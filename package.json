@@ -1,0 +1,21 @@
+{
+  "name": "whittle-app",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "deploy": "npx expo export -p web && npx eas-cli@latest deploy"
+  },
+  "dependencies": {
+    "expo": "^56.0.4",
+    "expo-router": "~56.2.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-web": "^0.21.0"
+  },
+  "private": true
+}
