@@ -2,7 +2,10 @@
   "expo": {
     "scheme": "acme",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-status-bar"
     ],
     "name": "whittle-app",
     "slug": "whittle-app"
