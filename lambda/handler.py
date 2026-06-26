@@ -9,12 +9,11 @@ than storing both.
 
 from typing import Any, Mapping, Optional
 from rapidfuzz import fuzz
-from pocketsmith import PocketSmithClient, Transaction
+from pocketsmith import PocketSmithClient, Transaction, PENDING_STATUS
 from repository import TransactionRepository
 
 # account ids for ANZ, Up Spending, Up Homeloan, hardcoded as they are rarely changed
 ACCOUNT_IDS = ["5256839", "5256787", "5256791"]
-PENDING_STATUS = "pending"
 # Minimum fuzzy-match score (0-100) for two payee strings to be treated as the
 # same merchant when reconciling a pending transaction with its posted version.
 PAYEE_MATCH_THRESHOLD = 80.0

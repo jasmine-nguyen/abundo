@@ -1,15 +1,18 @@
 from decimal import Decimal
 from ssm import get_param
-from typing import List, Optional, TypedDict
+from typing import Optional, TypedDict
 from urllib.parse import urlencode
 import json
 import urllib.request
+import urllib.error
 
 
+PENDING_STATUS = "pending"
 POCKETSMITH_DEVELOPER_KEY_PATH = "/whittle-app/pocketsmith-developer-key"
 GET_TRANSACTIONS_ENDPOINT = (
     "https://api.pocketsmith.com/v2/transaction_accounts/{account_id}/transactions"
 )
+REQUEST_TIMEOUT_SECONDS = 10
 
 
 class Transaction(TypedDict):
@@ -28,17 +31,17 @@ class Transaction(TypedDict):
     ps_category: Optional[str]
     category: Optional[str]  # Expresses that 'None' or 'str' is allowed
     notes: Optional[str]  # Expresses that 'None' or 'str' is allowed
+    updated_at: str  # ISO 8601, from PocketSmith raw payload
 
 
 class PocketSmithClient:
     def __init__(self) -> None:
         self._developer_key = None
-        self.path = "/whittle-app/pocketsmith-developer-key"
 
     @property
     def developer_key(self) -> str:
         if self._developer_key is None:
-            self._developer_key = get_param(self.path)
+            self._developer_key = get_param(POCKETSMITH_DEVELOPER_KEY_PATH)
         return self._developer_key
 
     def _get_headers(self) -> dict:
@@ -55,7 +58,7 @@ class PocketSmithClient:
         return None
 
     @staticmethod
-    def _normalise(raw_data: list) -> List[Transaction]:
+    def _normalise(raw_data: list) -> list[Transaction]:
         """Maps PocketSmith's specific fields to Whittle's standard format"""
         normalised = []
         for txn in raw_data:
@@ -79,30 +82,36 @@ class PocketSmithClient:
                     else None,
                     "category": None,
                     "notes": None,
+                    "updated_at": txn["updated_at"],
                 }
             )
 
         return normalised
 
     def get_transactions(
-        self, account_id: str, updated_since: str
-    ) -> List[Transaction]:
+        self, account_id: str, updated_since: Optional[str] = None
+    ) -> list[Transaction]:
         base_url: str = GET_TRANSACTIONS_ENDPOINT.format(account_id=account_id)
-        params = {"updated_since": updated_since}
-        query_string = urlencode(params)
-        final_url = f"{base_url}?{query_string}"
+        if updated_since is not None:
+            params = {"updated_since": updated_since}
+            query_string = urlencode(params)
+            final_url = f"{base_url}?{query_string}"
+        else:
+            final_url = base_url
 
         transactions = []
         url = final_url
         try:
             while url:
                 req = urllib.request.Request(url=url, headers=self._get_headers())
-                with urllib.request.urlopen(req) as response:
+                with urllib.request.urlopen(
+                    req, timeout=REQUEST_TIMEOUT_SECONDS
+                ) as response:
                     raw_data = json.loads(response.read().decode())
                     transactions.extend(raw_data)
                     link_header = response.headers.get("Link", "")
                     url = self._get_next_url(link_header) if link_header else None
-        except Exception as e:
-            raise RuntimeError(f"PocketSmith API call failed: {e}")
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"PocketSmith API call failed: {e}") from e
 
         return self._normalise(transactions)

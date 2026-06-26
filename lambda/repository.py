@@ -1,16 +1,16 @@
 import boto3
 from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key
-from handler import Transaction
-from typing import Any, Optional
+from boto3.dynamodb.conditions import Attr, Key
+from typing import Any, NoReturn, Optional
+from pocketsmith import Transaction, PENDING_STATUS
 
 REGION_NAME = "ap-southeast-2"
 RESOURCE_NAME = "dynamodb"
 TABLE_NAME = "whittle-dynamodb-table"
 
 
-def handle_database_error(e: ClientError, action: str) -> None:
-    """Centralized AWS exception handling and telemetry logging."""
+def handle_database_error(e: ClientError, action: str) -> NoReturn:
+    """Logs an AWS client error and re-raises it as a RuntimeError."""
     error_code = e.response["Error"]["Code"]
     error_message = e.response["Error"]["Message"]
     print(f"DynamoDB Error [{error_code}]: {error_message}")
@@ -20,6 +20,14 @@ def handle_database_error(e: ClientError, action: str) -> None:
 def sanitise_transaction(txn: Transaction) -> dict[str, Any]:
     """Strips out unassigned None properties to keep DynamoDB documents sparse."""
     return {k: v for k, v in txn.items() if v is not None}
+
+
+def _build_pk(account_id: str) -> str:
+    return f"ACCOUNT#{account_id}"
+
+
+def _build_sk(date: str, transaction_id: str) -> str:
+    return f"TXN#{date}#{transaction_id}"
 
 
 class TransactionRepository:
@@ -36,16 +44,28 @@ class TransactionRepository:
 
     def insert_transaction(self, txn: Transaction) -> None:
         """Inserts a new record or completely overwrites an existing item."""
-        pk = f"ACCOUNT#{txn['account_id']}"
-        sk = f"TXN#{txn['date']}#{txn['transaction_id']}"
+        self.insert_transactions([txn])
 
-        # Unpacks and strips fields safely
-        item = {"pk": pk, "sk": sk, **sanitise_transaction(txn)}
+    def insert_transactions(self, transactions: list[Transaction]) -> None:
+        """Inserts multiple transactions efficiently using DynamoDB Batch Write."""
+
+        if not transactions:
+            return
 
         try:
-            self._get_table().put_item(Item=item)
+            table = self._get_table()
+            with table.batch_writer() as batch:
+                for txn in transactions:
+                    # Ensure each transaction has the correct DynamoDB schema keys
+                    item = {
+                        "pk": _build_pk(txn["account_id"]),
+                        "sk": _build_sk(txn["date"], txn["transaction_id"]),
+                        **sanitise_transaction(txn),
+                    }
+                    # Put item into the batch buffer
+                    batch.put_item(Item=item)
         except ClientError as e:
-            handle_database_error(e, "write")
+            handle_database_error(e, "batch_write")
 
     def get_transaction(self, pk: str, sk: str) -> Optional[dict[str, Any]]:
         """Retrieves a single record document. Returns None if it is missing."""
@@ -56,6 +76,37 @@ class TransactionRepository:
                 print(f"Transaction not found for PK: {pk}, SK: {sk}")
                 return None
             return item
+        except ClientError as e:
+            handle_database_error(e, "read")
+
+    def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
+        """Retrieves all pending transaction of an account using the account_id"""
+        try:
+            response = self._get_table().query(
+                KeyConditionExpression=Key("pk").eq(_build_pk(account_id)),
+                FilterExpression=Attr("status").eq(PENDING_STATUS),
+            )
+
+            return response.get("Items", [])
+        except ClientError as e:
+            handle_database_error(e, "read")
+
+    def get_latest_updated_at(self, account_id: str) -> Optional[str]:
+        """Retrieves most recent transaction for a given account, sorted descending by SK, limit 1 and then returns its `updated_at`"""
+        try:
+            response = self._get_table().query(
+                # KeyConditionExpression isolates just the Partition Key (pk)
+                KeyConditionExpression=Key("pk").eq(_build_pk(account_id)),
+                # Sort descending (newest first)
+                ScanIndexForward=False,
+                Limit=1,
+            )
+
+            items = response.get("Items", [])
+            if items:
+                return items[0]["updated_at"]
+
+            return None
         except ClientError as e:
             handle_database_error(e, "read")
 
@@ -92,7 +143,7 @@ class TransactionRepository:
             handle_database_error(e, "index query")
 
     def update_transaction_status(self, pk: str, sk: str, new_status: str) -> None:
-        """Modifies a transaction's status flag using a safe attribute alias placeholder."""
+        """Updates a transaction's status. Uses a #s alias because 'status' is a reserved word in DynamoDB."""
         try:
             self._get_table().update_item(
                 Key={"pk": pk, "sk": sk},
@@ -116,17 +167,17 @@ class TransactionRepository:
     def reconcile_and_replace(
         self, pending_pk: str, pending_sk: str, posted_txn: Transaction
     ) -> None:
-        """Merges pending metadata edits into a posted payload, committing atomically."""
+        """Inserts the posted transaction, carrying over any user edits (notes, category) from the pending row, then deletes the old pending row if its key differs."""
         pending_txn = self.get_transaction(pending_pk, pending_sk)
         if not pending_txn:
             raise ValueError(
                 f"Cannot reconcile: Pending transaction {pending_pk} / {pending_sk} not found."
             )
 
-        # Clone context to shield upstream code states from side-effect mutations
+        # Copy so we don't mutate the caller's transaction
         posted_txn_copy = posted_txn.copy()
 
-        # Pull historical fields safely via identity checks
+        # Carry over user edits from the pending row if present
         pending_txn_notes = pending_txn.get("notes")
         if pending_txn_notes:
             posted_txn_copy["notes"] = pending_txn_notes
@@ -135,11 +186,13 @@ class TransactionRepository:
         if pending_txn_category:
             posted_txn_copy["category"] = pending_txn_category
 
-        # Pushes directly through the single-entry write gatekeeper
+        # Write the merged posted transaction
         self.insert_transaction(posted_txn_copy)
 
-        # Clear out the original pending marker only if structural key boundaries shifted
-        posted_pk = f"ACCOUNT#{posted_txn_copy['account_id']}"
-        posted_sk = f"TXN#{posted_txn_copy['date']}#{posted_txn_copy['transaction_id']}"
+        # Delete the old pending row only if it has a different key
+        posted_pk = _build_pk(posted_txn_copy["account_id"])
+        posted_sk = _build_sk(
+            posted_txn_copy["date"], posted_txn_copy["transaction_id"]
+        )
         if pending_pk != posted_pk or pending_sk != posted_sk:
             self.delete_transaction(pending_pk, pending_sk)
