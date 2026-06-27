@@ -8,7 +8,7 @@ import urllib.error
 
 
 PENDING_STATUS = "pending"
-POCKETSMITH_DEVELOPER_KEY_PATH = "/whittle-app/pocketsmith-developer-key"
+POCKETSMITH_DEVELOPER_KEY_PATH = "/whittle/pocketsmith-developer-key"
 GET_TRANSACTIONS_ENDPOINT = (
     "https://api.pocketsmith.com/v2/transaction_accounts/{account_id}/transactions"
 )
