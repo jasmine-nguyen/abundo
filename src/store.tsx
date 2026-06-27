@@ -16,9 +16,16 @@ export interface Cat {
 }
 export interface Budget { id: string; budget: number; posted: number; pending: number; }
 export interface Txn {
-  id: string; merchant: string; match: string; amount: number;
-  day: string; date: string; status: 'pending' | 'posted';
-  catId: string | null; countsToBudget: boolean;
+  transaction_id: string;
+  payee: string;
+  amount: number;
+  status: 'pending' | 'posted';
+  date: string;            // "YYYY-MM-DD"
+  category: string | null;
+  ps_category: string | null;
+  source: string;
+  account_name: string;
+  counts_to_budget: boolean;
 }
 export interface Rule { id: string; pattern: string; catId: string; isNew: boolean; }
 export interface Goal {
