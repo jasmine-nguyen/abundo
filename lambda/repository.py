@@ -26,7 +26,11 @@ def _build_pk(account_id: str) -> str:
     return f"ACCOUNT#{account_id}"
 
 
-def _build_sk(date: str, transaction_id: str) -> str:
+def _build_sk(date: Optional[str], transaction_id: Optional[str]) -> str:
+    if date is None:
+        return f"TXN#{transaction_id}"
+    if transaction_id is None:
+        return f"TXN#{date}"
     return f"TXN#{date}#{transaction_id}"
 
 
@@ -76,6 +80,25 @@ class TransactionRepository:
                 print(f"Transaction not found for PK: {pk}, SK: {sk}")
                 return None
             return item
+        except ClientError as e:
+            handle_database_error(e, "read")
+
+    def get_recent_transactions(
+        self, account_id: str, start_date: str, end_date: str
+    ) -> list[dict]:
+        if not account_id or not start_date or not end_date:
+            return []
+
+        try:
+            response = self._get_table().query(
+                KeyConditionExpression=Key("pk").eq(_build_pk(account_id))
+                & Key("sk").between(
+                    _build_sk(start_date, None), f"{_build_sk(end_date, None)}~"
+                ),
+                ScanIndexForward=False,
+            )
+
+            return response.get("Items", [])
         except ClientError as e:
             handle_database_error(e, "read")
 
