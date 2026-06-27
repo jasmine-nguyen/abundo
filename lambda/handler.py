@@ -38,6 +38,8 @@ def sync(repo: TransactionRepository, client: PocketSmithClient) -> None:
         # Only request transactions updated after our latest stored one to keep
         # each sync incremental rather than re-fetching the full history.
         updated_since = repo.get_latest_updated_at(account_id)
+        if updated_since is None:
+            updated_since = "2026-06-20T00:00:00Z"  # first run - limit history
         transactions = client.get_transactions(account_id, updated_since)
         for txn in transactions:
             process_transaction(repo, txn)
