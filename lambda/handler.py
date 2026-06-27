@@ -19,7 +19,7 @@ ACCOUNT_IDS = ["5256839", "5256787", "5256791"]
 PAYEE_MATCH_THRESHOLD = 80.0
 
 
-def handler(event, context):
+def lambda_handler(event, context):
     """Lambda handler: runs a full sync and returns a 200 response.
 
     `event` and `context` are supplied by the AWS Lambda runtime and are unused
