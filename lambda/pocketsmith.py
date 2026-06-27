@@ -12,7 +12,7 @@ POCKETSMITH_DEVELOPER_KEY_PATH = "/whittle/pocketsmith-developer-key"
 GET_TRANSACTIONS_ENDPOINT = (
     "https://api.pocketsmith.com/v2/transaction_accounts/{account_id}/transactions"
 )
-REQUEST_TIMEOUT_SECONDS = 60
+REQUEST_TIMEOUT_SECONDS = 10
 
 
 class Transaction(TypedDict):
