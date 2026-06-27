@@ -19,6 +19,7 @@ class Transaction(TypedDict):
     transaction_id: str
     account_id: str
     account_name: str
+    counts_to_budget: bool  # If a transaction should be counted toward a budget
     date: str  # Use date if parsed into a datetime object
     amount: Decimal  # Best practice for financial transactions
     closing_balance: Decimal
@@ -68,6 +69,7 @@ class PocketSmithClient:
                     "transaction_id": str(txn["id"]),
                     "account_id": str(txn_account["account_id"]),
                     "account_name": txn_account["name"],
+                    "counts_to_budget": True,
                     "date": txn["date"],
                     "amount": Decimal(str(txn["amount"])),
                     "closing_balance": Decimal(str(txn["closing_balance"])),
