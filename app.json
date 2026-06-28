@@ -8,6 +8,9 @@
       "expo-status-bar"
     ],
     "name": "whittle-app",
-    "slug": "whittle-app"
+    "slug": "whittle-app",
+    "ios": {
+      "bundleIdentifier": "com.anonymous.whittle-app"
+    }
   }
 }
