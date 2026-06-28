@@ -49,7 +49,9 @@ resource "aws_iam_role_policy" "lambda_logs" {
         "logs:CreateLogStream",
         "logs:PutLogEvents"
       ]
-      Resource = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda:*"
+      Resource = [
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda:*",
+      "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-api:*"]
     }]
   })
 }
