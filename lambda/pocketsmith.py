@@ -4,6 +4,7 @@ from ssm import get_param
 from typing import Optional
 from urllib.parse import urlencode
 import json
+import re
 import urllib.request
 import urllib.error
 
@@ -12,6 +13,22 @@ GET_TRANSACTIONS_ENDPOINT = (
     "https://api.pocketsmith.com/v2/transaction_accounts/{account_id}/transactions"
 )
 REQUEST_TIMEOUT_SECONDS = 10
+
+
+_PAYEE_PREFIX = re.compile(
+    r'^(POS AUTHORISATION\s+|DD \*|SQ \*|ZLR\*|SMM\s+)',
+    flags=re.IGNORECASE,
+)
+
+def derive_payee(raw: str) -> str:
+    """Strip common card-network prefixes from a raw bank payee string."""
+    cleaned = raw.strip()
+    while True:
+        new = _PAYEE_PREFIX.sub('', cleaned).strip()
+        if new == cleaned:
+            break
+        cleaned = new
+    return cleaned or raw
 
 
 class PocketSmithClient:
@@ -46,13 +63,13 @@ class PocketSmithClient:
             normalised.append(
                 {
                     "transaction_id": str(txn["id"]),
-                    "account_id": str(txn_account["account_id"]),
+                    "account_id": str(txn_account["id"]),
                     "account_name": txn_account["name"],
                     "counts_to_budget": True,
                     "date": txn["date"],
                     "amount": Decimal(str(txn["amount"])),
                     "closing_balance": Decimal(str(txn["closing_balance"])),
-                    "payee": txn["payee"],
+                    "payee": derive_payee(txn["payee"]),
                     "original_payee": txn["original_payee"],
                     "status": txn["status"],
                     "type": txn["type"],

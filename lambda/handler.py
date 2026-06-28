@@ -15,7 +15,7 @@ from pocketsmith import PocketSmithClient
 from repository import TransactionRepository
 
 # account ids for ANZ, Up Spending, Up Homeloan, hardcoded as they are rarely changed
-ACCOUNT_IDS = ["5128283", "5128231", "5128235"]
+ACCOUNT_IDS = ["5256839", "5256787", "5256791"]
 # Minimum fuzzy-match score (0-100) for two payee strings to be treated as the
 # same merchant when reconciling a pending transaction with its posted version.
 PAYEE_MATCH_THRESHOLD = 80.0
@@ -37,6 +37,7 @@ def sync(repo: TransactionRepository, client: PocketSmithClient) -> None:
     """Sync every configured account, fetching only transactions changed since
     the most recent one already stored for that account."""
     for account_id in ACCOUNT_IDS:
+        print(f"Fetching account {account_id}")
         # Only request transactions updated after our latest stored one to keep
         # each sync incremental rather than re-fetching the full history.
         updated_since = repo.get_latest_updated_at(account_id)
