@@ -2,11 +2,11 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { C, FONT } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, txView, Txn } from '../context';
+import { useAppContext, transactionView, Transaction } from '../context';
 
-export function TxRow({ t }: { t: Txn }) {
+export function TransactionRow({ t }: { t: Transaction }) {
   const s = useAppContext();
-  const v = txView(s, t);
+  const v = transactionView(s, t);
   const onPress = v.tappable ? () => s.openPicker(t.transaction_id) : undefined;
   return (
     <Pressable onPress={onPress} style={styles.row} disabled={!v.tappable}>

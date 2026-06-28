@@ -76,7 +76,7 @@ function PickerSheet() {
   const s = useAppContext();
   const sh = s.sheet;
   if (sh?.mode !== 'picker') return null;
-  const tx = s.txns.find((t) => t.transaction_id === sh.txId);
+  const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
   const cats = s.cats.filter((c) => c.bucket !== 'Income');
   return (
@@ -103,7 +103,7 @@ function ConfirmSheet() {
   const s = useAppContext();
   const sh = s.sheet;
   if (sh?.mode !== 'confirm') return null;
-  const tx = s.txns.find((t) => t.transaction_id === sh.txId);
+  const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
   const c = s.cat(sh.catId);
   if (!tx || !c) return null;
   return (

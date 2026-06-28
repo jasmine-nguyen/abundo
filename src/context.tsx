@@ -16,7 +16,7 @@ export interface Cat {
   recent: number;
 }
 export interface Budget { id: string; budget: number; posted: number; pending: number; }
-export interface Txn {
+export interface Transaction {
   transaction_id: string;
   payee: string;
   amount: number;
@@ -119,7 +119,7 @@ const REPAY_LINES = [
 // ---------------------------------------------------------------------------
 interface AppContext {
   // data
-  cats: Cat[]; budgets: Budget[]; txns: Txn[]; rules: Rule[]; goal: Goal;
+  cats: Cat[]; budgets: Budget[]; transactions: Transaction[]; rules: Rule[]; goal: Goal;
   payCycle: { length: number; anchor: string }; alerts: boolean;
   daysLeft: number; cycleLen: number;
   // ephemeral ui
@@ -143,6 +143,9 @@ interface AppContext {
   deleteRule: (id: string) => void;
   saveManualRule: (pattern: string, catId: string) => void;
   fireRepayment: () => void;
+	
+	transactionsLoading: boolean;
+	refreshTransactions: () => Promise<void>;
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -150,7 +153,7 @@ const Ctx = createContext<AppContext | null>(null);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [cats, setCats] = useState<Cat[]>(SEED_CATS);
   const [budgets, setBudgets] = useState<Budget[]>(SEED_BUDGETS);
-  const [txns, setTransactions] = useState<Txn[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [rules, setRules] = useState<Rule[]>(SEED_RULES);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
   const [payCycle, setPayCycle] = useState({ length: 14, anchor: 'Wednesday' });
@@ -158,10 +161,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [notif, setNotif] = useState<{ body: string; time: string } | null>(null);
-	
+
+	const [transactionsLoading, setTransactionsLoading] = useState(false);
+	const refreshTransactions = useCallback(async () => {
+		setTransactionsLoading(true);
+		try {
+			const data = await fetchTransactions();
+			setTransactions(data);
+		} finally{
+			setTransactionsLoading(false);
+		}
+	}, []);
+
 	useEffect(() =>{
-		fetchTransactions().then(setTransactions)
-	}, [] )
+		refreshTransactions()
+	}, [refreshTransactions] )
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -169,8 +183,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const cat = useCallback((id: string | null) => cats.find((c) => c.id === id), [cats]);
   const extraFor = useCallback(
-    (catId: string) => txns.filter((t) => t.counts_to_budget && t.category === catId).reduce((s, t) => s + Math.abs(t.amount), 0),
-    [txns],
+    (catId: string) => transactions.filter((t) => t.counts_to_budget && t.category === catId).reduce((s, t) => s + Math.abs(t.amount), 0),
+    [transactions],
   );
   const cycleName = useCallback(
     () => (payCycle.length === 7 ? 'Weekly' : payCycle.length === 14 ? 'Fortnightly' : 'Monthly'),
@@ -194,7 +208,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const applyCat = useCallback((scope: 'one' | 'all') => {
     setSheet((s) => {
       if (!s || s.mode !== 'confirm') return s;
-      const tx = txns.find((t) => t.transaction_id === s.txId);
+      const tx = transactions.find((t) => t.transaction_id === s.txId);
       const c = cats.find((x) => x.id === s.catId);
       if (!tx || !c) return null;
       if (scope === 'all') {
@@ -207,7 +221,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       return null;
     });
-  }, [txns, cats, showToast]);
+  }, [transactions, cats, showToast]);
 
   const saveBudget = useCallback((catId: string, value: number) => {
     if (value <= 0) return;
@@ -256,14 +270,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<AppContext>(() => ({
-    cats, budgets, txns, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
+    cats, budgets, transactions, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
     sheet, toast, notif,
     cat, extraFor, cycleName,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength: (len) => setPayCycle((p) => ({ ...p, length: len })),
-    openPicker, chooseCat, applyCat, saveBudget, saveCat, deleteCat, deleteRule, saveManualRule, fireRepayment,
-  }), [cats, budgets, txns, rules, goal, payCycle, alerts, sheet, toast, notif, cat, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCat, applyCat, saveBudget, saveCat, deleteCat, deleteRule, saveManualRule, fireRepayment]);
+    openPicker, chooseCat, applyCat, saveBudget, saveCat, deleteCat, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions
+  }), [cats, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, cat, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCat, applyCat, saveBudget, saveCat, deleteCat, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -318,13 +332,13 @@ export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: num
   return { rows, totBudget, totSpent, totRemain };
 }
 
-export interface TxView {
+export interface TransactionView {
   id: string; merchant: string; amountLabel: string; amountColor: string;
   isPending: boolean; icon: string; iconColor: string; chipBg: string;
   catLabel: string; catColor: string; catWeight: '500' | '700'; tappable: boolean;
 }
 
-export function txView(s: AppContext, t: Txn): TxView {
+export function transactionView(s: AppContext, t: Transaction): TransactionView {
   const c = t.category == null || t.category === 'income' ? undefined : s.cat(t.category);
   const isUncat = t.category == null || (t.category !== 'income' && !c);
   const isIncome = t.category === 'income';
@@ -341,11 +355,11 @@ export function txView(s: AppContext, t: Txn): TxView {
   };
 }
 
-export function txGroups(s: AppContext, tab: 'all' | 'uncat') {
-  const tabFilter = (t: Txn) => (tab === 'uncat' ? t.counts_to_budget && t.category == null : true);
-  const seen = new Map<string, Txn[]>();
+export function transactionGroups(s: AppContext, tab: 'all' | 'uncat') {
+  const tabFilter = (t: Transaction) => (tab === 'uncat' ? t.counts_to_budget && t.category == null : true);
+  const seen = new Map<string, Transaction[]>();
   const order: string[] = [];
-  for (const t of s.txns.filter(tabFilter)) {
+  for (const t of s.transactions.filter(tabFilter)) {
     const label = dateLabel(t.date);
     if (!seen.has(label)) { seen.set(label, []); order.push(label); }
     seen.get(label)!.push(t);
@@ -354,7 +368,7 @@ export function txGroups(s: AppContext, tab: 'all' | 'uncat') {
 }
 
 export function uncatCount(s: AppContext) {
-  return s.txns.filter((t) => t.counts_to_budget && t.category == null).length;
+  return s.transactions.filter((t) => t.counts_to_budget && t.category == null).length;
 }
 
 export function budgetDetail(s: AppContext, catId: string) {
@@ -369,9 +383,9 @@ export function budgetDetail(s: AppContext, catId: string) {
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
   const remain = b.budget - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
-  const relSeen = new Map<string, Txn[]>();
+  const relSeen = new Map<string, Transaction[]>();
   const relOrder: string[] = [];
-  for (const t of s.txns.filter((t) => t.category === b.id)) {
+  for (const t of s.transactions.filter((t) => t.category === b.id)) {
     const label = dateLabel(t.date);
     if (!relSeen.has(label)) { relSeen.set(label, []); relOrder.push(label); }
     relSeen.get(label)!.push(t);

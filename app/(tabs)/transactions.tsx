@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, txGroups, uncatCount } from '../../src/context';
-import { TxRow } from '../../src/components/TxRow';
+import { useAppContext, transactionGroups, uncatCount } from '../../src/context';
+import { TransactionRow } from '../../src/components/TransactionRow';
 
 type Tab = 'all' | 'uncat' | 'accounts';
 
@@ -19,7 +19,7 @@ export default function Transactions() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('all');
   const uncat = uncatCount(s);
-  const groups = txGroups(s, tab === 'uncat' ? 'uncat' : 'all');
+  const groups = transactionGroups(s, tab === 'uncat' ? 'uncat' : 'all');
 
   return (
     <View style={{ flex: 1 }}>
@@ -29,7 +29,14 @@ export default function Transactions() {
         <View style={styles.searchBtn}><Glyph name="search" size={20} color={C.textMid} /></View>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false} 
+				refreshControl={
+					<RefreshControl
+						refreshing={s.transactionsLoading}
+						onRefresh={s.refreshTransactions}
+						tintColor="#7c8cff"
+					/>
+				}>
         {/* segmented control */}
         <View style={styles.seg}>
           <Seg label="All" active={tab === 'all'} onPress={() => setTab('all')} flex={1} />
@@ -57,7 +64,7 @@ export default function Transactions() {
         {tab !== 'accounts' && groups.map((g) => (
           <View key={g.label} style={{ marginTop: 18 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => <TxRow key={t.transaction_id} t={t} />)}
+            {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} />)}
           </View>
         ))}
 
