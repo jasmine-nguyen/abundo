@@ -1,38 +1,17 @@
 from decimal import Decimal
+from models import Transaction
 from ssm import get_param
-from typing import Optional, TypedDict
+from typing import Optional
 from urllib.parse import urlencode
 import json
 import urllib.request
 import urllib.error
 
-
-PENDING_STATUS = "pending"
 POCKETSMITH_DEVELOPER_KEY_PATH = "/whittle/pocketsmith-developer-key"
 GET_TRANSACTIONS_ENDPOINT = (
     "https://api.pocketsmith.com/v2/transaction_accounts/{account_id}/transactions"
 )
 REQUEST_TIMEOUT_SECONDS = 10
-
-
-class Transaction(TypedDict):
-    transaction_id: str
-    account_id: str
-    account_name: str
-    counts_to_budget: bool  # If a transaction should be counted toward a budget
-    date: str  # Use date if parsed into a datetime object
-    amount: Decimal  # Best practice for financial transactions
-    closing_balance: Decimal
-    payee: str
-    original_payee: str
-    status: str
-    type: str
-    memo: Optional[str]
-    source: str
-    ps_category: Optional[str]
-    category: Optional[str]  # Expresses that 'None' or 'str' is allowed
-    notes: Optional[str]  # Expresses that 'None' or 'str' is allowed
-    updated_at: str  # ISO 8601, from PocketSmith raw payload
 
 
 class PocketSmithClient:

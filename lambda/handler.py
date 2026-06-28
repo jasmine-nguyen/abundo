@@ -7,9 +7,11 @@ with a different id), so this module detects and merges those duplicates rather
 than storing both.
 """
 
+from constants import PENDING_STATUS
+from models import Transaction
 from typing import Any, Mapping, Optional
 from rapidfuzz import fuzz
-from pocketsmith import PocketSmithClient, Transaction, PENDING_STATUS
+from pocketsmith import PocketSmithClient
 from repository import TransactionRepository
 
 # account ids for ANZ, Up Spending, Up Homeloan, hardcoded as they are rarely changed
@@ -39,7 +41,7 @@ def sync(repo: TransactionRepository, client: PocketSmithClient) -> None:
         # each sync incremental rather than re-fetching the full history.
         updated_since = repo.get_latest_updated_at(account_id)
         if updated_since is None:
-            updated_since = "2026-06-20T00:00:00Z"  # first run - limit history
+            updated_since = "2026-06-01T00:00:00Z"
         transactions = client.get_transactions(account_id, updated_since)
         for txn in transactions:
             process_transaction(repo, txn)
