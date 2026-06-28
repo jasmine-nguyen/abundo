@@ -4,8 +4,7 @@ from encoders import DecimalEncoder
 import json
 
 # account ids for ANZ, Up Spending, Up Homeloan, hardcoded as they are rarely changed
-ACCOUNT_IDS = ["5256839", "5256787", "5256791"]
-
+ACCOUNT_IDS = ["5128283", "5128231", "5128235"]
 TRANSACTION_PATH = "/transactions"
 
 
@@ -35,13 +34,17 @@ def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
         recent_transactions = repo.get_recent_transactions(
             account_id, start_date, end_date=today
         )
-        print(f"recent_txn_for_account {account_id}: {recent_transactions}")
         if len(recent_transactions) > 0:
             all_recent_transactions.extend(recent_transactions)
+
+    # remove pk and sk before returning to api
+    for txn in all_recent_transactions:
+        txn.pop("pk", None)
+        txn.pop("sk", None)
 
     # sort all transactions by date, newest first
     sorted_all_recent_transactions = sorted(
         all_recent_transactions, key=lambda txn: txn["date"], reverse=True
     )
-    print(f"sort_transactions: {sorted_all_recent_transactions}")
+
     return sorted_all_recent_transactions
