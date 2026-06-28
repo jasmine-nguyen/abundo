@@ -3,11 +3,11 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../src/theme';
 import { Icon, Glyph } from '../src/icons';
-import { useStore } from '../src/store';
+import { useAppContext } from '../src/context';
 import { Header } from '../src/components/Header';
 
 export default function Rules() {
-  const s = useStore();
+  const s = useAppContext();
   const insets = useSafeAreaInsets();
 
   return (

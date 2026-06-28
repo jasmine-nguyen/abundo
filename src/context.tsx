@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useMemo, useRef, useState, useCallback } from 'react';
+import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
+import { fetchTransactions } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,24 +76,6 @@ const SEED_BUDGETS: Budget[] = [
   { id: 'pets', budget: 49, posted: 0, pending: 0 },
   { id: 'shopping', budget: 100, posted: 30, pending: 0 },
 ];
-const SEED_TXNS: Txn[] = [
-  { id: 't1', merchant: 'DD *DOORDASH HUTIEUGOO', match: 'DOORDASH', amount: -46.33, day: 'Today', date: 'Today', status: 'pending', catId: null, countsToBudget: true },
-  { id: 't2', merchant: 'UNIFLEX REMEDIAL MASSAGE', match: 'UNIFLEX', amount: -120.0, day: 'Today', date: 'Today', status: 'pending', catId: null, countsToBudget: true },
-  { id: 't3', merchant: 'SQ *KKV INTERNATIONAL', match: 'KKV', amount: -5.5, day: 'Today', date: 'Today', status: 'pending', catId: null, countsToBudget: true },
-  { id: 't4', merchant: 'Woolworths Metro', match: 'WOOLWORTHS', amount: -38.2, day: 'Today', date: 'Today', status: 'posted', catId: 'groceries', countsToBudget: false },
-  { id: 't5', merchant: 'AGL Energy', match: 'AGL', amount: -187.71, day: 'Today', date: 'Today', status: 'pending', catId: 'utilities', countsToBudget: false },
-  { id: 't6', merchant: 'Salary — Northwind Pty', match: 'NORTHWIND', amount: 2450.0, day: 'Yesterday', date: 'Yesterday', status: 'posted', catId: 'income', countsToBudget: false },
-  { id: 't7', merchant: 'Shell Coles Express', match: 'SHELL', amount: -52.1, day: 'Yesterday', date: 'Yesterday', status: 'posted', catId: 'transport', countsToBudget: false },
-  { id: 't8', merchant: 'Cafe Bones', match: 'CAFE BONES', amount: -6.5, day: 'Yesterday', date: 'Yesterday', status: 'posted', catId: 'coffee', countsToBudget: false },
-  { id: 't9', merchant: 'Chemist Warehouse', match: 'CHEMIST', amount: -24.9, day: 'Yesterday', date: 'Yesterday', status: 'posted', catId: 'health', countsToBudget: false },
-  { id: 't10', merchant: 'SQ *KKV INTERNATIONAL', match: 'KKV', amount: -5.5, day: 'Earlier', date: 'Mon 22 Jun', status: 'posted', catId: 'coffee', countsToBudget: false },
-  { id: 't11', merchant: 'Industry Beans', match: 'INDUSTRY', amount: -5.2, day: 'Earlier', date: 'Mon 22 Jun', status: 'posted', catId: 'coffee', countsToBudget: false },
-  { id: 't12', merchant: 'Aldi Seddon', match: 'ALDI', amount: -64.3, day: 'Earlier', date: 'Mon 22 Jun', status: 'posted', catId: 'groceries', countsToBudget: false },
-  { id: 't13', merchant: 'Myki Top Up', match: 'MYKI', amount: -20.0, day: 'Earlier', date: 'Mon 22 Jun', status: 'posted', catId: 'transport', countsToBudget: false },
-  { id: 't14', merchant: "ZLR*SEDDON's Eatery", match: 'SEDDON', amount: -14.49, day: 'Earlier', date: 'Sun 21 Jun', status: 'posted', catId: 'eatingout', countsToBudget: false },
-  { id: 't15', merchant: 'Padre Coffee', match: 'PADRE', amount: -8.5, day: 'Earlier', date: 'Sun 21 Jun', status: 'posted', catId: 'coffee', countsToBudget: false },
-  { id: 't16', merchant: 'Chemist Warehouse', match: 'CHEMIST', amount: -18.0, day: 'Earlier', date: 'Sun 21 Jun', status: 'posted', catId: 'health', countsToBudget: false },
-];
 const SEED_RULES: Rule[] = [
   { id: 'r1', pattern: 'WOOLWORTHS', catId: 'groceries', isNew: false },
   { id: 'r2', pattern: 'AGL', catId: 'utilities', isNew: false },
@@ -105,14 +88,25 @@ const SEED_GOAL: Goal = {
   lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
 };
 
-export const DATE_ORDER = ['Today', 'Yesterday', 'Mon 22 Jun', 'Sun 21 Jun'];
-
 export const CLEAN_NAME: Record<string, string> = {
   'DD *DOORDASH HUTIEUGOO': 'DoorDash',
   'UNIFLEX REMEDIAL MASSAGE': 'Uniflex Massage',
   'SQ *KKV INTERNATIONAL': 'KKV International',
 };
 export function cleanName(m: string) { return CLEAN_NAME[m] || m; }
+
+function dateLabel(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const date = new Date(y, m - 1, d);
+  const diffDays = Math.round((today.getTime() - date.getTime()) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${DAY[date.getDay()]} ${d} ${MON[m - 1]}`;
+}
 
 const REPAY_LINES = [
   '−$1,440 just hit the mortgage. $1,208 of it murdered actual principal. The beast shrinks. 🪓',
@@ -121,9 +115,9 @@ const REPAY_LINES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Store
+// AppContext
 // ---------------------------------------------------------------------------
-interface Store {
+interface AppContext {
   // data
   cats: Cat[]; budgets: Budget[]; txns: Txn[]; rules: Rule[]; goal: Goal;
   payCycle: { length: number; anchor: string }; alerts: boolean;
@@ -151,12 +145,12 @@ interface Store {
   fireRepayment: () => void;
 }
 
-const Ctx = createContext<Store | null>(null);
+const Ctx = createContext<AppContext | null>(null);
 
-export function StoreProvider({ children }: { children: React.ReactNode }) {
+export function AppProvider({ children }: { children: React.ReactNode }) {
   const [cats, setCats] = useState<Cat[]>(SEED_CATS);
   const [budgets, setBudgets] = useState<Budget[]>(SEED_BUDGETS);
-  const [txns, setTxns] = useState<Txn[]>(SEED_TXNS);
+  const [txns, setTransactions] = useState<Txn[]>([]);
   const [rules, setRules] = useState<Rule[]>(SEED_RULES);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
   const [payCycle, setPayCycle] = useState({ length: 14, anchor: 'Wednesday' });
@@ -164,6 +158,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [notif, setNotif] = useState<{ body: string; time: string } | null>(null);
+	
+	useEffect(() =>{
+		fetchTransactions().then(setTransactions)
+	}, [] )
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -171,7 +169,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const cat = useCallback((id: string | null) => cats.find((c) => c.id === id), [cats]);
   const extraFor = useCallback(
-    (catId: string) => txns.filter((t) => t.countsToBudget && t.catId === catId).reduce((s, t) => s + Math.abs(t.amount), 0),
+    (catId: string) => txns.filter((t) => t.counts_to_budget && t.category === catId).reduce((s, t) => s + Math.abs(t.amount), 0),
     [txns],
   );
   const cycleName = useCallback(
@@ -196,15 +194,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const applyCat = useCallback((scope: 'one' | 'all') => {
     setSheet((s) => {
       if (!s || s.mode !== 'confirm') return s;
-      const tx = txns.find((t) => t.id === s.txId);
+      const tx = txns.find((t) => t.transaction_id === s.txId);
       const c = cats.find((x) => x.id === s.catId);
       if (!tx || !c) return null;
       if (scope === 'all') {
-        setTxns((prev) => prev.map((t) => (t.countsToBudget && t.catId === null && t.match === tx.match ? { ...t, catId: s.catId } : t)));
-        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.match, catId: s.catId, isNew: true }, ...prev]);
-        showToast(`Rule saved — future ${cleanName(tx.merchant)} charges file as ${c.name}.`);
+        setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.payee === tx.payee ? { ...t, category: s.catId } : t)));
+        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.payee, catId: s.catId, isNew: true }, ...prev]);
+        showToast(`Rule saved — future ${cleanName(tx.payee)} charges file as ${c.name}.`);
       } else {
-        setTxns((prev) => prev.map((t) => (t.id === s.txId ? { ...t, catId: s.catId } : t)));
+        setTransactions((prev) => prev.map((t) => (t.transaction_id === s.txId ? { ...t, category: s.catId } : t)));
         showToast(`This transaction filed under ${c.name}.`);
       }
       return null;
@@ -233,7 +231,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setCats((prev) => prev.filter((c) => c.id !== id));
     setBudgets((prev) => prev.filter((b) => b.id !== id));
     setRules((prev) => prev.filter((r) => r.catId !== id));
-    setTxns((prev) => prev.map((t) => (t.catId === id ? { ...t, catId: null } : t)));
+    setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
     showToast('Category deleted.');
   }, [showToast]);
 
@@ -257,7 +255,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     notifTimer.current = setTimeout(() => setNotif(null), 5600);
   }, []);
 
-  const value = useMemo<Store>(() => ({
+  const value = useMemo<AppContext>(() => ({
     cats, budgets, txns, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
     sheet, toast, notif,
     cat, extraFor, cycleName,
@@ -270,16 +268,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-export function useStore(): Store {
+export function useAppContext(): AppContext {
   const s = useContext(Ctx);
-  if (!s) throw new Error('useStore must be used within StoreProvider');
+  if (!s) throw new Error('useAppContext must be used within AppProvider');
   return s;
 }
 
 // ---------------------------------------------------------------------------
 // Derived-value selectors (ported from renderVals). Pure functions over state.
 // ---------------------------------------------------------------------------
-export function elapsedFrac(s: Store) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
+export function elapsedFrac(s: AppContext) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
 
 export interface BudgetView {
   id: string; name: string; color: string; icon: string; chipBg: string;
@@ -288,7 +286,7 @@ export interface BudgetView {
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
 }
 
-export function budgetViews(s: Store): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
+export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
   const elapsed = elapsedFrac(s);
   let totBudget = 0, totSpent = 0, totRemain = 0;
   const rows: BudgetView[] = [];
@@ -326,13 +324,14 @@ export interface TxView {
   catLabel: string; catColor: string; catWeight: '500' | '700'; tappable: boolean;
 }
 
-export function txView(s: Store, t: Txn): TxView {
-  const isUncat = t.catId === null, isIncome = t.catId === 'income';
-  const c = isUncat || isIncome ? undefined : s.cat(t.catId);
-  const key = isUncat ? 'q' : isIncome ? 'home' : c ? c.icon : 'q';
+export function txView(s: AppContext, t: Txn): TxView {
+  const c = t.category == null || t.category === 'income' ? undefined : s.cat(t.category);
+  const isUncat = t.category == null || (t.category !== 'income' && !c);
+  const isIncome = t.category === 'income';
+  const key = isUncat ? 'q' : isIncome ? 'home' : c!.icon;
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return {
-    id: t.id, merchant: t.merchant, amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
+    id: t.transaction_id, merchant: cleanName(t.payee), amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
     isPending: t.status === 'pending', icon: key,
     iconColor: isUncat ? '#c9b3f5' : isIncome ? '#9aa2b5' : c!.color,
     chipBg: isUncat ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),
@@ -342,18 +341,23 @@ export function txView(s: Store, t: Txn): TxView {
   };
 }
 
-export function txGroups(s: Store, tab: 'all' | 'uncat') {
-  const tabFilter = (t: Txn) => (tab === 'uncat' ? t.countsToBudget && t.catId === null : true);
-  return DATE_ORDER
-    .map((label) => ({ label, items: s.txns.filter((t) => (t.date || t.day) === label && tabFilter(t)) }))
-    .filter((g) => g.items.length);
+export function txGroups(s: AppContext, tab: 'all' | 'uncat') {
+  const tabFilter = (t: Txn) => (tab === 'uncat' ? t.counts_to_budget && t.category == null : true);
+  const seen = new Map<string, Txn[]>();
+  const order: string[] = [];
+  for (const t of s.txns.filter(tabFilter)) {
+    const label = dateLabel(t.date);
+    if (!seen.has(label)) { seen.set(label, []); order.push(label); }
+    seen.get(label)!.push(t);
+  }
+  return order.map((label) => ({ label, items: seen.get(label)! }));
 }
 
-export function uncatCount(s: Store) {
-  return s.txns.filter((t) => t.countsToBudget && t.catId === null).length;
+export function uncatCount(s: AppContext) {
+  return s.txns.filter((t) => t.counts_to_budget && t.category == null).length;
 }
 
-export function budgetDetail(s: Store, catId: string) {
+export function budgetDetail(s: AppContext, catId: string) {
   const c = s.cat(catId);
   const b = s.budgets.find((x) => x.id === catId);
   if (!c || !b) return null;
@@ -365,9 +369,14 @@ export function budgetDetail(s: Store, catId: string) {
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
   const remain = b.budget - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
-  const relGroups = DATE_ORDER
-    .map((label) => ({ label, items: s.txns.filter((t) => t.catId === b.id && (t.date || t.day) === label) }))
-    .filter((g) => g.items.length);
+  const relSeen = new Map<string, Txn[]>();
+  const relOrder: string[] = [];
+  for (const t of s.txns.filter((t) => t.category === b.id)) {
+    const label = dateLabel(t.date);
+    if (!relSeen.has(label)) { relSeen.set(label, []); relOrder.push(label); }
+    relSeen.get(label)!.push(t);
+  }
+  const relGroups = relOrder.map((label) => ({ label, items: relSeen.get(label)! }));
   return {
     name: c.name, icon: c.icon, color: c.color,
     spentBig: fmt(spent), ofBudget: 'of ' + fmt(b.budget),
@@ -381,7 +390,7 @@ export function budgetDetail(s: Store, catId: string) {
   };
 }
 
-export function budgetEditInfo(s: Store, catId: string) {
+export function budgetEditInfo(s: AppContext, catId: string) {
   const c = s.cat(catId);
   const existing = s.budgets.find((b) => b.id === catId);
   const avg = c ? Math.round(c.recent) : 0;
@@ -403,7 +412,7 @@ export function budgetEditInfo(s: Store, catId: string) {
   };
 }
 
-export function goalView(s: Store) {
+export function goalView(s: AppContext) {
   const G = s.goal;
   const paidOff = G.original - G.balance;
   const paidPct = Math.max(0, Math.min(100, (paidOff / G.original) * 100));

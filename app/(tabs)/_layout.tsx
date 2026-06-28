@@ -4,7 +4,7 @@ import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useStore, uncatCount } from '../../src/store';
+import { useAppContext, uncatCount } from '../../src/context';
 
 const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
@@ -23,7 +23,7 @@ type TabBarShape = {
 
 function TabBar({ state, navigation }: TabBarShape) {
   const insets = useSafeAreaInsets();
-  const store = useStore();
+  const store = useAppContext();
   const hasUncat = uncatCount(store) > 0;
 
   return (

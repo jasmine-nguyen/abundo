@@ -4,11 +4,11 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useStore } from '../../src/store';
+import { useAppContext } from '../../src/context';
 import { Header } from '../../src/components/Header';
 
 export default function BudgetPick() {
-  const s = useStore();
+  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const budgeted = s.budgets.map((b) => b.id);

@@ -3,10 +3,10 @@ import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput } from 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useStore, cleanName } from '../store';
+import { useAppContext, cleanName } from '../context';
 
 export function Overlays() {
-  const s = useStore();
+  const s = useAppContext();
   return (
     <>
       <NotifBanner />
@@ -18,7 +18,7 @@ export function Overlays() {
 }
 
 function Toast() {
-  const { toast } = useStore();
+  const { toast } = useAppContext();
   const insets = useSafeAreaInsets();
   if (!toast) return null;
   return (
@@ -31,7 +31,7 @@ function Toast() {
 }
 
 function NotifBanner() {
-  const { notif, dismissNotif } = useStore();
+  const { notif, dismissNotif } = useAppContext();
   const insets = useSafeAreaInsets();
   if (!notif) return null;
   return (
@@ -55,7 +55,7 @@ function NotifBanner() {
 }
 
 function SheetHost() {
-  const s = useStore();
+  const s = useAppContext();
   const open = !!s.sheet;
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={() => s.setSheet(null)}>
@@ -73,16 +73,16 @@ function SheetHost() {
 }
 
 function PickerSheet() {
-  const s = useStore();
+  const s = useAppContext();
   const sh = s.sheet;
   if (sh?.mode !== 'picker') return null;
-  const tx = s.txns.find((t) => t.id === sh.txId);
+  const tx = s.txns.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
   const cats = s.cats.filter((c) => c.bucket !== 'Income');
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
-      <Text style={styles.sheetMerchant}>{tx.merchant}</Text>
+      <Text style={styles.sheetMerchant}>{tx.payee}</Text>
       <Text style={styles.sheetAmount}>{'-$' + Math.abs(tx.amount).toFixed(2)}</Text>
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
         {cats.map((c) => (
@@ -100,10 +100,10 @@ function PickerSheet() {
 }
 
 function ConfirmSheet() {
-  const s = useStore();
+  const s = useAppContext();
   const sh = s.sheet;
   if (sh?.mode !== 'confirm') return null;
-  const tx = s.txns.find((t) => t.id === sh.txId);
+  const tx = s.txns.find((t) => t.transaction_id === sh.txId);
   const c = s.cat(sh.catId);
   if (!tx || !c) return null;
   return (
@@ -113,10 +113,10 @@ function ConfirmSheet() {
       </View>
       <Text style={styles.confirmTitle}>File as {c.name}</Text>
       <Text style={styles.confirmSub}>
-        Apply to just '{cleanName(tx.merchant)}', or set a rule so every charge from this merchant files itself?
+        Apply to just '{cleanName(tx.payee)}', or set a rule so every charge from this merchant files itself?
       </Text>
       <Pressable onPress={() => s.applyCat('all')} style={[styles.btn, styles.btnPrimary]}>
-        <Text style={styles.btnPrimaryText}>Every {cleanName(tx.merchant)} charge</Text>
+        <Text style={styles.btnPrimaryText}>Every {cleanName(tx.payee)} charge</Text>
       </Pressable>
       <Pressable onPress={() => s.applyCat('one')} style={[styles.btn, styles.btnGhost]}>
         <Text style={styles.btnGhostText}>Just this one</Text>
@@ -126,7 +126,7 @@ function ConfirmSheet() {
 }
 
 function AddRuleSheet() {
-  const s = useStore();
+  const s = useAppContext();
   const [pattern, setPattern] = useState('');
   const [catId, setCatId] = useState<string | null>(null);
   const cats = s.cats.filter((c) => c.bucket !== 'Income');
@@ -172,7 +172,7 @@ function AddRuleSheet() {
 }
 
 function PayCycleSheet() {
-  const s = useStore();
+  const s = useAppContext();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
   return (
     <View>

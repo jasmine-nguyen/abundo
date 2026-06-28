@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useStore, txGroups, uncatCount } from '../../src/store';
+import { useAppContext, txGroups, uncatCount } from '../../src/context';
 import { TxRow } from '../../src/components/TxRow';
 
 type Tab = 'all' | 'uncat' | 'accounts';
@@ -15,7 +15,7 @@ const ACCOUNTS = [
 ];
 
 export default function Transactions() {
-  const s = useStore();
+  const s = useAppContext();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('all');
   const uncat = uncatCount(s);
@@ -57,7 +57,7 @@ export default function Transactions() {
         {tab !== 'accounts' && groups.map((g) => (
           <View key={g.label} style={{ marginTop: 18 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => <TxRow key={t.id} t={t} />)}
+            {g.items.map((t) => <TxRow key={t.transaction_id} t={t} />)}
           </View>
         ))}
 

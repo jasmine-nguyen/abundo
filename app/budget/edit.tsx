@@ -4,11 +4,11 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useStore, budgetEditInfo } from '../../src/store';
+import { useAppContext, budgetEditInfo } from '../../src/context';
 import { Header } from '../../src/components/Header';
 
 export default function BudgetEdit() {
-  const s = useStore();
+  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { catId } = useLocalSearchParams<{ catId: string; from?: string }>();

@@ -4,12 +4,12 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useStore, budgetDetail, txView, Txn } from '../../src/store';
+import { useAppContext, budgetDetail, txView, Txn } from '../../src/context';
 import { Header } from '../../src/components/Header';
 import { WhittleBar } from '../../src/components/ui';
 
 export default function BudgetDetail() {
-  const s = useStore();
+  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -67,7 +67,7 @@ export default function BudgetDetail() {
         {bd.relGroups.map((g) => (
           <View key={g.label} style={{ marginTop: 6 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => <DetailTxRow key={t.id} t={t} />)}
+            {g.items.map((t) => <DetailTxRow key={t.transaction_id} t={t} />)}
           </View>
         ))}
         {bd.relEmpty && <Text style={styles.empty}>No transactions in this category yet this cycle.</Text>}
@@ -77,9 +77,9 @@ export default function BudgetDetail() {
 }
 
 function DetailTxRow({ t }: { t: Txn }) {
-  const s = useStore();
+  const s = useAppContext();
   const v = txView(s, t);
-  const c = s.cat(t.catId);
+  const c = s.cat(t.category);
   return (
     <View style={styles.txRow}>
       <View style={[styles.txChip, { backgroundColor: v.chipBg }]}><Icon name={v.icon} size={22} color={v.iconColor} /></View>

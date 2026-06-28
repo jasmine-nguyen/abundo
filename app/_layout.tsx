@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
 import { C } from '../src/theme';
-import { StoreProvider } from '../src/store';
+import { AppProvider } from '../src/context';
 import { Overlays } from '../src/components/Overlays';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -69,10 +69,10 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <StoreProvider>
+      <AppProvider>
         <StatusBar style="light" />
         {isWeb ? <View style={styles.backdrop}>{app}</View> : app}
-      </StoreProvider>
+      </AppProvider>
     </SafeAreaProvider>
   );
 }

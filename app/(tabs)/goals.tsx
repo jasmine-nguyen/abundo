@@ -3,11 +3,11 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useStore, goalView } from '../../src/store';
+import { useAppContext, goalView } from '../../src/context';
 import { Bar } from '../../src/components/ui';
 
 export default function Goals() {
-  const s = useStore();
+  const s = useAppContext();
   const insets = useSafeAreaInsets();
   const g = goalView(s);
   const G = g.G;

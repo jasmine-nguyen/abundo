@@ -4,11 +4,11 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useStore } from '../../src/store';
+import { useAppContext } from '../../src/context';
 import { SectionLabel } from '../../src/components/ui';
 
 export default function Settings() {
-  const s = useStore();
+  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 

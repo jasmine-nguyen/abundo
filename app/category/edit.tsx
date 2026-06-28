@@ -4,12 +4,12 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
-import { useStore, BUCKETS, BUCKET_COLOR, Bucket } from '../../src/store';
+import { useAppContext, BUCKETS, BUCKET_COLOR, Bucket } from '../../src/context';
 import { ICON_KEYS } from '../../src/icons';
 import { Header } from '../../src/components/Header';
 
 export default function CategoryEdit() {
-  const s = useStore();
+  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { catId } = useLocalSearchParams<{ catId?: string }>();

@@ -4,11 +4,11 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useStore, budgetViews } from '../../src/store';
+import { useAppContext, budgetViews } from '../../src/context';
 import { WhittleBar } from '../../src/components/ui';
 
 export default function Budgets() {
-  const s = useStore();
+  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
