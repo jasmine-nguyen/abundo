@@ -40,3 +40,7 @@ app-example
 # Python
 __pycache__/
 *.py[cod]
+lambda/repository.py
+lambda/ssm.py
+lambda_api/repository.py
+lambda_api/ssm.py
