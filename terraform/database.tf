@@ -19,6 +19,16 @@ resource "aws_dynamodb_table" "dynamodb_table" {
     type = "S"
   }
 
+  attribute {
+    name = "account_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "date"
+    type = "S"
+  }
+
   global_secondary_index {
     name = "transaction-id-index"
     key_schema {
@@ -26,5 +36,19 @@ resource "aws_dynamodb_table" "dynamodb_table" {
       key_type       = "HASH"
     }
     projection_type = "KEYS_ONLY"
+  }
+
+  global_secondary_index {
+    name = "date-index"
+    key_schema {
+      attribute_name = "account_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "date"
+      key_type       = "RANGE"
+    }
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["amount", "category", "transaction_id", "payee", "status"]
   }
 }
