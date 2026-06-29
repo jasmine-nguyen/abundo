@@ -1,16 +1,26 @@
 {
   "expo": {
     "scheme": "acme",
+    "icon": "./assets/whittle-logo.png",
     "plugins": [
       "expo-router",
       "expo-font",
       "expo-splash-screen",
       "expo-status-bar"
     ],
-    "name": "whittle-app",
-    "slug": "whittle-app",
+    "name": "whittle",
+    "slug": "whittle",
     "ios": {
       "bundleIdentifier": "com.anonymous.whittle-app"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "38dc6b5e-3c1c-4410-a18a-30b9a8cc57b0"
+      }
+    },
+    "android": {
+      "package": "com.anonymous.whittleapp"
     }
   }
 }
