@@ -27,12 +27,8 @@ def _build_pk(account_id: str) -> str:
     return f"ACCOUNT#{account_id}"
 
 
-def _build_sk(date: Optional[str], transaction_id: Optional[str]) -> str:
-    if date is None:
-        return f"TXN#{transaction_id}"
-    if transaction_id is None:
-        return f"TXN#{date}"
-    return f"TXN#{date}#{transaction_id}"
+def _build_sk(transaction_id: Optional[str]) -> str:
+    return f"TXN#{transaction_id}"
 
 
 class TransactionRepository:
@@ -64,7 +60,7 @@ class TransactionRepository:
                     # Ensure each transaction has the correct DynamoDB schema keys
                     item = {
                         "pk": _build_pk(txn["account_id"]),
-                        "sk": _build_sk(txn["date"], txn["transaction_id"]),
+                        "sk": _build_sk(txn["transaction_id"]),
                         **sanitise_transaction(txn),
                     }
                     # Put item into the batch buffer
@@ -93,9 +89,7 @@ class TransactionRepository:
         try:
             response = self._get_table().query(
                 KeyConditionExpression=Key("pk").eq(_build_pk(account_id))
-                & Key("sk").between(
-                    _build_sk(start_date, None), f"{_build_sk(end_date, None)}~"
-                ),
+                & Key("sk").between(_build_sk(None), f"{_build_sk(None)}~"),
                 ScanIndexForward=False,
             )
 
@@ -215,8 +209,6 @@ class TransactionRepository:
 
         # Delete the old pending row only if it has a different key
         posted_pk = _build_pk(posted_txn_copy["account_id"])
-        posted_sk = _build_sk(
-            posted_txn_copy["date"], posted_txn_copy["transaction_id"]
-        )
+        posted_sk = _build_sk(posted_txn_copy["transaction_id"])
         if pending_pk != posted_pk or pending_sk != posted_sk:
             self.delete_transaction(pending_pk, pending_sk)
