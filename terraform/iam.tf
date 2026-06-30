@@ -68,7 +68,7 @@ resource "aws_iam_role_policy" "lambda_ssm" {
         "ssm:GetParameter"
       ]
       Resource = [
-        aws_ssm_parameter.pocketsmith_developer_key.arn,
+        aws_ssm_parameter.banksync_webhook_secret.arn,
       ]
     }]
   })
