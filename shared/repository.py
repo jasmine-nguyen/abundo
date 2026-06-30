@@ -196,10 +196,6 @@ class TransactionRepository:
         posted_txn_copy = posted_txn.copy()
 
         # Carry over user edits from the pending row if present
-        pending_txn_notes = pending_txn.get("notes")
-        if pending_txn_notes:
-            posted_txn_copy["notes"] = pending_txn_notes
-
         pending_txn_category = pending_txn.get("category")
         if pending_txn_category:
             posted_txn_copy["category"] = pending_txn_category
@@ -212,3 +208,16 @@ class TransactionRepository:
         posted_sk = _build_sk(posted_txn_copy["transaction_id"])
         if pending_pk != posted_pk or pending_sk != posted_sk:
             self.delete_transaction(pending_pk, pending_sk)
+
+    def is_new_event(self, envelope_id: str) -> bool:
+        try:
+            self._get_table().put_item(
+                Item={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"},
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+
+            handle_database_error(e, "is_new_event")

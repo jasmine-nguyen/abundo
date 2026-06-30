@@ -27,12 +27,8 @@ def _build_pk(account_id: str) -> str:
     return f"ACCOUNT#{account_id}"
 
 
-def _build_sk(date: Optional[str], transaction_id: Optional[str]) -> str:
-    if date is None:
-        return f"TXN#{transaction_id}"
-    if transaction_id is None:
-        return f"TXN#{date}"
-    return f"TXN#{date}#{transaction_id}"
+def _build_sk(transaction_id: Optional[str]) -> str:
+    return f"TXN#{transaction_id}"
 
 
 class TransactionRepository:
@@ -64,7 +60,7 @@ class TransactionRepository:
                     # Ensure each transaction has the correct DynamoDB schema keys
                     item = {
                         "pk": _build_pk(txn["account_id"]),
-                        "sk": _build_sk(txn["date"], txn["transaction_id"]),
+                        "sk": _build_sk(txn["transaction_id"]),
                         **sanitise_transaction(txn),
                     }
                     # Put item into the batch buffer
@@ -93,9 +89,7 @@ class TransactionRepository:
         try:
             response = self._get_table().query(
                 KeyConditionExpression=Key("pk").eq(_build_pk(account_id))
-                & Key("sk").between(
-                    _build_sk(start_date, None), f"{_build_sk(end_date, None)}~"
-                ),
+                & Key("sk").between(_build_sk(None), f"{_build_sk(None)}~"),
                 ScanIndexForward=False,
             )
 
@@ -202,10 +196,6 @@ class TransactionRepository:
         posted_txn_copy = posted_txn.copy()
 
         # Carry over user edits from the pending row if present
-        pending_txn_notes = pending_txn.get("notes")
-        if pending_txn_notes:
-            posted_txn_copy["notes"] = pending_txn_notes
-
         pending_txn_category = pending_txn.get("category")
         if pending_txn_category:
             posted_txn_copy["category"] = pending_txn_category
@@ -215,8 +205,19 @@ class TransactionRepository:
 
         # Delete the old pending row only if it has a different key
         posted_pk = _build_pk(posted_txn_copy["account_id"])
-        posted_sk = _build_sk(
-            posted_txn_copy["date"], posted_txn_copy["transaction_id"]
-        )
+        posted_sk = _build_sk(posted_txn_copy["transaction_id"])
         if pending_pk != posted_pk or pending_sk != posted_sk:
             self.delete_transaction(pending_pk, pending_sk)
+
+    def is_new_event(self, envelope_id: str) -> bool:
+        try:
+            self._get_table().put_item(
+                Item={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"},
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+
+            handle_database_error(e, "is_new_event")
