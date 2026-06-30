@@ -1,0 +1,22 @@
+{
+  "id": "bank_tx_s_b726e693e21de09b7a7c322db9b4d579d71ea512a2dc7ad26fb33bcd6b493184",
+  "date": "2026-06-29",
+  "authorizedDate": "2026-06-29",
+  "description": "POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU",
+  "creditAmount": 0,
+  "debitAmount": 5.5,
+  "category": "FOOD_AND_DRINK",
+  "type": "TRANSFER_OUTGOING",
+  "reference": "",
+  "bank": "ANZ",
+  "account": "5239 (unknown)",
+  "accountName": "ANZ Rewards Black Visa",
+  "accountNumber": "5239",
+  "accountType": "unknown",
+  "accountId": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0",
+  "bankId": "fiskil_4",
+  "currency": "AUD",
+  "amount": -5.5,
+  "pending": true,
+  "pendingTransactionId": null
+}

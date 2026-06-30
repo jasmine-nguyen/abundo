@@ -1,0 +1,22 @@
+{
+  "id": "bank_tx_s_0b7aa48c6cbc04680a2fbca79ba9a17e2b0939027af980b7605c082a1328a800",
+  "date": "2026-06-29",
+  "authorizedDate": "2026-06-29",
+  "description": "POS AUTHORISATION         DD *DOORDASH XUANBANHC   +611800958316AU",
+  "creditAmount": 0,
+  "debitAmount": 24.53,
+  "category": "FOOD_AND_DRINK",
+  "type": "TRANSFER_OUTGOING",
+  "reference": "",
+  "bank": "ANZ",
+  "account": "5239 (unknown)",
+  "accountName": "ANZ Rewards Black Visa",
+  "accountNumber": "5239",
+  "accountType": "unknown",
+  "accountId": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0",
+  "bankId": "fiskil_4",
+  "currency": "AUD",
+  "amount": -24.53,
+  "pending": true,
+  "pendingTransactionId": null
+}
