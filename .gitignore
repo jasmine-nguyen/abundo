@@ -46,6 +46,12 @@ lambda/ssm.py
 lambda_api/repository.py
 lambda_api/ssm.py
 
+# Lambda build dir — ignore everything, allowlist only true source
+lambda/*
+
+!lambda/handler.py
+!lambda/banksync.py# terraform
+
 # terraform
 terraform/artifacts/*
 terraform/*.zip
