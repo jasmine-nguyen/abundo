@@ -1,4 +1,6 @@
 import boto3
+from datetime import datetime, timezone
+import json
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
@@ -52,21 +54,45 @@ class TransactionRepository:
 
         if not transactions:
             return
+        items = []
 
+        for transaction in transactions:
+            # Ensure each transaction has the correct DynamoDB schema keys
+            item = {
+                "pk": _build_pk(transaction["account_id"]),
+                "sk": _build_sk(transaction["transaction_id"]),
+                **sanitise_transaction(transaction),
+            }
+            items.append(item)
+
+        self._batch_put(items, "batch_write")
+
+    def save_failed_transactions(self, failed_transactions: list[dict]) -> None:
+        """Inserts failed transactions using DynamoDB Batch Write."""
+
+        if not failed_transactions:
+            return
+
+        items = []
+        for transaction in failed_transactions:
+            item = {
+                "pk": "FAILED",
+                "sk": datetime.now(timezone.utc).isoformat(),
+                "raw": json.dumps(transaction),
+            }
+            items.append(item)
+        self._batch_put(items, "save_failed_transactions")
+
+    def _batch_put(self, items: list[dict], action: str) -> None:
+        if not items:
+            return
         try:
             table = self._get_table()
             with table.batch_writer() as batch:
-                for txn in transactions:
-                    # Ensure each transaction has the correct DynamoDB schema keys
-                    item = {
-                        "pk": _build_pk(txn["account_id"]),
-                        "sk": _build_sk(txn["transaction_id"]),
-                        **sanitise_transaction(txn),
-                    }
-                    # Put item into the batch buffer
+                for item in items:
                     batch.put_item(Item=item)
         except ClientError as e:
-            handle_database_error(e, "batch_write")
+            handle_database_error(e, action)
 
     def get_transaction(self, pk: str, sk: str) -> Optional[dict[str, Any]]:
         """Retrieves a single record document. Returns None if it is missing."""
