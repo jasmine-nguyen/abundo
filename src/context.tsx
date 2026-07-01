@@ -18,14 +18,16 @@ export interface Cat {
 export interface Budget { id: string; budget: number; posted: number; pending: number; }
 export interface Transaction {
   transaction_id: string;
-  payee: string;
-  amount: number;
-  status: 'pending' | 'posted';
   date: string;            // "YYYY-MM-DD"
-  category: string | null;
-  ps_category: string | null;
-  source: string;
+  authorized_date: string;
+  description: string;
+  merchant_name: string;
+  amount: number;
+  account_id: string;
   account_name: string;
+  category: string | null;
+  status: 'pending' | 'posted';
+  type: string;
   counts_to_budget: boolean;
 }
 export interface Rule { id: string; pattern: string; catId: string; isNew: boolean; }
@@ -212,9 +214,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const c = cats.find((x) => x.id === s.catId);
       if (!tx || !c) return null;
       if (scope === 'all') {
-        setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.payee === tx.payee ? { ...t, category: s.catId } : t)));
-        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.payee, catId: s.catId, isNew: true }, ...prev]);
-        showToast(`Rule saved — future ${cleanName(tx.payee)} charges file as ${c.name}.`);
+        setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.description === tx.description ? { ...t, category: s.catId } : t)));
+        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.description, catId: s.catId, isNew: true }, ...prev]);
+        showToast(`Rule saved — future ${cleanName(tx.description)} charges file as ${c.name}.`);
       } else {
         setTransactions((prev) => prev.map((t) => (t.transaction_id === s.txId ? { ...t, category: s.catId } : t)));
         showToast(`This transaction filed under ${c.name}.`);
@@ -345,7 +347,7 @@ export function transactionView(s: AppContext, t: Transaction): TransactionView 
   const key = isUncat ? 'q' : isIncome ? 'home' : c!.icon;
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return {
-    id: t.transaction_id, merchant: cleanName(t.payee), amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
+    id: t.transaction_id, merchant: cleanName(t.merchant_name || t.description), amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
     isPending: t.status === 'pending', icon: key,
     iconColor: isUncat ? '#c9b3f5' : isIncome ? '#9aa2b5' : c!.color,
     chipBg: isUncat ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),
