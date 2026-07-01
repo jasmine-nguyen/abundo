@@ -18,10 +18,7 @@ resource "null_resource" "copy_shared" {
   }
 
   provisioner "local-exec" {
-    command = <<EOT
-      cp ${path.module}/../shared/* ${path.module}/../lambda/
-      cp ${path.module}/../shared/* ${path.module}/../lambda_api/
-    EOT
+    command = "cp ${path.module}/../shared/* ${path.module}/../lambda/ && cp ${path.module}/../shared/* ${path.module}/../lambda_api/"
   }
 }
 
