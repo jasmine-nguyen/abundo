@@ -36,12 +36,16 @@ resource "aws_lambda_function" "lambda" {
     log_format = "Text"
     log_group  = aws_cloudwatch_log_group.lambda.name
   }
-
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
 }
 
 resource "aws_lambda_function" "lambda_api" {
   function_name    = "${var.project_name}-lambda-api"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.lambda_api_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 60
@@ -53,7 +57,11 @@ resource "aws_lambda_function" "lambda_api" {
     log_format = "Text"
     log_group  = aws_cloudwatch_log_group.lambda_api.name
   }
-
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
 }
 
 resource "aws_cloudwatch_log_group" "lambda" {
