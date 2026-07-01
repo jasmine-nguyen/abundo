@@ -48,7 +48,6 @@ resource "aws_dynamodb_table" "dynamodb_table" {
       attribute_name = "date"
       key_type       = "RANGE"
     }
-    projection_type    = "INCLUDE"
-    non_key_attributes = ["amount", "category", "transaction_id", "payee", "status"]
+    projection_type = "ALL"
   }
 }
