@@ -41,10 +41,6 @@ app-example
 __pycache__/
 *.py[cod]
 lambda/rapidfuzz*
-lambda/repository.py
-lambda/ssm.py
-lambda_api/repository.py
-lambda_api/ssm.py
 
 # Lambda build dir — ignore everything, allowlist only true source
 lambda/*
@@ -53,5 +49,6 @@ lambda/*
 
 # terraform
 terraform/artifacts/*
+terraform/layer/
 terraform/*.zip
 terraform/*.json
