@@ -1,4 +1,22 @@
+# Install the webhook lambda's third-party deps into lambda/ before zipping.
+# These are gitignored build artifacts (not source); without this step a fresh
+# clone would zip the function without them (which is exactly how the deployed
+# webhook lost `standardwebhooks` and started 500ing). Installed --no-deps on
+# purpose: the signature-verify path we use is pure-stdlib, and standardwebhooks'
+# declared deps (httpx, wrapt with a compiled .so, ...) are unused and would ship
+# an architecture-incompatible wheel into the Linux runtime.
+resource "null_resource" "prepare_lambda_deps" {
+  triggers = {
+    requirements = filesha256("${path.module}/../lambda/requirements.txt")
+  }
+
+  provisioner "local-exec" {
+    command = "python3 -m pip install --no-deps --quiet --target ${path.module}/../lambda -r ${path.module}/../lambda/requirements.txt"
+  }
+}
+
 data "archive_file" "lambda_zip" {
+  depends_on  = [null_resource.prepare_lambda_deps]
   type        = "zip"
   source_dir  = "${path.module}/../lambda"
   output_path = "${path.module}/artifacts/lambda.zip"

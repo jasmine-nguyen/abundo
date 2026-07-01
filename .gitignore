@@ -40,12 +40,12 @@ app-example
 # Python
 __pycache__/
 *.py[cod]
-lambda/rapidfuzz*
 
 # Lambda build dirs — ignore everything, allowlist only true source
 lambda/*
 !lambda/handler.py
 !lambda/banksync.py
+!lambda/requirements.txt
 
 lambda_api/*
 !lambda_api/handler.py
