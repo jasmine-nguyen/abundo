@@ -1,5 +1,9 @@
+import logging
 from decimal import Decimal
+
 from models import Transaction
+
+logger = logging.getLogger(__name__)
 
 ACCOUNT_ID_MAP = {
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": "anz-rewards-black-visa",
@@ -28,9 +32,9 @@ class BankSyncClient:
         normalised: Transaction = {
             "transaction_id": str(row["id"]),
             "date": row["date"],
-            "authorized_date": row["authorizedDate"],
+            "authorized_date": row.get("authorizedDate", ""),
             "description": row["description"],
-            "merchant_name": row["merchantName"],
+            "merchant_name": row.get("merchantName", ""),
             "amount": Decimal(str(row["amount"])),
             "account_id": resolve_account_id(str(row["accountId"])),
             "account_name": row["accountName"],

@@ -1,22 +1,28 @@
-import boto3
-from datetime import datetime, timezone
 import json
-from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Attr, Key
+import logging
+import os
+import uuid
+from datetime import datetime, timezone
 from typing import Any, NoReturn, Optional
-from models import Transaction
-from constants import PENDING_STATUS
 
-REGION_NAME = "ap-southeast-2"
-RESOURCE_NAME = "dynamodb"
-TABLE_NAME = "whittle-dynamodb-table"
+import boto3
+from boto3.dynamodb.conditions import Attr, Key
+from botocore.exceptions import ClientError
+
+from constants import MAX_PAGE_SIZE, PENDING_STATUS
+from models import Transaction
+
+REGION_NAME = os.environ["AWS_REGION"]
+TABLE_NAME = os.environ["TABLE_NAME"]
+
+logger = logging.getLogger(__name__)
 
 
 def handle_database_error(e: ClientError, action: str) -> NoReturn:
     """Logs an AWS client error and re-raises it as a RuntimeError."""
     error_code = e.response["Error"]["Code"]
     error_message = e.response["Error"]["Message"]
-    print(f"DynamoDB Error [{error_code}]: {error_message}")
+    logger.error(f"DynamoDB Error [{error_code}]: {error_message}")
     raise RuntimeError(f"Database {action} failed: {error_message}") from e
 
 
@@ -29,7 +35,7 @@ def _build_pk(account_id: str) -> str:
     return f"ACCOUNT#{account_id}"
 
 
-def _build_sk(transaction_id: Optional[str]) -> str:
+def _build_sk(transaction_id: str) -> str:
     return f"TXN#{transaction_id}"
 
 
@@ -38,10 +44,10 @@ class TransactionRepository:
         self._dynamodb = None
         self._table = None
 
-    def _get_table(self):
+    def _get_table(self) -> Any:
         """Lazy-loads and buffers the connection to the physical DynamoDB table resource."""
         if self._table is None:
-            self._dynamodb: Any = boto3.resource(RESOURCE_NAME, region_name=REGION_NAME)
+            self._dynamodb: Any = boto3.resource("dynamodb", region_name=REGION_NAME)
             self._table = self._dynamodb.Table(TABLE_NAME)
         return self._table
 
@@ -51,13 +57,11 @@ class TransactionRepository:
 
     def insert_transactions(self, transactions: list[Transaction]) -> None:
         """Inserts multiple transactions efficiently using DynamoDB Batch Write."""
-
         if not transactions:
             return
         items = []
 
         for transaction in transactions:
-            # Ensure each transaction has the correct DynamoDB schema keys
             item = {
                 "pk": _build_pk(transaction["account_id"]),
                 "sk": _build_sk(transaction["transaction_id"]),
@@ -69,7 +73,6 @@ class TransactionRepository:
 
     def save_failed_transactions(self, failed_transactions: list[dict]) -> None:
         """Inserts failed transactions using DynamoDB Batch Write."""
-
         if not failed_transactions:
             return
 
@@ -77,7 +80,7 @@ class TransactionRepository:
         for transaction in failed_transactions:
             item = {
                 "pk": "FAILED",
-                "sk": datetime.now(timezone.utc).isoformat(),
+                "sk": f"{datetime.now(timezone.utc).isoformat()}#{uuid.uuid4()}",
                 "raw": json.dumps(transaction),
             }
             items.append(item)
@@ -100,30 +103,48 @@ class TransactionRepository:
             response = self._get_table().get_item(Key={"pk": pk, "sk": sk})
             item = response.get("Item")
             if not item:
-                print(f"Transaction not found for PK: {pk}, SK: {sk}")
+                logger.debug(f"Transaction not found for PK: {pk}, SK: {sk}")
                 return None
             return item
         except ClientError as e:
             handle_database_error(e, "read")
 
-    def get_recent_transactions(
-        self, account_id: str, start_date: str, end_date: str
-    ) -> list[dict]:
-        if not account_id or not start_date or not end_date:
-            return []
+    def get_transactions_by_date_range(
+        self,
+        account_id: str,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        limit: int = 20,
+        cursor: Optional[dict[str, Any]] = None,
+    ) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]]]:
+        if not account_id:
+            return [], None
+
+        # GSI keys hold RAW values — no ACCOUNT# / TXN# prefixes
+        key_condition = Key("account_id").eq(account_id)
+
+        if start_date and end_date:
+            key_condition &= Key("date").between(start_date, end_date)
+        elif start_date:
+            key_condition &= Key("date").gte(start_date)
+        # no dates → whole partition, newest-first
+
+        query_kwargs = {
+            "IndexName": "date-index",
+            "KeyConditionExpression": key_condition,
+            "ScanIndexForward": False,  # newest transaction first
+            "Limit": min(limit, MAX_PAGE_SIZE),
+        }
+        if cursor:
+            query_kwargs["ExclusiveStartKey"] = cursor
 
         try:
-            response = self._get_table().query(
-                KeyConditionExpression=Key("pk").eq(_build_pk(account_id))
-                & Key("sk").between(_build_sk(None), f"{_build_sk(None)}~"),
-                ScanIndexForward=False,
-            )
-
-            return response.get("Items", [])
+            response = self._get_table().query(**query_kwargs)
+            return response.get("Items", []), response.get("LastEvaluatedKey")
         except ClientError as e:
             handle_database_error(e, "read")
 
-    def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
+    def get_pending_transactions_for_account(self, account_id: str) -> list[dict[str, Any]]:
         """Retrieves all pending transaction of an account using the account_id"""
         try:
             response = self._get_table().query(
@@ -139,9 +160,7 @@ class TransactionRepository:
         """Retrieves most recent transaction for a given account, sorted descending by SK, limit 1 and then returns its `updated_at`"""
         try:
             response = self._get_table().query(
-                # KeyConditionExpression isolates just the Partition Key (pk)
                 KeyConditionExpression=Key("pk").eq(_build_pk(account_id)),
-                # Sort descending (newest first)
                 ScanIndexForward=False,
                 Limit=1,
             )
@@ -162,7 +181,7 @@ class TransactionRepository:
         Returns a dict with {"pk": "...", "sk": "..."} if found, or None.
         """
         try:
-            # 1. Run a Query operation against the GSI instead of a table Scan
+            # Query the GSI instead of a table Scan
             response = self._get_table().query(
                 IndexName="transaction-id-index",
                 KeyConditionExpression=Key("transaction_id").eq(transaction_id),
@@ -170,16 +189,15 @@ class TransactionRepository:
 
             items = response.get("Items", [])
 
-            # 2. Check if the index query returned any matching records
             if not items:
-                print(f"Transaction ID {transaction_id} not found in GSI.")
+                logger.debug(f"Transaction ID {transaction_id} not found in GSI.")
                 return None
 
             if len(items) > 1:
-                print(
-                    f"Warning: multiple records found for transaction_id {transaction_id}, using first match."
+                logger.warning(
+                    f"Multiple records found for transaction_id {transaction_id}, using first match."
                 )
-            # 3. Extract and return the primary keys of the first match
+
             first_match = items[0]
             return {"pk": first_match["pk"], "sk": first_match["sk"]}
 
@@ -211,14 +229,13 @@ class TransactionRepository:
     def reconcile_and_replace(
         self, pending_pk: str, pending_sk: str, posted_txn: Transaction
     ) -> None:
-        """Inserts the posted transaction, carrying over any user edits (notes, category) from the pending row, then deletes the old pending row if its key differs."""
+        """Inserts the posted transaction, carrying over the user's category from the pending row, then deletes the old pending row if its key differs."""
         pending_txn = self.get_transaction(pending_pk, pending_sk)
         if not pending_txn:
             raise ValueError(
                 f"Cannot reconcile: Pending transaction {pending_pk} / {pending_sk} not found."
             )
 
-        # Copy so we don't mutate the caller's transaction
         posted_txn_copy = posted_txn.copy()
 
         # Carry over user edits from the pending row if present
@@ -226,10 +243,8 @@ class TransactionRepository:
         if pending_txn_category:
             posted_txn_copy["category"] = pending_txn_category
 
-        # Write the merged posted transaction
         self.insert_transaction(posted_txn_copy)
 
-        # Delete the old pending row only if it has a different key
         posted_pk = _build_pk(posted_txn_copy["account_id"])
         posted_sk = _build_sk(posted_txn_copy["transaction_id"])
         if pending_pk != posted_pk or pending_sk != posted_sk:
