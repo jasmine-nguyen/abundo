@@ -42,10 +42,14 @@ __pycache__/
 *.py[cod]
 lambda/rapidfuzz*
 
-# Lambda build dir — ignore everything, allowlist only true source
+# Lambda build dirs — ignore everything, allowlist only true source
 lambda/*
 !lambda/handler.py
 !lambda/banksync.py
+
+lambda_api/*
+!lambda_api/handler.py
+!lambda_api/constants.py
 
 # terraform
 terraform/artifacts/*

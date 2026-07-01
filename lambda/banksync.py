@@ -1,15 +1,10 @@
 import logging
+from constants import ACCOUNT_ID_MAP
 from decimal import Decimal
 
 from models import Transaction
 
 logger = logging.getLogger(__name__)
-
-ACCOUNT_ID_MAP = {
-    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": "anz-rewards-black-visa",
-    "3zVQJ8Btz_IRmqp78VrQnQ": "up-spending",
-    "T6d8ppsYssBDFCwl1qEb0w": "up-homeloan",
-}
 
 
 class UnknownAccountError(Exception):
