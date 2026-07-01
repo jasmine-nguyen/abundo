@@ -56,3 +56,4 @@ terraform/artifacts/*
 terraform/layer/
 terraform/*.zip
 terraform/*.json
+.pytest_cache/

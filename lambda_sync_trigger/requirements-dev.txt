@@ -1,0 +1,3 @@
+# Test-only dependencies for the sync-trigger Lambda.
+# pytest is all that's needed: conftest.py fakes `ssm`, so boto3 is not required.
+pytest==8.*
