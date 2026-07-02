@@ -36,7 +36,7 @@ def lambda_handler(event, context):
         return create_category(event, CategoryRepository())
 
     if path.startswith(f"{CATEGORY_PATH}/") and method == "PATCH":
-        return rename_category(event, CategoryRepository())
+        return update_category(event, CategoryRepository())
 
     if path.startswith(f"{CATEGORY_PATH}/") and method == "DELETE":
         return delete_category(event, CategoryRepository())
@@ -177,8 +177,12 @@ def create_category(event: dict, repo: CategoryRepository) -> dict:
     return _json_response(201, {**created, "recent": 0})
 
 
-def rename_category(event: dict, repo: CategoryRepository) -> dict:
-    """PATCH /categories/{id} — rename a category (display name only; id immutable)."""
+def update_category(event: dict, repo: CategoryRepository) -> dict:
+    """PATCH /categories/{id} — update a category's name, bucket, and icon.
+
+    The id/slug is immutable and color is server-owned, so neither is editable.
+    Validation mirrors create; icon is optional (defaults when omitted).
+    """
     cat_id = (event.get("pathParameters") or {}).get("id")
     if not cat_id:
         return _json_response(404, {"error": "category not found"})
@@ -191,8 +195,15 @@ def rename_category(event: dict, repo: CategoryRepository) -> dict:
     if not isinstance(name, str) or not name.strip():
         return _json_response(400, {"error": "name is required"})
 
+    bucket = body.get("bucket")
+    if bucket not in CATEGORY_BUCKETS:
+        return _json_response(400, {"error": "invalid bucket"})
+
+    icon = body.get("icon")
+    icon = icon.strip() if isinstance(icon, str) and icon.strip() else DEFAULT_CATEGORY_ICON
+
     try:
-        updated = repo.rename_category(cat_id, name.strip())
+        updated = repo.update_category(cat_id, name.strip(), bucket, icon)
     except CategoryNotFoundError:
         return _json_response(404, {"error": "category not found"})
 

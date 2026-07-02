@@ -20,17 +20,22 @@ export default function CategoryEdit() {
   const [icon, setIcon] = useState(existing?.icon ?? 'coffee');
 
   const color = existing?.color ?? C.accent;
-  const canSave = name.trim().length > 0;
+  const [busy, setBusy] = useState(false);
+  const canSave = name.trim().length > 0 && !busy;
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
-    s.saveCat(catId ?? null, { name, bucket, icon });
-    router.back();
+    setBusy(true);
+    const ok = await s.saveCategory(catId ?? null, { name, bucket, icon });
+    if (ok) router.back();
+    else setBusy(false); // stay on the screen so the user can retry
   };
-  const remove = () => {
-    if (!catId) return;
-    s.deleteCat(catId);
-    router.back();
+  const remove = async () => {
+    if (!catId || busy) return;
+    setBusy(true);
+    const ok = await s.deleteCategory(catId);
+    if (ok) router.back();
+    else setBusy(false);
   };
 
   return (

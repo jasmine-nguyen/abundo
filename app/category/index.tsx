@@ -20,6 +20,11 @@ export default function CategoryList() {
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Categories" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+        {s.cats.length === 0 && (
+          <Text style={styles.emptyText}>
+            {s.categoriesLoading ? 'Loading categories…' : 'No categories yet.'}
+          </Text>
+        )}
         {groups.map((g) => (
           <View key={g.label} style={{ marginBottom: 8 }}>
             <View style={styles.bucketHead}>
@@ -47,6 +52,7 @@ export default function CategoryList() {
 }
 
 const styles = StyleSheet.create({
+  emptyText: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, textAlign: 'center', marginTop: 28 },
   bucketHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 4, marginTop: 14, marginBottom: 8 },
   bucketDot: { width: 8, height: 8, borderRadius: 4 },
   bucketLabel: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.textMid, letterSpacing: 0.3 },

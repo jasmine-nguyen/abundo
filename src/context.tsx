@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -140,14 +140,30 @@ interface AppContext {
   chooseCat: (catId: string) => void;
   applyCat: (scope: 'one' | 'all') => void;
   saveBudget: (catId: string, value: number) => void;
-  saveCat: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => void;
-  deleteCat: (id: string) => void;
+  saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => Promise<boolean>;
+  deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => void;
   saveManualRule: (pattern: string, catId: string) => void;
   fireRepayment: () => void;
 	
 	transactionsLoading: boolean;
 	refreshTransactions: () => Promise<void>;
+	categoriesLoading: boolean;
+	refreshCategories: () => Promise<void>;
+}
+
+// Map a server category (which always returns recent:0) to the client Cat shape,
+// defaulting any missing field so budget math never sees undefined/NaN. Icon
+// falls back to a key that exists in the icon map, not the server default.
+function toCat(raw: any): Cat {
+  return {
+    id: raw.id,
+    name: raw.name,
+    bucket: raw.bucket,
+    icon: raw.icon ?? 'coffee',
+    color: raw.color ?? PALETTE[0],
+    recent: typeof raw.recent === 'number' ? raw.recent : 0,
+  };
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -175,9 +191,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, []);
 
+	const [categoriesLoading, setCategoriesLoading] = useState(false);
+	const refreshCategories = useCallback(async () => {
+		setCategoriesLoading(true);
+		try {
+			const data = await fetchCategories();
+			setCats(data.map(toCat));
+		} finally {
+			setCategoriesLoading(false);
+		}
+	}, []);
+
 	useEffect(() =>{
 		refreshTransactions()
-	}, [refreshTransactions] )
+		refreshCategories()
+	}, [refreshTransactions, refreshCategories] )
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -233,22 +261,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(value)}.`);
   }, [cats, budgets, showToast]);
 
-  const saveCat = useCallback((editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => {
-    if (!form.name.trim()) return;
-    if (editId) {
-      setCats((prev) => prev.map((c) => (c.id === editId ? { ...c, name: form.name.trim(), bucket: form.bucket, icon: form.icon } : c)));
-    } else {
-      setCats((prev) => [...prev, { id: 'c' + Date.now(), name: form.name.trim(), bucket: form.bucket, icon: form.icon, color: PALETTE[prev.length % PALETTE.length], recent: 0 }]);
-    }
-    showToast(`Category ${editId ? 'updated' : 'created'}.`);
-  }, [showToast]);
+  const saveCategory = useCallback(
+    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string }): Promise<boolean> => {
+      const name = form.name.trim();
+      if (!name) return false;
+      try {
+        if (editId) {
+          const updated = await updateCategory(editId, { name, bucket: form.bucket, icon: form.icon });
+          setCats((prev) => prev.map((c) => (c.id === editId ? toCat(updated) : c)));
+          showToast('Category updated.');
+        } else {
+          const created = await createCategory({ name, bucket: form.bucket, icon: form.icon });
+          setCats((prev) => [...prev, toCat(created)]);
+          showToast('Category created.');
+        }
+        return true;
+      } catch {
+        showToast('Could not save category. Please try again.');
+        return false;
+      }
+    },
+    [showToast],
+  );
 
-  const deleteCat = useCallback((id: string) => {
-    setCats((prev) => prev.filter((c) => c.id !== id));
-    setBudgets((prev) => prev.filter((b) => b.id !== id));
-    setRules((prev) => prev.filter((r) => r.catId !== id));
-    setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
-    showToast('Category deleted.');
+  const deleteCategory = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      await apiDeleteCategory(id);
+      // Local cascade: drop the category's budget/rules and clear it off any
+      // referencing transaction (cosmetic — the server does no cascade, so on the
+      // next refresh those txns re-appear with the dangling id and render as
+      // Uncategorized via isUncategorized).
+      setCats((prev) => prev.filter((c) => c.id !== id));
+      setBudgets((prev) => prev.filter((b) => b.id !== id));
+      setRules((prev) => prev.filter((r) => r.catId !== id));
+      setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
+      showToast('Category deleted.');
+      return true;
+    } catch {
+      showToast('Could not delete category. Please try again.');
+      return false;
+    }
   }, [showToast]);
 
   const deleteRule = useCallback((id: string) => setRules((prev) => prev.filter((r) => r.id !== id)), []);
@@ -278,8 +330,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength: (len) => setPayCycle((p) => ({ ...p, length: len })),
-    openPicker, chooseCat, applyCat, saveBudget, saveCat, deleteCat, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions
-  }), [cats, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, cat, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCat, applyCat, saveBudget, saveCat, deleteCat, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions]);
+    openPicker, chooseCat, applyCat, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories
+  }), [cats, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, cat, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCat, applyCat, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

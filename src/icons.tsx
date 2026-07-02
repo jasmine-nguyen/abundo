@@ -18,10 +18,13 @@ export const ICON: Record<string, string> = {
   phone: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></g>',
   dumbbell: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5v5M6.5 7.5v9M17.5 7.5v9M20.5 9.5v5M6.5 12h11"/></g>',
   book: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4.5H16a1.5 1.5 0 0 1 1.5 1.5v13.5H7A1.5 1.5 0 0 1 5.5 18z"/><path d="M5.5 4.5A1.5 1.5 0 0 0 4 6v13.5"/></g>',
+  tag: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5 7.5 3.5 12 8l-4 4zM7.5 12.5l9-9 4 4-9 9z"/><circle cx="6" cy="6" r=".7" fill="currentColor"/></g>',
   q: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 9.3a2.9 2.9 0 0 1 5.5 1.1c0 1.9-2.7 2.3-2.7 4.2"/><circle cx="12" cy="18" r=".9" fill="currentColor" stroke="none"/></g>',
 };
 
-export const ICON_KEYS = ['coffee', 'cart', 'food', 'car', 'health', 'pets', 'bolt', 'bag', 'home', 'film', 'plane', 'gift', 'phone', 'dumbbell', 'book'];
+// 'tag' is the server's default icon (DEFAULT_CATEGORY_ICON) — include it so a
+// category created without an icon renders and is pickable in the edit form.
+export const ICON_KEYS = ['coffee', 'cart', 'food', 'car', 'health', 'pets', 'bolt', 'bag', 'home', 'film', 'plane', 'gift', 'phone', 'dumbbell', 'book', 'tag'];
 
 // UI chrome glyphs (chevrons, plus, search, etc.) used outside the category set.
 export const GLYPH: Record<string, string> = {
