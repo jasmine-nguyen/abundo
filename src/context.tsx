@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -135,7 +135,7 @@ interface AppContext {
   setPayCycleLength: (len: number) => void;
   openPicker: (txId: string) => void;
   chooseCategory: (categoryId: string) => void;
-  applyCategory: (scope: 'one' | 'all') => void;
+  applyCategory: (scope: 'one' | 'all') => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => Promise<boolean>;
   deleteCategory: (id: string) => Promise<boolean>;
@@ -268,23 +268,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const applyCategory = useCallback((scope: 'one' | 'all') => {
-    setSheet((s) => {
-      if (!s || s.mode !== 'confirm') return s;
-      const tx = transactions.find((t) => t.transaction_id === s.txId);
-      const c = categories.find((x) => x.id === s.categoryId);
-      if (!tx || !c) return null;
-      if (scope === 'all') {
-        setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.description === tx.description ? { ...t, category: s.categoryId } : t)));
-        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.description, categoryId: s.categoryId, isNew: true }, ...prev]);
-        showToast(`Rule saved — future ${cleanName(tx.description)} charges file as ${c.name}.`);
-      } else {
-        setTransactions((prev) => prev.map((t) => (t.transaction_id === s.txId ? { ...t, category: s.categoryId } : t)));
-        showToast(`This transaction filed under ${c.name}.`);
+  const applyCategory = useCallback(async (scope: 'one' | 'all'): Promise<void> => {
+    if (!sheet || sheet.mode !== 'confirm') return;
+    const { txId, categoryId } = sheet;
+    const tx = transactions.find((t) => t.transaction_id === txId);
+    const c = categories.find((x) => x.id === categoryId);
+    if (!tx || !c) { setSheet(null); return; }
+
+    if (scope === 'all') {
+      // Capture the matched ids ONCE so the optimistic write and the failure
+      // revert operate on exactly the same set (no re-running the predicate).
+      const matchedIds = transactions
+        .filter((t) => t.counts_to_budget && t.category == null && t.description === tx.description)
+        .map((t) => t.transaction_id);
+      setTransactions((prev) => prev.map((t) => (matchedIds.includes(t.transaction_id) ? { ...t, category: categoryId } : t)));
+      // The rule stays local for now — durable rules are a separate slice (WHIT-52).
+      setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.description, categoryId, isNew: true }, ...prev]);
+      showToast(`Rule saved — future ${cleanName(tx.description)} charges file as ${c.name}.`);
+      setSheet(null);
+      // Persist each matched transaction; revert only the ones whose write fails.
+      const outcomes = await Promise.allSettled(matchedIds.map((id) => apiSetTransactionCategory(id, categoryId)));
+      const failedIds = matchedIds.filter((_, i) => outcomes[i].status === 'rejected');
+      if (failedIds.length) {
+        setTransactions((prev) => prev.map((t) => (failedIds.includes(t.transaction_id) ? { ...t, category: null } : t)));
+        showToast('Could not save some categories. Please try again.');
       }
-      return null;
-    });
-  }, [transactions, categories, showToast]);
+    } else {
+      const previousCategory = tx.category;
+      setTransactions((prev) => prev.map((t) => (t.transaction_id === txId ? { ...t, category: categoryId } : t)));
+      showToast(`This transaction filed under ${c.name}.`);
+      setSheet(null);
+      try {
+        await apiSetTransactionCategory(txId, categoryId);
+      } catch {
+        setTransactions((prev) => prev.map((t) => (t.transaction_id === txId ? { ...t, category: previousCategory } : t)));
+        showToast('Could not save category. Please try again.');
+      }
+    }
+  }, [sheet, transactions, categories, showToast]);
 
   const saveBudget = useCallback(
     async (categoryId: string, value: number): Promise<boolean> => {

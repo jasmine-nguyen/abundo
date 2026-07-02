@@ -95,6 +95,28 @@ export async function deleteCategory(id: string): Promise<{ id: string }> {
  * @returns A map of category id to its budget-target number.
  * @throws If the response status is not OK.
  */
+/**
+ * Set (persist) a single transaction's category.
+ *
+ * @param id - The transaction_id to categorise.
+ * @param category - The category id/slug to file it under.
+ * @returns The transaction_id and the category that was saved.
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export async function setTransactionCategory(
+  id: string,
+  category: string
+): Promise<{ transaction_id: string; category: string }> {
+  const response = await fetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 export async function fetchBudgets(): Promise<Record<string, number>> {
   const response = await fetch(`${API_BASE}/budgets`);
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
