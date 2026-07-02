@@ -192,38 +192,132 @@ def test_set_budget_base64_body(handler):
     assert repo.set_calls == [("coffee", Decimal("58"))]
 
 
-# --- handler-level: GET /budgets ---------------------------------------------
+# --- handler-level: GET /budgets (rollup, approach C) ------------------------
 
 
-def test_list_budgets_flattens(handler):
-    repo = FakeBudgetRepo(budgets={
+class FakeTransactionRepo:
+    """Stand-in for TransactionRepository. Returns queued (items, cursor) pages
+    across calls; account/date args are recorded but ignored. Defaults to a single
+    page then empties, so the per-account loop sums each transaction once."""
+
+    def __init__(self, transactions=None, pages=None):
+        # pages: [(items, cursor), ...] to model a multi-page result; otherwise a
+        # single page of `transactions` then empty.
+        self._queue = list(pages) if pages is not None else [(list(transactions or []), None)]
+        self.calls = []
+
+    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
+        self.calls.append((account_id, start_date, end_date, limit, cursor))
+        return self._queue.pop(0) if self._queue else ([], None)
+
+
+def test_list_budgets_rollup_shape(handler):
+    budget_repo = FakeBudgetRepo(budgets={
         "coffee": {"target": Decimal("58")},
         "groceries": {"target": Decimal("320")},
     })
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("coffee", -50, "posted"),
+        _transaction("coffee", -12, "pending"),
+        _transaction("groceries", -30, "posted"),
+        _transaction("income", -100, "posted"),              # excluded (income)
+        _transaction("coffee", -9, "posted", counts=False),  # excluded (!counts_to_budget)
+    ])
 
-    result = handler.list_budgets(repo)
+    result = handler.list_budgets(budget_repo, txn_repo)
 
-    assert result == {"coffee": Decimal("58"), "groceries": Decimal("320")}
+    assert result == {
+        "coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("12")},
+        "groceries": {"target": Decimal("320"), "posted": Decimal("30"), "pending": Decimal("0")},
+    }
 
 
-def test_list_budgets_empty(handler):
-    repo = FakeBudgetRepo()
+def test_list_budgets_no_spend_is_zero(handler):
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
 
-    assert handler.list_budgets(repo) == {}
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]))
+
+    assert result == {"coffee": {"target": Decimal("58"), "posted": Decimal("0"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_empty_skips_txn_scan(handler):
+    budget_repo = FakeBudgetRepo()  # no targets
+    txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50)])
+
+    result = handler.list_budgets(budget_repo, txn_repo)
+
+    assert result == {}
+    assert txn_repo.calls == []  # no budgets -> don't scan transactions
+
+
+def test_list_budgets_paginates(handler):
+    # A >1-page window must sum across ALL pages, not stop at the first.
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    txn_repo = FakeTransactionRepo(pages=[
+        ([_transaction("coffee", -40, "posted")], {"cursor": 1}),  # page 1, more to come
+        ([_transaction("coffee", -25, "posted")], None),           # page 2, done
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo)
+
+    assert result["coffee"]["posted"] == Decimal("65")  # 40 + 25 summed across pages
 
 
 # --- handler-level: dispatch -------------------------------------------------
 
 
 def test_get_budgets_dispatch(handler, monkeypatch):
-    repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50, "posted")])
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
 
     resp = handler.lambda_handler(
         {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}, None)
 
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"coffee": 58}
+    assert json.loads(resp["body"]) == {"coffee": {"target": 58, "posted": 50, "pending": 0}}
+
+
+def test_get_budgets_dispatch_days_param(handler, monkeypatch):
+    # ?days=7 -> the window start is today-7 (the client's cycle length flows through).
+    from datetime import datetime, timezone, timedelta
+    monkeypatch.setattr(handler, "BudgetRepository",
+                        lambda: FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}}))
+    txn_repo = FakeTransactionRepo(transactions=[])
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
+
+    handler.lambda_handler({
+        "rawPath": "/budgets",
+        "requestContext": {"http": {"method": "GET"}},
+        "queryStringParameters": {"days": "7"},
+    }, None)
+
+    today = datetime.now(timezone.utc).date()
+    assert txn_repo.calls[0][1] == (today - timedelta(days=7)).isoformat()  # start_date arg
+
+
+def _get_budgets_event(days=None):
+    event = {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}
+    if days is not None:
+        event["queryStringParameters"] = {"days": days}
+    return event
+
+
+def test_budget_window_days_default(handler):
+    assert handler._budget_window_days(_get_budgets_event()) == handler.CYCLE_WINDOW_DAYS
+
+
+def test_budget_window_days_valid(handler):
+    assert handler._budget_window_days(_get_budgets_event("7")) == 7
+    assert handler._budget_window_days(_get_budgets_event("30")) == 30
+
+
+def test_budget_window_days_invalid_falls_back(handler):
+    default = handler.CYCLE_WINDOW_DAYS
+    assert handler._budget_window_days(_get_budgets_event("abc")) == default
+    assert handler._budget_window_days(_get_budgets_event("0")) == default    # below range
+    assert handler._budget_window_days(_get_budgets_event("999")) == default  # above range
 
 
 def test_put_budget_dispatch(handler, monkeypatch):
