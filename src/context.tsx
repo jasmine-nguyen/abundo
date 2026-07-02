@@ -242,25 +242,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		setPayCycle(cycle);
 	}, []);
 
-	// Persist a changed pay cycle: update local state optimistically, PUT the full
-	// cycle (the server replaces both fields), THEN refresh budgets — awaiting the
-	// write before the read so the refetch can't race ahead of the stored cycle.
-	const persistPayCycle = useCallback(async (next: { length: number; anchor: string }) => {
-		setPayCycle(next);
-		await apiSetPayCycle(next);
-		await refreshBudgets();
-	}, [refreshBudgets]);
-
-	// Change the window length (Weekly/Fortnightly/Monthly), keeping the anchor.
-	const setPayCycleLength = useCallback((length: number) => {
-		persistPayCycle({ ...payCycle, length });
-	}, [persistPayCycle, payCycle]);
-
-	// Change the payday anchor (a real past payday), keeping the length.
-	const setPayday = useCallback((anchor: string) => {
-		persistPayCycle({ ...payCycle, anchor });
-	}, [persistPayCycle, payCycle]);
-
 	useEffect(() => {
 		refreshTransactions();
 		refreshCategories();
@@ -287,6 +268,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3400);
   }, []);
+
+  // Persist a changed pay cycle: update local state optimistically, PUT the full
+  // cycle (the server replaces both fields together), then refresh budgets. On
+  // failure roll back to `prev` and tell the user — same optimistic-write pattern
+  // as saveBudget/applyCategory. Defined below showToast so it can reference it.
+  const persistPayCycle = useCallback(
+    async (next: { length: number; anchor: string }, prev: { length: number; anchor: string }) => {
+      setPayCycle(next);
+      try {
+        await apiSetPayCycle(next);
+        await refreshBudgets();
+      } catch {
+        setPayCycle(prev);
+        showToast('Could not save pay cycle. Please try again.');
+      }
+    },
+    [refreshBudgets, showToast],
+  );
+
+  // Change the window length (Weekly/Fortnightly/Monthly), keeping the anchor.
+  const setPayCycleLength = useCallback((length: number) => {
+    persistPayCycle({ ...payCycle, length }, payCycle);
+  }, [persistPayCycle, payCycle]);
+
+  // Change the payday anchor (a real past payday), keeping the length.
+  const setPayday = useCallback((anchor: string) => {
+    persistPayCycle({ ...payCycle, anchor }, payCycle);
+  }, [persistPayCycle, payCycle]);
 
   const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);
 

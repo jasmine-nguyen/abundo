@@ -196,16 +196,36 @@ function PayCycleSheet() {
   const s = useAppContext();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
   const [showPicker, setShowPicker] = useState(false);
+  // iOS renders the picker INLINE and fires onChange on every scroll tick, so we
+  // hold the in-progress pick locally and commit it ONCE when the picker closes —
+  // otherwise every intermediate date would fire a PUT + budget refetch. null =
+  // no uncommitted pick. Android commits directly (its dialog fires once on OK).
+  const [draftAnchor, setDraftAnchor] = useState<string | null>(null);
+  const shownAnchor = draftAnchor ?? s.payCycle.anchor;
 
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
 
+  const commitDraft = () => {
+    if (draftAnchor && draftAnchor !== s.payCycle.anchor) s.setPayday(draftAnchor);
+    setDraftAnchor(null);
+  };
+
   const onPickDate = (event: DateTimePickerEvent, picked?: Date) => {
-    // Android shows a modal dialog that dismisses itself; iOS renders inline and
-    // stays. Close it on Android; keep it open on iOS until the user taps Done.
-    if (Platform.OS !== 'ios') setShowPicker(false);
-    // event.type is 'dismissed' when the user cancels the Android dialog.
+    if (Platform.OS === 'ios') {
+      // Inline picker: stash the pick, don't persist yet (commit on close/Done).
+      if (picked) setDraftAnchor(toISODate(picked));
+      return;
+    }
+    // Android: modal dialog. event.type is 'set' on OK, 'dismissed' on cancel.
+    setShowPicker(false);
     if (event.type === 'set' && picked) s.setPayday(toISODate(picked));
+  };
+
+  // Toggle the inline picker; closing it commits any pending iOS draft.
+  const togglePicker = () => {
+    if (showPicker) commitDraft();
+    setShowPicker((open) => !open);
   };
 
   return (
@@ -231,15 +251,15 @@ function PayCycleSheet() {
       <Text style={styles.cycleSectionLabel}>Last payday</Text>
       <Text style={styles.cycleSectionHint}>The budget window resets on this date — set it to your (or your partner's) actual last pay, including any public-holiday shift.</Text>
       <Pressable
-        onPress={() => setShowPicker((open) => !open)}
+        onPress={togglePicker}
         style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: showPicker ? C.accent : 'rgba(255,255,255,.07)' }]}
       >
-        <Text style={[styles.cycleText, { color: C.textMid }]}>{formatAnchor(s.payCycle.anchor)}</Text>
+        <Text style={[styles.cycleText, { color: C.textMid }]}>{formatAnchor(shownAnchor)}</Text>
         <Glyph name="calendar" size={18} color={showPicker ? C.accent : C.textDim} />
       </Pressable>
       {showPicker && (
         <DateTimePicker
-          value={parseAnchor(s.payCycle.anchor)}
+          value={parseAnchor(shownAnchor)}
           mode="date"
           display={Platform.OS === 'ios' ? 'inline' : 'default'}
           maximumDate={today}
@@ -247,7 +267,7 @@ function PayCycleSheet() {
         />
       )}
 
-      <Pressable onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }]}>
+      <Pressable onPress={() => { commitDraft(); s.setSheet(null); }} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }]}>
         <Text style={styles.btnPrimaryText}>Done</Text>
       </Pressable>
     </View>
