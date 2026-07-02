@@ -5,6 +5,7 @@ from constants import (
     CATEGORY_PATH,
     CYCLE_WINDOW_DAYS,
     DEFAULT_CATEGORY_ICON,
+    MAX_PAGE_SIZE,
     PENDING_STATUS,
     POSTED_STATUS,
     TRANSACTION_PATH,
@@ -53,7 +54,9 @@ def lambda_handler(event, context):
             return delete_category(event, CategoryRepository())
 
         if path == BUDGET_PATH and method == "GET":
-            return _json_response(200, list_budgets(BudgetRepository()))
+            length_days = _budget_window_days(event)
+            return _json_response(
+                200, list_budgets(BudgetRepository(), TransactionRepository(), length_days))
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
             return set_budget(event, BudgetRepository())
@@ -299,13 +302,73 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> di
     return totals
 
 
-def list_budgets(repo: BudgetRepository) -> dict:
-    """GET /budgets — return the {category id -> target number} map.
+def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: str) -> list[dict]:
+    """Every transaction across all accounts within [start, end], following the
+    date-index pagination to completion.
 
-    Flattens the stored {id: {"target": Decimal}} shape; DecimalEncoder renders
-    the Decimal targets back to JSON numbers. Empty {} before any target is set.
+    A rollup must sum the WHOLE window, so — unlike the recent-transactions feed,
+    which reads only the first page — this loops on the returned cursor until the
+    account is exhausted.
     """
-    return {cat_id: entry["target"] for cat_id, entry in repo.list_budgets().items()}
+    transactions: list[dict] = []
+    for account_id in ACCOUNT_ID_MAP.values():
+        cursor = None
+        while True:
+            page, cursor = repo.get_transactions_by_date_range(
+                account_id, start, end, limit=MAX_PAGE_SIZE, cursor=cursor
+            )
+            transactions.extend(page)
+            if not cursor:
+                break
+    return transactions
+
+
+def _budget_window_days(event: dict) -> int:
+    """Rolling-window length (days) from the ?days=N query string, else the default.
+
+    The client sends its pay-cycle length so the window matches (7/14/30). A
+    missing / non-numeric / out-of-range value falls back to CYCLE_WINDOW_DAYS
+    rather than erroring — the param is an optimisation, not required.
+    """
+    raw = (event.get("queryStringParameters") or {}).get("days")
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return CYCLE_WINDOW_DAYS
+    if days < 1 or days > 366:
+        return CYCLE_WINDOW_DAYS
+    return days
+
+
+def list_budgets(
+    budget_repo: BudgetRepository,
+    transaction_repo: TransactionRepository,
+    length_days: int = CYCLE_WINDOW_DAYS,
+) -> dict:
+    """GET /budgets — per budgeted category, the target plus posted/pending spend
+    computed on-read (approach C) over the current window.
+
+    posted/pending are summed from the window's transactions (nothing stored), so
+    a pending->posted settlement or an amount change is reflected on the next call
+    with no bookkeeping. Every budgeted id appears; a category with no spend this
+    window is posted/pending 0. DecimalEncoder renders all three as JSON numbers.
+    Empty {} before any target is set (and the transaction scan is skipped).
+    """
+    targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
+    if not targets:
+        return {}
+    start, end = current_cycle_window(length_days)
+    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+    rollups = summarise_transactions(transactions, set(targets))
+    result = {}
+    for cat_id, entry in targets.items():
+        spend = rollups.get(cat_id)
+        result[cat_id] = {
+            "target": entry["target"],
+            "posted": spend["posted"] if spend else Decimal(0),
+            "pending": spend["pending"] if spend else Decimal(0),
+        }
+    return result
 
 
 def set_budget(event: dict, repo: BudgetRepository) -> dict:
