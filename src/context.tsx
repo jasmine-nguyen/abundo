@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, BudgetRollup } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -125,7 +125,6 @@ interface AppContext {
   sheet: Sheet; toast: string | null; notif: { body: string; time: string } | null;
   // helpers
   category: (id: string | null) => Category | undefined;
-  extraFor: (categoryId: string) => number;
   cycleName: () => string;
   // actions
   setSheet: (s: Sheet) => void;
@@ -173,12 +172,11 @@ function toCategory(raw: any): Category {
 }
 
 // Merge a server budget target into the client Budget shape. The /budgets
-// endpoint owns only `target` (-> client `budget`); `posted`/`pending` are
-// derived elsewhere, so preserve any prior local values and default to 0 for a
-// newly-seen id. Module-level (like toCategory) so refreshBudgets can be a
-// stable useCallback([]) and not re-fire the mount effect every render.
-function toBudget(id: string, target: number, prev?: Budget): Budget {
-  return { id, budget: target, posted: prev?.posted ?? 0, pending: prev?.pending ?? 0 };
+// The server rollup owns the target AND the computed posted/pending spend for
+// the window, so we take all three straight from it. Module-level (like
+// toCategory) so refreshBudgets stays a stable callback.
+function toBudget(id: string, rollup: BudgetRollup): Budget {
+  return { id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending };
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -221,34 +219,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	const refreshBudgets = useCallback(async () => {
 		setBudgetsLoading(true);
 		try {
-			const map = await fetchBudgets();
-			// Server is the source of truth for which categories have a target; replace
-			// the array, preserving any prior posted/pending by id. Skip target<=0 rows
-			// so budget math never divides by zero.
-			setBudgets((prev) =>
+			// Window length = the user's pay-cycle length, so the server sums spend
+			// over the matching period.
+			const map = await fetchBudgets(payCycle.length);
+			// Server owns which categories are budgeted and their spent/pending, so
+			// replace the array. Skip target<=0 rows so budget math never divides by zero.
+			setBudgets(
 				Object.entries(map)
-					.filter(([, target]) => target > 0)
-					.map(([id, target]) => toBudget(id, target, prev.find((b) => b.id === id))));
+					.filter(([, rollup]) => rollup.target > 0)
+					.map(([id, rollup]) => toBudget(id, rollup)));
 		} finally {
 			setBudgetsLoading(false);
 		}
-	}, []);
+	}, [payCycle.length]);
 
-	useEffect(() =>{
-		refreshTransactions()
-		refreshCategories()
-		refreshBudgets()
-	}, [refreshTransactions, refreshCategories, refreshBudgets] )
+	useEffect(() => {
+		refreshTransactions();
+		refreshCategories();
+	}, [refreshTransactions, refreshCategories]);
+
+	// Re-fetch budgets on mount and whenever the pay-cycle length (the window) changes.
+	useEffect(() => {
+		refreshBudgets();
+	}, [refreshBudgets]);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const repayIdx = useRef(0);
 
   const category = useCallback((id: string | null) => categories.find((c) => c.id === id), [categories]);
-  const extraFor = useCallback(
-    (categoryId: string) => transactions.filter((t) => t.counts_to_budget && t.category === categoryId).reduce((s, t) => s + Math.abs(t.amount), 0),
-    [transactions],
-  );
   const cycleName = useCallback(
     () => (payCycle.length === 7 ? 'Weekly' : payCycle.length === 14 ? 'Fortnightly' : 'Monthly'),
     [payCycle.length],
@@ -330,6 +329,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }));
         showToast('Could not save some categories. Please try again.');
       }
+      // Some categorisations persisted -> refresh the bars so budget spend updates.
+      if (failedIds.length < sameMerchantIds.length) refreshBudgets();
       return;
     }
 
@@ -346,6 +347,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     try {
       await apiSetTransactionCategory(txId, categoryId);
+      refreshBudgets(); // reflect the new categorisation in the budget bars
     } catch {
       // Save failed — undo the optimistic change, putting the old category back.
       setTransactions((prev) =>
@@ -355,7 +357,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }));
       showToast('Could not save category. Please try again.');
     }
-  }, [sheet, transactions, categories, showToast]);
+  }, [sheet, transactions, categories, showToast, refreshBudgets]);
 
   const saveBudget = useCallback(
     async (categoryId: string, value: number): Promise<boolean> => {
@@ -364,12 +366,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const existing = budgets.find((b) => b.id === categoryId);
       try {
         const saved = await apiSetBudget(categoryId, value);
-        // Key the local write off the known categoryId (not saved.id), so a new
-        // budget always lands on a real taxonomy id and renders in budgetViews.
+        // Optimistically show the new target right away (keyed off the known
+        // categoryId). A brand-new budget starts at 0 spend locally...
         setBudgets((prev) =>
           prev.some((b) => b.id === categoryId)
             ? prev.map((b) => (b.id === categoryId ? { ...b, budget: saved.target } : b))
-            : [...prev, toBudget(categoryId, saved.target, existing)]);
+            : [...prev, { id: categoryId, budget: saved.target, posted: 0, pending: 0 }]);
+        // ...then pull the server rollup so its real posted/pending fill in.
+        refreshBudgets();
         if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(saved.target)}.`);
         return true;
       } catch {
@@ -377,7 +381,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
     },
-    [categories, budgets, showToast],
+    [categories, budgets, showToast, refreshBudgets],
   );
 
   const saveCategory = useCallback(
@@ -445,12 +449,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppContext>(() => ({
     categories, budgets, transactions, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
     sheet, toast, notif,
-    category, extraFor, cycleName,
+    category, cycleName,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength: (len) => setPayCycle((p) => ({ ...p, length: len })),
     openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets
-  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets]);
+  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleName, showToast, dismissNotif, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -480,8 +484,8 @@ export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: num
   for (const b of s.budgets) {
     const c = s.category(b.id);
     if (!c) continue;
-    const extra = s.extraFor(b.id);
-    const pending = b.pending + extra, posted = b.posted, spent = posted + pending, remain = b.budget - spent;
+    // posted/pending come from the server rollup (computed over the window).
+    const pending = b.pending, posted = b.posted, spent = posted + pending, remain = b.budget - spent;
     totBudget += b.budget; totSpent += spent; totRemain += remain;
     const over = spent > b.budget;
     const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
@@ -557,8 +561,8 @@ export function budgetDetail(s: AppContext, categoryId: string) {
   const b = s.budgets.find((x) => x.id === categoryId);
   if (!c || !b) return null;
   const elapsed = elapsedFrac(s);
-  const extra = s.extraFor(b.id);
-  const pending = b.pending + extra, posted = b.posted, spent = posted + pending;
+  // posted/pending come from the server rollup (computed over the window).
+  const pending = b.pending, posted = b.posted, spent = posted + pending;
   const over = spent > b.budget;
   const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
