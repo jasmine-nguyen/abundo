@@ -195,40 +195,18 @@ function AddRuleSheet() {
 function PayCycleSheet() {
   const s = useAppContext();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
-  const [showPicker, setShowPicker] = useState(false);
-  // iOS renders the picker INLINE and fires onChange on every scroll tick, so we
-  // hold the in-progress pick locally and commit it ONCE when the picker closes —
-  // otherwise every intermediate date would fire a PUT + budget refetch. null =
-  // no uncommitted pick. Android commits directly (its dialog fires once on OK).
-  const [draftLastPayDate, setDraftLastPayDate] = useState<string | null>(null);
-  const shownLastPayDate = draftLastPayDate ?? s.payCycle.last_pay_date;
+  const isIOS = Platform.OS === 'ios';
+  // iOS shows a COMPACT date pill inline (tap -> calendar popover), so it needs no
+  // toggle. Android has no compact display, so a row opens the modal dialog.
+  const [showAndroidPicker, setShowAndroidPicker] = useState(false);
 
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
 
-  const commitDraft = () => {
-    if (draftLastPayDate && draftLastPayDate !== s.payCycle.last_pay_date) s.setPayday(draftLastPayDate);
-    setDraftLastPayDate(null);
-  };
-
-  // New split callback API (onChange is deprecated). onValueChange fires when the
-  // value changes; onDismiss fires on an Android cancel.
-  const onValueChange = (picked?: Date) => {
-    if (!picked) return;
-    if (Platform.OS === 'ios') {
-      // Inline picker fires on every scroll — stash the pick, commit on close/Done.
-      setDraftLastPayDate(toISODate(picked));
-      return;
-    }
-    // Android: modal dialog confirms once with OK.
-    setShowPicker(false);
-    s.setPayday(toISODate(picked));
-  };
-
-  // Toggle the inline picker; closing it commits any pending iOS draft.
-  const togglePicker = () => {
-    if (showPicker) commitDraft();
-    setShowPicker((open) => !open);
+  // onChange is deprecated -> onValueChange (value) + onDismiss (Android cancel).
+  // The compact pill / dialog only fires on a real selection, so persist directly.
+  const commitDate = (picked?: Date) => {
+    if (picked) s.setPayday(toISODate(picked));
   };
 
   return (
@@ -253,30 +231,40 @@ function PayCycleSheet() {
 
       <Text style={styles.cycleSectionLabel}>Last payday</Text>
       <Text style={styles.cycleSectionHint}>The budget window resets on this date — set it to your (or your partner's) actual last pay, including any public-holiday shift.</Text>
-      <Pressable
-        onPress={togglePicker}
-        style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: showPicker ? C.accent : 'rgba(255,255,255,.07)' }]}
-      >
-        <Text style={[styles.cycleText, { color: C.textMid }]}>{formatLastPayDate(shownLastPayDate)}</Text>
-        <Glyph name="calendar" size={18} color={showPicker ? C.accent : C.textDim} />
-      </Pressable>
-      {showPicker && (
+      {isIOS ? (
+        <View style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}>
+          <Text style={[styles.cycleText, { color: C.textMid }]}>Set date</Text>
+          <DateTimePicker
+            value={parseLastPayDate(s.payCycle.last_pay_date)}
+            mode="date"
+            display="compact"          // small native date pill, not the big inline grid
+            maximumDate={today}
+            themeVariant="dark"        // light text on the dark sheet
+            accentColor={C.accent}     // selected day + popover accent match the palette
+            onValueChange={commitDate}
+          />
+        </View>
+      ) : (
+        <Pressable
+          onPress={() => setShowAndroidPicker(true)}
+          style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
+        >
+          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatLastPayDate(s.payCycle.last_pay_date)}</Text>
+          <Glyph name="calendar" size={18} color={C.textDim} />
+        </Pressable>
+      )}
+      {!isIOS && showAndroidPicker && (
         <DateTimePicker
-          value={parseLastPayDate(shownLastPayDate)}
+          value={parseLastPayDate(s.payCycle.last_pay_date)}
           mode="date"
-          display={Platform.OS === 'ios' ? 'inline' : 'default'}
+          display="default"
           maximumDate={today}
-          // Dark theme so the month/day/year read on the dark sheet (default is
-          // light => dark-on-dark, barely visible); accent matches the palette.
-          themeVariant="dark"
-          accentColor={C.accent}
-          textColor={C.textBright}
-          onValueChange={onValueChange}
-          onDismiss={() => setShowPicker(false)}
+          onValueChange={(picked?: Date) => { setShowAndroidPicker(false); commitDate(picked); }}
+          onDismiss={() => setShowAndroidPicker(false)}
         />
       )}
 
-      <Pressable onPress={() => { commitDraft(); s.setSheet(null); }} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }]}>
+      <Pressable onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }]}>
         <Text style={styles.btnPrimaryText}>Done</Text>
       </Pressable>
     </View>
