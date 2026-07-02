@@ -8,3 +8,10 @@ Current state, decisions, and open work live in the Notion **Build Note**
 (page "Build Note" under "Budget Tracker App") and the **Board**
 (`collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`). At the start of a build
 session, read the latest Session Log in the Build Note before acting.
+
+# Pull request workflow
+
+Open a pull request for every completed, meaningful unit of work — and before
+the (ephemeral) container may time out — so Jasmine can review the code herself.
+Always create the PR; don't wait to be asked. Keep unrelated changes on separate
+branches/PRs so each one stays independently reviewable.
