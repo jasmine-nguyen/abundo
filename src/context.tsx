@@ -97,6 +97,13 @@ export const CLEAN_NAME: Record<string, string> = {
 };
 export function cleanName(m: string) { return CLEAN_NAME[m] || m; }
 
+// Best-effort display name for a transaction's merchant, applying the cleanup
+// map. Single source of truth so the transaction row and the categorize sheets
+// never diverge (the Transaction shape has merchant_name/description, not payee).
+export function merchantLabel(t: Transaction): string {
+  return cleanName(t.merchant_name || t.description);
+}
+
 function dateLabel(isoDate: string): string {
   const [y, m, d] = isoDate.split('-').map(Number);
   const today = new Date();
@@ -414,7 +421,7 @@ export function transactionView(s: AppContext, t: Transaction): TransactionView 
   const key = uncategorized ? 'q' : isIncome ? 'home' : c!.icon;
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return {
-    id: t.transaction_id, merchant: cleanName(t.merchant_name || t.description), amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
+    id: t.transaction_id, merchant: merchantLabel(t), amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
     isPending: t.status === 'pending', icon: key,
     iconColor: uncategorized ? '#c9b3f5' : isIncome ? '#9aa2b5' : c!.color,
     chipBg: uncategorized ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),

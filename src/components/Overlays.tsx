@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput } from 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, cleanName } from '../context';
+import { useAppContext, merchantLabel } from '../context';
 
 export function Overlays() {
   const s = useAppContext();
@@ -82,7 +82,7 @@ function PickerSheet() {
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
-      <Text style={styles.sheetMerchant}>{tx.payee}</Text>
+      <Text style={styles.sheetMerchant}>{merchantLabel(tx)}</Text>
       <Text style={styles.sheetAmount}>{'-$' + Math.abs(tx.amount).toFixed(2)}</Text>
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
         {categories.map((c) => (
@@ -113,10 +113,10 @@ function ConfirmSheet() {
       </View>
       <Text style={styles.confirmTitle}>File as {c.name}</Text>
       <Text style={styles.confirmSub}>
-        Apply to just '{cleanName(tx.payee)}', or set a rule so every charge from this merchant files itself?
+        Apply to just '{merchantLabel(tx)}', or set a rule so every charge from this merchant files itself?
       </Text>
       <Pressable onPress={() => s.applyCategory('all')} style={[styles.btn, styles.btnPrimary]}>
-        <Text style={styles.btnPrimaryText}>Every {cleanName(tx.payee)} charge</Text>
+        <Text style={styles.btnPrimaryText}>Every {merchantLabel(tx)} charge</Text>
       </Pressable>
       <Pressable onPress={() => s.applyCategory('one')} style={[styles.btn, styles.btnGhost]}>
         <Text style={styles.btnGhostText}>Just this one</Text>
