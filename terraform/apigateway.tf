@@ -58,6 +58,21 @@ resource "aws_apigatewayv2_route" "delete_category_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# Budget targets: read all (GET /budgets) + set one (PUT /budgets/{category}).
+# Reuse the lambda_api integration; the /*/* invoke permission already covers
+# these, so no new integration or lambda permission is needed.
+resource "aws_apigatewayv2_route" "get_budgets_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /budgets"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "put_budget_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "PUT /budgets/{category}"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 resource "aws_lambda_permission" "get_transactions_invoke_permission" {
   statement_id  = "AllowAPIGatewayInvokeGetTransactions"
   action        = "lambda:InvokeFunction"

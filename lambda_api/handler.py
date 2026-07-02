@@ -1,20 +1,25 @@
 from constants import (
     ACCOUNT_ID_MAP,
+    BUDGET_PATH,
     CATEGORY_BUCKETS,
     CATEGORY_PATH,
     DEFAULT_CATEGORY_ICON,
     TRANSACTION_PATH,
 )
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from repository import (
+    BudgetRepository,
     CategoryNotFoundError,
     CategoryRepository,
     DuplicateCategoryError,
     TransactionRepository,
+    VersionConflictError,
 )
 from encoders import DecimalEncoder
 import base64
 import json
+import math
 import re
 
 
@@ -22,26 +27,37 @@ def lambda_handler(event, context):
     path = event.get("rawPath", "")
     method = event.get("requestContext", {}).get("http", {}).get("method", "")
 
-    if path == TRANSACTION_PATH and method == "GET":
-        repo = TransactionRepository()
-        return _json_response(200, get_recent_transactions(repo))
+    # A config-item write that loses the optimistic-lock race past its retry budget
+    # is a conflict, not a server fault — map it to 409 for every route in one place.
+    try:
+        if path == TRANSACTION_PATH and method == "GET":
+            repo = TransactionRepository()
+            return _json_response(200, get_recent_transactions(repo))
 
-    if path.startswith(f"{TRANSACTION_PATH}/") and method == "PATCH":
-        return patch_transaction_category(event, TransactionRepository())
+        if path.startswith(f"{TRANSACTION_PATH}/") and method == "PATCH":
+            return patch_transaction_category(event, TransactionRepository())
 
-    if path == CATEGORY_PATH and method == "GET":
-        return _json_response(200, list_categories(CategoryRepository()))
+        if path == CATEGORY_PATH and method == "GET":
+            return _json_response(200, list_categories(CategoryRepository()))
 
-    if path == CATEGORY_PATH and method == "POST":
-        return create_category(event, CategoryRepository())
+        if path == CATEGORY_PATH and method == "POST":
+            return create_category(event, CategoryRepository())
 
-    if path.startswith(f"{CATEGORY_PATH}/") and method == "PATCH":
-        return update_category(event, CategoryRepository())
+        if path.startswith(f"{CATEGORY_PATH}/") and method == "PATCH":
+            return update_category(event, CategoryRepository())
 
-    if path.startswith(f"{CATEGORY_PATH}/") and method == "DELETE":
-        return delete_category(event, CategoryRepository())
+        if path.startswith(f"{CATEGORY_PATH}/") and method == "DELETE":
+            return delete_category(event, CategoryRepository())
 
-    return _json_response(404, {"error": "Not found"})
+        if path == BUDGET_PATH and method == "GET":
+            return _json_response(200, list_budgets(BudgetRepository()))
+
+        if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
+            return set_budget(event, BudgetRepository())
+
+        return _json_response(404, {"error": "Not found"})
+    except VersionConflictError:
+        return _json_response(409, {"error": "write conflict, please retry"})
 
 
 def _json_response(status_code: int, body: dict | list) -> dict:
@@ -226,3 +242,47 @@ def delete_category(event: dict, repo: CategoryRepository) -> dict:
         return _json_response(404, {"error": "category not found"})
 
     return _json_response(200, {"id": cat_id})
+
+
+def list_budgets(repo: BudgetRepository) -> dict:
+    """GET /budgets — return the {category id -> target number} map.
+
+    Flattens the stored {id: {"target": Decimal}} shape; DecimalEncoder renders
+    the Decimal targets back to JSON numbers. Empty {} before any target is set.
+    """
+    return {cat_id: entry["target"] for cat_id, entry in repo.list_budgets().items()}
+
+
+def set_budget(event: dict, repo: BudgetRepository) -> dict:
+    """PUT /budgets/{category} — set (upsert) a category's budget target.
+
+    Body: {"target": <number >= 0>} — the user-set pay-cycle amount (spent/pending
+    are derived elsewhere, not here). The target is stored as a Decimal via
+    Decimal(str(...)) so a JSON float never introduces binary-float drift. An
+    unknown category id is accepted (stored as an orphan the client ignores),
+    rather than coupling this to a category-existence read.
+    """
+    cat_id = (event.get("pathParameters") or {}).get("category")
+    if not cat_id:
+        return _json_response(404, {"error": "budget not found"})
+
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    target = body.get("target")
+    # bool is an int subclass, so reject it explicitly before the numeric check.
+    if isinstance(target, bool) or not isinstance(target, (int, float)):
+        return _json_response(400, {"error": "target must be a number"})
+    # json.loads accepts NaN/Infinity by default; DynamoDB rejects them at write.
+    if not math.isfinite(target):
+        return _json_response(400, {"error": "target must be a finite number"})
+    if target < 0:
+        return _json_response(400, {"error": "target must be >= 0"})
+    # Absurd for a personal budget; also keeps a giant value from blowing past
+    # DynamoDB's number limit and 500ing at write instead of a clean 400.
+    if target > 1_000_000_000:
+        return _json_response(400, {"error": "target too large"})
+
+    saved = repo.set_budget(cat_id, Decimal(str(target)))
+    return _json_response(200, saved)

@@ -17,3 +17,7 @@ CATEGORY_BUCKETS = {"Living", "Lifestyle", "Income", "Savings"}
 
 # Icon assigned when a create request omits one (a valid key in src/icons.tsx).
 DEFAULT_CATEGORY_ICON = "tag"
+
+# --- Budgets (per-category pay-cycle targets) ------------------------------
+# API Gateway route path for the budget-target endpoints (GET all, PUT one).
+BUDGET_PATH = "/budgets"
