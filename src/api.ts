@@ -87,3 +87,40 @@ export async function deleteCategory(id: string): Promise<{ id: string }> {
 
   return response.json();
 }
+
+/**
+ * Fetch all persisted budget targets as a { categoryId: target } map. Empty
+ * before any target is set. `posted`/`pending` are not part of this endpoint.
+ *
+ * @returns A map of category id to its budget-target number.
+ * @throws If the response status is not OK.
+ */
+export async function fetchBudgets(): Promise<Record<string, number>> {
+  const response = await fetch(`${API_BASE}/budgets`);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Set (upsert) a category's budget target. Idempotent — works whether or not
+ * the category already had a target.
+ *
+ * @param categoryId - The category id/slug to budget (e.g. "groceries").
+ * @param target - The pay-cycle target amount (must be >= 0).
+ * @returns The saved id and target.
+ * @throws If the response status is not OK (e.g. 400 on an invalid target).
+ */
+export async function setBudget(
+  categoryId: string,
+  target: number
+): Promise<{ id: string; target: number }> {
+  const response = await fetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}

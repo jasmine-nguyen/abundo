@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,16 +67,6 @@ const SEED_CATEGORIES: Category[] = [
   { id: 'travel', name: 'Travel', icon: 'plane', color: '#6FB6D0', bucket: 'Lifestyle', recent: 0 },
   { id: 'gifts', name: 'Gifts', icon: 'gift', color: '#E59BD0', bucket: 'Lifestyle', recent: 28 },
   { id: 'phonenet', name: 'Phone & Internet', icon: 'phone', color: '#B0A8F0', bucket: 'Living', recent: 79 },
-];
-const SEED_BUDGETS: Budget[] = [
-  { id: 'coffee', budget: 58, posted: 27, pending: 12 },
-  { id: 'eatingout', budget: 120, posted: 70, pending: 14 },
-  { id: 'groceries', budget: 320, posted: 120, pending: 19 },
-  { id: 'health', budget: 191, posted: 95, pending: 0 },
-  { id: 'transport', budget: 56, posted: 6, pending: 0 },
-  { id: 'utilities', budget: 240, posted: 0, pending: 188 },
-  { id: 'pets', budget: 49, posted: 0, pending: 0 },
-  { id: 'shopping', budget: 100, posted: 30, pending: 0 },
 ];
 const SEED_RULES: Rule[] = [
   { id: 'r1', pattern: 'WOOLWORTHS', categoryId: 'groceries', isNew: false },
@@ -146,7 +136,7 @@ interface AppContext {
   openPicker: (txId: string) => void;
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => void;
-  saveBudget: (categoryId: string, value: number) => void;
+  saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => Promise<boolean>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => void;
@@ -157,6 +147,8 @@ interface AppContext {
 	refreshTransactions: () => Promise<void>;
 	categoriesLoading: boolean;
 	refreshCategories: () => Promise<void>;
+	budgetsLoading: boolean;
+	refreshBudgets: () => Promise<void>;
 }
 
 /**
@@ -180,11 +172,20 @@ function toCategory(raw: any): Category {
   };
 }
 
+// Merge a server budget target into the client Budget shape. The /budgets
+// endpoint owns only `target` (-> client `budget`); `posted`/`pending` are
+// derived elsewhere, so preserve any prior local values and default to 0 for a
+// newly-seen id. Module-level (like toCategory) so refreshBudgets can be a
+// stable useCallback([]) and not re-fire the mount effect every render.
+function toBudget(id: string, target: number, prev?: Budget): Budget {
+  return { id, budget: target, posted: prev?.posted ?? 0, pending: prev?.pending ?? 0 };
+}
+
 const Ctx = createContext<AppContext | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [categories, setCategories] = useState<Category[]>(SEED_CATEGORIES);
-  const [budgets, setBudgets] = useState<Budget[]>(SEED_BUDGETS);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [rules, setRules] = useState<Rule[]>(SEED_RULES);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
@@ -216,10 +217,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, []);
 
+	const [budgetsLoading, setBudgetsLoading] = useState(false);
+	const refreshBudgets = useCallback(async () => {
+		setBudgetsLoading(true);
+		try {
+			const map = await fetchBudgets();
+			// Server is the source of truth for which categories have a target; replace
+			// the array, preserving any prior posted/pending by id. Skip target<=0 rows
+			// so budget math never divides by zero.
+			setBudgets((prev) =>
+				Object.entries(map)
+					.filter(([, target]) => target > 0)
+					.map(([id, target]) => toBudget(id, target, prev.find((b) => b.id === id))));
+		} finally {
+			setBudgetsLoading(false);
+		}
+	}, []);
+
 	useEffect(() =>{
 		refreshTransactions()
 		refreshCategories()
-	}, [refreshTransactions, refreshCategories] )
+		refreshBudgets()
+	}, [refreshTransactions, refreshCategories, refreshBudgets] )
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -267,13 +286,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [transactions, categories, showToast]);
 
-  const saveBudget = useCallback((categoryId: string, value: number) => {
-    if (value <= 0) return;
-    const c = categories.find((x) => x.id === categoryId);
-    const existing = budgets.find((b) => b.id === categoryId);
-    setBudgets((prev) => (existing ? prev.map((b) => (b.id === categoryId ? { ...b, budget: value } : b)) : [...prev, { id: categoryId, budget: value, posted: 0, pending: 0 }]));
-    if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(value)}.`);
-  }, [categories, budgets, showToast]);
+  const saveBudget = useCallback(
+    async (categoryId: string, value: number): Promise<boolean> => {
+      if (value <= 0) return false;
+      const c = categories.find((x) => x.id === categoryId);
+      const existing = budgets.find((b) => b.id === categoryId);
+      try {
+        const saved = await apiSetBudget(categoryId, value);
+        // Key the local write off the known categoryId (not saved.id), so a new
+        // budget always lands on a real taxonomy id and renders in budgetViews.
+        setBudgets((prev) =>
+          prev.some((b) => b.id === categoryId)
+            ? prev.map((b) => (b.id === categoryId ? { ...b, budget: saved.target } : b))
+            : [...prev, toBudget(categoryId, saved.target, existing)]);
+        if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(saved.target)}.`);
+        return true;
+      } catch {
+        showToast('Could not save budget. Please try again.');
+        return false;
+      }
+    },
+    [categories, budgets, showToast],
+  );
 
   const saveCategory = useCallback(
     async (editId: string | null, form: { name: string; bucket: Bucket; icon: string }): Promise<boolean> => {
@@ -344,8 +378,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength: (len) => setPayCycle((p) => ({ ...p, length: len })),
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories
-  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories]);
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets
+  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
