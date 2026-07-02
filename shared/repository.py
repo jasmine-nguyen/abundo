@@ -295,6 +295,10 @@ class DuplicateCategoryError(Exception):
     """A category with the given id already exists (handler maps this to 409)."""
 
 
+class CategoryNotFoundError(Exception):
+    """No category with the given id exists (handler maps this to 404)."""
+
+
 class CategoryRepository:
     """Stores the user-defined category taxonomy as a single DynamoDB config item.
 
@@ -386,3 +390,81 @@ class CategoryRepository:
                     raise DuplicateCategoryError(cat_id)
                 # id still free — the version moved under us; loop retries once.
         raise RuntimeError("create_category: exhausted retries under write contention")
+
+    def rename_category(self, cat_id: str, name: str) -> dict:
+        """Change a category's display name only — the id/slug is immutable (it's
+        the BankSync vocabulary). Raises CategoryNotFoundError if the id is absent.
+        `#name` is aliased because `name` is a DynamoDB reserved word.
+        """
+        self._ensure_seeded()
+        for _attempt in range(2):
+            item = self._get_config()
+            items = item["items"]
+            version = item["version"]
+            if cat_id not in items:
+                raise CategoryNotFoundError(cat_id)
+            try:
+                self._get_table().update_item(
+                    Key=_CATEGORIES_KEY,
+                    UpdateExpression="SET #items.#id.#name = :name, #v = :next",
+                    ConditionExpression=(
+                        "attribute_exists(pk) AND #v = :expected "
+                        "AND attribute_exists(#items.#id)"
+                    ),
+                    ExpressionAttributeNames={
+                        "#items": "items", "#id": cat_id, "#name": "name", "#v": "version",
+                    },
+                    ExpressionAttributeValues={
+                        ":name": name,
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                # Build the response from the pre-read item so id/icon/color/bucket survive.
+                return {**items[cat_id], "name": name}
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "rename category")
+                # Disambiguate: id deleted under us (404) vs a concurrent version bump (retry).
+                latest = self._get_config()
+                if cat_id not in latest["items"]:
+                    raise CategoryNotFoundError(cat_id)
+                # id still present — the version moved under us; loop retries once.
+        raise RuntimeError("rename_category: exhausted retries under write contention")
+
+    def delete_category(self, cat_id: str) -> str:
+        """Hard-delete a category (REMOVE its map key). No server-side cascade —
+        transactions still referencing the id render as Uncategorized client-side.
+        Raises CategoryNotFoundError if the id is absent.
+        """
+        self._ensure_seeded()
+        for _attempt in range(2):
+            item = self._get_config()
+            items = item["items"]
+            version = item["version"]
+            if cat_id not in items:
+                raise CategoryNotFoundError(cat_id)
+            try:
+                self._get_table().update_item(
+                    Key=_CATEGORIES_KEY,
+                    # REMOVE drops one map key; SET bumps the version. The config item stays.
+                    UpdateExpression="REMOVE #items.#id SET #v = :next",
+                    ConditionExpression=(
+                        "attribute_exists(pk) AND #v = :expected "
+                        "AND attribute_exists(#items.#id)"
+                    ),
+                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
+                    ExpressionAttributeValues={
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                return cat_id
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "delete category")
+                latest = self._get_config()
+                if cat_id not in latest["items"]:
+                    raise CategoryNotFoundError(cat_id)
+                # id still present — the version moved under us; loop retries once.
+        raise RuntimeError("delete_category: exhausted retries under write contention")

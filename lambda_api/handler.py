@@ -6,7 +6,12 @@ from constants import (
     TRANSACTION_PATH,
 )
 from datetime import datetime, timedelta, timezone
-from repository import CategoryRepository, DuplicateCategoryError, TransactionRepository
+from repository import (
+    CategoryNotFoundError,
+    CategoryRepository,
+    DuplicateCategoryError,
+    TransactionRepository,
+)
 from encoders import DecimalEncoder
 import base64
 import json
@@ -29,6 +34,12 @@ def lambda_handler(event, context):
 
     if path == CATEGORY_PATH and method == "POST":
         return create_category(event, CategoryRepository())
+
+    if path.startswith(f"{CATEGORY_PATH}/") and method == "PATCH":
+        return rename_category(event, CategoryRepository())
+
+    if path.startswith(f"{CATEGORY_PATH}/") and method == "DELETE":
+        return delete_category(event, CategoryRepository())
 
     return _json_response(404, {"error": "Not found"})
 
@@ -164,3 +175,41 @@ def create_category(event: dict, repo: CategoryRepository) -> dict:
         return _json_response(409, {"error": "category already exists"})
 
     return _json_response(201, {**created, "recent": 0})
+
+
+def rename_category(event: dict, repo: CategoryRepository) -> dict:
+    """PATCH /categories/{id} — rename a category (display name only; id immutable)."""
+    cat_id = (event.get("pathParameters") or {}).get("id")
+    if not cat_id:
+        return _json_response(404, {"error": "category not found"})
+
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return _json_response(400, {"error": "name is required"})
+
+    try:
+        updated = repo.rename_category(cat_id, name.strip())
+    except CategoryNotFoundError:
+        return _json_response(404, {"error": "category not found"})
+
+    return _json_response(200, {**updated, "recent": 0})
+
+
+def delete_category(event: dict, repo: CategoryRepository) -> dict:
+    """DELETE /categories/{id} — hard-delete a category. No server-side cascade;
+    transactions still referencing the id render as Uncategorized client-side.
+    """
+    cat_id = (event.get("pathParameters") or {}).get("id")
+    if not cat_id:
+        return _json_response(404, {"error": "category not found"})
+
+    try:
+        repo.delete_category(cat_id)
+    except CategoryNotFoundError:
+        return _json_response(404, {"error": "category not found"})
+
+    return _json_response(200, {"id": cat_id})

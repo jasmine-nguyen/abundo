@@ -23,10 +23,13 @@ from botocore.exceptions import ClientError
 class FakeCategoryRepo:
     """Handler-level stand-in for CategoryRepository (records calls)."""
 
-    def __init__(self, categories=None, duplicate_exc=None):
+    def __init__(self, categories=None, duplicate_exc=None, not_found_exc=None):
         self._categories = categories or []
         self._duplicate_exc = duplicate_exc
+        self._not_found_exc = not_found_exc
         self.create_calls = []
+        self.rename_calls = []
+        self.delete_calls = []
         self.list_calls = 0
 
     def list_categories(self):
@@ -39,11 +42,34 @@ class FakeCategoryRepo:
             raise self._duplicate_exc(cat_id)
         return {"id": cat_id, "name": name, "icon": icon, "color": "#123456", "bucket": bucket}
 
+    def rename_category(self, cat_id, name):
+        self.rename_calls.append((cat_id, name))
+        if self._not_found_exc is not None:
+            raise self._not_found_exc(cat_id)
+        return {"id": cat_id, "name": name, "icon": "coffee", "color": "#123456", "bucket": "Living"}
+
+    def delete_category(self, cat_id):
+        self.delete_calls.append(cat_id)
+        if self._not_found_exc is not None:
+            raise self._not_found_exc(cat_id)
+        return cat_id
+
 
 def _categories_event(body='{"name": "Gym", "bucket": "Lifestyle", "icon": "dumbbell"}', is_b64=False):
     return {
         "rawPath": "/categories",
         "requestContext": {"http": {"method": "POST"}},
+        "body": body,
+        "isBase64Encoded": is_b64,
+    }
+
+
+def _category_item_event(method, cat_id="coffee", body='{"name": "Coffee & Cake"}', is_b64=False):
+    """Event for the /categories/{id} routes (rename/delete)."""
+    return {
+        "rawPath": f"/categories/{cat_id}",
+        "requestContext": {"http": {"method": method}},
+        "pathParameters": {"id": cat_id},
         "body": body,
         "isBase64Encoded": is_b64,
     }
@@ -182,6 +208,109 @@ def test_post_categories_dispatch(handler, monkeypatch):
 # --- repository-level: storage logic via an in-memory fake table -------------
 
 
+# --- handler-level: PATCH /categories/{id} (rename) --------------------------
+
+
+def test_rename_success(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.rename_category(_category_item_event("PATCH"), repo)
+
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["name"] == "Coffee & Cake" and body["id"] == "coffee" and body["recent"] == 0
+    assert repo.rename_calls == [("coffee", "Coffee & Cake")]
+
+
+def test_rename_missing_id_returns_404(handler):
+    repo = FakeCategoryRepo()
+    event = _category_item_event("PATCH")
+    event["pathParameters"] = {}
+
+    resp = handler.rename_category(event, repo)
+
+    assert resp["statusCode"] == 404
+    assert repo.rename_calls == []
+
+
+def test_rename_blank_name_returns_400(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.rename_category(_category_item_event("PATCH", body='{"name": "   "}'), repo)
+
+    assert resp["statusCode"] == 400
+    assert repo.rename_calls == []
+
+
+def test_rename_invalid_json_returns_400(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.rename_category(_category_item_event("PATCH", body="not json"), repo)
+
+    assert resp["statusCode"] == 400
+    assert repo.rename_calls == []
+
+
+def test_rename_unknown_id_returns_404(handler):
+    repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
+
+    resp = handler.rename_category(_category_item_event("PATCH"), repo)
+
+    assert resp["statusCode"] == 404
+
+
+def test_rename_dispatch(handler, monkeypatch):
+    repo = FakeCategoryRepo()
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
+
+    resp = handler.lambda_handler(_category_item_event("PATCH"), None)
+
+    assert resp["statusCode"] == 200
+    assert repo.rename_calls == [("coffee", "Coffee & Cake")]
+
+
+# --- handler-level: DELETE /categories/{id} ----------------------------------
+
+
+def test_delete_success(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {"id": "coffee"}
+    assert repo.delete_calls == ["coffee"]
+
+
+def test_delete_missing_id_returns_404(handler):
+    repo = FakeCategoryRepo()
+    event = _category_item_event("DELETE", body=None)
+    event["pathParameters"] = {}
+
+    resp = handler.delete_category(event, repo)
+
+    assert resp["statusCode"] == 404
+    assert repo.delete_calls == []
+
+
+def test_delete_unknown_id_returns_404(handler):
+    repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
+
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo)
+
+    assert resp["statusCode"] == 404
+
+
+def test_delete_dispatch(handler, monkeypatch):
+    repo = FakeCategoryRepo()
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
+
+    resp = handler.lambda_handler(_category_item_event("DELETE", body=None), None)
+
+    assert resp["statusCode"] == 200
+    assert repo.delete_calls == ["coffee"]
+
+
 def _ccfe():
     err = ClientError()
     err.response = {"Error": {"Code": "ConditionalCheckFailedException"}}
@@ -214,12 +343,29 @@ class FakeTable:
         if self.before_update and item is not None:
             self.before_update.pop(0)(item)  # simulate a concurrent writer
         cat_id = ExpressionAttributeNames["#id"]
-        # Emulate: attribute_exists(pk) AND #v = :expected AND attribute_not_exists(items.<id>)
-        if item is None or item["version"] != ExpressionAttributeValues[":expected"] \
-                or cat_id in item["items"]:
+        values = ExpressionAttributeValues
+
+        # attribute_exists(pk) AND #v = :expected are common to create/rename/delete.
+        if item is None or item["version"] != values[":expected"]:
             raise _ccfe()
-        item["items"][cat_id] = copy.deepcopy(ExpressionAttributeValues[":cat"])
-        item["version"] = ExpressionAttributeValues[":next"]
+
+        if UpdateExpression.startswith("REMOVE"):
+            # delete: guard attribute_exists(items.<id>)
+            if cat_id not in item["items"]:
+                raise _ccfe()
+            del item["items"][cat_id]
+        elif "#items.#id.#name" in UpdateExpression:
+            # rename: guard attribute_exists(items.<id>); only the name changes
+            if cat_id not in item["items"]:
+                raise _ccfe()
+            item["items"][cat_id]["name"] = values[":name"]
+        else:
+            # create: guard attribute_not_exists(items.<id>)
+            if cat_id in item["items"]:
+                raise _ccfe()
+            item["items"][cat_id] = copy.deepcopy(values[":cat"])
+
+        item["version"] = values[":next"]
 
 
 def _repo_with_fake_table(handler):
@@ -325,4 +471,103 @@ def test_repo_create_raises_under_sustained_contention(handler):
         repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
         assert False, "expected RuntimeError under sustained contention"
     except RuntimeError:
+        pass
+
+
+# --- repository-level: rename ------------------------------------------------
+
+
+def test_repo_rename_changes_name_only(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+
+    updated = repo.rename_category("coffee", "Coffee & Cake")
+
+    config = repo._table.store[("CATEGORIES", "CATEGORIES")]
+    stored = config["items"]["coffee"]
+    assert stored["name"] == "Coffee & Cake"
+    # id/icon/color/bucket unchanged; still 13 categories; version bumped
+    assert stored["id"] == "coffee" and stored["icon"] == "coffee" and stored["bucket"] == "Lifestyle"
+    assert len(config["items"]) == 13 and config["version"] == 2
+    assert updated == {"id": "coffee", "name": "Coffee & Cake", "icon": "coffee",
+                       "color": "#E8A87C", "bucket": "Lifestyle"}
+
+
+def test_repo_rename_unknown_id_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    try:
+        repo.rename_category("nope", "Nope")
+        assert False, "expected CategoryNotFoundError"
+    except repository.CategoryNotFoundError:
+        pass
+
+
+def test_repo_rename_retries_after_version_race(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed -> version 1
+    repo._table.before_update.append(_bump_version)
+
+    repo.rename_category("coffee", "Coffee & Cake")
+
+    config = repo._table.store[("CATEGORIES", "CATEGORIES")]
+    assert config["items"]["coffee"]["name"] == "Coffee & Cake"
+    assert config["version"] == 3  # concurrent bump (1->2) + our write (2->3)
+
+
+def test_repo_rename_concurrently_deleted_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo._table.before_update.append(lambda item: item["items"].pop("coffee", None))
+    try:
+        repo.rename_category("coffee", "Coffee & Cake")
+        assert False, "expected CategoryNotFoundError"
+    except repository.CategoryNotFoundError:
+        pass
+
+
+# --- repository-level: delete ------------------------------------------------
+
+
+def test_repo_delete_removes_key(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+
+    removed = repo.delete_category("coffee")
+
+    config = repo._table.store[("CATEGORIES", "CATEGORIES")]
+    assert removed == "coffee"
+    assert "coffee" not in config["items"] and len(config["items"]) == 12
+    assert config["version"] == 2
+
+
+def test_repo_delete_unknown_id_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    try:
+        repo.delete_category("nope")
+        assert False, "expected CategoryNotFoundError"
+    except repository.CategoryNotFoundError:
+        pass
+
+
+def test_repo_delete_retries_after_version_race(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo._table.before_update.append(_bump_version)
+
+    repo.delete_category("coffee")
+
+    config = repo._table.store[("CATEGORIES", "CATEGORIES")]
+    assert "coffee" not in config["items"] and config["version"] == 3
+
+
+def test_repo_delete_concurrently_deleted_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo._table.before_update.append(lambda item: item["items"].pop("coffee", None))
+    try:
+        repo.delete_category("coffee")
+        assert False, "expected CategoryNotFoundError"
+    except repository.CategoryNotFoundError:
         pass
