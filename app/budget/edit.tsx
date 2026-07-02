@@ -15,16 +15,22 @@ export default function BudgetEdit() {
   const info = budgetEditInfo(s, categoryId);
   const [input, setInput] = useState(info.existing ? String(info.existing.budget) : '');
   const [histOpen, setHistOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   if (!info.category) return <View style={{ flex: 1 }}><Header title="Set budget" /></View>;
   const num = parseFloat(input) || 0;
-  const canSave = num > 0;
+  const canSave = num > 0 && !submitting;
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
-    s.saveBudget(categoryId, num);
-    router.dismissAll?.();
-    router.replace('/(tabs)/budgets');
+    setSubmitting(true);
+    const ok = await s.saveBudget(categoryId, num);
+    if (ok) {
+      router.dismissAll?.();
+      router.replace('/(tabs)/budgets');
+    } else {
+      setSubmitting(false); // stay on the screen so the user can retry
+    }
   };
 
   return (
