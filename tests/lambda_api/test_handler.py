@@ -1,9 +1,9 @@
 """Tests for the lambda_api handler, focused on the new PATCH /transactions/{id}.
 
 The handler is provided by the `handler` fixture (see conftest.py), which imports
-lambda_api/handler.py in isolation. The repository is faked per-test so no AWS or
-boto3 is exercised — these tests cover routing, body parsing/validation, and the
-mapping from repo results to HTTP status codes.
+lambda_api/handler.py in isolation. patch_transaction_category takes the repo as a
+parameter, so most tests call it directly with a FakeRepo — no patching, no AWS.
+A single dispatch test drives it through lambda_handler to prove the wiring.
 """
 
 import base64
@@ -36,19 +36,13 @@ def _patch_event(transaction_id="txn-1", body='{"category": "groceries"}', is_b6
     }
 
 
-def _use_repo(handler, monkeypatch, repo):
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    return repo
+# --- happy path (repo injected directly, no patching) ------------------------
 
 
-# --- happy path --------------------------------------------------------------
+def test_patch_success_persists_category(handler):
+    repo = FakeRepo(keys={"pk": "ACCOUNT#up-spending", "sk": "TXN#txn-1"})
 
-
-def test_patch_success_persists_category(handler, monkeypatch):
-    repo = _use_repo(handler, monkeypatch,
-                     FakeRepo(keys={"pk": "ACCOUNT#up-spending", "sk": "TXN#txn-1"}))
-
-    resp = handler.lambda_handler(_patch_event(), None)
+    resp = handler.patch_transaction_category(_patch_event(), repo)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"transaction_id": "txn-1", "category": "groceries"}
@@ -56,11 +50,11 @@ def test_patch_success_persists_category(handler, monkeypatch):
     assert repo.update_calls == [("ACCOUNT#up-spending", "TXN#txn-1", "groceries")]
 
 
-def test_patch_decodes_base64_body(handler, monkeypatch):
-    repo = _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}))
+def test_patch_decodes_base64_body(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
     encoded = base64.b64encode(b'{"category": "coffee"}').decode()
 
-    resp = handler.lambda_handler(_patch_event(body=encoded, is_b64=True), None)
+    resp = handler.patch_transaction_category(_patch_event(body=encoded, is_b64=True), repo)
 
     assert resp["statusCode"] == 200
     assert repo.update_calls == [("p", "s", "coffee")]
@@ -69,31 +63,30 @@ def test_patch_decodes_base64_body(handler, monkeypatch):
 # --- 404s --------------------------------------------------------------------
 
 
-def test_patch_unknown_id_returns_404_without_writing(handler, monkeypatch):
-    repo = _use_repo(handler, monkeypatch, FakeRepo(keys=None))
+def test_patch_unknown_id_returns_404_without_writing(handler):
+    repo = FakeRepo(keys=None)
 
-    resp = handler.lambda_handler(_patch_event(), None)
+    resp = handler.patch_transaction_category(_patch_event(), repo)
 
     assert resp["statusCode"] == 404
     assert repo.update_calls == []  # never attempt the write if the id doesn't resolve
 
 
-def test_patch_row_vanished_returns_404(handler, monkeypatch):
+def test_patch_row_vanished_returns_404(handler):
     # get_transaction_keys_by_id found keys, but the conditional write failed
     # (row deleted in between) -> update returns False -> 404, not 500.
-    _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}, update_result=False))
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"}, update_result=False)
 
-    resp = handler.lambda_handler(_patch_event(), None)
+    resp = handler.patch_transaction_category(_patch_event(), repo)
 
     assert resp["statusCode"] == 404
 
 
-def test_patch_missing_path_id_returns_404(handler, monkeypatch):
-    _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}))
+def test_patch_missing_path_id_returns_404(handler):
     event = _patch_event()
     event["pathParameters"] = {}  # no id
 
-    resp = handler.lambda_handler(event, None)
+    resp = handler.patch_transaction_category(event, FakeRepo(keys={"pk": "p", "sk": "s"}))
 
     assert resp["statusCode"] == 404
 
@@ -101,49 +94,51 @@ def test_patch_missing_path_id_returns_404(handler, monkeypatch):
 # --- 400s --------------------------------------------------------------------
 
 
-def test_patch_invalid_json_returns_400(handler, monkeypatch):
-    _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}))
-
-    resp = handler.lambda_handler(_patch_event(body="not json"), None)
-
+def test_patch_invalid_json_returns_400(handler):
+    resp = handler.patch_transaction_category(_patch_event(body="not json"),
+                                              FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
-def test_patch_base64_non_utf8_body_returns_400(handler, monkeypatch):
+def test_patch_base64_non_utf8_body_returns_400(handler):
     # Valid base64, but the decoded bytes aren't UTF-8 — must be a clean 400, not a 500.
-    _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}))
     encoded = base64.b64encode(b"\xff\xfe\xff").decode()
 
-    resp = handler.lambda_handler(_patch_event(body=encoded, is_b64=True), None)
-
+    resp = handler.patch_transaction_category(_patch_event(body=encoded, is_b64=True),
+                                              FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
-def test_patch_non_dict_body_returns_400(handler, monkeypatch):
-    _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}))
-
-    resp = handler.lambda_handler(_patch_event(body="[1, 2, 3]"), None)
-
+def test_patch_non_dict_body_returns_400(handler):
+    resp = handler.patch_transaction_category(_patch_event(body="[1, 2, 3]"),
+                                              FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
-def test_patch_missing_category_returns_400(handler, monkeypatch):
-    _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}))
-
-    resp = handler.lambda_handler(_patch_event(body='{"note": "x"}'), None)
-
+def test_patch_missing_category_returns_400(handler):
+    resp = handler.patch_transaction_category(_patch_event(body='{"note": "x"}'),
+                                              FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
-def test_patch_blank_category_returns_400(handler, monkeypatch):
-    _use_repo(handler, monkeypatch, FakeRepo(keys={"pk": "p", "sk": "s"}))
-
-    resp = handler.lambda_handler(_patch_event(body='{"category": "   "}'), None)
-
+def test_patch_blank_category_returns_400(handler):
+    resp = handler.patch_transaction_category(_patch_event(body='{"category": "   "}'),
+                                              FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
-# --- regression: existing dispatch still works -------------------------------
+# --- dispatch / regression (through lambda_handler) --------------------------
+
+
+def test_patch_dispatches_through_lambda_handler(handler, monkeypatch):
+    # Proves lambda_handler routes PATCH /transactions/{id} and passes a repo in.
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
+
+    resp = handler.lambda_handler(_patch_event(), None)
+
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("p", "s", "groceries")]
 
 
 def test_get_transactions_still_dispatches(handler, monkeypatch):

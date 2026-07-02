@@ -15,7 +15,7 @@ def lambda_handler(event, context):
         return _json_response(200, get_recent_transactions(repo))
 
     if path.startswith(f"{TRANSACTION_PATH}/") and method == "PATCH":
-        return patch_transaction_category(event)
+        return patch_transaction_category(event, TransactionRepository())
 
     return _json_response(404, {"error": "Not found"})
 
@@ -28,11 +28,13 @@ def _json_response(status_code: int, body: dict | list) -> dict:
     }
 
 
-def patch_transaction_category(event: dict) -> dict:
+def patch_transaction_category(event: dict, repo: TransactionRepository) -> dict:
     """PATCH /transactions/{id} — set a transaction's category and persist it.
 
-    Expects a JSON object body {"category": "<non-empty string>"}. Clearing a
-    category (null/empty) is intentionally not supported yet; it returns 400.
+    Takes the repository as a parameter so it can be unit-tested with a fake
+    repo, no patching required. Expects a JSON object body
+    {"category": "<non-empty string>"}. Clearing a category (null/empty) is
+    intentionally not supported yet; it returns 400.
     """
     transaction_id = (event.get("pathParameters") or {}).get("id")
     if not transaction_id:
@@ -55,7 +57,6 @@ def patch_transaction_category(event: dict) -> dict:
     if not isinstance(category, str) or not category.strip():
         return _json_response(400, {"error": "category is required"})
 
-    repo = TransactionRepository()
     keys = repo.get_transaction_keys_by_id(transaction_id)
     if keys is None:
         return _json_response(404, {"error": "transaction not found"})
