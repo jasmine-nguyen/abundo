@@ -73,7 +73,8 @@ resource "aws_iam_role_policy" "lambda_api_dynamodb" {
       Effect = "Allow"
       Action = [
         "dynamodb:GetItem",
-        "dynamodb:Query"
+        "dynamodb:Query",
+        "dynamodb:UpdateItem"
       ]
       Resource = [
         "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",

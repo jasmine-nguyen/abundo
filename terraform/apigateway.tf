@@ -23,6 +23,15 @@ resource "aws_apigatewayv2_route" "get_transactions_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# PATCH a single transaction's category; reuses the lambda_api integration.
+# No new lambda permission needed: get_transactions_invoke_permission already
+# grants apigateway invoke over ${execution_arn}/*/* (any method + route).
+resource "aws_apigatewayv2_route" "patch_transaction_category_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "PATCH /transactions/{id}"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 resource "aws_lambda_permission" "get_transactions_invoke_permission" {
   statement_id  = "AllowAPIGatewayInvokeGetTransactions"
   action        = "lambda:InvokeFunction"
