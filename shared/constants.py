@@ -21,11 +21,11 @@ MAX_PAGE_SIZE = 100
 PENDING_STATUS = "pending"
 
 # Seed pay cycle used by PayCycleRepository until the user sets their real payday:
-# a fixed past date (a Wednesday, the app's original default anchor) + a
+# a fixed past date (a Wednesday, the app's original default last_pay_date) + a
 # fortnightly length. Mirrored in lambda_api/constants.py, which shadows this at
 # /var/task; kept here too so repository.py imports cleanly under the sync lambda
 # (which has no shadowing constants.py), not only under the API lambda.
-DEFAULT_PAYCYCLE = {"length": 14, "anchor": "2024-01-03"}
+DEFAULT_PAYCYCLE = {"length": 14, "last_pay_date": "2024-01-03"}
 
 # BankSync feeds triggered on every scheduled sync run, keyed by feed id -> label.
 SYNC_FEED_IDS = {

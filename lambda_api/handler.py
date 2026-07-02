@@ -262,49 +262,49 @@ def delete_category(event: dict, repo: CategoryRepository) -> dict:
     return _json_response(200, {"id": cat_id})
 
 
-_SYDNEY = None  # ZoneInfo("Australia/Sydney"), built lazily on first use.
+_MELBOURNE = None  # ZoneInfo("Australia/Melbourne"), built lazily on first use.
 
 
-def _sydney_today() -> date:
-    """Today's date in the user's timezone (Australia/Sydney), so the budget
+def _melbourne_today() -> date:
+    """Today's date in the user's timezone (Australia/Melbourne), so the budget
     window resets at LOCAL midnight on payday, not UTC midnight.
 
     Built lazily and cached. If the tzdata package is ever missing from the layer,
     ZoneInfo raises here (only the budget path, not at module import). We catch that
     and FAIL SAFE to UTC: /budgets keeps working with a reset that's off by at most
-    a day at the UTC/Sydney seam, rather than 500ing the whole budget path. Sydney
+    a day at the UTC/Melbourne seam, rather than 500ing the whole budget path. Melbourne
     observes DST (+10/+11) so a fixed offset isn't a substitute for the tz database
     — UTC is only the degraded fallback, and the WARN makes the packaging gap loud.
     """
-    global _SYDNEY
-    if _SYDNEY is None:
+    global _MELBOURNE
+    if _MELBOURNE is None:
         try:
-            _SYDNEY = ZoneInfo("Australia/Sydney")
+            _MELBOURNE = ZoneInfo("Australia/Melbourne")
         except ZoneInfoNotFoundError:
             print("WARN: tzdata unavailable in layer; budget window falling back to UTC today")
             return datetime.now(timezone.utc).date()
-    return datetime.now(_SYDNEY).date()
+    return datetime.now(_MELBOURNE).date()
 
 
-def current_cycle_window(anchor: str, length: int, today: date | None = None) -> tuple[str, str]:
+def current_cycle_window(last_pay_date: str, length: int, today: date | None = None) -> tuple[str, str]:
     """Return (start, end) ISO dates for the CURRENT pay cycle: the half-open
     window [cycle_start, today+1) that resets on the user's payday.
 
     `cycle_start` is the most recent payday on or before today — the latest
-    `anchor + k*length` days (integer k >= 0) that is <= today. `today` defaults
-    to the Sydney-local date (injectable for deterministic tests). The +1-day end
+    `last_pay_date + k*length` days (integer k >= 0) that is <= today. `today` defaults
+    to the Melbourne-local date (injectable for deterministic tests). The +1-day end
     keeps the inclusive date-range query covering all of today's transactions;
     cycle_start is inclusive, so payday spend lands in the fresh cycle.
 
-    A future anchor has no valid k (Slice 1 rejects one at write, but stay safe):
+    A future last_pay_date has no valid k (Slice 1 rejects one at write, but stay safe):
     max(0, ...) plus the cycle_start>today clamp keep the window from inverting.
     """
     if today is None:
-        today = _sydney_today()
-    anchor_date = date.fromisoformat(anchor)
-    elapsed_days = (today - anchor_date).days
+        today = _melbourne_today()
+    pay_date = date.fromisoformat(last_pay_date)
+    elapsed_days = (today - pay_date).days
     cycles_elapsed = max(0, elapsed_days // length)
-    cycle_start = anchor_date + timedelta(days=cycles_elapsed * length)
+    cycle_start = pay_date + timedelta(days=cycles_elapsed * length)
     if cycle_start > today:
         cycle_start = today
     end = today + timedelta(days=1)
@@ -388,7 +388,7 @@ def list_budgets(
     if not targets:
         return {}
     cycle = paycycle_repo.get_paycycle()
-    start, end = current_cycle_window(cycle["anchor"], cycle["length"])
+    start, end = current_cycle_window(cycle["last_pay_date"], cycle["length"])
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
     rollups = summarise_transactions(transactions, set(targets))
     result = {}
@@ -440,15 +440,15 @@ def set_budget(event: dict, repo: BudgetRepository) -> dict:
 def set_paycycle(event: dict, repo: PayCycleRepository) -> dict:
     """PUT /paycycle — set (replace) the persisted pay cycle.
 
-    Body: {"length": <7|14|30>, "anchor": "YYYY-MM-DD"} where anchor is a real
+    Body: {"length": <7|14|30>, "last_pay_date": "YYYY-MM-DD"} where last_pay_date is a real
     past payday. Both fields are required and validated here (the repository just
-    persists): length must be one the client offers, anchor must be a valid ISO
-    date that isn't in the future — a future anchor has no cycle_start <= today,
+    persists): length must be one the client offers, last_pay_date must be a valid ISO
+    date that isn't in the future — a future last_pay_date has no cycle_start <= today,
     which would break the payday-window math in Slice 2.
 
     The "not in the future" ceiling is today + 1 day, matching the +1-day slack
     the rest of the API uses because AEST dates run up to a day ahead of UTC; the
-    precise Australia/Sydney reset lands with the window math in Slice 2.
+    precise Australia/Melbourne reset lands with the window math in Slice 2.
     """
     body, error = _parse_json_body(event)
     if error:
@@ -460,15 +460,15 @@ def set_paycycle(event: dict, repo: PayCycleRepository) -> dict:
         return _json_response(
             400, {"error": f"length must be one of {sorted(PAYCYCLE_LENGTHS)}"})
 
-    anchor = body.get("anchor")
-    if not isinstance(anchor, str):
-        return _json_response(400, {"error": "anchor must be a YYYY-MM-DD date string"})
+    last_pay_date = body.get("last_pay_date")
+    if not isinstance(last_pay_date, str):
+        return _json_response(400, {"error": "last_pay_date must be a YYYY-MM-DD date string"})
     try:
-        anchor_date = date.fromisoformat(anchor)
+        pay_date = date.fromisoformat(last_pay_date)
     except ValueError:
-        return _json_response(400, {"error": "anchor must be a valid YYYY-MM-DD date"})
-    if anchor_date > datetime.now(timezone.utc).date() + timedelta(days=1):
-        return _json_response(400, {"error": "anchor cannot be in the future"})
+        return _json_response(400, {"error": "last_pay_date must be a valid YYYY-MM-DD date"})
+    if pay_date > datetime.now(timezone.utc).date() + timedelta(days=1):
+        return _json_response(400, {"error": "last_pay_date cannot be in the future"})
 
-    saved = repo.set_paycycle(length, anchor)
+    saved = repo.set_paycycle(length, last_pay_date)
     return _json_response(200, saved)

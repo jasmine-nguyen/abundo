@@ -215,8 +215,8 @@ class FakePayCycleRepo:
     """Stand-in for PayCycleRepository. Returns a fixed cycle and counts reads so a
     test can assert the empty-budget short-circuit skips the pay-cycle read."""
 
-    def __init__(self, length=14, anchor="2024-01-03"):
-        self._cycle = {"length": length, "anchor": anchor}
+    def __init__(self, length=14, last_pay_date="2024-01-03"):
+        self._cycle = {"length": length, "last_pay_date": last_pay_date}
         self.get_calls = 0
 
     def get_paycycle(self):
@@ -297,14 +297,14 @@ def test_get_budgets_dispatch(handler, monkeypatch):
 
 def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
     # Back-compat: a deployed client still sends ?days=. The server no longer reads
-    # it (the window is anchor-derived), so the request still 200s and the window
+    # it (the window is last_pay_date-derived), so the request still 200s and the window
     # start is the stored cycle's cycle_start, NOT today-days.
     monkeypatch.setattr(handler, "BudgetRepository",
                         lambda: FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}}))
     txn_repo = FakeTransactionRepo(transactions=[])
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(handler, "PayCycleRepository",
-                        lambda: FakePayCycleRepo(length=14, anchor="2024-01-03"))
+                        lambda: FakePayCycleRepo(length=14, last_pay_date="2024-01-03"))
 
     resp = handler.lambda_handler({
         "rawPath": "/budgets",
@@ -314,7 +314,7 @@ def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
 
     assert resp["statusCode"] == 200  # ?days is ignored, not a 400
     expected_start, _ = handler.current_cycle_window("2024-01-03", 14)
-    assert txn_repo.calls[0][1] == expected_start  # anchor-derived, not today-7
+    assert txn_repo.calls[0][1] == expected_start  # last_pay_date-derived, not today-7
 
 
 def test_put_budget_dispatch(handler, monkeypatch):
@@ -548,36 +548,36 @@ def test_current_cycle_window_end_is_today_plus_one(handler):
 
 def test_current_cycle_window_k_selection_across_cycles(handler):
     from datetime import date
-    # anchor 2024-01-03, length 14; today 2024-02-15 is 43 days on -> k=3 -> +42 days.
+    # last_pay_date 2024-01-03, length 14; today 2024-02-15 is 43 days on -> k=3 -> +42 days.
     start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
     assert start == "2024-02-14"
 
 
 def test_current_cycle_window_today_on_payday_starts_new_cycle(handler):
     from datetime import date
-    # Exactly `length` days after the anchor: a fresh cycle starts today.
+    # Exactly `length` days after the last_pay_date: a fresh cycle starts today.
     start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 17))
     assert start == "2024-01-17"
 
 
 def test_current_cycle_window_day_before_payday_still_previous_cycle(handler):
     from datetime import date
-    # length-1 days after the anchor: still the anchor's cycle.
+    # length-1 days after the last_pay_date: still the last_pay_date's cycle.
     start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 16))
     assert start == "2024-01-03"
 
 
 def test_current_cycle_window_length_variants(handler):
     from datetime import date
-    today = date(2024, 3, 1)  # 58 days after the anchor
+    today = date(2024, 3, 1)  # 58 days after the last_pay_date
     # weekly: k=8 -> +56 days -> 2024-02-28; monthly: k=1 -> +30 -> 2024-02-02.
     assert handler.current_cycle_window("2024-01-03", 7, today=today)[0] == "2024-02-28"
     assert handler.current_cycle_window("2024-01-03", 30, today=today)[0] == "2024-02-02"
 
 
-def test_current_cycle_window_future_anchor_clamped(handler):
+def test_current_cycle_window_future_last_pay_date_clamped(handler):
     from datetime import date
-    # A future anchor has no valid k; the window must not invert.
+    # A future last_pay_date has no valid k; the window must not invert.
     start, end = handler.current_cycle_window("2024-06-05", 14, today=date(2024, 6, 1))
     assert start == "2024-06-01"       # clamped to today
     assert start <= end                # never inverted
@@ -590,32 +590,32 @@ def test_current_cycle_window_injectable_today_is_deterministic(handler):
     assert a == b
 
 
-def test_current_cycle_window_defaults_to_sydney_today(handler, monkeypatch):
+def test_current_cycle_window_defaults_to_melbourne_today(handler, monkeypatch):
     from datetime import date
-    # With no explicit `today`, the window uses _sydney_today().
-    monkeypatch.setattr(handler, "_sydney_today", lambda: date(2024, 2, 15))
+    # With no explicit `today`, the window uses _melbourne_today().
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 2, 15))
     start, end = handler.current_cycle_window("2024-01-03", 14)
     assert (start, end) == ("2024-02-14", "2024-02-16")
 
 
-def test_sydney_today_maps_utc_instant_to_local_date(handler, monkeypatch):
+def test_melbourne_today_maps_utc_instant_to_local_date(handler, monkeypatch):
     from datetime import datetime, timezone
-    # 2024-06-30T15:30Z is already 2024-07-01 in Sydney (UTC+10 in June/AEST).
+    # 2024-06-30T15:30Z is already 2024-07-01 in Melbourne (UTC+10 in June/AEST).
     class _FrozenDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
             return datetime(2024, 6, 30, 15, 30, tzinfo=timezone.utc).astimezone(tz)
     monkeypatch.setattr(handler, "datetime", _FrozenDatetime)
-    assert handler._sydney_today().isoformat() == "2024-07-01"
+    assert handler._melbourne_today().isoformat() == "2024-07-01"
 
 
-def test_sydney_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypatch):
+def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypatch):
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfoNotFoundError
     # Simulate tzdata missing from the layer: ZoneInfo raises. The budget path must
     # degrade to UTC, not 500.
-    monkeypatch.setattr(handler, "_SYDNEY", None)
+    monkeypatch.setattr(handler, "_MELBOURNE", None)
     def _boom(name):
         raise ZoneInfoNotFoundError(name)
     monkeypatch.setattr(handler, "ZoneInfo", _boom)
-    assert handler._sydney_today() == datetime.now(timezone.utc).date()
+    assert handler._melbourne_today() == datetime.now(timezone.utc).date()

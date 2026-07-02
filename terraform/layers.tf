@@ -10,7 +10,7 @@ locals {
   # creating the new one, orphaning both lambdas onto a deleted layer. Globbing
   # *.py sidesteps that entirely.
   #
-  # tzdata: handler.py uses ZoneInfo("Australia/Sydney") for the payday-aligned
+  # tzdata: handler.py uses ZoneInfo("Australia/Melbourne") for the payday-aligned
   # budget window, which needs the IANA tz database. Lambda's base image doesn't
   # reliably ship it, so bundle the pure-Python `tzdata` package into the layer
   # (--no-deps: it has none; pure data, no compiled .so, so architecture-safe).
