@@ -10,7 +10,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-from constants import CATEGORY_PALETTE, MAX_PAGE_SIZE, PENDING_STATUS, SEED_CATEGORIES
+from constants import MAX_PAGE_SIZE, PENDING_STATUS
 from models import Transaction
 
 REGION_NAME = os.environ["AWS_REGION"]
@@ -288,11 +288,45 @@ class TransactionRepository:
             handle_database_error(e, "is_new_event")
 
 
+# Category taxonomy data lives here, not in constants.py, on purpose: this module
+# ships in the Lambda layer, and a `from constants import ...` here binds to the
+# FUNCTION's constants.py — coupling the layer to another package's symbols. A
+# deploy skew there fails this import at module load and 500s EVERY route
+# (including /transactions). The palette + seed are used only by CategoryRepository,
+# so keeping them local makes the layer self-contained. Ids are the curated slugs
+# from src/context.tsx SEED_CATS (the vocabulary BankSync rules + client
+# budgets/rules reference); `recent` is omitted (client-derived).
+CATEGORY_PALETTE = [
+    "#E8A87C", "#7FD49B", "#F08C8C", "#8AB4F8", "#F2A0C9",
+    "#C7A8F0", "#F2C94C", "#6FD0C9", "#8FD46B", "#B0A8F0",
+]
+
+SEED_CATEGORIES = {
+    "coffee": {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle"},
+    "groceries": {"id": "groceries", "name": "Groceries", "icon": "cart", "color": "#7FD49B", "bucket": "Living"},
+    "eatingout": {"id": "eatingout", "name": "Eating Out", "icon": "food", "color": "#F08C8C", "bucket": "Lifestyle"},
+    "transport": {"id": "transport", "name": "Transport", "icon": "car", "color": "#8AB4F8", "bucket": "Living"},
+    "health": {"id": "health", "name": "Health", "icon": "health", "color": "#F2A0C9", "bucket": "Living"},
+    "pets": {"id": "pets", "name": "Pets", "icon": "pets", "color": "#C7A8F0", "bucket": "Lifestyle"},
+    "utilities": {"id": "utilities", "name": "Utilities", "icon": "bolt", "color": "#F2C94C", "bucket": "Living"},
+    "shopping": {"id": "shopping", "name": "Shopping", "icon": "bag", "color": "#6FD0C9", "bucket": "Lifestyle"},
+    "fitness": {"id": "fitness", "name": "Health & Fitness", "icon": "dumbbell", "color": "#8FD46B", "bucket": "Lifestyle"},
+    "subs": {"id": "subs", "name": "Subscriptions", "icon": "film", "color": "#F0B27A", "bucket": "Lifestyle"},
+    "travel": {"id": "travel", "name": "Travel", "icon": "plane", "color": "#6FB6D0", "bucket": "Lifestyle"},
+    "gifts": {"id": "gifts", "name": "Gifts", "icon": "gift", "color": "#E59BD0", "bucket": "Lifestyle"},
+    "phonenet": {"id": "phonenet", "name": "Phone & Internet", "icon": "phone", "color": "#B0A8F0", "bucket": "Living"},
+}
+
+
 _CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
 
 
 class DuplicateCategoryError(Exception):
     """A category with the given id already exists (handler maps this to 409)."""
+
+
+class CategoryNotFoundError(Exception):
+    """No category with the given id exists (handler maps this to 404)."""
 
 
 class CategoryRepository:
@@ -386,3 +420,81 @@ class CategoryRepository:
                     raise DuplicateCategoryError(cat_id)
                 # id still free — the version moved under us; loop retries once.
         raise RuntimeError("create_category: exhausted retries under write contention")
+
+    def rename_category(self, cat_id: str, name: str) -> dict:
+        """Change a category's display name only — the id/slug is immutable (it's
+        the BankSync vocabulary). Raises CategoryNotFoundError if the id is absent.
+        `#name` is aliased because `name` is a DynamoDB reserved word.
+        """
+        self._ensure_seeded()
+        for _attempt in range(2):
+            item = self._get_config()
+            items = item["items"]
+            version = item["version"]
+            if cat_id not in items:
+                raise CategoryNotFoundError(cat_id)
+            try:
+                self._get_table().update_item(
+                    Key=_CATEGORIES_KEY,
+                    UpdateExpression="SET #items.#id.#name = :name, #v = :next",
+                    ConditionExpression=(
+                        "attribute_exists(pk) AND #v = :expected "
+                        "AND attribute_exists(#items.#id)"
+                    ),
+                    ExpressionAttributeNames={
+                        "#items": "items", "#id": cat_id, "#name": "name", "#v": "version",
+                    },
+                    ExpressionAttributeValues={
+                        ":name": name,
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                # Build the response from the pre-read item so id/icon/color/bucket survive.
+                return {**items[cat_id], "name": name}
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "rename category")
+                # Disambiguate: id deleted under us (404) vs a concurrent version bump (retry).
+                latest = self._get_config()
+                if cat_id not in latest["items"]:
+                    raise CategoryNotFoundError(cat_id)
+                # id still present — the version moved under us; loop retries once.
+        raise RuntimeError("rename_category: exhausted retries under write contention")
+
+    def delete_category(self, cat_id: str) -> str:
+        """Hard-delete a category (REMOVE its map key). No server-side cascade —
+        transactions still referencing the id render as Uncategorized client-side.
+        Raises CategoryNotFoundError if the id is absent.
+        """
+        self._ensure_seeded()
+        for _attempt in range(2):
+            item = self._get_config()
+            items = item["items"]
+            version = item["version"]
+            if cat_id not in items:
+                raise CategoryNotFoundError(cat_id)
+            try:
+                self._get_table().update_item(
+                    Key=_CATEGORIES_KEY,
+                    # REMOVE drops one map key; SET bumps the version. The config item stays.
+                    UpdateExpression="REMOVE #items.#id SET #v = :next",
+                    ConditionExpression=(
+                        "attribute_exists(pk) AND #v = :expected "
+                        "AND attribute_exists(#items.#id)"
+                    ),
+                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
+                    ExpressionAttributeValues={
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                return cat_id
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "delete category")
+                latest = self._get_config()
+                if cat_id not in latest["items"]:
+                    raise CategoryNotFoundError(cat_id)
+                # id still present — the version moved under us; loop retries once.
+        raise RuntimeError("delete_category: exhausted retries under write contention")
