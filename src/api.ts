@@ -88,15 +88,24 @@ export async function deleteCategory(id: string): Promise<{ id: string }> {
   return response.json();
 }
 
+/** A budget's target plus its computed spend for the current window. */
+export interface BudgetRollup {
+  target: number;
+  posted: number;   // settled (posted) spend
+  pending: number;  // not-yet-settled (pending) spend
+}
+
 /**
- * Fetch all persisted budget targets as a { categoryId: target } map. Empty
- * before any target is set. `posted`/`pending` are not part of this endpoint.
+ * Fetch every budgeted category's target plus its computed posted/pending spend
+ * for the current window. Empty {} before any target is set.
  *
- * @returns A map of category id to its budget-target number.
+ * @param days - Rolling window length (the client's pay-cycle length); the server
+ *   sums spend over the last `days` days.
+ * @returns A map of category id to its { target, posted, pending }.
  * @throws If the response status is not OK.
  */
-export async function fetchBudgets(): Promise<Record<string, number>> {
-  const response = await fetch(`${API_BASE}/budgets`);
+export async function fetchBudgets(days: number): Promise<Record<string, BudgetRollup>> {
+  const response = await fetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`);
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
