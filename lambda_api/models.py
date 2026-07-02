@@ -15,3 +15,11 @@ class Transaction(TypedDict):
     status: str
     type: str
     counts_to_budget: bool
+
+
+class Category(TypedDict):
+    id: str
+    name: str
+    icon: str
+    color: str
+    bucket: str

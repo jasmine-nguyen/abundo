@@ -73,6 +73,7 @@ resource "aws_iam_role_policy" "lambda_api_dynamodb" {
       Effect = "Allow"
       Action = [
         "dynamodb:GetItem",
+        "dynamodb:PutItem",
         "dynamodb:Query",
         "dynamodb:UpdateItem"
       ]
