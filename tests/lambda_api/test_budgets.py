@@ -607,3 +607,15 @@ def test_sydney_today_maps_utc_instant_to_local_date(handler, monkeypatch):
             return datetime(2024, 6, 30, 15, 30, tzinfo=timezone.utc).astimezone(tz)
     monkeypatch.setattr(handler, "datetime", _FrozenDatetime)
     assert handler._sydney_today().isoformat() == "2024-07-01"
+
+
+def test_sydney_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypatch):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfoNotFoundError
+    # Simulate tzdata missing from the layer: ZoneInfo raises. The budget path must
+    # degrade to UTC, not 500.
+    monkeypatch.setattr(handler, "_SYDNEY", None)
+    def _boom(name):
+        raise ZoneInfoNotFoundError(name)
+    monkeypatch.setattr(handler, "ZoneInfo", _boom)
+    assert handler._sydney_today() == datetime.now(timezone.utc).date()

@@ -13,7 +13,7 @@ from constants import (
 )
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from repository import (
     BudgetRepository,
     CategoryNotFoundError,
@@ -269,14 +269,20 @@ def _sydney_today() -> date:
     """Today's date in the user's timezone (Australia/Sydney), so the budget
     window resets at LOCAL midnight on payday, not UTC midnight.
 
-    Built lazily and cached: if the tzdata package is ever missing from the layer,
-    ZoneInfo raises here (only the budget path) rather than at module import, which
-    would 500 every route. Sydney observes DST (+10/+11), so a fixed UTC offset
-    can't stand in — the tz database is required.
+    Built lazily and cached. If the tzdata package is ever missing from the layer,
+    ZoneInfo raises here (only the budget path, not at module import). We catch that
+    and FAIL SAFE to UTC: /budgets keeps working with a reset that's off by at most
+    a day at the UTC/Sydney seam, rather than 500ing the whole budget path. Sydney
+    observes DST (+10/+11) so a fixed offset isn't a substitute for the tz database
+    — UTC is only the degraded fallback, and the WARN makes the packaging gap loud.
     """
     global _SYDNEY
     if _SYDNEY is None:
-        _SYDNEY = ZoneInfo("Australia/Sydney")
+        try:
+            _SYDNEY = ZoneInfo("Australia/Sydney")
+        except ZoneInfoNotFoundError:
+            print("WARN: tzdata unavailable in layer; budget window falling back to UTC today")
+            return datetime.now(timezone.utc).date()
     return datetime.now(_SYDNEY).date()
 
 
