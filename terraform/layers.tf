@@ -3,6 +3,9 @@ resource "null_resource" "prepare_shared_layer" {
     # Hash only the .py sources, so a stray __pycache__ can't spuriously churn the
     # layer while any real source change still triggers a rebuild.
     shared_hash = sha256(join("", [for f in fileset("${path.module}/../shared", "*.py") : filesha256("${path.module}/../shared/${f}")]))
+    # tzdata is a bundled runtime dependency (see the pip step below); re-run the
+    # provisioner if the pinned package changes.
+    tzdata = "tzdata"
   }
 
   provisioner "local-exec" {
@@ -12,7 +15,14 @@ resource "null_resource" "prepare_shared_layer" {
     # left by running Python there) — and it failed *between* destroying the old
     # layer version and creating the new one, orphaning both lambdas onto a
     # deleted layer. Globbing *.py sidesteps that entirely.
-    command = "rm -rf ${path.module}/layer/python && mkdir -p ${path.module}/layer/python && cp ${path.module}/../shared/*.py ${path.module}/layer/python/"
+    #
+    # tzdata: handler.py uses ZoneInfo("Australia/Sydney") for the payday-aligned
+    # budget window, which needs the IANA tz database. Lambda's base image doesn't
+    # reliably ship it, so bundle the pure-Python `tzdata` package into the layer
+    # (--no-deps: it has none; pure data, no compiled .so, so architecture-safe).
+    # Folded into THIS command (not a separate null_resource) so it can't run —
+    # or fail — between destroying and recreating the layer version.
+    command = "rm -rf ${path.module}/layer/python && mkdir -p ${path.module}/layer/python && cp ${path.module}/../shared/*.py ${path.module}/layer/python/ && python3 -m pip install --no-deps --quiet --target ${path.module}/layer/python tzdata"
   }
 }
 

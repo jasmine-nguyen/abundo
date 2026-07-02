@@ -211,6 +211,19 @@ class FakeTransactionRepo:
         return self._queue.pop(0) if self._queue else ([], None)
 
 
+class FakePayCycleRepo:
+    """Stand-in for PayCycleRepository. Returns a fixed cycle and counts reads so a
+    test can assert the empty-budget short-circuit skips the pay-cycle read."""
+
+    def __init__(self, length=14, anchor="2024-01-03"):
+        self._cycle = {"length": length, "anchor": anchor}
+        self.get_calls = 0
+
+    def get_paycycle(self):
+        self.get_calls += 1
+        return dict(self._cycle)
+
+
 def test_list_budgets_rollup_shape(handler):
     budget_repo = FakeBudgetRepo(budgets={
         "coffee": {"target": Decimal("58")},
@@ -224,7 +237,7 @@ def test_list_budgets_rollup_shape(handler):
         _transaction("coffee", -9, "posted", counts=False),  # excluded (!counts_to_budget)
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo)
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
 
     assert result == {
         "coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("12")},
@@ -235,7 +248,7 @@ def test_list_budgets_rollup_shape(handler):
 def test_list_budgets_no_spend_is_zero(handler):
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
 
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]))
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]), FakePayCycleRepo())
 
     assert result == {"coffee": {"target": Decimal("58"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
@@ -243,11 +256,13 @@ def test_list_budgets_no_spend_is_zero(handler):
 def test_list_budgets_empty_skips_txn_scan(handler):
     budget_repo = FakeBudgetRepo()  # no targets
     txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50)])
+    paycycle_repo = FakePayCycleRepo()
 
-    result = handler.list_budgets(budget_repo, txn_repo)
+    result = handler.list_budgets(budget_repo, txn_repo, paycycle_repo)
 
     assert result == {}
-    assert txn_repo.calls == []  # no budgets -> don't scan transactions
+    assert txn_repo.calls == []          # no budgets -> don't scan transactions
+    assert paycycle_repo.get_calls == 0  # ...and don't even read the pay cycle
 
 
 def test_list_budgets_paginates(handler):
@@ -258,7 +273,7 @@ def test_list_budgets_paginates(handler):
         ([_transaction("coffee", -25, "posted")], None),           # page 2, done
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo)
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
 
     assert result["coffee"]["posted"] == Decimal("65")  # 40 + 25 summed across pages
 
@@ -271,6 +286,7 @@ def test_get_budgets_dispatch(handler, monkeypatch):
     txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50, "posted")])
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
+    monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
 
     resp = handler.lambda_handler(
         {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}, None)
@@ -279,45 +295,26 @@ def test_get_budgets_dispatch(handler, monkeypatch):
     assert json.loads(resp["body"]) == {"coffee": {"target": 58, "posted": 50, "pending": 0}}
 
 
-def test_get_budgets_dispatch_days_param(handler, monkeypatch):
-    # ?days=7 -> the window start is today-7 (the client's cycle length flows through).
-    from datetime import datetime, timezone, timedelta
+def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
+    # Back-compat: a deployed client still sends ?days=. The server no longer reads
+    # it (the window is anchor-derived), so the request still 200s and the window
+    # start is the stored cycle's cycle_start, NOT today-days.
     monkeypatch.setattr(handler, "BudgetRepository",
                         lambda: FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}}))
     txn_repo = FakeTransactionRepo(transactions=[])
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
+    monkeypatch.setattr(handler, "PayCycleRepository",
+                        lambda: FakePayCycleRepo(length=14, anchor="2024-01-03"))
 
-    handler.lambda_handler({
+    resp = handler.lambda_handler({
         "rawPath": "/budgets",
         "requestContext": {"http": {"method": "GET"}},
         "queryStringParameters": {"days": "7"},
     }, None)
 
-    today = datetime.now(timezone.utc).date()
-    assert txn_repo.calls[0][1] == (today - timedelta(days=7)).isoformat()  # start_date arg
-
-
-def _get_budgets_event(days=None):
-    event = {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}
-    if days is not None:
-        event["queryStringParameters"] = {"days": days}
-    return event
-
-
-def test_budget_window_days_default(handler):
-    assert handler._budget_window_days(_get_budgets_event()) == handler.CYCLE_WINDOW_DAYS
-
-
-def test_budget_window_days_valid(handler):
-    assert handler._budget_window_days(_get_budgets_event("7")) == 7
-    assert handler._budget_window_days(_get_budgets_event("30")) == 30
-
-
-def test_budget_window_days_invalid_falls_back(handler):
-    default = handler.CYCLE_WINDOW_DAYS
-    assert handler._budget_window_days(_get_budgets_event("abc")) == default
-    assert handler._budget_window_days(_get_budgets_event("0")) == default    # below range
-    assert handler._budget_window_days(_get_budgets_event("999")) == default  # above range
+    assert resp["statusCode"] == 200  # ?days is ignored, not a 400
+    expected_start, _ = handler.current_cycle_window("2024-01-03", 14)
+    assert txn_repo.calls[0][1] == expected_start  # anchor-derived, not today-7
 
 
 def test_put_budget_dispatch(handler, monkeypatch):
@@ -543,19 +540,70 @@ def test_summarise_skips_unknown_status(handler):
     assert handler.summarise_transactions(txns, {"coffee"}) == {}
 
 
-def test_current_cycle_window_bounds(handler):
-    from datetime import datetime, timezone, timedelta
-    today = datetime.now(timezone.utc).date()
-
-    start, end = handler.current_cycle_window(14)
-
-    assert start == (today - timedelta(days=14)).isoformat()
-    assert end == (today + timedelta(days=1)).isoformat()
+def test_current_cycle_window_end_is_today_plus_one(handler):
+    from datetime import date
+    _, end = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
+    assert end == "2024-02-16"  # half-open [start, today+1) includes all of today
 
 
-def test_current_cycle_window_length_varies(handler):
-    from datetime import datetime, timezone, timedelta
-    today = datetime.now(timezone.utc).date()
+def test_current_cycle_window_k_selection_across_cycles(handler):
+    from datetime import date
+    # anchor 2024-01-03, length 14; today 2024-02-15 is 43 days on -> k=3 -> +42 days.
+    start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
+    assert start == "2024-02-14"
 
-    assert handler.current_cycle_window(7)[0] == (today - timedelta(days=7)).isoformat()
-    assert handler.current_cycle_window(30)[0] == (today - timedelta(days=30)).isoformat()
+
+def test_current_cycle_window_today_on_payday_starts_new_cycle(handler):
+    from datetime import date
+    # Exactly `length` days after the anchor: a fresh cycle starts today.
+    start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 17))
+    assert start == "2024-01-17"
+
+
+def test_current_cycle_window_day_before_payday_still_previous_cycle(handler):
+    from datetime import date
+    # length-1 days after the anchor: still the anchor's cycle.
+    start, _ = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 16))
+    assert start == "2024-01-03"
+
+
+def test_current_cycle_window_length_variants(handler):
+    from datetime import date
+    today = date(2024, 3, 1)  # 58 days after the anchor
+    # weekly: k=8 -> +56 days -> 2024-02-28; monthly: k=1 -> +30 -> 2024-02-02.
+    assert handler.current_cycle_window("2024-01-03", 7, today=today)[0] == "2024-02-28"
+    assert handler.current_cycle_window("2024-01-03", 30, today=today)[0] == "2024-02-02"
+
+
+def test_current_cycle_window_future_anchor_clamped(handler):
+    from datetime import date
+    # A future anchor has no valid k; the window must not invert.
+    start, end = handler.current_cycle_window("2024-06-05", 14, today=date(2024, 6, 1))
+    assert start == "2024-06-01"       # clamped to today
+    assert start <= end                # never inverted
+
+
+def test_current_cycle_window_injectable_today_is_deterministic(handler):
+    from datetime import date
+    a = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
+    b = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
+    assert a == b
+
+
+def test_current_cycle_window_defaults_to_sydney_today(handler, monkeypatch):
+    from datetime import date
+    # With no explicit `today`, the window uses _sydney_today().
+    monkeypatch.setattr(handler, "_sydney_today", lambda: date(2024, 2, 15))
+    start, end = handler.current_cycle_window("2024-01-03", 14)
+    assert (start, end) == ("2024-02-14", "2024-02-16")
+
+
+def test_sydney_today_maps_utc_instant_to_local_date(handler, monkeypatch):
+    from datetime import datetime, timezone
+    # 2024-06-30T15:30Z is already 2024-07-01 in Sydney (UTC+10 in June/AEST).
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2024, 6, 30, 15, 30, tzinfo=timezone.utc).astimezone(tz)
+    monkeypatch.setattr(handler, "datetime", _FrozenDatetime)
+    assert handler._sydney_today().isoformat() == "2024-07-01"

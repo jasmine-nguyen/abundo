@@ -3,7 +3,6 @@ from constants import (
     BUDGET_PATH,
     CATEGORY_BUCKETS,
     CATEGORY_PATH,
-    CYCLE_WINDOW_DAYS,
     DEFAULT_CATEGORY_ICON,
     MAX_PAGE_SIZE,
     PAYCYCLE_LENGTHS,
@@ -14,6 +13,7 @@ from constants import (
 )
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 from repository import (
     BudgetRepository,
     CategoryNotFoundError,
@@ -57,9 +57,12 @@ def lambda_handler(event, context):
             return delete_category(event, CategoryRepository())
 
         if path == BUDGET_PATH and method == "GET":
-            length_days = _budget_window_days(event)
+            # Window is derived server-side from the stored pay cycle; a stale
+            # client's ?days= is simply not read (ignored, never a 400).
             return _json_response(
-                200, list_budgets(BudgetRepository(), TransactionRepository(), length_days))
+                200,
+                list_budgets(
+                    BudgetRepository(), TransactionRepository(), PayCycleRepository()))
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
             return set_budget(event, BudgetRepository())
@@ -259,20 +262,47 @@ def delete_category(event: dict, repo: CategoryRepository) -> dict:
     return _json_response(200, {"id": cat_id})
 
 
-def current_cycle_window(length_days: int = CYCLE_WINDOW_DAYS) -> tuple[str, str]:
-    """Return (start, end) ISO dates for the current budget window: the last
-    `length_days` days through today.
+_SYDNEY = None  # ZoneInfo("Australia/Sydney"), built lazily on first use.
 
-    INTERIM: a rolling window, NOT yet aligned to a pay-cycle anchor (real
-    payday-reset is P14). Isolated here on purpose — when P14 lands, only this
-    function changes; the sum logic, the API shape, and the client stay put. The
-    +1-day end mirrors get_recent_transactions (AEST dates can run a day ahead of
-    UTC), so today's transactions are always included.
+
+def _sydney_today() -> date:
+    """Today's date in the user's timezone (Australia/Sydney), so the budget
+    window resets at LOCAL midnight on payday, not UTC midnight.
+
+    Built lazily and cached: if the tzdata package is ever missing from the layer,
+    ZoneInfo raises here (only the budget path) rather than at module import, which
+    would 500 every route. Sydney observes DST (+10/+11), so a fixed UTC offset
+    can't stand in — the tz database is required.
     """
-    today = datetime.now(timezone.utc).date()
-    start = (today - timedelta(days=length_days)).isoformat()
-    end = (today + timedelta(days=1)).isoformat()
-    return start, end
+    global _SYDNEY
+    if _SYDNEY is None:
+        _SYDNEY = ZoneInfo("Australia/Sydney")
+    return datetime.now(_SYDNEY).date()
+
+
+def current_cycle_window(anchor: str, length: int, today: date | None = None) -> tuple[str, str]:
+    """Return (start, end) ISO dates for the CURRENT pay cycle: the half-open
+    window [cycle_start, today+1) that resets on the user's payday.
+
+    `cycle_start` is the most recent payday on or before today — the latest
+    `anchor + k*length` days (integer k >= 0) that is <= today. `today` defaults
+    to the Sydney-local date (injectable for deterministic tests). The +1-day end
+    keeps the inclusive date-range query covering all of today's transactions;
+    cycle_start is inclusive, so payday spend lands in the fresh cycle.
+
+    A future anchor has no valid k (Slice 1 rejects one at write, but stay safe):
+    max(0, ...) plus the cycle_start>today clamp keep the window from inverting.
+    """
+    if today is None:
+        today = _sydney_today()
+    anchor_date = date.fromisoformat(anchor)
+    elapsed_days = (today - anchor_date).days
+    cycles_elapsed = max(0, elapsed_days // length)
+    cycle_start = anchor_date + timedelta(days=cycles_elapsed * length)
+    if cycle_start > today:
+        cycle_start = today
+    end = today + timedelta(days=1)
+    return cycle_start.isoformat(), end.isoformat()
 
 
 def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> dict[str, dict]:
@@ -332,41 +362,27 @@ def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: s
     return transactions
 
 
-def _budget_window_days(event: dict) -> int:
-    """Rolling-window length (days) from the ?days=N query string, else the default.
-
-    The client sends its pay-cycle length so the window matches (7/14/30). A
-    missing / non-numeric / out-of-range value falls back to CYCLE_WINDOW_DAYS
-    rather than erroring — the param is an optimisation, not required.
-    """
-    raw = (event.get("queryStringParameters") or {}).get("days")
-    try:
-        days = int(raw)
-    except (TypeError, ValueError):
-        return CYCLE_WINDOW_DAYS
-    if days < 1 or days > 366:
-        return CYCLE_WINDOW_DAYS
-    return days
-
-
 def list_budgets(
     budget_repo: BudgetRepository,
     transaction_repo: TransactionRepository,
-    length_days: int = CYCLE_WINDOW_DAYS,
+    paycycle_repo: PayCycleRepository,
 ) -> dict:
     """GET /budgets — per budgeted category, the target plus posted/pending spend
-    computed on-read (approach C) over the current window.
+    computed on-read (approach C) over the current pay-cycle window.
 
-    posted/pending are summed from the window's transactions (nothing stored), so
-    a pending->posted settlement or an amount change is reflected on the next call
-    with no bookkeeping. Every budgeted id appears; a category with no spend this
-    window is posted/pending 0. DecimalEncoder renders all three as JSON numbers.
-    Empty {} before any target is set (and the transaction scan is skipped).
+    The window resets on the user's payday: it reads the stored pay cycle and sums
+    transactions over [cycle_start, today+1). posted/pending are summed from the
+    window's transactions (nothing stored), so a pending->posted settlement or an
+    amount change is reflected on the next call with no bookkeeping. Every budgeted
+    id appears; a category with no spend this window is posted/pending 0.
+    DecimalEncoder renders all three as JSON numbers. Empty {} before any target is
+    set — and the pay-cycle read AND the transaction scan are both skipped.
     """
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     if not targets:
         return {}
-    start, end = current_cycle_window(length_days)
+    cycle = paycycle_repo.get_paycycle()
+    start, end = current_cycle_window(cycle["anchor"], cycle["length"])
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
     rollups = summarise_transactions(transactions, set(targets))
     result = {}
