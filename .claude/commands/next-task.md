@@ -55,32 +55,45 @@ Target card (optional): $ARGUMENTS
    Report the results. Do not proceed to review with a red test suite unless the
    user explicitly says to.
 
-## Phase 3 — Verify (the gate that code-critic enforces)
+## Phase 3 — Verify (the gates that code-critic AND qa enforce)
 
-8. **Review (subagent).** Spawn the `code-critic` agent on the change (the branch
-   / working-tree diff). It returns a verdict, plus bugs, craft, escalations, and
-   any tech-debt cards.
+8. **Review + QA (subagents, in parallel).** On the built change, spawn BOTH:
+   - `code-critic` on the branch / working-tree diff → a verdict, plus bugs,
+     craft, escalations, and any tech-debt cards.
+   - `qa` on the same change (feed it the card's "done" definition + the diff) →
+     (1) a tickable MANUAL test-case checklist for the user to run by hand, and
+     (2) an adversarial edge-case critique with `file:line` citations, ranked
+     worst-first and each labelled real-bug vs acceptable-for-scope.
 
-9. **Resolve the verdict — bounded.**
-   - **Decisions to escalate** → surface to the user and pause; don't decide for
-     them.
-   - **Bugs + fix-now craft** (SHIP AFTER FIXES / DO NOT SHIP) → fix them, re-run
-     the self-check, then re-run `code-critic`. Cap this at **2 review rounds**:
-     if it still isn't SHIP after two, STOP and hand the user the remaining
-     findings rather than looping forever.
-   - **Deferred craft** → collect the proposed tech-debt CARD blocks; you'll
-     offer to file them at gate 2. Do NOT file them yet.
+   Spawn them together so their contexts stay isolated and they run concurrently.
+
+9. **Resolve both verdicts — bounded.**
+   - **Decisions to escalate** (from either agent) → surface to the user and
+     pause; don't decide for them.
+   - **Bugs + fix-now craft** — code-critic's SHIP AFTER FIXES / DO NOT SHIP
+     items, PLUS every qa finding labelled **real bug** → fix them, re-run the
+     self-check, then re-run BOTH agents. Cap this at **2 review rounds**: if it
+     still isn't clean after two, STOP and hand the user the remaining findings
+     rather than looping forever.
+   - **Deferred craft / acceptable-for-scope** → collect the proposed tech-debt
+     CARD blocks and qa's deferred risks; you'll offer to file them at gate 2. Do
+     NOT file them yet.
+   - **Hold onto qa's test-case checklist** — it's part of what you present and
+     write to Notion at gate 2.
 
 ## Phase 4 — Finish (gate 2)
 
 10. **Present + PAUSE (gate 2).** Show the user: what you built, the final diff
-    summary, the `code-critic` verdict (should be SHIP), test/typecheck results,
-    and the list of proposed tech-debt cards. Then ask:
-    **"Approve this change? On go I'll commit, push, file the tech-debt cards,
-    and move the card to Done."**
+    summary, the `code-critic` verdict (should be SHIP), the `qa` edge-case
+    findings and its test-case checklist, test/typecheck results, and the list of
+    proposed tech-debt cards. Then ask:
+    **"Approve this change? On go I'll commit, push, write the QA checklist to
+    Notion, file the tech-debt cards, and move the card to Done."**
 
 11. **On go — apply side effects (only now):**
     - Commit and push the branch.
+    - Write the `qa` test-case checklist to a Notion page (`notion-create-pages`)
+      so the user can tick through it on the phone; link it from the card.
     - File the approved tech-debt cards to the board (`notion-create-pages`).
     - Update the worked card's `Status` (In Progress → Done, or as the user
       directs).
@@ -90,6 +103,7 @@ Target card (optional): $ARGUMENTS
 - Two hard stops: never implement before gate-1 approval; never commit, push, or
   write to Notion before gate-2 approval.
 - code-critic's gate is real: don't push a change it marked SHIP AFTER FIXES /
-  DO NOT SHIP with the must-fix items unresolved.
+  DO NOT SHIP with the must-fix items unresolved. qa's real-bug findings are a
+  gate too: fix them (or get an explicit user waiver) before pushing.
 - Escalate architectural / hard-to-reverse decisions instead of guessing, at
   whatever phase they surface.
