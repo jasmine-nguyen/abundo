@@ -409,23 +409,23 @@ export function isUncategorized(s: AppContext, t: Transaction): boolean {
 
 export function transactionView(s: AppContext, t: Transaction): TransactionView {
   const c = t.category == null || t.category === 'income' ? undefined : s.category(t.category);
-  const isUncat = isUncategorized(s, t);
+  const uncategorized = isUncategorized(s, t);
   const isIncome = t.category === 'income';
-  const key = isUncat ? 'q' : isIncome ? 'home' : c!.icon;
+  const key = uncategorized ? 'q' : isIncome ? 'home' : c!.icon;
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return {
     id: t.transaction_id, merchant: cleanName(t.merchant_name || t.description), amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
     isPending: t.status === 'pending', icon: key,
-    iconColor: isUncat ? '#c9b3f5' : isIncome ? '#9aa2b5' : c!.color,
-    chipBg: isUncat ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),
-    categoryLabel: isUncat ? 'Uncategorized' : isIncome ? 'Income' : c!.name,
-    categoryColor: isUncat ? '#c9b3f5' : isIncome ? '#9aa2b5' : '#9a9aa4',
-    categoryWeight: isUncat ? '700' : '500', tappable: isUncat,
+    iconColor: uncategorized ? '#c9b3f5' : isIncome ? '#9aa2b5' : c!.color,
+    chipBg: uncategorized ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),
+    categoryLabel: uncategorized ? 'Uncategorized' : isIncome ? 'Income' : c!.name,
+    categoryColor: uncategorized ? '#c9b3f5' : isIncome ? '#9aa2b5' : '#9a9aa4',
+    categoryWeight: uncategorized ? '700' : '500', tappable: uncategorized,
   };
 }
 
-export function transactionGroups(s: AppContext, tab: 'all' | 'uncat') {
-  const tabFilter = (t: Transaction) => (tab === 'uncat' ? t.counts_to_budget && isUncategorized(s, t) : true);
+export function transactionGroups(s: AppContext, tab: 'all' | 'uncategorized') {
+  const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? t.counts_to_budget && isUncategorized(s, t) : true);
   const seen = new Map<string, Transaction[]>();
   const order: string[] = [];
   for (const t of s.transactions.filter(tabFilter)) {
@@ -436,7 +436,7 @@ export function transactionGroups(s: AppContext, tab: 'all' | 'uncat') {
   return order.map((label) => ({ label, items: seen.get(label)! }));
 }
 
-export function uncatCount(s: AppContext) {
+export function countUncategorized(s: AppContext) {
   return s.transactions.filter((t) => t.counts_to_budget && isUncategorized(s, t)).length;
 }
 

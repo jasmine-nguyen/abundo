@@ -4,7 +4,7 @@ import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useAppContext, uncatCount } from '../../src/context';
+import { useAppContext, countUncategorized } from '../../src/context';
 
 const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
@@ -24,7 +24,7 @@ type TabBarShape = {
 function TabBar({ state, navigation }: TabBarShape) {
   const insets = useSafeAreaInsets();
   const store = useAppContext();
-  const hasUncat = uncatCount(store) > 0;
+  const hasUncategorized = countUncategorized(store) > 0;
 
   return (
     <View style={[styles.bar, { paddingBottom: insets.bottom + 14 }]}>
@@ -44,7 +44,7 @@ function TabBar({ state, navigation }: TabBarShape) {
           >
             <View>
               <Glyph name={meta.icon} size={24} color={color} />
-              {meta.name === 'transactions' && hasUncat && <View style={styles.dot} />}
+              {meta.name === 'transactions' && hasUncategorized && <View style={styles.dot} />}
             </View>
             <Text style={[styles.label, { color }]}>{meta.label}</Text>
           </Pressable>
