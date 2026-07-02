@@ -3,7 +3,10 @@ from constants import (
     BUDGET_PATH,
     CATEGORY_BUCKETS,
     CATEGORY_PATH,
+    CYCLE_WINDOW_DAYS,
     DEFAULT_CATEGORY_ICON,
+    PENDING_STATUS,
+    POSTED_STATUS,
     TRANSACTION_PATH,
 )
 from datetime import datetime, timedelta, timezone
@@ -242,6 +245,58 @@ def delete_category(event: dict, repo: CategoryRepository) -> dict:
         return _json_response(404, {"error": "category not found"})
 
     return _json_response(200, {"id": cat_id})
+
+
+def current_cycle_window(length_days: int = CYCLE_WINDOW_DAYS) -> tuple[str, str]:
+    """Return (start, end) ISO dates for the current budget window: the last
+    `length_days` days through today.
+
+    INTERIM: a rolling window, NOT yet aligned to a pay-cycle anchor (real
+    payday-reset is P14). Isolated here on purpose — when P14 lands, only this
+    function changes; the sum logic, the API shape, and the client stay put. The
+    +1-day end mirrors get_recent_transactions (AEST dates can run a day ahead of
+    UTC), so today's transactions are always included.
+    """
+    today = datetime.now(timezone.utc).date()
+    start = (today - timedelta(days=length_days)).isoformat()
+    end = (today + timedelta(days=1)).isoformat()
+    return start, end
+
+
+def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> dict[str, dict]:
+    """Sum posted vs pending spend per budgeted category over `transactions`.
+
+    A transaction contributes only if it counts toward a budget: `counts_to_budget`
+    is truthy AND its `category` is a real budgeted id (not None, not "income", and
+    present in `target_ids`). Spend is stored as a NEGATIVE amount, so we sum
+    `-amount` — a refund (positive amount) reduces the total. Each bucket is clamped
+    at >= 0 so a net refund can't drive a bar negative. Pending vs posted is decided
+    by the transaction's own `status`, so a pending->posted settlement needs no
+    special handling: the next call just re-reads the current status.
+
+    Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
+    that had at least one contributing transaction.
+    """
+    totals: dict[str, dict] = {}
+    for transaction in transactions:
+        if not transaction.get("counts_to_budget"):
+            continue
+        category = transaction.get("category")
+        if category is None or category == "income" or category not in target_ids:
+            continue
+        status = transaction.get("status")
+        if status == PENDING_STATUS:
+            bucket = "pending"
+        elif status == POSTED_STATUS:
+            bucket = "posted"
+        else:
+            continue  # unknown status -> don't guess a bucket
+        entry = totals.setdefault(category, {"posted": Decimal(0), "pending": Decimal(0)})
+        entry[bucket] += -Decimal(str(transaction.get("amount", 0)))
+    for entry in totals.values():
+        entry["posted"] = max(Decimal(0), entry["posted"])
+        entry["pending"] = max(Decimal(0), entry["pending"])
+    return totals
 
 
 def list_budgets(repo: BudgetRepository) -> dict:

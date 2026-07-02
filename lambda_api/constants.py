@@ -4,6 +4,7 @@ ACCOUNT_ID_MAP = {
     "T6d8ppsYssBDFCwl1qEb0w": "up-homeloan",
 }
 PENDING_STATUS = "pending"
+POSTED_STATUS = "posted"
 MAX_PAGE_SIZE = 100
 TRANSACTION_PATH = "/transactions"
 FEED_WINDOW_DAYS = 5
@@ -21,3 +22,9 @@ DEFAULT_CATEGORY_ICON = "tag"
 # --- Budgets (per-category pay-cycle targets) ------------------------------
 # API Gateway route path for the budget-target endpoints (GET all, PUT one).
 BUDGET_PATH = "/budgets"
+
+# Default budget rollup window length (days) when the client doesn't send one.
+# INTERIM: a rolling last-N-days window, NOT yet aligned to a pay-cycle anchor —
+# real payday alignment is P14. Isolated in current_cycle_window() so only that
+# seam changes when P14 lands. 14 = the client's default payCycle.length.
+CYCLE_WINDOW_DAYS = 14

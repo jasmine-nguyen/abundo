@@ -384,3 +384,84 @@ def test_repo_set_budget_raises_under_sustained_contention(handler):
         assert False, "expected VersionConflictError under sustained contention"
     except repository.VersionConflictError:
         pass
+
+
+# --- rollup S1: pure summarise_transactions + current_cycle_window -----------
+
+
+def _transaction(category, amount, status="posted", counts=True):
+    return {"category": category, "amount": Decimal(str(amount)), "status": status,
+            "counts_to_budget": counts}
+
+
+def test_summarise_routes_posted_and_pending(handler):
+    # Spend is stored negative; posted -> posted bucket, pending -> pending bucket.
+    txns = [_transaction("coffee", -50, "posted"), _transaction("coffee", -12, "pending")]
+
+    result = handler.summarise_transactions(txns, {"coffee"})
+
+    assert result == {"coffee": {"posted": Decimal("50"), "pending": Decimal("12")}}
+
+
+def test_summarise_sums_multiple_and_ignores_others(handler):
+    txns = [
+        _transaction("coffee", -50), _transaction("coffee", -8),          # summed
+        _transaction("groceries", -30),                            # different category
+        _transaction("coffee", -99, counts=False),                 # not counts_to_budget
+        _transaction("income", -100),                              # income category
+        _transaction(None, -20),                                   # uncategorized
+        _transaction("unbudgeted", -40),                           # no target -> skipped
+    ]
+
+    result = handler.summarise_transactions(txns, {"coffee", "groceries"})
+
+    assert result["coffee"] == {"posted": Decimal("58"), "pending": Decimal("0")}
+    assert result["groceries"] == {"posted": Decimal("30"), "pending": Decimal("0")}
+    assert "unbudgeted" not in result and "income" not in result
+
+
+def test_summarise_refund_reduces_spent(handler):
+    # A refund (positive amount) in a spend category reduces posted spend (net).
+    txns = [_transaction("coffee", -50), _transaction("coffee", 20)]
+
+    result = handler.summarise_transactions(txns, {"coffee"})
+
+    assert result["coffee"]["posted"] == Decimal("30")
+
+
+def test_summarise_net_refund_clamped_to_zero(handler):
+    # A category whose net is a refund clamps at 0 (no negative bar).
+    txns = [_transaction("coffee", 20)]
+
+    result = handler.summarise_transactions(txns, {"coffee"})
+
+    assert result["coffee"]["posted"] == Decimal("0")
+
+
+def test_summarise_empty(handler):
+    assert handler.summarise_transactions([], {"coffee"}) == {}
+
+
+def test_summarise_skips_unknown_status(handler):
+    # An unrecognised status isn't guessed into a bucket -> the txn is skipped.
+    txns = [_transaction("coffee", -50, status="settled")]
+
+    assert handler.summarise_transactions(txns, {"coffee"}) == {}
+
+
+def test_current_cycle_window_bounds(handler):
+    from datetime import datetime, timezone, timedelta
+    today = datetime.now(timezone.utc).date()
+
+    start, end = handler.current_cycle_window(14)
+
+    assert start == (today - timedelta(days=14)).isoformat()
+    assert end == (today + timedelta(days=1)).isoformat()
+
+
+def test_current_cycle_window_length_varies(handler):
+    from datetime import datetime, timezone, timedelta
+    today = datetime.now(timezone.utc).date()
+
+    assert handler.current_cycle_window(7)[0] == (today - timedelta(days=7)).isoformat()
+    assert handler.current_cycle_window(30)[0] == (today - timedelta(days=30)).isoformat()
