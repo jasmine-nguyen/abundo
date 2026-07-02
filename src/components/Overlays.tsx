@@ -78,14 +78,14 @@ function PickerSheet() {
   if (sh?.mode !== 'picker') return null;
   const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
-  const cats = s.cats.filter((c) => c.bucket !== 'Income');
+  const categories = s.categories.filter((c) => c.bucket !== 'Income');
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
       <Text style={styles.sheetMerchant}>{tx.payee}</Text>
       <Text style={styles.sheetAmount}>{'-$' + Math.abs(tx.amount).toFixed(2)}</Text>
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
-        {cats.map((c) => (
+        {categories.map((c) => (
           <Pressable key={c.id} onPress={() => s.chooseCat(c.id)} style={styles.pickRow}>
             <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
               <Icon name={c.icon} size={19} color={c.color} />
@@ -129,7 +129,7 @@ function AddRuleSheet() {
   const s = useAppContext();
   const [pattern, setPattern] = useState('');
   const [catId, setCatId] = useState<string | null>(null);
-  const cats = s.cats.filter((c) => c.bucket !== 'Income');
+  const categories = s.categories.filter((c) => c.bucket !== 'Income');
   const canSave = pattern.trim().length > 0 && !!catId;
   return (
     <View>
@@ -146,7 +146,7 @@ function AddRuleSheet() {
       <Text style={[styles.fieldLabel, { marginTop: 14 }]}>FILE IT AS</Text>
       <ScrollView style={{ maxHeight: 220, marginTop: 6 }}>
         <View style={styles.ruleCatWrap}>
-          {cats.map((c) => {
+          {categories.map((c) => {
             const sel = catId === c.id;
             return (
               <Pressable

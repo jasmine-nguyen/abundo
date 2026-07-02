@@ -13,14 +13,14 @@ export default function CategoryList() {
   const insets = useSafeAreaInsets();
   const budgeted = s.budgets.map((b) => b.id);
   const groups = BUCKETS.filter((bk) => bk !== 'Income')
-    .map((bk) => ({ label: bk, color: BUCKET_COLOR[bk], items: s.cats.filter((c) => c.bucket === bk) }))
+    .map((bk) => ({ label: bk, color: BUCKET_COLOR[bk], items: s.categories.filter((c) => c.bucket === bk) }))
     .filter((g) => g.items.length);
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Categories" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
-        {s.cats.length === 0 && (
+        {s.categories.length === 0 && (
           <Text style={styles.emptyText}>
             {s.categoriesLoading ? 'Loading categories…' : 'No categories yet.'}
           </Text>

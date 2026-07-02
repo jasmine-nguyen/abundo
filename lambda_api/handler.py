@@ -180,8 +180,10 @@ def create_category(event: dict, repo: CategoryRepository) -> dict:
 def update_category(event: dict, repo: CategoryRepository) -> dict:
     """PATCH /categories/{id} — update a category's name, bucket, and icon.
 
-    The id/slug is immutable and color is server-owned, so neither is editable.
-    Validation mirrors create; icon is optional (defaults when omitted).
+    The id/slug (e.g. "groceries") is immutable and color is server-owned, so
+    neither is editable — renaming "Groceries" to "Supermarket" keeps the id
+    "groceries". Validation mirrors create; icon is optional (defaults when
+    omitted).
     """
     cat_id = (event.get("pathParameters") or {}).get("id")
     if not cat_id:

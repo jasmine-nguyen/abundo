@@ -7,7 +7,7 @@ import { fetchTransactions, fetchCategories, createCategory, updateCategory, del
 // ---------------------------------------------------------------------------
 export type Bucket = 'Living' | 'Lifestyle' | 'Income' | 'Savings';
 
-export interface Cat {
+export interface Category {
   id: string;
   name: string;
   icon: string;
@@ -53,7 +53,7 @@ export const PALETTE = ['#E8A87C', '#7FD49B', '#F08C8C', '#8AB4F8', '#F2A0C9', '
 // ---------------------------------------------------------------------------
 // Seed data (ported verbatim from Whittle.dc.html)
 // ---------------------------------------------------------------------------
-const SEED_CATS: Cat[] = [
+const SEED_CATEGORIES: Category[] = [
   { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52 },
   { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7FD49B', bucket: 'Living', recent: 300 },
   { id: 'eatingout', name: 'Eating Out', icon: 'food', color: '#F08C8C', bucket: 'Lifestyle', recent: 110 },
@@ -121,13 +121,13 @@ const REPAY_LINES = [
 // ---------------------------------------------------------------------------
 interface AppContext {
   // data
-  cats: Cat[]; budgets: Budget[]; transactions: Transaction[]; rules: Rule[]; goal: Goal;
+  categories: Category[]; budgets: Budget[]; transactions: Transaction[]; rules: Rule[]; goal: Goal;
   payCycle: { length: number; anchor: string }; alerts: boolean;
   daysLeft: number; cycleLen: number;
   // ephemeral ui
   sheet: Sheet; toast: string | null; notif: { body: string; time: string } | null;
   // helpers
-  cat: (id: string | null) => Cat | undefined;
+  cat: (id: string | null) => Category | undefined;
   extraFor: (catId: string) => number;
   cycleName: () => string;
   // actions
@@ -152,10 +152,17 @@ interface AppContext {
 	refreshCategories: () => Promise<void>;
 }
 
-// Map a server category (which always returns recent:0) to the client Cat shape,
-// defaulting any missing field so budget math never sees undefined/NaN. Icon
-// falls back to a key that exists in the icon map, not the server default.
-function toCat(raw: any): Cat {
+/**
+ * Map a raw category object from the categories API into the client-side
+ * `Category` shape, defaulting any missing field so downstream budget math never
+ * sees `undefined`/`NaN`. The server always returns `recent: 0`, and `icon`
+ * falls back to a key that is guaranteed to exist in the icon map (`coffee`)
+ * rather than the server's own default, so the chip always renders a glyph.
+ *
+ * @param raw - A single category record as returned by the categories API.
+ * @returns A fully-populated `Category` safe to store and render.
+ */
+function toCategory(raw: any): Category {
   return {
     id: raw.id,
     name: raw.name,
@@ -169,7 +176,7 @@ function toCat(raw: any): Cat {
 const Ctx = createContext<AppContext | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [cats, setCats] = useState<Cat[]>(SEED_CATS);
+  const [categories, setCategories] = useState<Category[]>(SEED_CATEGORIES);
   const [budgets, setBudgets] = useState<Budget[]>(SEED_BUDGETS);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [rules, setRules] = useState<Rule[]>(SEED_RULES);
@@ -196,7 +203,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		setCategoriesLoading(true);
 		try {
 			const data = await fetchCategories();
-			setCats(data.map(toCat));
+			setCategories(data.map(toCategory));
 		} finally {
 			setCategoriesLoading(false);
 		}
@@ -211,7 +218,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const repayIdx = useRef(0);
 
-  const cat = useCallback((id: string | null) => cats.find((c) => c.id === id), [cats]);
+  const cat = useCallback((id: string | null) => categories.find((c) => c.id === id), [categories]);
   const extraFor = useCallback(
     (catId: string) => transactions.filter((t) => t.counts_to_budget && t.category === catId).reduce((s, t) => s + Math.abs(t.amount), 0),
     [transactions],
@@ -239,7 +246,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet((s) => {
       if (!s || s.mode !== 'confirm') return s;
       const tx = transactions.find((t) => t.transaction_id === s.txId);
-      const c = cats.find((x) => x.id === s.catId);
+      const c = categories.find((x) => x.id === s.catId);
       if (!tx || !c) return null;
       if (scope === 'all') {
         setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.description === tx.description ? { ...t, category: s.catId } : t)));
@@ -251,15 +258,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       return null;
     });
-  }, [transactions, cats, showToast]);
+  }, [transactions, categories, showToast]);
 
   const saveBudget = useCallback((catId: string, value: number) => {
     if (value <= 0) return;
-    const c = cats.find((x) => x.id === catId);
+    const c = categories.find((x) => x.id === catId);
     const existing = budgets.find((b) => b.id === catId);
     setBudgets((prev) => (existing ? prev.map((b) => (b.id === catId ? { ...b, budget: value } : b)) : [...prev, { id: catId, budget: value, posted: 0, pending: 0 }]));
     if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(value)}.`);
-  }, [cats, budgets, showToast]);
+  }, [categories, budgets, showToast]);
 
   const saveCategory = useCallback(
     async (editId: string | null, form: { name: string; bucket: Bucket; icon: string }): Promise<boolean> => {
@@ -268,11 +275,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         if (editId) {
           const updated = await updateCategory(editId, { name, bucket: form.bucket, icon: form.icon });
-          setCats((prev) => prev.map((c) => (c.id === editId ? toCat(updated) : c)));
+          setCategories((prev) => prev.map((c) => (c.id === editId ? toCategory(updated) : c)));
           showToast('Category updated.');
         } else {
           const created = await createCategory({ name, bucket: form.bucket, icon: form.icon });
-          setCats((prev) => [...prev, toCat(created)]);
+          setCategories((prev) => [...prev, toCategory(created)]);
           showToast('Category created.');
         }
         return true;
@@ -291,7 +298,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // referencing transaction (cosmetic — the server does no cascade, so on the
       // next refresh those txns re-appear with the dangling id and render as
       // Uncategorized via isUncategorized).
-      setCats((prev) => prev.filter((c) => c.id !== id));
+      setCategories((prev) => prev.filter((c) => c.id !== id));
       setBudgets((prev) => prev.filter((b) => b.id !== id));
       setRules((prev) => prev.filter((r) => r.catId !== id));
       setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
@@ -308,11 +315,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const saveManualRule = useCallback((pattern: string, catId: string) => {
     const p = pattern.trim().toUpperCase();
     if (!p || !catId) return;
-    const c = cats.find((x) => x.id === catId);
+    const c = categories.find((x) => x.id === catId);
     setRules((prev) => [{ id: 'r' + Date.now(), pattern: p, catId, isNew: true }, ...prev]);
     setSheet(null);
     if (c) showToast(`Rule added — ${p} files as ${c.name}.`);
-  }, [cats, showToast]);
+  }, [categories, showToast]);
 
   const fireRepayment = useCallback(() => {
     const principal = 1208;
@@ -324,14 +331,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<AppContext>(() => ({
-    cats, budgets, transactions, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
+    categories, budgets, transactions, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
     sheet, toast, notif,
     cat, extraFor, cycleName,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength: (len) => setPayCycle((p) => ({ ...p, length: len })),
     openPicker, chooseCat, applyCat, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories
-  }), [cats, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, cat, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCat, applyCat, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories]);
+  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, cat, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCat, applyCat, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
