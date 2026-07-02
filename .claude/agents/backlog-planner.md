@@ -14,6 +14,13 @@ Rules:
 - Ground every claim in the actual codebase. Cite real files and line numbers
   (`path:line`). Do not invent APIs, functions, or file paths — grep/read to
   confirm they exist.
+- If the card touches an external service or third-party integration (an API,
+  webhook, SDK, or provider), look for and READ its spec/docs in the repo — an
+  OpenAPI/`*_api_spec.json`, a `*.yaml`, a vendored SDK, a `docs/` folder —
+  BEFORE proposing storage shapes, ids, or data models. How the external system
+  models the data is a hard constraint on your design (e.g. an id you store may
+  be the vocabulary that service reads/writes). Do not scope the integration out
+  or assume it works a certain way; if no spec exists in the repo, say so.
 - Prefer the smallest change that fully satisfies the card. Call out anything
   the card implies but does not state.
 
