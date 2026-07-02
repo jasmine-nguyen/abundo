@@ -10,7 +10,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-from constants import CATEGORY_PALETTE, MAX_PAGE_SIZE, PENDING_STATUS, SEED_CATEGORIES
+from constants import MAX_PAGE_SIZE, PENDING_STATUS
 from models import Transaction
 
 REGION_NAME = os.environ["AWS_REGION"]
@@ -286,6 +286,36 @@ class TransactionRepository:
                 return False
 
             handle_database_error(e, "is_new_event")
+
+
+# Category taxonomy data lives here, not in constants.py, on purpose: this module
+# ships in the Lambda layer, and a `from constants import ...` here binds to the
+# FUNCTION's constants.py — coupling the layer to another package's symbols. A
+# deploy skew there fails this import at module load and 500s EVERY route
+# (including /transactions). The palette + seed are used only by CategoryRepository,
+# so keeping them local makes the layer self-contained. Ids are the curated slugs
+# from src/context.tsx SEED_CATS (the vocabulary BankSync rules + client
+# budgets/rules reference); `recent` is omitted (client-derived).
+CATEGORY_PALETTE = [
+    "#E8A87C", "#7FD49B", "#F08C8C", "#8AB4F8", "#F2A0C9",
+    "#C7A8F0", "#F2C94C", "#6FD0C9", "#8FD46B", "#B0A8F0",
+]
+
+SEED_CATEGORIES = {
+    "coffee": {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle"},
+    "groceries": {"id": "groceries", "name": "Groceries", "icon": "cart", "color": "#7FD49B", "bucket": "Living"},
+    "eatingout": {"id": "eatingout", "name": "Eating Out", "icon": "food", "color": "#F08C8C", "bucket": "Lifestyle"},
+    "transport": {"id": "transport", "name": "Transport", "icon": "car", "color": "#8AB4F8", "bucket": "Living"},
+    "health": {"id": "health", "name": "Health", "icon": "health", "color": "#F2A0C9", "bucket": "Living"},
+    "pets": {"id": "pets", "name": "Pets", "icon": "pets", "color": "#C7A8F0", "bucket": "Lifestyle"},
+    "utilities": {"id": "utilities", "name": "Utilities", "icon": "bolt", "color": "#F2C94C", "bucket": "Living"},
+    "shopping": {"id": "shopping", "name": "Shopping", "icon": "bag", "color": "#6FD0C9", "bucket": "Lifestyle"},
+    "fitness": {"id": "fitness", "name": "Health & Fitness", "icon": "dumbbell", "color": "#8FD46B", "bucket": "Lifestyle"},
+    "subs": {"id": "subs", "name": "Subscriptions", "icon": "film", "color": "#F0B27A", "bucket": "Lifestyle"},
+    "travel": {"id": "travel", "name": "Travel", "icon": "plane", "color": "#6FB6D0", "bucket": "Lifestyle"},
+    "gifts": {"id": "gifts", "name": "Gifts", "icon": "gift", "color": "#E59BD0", "bucket": "Lifestyle"},
+    "phonenet": {"id": "phonenet", "name": "Phone & Internet", "icon": "phone", "color": "#B0A8F0", "bucket": "Living"},
+}
 
 
 _CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
