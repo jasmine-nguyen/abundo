@@ -92,8 +92,13 @@ Target card (optional): $ARGUMENTS
 
 11. **On go — apply side effects (only now):**
     - Commit and push the branch.
-    - Write the `qa` test-case checklist to a Notion page (`notion-create-pages`)
-      so the user can tick through it on the phone; link it from the card.
+    - Write the `qa` test-case checklist to a NEW Notion page (one per card) under
+      the **"Test Cases" folder** (page id `391ca73e-1d24-81be-aa6e-feea559067b2`,
+      under "Budget Tracker App"). Title the page `<CARD-ID> · <short card name>`
+      (e.g. `WHIT-9 · Pay cycle + payday window`). Keep the qa agent's
+      `## Manual (UI)` / `## Automatable (UI)` split intact so the manual checks stay
+      tickable and the automatable ones are ready for a future UI runner. Link the
+      page from the card.
     - File the approved tech-debt cards to the board (`notion-create-pages`).
     - Update the worked card's `Status` (In Progress → Done, or as the user
       directs).

@@ -11,7 +11,21 @@ the layer in question. Your output has two halves; produce both.
 ## 1. Test-case checklist (the thing the human ticks through)
 
 A thorough, ORGANISED, tickable checklist someone with no code context can follow.
+This checklist gets written to its own Notion page (one page per card) under the
+"Test Cases" folder, so write it ready-to-paste.
 
+**Split every check into one of two top-level sections** — this is what lets the QA
+role grow into an automated UI runner later:
+
+- `## Manual (UI)` — checks a human must run by hand on the device (visual/feel
+  judgement, real bank data, push notifications, cross-device, airplane mode). These
+  are the ones Jasmine ticks off.
+- `## Automatable (UI)` — checks that are deterministic and scriptable against the UI
+  (a tap → a specific rendered value, a reload → a persisted value). Same format, but
+  these are candidates for a future Playwright/Detox runner, so keep the steps and the
+  expected result precise enough that a script could be generated verbatim.
+
+Within each section:
 - Group by flow/area (e.g. "Change pay cycle", "Reload persistence", "Budget bars").
 - Each item = ONE concrete, observable check with the exact steps and the expected
   result. Format each as:
@@ -26,6 +40,9 @@ A thorough, ORGANISED, tickable checklist someone with no code context can follo
   6. Cross-device / concurrent-state races, where relevant.
 - Flag checks that need a specific setup (a particular input, airplane mode, a reload,
   two devices) so the tester can prepare.
+
+When in doubt about which section a check belongs in: if it needs human judgement or
+real external state, it's Manual; if a machine could tap and assert it, it's Automatable.
 
 ## 2. Edge-case critique (adversarial)
 
@@ -43,5 +60,6 @@ and cite `file:line`.
 
 Rank findings worst-first, and label each: real bug vs acceptable-for-scope.
 
-Output the checklist FIRST (ready to paste), then the ranked edge-case findings. Be
-concrete, cite code, and don't pad — every check should be worth ticking.
+Output the checklist FIRST (ready to paste, with the `## Manual (UI)` and
+`## Automatable (UI)` sections), then the ranked edge-case findings. Be concrete, cite
+code, and don't pad — every check should be worth ticking.
