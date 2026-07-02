@@ -86,7 +86,7 @@ function PickerSheet() {
       <Text style={styles.sheetAmount}>{'-$' + Math.abs(tx.amount).toFixed(2)}</Text>
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
         {categories.map((c) => (
-          <Pressable key={c.id} onPress={() => s.chooseCat(c.id)} style={styles.pickRow}>
+          <Pressable key={c.id} onPress={() => s.chooseCategory(c.id)} style={styles.pickRow}>
             <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
               <Icon name={c.icon} size={19} color={c.color} />
             </View>
@@ -104,7 +104,7 @@ function ConfirmSheet() {
   const sh = s.sheet;
   if (sh?.mode !== 'confirm') return null;
   const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
-  const c = s.cat(sh.catId);
+  const c = s.category(sh.categoryId);
   if (!tx || !c) return null;
   return (
     <View>
@@ -115,10 +115,10 @@ function ConfirmSheet() {
       <Text style={styles.confirmSub}>
         Apply to just '{cleanName(tx.payee)}', or set a rule so every charge from this merchant files itself?
       </Text>
-      <Pressable onPress={() => s.applyCat('all')} style={[styles.btn, styles.btnPrimary]}>
+      <Pressable onPress={() => s.applyCategory('all')} style={[styles.btn, styles.btnPrimary]}>
         <Text style={styles.btnPrimaryText}>Every {cleanName(tx.payee)} charge</Text>
       </Pressable>
-      <Pressable onPress={() => s.applyCat('one')} style={[styles.btn, styles.btnGhost]}>
+      <Pressable onPress={() => s.applyCategory('one')} style={[styles.btn, styles.btnGhost]}>
         <Text style={styles.btnGhostText}>Just this one</Text>
       </Pressable>
     </View>
@@ -128,9 +128,9 @@ function ConfirmSheet() {
 function AddRuleSheet() {
   const s = useAppContext();
   const [pattern, setPattern] = useState('');
-  const [catId, setCatId] = useState<string | null>(null);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
   const categories = s.categories.filter((c) => c.bucket !== 'Income');
-  const canSave = pattern.trim().length > 0 && !!catId;
+  const canSave = pattern.trim().length > 0 && !!categoryId;
   return (
     <View>
       <Text style={styles.sheetTitle}>New rule</Text>
@@ -147,11 +147,11 @@ function AddRuleSheet() {
       <ScrollView style={{ maxHeight: 220, marginTop: 6 }}>
         <View style={styles.ruleCatWrap}>
           {categories.map((c) => {
-            const sel = catId === c.id;
+            const sel = categoryId === c.id;
             return (
               <Pressable
                 key={c.id}
-                onPress={() => setCatId(c.id)}
+                onPress={() => setCategoryId(c.id)}
                 style={[styles.ruleCatPill, { backgroundColor: sel ? tint(c.color, 0.14) : C.cardAlt, borderColor: sel ? c.color : 'rgba(255,255,255,.06)' }]}
               >
                 <Icon name={c.icon} size={12} color={c.color} />
@@ -162,7 +162,7 @@ function AddRuleSheet() {
         </View>
       </ScrollView>
       <Pressable
-        onPress={() => canSave && s.saveManualRule(pattern, catId!)}
+        onPress={() => canSave && s.saveManualRule(pattern, categoryId!)}
         style={[styles.btn, { marginTop: 16, backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}
       >
         <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : '#6a6a90' }]}>Add rule</Text>

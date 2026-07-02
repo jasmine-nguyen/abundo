@@ -30,7 +30,7 @@ export interface Transaction {
   type: string;
   counts_to_budget: boolean;
 }
-export interface Rule { id: string; pattern: string; catId: string; isNew: boolean; }
+export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; }
 export interface Goal {
   original: number; balance: number; homeValue: number; startYear: string;
   ratePct: number; baseRepay: number; extra: number; freedomDate: string;
@@ -39,7 +39,7 @@ export interface Goal {
 }
 export type Sheet =
   | { mode: 'picker'; txId: string }
-  | { mode: 'confirm'; txId: string; catId: string }
+  | { mode: 'confirm'; txId: string; categoryId: string }
   | { mode: 'addrule' }
   | { mode: 'paycycle' }
   | null;
@@ -79,10 +79,10 @@ const SEED_BUDGETS: Budget[] = [
   { id: 'shopping', budget: 100, posted: 30, pending: 0 },
 ];
 const SEED_RULES: Rule[] = [
-  { id: 'r1', pattern: 'WOOLWORTHS', catId: 'groceries', isNew: false },
-  { id: 'r2', pattern: 'AGL', catId: 'utilities', isNew: false },
-  { id: 'r3', pattern: 'SHELL', catId: 'transport', isNew: false },
-  { id: 'r4', pattern: 'CAFE BONES', catId: 'coffee', isNew: false },
+  { id: 'r1', pattern: 'WOOLWORTHS', categoryId: 'groceries', isNew: false },
+  { id: 'r2', pattern: 'AGL', categoryId: 'utilities', isNew: false },
+  { id: 'r3', pattern: 'SHELL', categoryId: 'transport', isNew: false },
+  { id: 'r4', pattern: 'CAFE BONES', categoryId: 'coffee', isNew: false },
 ];
 const SEED_GOAL: Goal = {
   original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
@@ -127,8 +127,8 @@ interface AppContext {
   // ephemeral ui
   sheet: Sheet; toast: string | null; notif: { body: string; time: string } | null;
   // helpers
-  cat: (id: string | null) => Category | undefined;
-  extraFor: (catId: string) => number;
+  category: (id: string | null) => Category | undefined;
+  extraFor: (categoryId: string) => number;
   cycleName: () => string;
   // actions
   setSheet: (s: Sheet) => void;
@@ -137,13 +137,13 @@ interface AppContext {
   toggleAlerts: () => void;
   setPayCycleLength: (len: number) => void;
   openPicker: (txId: string) => void;
-  chooseCat: (catId: string) => void;
-  applyCat: (scope: 'one' | 'all') => void;
-  saveBudget: (catId: string, value: number) => void;
+  chooseCategory: (categoryId: string) => void;
+  applyCategory: (scope: 'one' | 'all') => void;
+  saveBudget: (categoryId: string, value: number) => void;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => Promise<boolean>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => void;
-  saveManualRule: (pattern: string, catId: string) => void;
+  saveManualRule: (pattern: string, categoryId: string) => void;
   fireRepayment: () => void;
 	
 	transactionsLoading: boolean;
@@ -218,9 +218,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const repayIdx = useRef(0);
 
-  const cat = useCallback((id: string | null) => categories.find((c) => c.id === id), [categories]);
+  const category = useCallback((id: string | null) => categories.find((c) => c.id === id), [categories]);
   const extraFor = useCallback(
-    (catId: string) => transactions.filter((t) => t.counts_to_budget && t.category === catId).reduce((s, t) => s + Math.abs(t.amount), 0),
+    (categoryId: string) => transactions.filter((t) => t.counts_to_budget && t.category === categoryId).reduce((s, t) => s + Math.abs(t.amount), 0),
     [transactions],
   );
   const cycleName = useCallback(
@@ -237,34 +237,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);
 
   const openPicker = useCallback((txId: string) => setSheet({ mode: 'picker', txId }), []);
-  const chooseCat = useCallback(
-    (catId: string) => setSheet((s) => (s && s.mode === 'picker' ? { mode: 'confirm', txId: s.txId, catId } : s)),
+  const chooseCategory = useCallback(
+    (categoryId: string) => setSheet((s) => (s && s.mode === 'picker' ? { mode: 'confirm', txId: s.txId, categoryId } : s)),
     [],
   );
 
-  const applyCat = useCallback((scope: 'one' | 'all') => {
+  const applyCategory = useCallback((scope: 'one' | 'all') => {
     setSheet((s) => {
       if (!s || s.mode !== 'confirm') return s;
       const tx = transactions.find((t) => t.transaction_id === s.txId);
-      const c = categories.find((x) => x.id === s.catId);
+      const c = categories.find((x) => x.id === s.categoryId);
       if (!tx || !c) return null;
       if (scope === 'all') {
-        setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.description === tx.description ? { ...t, category: s.catId } : t)));
-        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.description, catId: s.catId, isNew: true }, ...prev]);
+        setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.description === tx.description ? { ...t, category: s.categoryId } : t)));
+        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.description, categoryId: s.categoryId, isNew: true }, ...prev]);
         showToast(`Rule saved — future ${cleanName(tx.description)} charges file as ${c.name}.`);
       } else {
-        setTransactions((prev) => prev.map((t) => (t.transaction_id === s.txId ? { ...t, category: s.catId } : t)));
+        setTransactions((prev) => prev.map((t) => (t.transaction_id === s.txId ? { ...t, category: s.categoryId } : t)));
         showToast(`This transaction filed under ${c.name}.`);
       }
       return null;
     });
   }, [transactions, categories, showToast]);
 
-  const saveBudget = useCallback((catId: string, value: number) => {
+  const saveBudget = useCallback((categoryId: string, value: number) => {
     if (value <= 0) return;
-    const c = categories.find((x) => x.id === catId);
-    const existing = budgets.find((b) => b.id === catId);
-    setBudgets((prev) => (existing ? prev.map((b) => (b.id === catId ? { ...b, budget: value } : b)) : [...prev, { id: catId, budget: value, posted: 0, pending: 0 }]));
+    const c = categories.find((x) => x.id === categoryId);
+    const existing = budgets.find((b) => b.id === categoryId);
+    setBudgets((prev) => (existing ? prev.map((b) => (b.id === categoryId ? { ...b, budget: value } : b)) : [...prev, { id: categoryId, budget: value, posted: 0, pending: 0 }]));
     if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(value)}.`);
   }, [categories, budgets, showToast]);
 
@@ -300,7 +300,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Uncategorized via isUncategorized).
       setCategories((prev) => prev.filter((c) => c.id !== id));
       setBudgets((prev) => prev.filter((b) => b.id !== id));
-      setRules((prev) => prev.filter((r) => r.catId !== id));
+      setRules((prev) => prev.filter((r) => r.categoryId !== id));
       setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
       showToast('Category deleted.');
       return true;
@@ -312,11 +312,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const deleteRule = useCallback((id: string) => setRules((prev) => prev.filter((r) => r.id !== id)), []);
 
-  const saveManualRule = useCallback((pattern: string, catId: string) => {
+  const saveManualRule = useCallback((pattern: string, categoryId: string) => {
     const p = pattern.trim().toUpperCase();
-    if (!p || !catId) return;
-    const c = categories.find((x) => x.id === catId);
-    setRules((prev) => [{ id: 'r' + Date.now(), pattern: p, catId, isNew: true }, ...prev]);
+    if (!p || !categoryId) return;
+    const c = categories.find((x) => x.id === categoryId);
+    setRules((prev) => [{ id: 'r' + Date.now(), pattern: p, categoryId, isNew: true }, ...prev]);
     setSheet(null);
     if (c) showToast(`Rule added — ${p} files as ${c.name}.`);
   }, [categories, showToast]);
@@ -333,12 +333,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppContext>(() => ({
     categories, budgets, transactions, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
     sheet, toast, notif,
-    cat, extraFor, cycleName,
+    category, extraFor, cycleName,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength: (len) => setPayCycle((p) => ({ ...p, length: len })),
-    openPicker, chooseCat, applyCat, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories
-  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, cat, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCat, applyCat, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories]);
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories
+  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, extraFor, cycleName, showToast, dismissNotif, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -366,7 +366,7 @@ export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: num
   let totBudget = 0, totSpent = 0, totRemain = 0;
   const rows: BudgetView[] = [];
   for (const b of s.budgets) {
-    const c = s.cat(b.id);
+    const c = s.category(b.id);
     if (!c) continue;
     const extra = s.extraFor(b.id);
     const pending = b.pending + extra, posted = b.posted, spent = posted + pending, remain = b.budget - spent;
@@ -396,7 +396,7 @@ export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: num
 export interface TransactionView {
   id: string; merchant: string; amountLabel: string; amountColor: string;
   isPending: boolean; icon: string; iconColor: string; chipBg: string;
-  catLabel: string; catColor: string; catWeight: '500' | '700'; tappable: boolean;
+  categoryLabel: string; categoryColor: string; categoryWeight: '500' | '700'; tappable: boolean;
 }
 
 // A transaction is uncategorized when it has no resolvable Whittle category: its
@@ -404,11 +404,11 @@ export interface TransactionView {
 // category not yet mapped). 'income' is a category, not uncategorized. Single
 // source of truth so the row label, the tab list, and the badge always agree.
 export function isUncategorized(s: AppContext, t: Transaction): boolean {
-  return t.category !== 'income' && (t.category == null || !s.cat(t.category));
+  return t.category !== 'income' && (t.category == null || !s.category(t.category));
 }
 
 export function transactionView(s: AppContext, t: Transaction): TransactionView {
-  const c = t.category == null || t.category === 'income' ? undefined : s.cat(t.category);
+  const c = t.category == null || t.category === 'income' ? undefined : s.category(t.category);
   const isUncat = isUncategorized(s, t);
   const isIncome = t.category === 'income';
   const key = isUncat ? 'q' : isIncome ? 'home' : c!.icon;
@@ -418,9 +418,9 @@ export function transactionView(s: AppContext, t: Transaction): TransactionView 
     isPending: t.status === 'pending', icon: key,
     iconColor: isUncat ? '#c9b3f5' : isIncome ? '#9aa2b5' : c!.color,
     chipBg: isUncat ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),
-    catLabel: isUncat ? 'Uncategorized' : isIncome ? 'Income' : c!.name,
-    catColor: isUncat ? '#c9b3f5' : isIncome ? '#9aa2b5' : '#9a9aa4',
-    catWeight: isUncat ? '700' : '500', tappable: isUncat,
+    categoryLabel: isUncat ? 'Uncategorized' : isIncome ? 'Income' : c!.name,
+    categoryColor: isUncat ? '#c9b3f5' : isIncome ? '#9aa2b5' : '#9a9aa4',
+    categoryWeight: isUncat ? '700' : '500', tappable: isUncat,
   };
 }
 
@@ -440,9 +440,9 @@ export function uncatCount(s: AppContext) {
   return s.transactions.filter((t) => t.counts_to_budget && isUncategorized(s, t)).length;
 }
 
-export function budgetDetail(s: AppContext, catId: string) {
-  const c = s.cat(catId);
-  const b = s.budgets.find((x) => x.id === catId);
+export function budgetDetail(s: AppContext, categoryId: string) {
+  const c = s.category(categoryId);
+  const b = s.budgets.find((x) => x.id === categoryId);
   if (!c || !b) return null;
   const elapsed = elapsedFrac(s);
   const extra = s.extraFor(b.id);
@@ -473,9 +473,9 @@ export function budgetDetail(s: AppContext, catId: string) {
   };
 }
 
-export function budgetEditInfo(s: AppContext, catId: string) {
-  const c = s.cat(catId);
-  const existing = s.budgets.find((b) => b.id === catId);
+export function budgetEditInfo(s: AppContext, categoryId: string) {
+  const c = s.category(categoryId);
+  const existing = s.budgets.find((b) => b.id === categoryId);
   const avg = c ? Math.round(c.recent) : 0;
   const last = Math.round(avg * 0.92);
   const rec = avg; // recommendBasis default: Recent average
@@ -484,7 +484,7 @@ export function budgetEditInfo(s: AppContext, catId: string) {
   const histLabels = ['F1', 'F2', 'F3', 'F4', 'F5', 'Now'];
   const histBars = histVals.map((v, i) => ({ h: Math.round(14 + v * 76), label: histLabels[i], last: i === 5 }));
   return {
-    cat: c, existing, avg, last, rec,
+    category: c, existing, avg, last, rec,
     recLabel: fmt(rec), lastLabel: fmt(last), avgLabel: fmt(avg),
     periodLabel: cn.toUpperCase(),
     lastWord: cn === 'Weekly' ? 'week' : cn === 'Monthly' ? 'month' : 'fortnight',

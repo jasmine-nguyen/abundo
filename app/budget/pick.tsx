@@ -33,7 +33,7 @@ export default function BudgetPick() {
         )}
 
         {list.map((c) => (
-          <Pressable key={c.id} onPress={() => router.push(`/budget/edit?catId=${c.id}&from=pick`)} style={styles.row}>
+          <Pressable key={c.id} onPress={() => router.push(`/budget/edit?categoryId=${c.id}&from=pick`)} style={styles.row}>
             <View style={[styles.chip, { backgroundColor: tint(c.color, 0.15) }]}><Icon name={c.icon} size={22} color={c.color} /></View>
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{c.name}</Text>

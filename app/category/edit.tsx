@@ -12,8 +12,8 @@ export default function CategoryEdit() {
   const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { catId } = useLocalSearchParams<{ catId?: string }>();
-  const existing = catId ? s.cat(catId) : undefined;
+  const { categoryId } = useLocalSearchParams<{ categoryId?: string }>();
+  const existing = categoryId ? s.category(categoryId) : undefined;
 
   const [name, setName] = useState(existing?.name ?? '');
   const [bucket, setBucket] = useState<Bucket>(existing?.bucket ?? 'Lifestyle');
@@ -26,21 +26,21 @@ export default function CategoryEdit() {
   const save = async () => {
     if (!canSave) return;
     setSubmitting(true);
-    const ok = await s.saveCategory(catId ?? null, { name, bucket, icon });
+    const ok = await s.saveCategory(categoryId ?? null, { name, bucket, icon });
     if (ok) router.back();
     else setSubmitting(false); // stay on the screen so the user can retry
   };
   const remove = async () => {
-    if (!catId || submitting) return;
+    if (!categoryId || submitting) return;
     setSubmitting(true);
-    const ok = await s.deleteCategory(catId);
+    const ok = await s.deleteCategory(categoryId);
     if (ok) router.back();
     else setSubmitting(false);
   };
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-      <Header title={catId ? 'Edit category' : 'New category'} />
+      <Header title={categoryId ? 'Edit category' : 'New category'} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
         <View style={styles.preview}>
           <View style={[styles.previewChip, { backgroundColor: tint(color, 0.15) }]}><Icon name={icon} size={34} color={color} /></View>
@@ -74,7 +74,7 @@ export default function CategoryEdit() {
           })}
         </View>
 
-        {catId && (
+        {categoryId && (
           <Pressable onPress={remove} style={styles.deleteBtn}>
             <Text style={styles.deleteText}>Delete category</Text>
           </Pressable>
