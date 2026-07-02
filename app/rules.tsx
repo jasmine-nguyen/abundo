@@ -29,7 +29,7 @@ export default function Rules() {
         </View>
 
         {s.rules.map((r) => {
-          const c = s.cat(r.catId);
+          const c = s.category(r.categoryId);
           const color = c?.color ?? '#888';
           return (
             <View key={r.id} style={styles.row}>

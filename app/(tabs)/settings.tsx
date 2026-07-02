@@ -30,7 +30,7 @@ export default function Settings() {
 
         <SectionLabel>SETUP</SectionLabel>
         <View style={styles.group}>
-          <Row icon="tag" label="Categories" value={String(s.cats.length)} onPress={() => router.push('/category')} />
+          <Row icon="tag" label="Categories" value={String(s.categories.length)} onPress={() => router.push('/category')} />
           <Row icon="sliders" label="Automation rules" value={String(s.rules.length)} onPress={() => router.push('/rules')} />
           <Row icon="calendar" label="Pay cycle" value={s.cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} last />
         </View>

@@ -16,7 +16,7 @@ export function TransactionRow({ t }: { t: Transaction }) {
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.merchant} numberOfLines={1}>{v.merchant}</Text>
         <View style={styles.metaRow}>
-          <Text style={[styles.cat, { color: v.catColor, fontWeight: v.catWeight }]}>{v.catLabel}</Text>
+          <Text style={[styles.category, { color: v.categoryColor, fontWeight: v.categoryWeight }]}>{v.categoryLabel}</Text>
           {v.isPending && (
             <View style={styles.pending}>
               <Glyph name="clock" size={12} color="#8b8b95" />
@@ -35,7 +35,7 @@ const styles = StyleSheet.create({
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   merchant: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
-  cat: { fontFamily: FONT.body, fontSize: 12.5 },
+  category: { fontFamily: FONT.body, fontSize: 12.5 },
   pending: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
   pendingText: { fontFamily: FONT.body, fontSize: 11, color: '#8b8b95' },
   amount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },

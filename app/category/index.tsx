@@ -13,13 +13,18 @@ export default function CategoryList() {
   const insets = useSafeAreaInsets();
   const budgeted = s.budgets.map((b) => b.id);
   const groups = BUCKETS.filter((bk) => bk !== 'Income')
-    .map((bk) => ({ label: bk, color: BUCKET_COLOR[bk], items: s.cats.filter((c) => c.bucket === bk) }))
+    .map((bk) => ({ label: bk, color: BUCKET_COLOR[bk], items: s.categories.filter((c) => c.bucket === bk) }))
     .filter((g) => g.items.length);
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Categories" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+        {s.categories.length === 0 && (
+          <Text style={styles.emptyText}>
+            {s.categoriesLoading ? 'Loading categories…' : 'No categories yet.'}
+          </Text>
+        )}
         {groups.map((g) => (
           <View key={g.label} style={{ marginBottom: 8 }}>
             <View style={styles.bucketHead}>
@@ -27,7 +32,7 @@ export default function CategoryList() {
               <Text style={styles.bucketLabel}>{g.label}</Text>
             </View>
             {g.items.map((c) => (
-              <Pressable key={c.id} onPress={() => router.push(`/category/edit?catId=${c.id}`)} style={styles.row}>
+              <Pressable key={c.id} onPress={() => router.push(`/category/edit?categoryId=${c.id}`)} style={styles.row}>
                 <View style={[styles.chip, { backgroundColor: tint(c.color, 0.15) }]}><Icon name={c.icon} size={20} color={c.color} /></View>
                 <Text style={styles.name}>{c.name}</Text>
                 {budgeted.includes(c.id) && <Text style={styles.budgeted}>budgeted</Text>}
@@ -47,6 +52,7 @@ export default function CategoryList() {
 }
 
 const styles = StyleSheet.create({
+  emptyText: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, textAlign: 'center', marginTop: 28 },
   bucketHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 4, marginTop: 14, marginBottom: 8 },
   bucketDot: { width: 8, height: 8, borderRadius: 4 },
   bucketLabel: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.textMid, letterSpacing: 0.3 },

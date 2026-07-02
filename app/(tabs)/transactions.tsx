@@ -3,10 +3,10 @@ import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView } from 'r
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, transactionGroups, uncatCount } from '../../src/context';
+import { useAppContext, transactionGroups, countUncategorized } from '../../src/context';
 import { TransactionRow } from '../../src/components/TransactionRow';
 
-type Tab = 'all' | 'uncat' | 'accounts';
+type Tab = 'all' | 'uncategorized' | 'accounts';
 
 const ACCOUNTS = [
   { name: 'Spending', sub: 'Everyday account', balance: '$1,284.50', balColor: '#f1f1f4', icon: 'cart', color: '#7FD49B' },
@@ -18,8 +18,8 @@ export default function Transactions() {
   const s = useAppContext();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('all');
-  const uncat = uncatCount(s);
-  const groups = transactionGroups(s, tab === 'uncat' ? 'uncat' : 'all');
+  const uncategorizedCount = countUncategorized(s);
+  const groups = transactionGroups(s, tab === 'uncategorized' ? 'uncategorized' : 'all');
 
   return (
     <View style={{ flex: 1 }}>
@@ -40,7 +40,7 @@ export default function Transactions() {
         {/* segmented control */}
         <View style={styles.seg}>
           <Seg label="All" active={tab === 'all'} onPress={() => setTab('all')} flex={1} />
-          <Seg label="Uncategorized" active={tab === 'uncat'} onPress={() => setTab('uncat')} flex={1.45} badge={uncat} />
+          <Seg label="Uncategorized" active={tab === 'uncategorized'} onPress={() => setTab('uncategorized')} flex={1.45} badge={uncategorizedCount} />
           <Seg label="Accounts" active={tab === 'accounts'} onPress={() => setTab('accounts')} flex={1} />
         </View>
 
@@ -51,7 +51,7 @@ export default function Transactions() {
           </View>
         )}
 
-        {tab === 'uncat' && uncat > 0 && (
+        {tab === 'uncategorized' && uncategorizedCount > 0 && (
           <View style={styles.hint}>
             <Glyph name="star" size={18} color={C.accentSoft} />
             <Text style={styles.hintText}>
@@ -68,7 +68,7 @@ export default function Transactions() {
           </View>
         ))}
 
-        {tab === 'uncat' && uncat === 0 && (
+        {tab === 'uncategorized' && uncategorizedCount === 0 && (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}><Glyph name="check" size={32} color={C.good} /></View>
             <Text style={styles.emptyTitle}>All caught up</Text>

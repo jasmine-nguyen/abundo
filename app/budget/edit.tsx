@@ -11,18 +11,18 @@ export default function BudgetEdit() {
   const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { catId } = useLocalSearchParams<{ catId: string; from?: string }>();
-  const info = budgetEditInfo(s, catId);
+  const { categoryId } = useLocalSearchParams<{ categoryId: string; from?: string }>();
+  const info = budgetEditInfo(s, categoryId);
   const [input, setInput] = useState(info.existing ? String(info.existing.budget) : '');
   const [histOpen, setHistOpen] = useState(false);
 
-  if (!info.cat) return <View style={{ flex: 1 }}><Header title="Set budget" /></View>;
+  if (!info.category) return <View style={{ flex: 1 }}><Header title="Set budget" /></View>;
   const num = parseFloat(input) || 0;
   const canSave = num > 0;
 
   const save = () => {
     if (!canSave) return;
-    s.saveBudget(catId, num);
+    s.saveBudget(categoryId, num);
     router.dismissAll?.();
     router.replace('/(tabs)/budgets');
   };
@@ -31,11 +31,11 @@ export default function BudgetEdit() {
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title={info.title} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
-        <View style={styles.catRow}>
-          <View style={[styles.chip, { backgroundColor: tint(info.cat.color, 0.15) }]}><Icon name={info.cat.icon} size={30} color={info.cat.color} /></View>
+        <View style={styles.categoryRow}>
+          <View style={[styles.chip, { backgroundColor: tint(info.category.color, 0.15) }]}><Icon name={info.category.icon} size={30} color={info.category.color} /></View>
           <View>
-            <Text style={styles.catName}>{info.cat.name}</Text>
-            <Text style={styles.catRec}>Recommended: {info.recLabel}</Text>
+            <Text style={styles.categoryName}>{info.category.name}</Text>
+            <Text style={styles.categoryRec}>Recommended: {info.recLabel}</Text>
           </View>
         </View>
 
@@ -82,10 +82,10 @@ export default function BudgetEdit() {
 }
 
 const styles = StyleSheet.create({
-  catRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingTop: 4 },
+  categoryRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingTop: 4 },
   chip: { width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  catName: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
-  catRec: { fontFamily: FONT.body, fontSize: 13, color: C.accentSoft, marginTop: 3 },
+  categoryName: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
+  categoryRec: { fontFamily: FONT.body, fontSize: 13, color: C.accentSoft, marginTop: 3 },
   stat: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 13 },
   statLabel: { fontFamily: FONT.body, fontSize: 12, color: C.textDim },
   statValue: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.text, marginTop: 4 },

@@ -28,7 +28,7 @@ export default function BudgetDetail() {
       <Header
         title="Budget"
         right={
-          <Pressable onPress={() => router.push(`/budget/edit?catId=${id}&from=detail`)}>
+          <Pressable onPress={() => router.push(`/budget/edit?categoryId=${id}&from=detail`)}>
             <Text style={styles.edit}>Edit</Text>
           </Pressable>
         }
@@ -79,7 +79,7 @@ export default function BudgetDetail() {
 function DetailTransactionRow({ t }: { t: Transaction }) {
   const s = useAppContext();
   const v = transactionView(s, t);
-  const c = s.cat(t.category);
+  const c = s.category(t.category);
   return (
     <View style={styles.txRow}>
       <View style={[styles.txChip, { backgroundColor: v.chipBg }]}><Icon name={v.icon} size={22} color={v.iconColor} /></View>
