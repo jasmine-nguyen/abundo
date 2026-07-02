@@ -8,10 +8,10 @@ import { useAppContext, merchantLabel } from '../context';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// The anchor is stored as an ISO "YYYY-MM-DD" string. Parse/format it via the
+// The last_pay_date is stored as an ISO "YYYY-MM-DD" string. Parse/format it via the
 // device's LOCAL date components (not UTC) so the calendar and the label always
 // show the day the user actually picked — no midnight-timezone drift.
-function parseAnchor(iso: string): Date {
+function parseLastPayDate(iso: string): Date {
   return new Date(`${iso}T00:00:00`); // local midnight of that date
 }
 
@@ -21,8 +21,8 @@ function toISODate(d: Date): string {
   return `${d.getFullYear()}-${month}-${day}`;
 }
 
-function formatAnchor(iso: string): string {
-  const d = parseAnchor(iso);
+function formatLastPayDate(iso: string): string {
+  const d = parseLastPayDate(iso);
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
@@ -200,21 +200,21 @@ function PayCycleSheet() {
   // hold the in-progress pick locally and commit it ONCE when the picker closes —
   // otherwise every intermediate date would fire a PUT + budget refetch. null =
   // no uncommitted pick. Android commits directly (its dialog fires once on OK).
-  const [draftAnchor, setDraftAnchor] = useState<string | null>(null);
-  const shownAnchor = draftAnchor ?? s.payCycle.anchor;
+  const [draftLastPayDate, setDraftLastPayDate] = useState<string | null>(null);
+  const shownLastPayDate = draftLastPayDate ?? s.payCycle.last_pay_date;
 
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
 
   const commitDraft = () => {
-    if (draftAnchor && draftAnchor !== s.payCycle.anchor) s.setPayday(draftAnchor);
-    setDraftAnchor(null);
+    if (draftLastPayDate && draftLastPayDate !== s.payCycle.last_pay_date) s.setPayday(draftLastPayDate);
+    setDraftLastPayDate(null);
   };
 
   const onPickDate = (event: DateTimePickerEvent, picked?: Date) => {
     if (Platform.OS === 'ios') {
       // Inline picker: stash the pick, don't persist yet (commit on close/Done).
-      if (picked) setDraftAnchor(toISODate(picked));
+      if (picked) setDraftLastPayDate(toISODate(picked));
       return;
     }
     // Android: modal dialog. event.type is 'set' on OK, 'dismissed' on cancel.
@@ -254,12 +254,12 @@ function PayCycleSheet() {
         onPress={togglePicker}
         style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: showPicker ? C.accent : 'rgba(255,255,255,.07)' }]}
       >
-        <Text style={[styles.cycleText, { color: C.textMid }]}>{formatAnchor(shownAnchor)}</Text>
+        <Text style={[styles.cycleText, { color: C.textMid }]}>{formatLastPayDate(shownLastPayDate)}</Text>
         <Glyph name="calendar" size={18} color={showPicker ? C.accent : C.textDim} />
       </Pressable>
       {showPicker && (
         <DateTimePicker
-          value={parseAnchor(shownAnchor)}
+          value={parseLastPayDate(shownLastPayDate)}
           mode="date"
           display={Platform.OS === 'ios' ? 'inline' : 'default'}
           maximumDate={today}

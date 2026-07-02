@@ -119,7 +119,7 @@ const REPAY_LINES = [
 interface AppContext {
   // data
   categories: Category[]; budgets: Budget[]; transactions: Transaction[]; rules: Rule[]; goal: Goal;
-  payCycle: { length: number; anchor: string }; alerts: boolean;
+  payCycle: { length: number; last_pay_date: string }; alerts: boolean;
   daysLeft: number; cycleLen: number;
   // ephemeral ui
   sheet: Sheet; toast: string | null; notif: { body: string; time: string } | null;
@@ -132,7 +132,7 @@ interface AppContext {
   dismissNotif: () => void;
   toggleAlerts: () => void;
   setPayCycleLength: (len: number) => void;
-  setPayday: (anchor: string) => void;
+  setPayday: (last_pay_date: string) => void;
   openPicker: (txId: string) => void;
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
@@ -190,8 +190,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [rules, setRules] = useState<Rule[]>(SEED_RULES);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
   // Seeded to the server default; refreshPayCycle() overwrites it from the API on
-  // mount. anchor is an ISO "YYYY-MM-DD" payday date (was a weekday name pre-P14).
-  const [payCycle, setPayCycle] = useState({ length: 14, anchor: '2024-01-03' });
+  // mount. last_pay_date is an ISO "YYYY-MM-DD" payday date (was a weekday name pre-P14).
+  const [payCycle, setPayCycle] = useState({ length: 14, last_pay_date: '2024-01-03' });
   const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -274,7 +274,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // failure roll back to `prev` and tell the user — same optimistic-write pattern
   // as saveBudget/applyCategory. Defined below showToast so it can reference it.
   const persistPayCycle = useCallback(
-    async (next: { length: number; anchor: string }, prev: { length: number; anchor: string }) => {
+    async (next: { length: number; last_pay_date: string }, prev: { length: number; last_pay_date: string }) => {
       setPayCycle(next);
       try {
         await apiSetPayCycle(next);
@@ -287,14 +287,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [refreshBudgets, showToast],
   );
 
-  // Change the window length (Weekly/Fortnightly/Monthly), keeping the anchor.
+  // Change the window length (Weekly/Fortnightly/Monthly), keeping the last_pay_date.
   const setPayCycleLength = useCallback((length: number) => {
     persistPayCycle({ ...payCycle, length }, payCycle);
   }, [persistPayCycle, payCycle]);
 
-  // Change the payday anchor (a real past payday), keeping the length.
-  const setPayday = useCallback((anchor: string) => {
-    persistPayCycle({ ...payCycle, anchor }, payCycle);
+  // Change the last pay date (a real past payday), keeping the length.
+  const setPayday = useCallback((last_pay_date: string) => {
+    persistPayCycle({ ...payCycle, last_pay_date }, payCycle);
   }, [persistPayCycle, payCycle]);
 
   const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);

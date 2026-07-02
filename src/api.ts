@@ -133,17 +133,17 @@ export async function setTransactionCategory(
   return response.json();
 }
 
-/** The persisted pay cycle: window length in days + the payday anchor date. */
+/** The persisted pay cycle: window length in days + the last pay date. */
 export interface PayCycle {
   length: number;        // 7 | 14 | 30 (Weekly / Fortnightly / Monthly)
-  anchor: string;        // a real past payday, as an ISO "YYYY-MM-DD" date
+  last_pay_date: string;        // a real past payday, as an ISO "YYYY-MM-DD" date
 }
 
 /**
- * Fetch the persisted pay cycle (length + payday anchor). Seeds a default
+ * Fetch the persisted pay cycle (length + last pay date). Seeds a default
  * server-side on first read, so this always resolves to a valid cycle.
  *
- * @returns The stored { length, anchor }.
+ * @returns The stored { length, last_pay_date }.
  * @throws If the response status is not OK.
  */
 export async function fetchPayCycle(): Promise<PayCycle> {
@@ -157,10 +157,10 @@ export async function fetchPayCycle(): Promise<PayCycle> {
  * Set (replace) the persisted pay cycle. Both fields are written together, so
  * pass the full cycle even when only one field changed.
  *
- * @param cycle - The new { length, anchor }. anchor must be a past ISO date.
- * @returns The saved { length, anchor }.
+ * @param cycle - The new { length, last_pay_date }. last_pay_date must be a past ISO date.
+ * @returns The saved { length, last_pay_date }.
  * @throws If the response status is not OK (e.g. 400 on a bad length or a
- *   future/malformed anchor).
+ *   future/malformed last_pay_date).
  */
 export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
   const response = await fetch(`${API_BASE}/paycycle`, {

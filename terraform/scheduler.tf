@@ -44,8 +44,8 @@ resource "aws_scheduler_schedule" "banksync_sync" {
 
   schedule_expression = var.sync_schedule_expression
   # Timezone only affects cron() expressions; ignored for rate(). Set so that if
-  # the cadence is later switched to cron() it runs in local (Sydney) time.
-  schedule_expression_timezone = "Australia/Sydney"
+  # the cadence is later switched to cron() it runs in local (Melbourne) time.
+  schedule_expression_timezone = "Australia/Melbourne"
 
   target {
     arn      = aws_lambda_function.sync_trigger.arn
