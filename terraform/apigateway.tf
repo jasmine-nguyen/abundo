@@ -32,6 +32,20 @@ resource "aws_apigatewayv2_route" "patch_transaction_category_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# Category taxonomy CRUD (list/create); reuse the lambda_api integration.
+# The /*/* invoke permission already covers these, so no new lambda permission.
+resource "aws_apigatewayv2_route" "get_categories_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /categories"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "post_category_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "POST /categories"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 resource "aws_lambda_permission" "get_transactions_invoke_permission" {
   statement_id  = "AllowAPIGatewayInvokeGetTransactions"
   action        = "lambda:InvokeFunction"

@@ -3,13 +3,14 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, NoReturn, Optional
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-from constants import MAX_PAGE_SIZE, PENDING_STATUS
+from constants import CATEGORY_PALETTE, MAX_PAGE_SIZE, PENDING_STATUS, SEED_CATEGORIES
 from models import Transaction
 
 REGION_NAME = os.environ["AWS_REGION"]
@@ -285,3 +286,103 @@ class TransactionRepository:
                 return False
 
             handle_database_error(e, "is_new_event")
+
+
+_CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
+
+
+class DuplicateCategoryError(Exception):
+    """A category with the given id already exists (handler maps this to 409)."""
+
+
+class CategoryRepository:
+    """Stores the user-defined category taxonomy as a single DynamoDB config item.
+
+    The item at pk=sk="CATEGORIES" holds an `items` map (id -> category) plus a
+    numeric `version` for optimistic-locking on writes. Categories are read-heavy
+    and rarely written (single user), so a single-item read is the common path;
+    writes are conditional and retry once on a version race.
+    """
+
+    def __init__(self) -> None:
+        self._dynamodb = None
+        self._table = None
+
+    def _get_table(self) -> Any:
+        if self._table is None:
+            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
+            self._table = self._dynamodb.Table(TABLE_NAME)
+        return self._table
+
+    def _get_config(self) -> Optional[dict]:
+        try:
+            return self._get_table().get_item(Key=_CATEGORIES_KEY).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read categories")
+
+    def _ensure_seeded(self) -> None:
+        """Idempotently write the seed taxonomy if the config item is absent.
+
+        A lost race (another caller seeded first) raises ConditionalCheckFailed
+        and is a no-op success: the seed content is deterministic, so the winner
+        wrote exactly the same 13 categories.
+        """
+        try:
+            self._get_table().put_item(
+                Item={**_CATEGORIES_KEY, "items": dict(SEED_CATEGORIES), "version": Decimal(1)},
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return
+            handle_database_error(e, "seed categories")
+
+    def list_categories(self) -> list[dict]:
+        item = self._get_config()
+        if item is None:
+            self._ensure_seeded()
+            item = self._get_config()  # re-read so a concurrent create is reflected
+        return list(item["items"].values())
+
+    def create_category(self, cat_id: str, name: str, bucket: str, icon: str) -> dict:
+        """Add one category. Seeds first so the 13 defaults are never lost, then
+        adds a single map key under an optimistic-lock guard. Raises
+        DuplicateCategoryError if the id already exists.
+        """
+        self._ensure_seeded()
+        for _attempt in range(2):
+            item = self._get_config()
+            items = item["items"]
+            version = item["version"]
+            if cat_id in items:
+                raise DuplicateCategoryError(cat_id)
+
+            # Count taken AFTER seeding, so a new category never reuses a seed's index.
+            color = CATEGORY_PALETTE[len(items) % len(CATEGORY_PALETTE)]
+            new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color, "bucket": bucket}
+            try:
+                self._get_table().update_item(
+                    Key=_CATEGORIES_KEY,
+                    # Nested SET adds ONE map key — never rewrites the whole items map.
+                    UpdateExpression="SET #items.#id = :cat, #v = :next",
+                    ConditionExpression=(
+                        "attribute_exists(pk) AND #v = :expected "
+                        "AND attribute_not_exists(#items.#id)"
+                    ),
+                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
+                    ExpressionAttributeValues={
+                        ":cat": new_cat,
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                return new_cat
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "create category")
+                # Disambiguate: duplicate id (409) vs a concurrent version bump (retry).
+                latest = self._get_config()
+                if cat_id in latest["items"]:
+                    raise DuplicateCategoryError(cat_id)
+                # id still free — the version moved under us; loop retries once.
+        raise RuntimeError("create_category: exhausted retries under write contention")
