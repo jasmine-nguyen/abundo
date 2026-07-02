@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -135,7 +135,7 @@ interface AppContext {
   setPayCycleLength: (len: number) => void;
   openPicker: (txId: string) => void;
   chooseCategory: (categoryId: string) => void;
-  applyCategory: (scope: 'one' | 'all') => void;
+  applyCategory: (scope: 'one' | 'all') => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => Promise<boolean>;
   deleteCategory: (id: string) => Promise<boolean>;
@@ -268,23 +268,94 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const applyCategory = useCallback((scope: 'one' | 'all') => {
-    setSheet((s) => {
-      if (!s || s.mode !== 'confirm') return s;
-      const tx = transactions.find((t) => t.transaction_id === s.txId);
-      const c = categories.find((x) => x.id === s.categoryId);
-      if (!tx || !c) return null;
-      if (scope === 'all') {
-        setTransactions((prev) => prev.map((t) => (t.counts_to_budget && t.category == null && t.description === tx.description ? { ...t, category: s.categoryId } : t)));
-        setRules((prev) => [{ id: 'r' + Date.now(), pattern: tx.description, categoryId: s.categoryId, isNew: true }, ...prev]);
-        showToast(`Rule saved — future ${cleanName(tx.description)} charges file as ${c.name}.`);
-      } else {
-        setTransactions((prev) => prev.map((t) => (t.transaction_id === s.txId ? { ...t, category: s.categoryId } : t)));
-        showToast(`This transaction filed under ${c.name}.`);
+  const applyCategory = useCallback(async (scope: 'one' | 'all'): Promise<void> => {
+    // This is only ever triggered from the confirm sheet; ignore any other state.
+    if (!sheet || sheet.mode !== 'confirm') return;
+    const { txId, categoryId } = sheet;
+    const transaction = transactions.find((t) => t.transaction_id === txId);
+    const category = categories.find((c) => c.id === categoryId);
+    if (!transaction || !category) {
+      setSheet(null); // nothing to categorise — just close the sheet
+      return;
+    }
+
+    if (scope === 'all') {
+      // "Every {merchant} charge": every OTHER uncategorised transaction from the
+      // same merchant (matched by description) that counts toward a budget. Captured
+      // once so the optimistic update and the failure-revert act on the same set.
+      const sameMerchantIds = transactions
+        .filter((t) =>
+          t.counts_to_budget &&
+          t.category == null &&
+          t.description === transaction.description)
+        .map((t) => t.transaction_id);
+
+      // Optimistically file all of them under the chosen category (one state update).
+      setTransactions((prev) =>
+        prev.map((existing) => {
+          if (!sameMerchantIds.includes(existing.transaction_id)) return existing;
+          return { ...existing, category: categoryId };
+        }));
+
+      // Remember the intent as a local rule so the UI reflects it. Durable,
+      // server-side rules are a separate slice (WHIT-52).
+      setRules((prev) => {
+        const newRule: Rule = {
+          id: 'r' + Date.now(),          // unique-enough local id
+          pattern: transaction.description, // match future charges by this text
+          categoryId,                     // file them under the chosen category
+          isNew: true,                    // flags the "NEW" badge in the rules list
+        };
+        // Prepend so the newest rule shows at the top of the list.
+        return [newRule, ...prev];
+      });
+      showToast(`Rule saved — future ${cleanName(transaction.description)} charges file as ${category.name}.`);
+      setSheet(null); // close the confirm sheet
+
+      // Persist each transaction to the server, all in parallel.
+      const outcomes = await Promise.allSettled(
+        sameMerchantIds.map((id) => apiSetTransactionCategory(id, categoryId)));
+
+      // Promise.allSettled keeps the input order, so outcomes[index] is the result
+      // for sameMerchantIds[index]. Keep the ids whose save was rejected.
+      const failedIds = sameMerchantIds.filter((id, index) => {
+        return outcomes[index].status === 'rejected';
+      });
+      if (failedIds.length > 0) {
+        // Roll back only the ones whose save failed (back to uncategorised).
+        setTransactions((prev) =>
+          prev.map((existing) => {
+            if (!failedIds.includes(existing.transaction_id)) return existing;
+            return { ...existing, category: null };
+          }));
+        showToast('Could not save some categories. Please try again.');
       }
-      return null;
-    });
-  }, [transactions, categories, showToast]);
+      return;
+    }
+
+    // scope === 'one': just this single transaction.
+    const previousCategory = transaction.category;
+    // Optimistically show the new category on this one transaction.
+    setTransactions((prev) =>
+      prev.map((existing) => {
+        if (existing.transaction_id !== txId) return existing;
+        return { ...existing, category: categoryId };
+      }));
+    showToast(`This transaction filed under ${category.name}.`);
+    setSheet(null); // close the confirm sheet
+
+    try {
+      await apiSetTransactionCategory(txId, categoryId);
+    } catch {
+      // Save failed — undo the optimistic change, putting the old category back.
+      setTransactions((prev) =>
+        prev.map((existing) => {
+          if (existing.transaction_id !== txId) return existing;
+          return { ...existing, category: previousCategory };
+        }));
+      showToast('Could not save category. Please try again.');
+    }
+  }, [sheet, transactions, categories, showToast]);
 
   const saveBudget = useCallback(
     async (categoryId: string, value: number): Promise<boolean> => {

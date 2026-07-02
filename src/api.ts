@@ -103,6 +103,28 @@ export async function fetchBudgets(): Promise<Record<string, number>> {
 }
 
 /**
+ * Set (persist) a single transaction's category.
+ *
+ * @param id - The transaction_id to categorise.
+ * @param category - The category id/slug to file it under.
+ * @returns The transaction_id and the category that was saved.
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export async function setTransactionCategory(
+  id: string,
+  category: string
+): Promise<{ transaction_id: string; category: string }> {
+  const response = await fetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * Set (upsert) a category's budget target. Idempotent — works whether or not
  * the category already had a target.
  *
