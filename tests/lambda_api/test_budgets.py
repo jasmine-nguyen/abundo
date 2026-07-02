@@ -389,14 +389,14 @@ def test_repo_set_budget_raises_under_sustained_contention(handler):
 # --- rollup S1: pure summarise_transactions + current_cycle_window -----------
 
 
-def _txn(category, amount, status="posted", counts=True):
+def _transaction(category, amount, status="posted", counts=True):
     return {"category": category, "amount": Decimal(str(amount)), "status": status,
             "counts_to_budget": counts}
 
 
 def test_summarise_routes_posted_and_pending(handler):
     # Spend is stored negative; posted -> posted bucket, pending -> pending bucket.
-    txns = [_txn("coffee", -50, "posted"), _txn("coffee", -12, "pending")]
+    txns = [_transaction("coffee", -50, "posted"), _transaction("coffee", -12, "pending")]
 
     result = handler.summarise_transactions(txns, {"coffee"})
 
@@ -405,12 +405,12 @@ def test_summarise_routes_posted_and_pending(handler):
 
 def test_summarise_sums_multiple_and_ignores_others(handler):
     txns = [
-        _txn("coffee", -50), _txn("coffee", -8),          # summed
-        _txn("groceries", -30),                            # different category
-        _txn("coffee", -99, counts=False),                 # not counts_to_budget
-        _txn("income", -100),                              # income category
-        _txn(None, -20),                                   # uncategorized
-        _txn("unbudgeted", -40),                           # no target -> skipped
+        _transaction("coffee", -50), _transaction("coffee", -8),          # summed
+        _transaction("groceries", -30),                            # different category
+        _transaction("coffee", -99, counts=False),                 # not counts_to_budget
+        _transaction("income", -100),                              # income category
+        _transaction(None, -20),                                   # uncategorized
+        _transaction("unbudgeted", -40),                           # no target -> skipped
     ]
 
     result = handler.summarise_transactions(txns, {"coffee", "groceries"})
@@ -422,7 +422,7 @@ def test_summarise_sums_multiple_and_ignores_others(handler):
 
 def test_summarise_refund_reduces_spent(handler):
     # A refund (positive amount) in a spend category reduces posted spend (net).
-    txns = [_txn("coffee", -50), _txn("coffee", 20)]
+    txns = [_transaction("coffee", -50), _transaction("coffee", 20)]
 
     result = handler.summarise_transactions(txns, {"coffee"})
 
@@ -431,7 +431,7 @@ def test_summarise_refund_reduces_spent(handler):
 
 def test_summarise_net_refund_clamped_to_zero(handler):
     # A category whose net is a refund clamps at 0 (no negative bar).
-    txns = [_txn("coffee", 20)]
+    txns = [_transaction("coffee", 20)]
 
     result = handler.summarise_transactions(txns, {"coffee"})
 
@@ -440,6 +440,13 @@ def test_summarise_net_refund_clamped_to_zero(handler):
 
 def test_summarise_empty(handler):
     assert handler.summarise_transactions([], {"coffee"}) == {}
+
+
+def test_summarise_skips_unknown_status(handler):
+    # An unrecognised status isn't guessed into a bucket -> the txn is skipped.
+    txns = [_transaction("coffee", -50, status="settled")]
+
+    assert handler.summarise_transactions(txns, {"coffee"}) == {}
 
 
 def test_current_cycle_window_bounds(handler):

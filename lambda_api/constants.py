@@ -4,6 +4,7 @@ ACCOUNT_ID_MAP = {
     "T6d8ppsYssBDFCwl1qEb0w": "up-homeloan",
 }
 PENDING_STATUS = "pending"
+POSTED_STATUS = "posted"
 MAX_PAGE_SIZE = 100
 TRANSACTION_PATH = "/transactions"
 FEED_WINDOW_DAYS = 5

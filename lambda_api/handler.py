@@ -6,6 +6,7 @@ from constants import (
     CYCLE_WINDOW_DAYS,
     DEFAULT_CATEGORY_ICON,
     PENDING_STATUS,
+    POSTED_STATUS,
     TRANSACTION_PATH,
 )
 from datetime import datetime, timedelta, timezone
@@ -277,15 +278,21 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> di
     that had at least one contributing transaction.
     """
     totals: dict[str, dict] = {}
-    for txn in transactions:
-        if not txn.get("counts_to_budget"):
+    for transaction in transactions:
+        if not transaction.get("counts_to_budget"):
             continue
-        category = txn.get("category")
+        category = transaction.get("category")
         if category is None or category == "income" or category not in target_ids:
             continue
-        bucket = "pending" if txn.get("status") == PENDING_STATUS else "posted"
+        status = transaction.get("status")
+        if status == PENDING_STATUS:
+            bucket = "pending"
+        elif status == POSTED_STATUS:
+            bucket = "posted"
+        else:
+            continue  # unknown status -> don't guess a bucket
         entry = totals.setdefault(category, {"posted": Decimal(0), "pending": Decimal(0)})
-        entry[bucket] += -Decimal(str(txn.get("amount", 0)))
+        entry[bucket] += -Decimal(str(transaction.get("amount", 0)))
     for entry in totals.values():
         entry["posted"] = max(Decimal(0), entry["posted"])
         entry["pending"] = max(Decimal(0), entry["pending"])
