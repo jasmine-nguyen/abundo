@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Platform } from 'react-native';
-import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
@@ -211,15 +211,18 @@ function PayCycleSheet() {
     setDraftLastPayDate(null);
   };
 
-  const onPickDate = (event: DateTimePickerEvent, picked?: Date) => {
+  // New split callback API (onChange is deprecated). onValueChange fires when the
+  // value changes; onDismiss fires on an Android cancel.
+  const onValueChange = (picked?: Date) => {
+    if (!picked) return;
     if (Platform.OS === 'ios') {
-      // Inline picker: stash the pick, don't persist yet (commit on close/Done).
-      if (picked) setDraftLastPayDate(toISODate(picked));
+      // Inline picker fires on every scroll — stash the pick, commit on close/Done.
+      setDraftLastPayDate(toISODate(picked));
       return;
     }
-    // Android: modal dialog. event.type is 'set' on OK, 'dismissed' on cancel.
+    // Android: modal dialog confirms once with OK.
     setShowPicker(false);
-    if (event.type === 'set' && picked) s.setPayday(toISODate(picked));
+    s.setPayday(toISODate(picked));
   };
 
   // Toggle the inline picker; closing it commits any pending iOS draft.
@@ -263,7 +266,13 @@ function PayCycleSheet() {
           mode="date"
           display={Platform.OS === 'ios' ? 'inline' : 'default'}
           maximumDate={today}
-          onChange={onPickDate}
+          // Dark theme so the month/day/year read on the dark sheet (default is
+          // light => dark-on-dark, barely visible); accent matches the palette.
+          themeVariant="dark"
+          accentColor={C.accent}
+          textColor={C.textBright}
+          onValueChange={onValueChange}
+          onDismiss={() => setShowPicker(false)}
         />
       )}
 
