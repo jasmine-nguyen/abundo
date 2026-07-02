@@ -494,9 +494,23 @@ def test_repo_create_raises_under_sustained_contention(handler):
 
     try:
         repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
-        assert False, "expected RuntimeError under sustained contention"
-    except RuntimeError:
+        assert False, "expected VersionConflictError under sustained contention"
+    except repository.VersionConflictError:
         pass
+
+
+def test_create_version_conflict_returns_409(handler, monkeypatch):
+    # A repo that exhausts its retry budget raises VersionConflictError; the shared
+    # dispatch wrapper maps it to 409 (same path budgets use).
+    class ConflictingRepo:
+        def create_category(self, *args):
+            raise handler.VersionConflictError("boom")
+
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: ConflictingRepo())
+
+    resp = handler.lambda_handler(_categories_event(), None)
+
+    assert resp["statusCode"] == 409
 
 
 # --- repository-level: update ------------------------------------------------
