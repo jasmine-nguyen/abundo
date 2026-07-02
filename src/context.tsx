@@ -297,8 +297,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return { ...existing, category: categoryId };
         }));
 
-      // Remember the intent as a local rule (durable, server-side rules = WHIT-52).
-      setRules((prev) => [{ id: 'r' + Date.now(), pattern: transaction.description, categoryId, isNew: true }, ...prev]);
+      // Remember the intent as a local rule so the UI reflects it. Durable,
+      // server-side rules are a separate slice (WHIT-52).
+      setRules((prev) => {
+        const newRule: Rule = {
+          id: 'r' + Date.now(),          // unique-enough local id
+          pattern: transaction.description, // match future charges by this text
+          categoryId,                     // file them under the chosen category
+          isNew: true,                    // flags the "NEW" badge in the rules list
+        };
+        // Prepend so the newest rule shows at the top of the list.
+        return [newRule, ...prev];
+      });
       showToast(`Rule saved — future ${cleanName(transaction.description)} charges file as ${category.name}.`);
       setSheet(null); // close the confirm sheet
 
@@ -306,8 +316,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const outcomes = await Promise.allSettled(
         sameMerchantIds.map((id) => apiSetTransactionCategory(id, categoryId)));
 
-      // outcomes keeps the input order, so index i lines up with sameMerchantIds[i].
-      const failedIds = sameMerchantIds.filter((id, i) => outcomes[i].status === 'rejected');
+      // Promise.allSettled keeps the input order, so outcomes[index] is the result
+      // for sameMerchantIds[index]. Keep the ids whose save was rejected.
+      const failedIds = sameMerchantIds.filter((id, index) => {
+        return outcomes[index].status === 'rejected';
+      });
       if (failedIds.length > 0) {
         // Roll back only the ones whose save failed (back to uncategorised).
         setTransactions((prev) =>
