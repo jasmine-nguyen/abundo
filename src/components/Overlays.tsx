@@ -1,9 +1,30 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Platform } from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel } from '../context';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// The anchor is stored as an ISO "YYYY-MM-DD" string. Parse/format it via the
+// device's LOCAL date components (not UTC) so the calendar and the label always
+// show the day the user actually picked — no midnight-timezone drift.
+function parseAnchor(iso: string): Date {
+  return new Date(`${iso}T00:00:00`); // local midnight of that date
+}
+
+function toISODate(d: Date): string {
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+function formatAnchor(iso: string): string {
+  const d = parseAnchor(iso);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
 
 export function Overlays() {
   const s = useAppContext();
@@ -174,6 +195,19 @@ function AddRuleSheet() {
 function PayCycleSheet() {
   const s = useAppContext();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
+  const [showPicker, setShowPicker] = useState(false);
+
+  // A payday can be today or in the past, never the future — so does the picker.
+  const today = new Date();
+
+  const onPickDate = (event: DateTimePickerEvent, picked?: Date) => {
+    // Android shows a modal dialog that dismisses itself; iOS renders inline and
+    // stays. Close it on Android; keep it open on iOS until the user taps Done.
+    if (Platform.OS !== 'ios') setShowPicker(false);
+    // event.type is 'dismissed' when the user cancels the Android dialog.
+    if (event.type === 'set' && picked) s.setPayday(toISODate(picked));
+  };
+
   return (
     <View>
       <Text style={styles.sheetTitle}>Pay cycle</Text>
@@ -193,6 +227,26 @@ function PayCycleSheet() {
           );
         })}
       </View>
+
+      <Text style={styles.cycleSectionLabel}>Last payday</Text>
+      <Text style={styles.cycleSectionHint}>The budget window resets on this date — set it to your (or your partner's) actual last pay, including any public-holiday shift.</Text>
+      <Pressable
+        onPress={() => setShowPicker((open) => !open)}
+        style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: showPicker ? C.accent : 'rgba(255,255,255,.07)' }]}
+      >
+        <Text style={[styles.cycleText, { color: C.textMid }]}>{formatAnchor(s.payCycle.anchor)}</Text>
+        <Glyph name="calendar" size={18} color={showPicker ? C.accent : C.textDim} />
+      </Pressable>
+      {showPicker && (
+        <DateTimePicker
+          value={parseAnchor(s.payCycle.anchor)}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'inline' : 'default'}
+          maximumDate={today}
+          onChange={onPickDate}
+        />
+      )}
+
       <Pressable onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }]}>
         <Text style={styles.btnPrimaryText}>Done</Text>
       </Pressable>
@@ -238,4 +292,6 @@ const styles = StyleSheet.create({
   ruleCatText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600' },
   cycleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 15, paddingHorizontal: 16, borderRadius: 14, borderWidth: 1 },
   cycleText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600' },
+  cycleSectionLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginTop: 20, letterSpacing: 0.2 },
+  cycleSectionHint: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, lineHeight: 18, marginTop: 4 },
 });
