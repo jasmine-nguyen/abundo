@@ -22,9 +22,30 @@ data "archive_file" "lambda_zip" {
   output_path = "${path.module}/artifacts/lambda.zip"
 }
 
+# Stage the lambda_api package from ONLY its true source (handler.py + its own
+# constants.py, which intentionally shadows the layer's constants with
+# category-aware values). repository.py, models.py, and encoders.py come from the
+# shared layer. Previously this zipped the raw lambda_api/ dir, which is a
+# gitignored build dir ("allowlist only true source" per .gitignore) — so it
+# shipped whatever stale copies happened to be on disk. A leftover repository.py
+# predating CategoryNotFoundError landed in /var/task, shadowed the layer's fresh
+# copy, and 500'd every route on import. Staging a clean dir makes the package
+# deterministic regardless of local cruft.
+resource "null_resource" "prepare_lambda_api" {
+  triggers = {
+    handler   = filesha256("${path.module}/../lambda_api/handler.py")
+    constants = filesha256("${path.module}/../lambda_api/constants.py")
+  }
+
+  provisioner "local-exec" {
+    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/build/lambda_api/"
+  }
+}
+
 data "archive_file" "lambda_api_zip" {
+  depends_on  = [null_resource.prepare_lambda_api]
   type        = "zip"
-  source_dir  = "${path.module}/../lambda_api"
+  source_dir  = "${path.module}/build/lambda_api"
   output_path = "${path.module}/artifacts/lambda_api.zip"
 }
 

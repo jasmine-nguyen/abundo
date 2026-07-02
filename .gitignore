@@ -54,6 +54,7 @@ lambda_api/*
 # terraform
 terraform/artifacts/*
 terraform/layer/
+terraform/build/
 terraform/*.zip
 terraform/*.json
 .pytest_cache/
