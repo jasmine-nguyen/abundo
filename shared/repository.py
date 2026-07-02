@@ -216,6 +216,29 @@ class TransactionRepository:
         except ClientError as e:
             handle_database_error(e, "write")
 
+    def update_transaction_category(self, pk: str, sk: str, category: str) -> bool:
+        """Sets a transaction's category, leaving all other attributes intact.
+
+        Uses a #c alias because 'category' is a reserved word in DynamoDB. The
+        attribute_exists(pk) guard makes the write conditional on the row still
+        existing: get_transaction_keys_by_id and this update are not atomic, so a
+        row deleted in between yields ConditionalCheckFailedException, which we
+        surface as False (a 404 for the caller) rather than a 500.
+        """
+        try:
+            self._get_table().update_item(
+                Key={"pk": pk, "sk": sk},
+                UpdateExpression="SET #c = :category",
+                ExpressionAttributeNames={"#c": "category"},
+                ExpressionAttributeValues={":category": category},
+                ConditionExpression="attribute_exists(pk)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "write")
+
     def delete_transaction(self, pk: str, sk: str) -> None:
         """Deletes a record. Asserts that the key must physically exist prior to removal."""
         try:
