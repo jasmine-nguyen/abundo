@@ -40,7 +40,30 @@ Target card (optional): $ARGUMENTS
    - The proposed test plan.
    Then ask: **"Approve this plan? I'll implement on the branch once you say go."**
 
+## Escalation — decisions you must not make alone
+
+Some choices are the user's to make, not yours. On any decision that is
+**architecturally significant or hard to reverse**, STOP and ask the user — do
+not pick a direction and quietly proceed. This includes: a new data store /
+table / schema shape, sync vs. async, adding a new dependency or service, a
+public API/interface shape, an auth/security choice, or anything that would be
+expensive to undo later.
+
+- Surface these at the **plan stage**, where they're cheapest to change: the
+  plan you present must call them out explicitly as open decisions, with the
+  realistic options and a recommendation — not a fait accompli.
+- Remember subagents can't ask the user directly; if `backlog-planner` or
+  `plan-critic` flags such a fork in its output, it is YOUR job as orchestrator
+  to relay it to the user and pause. Prefer a short multiple-choice question so
+  the decision is easy to make.
+- Small, reversible choices with an obvious default (a local name, which file a
+  helper lives in) you may just make — and mention in your summary. The bar is
+  reversibility and blast radius, not "is there any choice at all."
+
 Hard rules:
 - Do NOT use Edit/Write on source files, do NOT commit, do NOT push, do NOT
   touch the Notion card's status in this command. This stage produces a plan
   only. Implementation is a separate, explicitly-approved step.
+- When the implement stage is added, it inherits the escalation rule above:
+  never resolve an architectural fork by guessing mid-implementation — stop and
+  ask.

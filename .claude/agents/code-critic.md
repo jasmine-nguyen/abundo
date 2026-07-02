@@ -92,6 +92,15 @@ One of:
   until these are done or (for craft) reclassified as deferred cards.
 - **DO NOT SHIP** — a serious correctness bug that isn't a quick fix.
 
+## Decisions to escalate
+If the change silently BAKES IN an architecturally significant or hard-to-reverse
+decision that the user should have signed off on — a new data store / table /
+schema shape, sync vs. async, a new dependency or service, a public API/interface
+shape, an auth/security choice — flag it here. You can't ask the user yourself
+(you run headless), so name the decision, what the change assumes, the realistic
+alternatives, and why it deserves a human's explicit call. The orchestrator will
+relay it and pause. If the change makes no such decision, say "None."
+
 ## Bugs (Axis 1)
 Worst-first. Each: **what & where** (`path:line`), **failure** (trigger + wrong
 outcome), **confidence** (high/med/low), **fix** (smallest change). If none, say
