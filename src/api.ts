@@ -95,6 +95,13 @@ export async function deleteCategory(id: string): Promise<{ id: string }> {
  * @returns A map of category id to its budget-target number.
  * @throws If the response status is not OK.
  */
+export async function fetchBudgets(): Promise<Record<string, number>> {
+  const response = await fetch(`${API_BASE}/budgets`);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /**
  * Set (persist) a single transaction's category.
  *
@@ -112,13 +119,6 @@ export async function setTransactionCategory(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ category }),
   });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return response.json();
-}
-
-export async function fetchBudgets(): Promise<Record<string, number>> {
-  const response = await fetch(`${API_BASE}/budgets`);
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
