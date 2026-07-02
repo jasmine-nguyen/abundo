@@ -28,3 +28,17 @@ BUDGET_PATH = "/budgets"
 # real payday alignment is P14. Isolated in current_cycle_window() so only that
 # seam changes when P14 lands. 14 = the client's default payCycle.length.
 CYCLE_WINDOW_DAYS = 14
+
+# --- Pay cycle (persisted length + payday anchor) --------------------------
+# API Gateway route path for the pay-cycle endpoints (GET current, PUT to set).
+PAYCYCLE_PATH = "/paycycle"
+
+# Cycle lengths (days) the client offers: Weekly / Fortnightly / Monthly. A PUT
+# with any other length is rejected 400 — the window math assumes one of these.
+PAYCYCLE_LENGTHS = frozenset({7, 14, 30})
+
+# Seed until the user sets their real payday: a fixed past date (a Wednesday, the
+# app's original default anchor) + a fortnightly length. Any past date works —
+# the window math walks forward from it in `length`-day steps (P14/Slice 2).
+# Mirrored in shared/constants.py (imported by repository.py); keep the two equal.
+DEFAULT_PAYCYCLE = {"length": 14, "anchor": "2024-01-03"}

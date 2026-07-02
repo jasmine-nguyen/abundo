@@ -133,6 +133,46 @@ export async function setTransactionCategory(
   return response.json();
 }
 
+/** The persisted pay cycle: window length in days + the payday anchor date. */
+export interface PayCycle {
+  length: number;        // 7 | 14 | 30 (Weekly / Fortnightly / Monthly)
+  anchor: string;        // a real past payday, as an ISO "YYYY-MM-DD" date
+}
+
+/**
+ * Fetch the persisted pay cycle (length + payday anchor). Seeds a default
+ * server-side on first read, so this always resolves to a valid cycle.
+ *
+ * @returns The stored { length, anchor }.
+ * @throws If the response status is not OK.
+ */
+export async function fetchPayCycle(): Promise<PayCycle> {
+  const response = await fetch(`${API_BASE}/paycycle`);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Set (replace) the persisted pay cycle. Both fields are written together, so
+ * pass the full cycle even when only one field changed.
+ *
+ * @param cycle - The new { length, anchor }. anchor must be a past ISO date.
+ * @returns The saved { length, anchor }.
+ * @throws If the response status is not OK (e.g. 400 on a bad length or a
+ *   future/malformed anchor).
+ */
+export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
+  const response = await fetch(`${API_BASE}/paycycle`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cycle),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /**
  * Set (upsert) a category's budget target. Idempotent — works whether or not
  * the category already had a target.
