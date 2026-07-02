@@ -340,9 +340,17 @@ export interface TransactionView {
   catLabel: string; catColor: string; catWeight: '500' | '700'; tappable: boolean;
 }
 
+// A transaction is uncategorized when it has no resolvable Whittle category: its
+// category is null, or it points at an id not in the taxonomy (e.g. a raw BankSync
+// category not yet mapped). 'income' is a category, not uncategorized. Single
+// source of truth so the row label, the tab list, and the badge always agree.
+export function isUncategorized(s: AppContext, t: Transaction): boolean {
+  return t.category !== 'income' && (t.category == null || !s.cat(t.category));
+}
+
 export function transactionView(s: AppContext, t: Transaction): TransactionView {
   const c = t.category == null || t.category === 'income' ? undefined : s.cat(t.category);
-  const isUncat = t.category == null || (t.category !== 'income' && !c);
+  const isUncat = isUncategorized(s, t);
   const isIncome = t.category === 'income';
   const key = isUncat ? 'q' : isIncome ? 'home' : c!.icon;
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -358,7 +366,7 @@ export function transactionView(s: AppContext, t: Transaction): TransactionView 
 }
 
 export function transactionGroups(s: AppContext, tab: 'all' | 'uncat') {
-  const tabFilter = (t: Transaction) => (tab === 'uncat' ? t.counts_to_budget && t.category == null : true);
+  const tabFilter = (t: Transaction) => (tab === 'uncat' ? t.counts_to_budget && isUncategorized(s, t) : true);
   const seen = new Map<string, Transaction[]>();
   const order: string[] = [];
   for (const t of s.transactions.filter(tabFilter)) {
@@ -370,7 +378,7 @@ export function transactionGroups(s: AppContext, tab: 'all' | 'uncat') {
 }
 
 export function uncatCount(s: AppContext) {
-  return s.transactions.filter((t) => t.counts_to_budget && t.category == null).length;
+  return s.transactions.filter((t) => t.counts_to_budget && isUncategorized(s, t)).length;
 }
 
 export function budgetDetail(s: AppContext, catId: string) {
