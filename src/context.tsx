@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, BudgetRollup } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -132,6 +132,7 @@ interface AppContext {
   dismissNotif: () => void;
   toggleAlerts: () => void;
   setPayCycleLength: (len: number) => void;
+  setPayday: (anchor: string) => void;
   openPicker: (txId: string) => void;
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
@@ -148,6 +149,7 @@ interface AppContext {
 	refreshCategories: () => Promise<void>;
 	budgetsLoading: boolean;
 	refreshBudgets: () => Promise<void>;
+	refreshPayCycle: () => Promise<void>;
 }
 
 /**
@@ -187,7 +189,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [rules, setRules] = useState<Rule[]>(SEED_RULES);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
-  const [payCycle, setPayCycle] = useState({ length: 14, anchor: 'Wednesday' });
+  // Seeded to the server default; refreshPayCycle() overwrites it from the API on
+  // mount. anchor is an ISO "YYYY-MM-DD" payday date (was a weekday name pre-P14).
+  const [payCycle, setPayCycle] = useState({ length: 14, anchor: '2024-01-03' });
   const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -233,10 +237,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, [payCycle.length]);
 
+	const refreshPayCycle = useCallback(async () => {
+		const cycle = await fetchPayCycle();
+		setPayCycle(cycle);
+	}, []);
+
+	// Persist a changed pay cycle: update local state optimistically, PUT the full
+	// cycle (the server replaces both fields), THEN refresh budgets — awaiting the
+	// write before the read so the refetch can't race ahead of the stored cycle.
+	const persistPayCycle = useCallback(async (next: { length: number; anchor: string }) => {
+		setPayCycle(next);
+		await apiSetPayCycle(next);
+		await refreshBudgets();
+	}, [refreshBudgets]);
+
+	// Change the window length (Weekly/Fortnightly/Monthly), keeping the anchor.
+	const setPayCycleLength = useCallback((length: number) => {
+		persistPayCycle({ ...payCycle, length });
+	}, [persistPayCycle, payCycle]);
+
+	// Change the payday anchor (a real past payday), keeping the length.
+	const setPayday = useCallback((anchor: string) => {
+		persistPayCycle({ ...payCycle, anchor });
+	}, [persistPayCycle, payCycle]);
+
 	useEffect(() => {
 		refreshTransactions();
 		refreshCategories();
-	}, [refreshTransactions, refreshCategories]);
+		refreshPayCycle();
+	}, [refreshTransactions, refreshCategories, refreshPayCycle]);
 
 	// Re-fetch budgets on mount and whenever the pay-cycle length (the window) changes.
 	useEffect(() => {
@@ -452,9 +481,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     category, cycleName,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
-    setPayCycleLength: (len) => setPayCycle((p) => ({ ...p, length: len })),
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets
-  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleName, showToast, dismissNotif, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets]);
+    setPayCycleLength, setPayday,
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle
+  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleName, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

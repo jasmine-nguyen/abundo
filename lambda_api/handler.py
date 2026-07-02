@@ -6,17 +6,20 @@ from constants import (
     CYCLE_WINDOW_DAYS,
     DEFAULT_CATEGORY_ICON,
     MAX_PAGE_SIZE,
+    PAYCYCLE_LENGTHS,
+    PAYCYCLE_PATH,
     PENDING_STATUS,
     POSTED_STATUS,
     TRANSACTION_PATH,
 )
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from repository import (
     BudgetRepository,
     CategoryNotFoundError,
     CategoryRepository,
     DuplicateCategoryError,
+    PayCycleRepository,
     TransactionRepository,
     VersionConflictError,
 )
@@ -60,6 +63,12 @@ def lambda_handler(event, context):
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
             return set_budget(event, BudgetRepository())
+
+        if path == PAYCYCLE_PATH and method == "GET":
+            return _json_response(200, PayCycleRepository().get_paycycle())
+
+        if path == PAYCYCLE_PATH and method == "PUT":
+            return set_paycycle(event, PayCycleRepository())
 
         return _json_response(404, {"error": "Not found"})
     except VersionConflictError:
@@ -403,4 +412,41 @@ def set_budget(event: dict, repo: BudgetRepository) -> dict:
         return _json_response(400, {"error": "target too large"})
 
     saved = repo.set_budget(cat_id, Decimal(str(target)))
+    return _json_response(200, saved)
+
+
+def set_paycycle(event: dict, repo: PayCycleRepository) -> dict:
+    """PUT /paycycle — set (replace) the persisted pay cycle.
+
+    Body: {"length": <7|14|30>, "anchor": "YYYY-MM-DD"} where anchor is a real
+    past payday. Both fields are required and validated here (the repository just
+    persists): length must be one the client offers, anchor must be a valid ISO
+    date that isn't in the future — a future anchor has no cycle_start <= today,
+    which would break the payday-window math in Slice 2.
+
+    The "not in the future" ceiling is today + 1 day, matching the +1-day slack
+    the rest of the API uses because AEST dates run up to a day ahead of UTC; the
+    precise Australia/Sydney reset lands with the window math in Slice 2.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    length = body.get("length")
+    # bool is an int subclass, so reject it before the membership check.
+    if isinstance(length, bool) or length not in PAYCYCLE_LENGTHS:
+        return _json_response(
+            400, {"error": f"length must be one of {sorted(PAYCYCLE_LENGTHS)}"})
+
+    anchor = body.get("anchor")
+    if not isinstance(anchor, str):
+        return _json_response(400, {"error": "anchor must be a YYYY-MM-DD date string"})
+    try:
+        anchor_date = date.fromisoformat(anchor)
+    except ValueError:
+        return _json_response(400, {"error": "anchor must be a valid YYYY-MM-DD date"})
+    if anchor_date > datetime.now(timezone.utc).date() + timedelta(days=1):
+        return _json_response(400, {"error": "anchor cannot be in the future"})
+
+    saved = repo.set_paycycle(length, anchor)
     return _json_response(200, saved)

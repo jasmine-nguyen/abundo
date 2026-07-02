@@ -73,6 +73,21 @@ resource "aws_apigatewayv2_route" "put_budget_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# Pay cycle: read current (GET /paycycle) + set length + payday anchor (PUT
+# /paycycle). Reuse the lambda_api integration; the /*/* invoke permission
+# already covers these, so no new integration or lambda permission is needed.
+resource "aws_apigatewayv2_route" "get_paycycle_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /paycycle"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "put_paycycle_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "PUT /paycycle"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 resource "aws_lambda_permission" "get_transactions_invoke_permission" {
   statement_id  = "AllowAPIGatewayInvokeGetTransactions"
   action        = "lambda:InvokeFunction"
