@@ -1,11 +1,14 @@
 """Test bootstrap for the BankSync webhook lambda suite (``lambda/``).
 
-``lambda/`` has its OWN copies of ``handler`` / ``constants`` / ``models`` /
-``repository`` / ``banksync`` (and imports ``ssm`` / ``standardwebhooks``), whose
-bare module names collide with the ``lambda_api`` and ``sync_trigger`` suites. The
-``lam`` fixture pins ``lambda/`` to the front of ``sys.path``, sheds those names
-from ``sys.modules`` before importing so ``lambda/``'s copies win, and restores
-everything afterwards — mirroring ``tests/lambda_api/conftest.py``.
+``lambda/`` owns only the webhook-specific ``handler`` / ``repository`` /
+``banksync`` (and imports ``ssm`` / ``standardwebhooks``); ``constants`` /
+``models`` / ``encoders`` come from the shared layer (``shared/``), exactly as the
+deployed webhook resolves them (its function code shadows the attached layer). The
+``lam`` fixture therefore pins ``lambda/`` in front of ``shared/`` on ``sys.path``
+— so ``lambda/``'s own copies win and the folded modules fall through to
+``shared/``, mirroring ``/var/task`` before ``/opt/python`` in prod — sheds the
+colliding bare names from ``sys.modules`` before importing, and restores
+everything afterwards.
 
 Unlike the lambda_api fakes (which set ``Key = Attr = object`` because those tests
 never query), this suite exercises ``get_pending_transactions_for_account``, so it
@@ -97,8 +100,12 @@ def _fake_import_satisfiers() -> dict:
     }
 
 
-_LAMBDA_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "lambda")
-# Real lambda/ modules whose bare names collide with the sibling suites.
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_LAMBDA_DIR = str(_REPO_ROOT / "lambda")
+_SHARED_DIR = str(_REPO_ROOT / "shared")
+# Bare module names whose imports must resolve fresh per test: lambda/'s own copies
+# (handler / repository / banksync) plus the folded modules now provided by shared/
+# (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
 _REIMPORT = ("handler", "constants", "models", "repository", "banksync", "encoders")
 
 
@@ -117,8 +124,12 @@ def lam():
         saved_fakes[name] = sys.modules.get(name)
         sys.modules[name] = mod
 
-    while _LAMBDA_DIR in sys.path:
-        sys.path.remove(_LAMBDA_DIR)
+    for d in (_LAMBDA_DIR, _SHARED_DIR):
+        while d in sys.path:
+            sys.path.remove(d)
+    # shared/ first, then lambda/ on top: lambda/ wins for its own modules, and the
+    # folded ones (constants / models / encoders) fall through to shared/.
+    sys.path.insert(0, _SHARED_DIR)
     sys.path.insert(0, _LAMBDA_DIR)
     saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
 
@@ -144,8 +155,9 @@ def lam():
                 sys.modules[name] = orig
         conds.Key = saved_key
         conds.Attr = saved_attr
-        while _LAMBDA_DIR in sys.path:
-            sys.path.remove(_LAMBDA_DIR)
+        for d in (_LAMBDA_DIR, _SHARED_DIR):
+            while d in sys.path:
+                sys.path.remove(d)
 
 
 class FakeTable:
