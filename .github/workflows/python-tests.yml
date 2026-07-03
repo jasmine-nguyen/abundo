@@ -29,3 +29,19 @@ jobs:
             --cov=lambda_authorizer \
             --cov-report=term-missing \
             --cov-fail-under=72
+
+      # Render the coverage table onto the run summary page so it's visible
+      # without opening the job log. Runs even if the tests failed (if: always),
+      # so a floor breach still shows the numbers. Reads the .coverage data file
+      # pytest-cov wrote before the fail-under check.
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo "## 🐍 Python coverage"
+            echo ""
+            echo "Floor: 72%"
+            echo ""
+            python -m coverage report --format=markdown 2>/dev/null \
+              || { echo '```'; python -m coverage report 2>/dev/null || echo "(no coverage data)"; echo '```'; }
+          } >> "$GITHUB_STEP_SUMMARY"
