@@ -540,10 +540,14 @@ def test_summarise_skips_unknown_status(handler):
     assert handler.summarise_transactions(txns, {"coffee"}) == {}
 
 
-def test_current_cycle_window_end_is_today_plus_one(handler):
+def test_current_cycle_window_end_is_today_inclusive(handler):
     from datetime import date
+    # WHIT-75: the end bound is today itself (inclusive), NOT today+1 — date-only
+    # storage + inclusive `between` means `today` already covers all of today's spend,
+    # and a transaction dated tomorrow must be excluded.
     _, end = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 2, 15))
-    assert end == "2024-02-16"  # half-open [start, today+1) includes all of today
+    assert end == "2024-02-15"          # today, inclusive
+    assert end < "2024-02-16"           # tomorrow is out of the window
 
 
 def test_current_cycle_window_k_selection_across_cycles(handler):
@@ -577,10 +581,110 @@ def test_current_cycle_window_length_variants(handler):
 
 def test_current_cycle_window_future_last_pay_date_clamped(handler):
     from datetime import date
-    # A future last_pay_date has no valid k; the window must not invert.
+    # A future last_pay_date has no valid k; the window must not invert. It collapses
+    # to the single inclusive day [today, today] — today's spend still counts.
     start, end = handler.current_cycle_window("2024-06-05", 14, today=date(2024, 6, 1))
     assert start == "2024-06-01"       # clamped to today
-    assert start <= end                # never inverted
+    assert start == end == "2024-06-01"  # single inclusive day, not inverted/empty
+
+
+def test_current_cycle_window_payday_end_covers_today(handler):
+    from datetime import date
+    # On payday, cycle_start == today; the window is the single inclusive day
+    # [today, today], so a transaction dated today still lands in the fresh cycle.
+    start, end = handler.current_cycle_window("2024-01-03", 14, today=date(2024, 1, 17))
+    assert start == end == "2024-01-17"
+
+
+class _DateFilteringTransactionRepo:
+    """Like FakeTransactionRepo, but HONOURS the date bounds the way DynamoDB
+    `between` does — inclusive on BOTH ends over date-only YYYY-MM-DD strings — so a
+    boundary test can prove exactly which dates the window pulls in. Serves the pool
+    once (then empties) so the per-account loop sums each transaction a single time."""
+
+    def __init__(self, transactions):
+        self._txns = list(transactions)
+        self._served = False
+        self.calls = []
+
+    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
+        self.calls.append((account_id, start_date, end_date, limit, cursor))
+        if self._served:
+            return [], None
+        self._served = True
+        page = [t for t in self._txns if start_date <= t["date"] <= end_date]
+        return page, None
+
+
+def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monkeypatch):
+    # WHIT-75 end-to-end: on the day BEFORE payday, a transaction dated TOMORROW (the
+    # next payday) must NOT smear into this cycle, while both cycle_start and today
+    # count. Fails on the old `today+1` end (would sum 30); passes on the fix (sums 20).
+    from datetime import date
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 1, 16))
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    txn_repo = _DateFilteringTransactionRepo(transactions=[
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-16"},  # today       -> IN
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-17"},  # tomorrow    -> OUT
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+
+    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
+    assert txn_repo.calls[0][2] == "2024-01-16"  # queried end bound is today, not today+1
+
+
+def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatch):
+    # WHIT-75 lower-bound guard (regression): a transaction dated the day BEFORE
+    # cycle_start (last cycle's spend) must NOT count in this cycle, while cycle_start
+    # itself does. Locks the start bound the same way the end bound is locked.
+    from datetime import date
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 1, 16))
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    txn_repo = _DateFilteringTransactionRepo(transactions=[
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-02"},  # day before cycle_start -> OUT
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start            -> IN
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+
+    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("10"), "pending": Decimal("0")}}
+    assert txn_repo.calls[0][1] == "2024-01-03"  # queried start bound is cycle_start
+
+
+def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatch):
+    # WHIT-75 for the PENDING bucket: a pending authorisation dated tomorrow must not
+    # leak in either — pending stays 0, today's pending still counts.
+    from datetime import date
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 1, 16))
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    txn_repo = _DateFilteringTransactionRepo(transactions=[
+        {**_transaction("coffee", -10, "pending"), "date": "2024-01-16"},  # today    -> IN
+        {**_transaction("coffee", -10, "pending"), "date": "2024-01-17"},  # tomorrow -> OUT
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+
+    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("0"), "pending": Decimal("10")}}
+
+
+def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
+    # Boundary independence from cycle length: with a 30-day cycle the end is still
+    # `today`, so a txn dated tomorrow is excluded and cycle_start still counts.
+    from datetime import date
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 2, 1))  # 29 days on -> cycle_start 2024-01-03
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    txn_repo = _DateFilteringTransactionRepo(transactions=[
+        {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
+        {**_transaction("coffee", -10, "posted"), "date": "2024-02-01"},  # today       -> IN
+        {**_transaction("coffee", -10, "posted"), "date": "2024-02-02"},  # tomorrow    -> OUT
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(length=30))
+
+    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
+    assert txn_repo.calls[0][2] == "2024-02-01"  # end bound is today regardless of length
 
 
 def test_current_cycle_window_injectable_today_is_deterministic(handler):
@@ -595,7 +699,7 @@ def test_current_cycle_window_defaults_to_melbourne_today(handler, monkeypatch):
     # With no explicit `today`, the window uses _melbourne_today().
     monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 2, 15))
     start, end = handler.current_cycle_window("2024-01-03", 14)
-    assert (start, end) == ("2024-02-14", "2024-02-16")
+    assert (start, end) == ("2024-02-14", "2024-02-15")
 
 
 def test_melbourne_today_maps_utc_instant_to_local_date(handler, monkeypatch):

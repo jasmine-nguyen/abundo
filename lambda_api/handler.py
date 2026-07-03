@@ -287,17 +287,21 @@ def _melbourne_today() -> date:
 
 
 def current_cycle_window(last_pay_date: str, length: int, today: date | None = None) -> tuple[str, str]:
-    """Return (start, end) ISO dates for the CURRENT pay cycle: the half-open
-    window [cycle_start, today+1) that resets on the user's payday.
+    """Return (start, end) ISO dates for the CURRENT pay cycle: the inclusive
+    window [cycle_start, today] that resets on the user's payday.
 
     `cycle_start` is the most recent payday on or before today — the latest
     `last_pay_date + k*length` days (integer k >= 0) that is <= today. `today` defaults
-    to the Melbourne-local date (injectable for deterministic tests). The +1-day end
-    keeps the inclusive date-range query covering all of today's transactions;
-    cycle_start is inclusive, so payday spend lands in the fresh cycle.
+    to the Melbourne-local date (injectable for deterministic tests). Both bounds are
+    inclusive: transaction `date` is stored date-only (YYYY-MM-DD) and the date-range
+    query uses DynamoDB `between`, which is inclusive on both ends, so `end = today`
+    covers all of today's spend while excluding tomorrow's (WHIT-75 — a `today+1` end
+    used to leak a transaction dated tomorrow into the cycle). cycle_start is inclusive,
+    so payday spend lands in the fresh cycle.
 
     A future last_pay_date has no valid k (Slice 1 rejects one at write, but stay safe):
-    max(0, ...) plus the cycle_start>today clamp keep the window from inverting.
+    max(0, ...) plus the cycle_start>today clamp keep the window from inverting (they
+    collapse it to the single inclusive day [today, today]).
     """
     if today is None:
         today = _melbourne_today()
@@ -307,7 +311,7 @@ def current_cycle_window(last_pay_date: str, length: int, today: date | None = N
     cycle_start = pay_date + timedelta(days=cycles_elapsed * length)
     if cycle_start > today:
         cycle_start = today
-    end = today + timedelta(days=1)
+    end = today
     return cycle_start.isoformat(), end.isoformat()
 
 
@@ -377,7 +381,7 @@ def list_budgets(
     computed on-read (approach C) over the current pay-cycle window.
 
     The window resets on the user's payday: it reads the stored pay cycle and sums
-    transactions over [cycle_start, today+1). posted/pending are summed from the
+    transactions over the inclusive [cycle_start, today]. posted/pending are summed from the
     window's transactions (nothing stored), so a pending->posted settlement or an
     amount change is reflected on the next call with no bookkeeping. Every budgeted
     id appears; a category with no spend this window is posted/pending 0.
