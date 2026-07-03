@@ -23,6 +23,10 @@ module.exports = {
   // check code-critic runs). Current ~33% lines; floor sits a few points under so a
   // new feature can't quietly drop coverage, without demanding a legacy-screen backfill.
   collectCoverageFrom: ['src/**/*.{ts,tsx}', '!src/__tests__/**'],
+  // `text` prints the per-file table into the CI log; `json-summary` writes
+  // coverage/coverage-summary.json, which the CI "Coverage summary" step renders
+  // onto the GitHub run summary page (so you don't have to open the job log).
+  coverageReporters: ['text', 'json-summary'],
   coverageThreshold: {
     global: { statements: 30, branches: 42, functions: 22, lines: 30 },
   },
