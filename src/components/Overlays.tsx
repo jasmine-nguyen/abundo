@@ -85,7 +85,7 @@ function SheetHost() {
           <View style={styles.grabber} />
           {s.sheet?.mode === 'picker' && <PickerSheet />}
           {s.sheet?.mode === 'confirm' && <ConfirmSheet />}
-          {s.sheet?.mode === 'addrule' && <AddRuleSheet />}
+          {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
           {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
         </Pressable>
       </Pressable>
@@ -148,13 +148,23 @@ function ConfirmSheet() {
 
 function AddRuleSheet() {
   const s = useAppContext();
-  const [pattern, setPattern] = useState('');
-  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const sh = s.sheet;
+  // ruleId present -> editing an existing rule; prefill from it. The sheet is
+  // keyed on ruleId (see SheetHost), so it remounts per rule and these
+  // initialisers re-run.
+  const editing = sh?.mode === 'addrule' && sh.ruleId ? s.rules.find((r) => r.id === sh.ruleId) : undefined;
+  const [pattern, setPattern] = useState(editing?.pattern ?? '');
+  const [categoryId, setCategoryId] = useState<string | null>(editing?.categoryId ?? null);
   const categories = s.categories.filter((c) => c.bucket !== 'Income');
   const canSave = pattern.trim().length > 0 && !!categoryId;
+  const submit = () => {
+    if (!canSave) return;
+    if (editing) s.updateRule(editing.id, pattern, categoryId!);
+    else s.saveManualRule(pattern, categoryId!);
+  };
   return (
     <View>
-      <Text style={styles.sheetTitle}>New rule</Text>
+      <Text style={styles.sheetTitle}>{editing ? 'Edit rule' : 'New rule'}</Text>
       <Text style={styles.fieldLabel}>WHEN DESCRIPTION CONTAINS</Text>
       <TextInput
         value={pattern}
@@ -183,10 +193,10 @@ function AddRuleSheet() {
         </View>
       </ScrollView>
       <Pressable
-        onPress={() => canSave && s.saveManualRule(pattern, categoryId!)}
+        onPress={submit}
         style={[styles.btn, { marginTop: 16, backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}
       >
-        <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : '#6a6a90' }]}>Add rule</Text>
+        <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{editing ? 'Update rule' : 'Add rule'}</Text>
       </Pressable>
     </View>
   );

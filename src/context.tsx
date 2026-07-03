@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup, listEnrichments, createEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,7 +44,7 @@ export interface Goal {
 export type Sheet =
   | { mode: 'picker'; txId: string }
   | { mode: 'confirm'; txId: string; categoryId: string }
-  | { mode: 'addrule' }
+  | { mode: 'addrule'; ruleId?: string }   // ruleId set -> editing an existing rule
   | { mode: 'paycycle' }
   | null;
 
@@ -145,6 +145,7 @@ export interface AppContext {
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
   saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
+  updateRule: (id: string, pattern: string, categoryId: string) => Promise<void>;
   fireRepayment: () => void;
 
 	transactionsLoading: boolean;
@@ -554,6 +555,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [categories, showToast]);
 
+  // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
+  // failure. The rule's field/operator are preserved (passed through) so a
+  // non-default rule isn't silently reset to description/contains.
+  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string) => {
+    const value = pattern.trim();
+    if (!value || !categoryId) return;
+    const before = rules.find((r) => r.id === id);
+    if (!before) return;
+    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, pattern: value, categoryId } : r)));
+    setSheet(null);
+    const c = categories.find((x) => x.id === categoryId);
+    if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
+    try {
+      const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator });
+      setRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
+    } catch {
+      setRules((prev) => prev.map((r) => (r.id === id ? before : r)));
+      showToast('Could not update rule. Please try again.');
+    }
+  }, [rules, categories, showToast]);
+
   const fireRepayment = useCallback(() => {
     const principal = 1208;
     const body = REPAY_LINES[(repayIdx.current = (repayIdx.current + 1) % REPAY_LINES.length)];
@@ -572,9 +594,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

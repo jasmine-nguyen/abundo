@@ -144,14 +144,11 @@ def list_rules() -> list[dict]:
     return rules
 
 
-def create_rule(field: str, operator: str, value: str, category_id: str) -> dict:
-    """POST /v1/enrichments — create a single-condition categorisation rule.
-
-    Builds `<field> <operator> <value>` -> set category=<category_id>, applied to
-    all feeds. Returns the new Rule (id from BankSync + the inputs), so the caller
-    doesn't depend on BankSync echoing the ruleConfig back.
-    """
-    payload = {
+def _rule_payload(field: str, operator: str, value: str, category_id: str) -> dict:
+    """The BankSync enrichment body for a single-condition rule
+    `<field> <operator> <value>` -> set category=<category_id>, applied to all
+    feeds. Shared by create and update so the two can't diverge on shape."""
+    return {
         "name": f"{field} {operator} {value} -> {category_id}",
         "type": "rule",
         "dataType": "transactions",
@@ -170,10 +167,34 @@ def create_rule(field: str, operator: str, value: str, category_id: str) -> dict
             ]
         },
     }
-    result = _request("POST", _ENRICHMENTS, payload)
+
+
+def create_rule(field: str, operator: str, value: str, category_id: str) -> dict:
+    """POST /v1/enrichments — create a single-condition categorisation rule.
+
+    Returns the new Rule (id from BankSync + the inputs), so the caller doesn't
+    depend on BankSync echoing the ruleConfig back.
+    """
+    result = _request("POST", _ENRICHMENTS, _rule_payload(field, operator, value, category_id))
     created = result.get("data") or {}
     return {
         "id": created.get("id"),
+        "field": field,
+        "operator": operator,
+        "value": value,
+        "categoryId": category_id,
+    }
+
+
+def update_rule(enrichment_id: str, field: str, operator: str, value: str, category_id: str) -> dict:
+    """PUT /v1/enrichments/{id} — replace a rule's config (full replace, so we
+    always send the whole ruleConfig). Returns the Rule from the inputs (the id is
+    the known enrichment_id). Unlike delete_rule, a 404 is NOT swallowed — the
+    handler maps it to a 404 for the app (editing a rule that's gone is an error,
+    not a no-op)."""
+    _request("PUT", f"{_ENRICHMENTS}/{enrichment_id}", _rule_payload(field, operator, value, category_id))
+    return {
+        "id": enrichment_id,
         "field": field,
         "operator": operator,
         "value": value,

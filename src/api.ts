@@ -264,6 +264,29 @@ export async function createEnrichment(
 }
 
 /**
+ * Update (replace) a categorisation rule. `field`/`operator` are omitted by
+ * default so the server keeps its "description contains" default. Auth-gated.
+ *
+ * @param id - The BankSync enrichment id to update.
+ * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
+ * @returns The updated rule.
+ * @throws If the response status is not OK (404 unknown id, 400 invalid, 401 auth).
+ */
+export async function updateEnrichment(
+  id: string,
+  input: { value: string; categoryId: string; field?: string; operator?: string }
+): Promise<EnrichmentRule> {
+  const response = await fetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * Delete a categorisation rule. Idempotent server-side (an unknown id still
  * returns 200). Auth-gated.
  *

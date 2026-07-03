@@ -47,10 +47,13 @@ export default function Rules() {
             return (
               <View key={r.id} style={styles.row}>
                 <View style={[styles.chip, { backgroundColor: tint(color, 0.15) }]}><Icon name={c?.icon ?? 'q'} size={20} color={color} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pattern}>{r.pattern}</Text>
-                  <Text style={styles.target}>→ <Text style={{ color, fontWeight: '600' }}>{c?.name ?? '—'}</Text></Text>
-                </View>
+                <Pressable testID={`edit-rule-${r.id}`} onPress={() => s.setSheet({ mode: 'addrule', ruleId: r.id })} style={styles.ruleBody}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pattern}>{r.pattern}</Text>
+                    <Text style={styles.target}>→ <Text style={{ color, fontWeight: '600' }}>{c?.name ?? '—'}</Text></Text>
+                  </View>
+                  <Glyph name="chevron" size={15} color={C.textFaint} />
+                </Pressable>
                 {r.isNew && <Text style={styles.newBadge}>NEW</Text>}
                 <Pressable testID={`delete-rule-${r.id}`} onPress={() => s.deleteRule(r.id)} style={styles.trash}>
                   <Glyph name="trash" size={18} color={C.textFaint} />
@@ -77,6 +80,7 @@ const styles = StyleSheet.create({
   introBold: { color: '#fff', fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 8 },
   chip: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  ruleBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   pattern: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.textBright, letterSpacing: 0.2 },
   target: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   newBadge: { fontFamily: FONT.body, fontSize: 10, fontWeight: '700', color: C.good, backgroundColor: 'rgba(53,217,160,.14)', paddingVertical: 3, paddingHorizontal: 7, borderRadius: 6, overflow: 'hidden' },

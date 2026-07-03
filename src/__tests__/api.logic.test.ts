@@ -3,7 +3,7 @@
 // (incl. encodeURIComponent + server-default field/operator omission), and the
 // not-OK throw. fetch is mocked; no network. WHIT-52 Slice 2.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { listEnrichments, createEnrichment, deleteEnrichment } from '../api';
+import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment } from '../api';
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
@@ -56,6 +56,31 @@ describe('createEnrichment', () => {
     await createEnrichment({ value: 'FOOD_AND_DRINK', categoryId: 'eatingout', field: 'category', operator: 'equals' });
     const [, opts] = fetchMock.mock.calls[0] as [string, any];
     expect(JSON.parse(opts.body)).toEqual({ value: 'FOOD_AND_DRINK', categoryId: 'eatingout', field: 'category', operator: 'equals' });
+  });
+});
+
+describe('updateEnrichment', () => {
+  it('PUTs /enrichments/{id} url-encoded, with body + Bearer token', async () => {
+    fetchMock.mockReturnValue(okJson(RULE));
+    await updateEnrichment('a/b', { value: 'NETFLIX', categoryId: 'subs' });
+    const [url, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe(`${API}/enrichments/a%2Fb`);
+    expect(opts.method).toBe('PUT');
+    expect(opts.headers['Content-Type']).toBe('application/json');
+    expect(opts.headers.Authorization).toBe('Bearer test-token');
+    expect(JSON.parse(opts.body)).toEqual({ value: 'NETFLIX', categoryId: 'subs' });
+  });
+
+  it('passes field/operator through when supplied', async () => {
+    fetchMock.mockReturnValue(okJson(RULE));
+    await updateEnrichment('e1', { value: 'X', categoryId: 'c', field: 'category', operator: 'equals' });
+    const [, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(JSON.parse(opts.body)).toEqual({ value: 'X', categoryId: 'c', field: 'category', operator: 'equals' });
+  });
+
+  it('throws on a not-OK response (e.g. 404 unknown id)', async () => {
+    fetchMock.mockReturnValue(notOk(404));
+    await expect(updateEnrichment('gone', { value: 'X', categoryId: 'c' })).rejects.toThrow('API error: 404');
   });
 });
 

@@ -64,3 +64,10 @@ it('renders a rule and deletes it via the trash button', () => {
   fireEvent.press(screen.getByTestId('delete-rule-e1'));
   expect(fns.deleteRule).toHaveBeenCalledWith('e1');
 });
+
+it('tapping a rule body opens the edit sheet with its id', () => {
+  mockState = state({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }] });
+  render(<Rules />);
+  fireEvent.press(screen.getByTestId('edit-rule-e1'));
+  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addrule', ruleId: 'e1' });
+});

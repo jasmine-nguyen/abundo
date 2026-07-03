@@ -33,6 +33,7 @@ from banksync_enrichments import (
     create_rule,
     delete_rule,
     list_rules,
+    update_rule,
 )
 from encoders import DecimalEncoder
 import base64
@@ -92,6 +93,9 @@ def lambda_handler(event, context):
 
         if path == ENRICHMENTS_PATH and method == "POST":
             return create_enrichment(event)
+
+        if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "PUT":
+            return update_enrichment(event)
 
         if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "DELETE":
             return delete_enrichment(event)
@@ -306,6 +310,39 @@ def get_enrichments() -> dict:
         return _banksync_error_response(e)
 
 
+def _validate_rule_body(event: dict):
+    """Parse + validate a create/update rule body, returning the NORMALISED
+    values so create and update trim/default identically.
+
+    Returns ((value, category_id, field, operator), None) on success — value and
+    category_id already stripped, field/operator defaulted to the Tier-1
+    "description contains" and restricted to the verified vocabulary — or
+    (None, error_response) with a 400.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return None, error
+
+    value = body.get("value")
+    if not isinstance(value, str) or not value.strip():
+        return None, _json_response(400, {"error": "value is required"})
+
+    category_id = body.get("categoryId")
+    if not isinstance(category_id, str) or not category_id.strip():
+        return None, _json_response(400, {"error": "categoryId is required"})
+
+    field = body.get("field", DEFAULT_RULE_FIELD)
+    if field not in RULE_FIELDS:
+        return None, _json_response(400, {"error": f"field must be one of {sorted(RULE_FIELDS)}"})
+
+    operator = body.get("operator", DEFAULT_RULE_OPERATOR)
+    if operator not in RULE_OPERATORS:
+        return None, _json_response(
+            400, {"error": f"operator must be one of {sorted(RULE_OPERATORS)}"})
+
+    return (value.strip(), category_id.strip(), field, operator), None
+
+
 def create_enrichment(event: dict) -> dict:
     """POST /enrichments — create a categorisation rule in BankSync.
 
@@ -315,33 +352,43 @@ def create_enrichment(event: dict) -> dict:
     verified vocabulary — an unverified operator is rejected 400 before it can
     reach BankSync.
     """
-    body, error = _parse_json_body(event)
+    parsed, error = _validate_rule_body(event)
     if error:
         return error
-
-    value = body.get("value")
-    if not isinstance(value, str) or not value.strip():
-        return _json_response(400, {"error": "value is required"})
-
-    category_id = body.get("categoryId")
-    if not isinstance(category_id, str) or not category_id.strip():
-        return _json_response(400, {"error": "categoryId is required"})
-
-    field = body.get("field", DEFAULT_RULE_FIELD)
-    if field not in RULE_FIELDS:
-        return _json_response(400, {"error": f"field must be one of {sorted(RULE_FIELDS)}"})
-
-    operator = body.get("operator", DEFAULT_RULE_OPERATOR)
-    if operator not in RULE_OPERATORS:
-        return _json_response(
-            400, {"error": f"operator must be one of {sorted(RULE_OPERATORS)}"})
+    value, category_id, field, operator = parsed
 
     try:
-        rule = create_rule(field, operator, value.strip(), category_id.strip())
+        rule = create_rule(field, operator, value, category_id)
     except BankSyncError as e:
         return _banksync_error_response(e)
 
     return _json_response(201, rule)
+
+
+def update_enrichment(event: dict) -> dict:
+    """PUT /enrichments/{id} — replace a categorisation rule in BankSync.
+
+    Same body + validation as create. Editing a rule that no longer exists is a
+    real 404 (not an idempotent no-op like delete), so an upstream 404 is mapped
+    to 404 rather than the default 502.
+    """
+    enrichment_id = (event.get("pathParameters") or {}).get("id")
+    if not enrichment_id:
+        return _json_response(404, {"error": "enrichment not found"})
+
+    parsed, error = _validate_rule_body(event)
+    if error:
+        return error
+    value, category_id, field, operator = parsed
+
+    try:
+        rule = update_rule(enrichment_id, field, operator, value, category_id)
+    except BankSyncError as e:
+        if e.upstream_status == 404:
+            return _json_response(404, {"error": "enrichment not found"})
+        return _banksync_error_response(e)
+
+    return _json_response(200, rule)
 
 
 def delete_enrichment(event: dict) -> dict:
