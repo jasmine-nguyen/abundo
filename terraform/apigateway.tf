@@ -138,6 +138,14 @@ resource "aws_apigatewayv2_route" "post_enrichment_route" {
   authorizer_id      = aws_apigatewayv2_authorizer.enrichments.id
 }
 
+resource "aws_apigatewayv2_route" "put_enrichment_route" {
+  api_id             = aws_apigatewayv2_api.api.id
+  route_key          = "PUT /enrichments/{id}"
+  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.enrichments.id
+}
+
 resource "aws_apigatewayv2_route" "delete_enrichment_route" {
   api_id             = aws_apigatewayv2_api.api.id
   route_key          = "DELETE /enrichments/{id}"

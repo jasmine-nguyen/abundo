@@ -82,6 +82,33 @@ it('deleteRule removes the rule on success', async () => {
   expect(result.current.rules).toEqual([]);
 });
 
+it('updateRule edits in place and preserves the rule field/operator', async () => {
+  // A non-default (category equals) rule must not be reset to description/contains.
+  mockApi.listEnrichments.mockResolvedValue([
+    { id: 'e1', field: 'category', operator: 'equals', value: 'FOOD_AND_DRINK', categoryId: 'eatingout' },
+  ]);
+  mockApi.updateEnrichment.mockResolvedValue({ id: 'e1', field: 'category', operator: 'equals', value: 'GROCERIES', categoryId: 'groceries' });
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  await waitFor(() => expect(result.current.rules).toHaveLength(1));
+
+  await act(async () => { await result.current.updateRule('e1', 'GROCERIES', 'groceries'); });
+
+  expect(mockApi.updateEnrichment).toHaveBeenCalledWith('e1', { value: 'GROCERIES', categoryId: 'groceries', field: 'category', operator: 'equals' });
+  expect(result.current.rules[0]).toEqual({ id: 'e1', pattern: 'GROCERIES', categoryId: 'groceries', isNew: false, field: 'category', operator: 'equals' });
+});
+
+it('updateRule rolls back to the original rule when the update fails', async () => {
+  mockApi.listEnrichments.mockResolvedValue([{ ...SERVER_RULE }]);
+  mockApi.updateEnrichment.mockRejectedValue(new Error('boom'));
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  await waitFor(() => expect(result.current.rules).toHaveLength(1));
+
+  await act(async () => { await result.current.updateRule('e1', 'SPOTIFY', 'subs'); });
+
+  expect(result.current.rules[0]).toEqual({ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, field: 'description', operator: 'contains' });
+  expect(result.current.toast).toBe('Could not update rule. Please try again.');
+});
+
 it('deleteRule restores the rule at its position when the delete fails', async () => {
   mockApi.listEnrichments.mockResolvedValue([{ ...SERVER_RULE }]);
   mockApi.deleteEnrichment.mockRejectedValue(new Error('boom'));

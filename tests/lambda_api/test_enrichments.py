@@ -308,3 +308,104 @@ def test_delete_enrichment_missing_id_404(handler):
     resp = handler.lambda_handler(
         _event("DELETE", "/enrichments/", path_params={}), None)
     assert resp["statusCode"] == 404
+
+
+# --- update (PUT) ------------------------------------------------------------
+
+
+def test_update_rule_builds_correct_put_payload(enrichments, monkeypatch):
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["req"] = req
+        return _FakeResponse({"success": True, "data": {"id": "enr_1"}})
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.update_rule("enr_1", "description", "contains", "NETFLIX", "subs")
+
+    req = captured["req"]
+    assert req.method == "PUT"
+    assert req.full_url == "https://api.banksync.io/v1/enrichments/enr_1"
+    assert req.get_header("X-api-key") == "test-api-key"
+    assert req.get_header("User-agent") == "whittle-lambda-api"
+
+    sent = json.loads(req.data)
+    assert sent["allFeeds"] is True
+    leaf = sent["ruleConfig"]["rules"][0]["conditions"]["conditions"][0]
+    assert leaf == {"field": "description", "operator": "contains", "value": "NETFLIX"}
+    assert sent["ruleConfig"]["rules"][0]["action"] == {"field": "category", "value": "subs"}
+
+    # id is the KNOWN enrichment id (not from the echo); same shape as create.
+    assert rule == {"id": "enr_1", "field": "description", "operator": "contains",
+                    "value": "NETFLIX", "categoryId": "subs"}
+
+
+def test_update_rule_404_propagates(enrichments, monkeypatch):
+    # Unlike delete_rule, update must NOT swallow 404 — editing a gone rule is an
+    # error the handler turns into a 404.
+    monkeypatch.setattr(
+        enrichments.urllib.request, "urlopen",
+        lambda req, timeout=None: (_ for _ in ()).throw(_http_error(enrichments, 404)))
+    with pytest.raises(enrichments.BankSyncError) as excinfo:
+        enrichments.update_rule("gone", "description", "contains", "X", "c")
+    assert excinfo.value.upstream_status == 404
+
+
+def test_update_enrichment_happy_path_trims_and_defaults(handler, monkeypatch):
+    captured = {}
+
+    def fake_update(eid, field, operator, value, category_id):
+        captured.update(eid=eid, field=field, operator=operator, value=value, category_id=category_id)
+        return {"id": eid, "field": field, "operator": operator, "value": value, "categoryId": category_id}
+
+    monkeypatch.setattr(handler, "update_rule", fake_update)
+
+    resp = handler.lambda_handler(
+        _event("PUT", "/enrichments/enr_1", {"value": " NETFLIX ", "categoryId": " subs "},
+               path_params={"id": "enr_1"}),
+        None)
+
+    assert resp["statusCode"] == 200
+    # Same trim + defaulting as create, via the shared _validate_rule_body.
+    assert captured == {"eid": "enr_1", "field": "description", "operator": "contains",
+                        "value": "NETFLIX", "category_id": "subs"}
+
+
+def test_update_enrichment_missing_id_404(handler):
+    resp = handler.lambda_handler(
+        _event("PUT", "/enrichments/", {"value": "X", "categoryId": "c"}, path_params={}), None)
+    assert resp["statusCode"] == 404
+
+
+def test_update_enrichment_missing_value_400(handler):
+    resp = handler.lambda_handler(
+        _event("PUT", "/enrichments/enr_1", {"categoryId": "c"}, path_params={"id": "enr_1"}), None)
+    assert resp["statusCode"] == 400
+
+
+def test_update_enrichment_unknown_rule_is_404(handler, monkeypatch):
+    # A BankSync 404 on PUT (rule gone) surfaces as 404, not the default 502.
+    def boom(*a):
+        raise handler.BankSyncError(404)
+
+    monkeypatch.setattr(handler, "update_rule", boom)
+    resp = handler.lambda_handler(
+        _event("PUT", "/enrichments/enr_1", {"value": "X", "categoryId": "c"}, path_params={"id": "enr_1"}), None)
+    assert resp["statusCode"] == 404
+
+
+def test_update_enrichment_bad_rule_upstream_is_400(handler, monkeypatch):
+    monkeypatch.setattr(handler, "update_rule",
+                        lambda *a: (_ for _ in ()).throw(handler.BankSyncError(422)))
+    resp = handler.lambda_handler(
+        _event("PUT", "/enrichments/enr_1", {"value": "X", "categoryId": "c"}, path_params={"id": "enr_1"}), None)
+    assert resp["statusCode"] == 400
+
+
+def test_update_enrichment_auth_failure_upstream_is_502(handler, monkeypatch):
+    monkeypatch.setattr(handler, "update_rule",
+                        lambda *a: (_ for _ in ()).throw(handler.BankSyncError(401)))
+    resp = handler.lambda_handler(
+        _event("PUT", "/enrichments/enr_1", {"value": "X", "categoryId": "c"}, path_params={"id": "enr_1"}), None)
+    assert resp["statusCode"] == 502
