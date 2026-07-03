@@ -182,16 +182,3 @@ class TransactionRepository:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return False
             handle_database_error(e, "write")
-
-    def is_new_event(self, envelope_id: str) -> bool:
-        try:
-            self._get_table().put_item(
-                Item={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"},
-                ConditionExpression="attribute_not_exists(pk)",
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-
-            handle_database_error(e, "is_new_event")

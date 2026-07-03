@@ -332,26 +332,3 @@ def test_update_category_maps_other_database_error(repo, client_error, monkeypat
     monkeypatch.setattr(repo._table, "update_item", boom)
     with pytest.raises(RuntimeError):
         repo.update_transaction_category("pk", "sk", "FOOD")
-
-
-# --------------------------------------------------------------------------- #
-# is_new_event                                                                #
-# --------------------------------------------------------------------------- #
-
-def test_is_new_event_true_and_writes_marker(repo):
-    assert repo.is_new_event("evt_1") is True
-    assert ("EVENT#evt_1", "EVENT") in repo._table.store
-
-
-def test_is_new_event_false_on_redelivery(repo):
-    assert repo.is_new_event("evt_1") is True
-    assert repo.is_new_event("evt_1") is False  # marker already present → deduped
-
-
-def test_is_new_event_maps_other_database_error(repo, client_error, monkeypatch):
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    monkeypatch.setattr(repo._table, "put_item", boom)
-    with pytest.raises(RuntimeError):
-        repo.is_new_event("evt_1")
