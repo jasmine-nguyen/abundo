@@ -484,15 +484,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     notifTimer.current = setTimeout(() => setNotif(null), 5600);
   }, []);
 
-  const value = useMemo<AppContext>(() => ({
-    categories, budgets, transactions, rules, goal, payCycle, alerts, daysLeft: 7, cycleLen: 14,
+  const value = useMemo<AppContext>(() => {
+    const { cycleLen, daysLeft } = cycleClock(payCycle);
+    return {
+    categories, budgets, transactions, rules, goal, payCycle, alerts, daysLeft, cycleLen,
     sheet, toast, notif,
     category, cycleName,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
     openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle
-  }), [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleName, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle]);
+    };
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleName, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -506,6 +509,30 @@ export function useAppContext(): AppContext {
 // ---------------------------------------------------------------------------
 // Derived-value selectors (ported from renderVals). Pure functions over state.
 // ---------------------------------------------------------------------------
+
+// The persisted pay cycle -> the live "days until the next payday" + cycle length,
+// mirroring the server's current_cycle_window. Computed in UTC whole days (every
+// UTC day is exactly 24h) so a Melbourne daylight-saving change can't shift the
+// count by a day. daysLeft is clamped to [0, length]; on payday it reads `length`
+// (a fresh cycle just began). Pure: the same (payCycle, today) always give the
+// same result.
+export function cycleClock(
+  payCycle: { length: number; last_pay_date: string },
+  today?: Date,
+): { cycleLen: number; daysLeft: number } {
+  const length = payCycle.length;
+  const [y, m, d] = payCycle.last_pay_date.split('-').map(Number);
+  const pay = Date.UTC(y, m - 1, d);
+  const now = today ?? new Date();
+  const t = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()); // device calendar day
+  const DAY = 86400000;
+  const elapsedDays = Math.round((t - pay) / DAY);                     // integer-exact whole days
+  const cyclesElapsed = Math.max(0, Math.floor(elapsedDays / length)); // mirrors max(0, //)
+  const daysIntoCycle = elapsedDays - cyclesElapsed * length;
+  const daysLeft = Math.max(0, Math.min(length, length - daysIntoCycle));
+  return { cycleLen: length, daysLeft };
+}
+
 export function elapsedFrac(s: AppContext) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
 
 export interface BudgetView {
@@ -619,7 +646,7 @@ export function budgetDetail(s: AppContext, categoryId: string) {
     spentBig: fmt(spent), ofBudget: 'of ' + fmt(b.budget),
     statusLabel: over ? 'Over budget — ease up' : 'On target — keep it up',
     statusColor: over ? '#ff6b6b' : '#35d9a0',
-    daysLeftLabel: `${s.daysLeft} days remaining`,
+    daysLeftLabel: `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`,
     postedPct, pendingPct, targetPct: Math.round(elapsed * 100),
     postedColor: over ? '#ff6b6b' : c.color, pendingTint: tint(over ? '#ff6b6b' : c.color, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
