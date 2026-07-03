@@ -1,0 +1,14 @@
+# Coverage config for the Python Lambda suites (used by CI: .github/workflows/python-tests.yml).
+[run]
+omit =
+    # Pure type declarations (TypedDicts) and thin AWS wrappers that are faked in
+    # every test — no branch logic worth measuring. Excluded so the percentage
+    # reflects real, testable code, not boilerplate.
+    */models.py
+    */ssm.py
+    */__init__.py
+    tests/*
+
+[report]
+show_missing = True
+precision = 1

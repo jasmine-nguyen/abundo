@@ -19,5 +19,12 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r lambda_sync_trigger/requirements-dev.txt
 
-      - name: Run tests
-        run: python -m pytest
+      # Prints the per-file coverage table (with missing lines) into the Actions
+      # log, and fails the build if total coverage drops below the gate. The gate
+      # is a ratchet: raise it toward 80% as the outstanding test cards land.
+      - name: Run tests with coverage
+        run: |
+          python -m pytest \
+            --cov=shared --cov=lambda --cov=lambda_api --cov=lambda_sync_trigger \
+            --cov-report=term-missing \
+            --cov-fail-under=72
