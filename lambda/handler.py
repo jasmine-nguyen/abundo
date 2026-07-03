@@ -4,7 +4,6 @@ import base64
 import logging
 
 from banksync import BankSyncClient, UnknownAccountError
-from botocore.exceptions import ClientError
 from models import Transaction
 from repository import TransactionRepository
 from ssm import get_param
@@ -46,17 +45,20 @@ def lambda_handler(event, context) -> dict:
     except Exception:
         return {"statusCode": 401, "body": "invalid signature"}
 
-    if not repo.is_new_event(payload["id"]):
+    if repo.has_event(payload["id"]):
         return {"statusCode": 200, "body": "duplicate event - skipped"}
 
     try:
         process_transaction(payload, repo)
-        return {"statusCode": 200, "body": "ok"}
     except Exception as e:
-        return {
-            "statusCode": 500,
-            "body": str(e),
-        }
+        # Save-then-mark (WHIT-83): the event is marked seen only AFTER a successful
+        # write (below), so a failed write leaves it UNMARKED and BankSync's retry
+        # re-processes it — a transaction can never be dropped by a failed write, and
+        # no rollback is needed. (Writes overwrite by id, so a retry is idempotent.)
+        return {"statusCode": 500, "body": str(e)}
+
+    repo.mark_event(payload["id"])
+    return {"statusCode": 200, "body": "ok"}
 
 
 def process_transaction(payload: dict, repo: TransactionRepository) -> None:
@@ -69,8 +71,9 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
             unmapped_transactions.append(row)
 
     repo.save_failed_transactions(unmapped_transactions)
-
-    try:
-        repo.insert_or_reconcile(normalised_transactions)
-    except ClientError:
-        return {"statusCode": 500, "body": "transaction insertion failed"}
+    # Let any error propagate to lambda_handler, which returns 500 and leaves the
+    # event unmarked, so BankSync's retry re-processes it. The old `except ClientError`
+    # swallowed the error into an ignored return dict, so the handler reported 200 "ok"
+    # with nothing written; it was also dead — handle_database_error converts every
+    # ClientError to a RuntimeError before it could reach here (WHIT-83).
+    repo.insert_or_reconcile(normalised_transactions)

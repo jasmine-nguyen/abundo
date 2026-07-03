@@ -40,6 +40,8 @@ app-example
 # Python
 __pycache__/
 *.py[cod]
+.coverage
+.coverage.*
 
 # Lambda build dirs — ignore everything, allowlist only true source
 lambda/*
