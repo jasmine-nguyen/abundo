@@ -1,6 +1,7 @@
 import boto3
 from datetime import datetime, timezone
 import json
+import uuid
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
@@ -77,7 +78,10 @@ class TransactionRepository:
         for transaction in failed_transactions:
             item = {
                 "pk": "FAILED",
-                "sk": datetime.now(timezone.utc).isoformat(),
+                # A uuid disambiguates two failures written in the same microsecond,
+                # whose isoformat timestamps would otherwise collide and overwrite
+                # each other (WHIT-84) — matches shared/repository_transaction.py.
+                "sk": f"{datetime.now(timezone.utc).isoformat()}#{uuid.uuid4()}",
                 "raw": json.dumps(transaction),
             }
             items.append(item)
@@ -354,15 +358,27 @@ class TransactionRepository:
         except ClientError as e:
             handle_database_error(e, "delete pending")
 
-    def is_new_event(self, envelope_id: str) -> bool:
+    def has_event(self, envelope_id: str) -> bool:
+        """Whether this event was already fully processed (its marker exists).
+
+        The marker is written by mark_event only AFTER a delivery succeeds, so a
+        failed delivery leaves no marker and BankSync's retry re-processes it — a
+        failed write can never drop the transaction (WHIT-83, save-then-mark).
+        """
+        try:
+            result = self._get_table().get_item(
+                Key={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"}
+            )
+            return "Item" in result
+        except ClientError as e:
+            handle_database_error(e, "has_event")
+
+    def mark_event(self, envelope_id: str) -> None:
+        """Record that an event has been fully processed. Called only after the
+        write succeeds; a plain, idempotent put — re-marking is harmless."""
         try:
             self._get_table().put_item(
-                Item={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"},
-                ConditionExpression="attribute_not_exists(pk)",
+                Item={"pk": f"EVENT#{envelope_id}", "sk": "EVENT"}
             )
-            return True
         except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                return False
-
-            handle_database_error(e, "is_new_event")
+            handle_database_error(e, "mark_event")
