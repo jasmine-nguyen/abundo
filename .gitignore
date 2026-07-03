@@ -48,6 +48,7 @@ __pycache__/
 lambda/*
 !lambda/handler.py
 !lambda/banksync.py
+!lambda/merchant.py
 !lambda/requirements.txt
 
 lambda_api/*
