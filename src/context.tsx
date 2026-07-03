@@ -116,7 +116,7 @@ const REPAY_LINES = [
 // ---------------------------------------------------------------------------
 // AppContext
 // ---------------------------------------------------------------------------
-interface AppContext {
+export interface AppContext {
   // data
   categories: Category[]; budgets: Budget[]; transactions: Transaction[]; rules: Rule[]; goal: Goal;
   payCycle: { length: number; last_pay_date: string }; alerts: boolean;

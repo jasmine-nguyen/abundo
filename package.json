@@ -7,6 +7,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "test": "TZ=Australia/Melbourne jest",
+    "test:ci": "TZ=Australia/Melbourne jest --ci",
+    "typecheck": "tsc --noEmit",
     "deploy": "npx expo export -p web && npx eas-cli@latest deploy"
   },
   "dependencies": {
@@ -30,8 +33,28 @@
     "react-native-web": "^0.21.0"
   },
   "private": true,
+  "//overrides": "React Native 0.85's jest preset pulls jest 30, but jest-expo 56 pins some jest-* internals to 29 and npm mixes patch levels. Force one consistent jest 30 toolchain so the runtime/mock/env versions agree.",
+  "overrides": {
+    "jest": "30.4.1",
+    "jest-cli": "30.4.1",
+    "@jest/core": "30.4.1",
+    "@jest/globals": "30.4.1",
+    "jest-mock": "30.4.1",
+    "jest-runtime": "30.4.1",
+    "jest-resolve": "30.4.1",
+    "jest-snapshot": "30.4.1",
+    "jest-config": "30.4.1",
+    "jest-environment-jsdom": "30.4.1",
+    "jest-environment-node": "30.4.1",
+    "expect": "30.4.1"
+  },
   "devDependencies": {
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.2.14",
+    "jest": "30.4.1",
+    "jest-expo": "~56.0.0",
+    "react-test-renderer": "19.2.3",
     "typescript": "~6.0.3"
   }
 }
