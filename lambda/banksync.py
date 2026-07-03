@@ -37,6 +37,9 @@ class BankSyncClient:
             "status": "pending" if row["pending"] else "posted",
             "type": row["type"],
             "counts_to_budget": True,  # TODO: revisit when building excluding transaction
+            # None when missing or JSON-null (the case today). sanitise_transaction
+            # strips None, so it never bloats the stored item.
+            "pending_transaction_id": row.get("pendingTransactionId"),
         }
 
         return normalised
