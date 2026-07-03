@@ -204,8 +204,11 @@ function PayCycleSheet() {
   const today = new Date();
 
   // onChange is deprecated -> onValueChange (value) + onDismiss (Android cancel).
-  // The compact pill / dialog only fires on a real selection, so persist directly.
-  const commitDate = (picked?: Date) => {
+  // The callback fires as (event, date) — the Date is the SECOND arg, not the
+  // first — so pull it out of whichever position it lands in, rather than assume
+  // arg 0 is the Date (which crashed: `event.getMonth()` is undefined).
+  const commitDate = (a?: unknown, b?: unknown) => {
+    const picked = a instanceof Date ? a : b instanceof Date ? b : undefined;
     if (picked) s.setPayday(toISODate(picked));
   };
 

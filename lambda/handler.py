@@ -71,6 +71,6 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     repo.save_failed_transactions(unmapped_transactions)
 
     try:
-        repo.insert_transactions(normalised_transactions)
+        repo.insert_or_reconcile(normalised_transactions)
     except ClientError:
         return {"statusCode": 500, "body": "transaction insertion failed"}

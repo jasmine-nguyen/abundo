@@ -235,6 +235,125 @@ class TransactionRepository:
         if pending_pk != posted_pk or pending_sk != posted_sk:
             self.delete_transaction(pending_pk, pending_sk)
 
+    def insert_or_reconcile(self, transactions: list[Transaction]) -> None:
+        """Insert transactions, reconciling pending->posted so a user's category
+        survives settlement.
+
+        On settlement BankSync issues a NEW id for the posted transaction with no
+        link back to the pending one (`pendingTransactionId` is null today), so a
+        blind insert would leave two rows — a categorized pending + an uncategorized
+        posted. Instead, for each POSTED transaction we find its pending twin, carry
+        the pending row's `category` onto the posted row, and delete the stale
+        pending. Match order (see _find_pending_twin): exact `pending_transaction_id`
+        link (forward-compat), else heuristic on account_id + authorized_date +
+        amount, else a same-id re-sync of an already-stored posted row. No match ->
+        a plain insert. A missing/racey match never raises: it degrades to insert.
+
+        Pending rows are inserted as-is. All inserts are batched at the end; stale
+        pendings are deleted after.
+        """
+        if not transactions:
+            return
+
+        pending_pools: dict[str, list[dict]] = {}   # account_id -> loaded pending rows
+        to_insert: list[Transaction] = []
+        stale_pending_keys: list[tuple[str, str]] = []
+
+        for txn in transactions:
+            if txn.get("status") == PENDING_STATUS:
+                # Pending rows just insert. NOTE: a posted twin arriving in this SAME
+                # payload won't see this pending (the pool is the DB scan), so both
+                # would insert -> a duplicate. Real settlements arrive in separate
+                # webhooks; a backfill payload containing both is an accepted edge,
+                # cleaned by the age-out follow-up.
+                to_insert.append(txn)
+                continue
+
+            match = self._find_pending_twin(txn, pending_pools)
+            if match is not None:
+                to_insert.append(self._with_carried_category(txn, match))
+                match_key = (match["pk"], match["sk"])
+                own_key = (_build_pk(txn["account_id"]), _build_sk(txn["transaction_id"]))
+                if match_key != own_key:
+                    stale_pending_keys.append(match_key)
+                continue
+
+            # No pending twin, but a posted row may already exist under this same id
+            # (a re-sync). Preserve any user category on it (read-then-carry).
+            own_pk = _build_pk(txn["account_id"])
+            own_sk = _build_sk(txn["transaction_id"])
+            existing = self.get_transaction(own_pk, own_sk)
+            if existing is not None:
+                to_insert.append(self._with_carried_category(txn, existing))
+            else:
+                to_insert.append(txn)
+
+        self.insert_transactions(to_insert)
+        for pk, sk in stale_pending_keys:
+            self._delete_pending_if_present(pk, sk)
+
+    def _find_pending_twin(
+        self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
+    ) -> Optional[dict]:
+        """Return AND consume the stored pending row that settled into `posted_txn`,
+        or None. Only ever returns a row taken from the account's pending scan, so
+        the caller never gets an unverified key. Consumed rows are removed from the
+        pool so one pending can't be claimed by two posted rows in the same batch.
+        """
+        account_id = posted_txn["account_id"]
+        pool = pending_pools.get(account_id)
+        if pool is None:
+            pool = list(self.get_pending_transactions_for_account(account_id))
+            pending_pools[account_id] = pool
+
+        # 1. Exact link (forward-compat; pending_transaction_id is null today). The
+        #    pool IS the full account pending scan, so a link not in it means the
+        #    pending is already gone -> fall through to the heuristic, never a
+        #    fabricated key.
+        link_id = posted_txn.get("pending_transaction_id")
+        if link_id:
+            for i, item in enumerate(pool):
+                if item.get("transaction_id") == link_id:
+                    return pool.pop(i)
+
+        # 2. Heuristic: same authorized_date + amount (account already scoped by the
+        #    pool). Skip when authorized_date is missing — matching on amount alone
+        #    is too loose. authorized_date is preserved across settlement, so it
+        #    discriminates identical daily purchases.
+        authorized_date = posted_txn.get("authorized_date")
+        if not authorized_date:
+            return None
+        amount = posted_txn.get("amount")
+        candidates = [
+            i for i, item in enumerate(pool)
+            if item.get("authorized_date") == authorized_date and item.get("amount") == amount
+        ]
+        if not candidates:
+            return None
+        # Two identical same-day charges are indistinguishable; pick deterministically
+        # (lowest transaction_id) so behaviour is stable and testable.
+        best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
+        return pool.pop(best)
+
+    @staticmethod
+    def _with_carried_category(posted_txn: Transaction, source_row: dict) -> Transaction:
+        """A copy of the posted txn with `category` carried from `source_row` (the
+        matched pending / existing posted) when that row has one. Falsy/absent ->
+        keep the posted txn's own (bank) category."""
+        carried = posted_txn.copy()
+        source_category = source_row.get("category")
+        if source_category:
+            carried["category"] = source_category
+        return carried
+
+    def _delete_pending_if_present(self, pk: str, sk: str) -> None:
+        """Delete a stale pending row. No attribute_exists guard, so deleting an
+        already-gone row is a harmless no-op (avoids a race raising a 500)."""
+        try:
+            self._get_table().delete_item(Key={"pk": pk, "sk": sk})
+        except ClientError as e:
+            handle_database_error(e, "delete pending")
+
     def is_new_event(self, envelope_id: str) -> bool:
         try:
             self._get_table().put_item(
