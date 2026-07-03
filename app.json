@@ -12,7 +12,10 @@
     "name": "whittle",
     "slug": "whittle",
     "ios": {
-      "bundleIdentifier": "com.anonymous.whittle-app"
+      "bundleIdentifier": "com.anonymous.whittle-app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "extra": {
       "router": {},
