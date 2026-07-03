@@ -495,24 +495,41 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> di
     return totals
 
 
+# Safety ceiling on cursor-follow iterations per account. A bounded date-range
+# query terminates on its own (LastEvaluatedKey eventually None), so reaching this
+# many pages for a single account means the cursor is not advancing — a repo/
+# contract bug. Fail loudly instead of spinning to the Lambda timeout. 1000 pages ×
+# MAX_PAGE_SIZE is far beyond any real window, so a legitimate feed never hits it.
+_MAX_PAGES_PER_ACCOUNT = 1000
+
+
 def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: str) -> list[dict]:
     """Every transaction across all accounts within [start, end], following the
     date-index pagination to completion.
 
     Both the recent-transactions feed and the budget rollup need the WHOLE window,
     so this loops on the returned cursor until each account is exhausted rather than
-    stopping at the first page.
+    stopping at the first page. The loop is bounded (_MAX_PAGES_PER_ACCOUNT): a
+    cursor that never terminates raises rather than hanging both endpoints.
     """
     transactions: list[dict] = []
     for account_id in ACCOUNT_ID_MAP.values():
         cursor = None
+        pages = 0
         while True:
             page, cursor = repo.get_transactions_by_date_range(
                 account_id, start, end, limit=MAX_PAGE_SIZE, cursor=cursor
             )
             transactions.extend(page)
+            pages += 1
             if not cursor:
                 break
+            if pages >= _MAX_PAGES_PER_ACCOUNT:
+                raise RuntimeError(
+                    f"pagination for account {account_id} did not terminate after "
+                    f"{_MAX_PAGES_PER_ACCOUNT} pages ({start}..{end}); aborting to "
+                    f"avoid an unbounded read"
+                )
     return transactions
 
 
