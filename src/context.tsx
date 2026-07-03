@@ -94,6 +94,12 @@ export function merchantLabel(t: Transaction): string {
   return cleanName(t.merchant_name || t.description);
 }
 
+// The pay-cycle length -> its human name. Pure + exported so the provider and the
+// tests share one source of truth (rather than each reimplementing the mapping).
+export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' {
+  return length === 7 ? 'Weekly' : length === 14 ? 'Fortnightly' : 'Monthly';
+}
+
 function dateLabel(isoDate: string): string {
   const [y, m, d] = isoDate.split('-').map(Number);
   const today = new Date();
@@ -258,10 +264,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const repayIdx = useRef(0);
 
   const category = useCallback((id: string | null) => categories.find((c) => c.id === id), [categories]);
-  const cycleName = useCallback(
-    () => (payCycle.length === 7 ? 'Weekly' : payCycle.length === 14 ? 'Fortnightly' : 'Monthly'),
-    [payCycle.length],
-  );
+  const cycleNameCb = useCallback(() => cycleName(payCycle.length), [payCycle.length]);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
@@ -489,13 +492,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return {
     categories, budgets, transactions, rules, goal, payCycle, alerts, daysLeft, cycleLen,
     sheet, toast, notif,
-    category, cycleName,
+    category, cycleName: cycleNameCb,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
     openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleName, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

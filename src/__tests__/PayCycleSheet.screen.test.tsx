@@ -57,10 +57,10 @@ it('tapping a length calls setPayCycleLength with its day count', () => {
   expect(fns.setPayCycleLength).toHaveBeenCalledWith(7);
 });
 
-it('picking a date calls setPayday with the ISO date (via the event,date extraction)', () => {
+it('picking a date calls setPayday with the ISO date (via the onChange event,date extraction)', () => {
   mockState = paycycleState(14);
   render(<Overlays />);
-  // The mocked picker fires onValueChange({type:'set'}, Date(2026-06-20)).
+  // The mocked picker fires the real onChange({type:'set'}, Date(2026-06-20)).
   fireEvent.press(screen.getByTestId('mock-datepicker'));
   expect(fns.setPayday).toHaveBeenCalledWith('2026-06-20');
 });

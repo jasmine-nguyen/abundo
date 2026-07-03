@@ -2,19 +2,6 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-// v8.4 fires onValueChange (the modern replacement for the deprecated onChange)
-// and onDismiss at runtime, but the library hasn't added them to its exported
-// prop types yet. Assert them here so the picker's real API typechecks — this is
-// a pure type widening; runtime behaviour is unchanged.
-const DatePicker = DateTimePicker as unknown as React.ComponentType<
-  React.ComponentProps<typeof DateTimePicker> & {
-    // Loosely typed: iOS fires (event, date) while Android fires (date) — the
-    // library doesn't type this prop at all, so accept either arity.
-    onValueChange?: (...args: any[]) => void;
-    onDismiss?: () => void;
-  }
->;
 import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel } from '../context';
@@ -216,10 +203,11 @@ function PayCycleSheet() {
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
 
-  // onChange is deprecated -> onValueChange (value) + onDismiss (Android cancel).
-  // The callback fires as (event, date) — the Date is the SECOND arg, not the
-  // first — so pull it out of whichever position it lands in, rather than assume
-  // arg 0 is the Date (which crashed: `event.getMonth()` is undefined).
+  // The picker's callback is onChange, which fires as (event, date) — the Date is
+  // the SECOND arg, not the first — so pull it out of whichever position it lands
+  // in, rather than assume arg 0 is the Date (assuming arg 0 crashed once:
+  // `event.getMonth()` is undefined). On a cancel/dismiss the date is undefined, so
+  // nothing is committed.
   const commitDate = (a?: unknown, b?: unknown) => {
     const picked = a instanceof Date ? a : b instanceof Date ? b : undefined;
     if (picked) s.setPayday(toISODate(picked));
@@ -250,14 +238,14 @@ function PayCycleSheet() {
       {isIOS ? (
         <View style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}>
           <Text style={[styles.cycleText, { color: C.textMid }]}>Set date</Text>
-          <DatePicker
+          <DateTimePicker
             value={parseLastPayDate(s.payCycle.last_pay_date)}
             mode="date"
             display="compact"          // small native date pill, not the big inline grid
             maximumDate={today}
             themeVariant="dark"        // light text on the dark sheet
             accentColor={C.accent}     // selected day + popover accent match the palette
-            onValueChange={commitDate}
+            onChange={commitDate}
           />
         </View>
       ) : (
@@ -270,13 +258,14 @@ function PayCycleSheet() {
         </Pressable>
       )}
       {!isIOS && showAndroidPicker && (
-        <DatePicker
+        <DateTimePicker
           value={parseLastPayDate(s.payCycle.last_pay_date)}
           mode="date"
           display="default"
           maximumDate={today}
-          onValueChange={(picked?: Date) => { setShowAndroidPicker(false); commitDate(picked); }}
-          onDismiss={() => setShowAndroidPicker(false)}
+          // Android fires onChange for both pick and dismiss; close the dialog
+          // either way, and commitDate only saves when a Date came through.
+          onChange={(event, date) => { setShowAndroidPicker(false); commitDate(event, date); }}
         />
       )}
 

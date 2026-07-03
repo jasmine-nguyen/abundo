@@ -8,14 +8,14 @@ jest.mock('@react-native-community/datetimepicker', () => {
   const React = require('react');
   const { Pressable, Text } = require('react-native');
   const MockPicker = (props) => {
-    // Tapping emits a fixed picked date through onValueChange using the real
+    // Tapping emits a fixed picked date through onChange using the real
     // (event, date) signature — the Date is the SECOND arg — so the component's
-    // arg-extraction (the crash fix) is genuinely exercised.
+    // arg-extraction (the crash fix) is genuinely exercised against the actual API.
     return React.createElement(
       Pressable,
       {
         testID: 'mock-datepicker',
-        onPress: () => props.onValueChange && props.onValueChange({ type: 'set' }, new Date(2026, 5, 20)),
+        onPress: () => props.onChange && props.onChange({ type: 'set' }, new Date(2026, 5, 20)),
       },
       React.createElement(Text, null, 'picker'),
     );

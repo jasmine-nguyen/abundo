@@ -2,9 +2,9 @@
 // display name), fmt/tint (money + colour tokens), and cycleName (Weekly /
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
-import { cleanName, merchantLabel } from '../context';
+import { cleanName, merchantLabel, cycleName } from '../context';
 import { fmt, fmt2, tint } from '../theme';
-import { txn, makeState } from './factory';
+import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
   it('maps known raw merchant strings to friendly names', () => {
@@ -46,8 +46,8 @@ describe('tint', () => {
 
 describe('cycleName', () => {
   it('names the cycle from its length', () => {
-    expect(makeState({ cycleLen: 7 }).cycleName()).toBe('Weekly');
-    expect(makeState({ cycleLen: 14 }).cycleName()).toBe('Fortnightly');
-    expect(makeState({ cycleLen: 30 }).cycleName()).toBe('Monthly');
+    expect(cycleName(7)).toBe('Weekly');
+    expect(cycleName(14)).toBe('Fortnightly');
+    expect(cycleName(30)).toBe('Monthly');
   });
 });

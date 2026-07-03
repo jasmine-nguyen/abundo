@@ -2,6 +2,7 @@
 // The selectors (budgetViews, transactionView, budgetDetail, ...) only read a
 // handful of AppContext fields, so we build just those and cast — no provider,
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
+import { cycleName } from '../context';
 import type { AppContext, Category, Transaction, Budget, Goal } from '../context';
 
 export function cat(over: Partial<Category> = {}): Category {
@@ -49,7 +50,7 @@ export function makeState(over: StateOver = {}): AppContext {
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
     category: (id: string | null) => categories.find((c) => c.id === id),
-    cycleName: () => (cycleLen === 7 ? 'Weekly' : cycleLen === 14 ? 'Fortnightly' : 'Monthly'),
+    cycleName: () => cycleName(cycleLen),
   };
   return s as unknown as AppContext;
 }
