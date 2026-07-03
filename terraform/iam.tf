@@ -40,6 +40,20 @@ resource "aws_iam_role" "sync_trigger_exec" {
   })
 }
 
+# Execution role for the API Gateway authorizer lambda. Minimal: it only reads
+# the shared-secret token from SSM and writes its own logs — no DynamoDB.
+resource "aws_iam_role" "authorizer_exec" {
+  name = "${var.project_name}-authorizer-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
 
 resource "aws_iam_role_policy" "lambda_dynamodb" {
   name = "${var.project_name}-lambda-dynamodb"
@@ -122,6 +136,27 @@ resource "aws_iam_role_policy" "lambda_api_logs" {
     }]
   })
 }
+
+# lambda_api: read the BankSync API key to call the Enrichments API (WHIT-52).
+# ssm:GetParameter alone decrypts the SecureString via the AWS-managed key (same
+# pattern as sync_trigger_ssm).
+resource "aws_iam_role_policy" "lambda_api_ssm" {
+  name = "${var.project_name}-lambda-api-ssm"
+  role = aws_iam_role.lambda_api_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameter"
+      ]
+      Resource = [
+        aws_ssm_parameter.banksync_api_key.arn,
+      ]
+    }]
+  })
+}
 resource "aws_iam_role_policy" "lambda_ssm" {
   name = "${var.project_name}-lambda-ssm"
   role = aws_iam_role.lambda_exec.id
@@ -177,6 +212,46 @@ resource "aws_iam_role_policy" "sync_trigger_logs" {
       ]
       Resource = [
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-sync-trigger:*"
+      ]
+    }]
+  })
+}
+
+# Authorizer lambda: read the shared-secret API auth token from SSM.
+resource "aws_iam_role_policy" "authorizer_ssm" {
+  name = "${var.project_name}-authorizer-ssm"
+  role = aws_iam_role.authorizer_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameter"
+      ]
+      Resource = [
+        aws_ssm_parameter.api_auth_token.arn,
+      ]
+    }]
+  })
+}
+
+# Authorizer lambda: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "authorizer_logs" {
+  name = "${var.project_name}-authorizer-logs"
+  role = aws_iam_role.authorizer_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = [
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-authorizer:*"
       ]
     }]
   })

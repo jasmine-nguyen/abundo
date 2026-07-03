@@ -11,6 +11,11 @@ BANKSYNC_API_KEY_PATH = "/whittle/banksync-api-key"
 # Base URL for the BankSync REST API.
 BANKSYNC_BASE_URL = "https://api.banksync.io"
 
+# SSM SecureString path holding the shared-secret token that the API Gateway
+# authorizer checks on the /enrichments routes. Read by the authorizer lambda
+# (via this layer); the real value is set out-of-band (see terraform/ssm.tf).
+API_AUTH_TOKEN_PATH = "/whittle/api-auth-token"
+
 # Lookback window, in days, used when requesting a feed's transactions.
 FEED_WINDOW_DAYS = 5
 
