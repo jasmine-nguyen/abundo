@@ -9,7 +9,10 @@ dist/
 web-build/
 expo-env.d.ts
 
-# Native
+# Native — prebuild output (Continuous Native Generation regenerates these from
+# app.json; keep them out of git rather than committing the large generated dirs).
+/ios/
+/android/
 *.orig.*
 *.jks
 *.p8
