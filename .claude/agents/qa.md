@@ -66,20 +66,31 @@ real external state, it's Manual; if a machine could tap and assert it, it's Aut
 
 ## 2. Automated tests (write the code)
 
-Write the ACTUAL Jest test files that cover every `## Automatable (UI)` check above,
-plus every pure function this change touches. This is real, paste-ready code the
-orchestrator will commit as-is.
+Write the ACTUAL, paste-ready test code the orchestrator will commit. Cover the change
+in whichever suite it lives in: **Jest** for client/UI changes (`*.logic.test.ts` for
+pure functions, `*.screen.test.tsx` for render/interaction), **pytest** for server /
+Lambda changes (`tests/lambda/…`, `tests/lambda_api/…`). A change can need both.
 
-- Put logic assertions in a `*.logic.test.ts` file; put render/interaction checks in a
-  `*.screen.test.tsx` file. Name them after the feature (e.g. `reconcile.logic.test.ts`).
-- Cover, at minimum: the acceptance criteria, the boundaries/edge cases from the
-  checklist, and a regression guard for anything this change could break.
-- Reuse `factory.ts` helpers and the existing mock patterns. If you need a new fixture
-  or a production function extracted to make something testable, state that explicitly
-  as a prerequisite so the orchestrator does it first.
-- Give each file a one-line header comment saying which card/scenarios it covers.
-- These tests MUST pass on the finished change (the orchestrator runs `npm test` before
-  raising the PR), so write them against the real, current API — not an assumed one.
+**Your role vs the implementer's — divide the work, don't duplicate it.** The
+implementer already wrote tests for the happy path + acceptance criteria (you can see
+them in the diff). Your job is the INDEPENDENT, adversarial half:
+- **Read the implementer's tests first.** Do NOT re-write a case they already lock.
+  If they cover something well, say "already covered by `<test name>`" and move on.
+- **Add only the gaps** — boundaries, error/offline paths, persistence/reload,
+  concurrency/ordering, and regression guards the implementer missed. This is where a
+  fresh, spec-derived perspective earns its keep.
+- If you notice the implementer's test is weak (see the fail-on-revert bar below), call
+  it out for code-critic rather than silently duplicating a stronger version.
+
+Every test you write MUST:
+- **Be able to FAIL if the code is reverted.** Never assert against a value a test helper
+  re-implements — assert against the real, current production function/API. A test that
+  passes whether or not the bug exists is worthless; don't write it.
+- Reuse existing fixtures/helpers (`factory.ts`, the pytest `conftest` fakes) and the
+  established mock patterns. If you need a new fixture or a production function extracted
+  to make something testable, state that as a prerequisite so the orchestrator does it first.
+- Carry a one-line header comment naming the card/scenarios it covers, and pass on the
+  finished change (the orchestrator runs the suite + coverage gate before the PR).
 
 ## 3. Edge-case critique (adversarial)
 

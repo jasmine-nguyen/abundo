@@ -17,6 +17,15 @@ const RN_TRANSFORM_IGNORE = [
 ];
 
 module.exports = {
+  // Coverage floor (a ratchet — raise it as more of the client gets tested, like the
+  // Python 72% gate). It's a REGRESSION backstop, not a quality measure: a green
+  // coverage number never proves a test is meaningful (that's the fail-on-revert
+  // check code-critic runs). Current ~33% lines; floor sits a few points under so a
+  // new feature can't quietly drop coverage, without demanding a legacy-screen backfill.
+  collectCoverageFrom: ['src/**/*.{ts,tsx}', '!src/__tests__/**'],
+  coverageThreshold: {
+    global: { statements: 30, branches: 42, functions: 22, lines: 30 },
+  },
   projects: [
     {
       displayName: 'logic',
