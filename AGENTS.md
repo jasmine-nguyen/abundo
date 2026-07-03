@@ -25,4 +25,7 @@ When explaining, presenting ideas, or writing to Notion:
 - Conditionals as: if X → then Y.
 - Use arrows (→) to show flow / what happens.
 - Draw a diagram when it helps (ASCII or mermaid).
+- Plain language — no unexplained jargon. If a term is technical (UI/code/infra,
+  e.g. "hero", "optimistic update", "idempotent"), explain it in everyday words
+  or name the actual thing on screen (e.g. "the big 'days left' number").
 - Applies to chat AND Notion writes.
