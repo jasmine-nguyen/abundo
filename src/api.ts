@@ -2,6 +2,38 @@ import { Transaction, Category, Bucket } from "./context";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
 /**
+ * The shared-secret token the app presents to the auth-gated /enrichments routes
+ * (the only gated endpoints — every other call here is open).
+ *
+ * Read at CALL time, not as a module const: the Expo bundler rewrites
+ * `process.env.EXPO_PUBLIC_API_TOKEN` to read from a live env reference, so a
+ * module-level capture would freeze an early/undefined value (and break tests
+ * that set the var before calling). Throws loudly if unset — better a clear
+ * error than silently sending `Bearer undefined` and getting a 401 on every
+ * rule action. EXPO_PUBLIC_API_TOKEN must be set at build/export time.
+ */
+function apiToken(): string {
+  const token = process.env.EXPO_PUBLIC_API_TOKEN;
+  if (!token) {
+    throw new Error("Missing EXPO_PUBLIC_API_TOKEN");
+  }
+  return token;
+}
+
+function authHeaders(): Record<string, string> {
+  return { Authorization: `Bearer ${apiToken()}` };
+}
+
+/** A BankSync-backed categorisation rule, as returned by the /enrichments API. */
+export interface EnrichmentRule {
+  id: string;
+  field: "description" | "category";
+  operator: "contains" | "equals";
+  value: string;
+  categoryId: string;
+}
+
+/**
  * Fetch every transaction for the account.
  *
  * @returns The full list of transactions from the API.
@@ -190,6 +222,59 @@ export async function setBudget(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * List every categorisation rule from the enrichments API. Auth-gated.
+ *
+ * @returns The rules currently held by BankSync (source of truth).
+ * @throws If the response status is not OK (401 when the token is wrong/missing).
+ */
+export async function listEnrichments(): Promise<EnrichmentRule[]> {
+  const response = await fetch(`${API_BASE}/enrichments`, { headers: authHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Create a categorisation rule. `field`/`operator` are omitted by default so the
+ * server applies its "description contains" default — matching what the app's
+ * rule UI produces. Auth-gated.
+ *
+ * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
+ * @returns The created rule, including its BankSync-assigned id.
+ * @throws If the response status is not OK (400 on an invalid rule, 401 on auth).
+ */
+export async function createEnrichment(
+  input: { value: string; categoryId: string; field?: string; operator?: string }
+): Promise<EnrichmentRule> {
+  const response = await fetch(`${API_BASE}/enrichments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Delete a categorisation rule. Idempotent server-side (an unknown id still
+ * returns 200). Auth-gated.
+ *
+ * @param id - The BankSync enrichment id to remove.
+ * @returns The id of the deleted rule.
+ * @throws If the response status is not OK (401 on auth).
+ */
+export async function deleteEnrichment(id: string): Promise<{ id: string }> {
+  const response = await fetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
