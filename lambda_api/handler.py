@@ -4,11 +4,16 @@ from constants import (
     CATEGORY_BUCKETS,
     CATEGORY_PATH,
     DEFAULT_CATEGORY_ICON,
+    DEFAULT_RULE_FIELD,
+    DEFAULT_RULE_OPERATOR,
+    ENRICHMENTS_PATH,
     MAX_PAGE_SIZE,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
     PENDING_STATUS,
     POSTED_STATUS,
+    RULE_FIELDS,
+    RULE_OPERATORS,
     TRANSACTION_PATH,
 )
 from datetime import date, datetime, timedelta, timezone
@@ -22,6 +27,12 @@ from repository import (
     PayCycleRepository,
     TransactionRepository,
     VersionConflictError,
+)
+from banksync_enrichments import (
+    BankSyncError,
+    create_rule,
+    delete_rule,
+    list_rules,
 )
 from encoders import DecimalEncoder
 import base64
@@ -72,6 +83,18 @@ def lambda_handler(event, context):
 
         if path == PAYCYCLE_PATH and method == "PUT":
             return set_paycycle(event, PayCycleRepository())
+
+        # Enrichments (BankSync categorisation rules). These sit behind the API
+        # Gateway authorizer (unlike the routes above), because they mutate
+        # BankSync — our source of truth.
+        if path == ENRICHMENTS_PATH and method == "GET":
+            return get_enrichments()
+
+        if path == ENRICHMENTS_PATH and method == "POST":
+            return create_enrichment(event)
+
+        if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "DELETE":
+            return delete_enrichment(event)
 
         return _json_response(404, {"error": "Not found"})
     except VersionConflictError:
@@ -260,6 +283,83 @@ def delete_category(event: dict, repo: CategoryRepository) -> dict:
         return _json_response(404, {"error": "category not found"})
 
     return _json_response(200, {"id": cat_id})
+
+
+def _banksync_error_response(error: BankSyncError) -> dict:
+    """Translate a BankSync failure into the status WE return to the app.
+
+    A bad rule we sent (400/422) is the client's fault -> 400. Everything else —
+    an auth failure on OUR key (401/403), a BankSync 5xx, or an unreachable host
+    (upstream_status None) — is an upstream problem, not the caller's -> 502. The
+    raw upstream error and the API key are never surfaced.
+    """
+    if error.upstream_status in (400, 422):
+        return _json_response(400, {"error": "invalid enrichment rule"})
+    return _json_response(502, {"error": "enrichment service unavailable"})
+
+
+def get_enrichments() -> dict:
+    """GET /enrichments — list the categorisation rules from BankSync."""
+    try:
+        return _json_response(200, list_rules())
+    except BankSyncError as e:
+        return _banksync_error_response(e)
+
+
+def create_enrichment(event: dict) -> dict:
+    """POST /enrichments — create a categorisation rule in BankSync.
+
+    Body: {"value": <str>, "categoryId": <slug>, "field"?, "operator"?}. `field`
+    and `operator` default to a plain "description contains" match (what the
+    current in-app UI produces) and are otherwise restricted to the Tier-1
+    verified vocabulary — an unverified operator is rejected 400 before it can
+    reach BankSync.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    value = body.get("value")
+    if not isinstance(value, str) or not value.strip():
+        return _json_response(400, {"error": "value is required"})
+
+    category_id = body.get("categoryId")
+    if not isinstance(category_id, str) or not category_id.strip():
+        return _json_response(400, {"error": "categoryId is required"})
+
+    field = body.get("field", DEFAULT_RULE_FIELD)
+    if field not in RULE_FIELDS:
+        return _json_response(400, {"error": f"field must be one of {sorted(RULE_FIELDS)}"})
+
+    operator = body.get("operator", DEFAULT_RULE_OPERATOR)
+    if operator not in RULE_OPERATORS:
+        return _json_response(
+            400, {"error": f"operator must be one of {sorted(RULE_OPERATORS)}"})
+
+    try:
+        rule = create_rule(field, operator, value.strip(), category_id.strip())
+    except BankSyncError as e:
+        return _banksync_error_response(e)
+
+    return _json_response(201, rule)
+
+
+def delete_enrichment(event: dict) -> dict:
+    """DELETE /enrichments/{id} — remove a categorisation rule from BankSync.
+
+    Idempotent: an unknown/already-gone id still returns 200 (the underlying
+    client swallows BankSync's 404).
+    """
+    enrichment_id = (event.get("pathParameters") or {}).get("id")
+    if not enrichment_id:
+        return _json_response(404, {"error": "enrichment not found"})
+
+    try:
+        delete_rule(enrichment_id)
+    except BankSyncError as e:
+        return _banksync_error_response(e)
+
+    return _json_response(200, {"id": enrichment_id})
 
 
 _MELBOURNE = None  # ZoneInfo("Australia/Melbourne"), built lazily on first use.

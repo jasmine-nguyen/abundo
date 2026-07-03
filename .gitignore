@@ -52,6 +52,7 @@ lambda/*
 lambda_api/*
 !lambda_api/handler.py
 !lambda_api/constants.py
+!lambda_api/banksync_enrichments.py
 
 # terraform
 terraform/artifacts/*

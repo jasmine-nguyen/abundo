@@ -9,6 +9,34 @@ MAX_PAGE_SIZE = 100
 TRANSACTION_PATH = "/transactions"
 FEED_WINDOW_DAYS = 5
 
+# --- BankSync Enrichments (categorisation rules) ---------------------------
+# lambda_api ships its OWN constants.py (it shadows the shared layer at
+# /var/task), so the BankSync values the shared layer already defines have to be
+# repeated here for the enrichments proxy to import them. Keep equal to
+# shared/constants.py.
+BANKSYNC_BASE_URL = "https://api.banksync.io"
+BANKSYNC_API_KEY_PATH = "/whittle/banksync-api-key"
+# BankSync sits behind Cloudflare, which 403s the default "Python-urllib"
+# User-Agent (error 1010). Send our own on every request (matches the
+# sync-trigger lambda, which uses its own "whittle-sync-trigger").
+BANKSYNC_USER_AGENT = "whittle-lambda-api"
+# HTTP timeout, in seconds, for a single enrichments request to BankSync.
+BANKSYNC_TIMEOUT_SECONDS = 30
+
+# API Gateway route path for the enrichments (categorisation-rule) endpoints.
+ENRICHMENTS_PATH = "/enrichments"
+
+# Tier-1 rule vocabulary we let the app author. Kept to what we've VERIFIED
+# against BankSync (description contains / category equals, 2026-07-02); the
+# create handler rejects anything outside these so an unverified operator never
+# reaches BankSync. Widen only after a /enrich/preview dry-run confirms support.
+RULE_FIELDS = frozenset({"description", "category"})
+RULE_OPERATORS = frozenset({"contains", "equals"})
+# Applied when a create request omits them: the plain "description contains X"
+# rule that the current in-app UI produces.
+DEFAULT_RULE_FIELD = "description"
+DEFAULT_RULE_OPERATOR = "contains"
+
 # --- Categories (user-defined taxonomy) ------------------------------------
 # API Gateway route path for the category CRUD endpoints.
 CATEGORY_PATH = "/categories"

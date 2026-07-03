@@ -57,11 +57,25 @@ if "botocore" not in sys.modules:
     _botocore.exceptions = _exceptions
     sys.modules.update({"botocore": _botocore, "botocore.exceptions": _exceptions})
 
+# 1c. Fake `ssm` so importing the handler — which now pulls in
+#     banksync_enrichments (`from ssm import get_param`) — needs no boto3/AWS.
+#     Tests that care about SSM monkeypatch banksync_enrichments.get_param /
+#     _api_key directly; this default just keeps the import chain clean.
+if "ssm" not in sys.modules:
+    _ssm = types.ModuleType("ssm")
+    _ssm.get_param = lambda parameter_name: "test-api-key"
+    sys.modules["ssm"] = _ssm
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _LAMBDA_API_DIR = str(_REPO_ROOT / "lambda_api")
 _SHARED_DIR = str(_REPO_ROOT / "shared")
-# Modules whose names collide with the sibling sync_trigger suite.
-_COLLIDING = ("handler", "constants", "models", "encoders", "repository")
+# Modules re-imported fresh per test: names that collide with the sibling
+# sync_trigger suite, plus banksync_enrichments (so its cached _api_key can't
+# leak across tests).
+_COLLIDING = (
+    "handler", "constants", "models", "encoders", "repository",
+    "banksync_enrichments",
+)
 
 
 @pytest.fixture
@@ -80,6 +94,35 @@ def handler():
 
     try:
         yield h
+    finally:
+        for name in _COLLIDING:
+            sys.modules.pop(name, None)
+        for name, mod in saved.items():
+            if mod is not None:
+                sys.modules[name] = mod
+
+
+@pytest.fixture
+def enrichments():
+    """Import lambda_api/banksync_enrichments.py in isolation for direct tests
+    of the BankSync client + Rule adapter (create/list/delete/_to_rule)."""
+    for d in (_SHARED_DIR, _LAMBDA_API_DIR):
+        while d in sys.path:
+            sys.path.remove(d)
+    sys.path.insert(0, _SHARED_DIR)
+    sys.path.insert(0, _LAMBDA_API_DIR)
+
+    saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
+    import banksync_enrichments as be
+
+    be._api_key = None  # never leak a cached key across tests
+    # Pin the key deterministically instead of leaning on whichever suite's
+    # module-level `ssm` fake won collection order (lambda_api's "test-api-key"
+    # vs lambda_authorizer's "test-token") — otherwise value-sensitive tests are
+    # order-dependent. Tests that care about caching monkeypatch this themselves.
+    be.get_param = lambda path: "test-api-key"
+    try:
+        yield be
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)

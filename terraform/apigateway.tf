@@ -96,6 +96,56 @@ resource "aws_lambda_permission" "get_transactions_invoke_permission" {
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }
 
+# Shared-secret authorizer guarding the /enrichments routes (WHIT-52). REQUEST
+# type + simple responses: the lambda returns {"isAuthorized": bool}. The
+# Authorization identity source is required — a request missing it is rejected
+# 401 by API Gateway before the authorizer is even invoked.
+resource "aws_apigatewayv2_authorizer" "enrichments" {
+  api_id                            = aws_apigatewayv2_api.api.id
+  authorizer_type                   = "REQUEST"
+  authorizer_uri                    = aws_lambda_function.authorizer.invoke_arn
+  identity_sources                  = ["$request.header.Authorization"]
+  name                              = "${var.project_name}-enrichments-authorizer"
+  authorizer_payload_format_version = "2.0"
+  enable_simple_responses           = true
+}
+
+resource "aws_lambda_permission" "authorizer_invoke_permission" {
+  statement_id  = "AllowAPIGatewayInvokeAuthorizer"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/authorizers/${aws_apigatewayv2_authorizer.enrichments.id}"
+}
+
+# Enrichments (BankSync categorisation rules): list/create/delete. Reuse the
+# lambda_api integration (its /*/* invoke permission already covers these), but
+# gate every route behind the shared-secret authorizer — unlike the routes
+# above, these mutate BankSync, our source of truth.
+resource "aws_apigatewayv2_route" "get_enrichments_route" {
+  api_id             = aws_apigatewayv2_api.api.id
+  route_key          = "GET /enrichments"
+  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.enrichments.id
+}
+
+resource "aws_apigatewayv2_route" "post_enrichment_route" {
+  api_id             = aws_apigatewayv2_api.api.id
+  route_key          = "POST /enrichments"
+  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.enrichments.id
+}
+
+resource "aws_apigatewayv2_route" "delete_enrichment_route" {
+  api_id             = aws_apigatewayv2_api.api.id
+  route_key          = "DELETE /enrichments/{id}"
+  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.enrichments.id
+}
+
 # banksync webhook endpoint used by banksync to push transaction data
 resource "aws_apigatewayv2_integration" "banksync_webhook_integration" {
   api_id                 = aws_apigatewayv2_api.api.id

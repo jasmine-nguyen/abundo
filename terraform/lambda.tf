@@ -33,12 +33,13 @@ data "archive_file" "lambda_zip" {
 # deterministic regardless of local cruft.
 resource "null_resource" "prepare_lambda_api" {
   triggers = {
-    handler   = filesha256("${path.module}/../lambda_api/handler.py")
-    constants = filesha256("${path.module}/../lambda_api/constants.py")
+    handler     = filesha256("${path.module}/../lambda_api/handler.py")
+    constants   = filesha256("${path.module}/../lambda_api/constants.py")
+    enrichments = filesha256("${path.module}/../lambda_api/banksync_enrichments.py")
   }
 
   provisioner "local-exec" {
-    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/build/lambda_api/"
+    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/../lambda_api/banksync_enrichments.py ${path.module}/build/lambda_api/"
   }
 }
 
@@ -55,6 +56,14 @@ data "archive_file" "sync_trigger_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda_sync_trigger"
   output_path = "${path.module}/artifacts/sync_trigger.zip"
+}
+
+# Authorizer lambda source. Contains only handler.py; constants.py and ssm.py
+# come from the shared layer.
+data "archive_file" "authorizer_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../lambda_authorizer"
+  output_path = "${path.module}/artifacts/authorizer.zip"
 }
 
 resource "aws_lambda_function" "lambda" {
@@ -123,6 +132,26 @@ resource "aws_lambda_function" "sync_trigger" {
   }
 }
 
+# API Gateway authorizer: checks the shared-secret token on the /enrichments
+# routes (WHIT-52). Only needs the shared layer for constants.py/ssm.py; no
+# DynamoDB. TABLE_NAME is not set — it never touches the table.
+resource "aws_lambda_function" "authorizer" {
+  function_name    = "${var.project_name}-authorizer"
+  role             = aws_iam_role.authorizer_exec.arn
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 10
+  memory_size      = 128
+  filename         = data.archive_file.authorizer_zip.output_path
+  source_code_hash = data.archive_file.authorizer_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.authorizer.name
+  }
+}
+
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.project_name}-lambda"
   retention_in_days = 30
@@ -135,5 +164,10 @@ resource "aws_cloudwatch_log_group" "lambda_api" {
 
 resource "aws_cloudwatch_log_group" "sync_trigger" {
   name              = "/aws/lambda/${var.project_name}-sync-trigger"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "authorizer" {
+  name              = "/aws/lambda/${var.project_name}-authorizer"
   retention_in_days = 30
 }
