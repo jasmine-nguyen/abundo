@@ -166,12 +166,15 @@ def patch_transaction_category(event: dict, repo: TransactionRepository) -> dict
 
 
 def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
-    # calculate date range
-    today = datetime.now(timezone.utc).date()
+    # The last FEED_WINDOW_DAYS days, inclusive, on the user's clock. `today` is
+    # Melbourne-local — the SAME clock the budget window uses (_melbourne_today) —
+    # so the feed and the budget bar agree on where "today" ends: no UTC/Melbourne
+    # ±1-day seam near midnight, and no `today + 1` end leaking a tomorrow-dated
+    # charge into the list (the leak WHIT-75 removed from the budget window).
+    # This is a rolling 7-day view, independent of the pay cycle by design.
+    today = _melbourne_today()
     start_date = (today - timedelta(days=FEED_WINDOW_DAYS)).isoformat()
-    end_date = (
-        today + timedelta(days=1)
-    ).isoformat()  # +1 day covers AEST dates ahead of UTC
+    end_date = today.isoformat()
 
     # Every row in the window across all accounts, following the date-index cursor
     # to exhaustion — the feed must not silently truncate at one page/account.

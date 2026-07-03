@@ -11,7 +11,7 @@ lambda_handler to prove the wiring (and, for the feed, that its real body runs).
 import base64
 import copy
 import json
-from datetime import datetime, timezone
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -279,35 +279,26 @@ def test_recent_paginates_all_pages_per_account(handler):
     assert {t["transaction_id"] for t in result} == {"page1", "page2"}
 
 
-def test_recent_window_is_feed_window_days_with_plus_one_end(handler, monkeypatch):
-    # Freeze "now" and assert the recorded query bounds against LITERAL dates (an
-    # independent oracle): start = today - FEED_WINDOW_DAYS(7), end = today + 1
-    # (the AEST-ahead-of-UTC fudge). Literals catch a dropped +1 or a changed
-    # window that a recomputed expression would silently mirror.
-    class _FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
-
-    monkeypatch.setattr(handler, "datetime", _FrozenDatetime)
+def test_recent_window_is_feed_window_days_on_melbourne_clock(handler, monkeypatch):
+    # Freeze today (Melbourne-local, the same clock the budget window uses) and
+    # assert the recorded query bounds against LITERAL dates (an independent
+    # oracle): start = today - FEED_WINDOW_DAYS(7), end = today (INCLUSIVE, no
+    # today+1). Literals catch a reintroduced +1 or a changed window that a
+    # recomputed expression would silently mirror.
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2026, 7, 3))
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
     repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
 
     handler.get_recent_transactions(repo)
 
     assert {c[1] for c in repo.calls} == {"2026-06-26"}  # 2026-07-03 minus 7 days
-    assert {c[2] for c in repo.calls} == {"2026-07-04"}  # 2026-07-03 plus 1 day
+    assert {c[2] for c in repo.calls} == {"2026-07-03"}  # today, inclusive (no +1 leak)
 
 
 def test_recent_window_reads_the_feed_window_days_constant(handler, monkeypatch):
     # Prove the window is wired to FEED_WINDOW_DAYS, not a hardcoded 7: patch the
     # constant to 3 and the start bound must move with it.
-    class _FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return datetime(2026, 7, 3, 12, 0, tzinfo=timezone.utc)
-
-    monkeypatch.setattr(handler, "datetime", _FrozenDatetime)
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2026, 7, 3))
     monkeypatch.setattr(handler, "FEED_WINDOW_DAYS", 3)
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
     repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
