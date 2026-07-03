@@ -156,3 +156,25 @@ def test_null_category_reaches_helper_and_counts(lam):
     txn = _normalise(lam, category=None)
     assert txn["category"] is None
     assert txn["counts_to_budget"] is True
+
+
+# --- merchant_name cleaning (real ANZ payload shapes) ------------------------
+
+
+def test_pending_row_stores_clean_merchant_and_raw_description(lam):
+    # Pending card auth: no merchantName, "POS AUTHORISATION" prefix column.
+    raw = "POS AUTHORISATION         COLES 0602               MELBOURNE    AU"
+    txn = _normalise(lam, description=raw, merchantName="", pending=True)
+    assert txn["merchant_name"] == "COLES"       # cleaned for display
+    assert txn["description"] == raw             # description kept byte-for-byte raw
+
+
+def test_posted_row_uses_merchant_name_column(lam):
+    txn = _normalise(
+        lam,
+        description="SQ *KKV INTERNATIONAL PTY Sunshine",
+        merchantName="SQ *KKV INTERNATIONAL PTY ",
+        pending=False,
+    )
+    assert txn["merchant_name"] == "KKV INTERNATIONAL PTY"
+    assert txn["description"] == "SQ *KKV INTERNATIONAL PTY Sunshine"

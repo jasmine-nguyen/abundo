@@ -2,6 +2,7 @@ import logging
 from constants import ACCOUNT_ID_MAP, HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES
 from decimal import Decimal
 
+from merchant import clean_merchant
 from models import Transaction
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,9 @@ class BankSyncClient:
             "date": row["date"],
             "authorized_date": row.get("authorizedDate", ""),
             "description": row["description"],
-            "merchant_name": row.get("merchantName", ""),
+            # description stays RAW (rules + audit rely on it); merchant_name is the
+            # cleaned display name derived from it / merchantName (see merchant.py).
+            "merchant_name": clean_merchant(row["description"], row.get("merchantName", "")),
             "amount": Decimal(str(row["amount"])),
             "account_id": internal_account_id,
             "account_name": row["accountName"],
