@@ -203,10 +203,11 @@ function PayCycleSheet() {
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
 
-  // onChange is deprecated -> onValueChange (value) + onDismiss (Android cancel).
-  // The callback fires as (event, date) — the Date is the SECOND arg, not the
-  // first — so pull it out of whichever position it lands in, rather than assume
-  // arg 0 is the Date (which crashed: `event.getMonth()` is undefined).
+  // The picker's callback is onChange, which fires as (event, date) — the Date is
+  // the SECOND arg, not the first — so pull it out of whichever position it lands
+  // in, rather than assume arg 0 is the Date (assuming arg 0 crashed once:
+  // `event.getMonth()` is undefined). On a cancel/dismiss the date is undefined, so
+  // nothing is committed.
   const commitDate = (a?: unknown, b?: unknown) => {
     const picked = a instanceof Date ? a : b instanceof Date ? b : undefined;
     if (picked) s.setPayday(toISODate(picked));
@@ -244,7 +245,7 @@ function PayCycleSheet() {
             maximumDate={today}
             themeVariant="dark"        // light text on the dark sheet
             accentColor={C.accent}     // selected day + popover accent match the palette
-            onValueChange={commitDate}
+            onChange={commitDate}
           />
         </View>
       ) : (
@@ -262,8 +263,9 @@ function PayCycleSheet() {
           mode="date"
           display="default"
           maximumDate={today}
-          onValueChange={(picked?: Date) => { setShowAndroidPicker(false); commitDate(picked); }}
-          onDismiss={() => setShowAndroidPicker(false)}
+          // Android fires onChange for both pick and dismiss; close the dialog
+          // either way, and commitDate only saves when a Date came through.
+          onChange={(event, date) => { setShowAndroidPicker(false); commitDate(event, date); }}
         />
       )}
 
