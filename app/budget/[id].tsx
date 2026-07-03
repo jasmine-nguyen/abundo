@@ -70,7 +70,7 @@ export default function BudgetDetail() {
             {g.items.map((t) => <DetailTransactionRow key={t.transaction_id} t={t} />)}
           </View>
         ))}
-        {bd.relEmpty && <Text style={styles.empty}>No transactions in this category yet this cycle.</Text>}
+        {bd.relEmpty && <Text style={styles.empty}>No transactions in this category in the last 7 days.</Text>}
       </ScrollView>
     </View>
   );
