@@ -36,7 +36,7 @@ BANKSYNC_BASE_URL = "https://api.banksync.io"
 API_AUTH_TOKEN_PATH = "/whittle/api-auth-token"
 
 # Lookback window, in days, used when requesting a feed's transactions.
-FEED_WINDOW_DAYS = 5
+FEED_WINDOW_DAYS = 7
 
 # Maximum number of items requested per DynamoDB query page.
 MAX_PAGE_SIZE = 100
