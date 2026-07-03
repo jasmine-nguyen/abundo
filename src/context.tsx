@@ -92,6 +92,40 @@ export function merchantLabel(t: Transaction): string {
   return cleanName(t.merchant_name || t.description);
 }
 
+// The `contains` pattern the "Every {merchant} charge" rule matches on. Where the
+// merchant name appears inside the description, return that slice using the
+// description's OWN casing — this drops the volatile store#/location/ref suffix so
+// the rule generalises to future charges, while the preserved casing keeps the
+// match working whether or not BankSync's `contains` is case-sensitive. Falls back
+// to the full description when there's no clean merchant substring (behaves as
+// before — a rule that only catches this exact description).
+export function rulePattern(t: Transaction): string {
+  const desc = t.description ?? '';
+  const merchant = (t.merchant_name ?? '').trim();
+  if (merchant) {
+    const i = desc.toLowerCase().indexOf(merchant.toLowerCase());
+    if (i >= 0) return desc.slice(i, i + merchant.length);
+  }
+  return desc;
+}
+
+// Whether transaction `t` should be swept into an "Every {merchant} charge" for a
+// rule whose match value is `pattern`, relative to the tapped `origin` charge.
+// Requires the rule's own `description contains pattern` match AND — when BOTH
+// charges carry a merchant name — that the merchants are the same, so a
+// promiscuous token (e.g. "METRO" inside "WOOLWORTHS METRO") can't pull a
+// different merchant's charge into the batch. When either charge lacks a merchant
+// name, the description match alone stands. An empty pattern falls back to exact
+// description equality (so `includes('')` can't sweep in everything).
+export function matchesRulePattern(t: Transaction, pattern: string, origin: Transaction): boolean {
+  if (!pattern) return t.description === origin.description;
+  if (!t.description.toLowerCase().includes(pattern.toLowerCase())) return false;
+  const originMerchant = (origin.merchant_name ?? '').trim().toLowerCase();
+  const candMerchant = (t.merchant_name ?? '').trim().toLowerCase();
+  if (originMerchant && candMerchant) return candMerchant === originMerchant;
+  return true;
+}
+
 // The pay-cycle length -> its human name. Pure + exported so the provider and the
 // tests share one source of truth (rather than each reimplementing the mapping).
 export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' {
@@ -359,11 +393,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // "Every {merchant} charge": every OTHER uncategorised transaction from the
       // same merchant (matched by description) that counts toward a budget. Captured
       // once so the optimistic update and the failure-revert act on the same set.
+      // Match future charges on a generalised merchant pattern, and categorise the
+      // CURRENT uncategorised charges the rule will catch — but gated to the SAME
+      // merchant (matchesRulePattern) so a promiscuous token can't sweep in a
+      // different merchant's charge.
+      const ruleValue = rulePattern(transaction);
       const sameMerchantIds = transactions
         .filter((t) =>
           t.counts_to_budget &&
           t.category == null &&
-          t.description === transaction.description)
+          matchesRulePattern(t, ruleValue, transaction))
         .map((t) => t.transaction_id);
 
       // Optimistically file all of them under the chosen category (one state update).
@@ -376,7 +415,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Optimistically add the rule; a durable BankSync rule is created below.
       // Keep its temp id so we can swap in the server id or roll it back.
       const tempRuleId = 'tmp-' + Date.now();
-      const ruleValue = transaction.description; // match future charges by this text
       setRules((prev) => [
         { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
         ...prev,
