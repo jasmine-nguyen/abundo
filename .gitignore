@@ -37,7 +37,8 @@ yarn-error.*
 
 app-example
 
-# Python
+# Coverage (jest + python)
+coverage/
 __pycache__/
 *.py[cod]
 .coverage

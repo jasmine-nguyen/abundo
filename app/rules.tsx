@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../src/theme';
 import { Icon, Glyph } from '../src/icons';
@@ -24,27 +24,41 @@ export default function Rules() {
         <View style={styles.intro}>
           <View style={styles.introIcon}><Glyph name="sliders" size={22} color={C.accentSoft} /></View>
           <Text style={styles.introText}>
-            Rules categorize matching merchants the moment a transaction lands — <Text style={styles.introBold}>posted or pending</Text>. You have {s.rules.length} active rules.
+            Rules categorize matching merchants the moment a transaction lands — <Text style={styles.introBold}>posted or pending</Text>. You have {s.rules.length} active {s.rules.length === 1 ? 'rule' : 'rules'}.
           </Text>
         </View>
 
-        {s.rules.map((r) => {
-          const c = s.category(r.categoryId);
-          const color = c?.color ?? '#888';
-          return (
-            <View key={r.id} style={styles.row}>
-              <View style={[styles.chip, { backgroundColor: tint(color, 0.15) }]}><Icon name={c?.icon ?? 'q'} size={20} color={color} /></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.pattern}>{r.pattern}</Text>
-                <Text style={styles.target}>→ <Text style={{ color, fontWeight: '600' }}>{c?.name ?? '—'}</Text></Text>
+        {s.enrichmentsError ? (
+          <View style={styles.stateCard}>
+            <Text style={styles.stateText}>{s.enrichmentsError}</Text>
+            <Pressable onPress={() => s.refreshEnrichments()} style={styles.retryBtn}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : s.enrichmentsLoading && s.rules.length === 0 ? (
+          <View style={styles.stateCard}>
+            <ActivityIndicator color={C.accentSoft} />
+            <Text style={styles.stateText}>Loading rules…</Text>
+          </View>
+        ) : (
+          s.rules.map((r) => {
+            const c = s.category(r.categoryId);
+            const color = c?.color ?? '#888';
+            return (
+              <View key={r.id} style={styles.row}>
+                <View style={[styles.chip, { backgroundColor: tint(color, 0.15) }]}><Icon name={c?.icon ?? 'q'} size={20} color={color} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pattern}>{r.pattern}</Text>
+                  <Text style={styles.target}>→ <Text style={{ color, fontWeight: '600' }}>{c?.name ?? '—'}</Text></Text>
+                </View>
+                {r.isNew && <Text style={styles.newBadge}>NEW</Text>}
+                <Pressable testID={`delete-rule-${r.id}`} onPress={() => s.deleteRule(r.id)} style={styles.trash}>
+                  <Glyph name="trash" size={18} color={C.textFaint} />
+                </Pressable>
               </View>
-              {r.isNew && <Text style={styles.newBadge}>NEW</Text>}
-              <Pressable onPress={() => s.deleteRule(r.id)} style={styles.trash}>
-                <Glyph name="trash" size={18} color={C.textFaint} />
-              </Pressable>
-            </View>
-          );
-        })}
+            );
+          })
+        )}
 
         <Pressable onPress={() => s.setSheet({ mode: 'addrule' })} style={styles.newRuleBtn}>
           <Glyph name="plus" size={18} color={C.accentSoft} />
@@ -67,6 +81,10 @@ const styles = StyleSheet.create({
   target: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   newBadge: { fontFamily: FONT.body, fontSize: 10, fontWeight: '700', color: C.good, backgroundColor: 'rgba(53,217,160,.14)', paddingVertical: 3, paddingHorizontal: 7, borderRadius: 6, overflow: 'hidden' },
   trash: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  stateCard: { alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingVertical: 28, paddingHorizontal: 14, marginBottom: 8 },
+  stateText: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center' },
+  retryBtn: { paddingVertical: 9, paddingHorizontal: 18, borderRadius: 10, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.accentSoft },
   newRuleBtn: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', backgroundColor: 'rgba(124,140,255,.07)', borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   newRuleText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
 });

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup, listEnrichments, createEnrichment, deleteEnrichment, EnrichmentRule } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,7 +30,11 @@ export interface Transaction {
   type: string;
   counts_to_budget: boolean;
 }
-export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; }
+// `pattern` mirrors the server rule's `value`; `field`/`operator` carry the
+// server facts (default description/contains for app-authored rules) so a rule
+// surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
+// is client-only (server rules load as isNew:false).
+export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; }
 export interface Goal {
   original: number; balance: number; homeValue: number; startYear: string;
   ratePct: number; baseRepay: number; extra: number; freedomDate: string;
@@ -67,12 +71,6 @@ const SEED_CATEGORIES: Category[] = [
   { id: 'travel', name: 'Travel', icon: 'plane', color: '#6FB6D0', bucket: 'Lifestyle', recent: 0 },
   { id: 'gifts', name: 'Gifts', icon: 'gift', color: '#E59BD0', bucket: 'Lifestyle', recent: 28 },
   { id: 'phonenet', name: 'Phone & Internet', icon: 'phone', color: '#B0A8F0', bucket: 'Living', recent: 79 },
-];
-const SEED_RULES: Rule[] = [
-  { id: 'r1', pattern: 'WOOLWORTHS', categoryId: 'groceries', isNew: false },
-  { id: 'r2', pattern: 'AGL', categoryId: 'utilities', isNew: false },
-  { id: 'r3', pattern: 'SHELL', categoryId: 'transport', isNew: false },
-  { id: 'r4', pattern: 'CAFE BONES', categoryId: 'coffee', isNew: false },
 ];
 const SEED_GOAL: Goal = {
   original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
@@ -145,10 +143,10 @@ export interface AppContext {
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => Promise<boolean>;
   deleteCategory: (id: string) => Promise<boolean>;
-  deleteRule: (id: string) => void;
-  saveManualRule: (pattern: string, categoryId: string) => void;
+  deleteRule: (id: string) => Promise<void>;
+  saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
   fireRepayment: () => void;
-	
+
 	transactionsLoading: boolean;
 	refreshTransactions: () => Promise<void>;
 	categoriesLoading: boolean;
@@ -156,6 +154,9 @@ export interface AppContext {
 	budgetsLoading: boolean;
 	refreshBudgets: () => Promise<void>;
 	refreshPayCycle: () => Promise<void>;
+	enrichmentsLoading: boolean;
+	enrichmentsError: string | null;
+	refreshEnrichments: () => Promise<void>;
 }
 
 /**
@@ -187,13 +188,23 @@ function toBudget(id: string, rollup: BudgetRollup): Budget {
   return { id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending };
 }
 
+// Map a server enrichment rule into the client `Rule` shape. `value` -> `pattern`
+// (what the list renders); loaded rules are never "new". Module-level (like
+// toCategory/toBudget) so refreshEnrichments stays a stable callback.
+function toRule(raw: EnrichmentRule): Rule {
+  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator };
+}
+
 const Ctx = createContext<AppContext | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [categories, setCategories] = useState<Category[]>(SEED_CATEGORIES);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [rules, setRules] = useState<Rule[]>(SEED_RULES);
+  // Server (BankSync) is the source of truth for rules; start empty and load
+  // from /enrichments on mount (no fake seeds — a failed load shows an error, not
+  // undeletable placeholder rules).
+  const [rules, setRules] = useState<Rule[]>([]);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
   // Seeded to the server default; refreshPayCycle() overwrites it from the API on
   // mount. last_pay_date is an ISO "YYYY-MM-DD" payday date (was a weekday name pre-P14).
@@ -248,11 +259,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		setPayCycle(cycle);
 	}, []);
 
+	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
+	const [enrichmentsError, setEnrichmentsError] = useState<string | null>(null);
+	const refreshEnrichments = useCallback(async () => {
+		setEnrichmentsLoading(true);
+		setEnrichmentsError(null);
+		try {
+			const data = await listEnrichments();
+			setRules(data.map(toRule));
+		} catch {
+			// Surface a retryable error on the Rules screen rather than throwing.
+			setEnrichmentsError('Could not load rules.');
+		} finally {
+			setEnrichmentsLoading(false);
+		}
+	}, []);
+
 	useEffect(() => {
 		refreshTransactions();
 		refreshCategories();
 		refreshPayCycle();
-	}, [refreshTransactions, refreshCategories, refreshPayCycle]);
+		refreshEnrichments();
+	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshEnrichments]);
 
 	// Re-fetch budgets on mount and whenever the pay-cycle length (the window) changes.
 	useEffect(() => {
@@ -262,6 +290,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const repayIdx = useRef(0);
+
+  // Clear the toast/notif timers on unmount so they can't fire a setState after
+  // teardown (a leak that also kept the jest worker alive between tests).
+  useEffect(() => () => {
+    clearTimeout(toastTimer.current);
+    clearTimeout(notifTimer.current);
+  }, []);
 
   const category = useCallback((id: string | null) => categories.find((c) => c.id === id), [categories]);
   const cycleNameCb = useCallback(() => cycleName(payCycle.length), [payCycle.length]);
@@ -337,30 +372,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return { ...existing, category: categoryId };
         }));
 
-      // Remember the intent as a local rule so the UI reflects it. Durable,
-      // server-side rules are a separate slice (WHIT-52).
-      setRules((prev) => {
-        const newRule: Rule = {
-          id: 'r' + Date.now(),          // unique-enough local id
-          pattern: transaction.description, // match future charges by this text
-          categoryId,                     // file them under the chosen category
-          isNew: true,                    // flags the "NEW" badge in the rules list
-        };
-        // Prepend so the newest rule shows at the top of the list.
-        return [newRule, ...prev];
-      });
+      // Optimistically add the rule; a durable BankSync rule is created below.
+      // Keep its temp id so we can swap in the server id or roll it back.
+      const tempRuleId = 'tmp-' + Date.now();
+      const ruleValue = transaction.description; // match future charges by this text
+      setRules((prev) => [
+        { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
+        ...prev,
+      ]);
       showToast(`Rule saved — future ${cleanName(transaction.description)} charges file as ${category.name}.`);
       setSheet(null); // close the confirm sheet
 
-      // Persist each transaction to the server, all in parallel.
-      const outcomes = await Promise.allSettled(
-        sameMerchantIds.map((id) => apiSetTransactionCategory(id, categoryId)));
+      // Persist the rule AND each transaction in parallel. The rule outcome is
+      // first; the rest align 1:1 with sameMerchantIds.
+      const [ruleOutcome, ...outcomes] = await Promise.allSettled([
+        createEnrichment({ value: ruleValue, categoryId }),
+        ...sameMerchantIds.map((id) => apiSetTransactionCategory(id, categoryId)),
+      ]);
 
-      // Promise.allSettled keeps the input order, so outcomes[index] is the result
-      // for sameMerchantIds[index]. Keep the ids whose save was rejected.
-      const failedIds = sameMerchantIds.filter((id, index) => {
-        return outcomes[index].status === 'rejected';
-      });
+      // Reconcile the optimistic rule: swap in the real BankSync id on success (so
+      // a later delete targets the real rule), or remove it on failure.
+      if (ruleOutcome.status === 'fulfilled') {
+        // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
+        // false for the load path, where rules genuinely aren't new).
+        setRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(ruleOutcome.value), isNew: true } : r)));
+      } else {
+        setRules((prev) => prev.filter((r) => r.id !== tempRuleId));
+      }
+
+      // outcomes[index] is the result for sameMerchantIds[index]. Keep the failures.
+      const failedIds = sameMerchantIds.filter((id, index) => outcomes[index].status === 'rejected');
       if (failedIds.length > 0) {
         // Roll back only the ones whose save failed (back to uncategorised).
         setTransactions((prev) =>
@@ -369,6 +410,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             return { ...existing, category: null };
           }));
         showToast('Could not save some categories. Please try again.');
+      } else if (ruleOutcome.status === 'rejected') {
+        // Transactions filed fine; only the future-rule failed to persist.
+        showToast('Filed, but could not save the rule for future charges.');
       }
       // Some categorisations persisted -> refresh the bars so budget spend updates.
       if (failedIds.length < sameMerchantIds.length) refreshBudgets();
@@ -467,15 +511,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [showToast]);
 
-  const deleteRule = useCallback((id: string) => setRules((prev) => prev.filter((r) => r.id !== id)), []);
+  // Optimistically remove the rule, then delete it in BankSync; on failure put it
+  // back where it was and tell the user. A temp-id rule (mid-create) deletes fine
+  // too — the server DELETE is idempotent (unknown id -> 200), and a refresh
+  // reconciles any brief create/delete race.
+  const deleteRule = useCallback(async (id: string) => {
+    const index = rules.findIndex((r) => r.id === id);
+    if (index === -1) return;
+    const removed = rules[index];
+    setRules((prev) => prev.filter((r) => r.id !== id));
+    try {
+      await deleteEnrichment(id);
+    } catch {
+      setRules((prev) => {
+        const next = [...prev];
+        next.splice(Math.min(index, next.length), 0, removed);
+        return next;
+      });
+      showToast('Could not delete rule. Please try again.');
+    }
+  }, [rules, showToast]);
 
-  const saveManualRule = useCallback((pattern: string, categoryId: string) => {
-    const p = pattern.trim().toUpperCase();
-    if (!p || !categoryId) return;
+  // Optimistically add the rule (temp id), create it in BankSync, then swap in the
+  // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
+  // not upper-cased) so both rule-creation paths POST a consistent `value`.
+  const saveManualRule = useCallback(async (pattern: string, categoryId: string) => {
+    const value = pattern.trim();
+    if (!value || !categoryId) return;
     const c = categories.find((x) => x.id === categoryId);
-    setRules((prev) => [{ id: 'r' + Date.now(), pattern: p, categoryId, isNew: true }, ...prev]);
+    const tempRuleId = 'tmp-' + Date.now();
+    setRules((prev) => [{ id: tempRuleId, pattern: value, categoryId, isNew: true }, ...prev]);
     setSheet(null);
-    if (c) showToast(`Rule added — ${p} files as ${c.name}.`);
+    if (c) showToast(`Rule added — ${value} files as ${c.name}.`);
+    try {
+      const created = await createEnrichment({ value, categoryId });
+      // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
+      // false for the load path, where rules genuinely aren't new).
+      setRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
+    } catch {
+      setRules((prev) => prev.filter((r) => r.id !== tempRuleId));
+      showToast('Could not save rule. Please try again.');
+    }
   }, [categories, showToast]);
 
   const fireRepayment = useCallback(() => {
@@ -496,9 +572,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
