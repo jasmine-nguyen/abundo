@@ -25,5 +25,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # --coverage enforces the floor in jest.config.js (coverageThreshold) and
+      # prints the per-file table into the Actions log. A ratchet, like the Python gate.
       - name: Run tests
-        run: npm test
+        run: npm test -- --coverage

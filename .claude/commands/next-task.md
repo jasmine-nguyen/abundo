@@ -50,11 +50,13 @@ Target card (optional): $ARGUMENTS
      — a short multiple-choice question — then continue. Never resolve such a
      fork silently mid-implementation.
 
-7. **Self-check.** Run the project's tests and typecheck for anything the change
-   touches — the Python suite (`python -m pytest`) for Lambda work, and for any
-   client change the full JS suite + typecheck (`npm test`, `npx tsc --noEmit`).
-   Fix what you broke. Report the results. Do not proceed to review with a red
-   test suite unless the user explicitly says to.
+7. **Write the first tests + self-check.** As the implementer, write tests as you
+   build — the happy path + the acceptance criteria + the obvious edges. That's your
+   "prove it works" half; the `qa` agent writes the independent adversarial half in
+   Phase 3. Then run the suites + typecheck for anything the change touches — the
+   Python suite (`python -m pytest`) for Lambda work, and the JS suite + typecheck
+   (`npm test`, `npx tsc --noEmit`) for client work. Fix what you broke. Report the
+   results. Do not proceed to review with a red test suite unless the user says to.
 
 ## Phase 3 — Verify (the gates that code-critic AND qa enforce)
 
@@ -63,10 +65,11 @@ Target card (optional): $ARGUMENTS
      craft, escalations, and any tech-debt cards.
    - `qa` on the same change (feed it the card's "done" definition + the diff) →
      (1) a tickable MANUAL test-case checklist for the user to run by hand,
-     (2) the ACTUAL automated test code (Jest logic + RNTL screen) covering every
-     automatable scenario for this feature, and (3) an adversarial edge-case
-     critique with `file:line` citations, ranked worst-first and each labelled
-     real-bug vs acceptable-for-scope.
+     (2) the ACTUAL automated test code (Jest for client, pytest for server) for the
+     GAPS the implementer's tests don't already cover — adversarial edges, error/offline
+     paths, regressions — explicitly NOT duplicating what's already tested, and (3) an
+     adversarial edge-case critique with `file:line` citations, ranked worst-first and
+     each labelled real-bug vs acceptable-for-scope.
 
    Spawn them together so their contexts stay isolated and they run concurrently.
 
@@ -82,20 +85,29 @@ Target card (optional): $ARGUMENTS
      CARD blocks and qa's deferred risks; you'll offer to file them at gate 2. Do
      NOT file them yet.
    - **Commit qa's automated tests into the suite** — write the test files qa
-     authored into `src/__tests__/` (doing any pure-function extraction it flagged
-     as a prerequisite first), then run `npm test` + `npx tsc --noEmit`. Every test
-     must pass and typecheck must be clean. If a qa test fails, that's either a real
-     bug (fix it) or a wrong test (fix the test) — resolve it within the 2-round cap.
+     authored into `src/__tests__/` (client) or `tests/` (server), doing any
+     production extraction it flagged as a prerequisite first, and **drop any that
+     duplicate a case the implementer already locked**. Then run the suite + typecheck.
+     Every test must pass. If a qa test fails, that's either a real bug (fix it) or a
+     wrong test (fix the test) — resolve it within the 2-round cap.
+   - **Re-critique qa's tests (close the loop).** The tests qa authored are the one
+     piece of committed code that neither the implementer nor code-critic wrote — so
+     the FINAL code-critic pass (in the green gate below) must review them too, applying
+     the fail-on-revert check (a test that still passes with the fix reverted is worthless).
+     Never let an agent be the sole reviewer of its own tests.
    - **Hold onto qa's test-case checklist** — it's part of what you present and
      write to Notion at gate 2.
 
 ## Phase 4 — Finish (gate 2)
 
-10. **Green gate — the suite must pass before you present.** Run `npm test` +
-    `npx tsc --noEmit` (and `python -m pytest` for Lambda work). ALL tests green
-    and typecheck clean is a precondition for gate 2. If anything is red, you are
-    not done — fix it (or take it back through Phase 3) before presenting. Never
-    raise a PR on a red suite.
+10. **Green gate — the suite (with coverage floor) must pass before you present.**
+    Run the suites the way CI does, so the coverage floor is enforced: client
+    `npm test -- --coverage` + `npx tsc --noEmit`; server `python -m pytest --cov …
+    --cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
+    backstop, not a quality signal — the real quality gate is fail-on-revert, which
+    code-critic checks). ALL tests green, coverage floor met, typecheck clean is the
+    precondition for gate 2. If anything is red, you are not done — fix it (or take it
+    back through Phase 3). Never raise a PR on a red suite.
 
 11. **Present + PAUSE (gate 2).** Show the user: what you built, the final diff
     summary, the `code-critic` verdict (should be SHIP), the `qa` edge-case
@@ -123,9 +135,14 @@ Target card (optional): $ARGUMENTS
   write to Notion before gate-2 approval.
 - **Green before PR.** The full automated suite (`npm test`, plus `pytest` for
   Lambda work) and typecheck must pass before a PR is raised. No red suite ships.
-- Every feature ships with the automated tests for its automatable scenarios —
-  qa writes them, you commit them. A feature with automatable behaviour and no new
-  tests is not done.
+- Every feature ships with the automated tests for its automatable scenarios.
+  **Testing model: two authors, one independent critic.** The implementer writes the
+  first tests (happy path + acceptance); `qa` independently writes the adversarial
+  gap tests (edges/errors/regressions) WITHOUT duplicating them; `code-critic` — which
+  wrote neither — is the critic of ALL tests. The hard test gate is **fail-on-revert**:
+  a test that still passes with the fix reverted is worthless. Coverage floors (Python
+  `--cov-fail-under`, Jest `coverageThreshold`) are a regression backstop, not proof of
+  quality. A feature with automatable behaviour and no new tests is not done.
 - code-critic's gate is real: don't push a change it marked SHIP AFTER FIXES /
   DO NOT SHIP with the must-fix items unresolved. qa's real-bug findings are a
   gate too: fix them (or get an explicit user waiver) before pushing.

@@ -35,7 +35,18 @@ Hunt, worst-first:
    state, wrong serialization/encoding.
 5. **Interface breakage** — callers, tests, consumers this silently breaks. Grep
    usages before trusting a rename/signature change is safe.
-6. **Weak tests** — any added test that would still pass if the code were broken.
+6. **Weak, fixture-testing, or redundant tests** — a hard gate on ALL committed
+   tests (the implementer's AND any the qa agent authored — you are the independent
+   critic of both, since neither should bless its own tests). For each new/changed test:
+   - **Fail-on-revert:** would it still pass if the fix were reverted? If so it's
+     worthless. Where cheap, actually revert the change (git stash / edit it back)
+     and run the suite to CONFIRM the test goes red — then restore and report you did.
+   - **Real, not fixture:** it must assert against the real production function/API,
+     not a value a test helper re-implements (a tautology that can't catch a regression).
+   - **No duplicates:** flag a test that re-covers a case another test already locks
+     — redundant tests are craft debt (drop or merge).
+   Applies to BOTH the Python (pytest) and client (Jest) suites; fail-on-revert is
+   checked the same way in each — revert the source, the test must fail.
 
 ## Axis 2 — Craft (also a hard gate, with a defer valve)
 
