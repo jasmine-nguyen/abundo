@@ -7,7 +7,8 @@ PENDING_STATUS = "pending"
 POSTED_STATUS = "posted"
 MAX_PAGE_SIZE = 100
 TRANSACTION_PATH = "/transactions"
-FEED_WINDOW_DAYS = 5
+# Lookback window, in days, for the recent-transactions feed (get_recent_transactions).
+FEED_WINDOW_DAYS = 7
 
 # --- BankSync Enrichments (categorisation rules) ---------------------------
 # lambda_api ships its OWN constants.py (it shadows the shared layer at

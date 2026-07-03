@@ -7,6 +7,7 @@ from constants import (
     DEFAULT_RULE_FIELD,
     DEFAULT_RULE_OPERATOR,
     ENRICHMENTS_PATH,
+    FEED_WINDOW_DAYS,
     MAX_PAGE_SIZE,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
@@ -167,18 +168,14 @@ def patch_transaction_category(event: dict, repo: TransactionRepository) -> dict
 def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
     # calculate date range
     today = datetime.now(timezone.utc).date()
-    start_date = (today - timedelta(days=7)).isoformat()
+    start_date = (today - timedelta(days=FEED_WINDOW_DAYS)).isoformat()
     end_date = (
         today + timedelta(days=1)
     ).isoformat()  # +1 day covers AEST dates ahead of UTC
 
-    all_recent_transactions = []
-    # query each account
-    for account_id in ACCOUNT_ID_MAP.values():
-        recent_transactions, _ = repo.get_transactions_by_date_range(
-            account_id, start_date, end_date=end_date
-        )
-        all_recent_transactions.extend(recent_transactions)
+    # Every row in the window across all accounts, following the date-index cursor
+    # to exhaustion — the feed must not silently truncate at one page/account.
+    all_recent_transactions = _fetch_windowed_transactions(repo, start_date, end_date)
 
     # remove pk and sk before returning to api, and ensure sparse fields default to None
     for txn in all_recent_transactions:
@@ -502,9 +499,9 @@ def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: s
     """Every transaction across all accounts within [start, end], following the
     date-index pagination to completion.
 
-    A rollup must sum the WHOLE window, so — unlike the recent-transactions feed,
-    which reads only the first page — this loops on the returned cursor until the
-    account is exhausted.
+    Both the recent-transactions feed and the budget rollup need the WHOLE window,
+    so this loops on the returned cursor until each account is exhausted rather than
+    stopping at the first page.
     """
     transactions: list[dict] = []
     for account_id in ACCOUNT_ID_MAP.values():
