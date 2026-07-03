@@ -646,7 +646,7 @@ export function budgetDetail(s: AppContext, categoryId: string) {
     spentBig: fmt(spent), ofBudget: 'of ' + fmt(b.budget),
     statusLabel: over ? 'Over budget — ease up' : 'On target — keep it up',
     statusColor: over ? '#ff6b6b' : '#35d9a0',
-    daysLeftLabel: `${s.daysLeft} days remaining`,
+    daysLeftLabel: `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`,
     postedPct, pendingPct, targetPct: Math.round(elapsed * 100),
     postedColor: over ? '#ff6b6b' : c.color, pendingTint: tint(over ? '#ff6b6b' : c.color, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
