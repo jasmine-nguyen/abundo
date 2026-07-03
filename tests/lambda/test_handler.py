@@ -1,36 +1,34 @@
-"""Tests for ``lambda/handler.py``'s ``lambda_handler`` control flow: the verify →
-dedup → process gate, and — critically — what happens when the DB write fails.
+"""Tests for ``lambda/handler.py`` — the BankSync webhook, the only write path
+into DynamoDB.
 
-The suite's ``lam`` fixture stubs signature verification (conftest's fake
-``Webhook.verify`` → ``{}``), so signature *content* is covered separately in
-``test_webhook_verify.py``. Here we drive the handler by monkeypatching
-``verify_and_parse`` / ``process_transaction`` / ``TransactionRepository`` so we
-can steer the id, the payload, and the failure, and observe the routing.
+Two concerns:
+
+1. **Signature handling is our contract, not the library's.** ``standardwebhooks``
+   is a pinned third-party dependency (``lambda/requirements.txt``); we don't
+   unit-test its internals. We DO test that our ``verify_and_parse`` glue
+   (base64 body decode, header lowercasing) and ``lambda_handler`` reject a bad
+   / stale / unsigned request with a 401 — using real signatures from the real
+   library.
+2. **The verify → dedup → process control flow**, including what happens when the
+   DB write fails.
+
+The suite's ``lam`` fixture stubs ``standardwebhooks`` while importing the handler
+(so it imports without AWS); these tests monkeypatch ``handler.Webhook`` back to
+the real class and set a known secret, so real HMAC verification runs.
 
 Two tests are ``xfail(strict)`` — they encode the CORRECT behaviour for a known
 data-loss bug (see Board: "BUG: BankSync webhook drops transactions when a write
-fails"). They fail today and will flip to a hard failure once the bug is fixed,
-which is the signal to drop the marker.
+fails"). They fail today and flip to a hard failure once the bug is fixed, which
+is the signal to drop the marker.
 """
 
 import base64
-import importlib.util
 import json
-import pathlib
 from datetime import datetime, timezone
 
 import pytest
+from standardwebhooks.webhooks import Webhook as _RealWebhook
 
-# The real Standard-Webhooks verifier, loaded off disk (the suite's conftest
-# swaps in a no-op fake), so verify_and_parse can be tested end-to-end.
-_WEBHOOKS_PATH = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "lambda" / "standardwebhooks" / "webhooks.py"
-)
-_spec = importlib.util.spec_from_file_location("_real_sw_webhooks_h", _WEBHOOKS_PATH)
-_real_webhooks = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_real_webhooks)
-_RealWebhook = _real_webhooks.Webhook
 _SECRET = base64.b64encode(b"whittle-test-signing-key").decode()
 
 
@@ -84,8 +82,7 @@ def test_duplicate_event_is_skipped_without_processing(lam, monkeypatch):
     calls = []
     monkeypatch.setattr(handler, "process_transaction",
                         lambda payload, repo: calls.append(payload))
-    repo = _Repo()
-    handler = _wire(lam, monkeypatch, repo, {"id": "evt_dup", "data": []})
+    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_dup", "data": []})
 
     first = handler.lambda_handler({}, None)
     second = handler.lambda_handler({}, None)  # same id re-delivered
@@ -95,36 +92,22 @@ def test_duplicate_event_is_skipped_without_processing(lam, monkeypatch):
     assert len(calls) == 1  # processed exactly once
 
 
-def test_invalid_signature_returns_401(lam, monkeypatch):
-    handler = lam.handler
-
-    def boom(event):
-        raise ValueError("bad signature")
-
-    monkeypatch.setattr(handler, "verify_and_parse", boom)
-    monkeypatch.setattr(handler, "TransactionRepository", lambda: _Repo())
-
-    resp = handler.lambda_handler({}, None)
-    assert resp["statusCode"] == 401
+# --- signature glue: real verification through our handler -------------------
 
 
-# --- verify_and_parse: real signature glue ----------------------------------
-
-
-def _signed_event(data: str, *, base64_body: bool, mixed_case_headers: bool):
+def _signed_event(data: str, *, base64_body: bool, mixed_case_headers: bool,
+                  ts: datetime | None = None):
     """An API-Gateway-shaped event carrying a validly-signed body."""
     wh = _RealWebhook(_SECRET)
-    ts = datetime.now(tz=timezone.utc)
+    ts = ts or datetime.now(tz=timezone.utc)
     sig = wh.sign(msg_id="evt_1", timestamp=ts, data=data)
     hdr = {
         "webhook-id": "evt_1",
         "webhook-timestamp": str(int(ts.timestamp())),
         "webhook-signature": sig,
     }
-    if mixed_case_headers:  # BankSync/API Gateway may send Title-Case headers
-        hdr = {"Webhook-Id": hdr["webhook-id"],
-               "Webhook-Timestamp": hdr["webhook-timestamp"],
-               "Webhook-Signature": hdr["webhook-signature"]}
+    if mixed_case_headers:  # BankSync / API Gateway may send Title-Case headers
+        hdr = {k.title(): v for k, v in hdr.items()}
     body = base64.b64encode(data.encode()).decode() if base64_body else data
     return {"body": body, "headers": hdr, "isBase64Encoded": base64_body}
 
@@ -152,12 +135,31 @@ def test_verify_and_parse_decodes_a_base64_body(lam, monkeypatch):
     assert handler.verify_and_parse(event) == {"id": "evt_1", "data": []}
 
 
-def test_lambda_handler_rejects_a_tampered_body_with_401(lam, monkeypatch):
+def test_tampered_body_is_rejected_with_401(lam, monkeypatch):
     handler = _use_real_verifier(lam, monkeypatch)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: _Repo())
     data = json.dumps({"id": "evt_1", "data": []})
     event = _signed_event(data, base64_body=False, mixed_case_headers=False)
     event["body"] = data + " "  # mutate after signing → signature no longer matches
+
+    assert handler.lambda_handler(event, None)["statusCode"] == 401
+
+
+def test_unsigned_request_is_rejected_with_401(lam, monkeypatch):
+    handler = _use_real_verifier(lam, monkeypatch)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _Repo())
+    event = {"body": json.dumps({"id": "evt_1"}), "headers": {}, "isBase64Encoded": False}
+
+    assert handler.lambda_handler(event, None)["statusCode"] == 401
+
+
+def test_stale_timestamp_is_rejected_with_401(lam, monkeypatch):
+    handler = _use_real_verifier(lam, monkeypatch)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: _Repo())
+    data = json.dumps({"id": "evt_1", "data": []})
+    # Validly signed, but the timestamp is outside the ±5-minute replay window.
+    stale = datetime.fromtimestamp(1_700_000_000, tz=timezone.utc)
+    event = _signed_event(data, base64_body=False, mixed_case_headers=False, ts=stale)
 
     assert handler.lambda_handler(event, None)["statusCode"] == 401
 
