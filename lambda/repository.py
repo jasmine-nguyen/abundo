@@ -261,6 +261,11 @@ class TransactionRepository:
 
         for txn in transactions:
             if txn.get("status") == PENDING_STATUS:
+                # Pending rows just insert. NOTE: a posted twin arriving in this SAME
+                # payload won't see this pending (the pool is the DB scan), so both
+                # would insert -> a duplicate. Real settlements arrive in separate
+                # webhooks; a backfill payload containing both is an accepted edge,
+                # cleaned by the age-out follow-up.
                 to_insert.append(txn)
                 continue
 

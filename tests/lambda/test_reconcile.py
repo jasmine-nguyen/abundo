@@ -232,3 +232,77 @@ def test_process_transaction_uses_insert_or_reconcile(lam):
     assert "reconcile" in calls and "insert" not in calls   # swapped to the new path
     assert len(calls["reconcile"]) == 1                      # the one good row normalised
     assert calls["failed"] == [bad_row]                      # the bad row diverted
+
+
+# --- consume-on-match across a batch (locks the pool.pop) --------------------
+
+
+def test_two_posted_consume_two_identical_pendings_in_one_batch(lam, repo):
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="C", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    # Each posted popped a DISTINCT pending — both consumed, both posted carry the tag.
+    assert (acc, "TXN#A1") not in store
+    assert (acc, "TXN#A2") not in store
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+    assert store[(acc, "TXN#C")]["category"] == "coffee"
+    assert len(store) == 2  # only the two posted rows remain
+
+
+def test_consume_on_match_pool_exhausts(lam, repo):
+    # One pending, two posted twins in the batch: the FIRST consumes it, the second
+    # finds an empty pool and falls through to a plain insert. Without pool.pop, the
+    # second would also match the pending and wrongly carry "coffee".
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="C", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert (acc, "TXN#A1") not in store                              # consumed by B
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+    assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK"     # no twin left -> plain insert
+
+
+# --- small edge coverage ----------------------------------------------------
+
+
+def test_empty_batch_is_a_noop(lam, repo):
+    repo.insert_or_reconcile([])
+    assert repo._table.store == {}
+    assert repo._table.query_calls == 0
+
+
+def test_matched_pending_without_category_still_dedupes(lam, repo):
+    # An uncategorised pending (falsy category) still gets reconciled/de-duped; the
+    # posted keeps its own (bank) category rather than carrying an empty one.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store                          # stale pending removed
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"  # empty not carried
