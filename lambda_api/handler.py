@@ -552,36 +552,54 @@ def current_cycle_window(last_pay_date: str, length: int, today: date | None = N
     return cycle_start.isoformat(), end.isoformat()
 
 
+def _spend_contribution(transaction: dict) -> tuple[str, Decimal] | None:
+    """The (bucket, spend) a transaction adds to a budget summary, or None if it
+    doesn't count. Shared by summarise_transactions and summarise_uncategorized:
+    they differ only in WHICH categories they roll up, not in how a contributing
+    transaction maps to a bucket + amount.
+
+    Contributes only if `counts_to_budget` is truthy and `status` is a known
+    pending/posted (an unknown status is skipped, never guessed). Spend is stored
+    as a NEGATIVE amount, so the returned spend is `-amount` — a refund (positive
+    amount) yields a negative contribution that reduces the total; callers clamp
+    each bucket at >= 0.
+    """
+    if not transaction.get("counts_to_budget"):
+        return None
+    status = transaction.get("status")
+    if status == PENDING_STATUS:
+        bucket = "pending"
+    elif status == POSTED_STATUS:
+        bucket = "posted"
+    else:
+        return None  # unknown status -> don't guess a bucket
+    return bucket, -Decimal(str(transaction.get("amount", 0)))
+
+
 def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> dict[str, dict]:
     """Sum posted vs pending spend per budgeted category over `transactions`.
 
-    A transaction contributes only if it counts toward a budget: `counts_to_budget`
-    is truthy AND its `category` is a real budgeted id (not None, not "income", and
-    present in `target_ids`). Spend is stored as a NEGATIVE amount, so we sum
-    `-amount` — a refund (positive amount) reduces the total. Each bucket is clamped
-    at >= 0 so a net refund can't drive a bar negative. Pending vs posted is decided
-    by the transaction's own `status`, so a pending->posted settlement needs no
-    special handling: the next call just re-reads the current status.
+    A transaction contributes only if it counts toward a budget (see
+    `_spend_contribution`) AND its `category` is a real budgeted id (not None, not
+    "income", and present in `target_ids`). Each bucket is clamped at >= 0 so a net
+    refund can't drive a bar negative. Pending vs posted is decided by the
+    transaction's own `status`, so a pending->posted settlement needs no special
+    handling: the next call just re-reads the current status.
 
     Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
     that had at least one contributing transaction.
     """
     totals: dict[str, dict] = {}
     for transaction in transactions:
-        if not transaction.get("counts_to_budget"):
-            continue
         category = transaction.get("category")
         if category is None or category == "income" or category not in target_ids:
             continue
-        status = transaction.get("status")
-        if status == PENDING_STATUS:
-            bucket = "pending"
-        elif status == POSTED_STATUS:
-            bucket = "posted"
-        else:
-            continue  # unknown status -> don't guess a bucket
+        contribution = _spend_contribution(transaction)
+        if contribution is None:
+            continue
+        bucket, spend = contribution
         entry = totals.setdefault(category, {"posted": Decimal(0), "pending": Decimal(0)})
-        entry[bucket] += -Decimal(str(transaction.get("amount", 0)))
+        entry[bucket] += spend
     for entry in totals.values():
         entry["posted"] = max(Decimal(0), entry["posted"])
         entry["pending"] = max(Decimal(0), entry["pending"])
@@ -600,19 +618,14 @@ def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) ->
     """
     totals = {"posted": Decimal(0), "pending": Decimal(0)}
     for transaction in transactions:
-        if not transaction.get("counts_to_budget"):
-            continue
         category = transaction.get("category")
         if category == "income" or category in taxonomy_ids:
             continue
-        status = transaction.get("status")
-        if status == PENDING_STATUS:
-            bucket = "pending"
-        elif status == POSTED_STATUS:
-            bucket = "posted"
-        else:
-            continue  # unknown status -> don't guess a bucket
-        totals[bucket] += -Decimal(str(transaction.get("amount", 0)))
+        contribution = _spend_contribution(transaction)
+        if contribution is None:
+            continue
+        bucket, spend = contribution
+        totals[bucket] += spend
     totals["posted"] = max(Decimal(0), totals["posted"])
     totals["pending"] = max(Decimal(0), totals["pending"])
     return totals
