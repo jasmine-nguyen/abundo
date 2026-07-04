@@ -72,8 +72,8 @@ export default function Loan() {
         <Field label="Property value" hint="What it's worth today" placeholder="e.g. 770000" prefix="$" value={homeValue} onChangeText={setHomeValue} />
         <Field label="Loan-to-value ratio" hint="How much the bank lends against it — usually 80" placeholder="e.g. 80" suffix="%" value={lvr} onChangeText={setLvr} />
         <Field label="Interest rate" hint="Your current rate" placeholder="e.g. 5.74" suffix="%" value={ratePct} onChangeText={setRatePct} />
-        <Field label="Scheduled repayment" hint="Per pay cycle" placeholder="e.g. 1240" prefix="$" value={baseRepay} onChangeText={setBaseRepay} />
-        <Field label="Extra repayment" hint="Optional top-up per cycle" placeholder="e.g. 200" prefix="$" value={extra} onChangeText={setExtra} />
+        <Field label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} />
+        <Field label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} />
 
         <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
           <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>

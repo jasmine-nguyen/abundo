@@ -52,8 +52,7 @@ export interface Transaction {
 export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; }
 export interface Goal {
   original: number; balance: number; homeValue: number; startYear: string;
-  ratePct: number; baseRepay: number; extra: number; freedomDate: string;
-  aheadLabel: string; interestSaved: number;
+  ratePct: number; baseRepay: number; extra: number;
   lastRepay: { amount: number; principal: number; interest: number; date: string };
 }
 // The live home-loan balance from BankSync (WHIT-8), kept SEPARATE from `goal`
@@ -93,7 +92,7 @@ const SEED_CATEGORIES: Category[] = [
 ];
 const SEED_GOAL: Goal = {
   original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
-  ratePct: 5.74, baseRepay: 1240, extra: 200, freedomDate: 'Aug 2045', aheadLabel: '4y 3m', interestSaved: 58200,
+  ratePct: 5.74, baseRepay: 1240, extra: 200,
   lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
 };
 
@@ -202,6 +201,49 @@ export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' 
   return length === 7 ? 'Weekly' : length === 14 ? 'Fortnightly' : 'Monthly';
 }
 
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// A home loan is repaid on its own MONTHLY schedule — a fixed direct debit —
+// independent of how often the user is paid. So the payoff projection (WHIT-114)
+// is always 12 periods/year; the loan-facts repayment fields are per month.
+const MONTHS_PER_YEAR = 12;
+
+// A loan-amortization result: the (fractional) number of equal repayments to
+// clear the balance, and the total interest paid over that schedule.
+export interface Amort { periods: number; totalInterest: number; }
+
+// Months to pay off `balance` paying `pmt` each month at monthly rate `i` (a
+// fraction, e.g. 0.0574/12 for a 5.74% loan), plus the total interest over that
+// schedule. Closed form n = -ln(1 − B·i/pmt)/ln(1+i), which rearranges the
+// standard annuity formula. Returns null when the loan never pays off — the
+// payment must be positive and, once interest accrues (i>0), strictly exceed the
+// monthly interest B·i, or the balance can't fall. A non-positive balance is
+// "already there" in 0 periods; i≤0 is the interest-free straight-line case.
+export function amortize(balance: number, i: number, pmt: number): Amort | null {
+  if (!(pmt > 0)) return null;
+  if (balance <= 0) return { periods: 0, totalInterest: 0 };
+  if (i <= 0) return { periods: balance / pmt, totalInterest: 0 };
+  if (pmt <= balance * i) return null;                       // never pays off
+  const periods = -Math.log(1 - (balance * i) / pmt) / Math.log(1 + i);
+  return { periods, totalInterest: pmt * periods - balance };
+}
+
+// `from` advanced by `months` whole calendar months. The day is pinned to the 1st
+// first — only the month-year is rendered, and otherwise a 31st + n months would
+// roll "Feb 31" into March (off by a month).
+function addMonths(from: Date, months: number): Date {
+  const d = new Date(from.getTime());
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  return d;
+}
+
+// A month-year label ("Aug 2045") for the payoff projection — matches the
+// granularity the hero shows (nobody expects day-precision 20 years out).
+function monthYear(d: Date): string {
+  return `${MON[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 function dateLabel(isoDate: string): string {
   const [y, m, d] = isoDate.split('-').map(Number);
   const today = new Date();
@@ -211,7 +253,6 @@ function dateLabel(isoDate: string): string {
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${DAY[date.getDay()]} ${d} ${MON[m - 1]}`;
 }
 
@@ -1045,10 +1086,8 @@ export function budgetEditInfo(s: AppContext, categoryId: string) {
 // facts (Loan facts card) and the LIVE balance (WHIT-8's s.homeLoan) — never the
 // old seed. `factsReady` is false until the user saves the form: the screen then
 // shows a friendly "set this up" state instead of any fabricated number. The
-// display-only projection fields (freedomDate/interestSaved/lastRepay via `G`)
-// remain seed for now — Cards 2/3 make those real.
+// payoff projection (mortgage-free date + interest dodged) lives in paydownView.
 export function goalView(s: AppContext) {
-  const G = s.goal;
   const facts = s.loanFacts;
   const factsReady = loanFactsReady(facts);
   const liveBalance = s.homeLoan.balance;                 // real balance, null until loaded
@@ -1080,12 +1119,73 @@ export function goalView(s: AppContext) {
   const depositPct = usableEquity != null ? Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100)) : 0;
 
   return {
-    G, factsReady,
+    factsReady,
     liveBalance, balanceKnown, balanceLabel: balanceKnown ? fmt(liveBalance!) : '—',
     original, paidOff, paidPct,
     usableEquity, depositTarget, depositPct,
     baseRepay, extra, contribution,
   };
+}
+
+// The Goal-tab payoff projection (WHIT-114): mortgage-free date + how much sooner
+// and how much interest the EXTRA repayment saves — a pure loan amortization over
+// the live balance (s.homeLoan) and the saved facts (s.loanFacts: ratePct,
+// baseRepay, extra) on the loan's MONTHLY schedule. Forward-looking from today's
+// balance; needs no payment history. `today` is injected for deterministic tests.
+//
+// The `mode` discriminates what the screen can honestly show:
+//   'unready' → facts unset or balance not loaded → show nothing here
+//   'none'    → won't pay off even with the extra (payment ≤ interest) → warn
+//   'partial' → pays off ONLY because of the extra (scheduled-alone never clears)
+//               → show the date, but no "X early"/"dodged" (no finite baseline)
+//   'flat'    → pays off, but the extra makes no measurable difference (e.g. 0)
+//   'ahead'   → pays off, and the extra saves real time + interest → full display
+export type PaydownMode = 'unready' | 'none' | 'partial' | 'flat' | 'ahead';
+export interface PaydownView {
+  mode: PaydownMode;
+  freedomLabel: string;                 // "Aug 2045"; '' when unready/none
+  aheadLabel: string | null;            // "6y 6m"; set only in 'ahead'
+  interestDodged: number | null;        // set only in 'ahead'
+  interestDodgedLabel: string | null;   // fmt(interestDodged); set only in 'ahead'
+}
+
+export function paydownView(s: AppContext, today?: Date): PaydownView {
+  const base: PaydownView = {
+    mode: 'unready', freedomLabel: '',
+    aheadLabel: null, interestDodged: null, interestDodgedLabel: null,
+  };
+  const facts = s.loanFacts;
+  const balance = s.homeLoan.balance;
+  // typeof narrows null away; Number.isFinite also rejects a NaN/Infinity balance
+  // (which is itself typeof 'number') so it can't leak an "undefined NaN" label.
+  if (!loanFactsReady(facts) || typeof balance !== 'number' || !Number.isFinite(balance)) return base;
+
+  const i = facts.ratePct / 100 / MONTHS_PER_YEAR;
+
+  const withExtra = amortize(balance, i, facts.baseRepay + facts.extra);
+  if (!withExtra) return { ...base, mode: 'none' };          // won't pay off at all
+
+  const freedomLabel = monthYear(addMonths(today ?? new Date(), Math.ceil(withExtra.periods)));
+
+  // "X early" + "interest dodged" compare against the scheduled-only baseline.
+  // When the baseline itself never clears, the extra is what makes the loan
+  // finishable — there's nothing finite to beat, so show the date alone.
+  const baseline = amortize(balance, i, facts.baseRepay);
+  if (!baseline) return { ...base, mode: 'partial', freedomLabel };
+
+  const deltaMonths = baseline.periods - withExtra.periods;
+  const years = Math.floor(deltaMonths / MONTHS_PER_YEAR);
+  const months = Math.round((deltaMonths / MONTHS_PER_YEAR - years) * 12);
+  const y = years + Math.floor(months / 12);                 // carry a rounded-up 12m
+  const m = months % 12;
+  const dodged = baseline.totalInterest - withExtra.totalInterest;
+
+  // Only claim "ahead" when both a whole-month saving AND at least a dollar of
+  // interest survive rounding — otherwise the extra is effectively no different.
+  if ((y > 0 || m > 0) && Math.round(dodged) > 0) {
+    return { mode: 'ahead', freedomLabel, aheadLabel: `${y}y ${m}m`, interestDodged: dodged, interestDodgedLabel: fmt(dodged) };
+  }
+  return { ...base, mode: 'flat', freedomLabel };
 }
 
 export interface LastRepaymentView {
