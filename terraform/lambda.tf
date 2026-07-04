@@ -101,6 +101,36 @@ resource "aws_lambda_function" "lambda" {
   }
 }
 
+# Manual recovery lambda (WHIT-55): re-drives dead-lettered FAILED# rows through
+# normalise + insert. Reuses the webhook zip (source_dir ../lambda already contains
+# reprocess.py) and the lambda_exec role — which already has Query / DeleteItem /
+# BatchWriteItem / GetItem, so NO DynamoDB IAM change is needed. Invoked manually
+# (AWS console Test button / `aws lambda invoke`); it has no event source, schedule,
+# or API integration, so nothing triggers it unintentionally. Longer timeout than
+# the webhook since a backlog is processed one row at a time.
+resource "aws_lambda_function" "reprocess" {
+  function_name    = "${var.project_name}-lambda-reprocess"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "reprocess.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 300
+  memory_size      = 128
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.reprocess.name
+  }
+}
+
 resource "aws_lambda_function" "lambda_api" {
   function_name    = "${var.project_name}-lambda-api"
   role             = aws_iam_role.lambda_api_exec.arn
@@ -198,6 +228,11 @@ resource "aws_cloudwatch_log_group" "lambda" {
 
 resource "aws_cloudwatch_log_group" "lambda_api" {
   name              = "/aws/lambda/${var.project_name}-lambda-api"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "reprocess" {
+  name              = "/aws/lambda/${var.project_name}-lambda-reprocess"
   retention_in_days = 30
 }
 

@@ -191,6 +191,38 @@ class TransactionRepository:
         except ClientError as e:
             handle_database_error(e, "read")
 
+    def get_failed_transactions(self) -> list[dict]:
+        """Retrieve all dead-lettered rows — the ``pk="FAILED"`` partition written by
+        save_failed_transactions. Paginated (WHIT-82 pattern) so a large backlog isn't
+        truncated at DynamoDB's 1MB page. Read-only; the reprocess sweep (WHIT-55)
+        drives it."""
+        try:
+            table = self._get_table()
+            key_condition = Key("pk").eq("FAILED")
+            items: list[dict] = []
+            start_key = None
+            while True:
+                kwargs = {"KeyConditionExpression": key_condition}
+                if start_key is not None:
+                    kwargs["ExclusiveStartKey"] = start_key
+                response = table.query(**kwargs)
+                items.extend(response.get("Items", []))
+                start_key = response.get("LastEvaluatedKey")
+                if not start_key:
+                    break
+            return items
+        except ClientError as e:
+            handle_database_error(e, "read")
+
+    def delete_failed_transaction(self, sk: str) -> None:
+        """Delete a dead-letter row after it has been successfully reprocessed
+        (WHIT-55). No attribute_exists guard, so a re-run deleting an already-gone row
+        is a harmless no-op (mirrors _delete_pending_if_present)."""
+        try:
+            self._get_table().delete_item(Key={"pk": "FAILED", "sk": sk})
+        except ClientError as e:
+            handle_database_error(e, "delete failed")
+
     def insert_or_reconcile(self, transactions: list[Transaction]) -> None:
         """Insert transactions, reconciling pending->posted so a user's category
         survives settlement.
