@@ -74,3 +74,58 @@ def test_concurrent_duplicate_dead_letters_are_not_deduped(repo):
 
     failed = [k for k in repo._table.store if k[0] == "FAILED"]
     assert len(failed) == 2  # not deduped
+
+
+# --- WHIT-82: get_pending_transactions_for_account paginates -----------------
+# DynamoDB caps a query at 1MB/page and applies the status filter per page. A
+# pending row beyond page 1 must still be found, or reconciliation silently misses
+# it. FakeTable.page_size forces the paging; pages are cut BEFORE the filter runs.
+
+
+def _put(repo, account_id, txn_id, status):
+    """Insert a minimal transaction row straight into the fake store."""
+    pk, sk = f"ACCOUNT#{account_id}", f"TXN#{txn_id}"
+    repo._table.store[(pk, sk)] = {
+        "pk": pk, "sk": sk, "transaction_id": txn_id, "status": status,
+    }
+
+
+def test_get_pending_finds_a_pending_hidden_beyond_the_first_page(repo):
+    # Two posted rows fill page 1; the only pending lands on page 2. Without the
+    # LastEvaluatedKey loop the filter runs on page 1 alone -> [] -> the pending is
+    # invisible to reconciliation. This is the WHIT-82 bug; assert it's now found.
+    _put(repo, "acc", "posted_1", "posted")
+    _put(repo, "acc", "posted_2", "posted")
+    _put(repo, "acc", "pending_1", "pending")
+    repo._table.page_size = 2  # page1 = 2 posted, page2 = the pending
+
+    pendings = repo.get_pending_transactions_for_account("acc")
+
+    assert [t["transaction_id"] for t in pendings] == ["pending_1"]
+    assert repo._table.query_calls == 2  # followed the cursor to page 2
+
+
+def test_get_pending_accumulates_pendings_across_pages(repo):
+    # A pending on page 1 AND page 2 — both must come back.
+    _put(repo, "acc", "pend_a", "pending")
+    _put(repo, "acc", "post_b", "posted")
+    _put(repo, "acc", "pend_c", "pending")
+    repo._table.page_size = 2  # page1 = [pend_a, post_b], page2 = [pend_c]
+
+    pendings = repo.get_pending_transactions_for_account("acc")
+
+    assert sorted(t["transaction_id"] for t in pendings) == ["pend_a", "pend_c"]
+    assert repo._table.query_calls == 2
+
+
+def test_get_pending_single_page_returns_all_and_queries_once(repo):
+    # Common case (default page_size=None): every pending comes back in one query,
+    # posted rows filtered out. Locks that pagination didn't regress the happy path.
+    _put(repo, "acc", "a", "pending")
+    _put(repo, "acc", "b", "posted")
+    _put(repo, "acc", "c", "pending")
+
+    pendings = repo.get_pending_transactions_for_account("acc")
+
+    assert sorted(t["transaction_id"] for t in pendings) == ["a", "c"]
+    assert repo._table.query_calls == 1

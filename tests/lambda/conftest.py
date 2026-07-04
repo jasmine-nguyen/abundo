@@ -171,6 +171,11 @@ class FakeTable:
     def __init__(self):
         self.store: dict = {}  # (pk, sk) -> item
         self.query_calls = 0
+        # None -> single page (all matches at once, as DynamoDB does under 1MB).
+        # Set to an int to force paging: the KEY-matched set is sliced into pages of
+        # this size BEFORE FilterExpression runs (mirroring DynamoDB's 1MB-then-filter
+        # order), so a row a filter would keep can hide on a later page (WHIT-82).
+        self.page_size = None
 
     def get_item(self, Key):
         item = self.store.get((Key["pk"], Key["sk"]))
@@ -200,14 +205,35 @@ class FakeTable:
         self.store.pop((Key["pk"], Key["sk"]), None)
 
     def query(self, KeyConditionExpression=None, FilterExpression=None,
-              ScanIndexForward=None, Limit=None, IndexName=None):
+              ScanIndexForward=None, Limit=None, IndexName=None,
+              ExclusiveStartKey=None):
         self.query_calls += 1
         items = list(self.store.values())
         if KeyConditionExpression is not None:
             items = [it for it in items if KeyConditionExpression.evaluate(it)]
+
+        result: dict = {}
+        # Page the key-matched set (before filtering) when page_size is set, resuming
+        # after ExclusiveStartKey. Matches DynamoDB: the 1MB limit + LastEvaluatedKey
+        # are about the queried keys; the filter is applied to each page afterward.
+        if self.page_size is not None:
+            if ExclusiveStartKey is not None:
+                after = next(
+                    (i for i, it in enumerate(items)
+                     if it["pk"] == ExclusiveStartKey["pk"]
+                     and it["sk"] == ExclusiveStartKey["sk"]),
+                    -1,
+                )
+                items = items[after + 1:]
+            if len(items) > self.page_size:
+                items = items[:self.page_size]
+                last = items[-1]
+                result["LastEvaluatedKey"] = {"pk": last["pk"], "sk": last["sk"]}
+
         if FilterExpression is not None:
             items = [it for it in items if FilterExpression.evaluate(it)]
-        return {"Items": [dict(it) for it in items]}
+        result["Items"] = [dict(it) for it in items]
+        return result
 
 
 @pytest.fixture
