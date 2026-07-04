@@ -111,6 +111,15 @@ INTEREST_CATEGORY = "BANK_FEES"
 # API Gateway route path for the pay-cycle endpoints (GET current, PUT to set).
 PAYCYCLE_PATH = "/paycycle"
 
+# --- Device push-token registration (POST /devices) ------------------------
+# API Gateway route path for registering an Expo push token. Gated behind the
+# shared-secret authorizer (like /enrichments): it controls who receives the
+# user's notifications, so it is NOT left open like the read routes.
+DEVICES_PATH = "/devices"
+# Upper bound on an accepted Expo push token's length — a sanity guard, not a real
+# limit (a real ExpoPushToken[...] value is ~40 chars).
+EXPO_TOKEN_MAX_LEN = 256
+
 # Cycle lengths (days) the client offers: Weekly / Fortnightly / Monthly. A PUT
 # with any other length is rejected 400 — the window math assumes one of these.
 PAYCYCLE_LENGTHS = frozenset({7, 14, 30})

@@ -83,3 +83,17 @@ HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
 
 # API Gateway route path for the read API that the whittle app calls.
 TRANSACTION_PATH = "/transactions"
+
+# --- Push notifications (Expo Push) ----------------------------------------
+# Expo Push send endpoint. shared/push.py POSTs a batch of messages here.
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+# HTTP timeout, in seconds, for a single Expo Push request.
+EXPO_PUSH_TIMEOUT_SECONDS = 15
+# Expo accepts at most 100 messages per push request.
+EXPO_PUSH_BATCH_MAX = 100
+# SSM SecureString path holding the Expo access token (a PAT). Required because
+# the Expo project has "Enhanced Security for Push Notifications" enabled, so
+# every send must carry Authorization: Bearer <token>. Seeded as a placeholder by
+# terraform/ssm.tf; the real value is set out-of-band (console/CLI). Read only by
+# the shared push sender — NOT under lambda_api (see the warning in push.py).
+EXPO_ACCESS_TOKEN_PATH = "/whittle/expo-access-token"

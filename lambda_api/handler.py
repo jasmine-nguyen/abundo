@@ -7,7 +7,9 @@ from constants import (
     DEFAULT_CATEGORY_ICON,
     DEFAULT_RULE_FIELD,
     DEFAULT_RULE_OPERATOR,
+    DEVICES_PATH,
     ENRICHMENTS_PATH,
+    EXPO_TOKEN_MAX_LEN,
     FEED_WINDOW_DAYS,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_PATH,
@@ -35,6 +37,7 @@ from repository import (
     BudgetRepository,
     CategoryNotFoundError,
     CategoryRepository,
+    DeviceRepository,
     DuplicateCategoryError,
     HomeLoanBalanceRepository,
     LoanFactsRepository,
@@ -142,6 +145,11 @@ def lambda_handler(event, context):
         if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "DELETE":
             return delete_enrichment(event)
 
+        # Device push-token registration. Behind the same shared-secret authorizer
+        # as /enrichments (it controls who receives the user's notifications).
+        if path == DEVICES_PATH and method == "POST":
+            return register_device(event, DeviceRepository())
+
         return _json_response(404, {"error": "Not found"})
     except VersionConflictError:
         return _json_response(409, {"error": "write conflict, please retry"})
@@ -174,6 +182,28 @@ def _parse_json_body(event: dict):
     if not isinstance(body, dict):
         return None, _json_response(400, {"error": "invalid JSON body"})
     return body, None
+
+
+def register_device(event: dict, repo: DeviceRepository) -> dict:
+    """POST /devices — register an Expo push token so this device gets notified.
+
+    Idempotent by construction: the store is a String Set, so re-registering the
+    same token is a no-op. Rejects anything that isn't a plausibly-real Expo token
+    (right prefix, bounded length) so junk never accumulates in the token set.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+    token = body.get("token")
+    if not isinstance(token, str) or not token.strip():
+        return _json_response(400, {"error": "token is required"})
+    token = token.strip()
+    if len(token) > EXPO_TOKEN_MAX_LEN or not token.startswith(
+        ("ExpoPushToken[", "ExponentPushToken[")
+    ):
+        return _json_response(400, {"error": "invalid Expo push token"})
+    repo.register(token)
+    return _json_response(200, {"token": token})
 
 
 def patch_transaction_category(event: dict, repo: TransactionRepository) -> dict:
