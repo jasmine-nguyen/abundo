@@ -3,7 +3,7 @@
 // handful of AppContext fields, so we build just those and cast — no provider,
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName } from '../context';
-import type { AppContext, Category, Transaction, Budget, Goal } from '../context';
+import type { AppContext, Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
 import type { CategorySpend } from '../api';
 
 export function cat(over: Partial<Category> = {}): Category {
@@ -39,6 +39,7 @@ interface StateOver {
   transactions?: Transaction[];
   breakdown?: Record<string, CategorySpend>;
   goal?: Goal;
+  homeLoan?: HomeLoanState;
   cycleLen?: number;
   daysLeft?: number;
 }
@@ -54,6 +55,7 @@ export function makeState(over: StateOver = {}): AppContext {
     transactions: over.transactions ?? [],
     breakdown: over.breakdown ?? {},
     goal: over.goal ?? GOAL,
+    homeLoan: over.homeLoan ?? { balance: null, asOf: null },
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
     category: (id: string | null) => categories.find((c) => c.id === id),

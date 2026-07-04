@@ -6,7 +6,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
-  fetchBudgets, setTransactionCategory, fetchPayCycle, setPayCycle, setBudget,
+  fetchBudgets, setTransactionCategory, fetchPayCycle, setPayCycle, setBudget, fetchHomeLoan,
 } from '../api';
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
@@ -65,6 +65,16 @@ describe('reads', () => {
     const out = await fetchPayCycle();
     expect(lastCall()[0]).toBe(`${API}/paycycle`);
     expect(out).toEqual({ length: 14, last_pay_date: '2026-06-06' });
+  });
+
+  it('fetchHomeLoan GETs /homeloan and returns the balance shape', async () => {
+    const body = { balance: 596642.43, as_of: '2026-07-04T00:24:37.614Z', currency: 'AUD' };
+    fetchMock.mockReturnValue(okJson(body));
+    const out = await fetchHomeLoan();
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/homeloan`);
+    expect(opts).toBeUndefined();            // plain GET, no options object
+    expect(out).toEqual(body);
   });
 });
 
@@ -134,6 +144,7 @@ describe('every fetcher throws on a not-OK response', () => {
     ['fetchCategories', () => fetchCategories()],
     ['fetchBudgets', () => fetchBudgets(14)],
     ['fetchPayCycle', () => fetchPayCycle()],
+    ['fetchHomeLoan', () => fetchHomeLoan()],
     ['createCategory', () => createCategory({ name: 'X', bucket: 'Living', icon: 'cart' })],
     ['updateCategory', () => updateCategory('x', { name: 'X', bucket: 'Living', icon: 'cart' })],
     ['deleteCategory', () => deleteCategory('x')],

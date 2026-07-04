@@ -40,6 +40,21 @@ resource "aws_iam_role" "sync_trigger_exec" {
   })
 }
 
+# Execution role for the balance-poller lambda. Reads the BankSync API key from
+# SSM, writes the single home-loan balance row to DynamoDB (PutItem only — it
+# never reads or mutates transactions), and writes its own logs.
+resource "aws_iam_role" "balance_poller_exec" {
+  name = "${var.project_name}-balance-poller-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
 # Execution role for the API Gateway authorizer lambda. Minimal: it only reads
 # the shared-secret token from SSM and writes its own logs — no DynamoDB.
 resource "aws_iam_role" "authorizer_exec" {
@@ -213,6 +228,69 @@ resource "aws_iam_role_policy" "sync_trigger_logs" {
       ]
       Resource = [
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-sync-trigger:*"
+      ]
+    }]
+  })
+}
+
+# Balance-poller lambda: write ONLY the home-loan balance row. Scoped to PutItem
+# on the base table (the balance item is a single pk/sk row, never a GSI query),
+# deliberately narrower than the webhook lambda's full CRUD.
+resource "aws_iam_role_policy" "balance_poller_dynamodb" {
+  name = "${var.project_name}-balance-poller-dynamodb"
+  role = aws_iam_role.balance_poller_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:PutItem"
+      ]
+      Resource = [
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+      ]
+    }]
+  })
+}
+
+# Balance-poller lambda: read the BankSync API key. ssm:GetParameter alone
+# decrypts the SecureString via the AWS-managed key (same pattern as
+# sync_trigger_ssm).
+resource "aws_iam_role_policy" "balance_poller_ssm" {
+  name = "${var.project_name}-balance-poller-ssm"
+  role = aws_iam_role.balance_poller_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameter"
+      ]
+      Resource = [
+        aws_ssm_parameter.banksync_api_key.arn,
+      ]
+    }]
+  })
+}
+
+# Balance-poller lambda: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "balance_poller_logs" {
+  name = "${var.project_name}-balance-poller-logs"
+  role = aws_iam_role.balance_poller_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = [
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-balance-poller:*"
       ]
     }]
   })

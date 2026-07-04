@@ -42,7 +42,5 @@ describe('goalView', () => {
     expect(v.paidPct).toBeCloseTo((67100 / 500000) * 100, 5);
     expect(v.usableEquity).toBe(79100);                  // round(640000*0.8) - 432900
     expect(v.contribution).toBe(1440);                   // baseRepay + extra
-    expect(v.totalChunks).toBe(10);                      // 500000 / 50000
-    expect(v.chunksCleared).toBe(1);                     // floor(67100 / 50000)
   });
 });

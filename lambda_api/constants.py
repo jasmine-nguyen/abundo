@@ -67,6 +67,16 @@ BREAKDOWN_PATH = "/breakdown"
 # so no real category id can ever collide with this key.
 UNCATEGORIZED_KEY = "__uncategorized__"
 
+# --- Home loan (live mortgage balance, WHIT-8) -----------------------------
+# API Gateway route path for the home-loan balance endpoint (GET only). The
+# balance-poller lambda writes the row; this read API serves it to the app.
+HOMELOAN_PATH = "/homeloan"
+
+# Internal account id whose balance the /homeloan route serves. Mirrors
+# HOMELOAN_ACCOUNT_ID in shared/constants.py (lambda_api shadows the layer's
+# constants at /var/task); keep the two equal.
+HOMELOAN_ACCOUNT_ID = "up-homeloan"
+
 # --- Pay cycle (persisted length + payday last_pay_date) --------------------------
 # API Gateway route path for the pay-cycle endpoints (GET current, PUT to set).
 PAYCYCLE_PATH = "/paycycle"

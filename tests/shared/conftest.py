@@ -89,6 +89,7 @@ _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 # shared/ modules whose bare names collide with the sibling suites.
 _REIMPORT = (
     "constants", "models", "encoders", "repository_base", "repository_transaction",
+    "repository_balance",
 )
 
 
@@ -109,9 +110,11 @@ def shared():
 
     import encoders
     import repository_transaction
+    import repository_balance
 
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
+        balance=repository_balance,
     )
     try:
         yield ns
@@ -165,6 +168,10 @@ class FakeTable:
             raise _client_error("ConditionalCheckFailedException")
         self.store[key] = dict(Item)
 
+    def get_item(self, Key):
+        item = self.store.get((Key["pk"], Key["sk"]))
+        return {"Item": dict(item)} if item is not None else {}
+
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
                     ExpressionAttributeValues, ConditionExpression=None):
         key = (Key["pk"], Key["sk"])
@@ -216,6 +223,14 @@ class FakeTable:
 def repo(shared):
     """A shared TransactionRepository backed by an in-memory FakeTable."""
     r = shared.repository.TransactionRepository()
+    r._table = FakeTable()
+    return r
+
+
+@pytest.fixture
+def balance_repo(shared):
+    """A shared HomeLoanBalanceRepository backed by an in-memory FakeTable."""
+    r = shared.balance.HomeLoanBalanceRepository()
     r._table = FakeTable()
     return r
 

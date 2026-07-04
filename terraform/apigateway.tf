@@ -82,6 +82,15 @@ resource "aws_apigatewayv2_route" "get_breakdown_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# Home-loan balance (WHIT-8): the live mortgage balance the poller stores. Reuse
+# the lambda_api integration; the /*/* invoke permission already covers it, so no
+# new integration or lambda permission is needed.
+resource "aws_apigatewayv2_route" "get_homeloan_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /homeloan"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 # Pay cycle: read current (GET /paycycle) + set length + last pay date (PUT
 # /paycycle). Reuse the lambda_api integration; the /*/* invoke permission
 # already covers these, so no new integration or lambda permission is needed.

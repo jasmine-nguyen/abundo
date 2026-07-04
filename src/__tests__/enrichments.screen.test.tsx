@@ -20,6 +20,7 @@ beforeEach(() => {
   mockApi.fetchCategories.mockResolvedValue([]);
   mockApi.fetchPayCycle.mockResolvedValue({ length: 14, last_pay_date: '2024-01-03' });
   mockApi.fetchBudgets.mockResolvedValue({});
+  mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
   mockApi.listEnrichments.mockResolvedValue([]);
 });
 
