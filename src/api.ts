@@ -456,3 +456,49 @@ export async function deleteEnrichment(id: string): Promise<{ id: string }> {
 
   return response.json();
 }
+
+/**
+ * AI spending insights (WHIT-104): a short summary + a few suggestions grounded in
+ * the user's real spend. `summary` is null before any have been generated this
+ * cycle. `cached` is true when the server returned a stored result without paying
+ * for a fresh generation.
+ */
+export interface AiInsights {
+  summary: string | null;
+  suggestions: string[];
+  generated_at: string | null;
+  cycle_start: string | null;
+  cached: boolean;
+}
+
+/**
+ * Read the cached AI insights for the current pay cycle WITHOUT generating (no
+ * paid call). Returns a null-summary shape when none has been generated yet.
+ * Auth-gated (the endpoint costs money, so it sits behind the token like
+ * /enrichments).
+ *
+ * @throws If the response status is not OK (401 on auth).
+ */
+export async function fetchAiInsights(): Promise<AiInsights> {
+  const response = await fetch(`${API_BASE}/insights/ai`, { headers: authHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Generate (or return the cached) AI insights for the current cycle — the paid
+ * action behind the "Analyse my spending" button. The server skips the paid call
+ * when nothing has changed since the cached run. Auth-gated.
+ *
+ * @throws If the response status is not OK (401 auth, 502 when the AI is unavailable).
+ */
+export async function generateAiInsights(): Promise<AiInsights> {
+  const response = await fetch(`${API_BASE}/insights/ai`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}

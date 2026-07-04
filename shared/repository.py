@@ -29,6 +29,7 @@ from repository_paycycle import PayCycleRepository
 from repository_balance import HomeLoanBalanceRepository
 from repository_loanfacts import LoanFactsRepository
 from repository_device import DeviceRepository
+from repository_insight import InsightRepository
 
 __all__ = [
     "TransactionRepository",
@@ -38,6 +39,7 @@ __all__ = [
     "HomeLoanBalanceRepository",
     "LoanFactsRepository",
     "DeviceRepository",
+    "InsightRepository",
     "DuplicateCategoryError",
     "CategoryNotFoundError",
     "VersionConflictError",

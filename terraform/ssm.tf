@@ -19,6 +19,18 @@ resource "aws_ssm_parameter" "banksync_api_key" {
   }
 }
 
+# Anthropic API key, read by lambda_api (insights_ai.py) to call the Messages API
+# for AI spending insights (WHIT-104). Terraform seeds a placeholder; paste the
+# real key out-of-band (console/CLI). ignore_changes keeps applies from clobbering it.
+resource "aws_ssm_parameter" "anthropic_api_key" {
+  name  = "/${var.project_name}/anthropic-api-key"
+  type  = "SecureString"
+  value = "placeholder"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 # Shared-secret token the API Gateway authorizer checks on the /enrichments
 # routes (WHIT-52). Terraform seeds a placeholder; set the real random value
 # out-of-band (console/CLI) and inject the same value into the app config.

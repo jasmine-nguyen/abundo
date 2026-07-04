@@ -495,3 +495,23 @@ def test_batch_error_midloop_keeps_earlier_write_then_raises(repo, client_error,
 
     # First write committed before the raise (loop is not all-or-nothing).
     assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"
+
+
+def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, shared, monkeypatch):
+    # WHIT-54: each dead-letter row carries a readable failed_at (ISO) and an
+    # expires_at DynamoDB TTL (epoch seconds) 30 days out, from the same instant.
+    frozen = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen
+
+    monkeypatch.setattr(shared.repository, "datetime", _FrozenDatetime)
+
+    repo.save_failed_transactions([{"id": "a"}])
+
+    (_, item), = [(k, v) for k, v in repo._table.store.items() if k[0] == "FAILED"]
+    assert item["failed_at"] == frozen.isoformat()
+    assert item["expires_at"] == int(frozen.timestamp()) + 30 * 24 * 60 * 60
+    assert isinstance(item["expires_at"], int)   # TTL must be a Number, not a string

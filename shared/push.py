@@ -5,15 +5,13 @@ token Expo reports as ``DeviceNotRegistered``. It is BEST-EFFORT: it never raise
 so a push failure can't break whatever wrote the data that triggered it (mirrors
 the balance poller's swallow-everything shape).
 
-IMPORTANT — do NOT import this module from ``lambda_api``. It reads EXPO_PUSH_URL
-etc. from ``constants``, which under lambda_api resolves to ``lambda_api/
-constants.py`` (the /var/task shadow), NOT ``shared/constants.py`` — so the import
-would fail at load and 500 every API route. The sender runs from the webhook /
-notification lambdas, which see the shared layer's constants. (Same shadow rule
-the BankSync values in ``lambda_api/constants.py`` document.)
-
 The Expo project has Enhanced Security enabled, so every send carries
 ``Authorization: Bearer <access token>``, read from SSM (cached per container).
+
+The Expo constants below are defined locally (not in the shared ``constants``
+module) because they're used only here — which also keeps this module free of the
+``constants`` shadow trap the BankSync values in ``lambda_api/constants.py``
+document, so it stays importable from any lambda.
 """
 
 import json
@@ -21,13 +19,19 @@ import logging
 import urllib.error
 import urllib.request
 
-from constants import (
-    EXPO_ACCESS_TOKEN_PATH,
-    EXPO_PUSH_BATCH_MAX,
-    EXPO_PUSH_TIMEOUT_SECONDS,
-    EXPO_PUSH_URL,
-)
 from ssm import get_param
+
+# Expo Push send endpoint. send_push POSTs a batch of messages here.
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+# HTTP timeout, in seconds, for a single Expo Push request.
+EXPO_PUSH_TIMEOUT_SECONDS = 15
+# Expo accepts at most 100 messages per push request.
+EXPO_PUSH_BATCH_MAX = 100
+# SSM SecureString path holding the Expo access token (a PAT). Required because
+# the Expo project has "Enhanced Security for Push Notifications" enabled, so every
+# send must carry Authorization: Bearer <token>. Seeded as a placeholder by
+# terraform/ssm.tf; the real value is set out-of-band (console/CLI).
+EXPO_ACCESS_TOKEN_PATH = "/whittle/expo-access-token"
 
 logger = logging.getLogger(__name__)
 

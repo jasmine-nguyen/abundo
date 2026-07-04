@@ -540,6 +540,34 @@ def test_summarise_skips_unknown_status(handler):
     assert handler.summarise_transactions(txns, {"coffee"}) == {}
 
 
+# --- _spend_contribution: the shared helper both summarisers call (WHIT-106) --
+
+
+def test_spend_contribution_posted_returns_bucket_and_positive_spend(handler):
+    # Spend stored negative -> contribution is -amount (positive) in the posted bucket.
+    assert handler._spend_contribution(_transaction("coffee", -50, "posted")) == (
+        "posted", Decimal("50"))
+
+
+def test_spend_contribution_pending_uses_pending_bucket(handler):
+    assert handler._spend_contribution(_transaction("coffee", -12, "pending")) == (
+        "pending", Decimal("12"))
+
+
+def test_spend_contribution_refund_is_a_negative_contribution(handler):
+    # A refund (positive amount) yields a negative spend; the caller clamps, not this.
+    assert handler._spend_contribution(_transaction("coffee", 20, "posted")) == (
+        "posted", Decimal("-20"))
+
+
+def test_spend_contribution_none_when_not_counting(handler):
+    assert handler._spend_contribution(_transaction("coffee", -50, counts=False)) is None
+
+
+def test_spend_contribution_none_on_unknown_status(handler):
+    assert handler._spend_contribution(_transaction("coffee", -50, status="settled")) is None
+
+
 def test_current_cycle_window_end_is_today_inclusive(handler):
     from datetime import date
     # WHIT-75: the end bound is today itself (inclusive), NOT today+1 — date-only
