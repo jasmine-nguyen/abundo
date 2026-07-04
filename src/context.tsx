@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 
 export type { LoanFacts, LoanFactsInput } from './api';
@@ -268,6 +268,8 @@ export interface AppContext {
 	loanFacts: LoanFacts;
 	refreshLoanFacts: () => Promise<void>;
 	saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
+	repayment: Repayment;
+	refreshRepayment: () => Promise<void>;
 	refreshPayCycle: () => Promise<void>;
 	enrichmentsLoading: boolean;
 	enrichmentsError: string | null;
@@ -423,6 +425,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		setLoanFacts(await fetchLoanFacts());
 	}, []);
 
+	// Most recent home-loan repayment (WHIT-115), derived server-side from the
+	// up-homeloan history. Null-filled until loaded / when none is on record — the
+	// card shows a graceful empty state. Same no-catch pattern as refreshLoanFacts.
+	const [repayment, setRepayment] = useState<Repayment>({ amount: null, date: null, principal: null, interest: null });
+	const refreshRepayment = useCallback(async () => {
+		setRepayment(await fetchRepayment());
+	}, []);
+
 	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
 	const [enrichmentsError, setEnrichmentsError] = useState<string | null>(null);
 	const refreshEnrichments = useCallback(async () => {
@@ -445,8 +455,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshPayCycle();
 		refreshHomeLoan();
 		refreshLoanFacts();
+		refreshRepayment();
 		refreshEnrichments();
-	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshLoanFacts, refreshEnrichments]);
+	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshLoanFacts, refreshRepayment, refreshEnrichments]);
 
 	// Re-fetch budgets + breakdown on mount and whenever the pay-cycle length (the
 	// window) changes — both are computed over the current cycle.
@@ -790,9 +801,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -1075,6 +1086,28 @@ export function goalView(s: AppContext) {
     usableEquity, depositTarget, depositPct,
     baseRepay, extra, contribution,
   };
+}
+
+export interface LastRepaymentView {
+  present: boolean;
+  amountLabel: string;         // fmt(amount), '' when absent
+  whenLabel: string;           // dateLabel(date), '' when absent
+  splitLabel: string | null;   // "$X principal · $Y interest", or null (total only)
+}
+
+// The Goal-tab "last repayment" card (WHIT-115): the most recent real home-loan
+// repayment from s.repayment (server-derived), or a graceful empty state when
+// none is on record. The principal/interest split shows only when the server
+// could pair the interest leg — never a fabricated split. Pure over s.repayment.
+export function lastRepaymentView(s: AppContext): LastRepaymentView {
+  const r = s.repayment;
+  if (r.amount == null || r.date == null) {
+    return { present: false, amountLabel: '', whenLabel: '', splitLabel: null };
+  }
+  const splitLabel = r.principal != null && r.interest != null
+    ? `${fmt(r.principal)} principal · ${fmt(r.interest)} interest`
+    : null;
+  return { present: true, amountLabel: fmt(r.amount), whenLabel: dateLabel(r.date), splitLabel };
 }
 
 // ---------------------------------------------------------------------------

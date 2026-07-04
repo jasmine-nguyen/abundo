@@ -91,6 +91,15 @@ resource "aws_apigatewayv2_route" "get_homeloan_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# Last home-loan repayment (WHIT-115): the most recent repayment derived from the
+# up-homeloan transaction history. Reuse the lambda_api integration; the /*/*
+# invoke permission already covers it, so no new integration or permission.
+resource "aws_apigatewayv2_route" "get_repayment_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /repayment"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 # Loan facts: read (GET /loanfacts) + save (PUT /loanfacts) the user-entered
 # home-loan inputs. Reuse the lambda_api integration; the /*/* invoke permission
 # already covers these, so no new integration or lambda permission is needed.

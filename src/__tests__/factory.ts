@@ -4,7 +4,7 @@
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName } from '../context';
 import type { AppContext, Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
-import type { CategorySpend, LoanFacts } from '../api';
+import type { CategorySpend, LoanFacts, Repayment } from '../api';
 
 export function cat(over: Partial<Category> = {}): Category {
   return { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52, ...over };
@@ -39,6 +39,11 @@ const GOAL: Goal = {
 export const LOAN_FACTS: LoanFacts = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
 export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
+// Repayment fixtures (WHIT-115): a real repayment with a paired split, and the
+// "none on record" empty shape (the makeState default).
+export const REPAYMENT: Repayment = { amount: 1440, date: '2026-07-01', principal: 1208, interest: 232 };
+export const NO_REPAYMENT: Repayment = { amount: null, date: null, principal: null, interest: null };
+
 interface StateOver {
   categories?: Category[];
   budgets?: Budget[];
@@ -47,6 +52,7 @@ interface StateOver {
   goal?: Goal;
   homeLoan?: HomeLoanState;
   loanFacts?: LoanFacts;
+  repayment?: Repayment;
   cycleLen?: number;
   daysLeft?: number;
 }
@@ -64,6 +70,7 @@ export function makeState(over: StateOver = {}): AppContext {
     goal: over.goal ?? GOAL,
     homeLoan: over.homeLoan ?? { balance: null, asOf: null },
     loanFacts: over.loanFacts ?? LOAN_FACTS,
+    repayment: over.repayment ?? NO_REPAYMENT,
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
     category: (id: string | null) => categories.find((c) => c.id === id),

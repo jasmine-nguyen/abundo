@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useAppContext, goalView, milestoneView } from '../../src/context';
+import { useAppContext, goalView, milestoneView, lastRepaymentView } from '../../src/context';
 import { Bar } from '../../src/components/ui';
 
 export default function Goals() {
@@ -13,6 +13,7 @@ export default function Goals() {
   const router = useRouter();
   const g = goalView(s);
   const m = milestoneView(s);
+  const lr = lastRepaymentView(s);
   const G = g.G;
 
   return (
@@ -126,23 +127,32 @@ export default function Goals() {
           </View>
         )}
 
-        {/* last repayment — a repayment preview (Cards 2/3). Shown once set up. */}
-        {g.factsReady && (
-          <View style={styles.card}>
+        {/* last repayment — the real most-recent home-loan repayment (WHIT-115),
+            or a graceful empty state. Independent of the loan-facts form. */}
+        <View style={styles.card}>
+          {lr.present ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <View style={styles.repayChip}><Glyph name="arrowDown" size={22} color={C.good} /></View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.repayTitle}>Last repayment · {G.lastRepay.date}</Text>
-                <Text style={styles.repaySub}>{fmt(G.lastRepay.principal)} principal · {fmt(G.lastRepay.interest)} interest</Text>
+                <Text style={styles.repayTitle}>Last repayment · {lr.whenLabel}</Text>
+                <Text style={styles.repaySub}>{lr.splitLabel ?? 'toward your home loan'}</Text>
               </View>
-              <Text style={styles.repayAmount}>−{fmt(G.lastRepay.amount)}</Text>
+              <Text style={styles.repayAmount}>{lr.amountLabel}</Text>
             </View>
-            <Pressable onPress={s.fireRepayment} style={styles.repayBtn}>
-              <Glyph name="play" size={18} color={C.accentInk} />
-              <Text style={styles.repayBtnText}>Preview a repayment alert</Text>
-            </Pressable>
-          </View>
-        )}
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <View style={[styles.repayChip, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="arrowDown" size={22} color={C.textFaint} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.repayTitle}>Last repayment</Text>
+                <Text style={styles.repaySub}>No repayment on record yet — it'll show here when one lands.</Text>
+              </View>
+            </View>
+          )}
+          <Pressable onPress={s.fireRepayment} style={styles.repayBtn}>
+            <Glyph name="play" size={18} color={C.accentInk} />
+            <Text style={styles.repayBtnText}>Preview a repayment alert</Text>
+          </Pressable>
+        </View>
 
         {/* investment property unlock — real usable equity once the property value
             is set, else a friendly prompt to add it. */}

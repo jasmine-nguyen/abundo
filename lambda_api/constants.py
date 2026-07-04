@@ -87,6 +87,21 @@ HOMELOAN_PATH = "/homeloan"
 # constants at /var/task); keep the two equal.
 HOMELOAN_ACCOUNT_ID = "up-homeloan"
 
+# --- Last repayment (WHIT-115) ---------------------------------------------
+# API Gateway route path for the latest home-loan repayment (GET only). Reads
+# the full up-homeloan history (not the 7-day feed) since repayments are ~monthly.
+REPAYMENT_PATH = "/repayment"
+
+# A home-loan repayment CREDIT leg lands on the up-homeloan account as an incoming
+# transfer (positive amount). Anchoring on the account + this type is unambiguous;
+# the description varies ("Transfer from Spending") and LOAN_PAYMENTS also matches
+# unrelated card payments on up-spending, so neither is used to identify it.
+REPAYMENT_INCOMING_TYPE = "TRANSFER_INCOMING"
+
+# Interest posts as a separate BANK_FEES debit on the up-homeloan account. When one
+# falls in the same calendar month as the repayment, principal = repayment - |interest|.
+INTEREST_CATEGORY = "BANK_FEES"
+
 # --- Pay cycle (persisted length + payday last_pay_date) --------------------------
 # API Gateway route path for the pay-cycle endpoints (GET current, PUT to set).
 PAYCYCLE_PATH = "/paycycle"
