@@ -16,6 +16,12 @@ Rules:
 - Hunt specifically for: incorrect assumptions about how existing code works,
   missed edge cases, breaking changes to callers, cases the "done" definition
   doesn't actually cover, and test-plan gaps.
+- Independently confirm the card is still real. Don't trust the planner's Card
+  validity verdict — grep/read the code yourself. Is the target already
+  implemented, already tested, or dead (uncalled)? A plan to build work that
+  isn't needed is NEEDS REWORK.
+- Ask whether a LOWER-blast-radius design would meet the same goal. If the plan's
+  approach is cross-cutting or high-churn and a smaller one exists, flag it.
 
 Return your review in this structure:
 
