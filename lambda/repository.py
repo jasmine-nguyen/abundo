@@ -196,6 +196,29 @@ class TransactionRepository:
         except ClientError as e:
             handle_database_error(e, "read")
 
+    def get_all_transactions_for_account(self, account_id: str) -> list[dict]:
+        """Every stored transaction row — pending AND posted — for an account,
+        paginated (WHIT-82 pattern). Used by the one-time dedupe cleanup (WHIT-80);
+        unlike get_recent_transactions this follows LastEvaluatedKey, so no row is
+        truncated at DynamoDB's 1MB page."""
+        try:
+            table = self._get_table()
+            key_condition = Key("pk").eq(_build_pk(account_id))
+            items: list[dict] = []
+            start_key = None
+            while True:
+                kwargs = {"KeyConditionExpression": key_condition}
+                if start_key is not None:
+                    kwargs["ExclusiveStartKey"] = start_key
+                response = table.query(**kwargs)
+                items.extend(response.get("Items", []))
+                start_key = response.get("LastEvaluatedKey")
+                if not start_key:
+                    break
+            return items
+        except ClientError as e:
+            handle_database_error(e, "read")
+
     def get_failed_transactions(self) -> list[dict]:
         """Retrieve all dead-lettered rows — the ``pk="FAILED"`` partition written by
         save_failed_transactions. Paginated (WHIT-82 pattern) so a large backlog isn't

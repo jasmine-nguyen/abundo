@@ -106,7 +106,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Bare module names whose imports must resolve fresh per test: lambda/'s own copies
 # (handler / repository / banksync) plus the folded modules now provided by shared/
 # (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
-_REIMPORT = ("handler", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess")
+_REIMPORT = ("handler", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "dedupe_cleanup")
 
 
 @pytest.fixture
@@ -139,10 +139,11 @@ def lam():
     import models
     import repository
     import reprocess
+    import dedupe_cleanup
 
     ns = types.SimpleNamespace(
         repository=repository, banksync=banksync, handler=handler, models=models,
-        merchant=merchant, reprocess=reprocess,
+        merchant=merchant, reprocess=reprocess, dedupe_cleanup=dedupe_cleanup,
     )
     try:
         yield ns

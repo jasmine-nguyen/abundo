@@ -132,6 +132,35 @@ resource "aws_lambda_function" "reprocess" {
   }
 }
 
+# One-time dedupe cleanup lambda (WHIT-80): reconciles pre-reconciliation
+# pending/posted twins that settled before WHIT-77 deployed. Like reprocess, it
+# reuses the webhook zip (../lambda already contains dedupe_cleanup.py) and the
+# lambda_exec role (Query / DeleteItem / BatchWriteItem / GetItem already granted),
+# so NO IAM change. Invoked manually; dry-run unless the event says
+# {"dry_run": false}. No event source/schedule/API, so nothing triggers it.
+resource "aws_lambda_function" "dedupe" {
+  function_name    = "${var.project_name}-lambda-dedupe"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "dedupe_cleanup.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 300
+  memory_size      = 128
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.dedupe.name
+  }
+}
+
 resource "aws_lambda_function" "lambda_api" {
   function_name    = "${var.project_name}-lambda-api"
   role             = aws_iam_role.lambda_api_exec.arn
@@ -234,6 +263,11 @@ resource "aws_cloudwatch_log_group" "lambda_api" {
 
 resource "aws_cloudwatch_log_group" "reprocess" {
   name              = "/aws/lambda/${var.project_name}-lambda-reprocess"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "dedupe" {
+  name              = "/aws/lambda/${var.project_name}-lambda-dedupe"
   retention_in_days = 30
 }
 
