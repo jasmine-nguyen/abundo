@@ -1,12 +1,14 @@
 import boto3
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
+import re
 import uuid
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
 from models import Transaction
-from constants import PENDING_STATUS
+from constants import PENDING_STATUS, TIP_HEADROOM
 
 REGION_NAME = "ap-southeast-2"
 RESOURCE_NAME = "dynamodb"
@@ -32,6 +34,42 @@ def _build_pk(account_id: str) -> str:
 
 def _build_sk(transaction_id: Optional[str]) -> str:
     return f"TXN#{transaction_id}"
+
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _words(s: Optional[str]) -> list[str]:
+    """Lowercase alphanumeric words of a string. BankSync descriptor noise
+    ('POS AUTHORISATION', 'DD *', country/store codes) splits out on the
+    non-alphanumeric boundaries, leaving comparable merchant words."""
+    return _WORD.findall((s or "").lower())
+
+
+def _merchant_in_description(merchant: str, description: str) -> bool:
+    """Whether every word of `merchant` appears as a CONSECUTIVE run inside
+    `description`'s words. Word-level (not raw substring) so a short or adjacent
+    token can't over-match: 'coles' is NOT a word in "nicole's cafe", 'bp' is NOT a
+    word in 'bpay' — while a multi-word merchant ('DOORDASH XUANBANHC') still matches
+    a pending's raw "POS AUTHORISATION  DD *DOORDASH XUANBANHC ..." description.
+    Empty merchant -> False (never over-match on an underivable token)."""
+    m = _words(merchant)
+    if not m:
+        return False
+    d = _words(description)
+    return any(d[i:i + len(m)] == m for i in range(len(d) - len(m) + 1))
+
+
+def _is_tip_adjusted(auth_amount: Decimal, settled_amount: Decimal) -> bool:
+    """Whether `settled_amount` is `auth_amount` plus at most a tip (TIP_HEADROOM).
+    Both must be spend (negative) and ONE-DIRECTIONAL — a tip only makes the
+    magnitude larger — so a smaller settled amount, or an opposite-sign one (a
+    refund/credit), is never a tip-match."""
+    if auth_amount >= 0 or settled_amount >= 0:
+        return False
+    auth_mag = -auth_amount
+    settled_mag = -settled_amount
+    return auth_mag <= settled_mag <= auth_mag * (Decimal(1) + TIP_HEADROOM)
 
 
 class TransactionRepository:
@@ -145,8 +183,9 @@ class TransactionRepository:
         posted. Instead, for each POSTED transaction we find its pending twin, carry
         the pending row's `category` onto the posted row, and delete the stale
         pending. Match order (see _find_pending_twin): exact `pending_transaction_id`
-        link (forward-compat), else heuristic on account_id + authorized_date +
-        amount, else a same-id re-sync of an already-stored posted row. No match ->
+        link (forward-compat), else same authorized_date + EXACT amount, else a
+        tip-adjusted match (same day + merchant + amount within TIP_HEADROOM above the
+        auth), else a same-id re-sync of an already-stored posted row. No match ->
         a plain insert. A missing/racey match never raises: it degrades to insert.
 
         Pending rows are inserted as-is. All inserts are batched at the end; stale
@@ -216,23 +255,53 @@ class TransactionRepository:
                 if item.get("transaction_id") == link_id:
                     return pool.pop(i)
 
-        # 2. Heuristic: same authorized_date + amount (account already scoped by the
-        #    pool). Skip when authorized_date is missing — matching on amount alone
+        # 2. Heuristic: same authorized_date + EXACT amount (account already scoped by
+        #    the pool). Skip when authorized_date is missing — matching on amount alone
         #    is too loose. authorized_date is preserved across settlement, so it
         #    discriminates identical daily purchases.
         authorized_date = posted_txn.get("authorized_date")
         if not authorized_date:
             return None
         amount = posted_txn.get("amount")
-        candidates = [
+        exact = [
             i for i, item in enumerate(pool)
             if item.get("authorized_date") == authorized_date and item.get("amount") == amount
         ]
-        if not candidates:
+        if exact:
+            # Two identical same-day charges are indistinguishable; pick deterministically
+            # (lowest transaction_id) so behaviour is stable and testable.
+            best = min(exact, key=lambda i: pool[i].get("transaction_id", ""))
+            return pool.pop(best)
+
+        # 3. Tip-adjusted settlement (WHIT-116): a tip added at settlement changes the
+        #    amount, so tier 2's exact match misses. Match same authorized_date + the
+        #    posted merchant appearing (word-for-word) in the pending's raw description
+        #    — pending rows carry no clean merchant_name, only the description — + a
+        #    settled amount within TIP_HEADROOM above the auth. The merchant gate plus
+        #    the one-directional amount headroom keep a coincidental same-day charge
+        #    (or a refund) from being swept in. tier 2 already claimed any exact-amount
+        #    twin, so this only sees strictly-larger-amount leftovers.
+        if amount is None:
             return None
-        # Two identical same-day charges are indistinguishable; pick deterministically
-        # (lowest transaction_id) so behaviour is stable and testable.
-        best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
+        # A tip-adjusted match DELETES a pending, so require a merchant strong enough to
+        # trust: at least TWO words. A lone common word (a bare location like "MELBOURNE",
+        # or a generic token like "EXPRESS") is a whole word in many unrelated same-day
+        # descriptions and would wrongly consume a different merchant's pending. Single-
+        # word merchants simply don't tip-reconcile — they fall back to the exact-amount
+        # tier (today's behaviour: a leftover duplicate, never a wrong merge).
+        merchant = posted_txn.get("merchant_name") or ""
+        if len(_words(merchant)) < 2:
+            return None
+        tip = [
+            i for i, item in enumerate(pool)
+            if item.get("authorized_date") == authorized_date
+            and item.get("amount") is not None
+            and _is_tip_adjusted(item["amount"], amount)
+            and _merchant_in_description(merchant, item.get("description") or "")
+        ]
+        if not tip:
+            return None
+        best = min(tip, key=lambda i: pool[i].get("transaction_id", ""))
         return pool.pop(best)
 
     @staticmethod

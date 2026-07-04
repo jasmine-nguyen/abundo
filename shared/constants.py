@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 # Maps BankSync account ids to whittle's internal account ids.
 ACCOUNT_ID_MAP = {
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": "anz-rewards-black-visa",
@@ -43,6 +45,14 @@ MAX_PAGE_SIZE = 100
 
 # Status value marking a transaction as not yet posted.
 PENDING_STATUS = "pending"
+
+# Maximum fraction by which a settled (posted) charge may exceed its pending
+# authorisation and still be reconciled as the SAME purchase — i.e. a tip added at
+# settlement (restaurants/delivery/rideshare). ONE-DIRECTIONAL: a tip only makes
+# spend larger, so a smaller (or opposite-sign, e.g. a refund) settled amount is
+# never a tip-match. Used by the reconciler's tip-adjusted tier (WHIT-116).
+# +25% = a generous but bounded tip.
+TIP_HEADROOM = Decimal("0.25")
 
 # Seed pay cycle used by PayCycleRepository until the user sets their real payday:
 # a fixed past date (a Wednesday, the app's original default last_pay_date) + a
