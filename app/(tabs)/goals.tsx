@@ -22,40 +22,63 @@ export default function Goals() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
-        {/* hero */}
+        {/* hero — real payoff progress once loan facts are set, else a set-up prompt
+            that still shows the one thing we genuinely know: the live balance. */}
         <View style={styles.hero}>
           <View style={styles.heroBlob} />
-          <Text style={styles.heroEyebrow}>THE MORTGAGE · WHITTLED SO FAR</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 7 }}>
-            <Text style={styles.heroBig}>{fmt(g.paidOff)}</Text>
-            <Text style={styles.heroPct}>{Math.round(g.paidPct)}% gone</Text>
-          </View>
-          <View style={{ marginTop: 16 }}>
-            <Bar pct={g.paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={12} />
-          </View>
-          <View style={styles.heroRow}>
-            <Text style={styles.heroRowL}>{fmt(G.balance)} to go</Text>
-            <Text style={styles.heroRowR}>started at {fmt(G.original)}</Text>
-          </View>
-          <View style={styles.syncPill}>
-            <View style={styles.syncDot} />
-            <Text style={styles.syncText}>Synced · Up Home Loan · {G.lastRepay.date}</Text>
-          </View>
+          {g.factsReady && g.balanceKnown ? (
+            <>
+              <Text style={styles.heroEyebrow}>THE MORTGAGE · WHITTLED SO FAR</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 7 }}>
+                <Text style={styles.heroBig}>{fmt(g.paidOff!)}</Text>
+                <Text style={styles.heroPct}>{Math.round(g.paidPct)}% gone</Text>
+              </View>
+              <View style={{ marginTop: 16 }}>
+                <Bar pct={g.paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={12} />
+              </View>
+              <View style={styles.heroRow}>
+                <Text style={styles.heroRowL}>{g.balanceLabel} to go</Text>
+                <Text style={styles.heroRowR}>started at {fmt(g.original!)}</Text>
+              </View>
+            </>
+          ) : !g.factsReady ? (
+            <>
+              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+              <Text style={[styles.heroBig, { marginTop: 6 }]}>{g.balanceLabel}</Text>
+              <Text style={styles.heroSetupBody}>
+                Add your loan amount and repayments to see how much you've whittled and your real payoff progress.
+              </Text>
+              <Pressable onPress={() => router.push('/loan')} style={styles.heroSetupBtn}>
+                <Text style={styles.heroSetupBtnText}>Set up loan details →</Text>
+              </Pressable>
+            </>
+          ) : (
+            // Facts are set, but the live balance hasn't loaded yet — don't imply
+            // "set up needed"; just wait on the balance.
+            <>
+              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+              <Text style={[styles.heroBig, { marginTop: 6 }]}>{g.balanceLabel}</Text>
+              <Text style={styles.heroSetupBody}>We'll show your whittled-so-far progress once your balance loads.</Text>
+            </>
+          )}
         </View>
 
-        {/* freedom + interest */}
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-          <View style={styles.miniCard}>
-            <View style={styles.miniHead}><Glyph name="check" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Mortgage-free</Text></View>
-            <Text style={styles.miniValue}>{G.freedomDate}</Text>
-            <Text style={[styles.miniSub, { color: C.good }]}>{G.aheadLabel} early 🏁</Text>
+        {/* freedom + interest — payoff projections (Cards 2/3). Shown once the loan
+            is set up; still seed until those cards compute them for real. */}
+        {g.factsReady && (
+          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+            <View style={styles.miniCard}>
+              <View style={styles.miniHead}><Glyph name="check" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Mortgage-free</Text></View>
+              <Text style={styles.miniValue}>{G.freedomDate}</Text>
+              <Text style={[styles.miniSub, { color: C.good }]}>{G.aheadLabel} early 🏁</Text>
+            </View>
+            <View style={styles.miniCard}>
+              <View style={styles.miniHead}><Glyph name="dollar" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Interest dodged</Text></View>
+              <Text style={styles.miniValue}>{fmt(G.interestSaved)}</Text>
+              <Text style={styles.miniSub}>never going to the bank</Text>
+            </View>
           </View>
-          <View style={styles.miniCard}>
-            <View style={styles.miniHead}><Glyph name="dollar" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Interest dodged</Text></View>
-            <Text style={styles.miniValue}>{fmt(G.interestSaved)}</Text>
-            <Text style={styles.miniSub}>never going to the bank</Text>
-          </View>
-        </View>
+        )}
 
         {/* 36-month milestone plan — real Sprint progress, taps into the full screen */}
         <Pressable testID="milestone-link" onPress={() => router.push('/milestone')} style={styles.card}>
@@ -92,32 +115,37 @@ export default function Goals() {
           )}
         </Pressable>
 
-        {/* contribution */}
-        <View style={styles.contribCard}>
-          <Text style={styles.contribEyebrow}>HEADING TO THE LOAN THIS FORTNIGHT</Text>
-          <Text style={styles.contribBig}>{fmt(g.contribution)}</Text>
-          <Text style={styles.contribBody}>
-            {fmt(G.baseRepay)} scheduled <Text style={styles.contribStrong}>+ {fmt(G.extra)} you clawed back from budgets</Text>. Every coffee you skipped is a brick out of the wall. 🧱
-          </Text>
-        </View>
-
-        {/* last repayment */}
-        <View style={styles.card}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <View style={styles.repayChip}><Glyph name="arrowDown" size={22} color={C.good} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.repayTitle}>Last repayment · {G.lastRepay.date}</Text>
-              <Text style={styles.repaySub}>{fmt(G.lastRepay.principal)} principal · {fmt(G.lastRepay.interest)} interest</Text>
-            </View>
-            <Text style={styles.repayAmount}>−{fmt(G.lastRepay.amount)}</Text>
+        {/* contribution — from the user's saved scheduled + extra repayment */}
+        {g.factsReady && (
+          <View style={styles.contribCard}>
+            <Text style={styles.contribEyebrow}>HEADING TO THE LOAN THIS CYCLE</Text>
+            <Text style={styles.contribBig}>{fmt(g.contribution!)}</Text>
+            <Text style={styles.contribBody}>
+              {fmt(g.baseRepay!)} scheduled <Text style={styles.contribStrong}>+ {fmt(g.extra!)} extra</Text>. Every coffee you skipped is a brick out of the wall. 🧱
+            </Text>
           </View>
-          <Pressable onPress={s.fireRepayment} style={styles.repayBtn}>
-            <Glyph name="play" size={18} color={C.accentInk} />
-            <Text style={styles.repayBtnText}>Preview a repayment alert</Text>
-          </Pressable>
-        </View>
+        )}
 
-        {/* investment property unlock */}
+        {/* last repayment — a repayment preview (Cards 2/3). Shown once set up. */}
+        {g.factsReady && (
+          <View style={styles.card}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <View style={styles.repayChip}><Glyph name="arrowDown" size={22} color={C.good} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.repayTitle}>Last repayment · {G.lastRepay.date}</Text>
+                <Text style={styles.repaySub}>{fmt(G.lastRepay.principal)} principal · {fmt(G.lastRepay.interest)} interest</Text>
+              </View>
+              <Text style={styles.repayAmount}>−{fmt(G.lastRepay.amount)}</Text>
+            </View>
+            <Pressable onPress={s.fireRepayment} style={styles.repayBtn}>
+              <Glyph name="play" size={18} color={C.accentInk} />
+              <Text style={styles.repayBtnText}>Preview a repayment alert</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* investment property unlock — real usable equity once the property value
+            is set, else a friendly prompt to add it. */}
         <View style={[styles.card, { marginBottom: 6 }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, marginBottom: 13 }}>
             <View style={styles.ipChip}><Glyph name="building" size={22} color={C.purple} /></View>
@@ -125,14 +153,28 @@ export default function Goals() {
               <Text style={styles.repayTitle}>Investment property #2</Text>
               <Text style={styles.repaySub}>Usable equity toward a deposit</Text>
             </View>
-            <View style={styles.ipPct}><Text style={styles.ipPctText}>{Math.round(g.depositPct)}%</Text></View>
+            {g.usableEquity != null && <View style={styles.ipPct}><Text style={styles.ipPctText}>{Math.round(g.depositPct)}%</Text></View>}
           </View>
-          <Bar pct={g.depositPct} color={C.purple} height={10} />
-          <View style={[styles.cardHead, { marginTop: 9, marginBottom: 0 }]}>
-            <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
-            <Text style={styles.cardHint}>of {fmt(g.depositTarget)} needed</Text>
-          </View>
-          <Text style={styles.ipBody}>Keep whittling — the more principal you kill, the more equity you can borrow against. Landlord arc loading. 📈</Text>
+          {g.usableEquity != null ? (
+            <>
+              <Bar pct={g.depositPct} color={C.purple} height={10} />
+              <View style={[styles.cardHead, { marginTop: 9, marginBottom: 0 }]}>
+                <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
+                <Text style={styles.cardHint}>of {fmt(g.depositTarget)} needed</Text>
+              </View>
+              <Text style={styles.ipBody}>Keep whittling — the more principal you kill, the more equity you can borrow against. Landlord arc loading. 📈</Text>
+            </>
+          ) : g.factsReady ? (
+            // Property value is set; the equity figure just needs the live balance.
+            <Text style={styles.ipBody}>Your usable equity will show once your balance loads.</Text>
+          ) : (
+            <>
+              <Text style={styles.ipBody}>Add your property value to see how much equity you could unlock toward your next place.</Text>
+              <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
+                <Text style={styles.equityCtaText}>Add loan details →</Text>
+              </Pressable>
+            </>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -151,9 +193,11 @@ const styles = StyleSheet.create({
   heroRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
   heroRowL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
   heroRowR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
-  syncPill: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 7, backgroundColor: 'rgba(21,18,58,.16)', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 11, marginTop: 14 },
-  syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.goodBright },
-  syncText: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.heroInk },
+  heroSetupBody: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk2, lineHeight: 20, marginTop: 10 },
+  heroSetupBtn: { alignSelf: 'flex-start', backgroundColor: 'rgba(21,18,58,.18)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
+  heroSetupBtnText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.heroInk },
+  equityCta: { alignSelf: 'flex-start', backgroundColor: 'rgba(201,179,245,.16)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 12 },
+  equityCtaText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.purple },
 
   miniCard: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14 },
   miniHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },

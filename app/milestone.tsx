@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { C, FONT, fmt } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { useAppContext, milestoneView } from '../src/context';
@@ -19,6 +20,7 @@ function monthYear(iso: string): string {
 export default function Milestone() {
   const s = useAppContext();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const v = milestoneView(s);
 
   const scheduleColor = !v.schedule
@@ -99,15 +101,18 @@ export default function Milestone() {
                 <Text style={styles.rowTitle}>Sprint {r.sprint} · {r.label}</Text>
                 <Text style={styles.rowSub}>under {fmt(r.targetBalance)} · {monthYear(r.targetDate)}</Text>
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.rowEquity}>{fmt(r.targetEquity)}</Text>
-                <Text style={styles.rowEquityLabel}>equity</Text>
-              </View>
+              {/* per-sprint equity only once the property value + LVR are set */}
+              {r.targetEquity != null && (
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.rowEquity}>{fmt(r.targetEquity)}</Text>
+                  <Text style={styles.rowEquityLabel}>equity</Text>
+                </View>
+              )}
             </View>
           ))}
         </View>
 
-        {/* usable equity for IP1 */}
+        {/* usable equity for IP1 — real once the property value is set, else a prompt */}
         <View style={[styles.card, { marginBottom: 6 }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, marginBottom: 13 }}>
             <View style={styles.ipChip}><Glyph name="building" size={22} color={C.purple} /></View>
@@ -116,11 +121,22 @@ export default function Milestone() {
               <Text style={styles.rowSub}>Usable equity toward a deposit</Text>
             </View>
           </View>
-          <View style={styles.equityHead}>
-            <Text style={styles.equityBig}>{v.usableEquityLabel}</Text>
-            <Text style={styles.equityHint}>at {fmt(v.propertyValue)} value · 80% LVR</Text>
-          </View>
-          <Text style={styles.ipBody}>Usable equity = 80% of the property value minus what you still owe. Kill more principal, unlock more deposit. 📈</Text>
+          {v.equityKnown ? (
+            <>
+              <View style={styles.equityHead}>
+                <Text style={styles.equityBig}>{v.usableEquityLabel}</Text>
+                <Text style={styles.equityHint}>at {fmt(v.propertyValue!)} value · {Math.round((s.loanFacts.lvr ?? 0) * 100)}% LVR</Text>
+              </View>
+              <Text style={styles.ipBody}>Usable equity = your LVR × the property value, minus what you still owe. Kill more principal, unlock more deposit. 📈</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.ipBody}>Add your property value to see how much equity you could unlock toward your next place.</Text>
+              <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
+                <Text style={styles.equityCtaText}>Add loan details →</Text>
+              </Pressable>
+            </>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -166,4 +182,6 @@ const styles = StyleSheet.create({
   equityBig: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: '#d9c9f7', letterSpacing: -0.6 },
   equityHint: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
   ipBody: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, lineHeight: 18, marginTop: 11 },
+  equityCta: { alignSelf: 'flex-start', backgroundColor: 'rgba(201,179,245,.16)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 12 },
+  equityCtaText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.purple },
 });

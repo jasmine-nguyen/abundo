@@ -67,6 +67,16 @@ BREAKDOWN_PATH = "/breakdown"
 # so no real category id can ever collide with this key.
 UNCATEGORIZED_KEY = "__uncategorized__"
 
+# --- Loan facts (user-entered home-loan inputs) ----------------------------
+# API Gateway route path for the loan-facts endpoints (GET current, PUT to set).
+# The user enters facts no bank feed provides (original amount, property value,
+# LVR, rate, scheduled + extra repayment); GET returns null fields until saved.
+LOANFACTS_PATH = "/loanfacts"
+
+# Upper bound for the dollar-amount fields (original / homeValue / baseRepay /
+# extra). Same ceiling as budget targets — a sanity guard, not a real limit.
+LOANFACTS_FIELD_MAX = 1_000_000_000
+
 # --- Home loan (live mortgage balance, WHIT-8) -----------------------------
 # API Gateway route path for the home-loan balance endpoint (GET only). The
 # balance-poller lambda writes the row; this read API serves it to the app.

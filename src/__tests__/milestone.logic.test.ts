@@ -4,7 +4,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { milestoneView } from '../context';
 import { MILESTONES, PROPERTY_VALUE, HOME_LOAN_LVR, milestoneTime, usableEquity } from '../milestones';
-import { makeState } from './factory';
+import { makeState, EMPTY_LOAN_FACTS } from './factory';
 
 // A UTC-midnight Date the selector reads via get*()/Date.UTC — matches how the
 // milestone dates are compared. Passing the milestone's own ISO gives a `today`
@@ -42,11 +42,39 @@ describe('milestoneView — no balance yet', () => {
 });
 
 describe('milestoneView — usable equity', () => {
-  it('derives equity from the property value and LVR, clamped ≥ 0', () => {
+  it('derives equity from the saved property value and LVR, clamped ≥ 0', () => {
     const v = milestoneView(makeState({ homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } }));
-    // 770000 * 0.8 - 596642.43 = 19357.57 -> round 19358
+    // LOAN_FACTS: homeValue 770000, lvr 0.8 -> 770000 * 0.8 - 596642.43 = 19357.57 -> round 19358
+    expect(v.equityKnown).toBe(true);
     expect(v.usableEquity).toBe(19358);
     expect(v.usableEquityLabel).toBe('$19,358');
+    expect(v.propertyValue).toBe(770000);
+    expect(v.rows[0].targetEquity).toBe(72000);  // 770000*0.8 - 544000
+  });
+
+  it('gates equity behind saved facts: unset -> null figures, "—" label', () => {
+    const v = milestoneView(makeState({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: null } }));
+    expect(v.equityKnown).toBe(false);
+    expect(v.usableEquity).toBeNull();
+    expect(v.usableEquityLabel).toBe('—');
+    expect(v.propertyValue).toBeNull();
+    expect(v.rows.every((r) => r.targetEquity === null)).toBe(true);
+    // Balance-driven progress is unaffected — it doesn't need the facts.
+    expect(v.hasBalance).toBe(true);
+    expect(v.clearedCount).toBe(0);
+  });
+
+  it('facts saved but balance not loaded: live equity null, per-sprint targetEquity computed', () => {
+    // The equityKnown × hasBalance asymmetry: LIVE equity needs both, targets need
+    // only the facts — so the table shows real targets next to a "—" current equity.
+    const v = milestoneView(makeState({ homeLoan: { balance: null, asOf: null } }));
+    expect(v.equityKnown).toBe(true);        // facts set (factory default)…
+    expect(v.hasBalance).toBe(false);        // …but no live balance
+    expect(v.usableEquity).toBeNull();       // needs both -> null, never 0/NaN
+    expect(v.usableEquityLabel).toBe('—');
+    expect(v.propertyValue).toBe(770000);    // needs only the facts
+    expect(v.rows[0].targetEquity).toBe(72000);   // 770000*0.8 - 544000
+    expect(v.rows.every((r) => r.targetEquity !== null)).toBe(true);
   });
 
   it('never goes negative when the balance exceeds borrowing power', () => {

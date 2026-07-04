@@ -9,12 +9,13 @@
 // (e.g. 770000 * 0.8 - 544000 = 72000 at Sprint 0), which is what pins the two
 // constants below.
 
-// The property's value used for the usable-equity (borrowing-power) calc. Not
-// available from the balance feed — it's a valuation, so it lives here.
+// Reference property value + LVR. As of the Loan facts card these are NO LONGER
+// the live source — the app reads the user-entered `homeValue`/`lvr` from context
+// (`s.loanFacts`) and shows a "set this up" state until saved. These constants
+// remain only as documented reference defaults (and the value the form suggests /
+// tests build on). `usableEquity()` takes homeValue + lvr as params, so the live
+// values flow straight through it.
 export const PROPERTY_VALUE = 770000;
-
-// Loan-to-value ratio the lender allows against the property (80%). Usable
-// equity toward the next deposit = PROPERTY_VALUE * HOME_LOAN_LVR - balance.
 export const HOME_LOAN_LVR = 0.8;
 
 export interface Milestone {
