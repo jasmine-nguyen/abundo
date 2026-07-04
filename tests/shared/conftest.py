@@ -146,6 +146,14 @@ def _client_error(code: str, message: str = "boom"):
     return err
 
 
+@pytest.fixture
+def database_error(shared):
+    """The DatabaseError type handle_database_error raises (WHIT-127). Depends on
+    `shared` so shared/ is on sys.path and this resolves the same class the repos do."""
+    import repository_errors
+    return repository_errors.DatabaseError
+
+
 class FakeTable:
     """In-memory DynamoDB table stand-in, injected via ``repo._table``. Emulates the
     calls the shared TransactionRepository makes: batch_writer put, conditional

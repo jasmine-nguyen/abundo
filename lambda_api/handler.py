@@ -36,6 +36,7 @@ from repository import (
     BudgetRepository,
     CategoryNotFoundError,
     CategoryRepository,
+    DatabaseError,
     DeviceRepository,
     DuplicateCategoryError,
     HomeLoanBalanceRepository,
@@ -133,7 +134,7 @@ def lambda_handler(event, context):
         if path == INSIGHTS_AI_PATH and method == "POST":
             return generate_ai_insights(
                 CategoryRepository(), BudgetRepository(), TransactionRepository(),
-                PayCycleRepository(), InsightRepository())
+                PayCycleRepository(), InsightRepository(), event)
 
         if path == HOMELOAN_PATH and method == "GET":
             return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
@@ -426,7 +427,7 @@ def delete_category(
     # fail the delete, so it is best-effort: log and return 200 if it can't complete.
     try:
         budget_repo.delete_budget(cat_id)
-    except (VersionConflictError, RuntimeError) as e:
+    except (VersionConflictError, DatabaseError) as e:
         logger.warning("budget cascade failed for deleted category %s: %s", cat_id, e)
 
     return _json_response(200, {"id": cat_id})
@@ -687,19 +688,96 @@ def _window_category_spend(transactions: list[dict], categories: list[dict],
     return [row for _name, _cid, row in rows]
 
 
+_GOAL_PAYOFF_MODES = {"partial", "flat", "ahead"}
+# The projected payoff label the client sends, e.g. "Nov 2042" — the one free-form
+# string in an otherwise numbers-only goal, and the one value the prompt echoes. Pin
+# its exact shape so a garbage/misleading label ("Soon!", "Never") can't reach the model.
+_GOAL_DATE_RE = re.compile(r"^[A-Z][a-z]{2} \d{4}$")
+
+
+def _finite_number(value, *, low=0.0, high=None) -> bool:
+    """True when `value` is a real (non-bool) finite number in [low, high]. bool is an
+    int subclass, so it's excluded explicitly; math.isfinite rejects NaN/Infinity,
+    which json.loads accepts by default."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if not math.isfinite(value) or value < low:
+        return False
+    return high is None or value <= high
+
+
+def _sanitise_goal(raw) -> dict | None:
+    """Validate + narrow a client-sent home-loan goal signal (WHIT-134) to a small,
+    numbers-only dict, or None when it's absent/malformed.
+
+    The goal is client-COMPUTED (unlike the server-assembled spend), so anything
+    off-shape is dropped rather than trusted: a bad goal degrades to spend-only —
+    never a 400, and never a junk figure the "use ONLY these numbers" prompt would
+    parrot. Only the payoff cases carry a real date; 'none'/'unready' never reach here.
+    """
+    if not isinstance(raw, dict):
+        return None
+    mode = raw.get("payoff_mode")
+    if mode not in _GOAL_PAYOFF_MODES:
+        return None
+    when = raw.get("mortgage_free_date")
+    if not isinstance(when, str) or not _GOAL_DATE_RE.match(when):
+        return None
+    extra = raw.get("current_extra_monthly")
+    if not _finite_number(extra, high=1_000_000):
+        return None
+    goal = {
+        "payoff_mode": mode,
+        "mortgage_free_date": when,
+        "current_extra_monthly": float(extra),
+    }
+    # Optional sensitivity — keep only when finite + positive + plausibly bounded.
+    months = raw.get("months_sooner_per_100_extra")
+    if _finite_number(months, low=0.0, high=1200) and months > 0:
+        goal["months_sooner_per_100_extra"] = float(months)
+    return goal
+
+
+def _extract_goal(event) -> dict | None:
+    """Pull + sanitise the optional home-loan goal from a POST body (WHIT-134).
+
+    Never raises, never 400s: an absent/empty/non-JSON body — or one with no valid
+    "goal" — yields None (spend-only). This is deliberately NOT _parse_json_body,
+    which 400s an empty body; older app versions POST with no body at all and must
+    keep working.
+    """
+    if not event:
+        return None
+    raw_body = event.get("body") or ""
+    if not raw_body:
+        return None
+    try:
+        if event.get("isBase64Encoded"):
+            raw_body = base64.b64decode(raw_body).decode("utf-8")
+        body = json.loads(raw_body)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    return _sanitise_goal(body.get("goal"))
+
+
 def assemble_insight_input(
     category_repo: CategoryRepository,
     budget_repo: BudgetRepository,
     transaction_repo: TransactionRepository,
     paycycle_repo: PayCycleRepository,
+    goal: dict | None = None,
 ) -> tuple[dict, str]:
     """Build the numbers-only model input for the AI insight, and the cache key.
 
     Returns (model_input, cycle_start). model_input carries category spend
     (posted/pending), budget targets, the uncategorized bucket, the pay cycle, and
     INSIGHTS_PRIOR_CYCLES prior cycle(s) of category spend for trend — as plain
-    floats. NO loan data, NO transaction descriptions/merchants/account ids
-    (spend-only scope, WHIT-104). cycle_start is the stable per-cycle cache key.
+    floats. NO transaction descriptions/merchants/account ids. When a sanitised
+    `goal` is passed (WHIT-134), a small home-loan goal block is added so advice can
+    tie cuts to the mortgage-free date. cycle_start is the stable per-cycle cache key;
+    because the goal is part of model_input, it's part of the input_hash too.
     """
     categories = category_repo.list_categories()
     cycle = paycycle_repo.get_paycycle()
@@ -740,6 +818,8 @@ def assemble_insight_input(
         "uncategorized": unc,
         "prior_cycles": prior,
     }
+    if goal is not None:
+        model_input["goal"] = goal
     return model_input, start
 
 
@@ -769,17 +849,21 @@ def generate_ai_insights(
     transaction_repo: TransactionRepository,
     paycycle_repo: PayCycleRepository,
     insight_repo: InsightRepository,
+    event: dict | None = None,
 ) -> dict:
     """POST /insights/ai — generate suggestions from the user's real figures via the
     Anthropic API, cache them for the cycle, and return them.
 
     Skips the paid call when a cached insight exists for this cycle AND the input is
     unchanged (input_hash match) — so re-tapping "Analyse" mid-cycle is free unless
-    the numbers moved. On an Anthropic failure returns a 502 with an error body (no
-    key leaked) so the client shows a retry, not a silent success.
+    the numbers moved. The optional home-loan goal from the request body (WHIT-134)
+    joins model_input, so a changed goal is a changed hash → regenerate. On an
+    Anthropic failure returns a 502 with an error body (no key leaked) so the client
+    shows a retry, not a silent success.
     """
+    goal = _extract_goal(event)
     model_input, cycle_start = assemble_insight_input(
-        category_repo, budget_repo, transaction_repo, paycycle_repo)
+        category_repo, budget_repo, transaction_repo, paycycle_repo, goal)
     input_hash = hashlib.sha256(
         json.dumps(model_input, sort_keys=True, default=str).encode()).hexdigest()
 

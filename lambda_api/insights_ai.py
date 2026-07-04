@@ -11,9 +11,10 @@ model is asked to reply as strict JSON, and we parse defensively (extract the
 first {...} span, fall back to a graceful empty result) so a chatty model can
 never 500 the endpoint.
 
-Scope (spend-only, WHIT-104): the model is given category spend, budgets and the
-pay cycle — NO loan data, and NO transaction descriptions/merchants/account ids.
-Tying advice to the mortgage-free goal is a deliberate follow-up.
+Scope: the model is given category spend, budgets and the pay cycle, and — when the
+request carries one (WHIT-134) — an optional home-loan "goal" block (projected
+mortgage-free month + the exact months-sooner-per-$100 sensitivity) so advice can
+tie cuts to the payoff date. NO transaction descriptions/merchants/account ids.
 """
 
 import json
@@ -45,6 +46,15 @@ _SYSTEM_PROMPT = (
     "specific, actionable suggestions about where to cut back, grounded in the "
     "actual category totals (name the category and the dollar figure). "
     "Be encouraging, not preachy. This is guidance, not financial advice. "
+    "If a \"goal\" block is present, the user is paying down a home loan and wants to "
+    "be mortgage-free sooner (projected month: goal.mortgage_free_date). For ONE or "
+    "TWO suggestions, connect a specific category cut to the loan — the dollars it "
+    "frees each month could go onto the mortgage — and reference "
+    "goal.mortgage_free_date as the current projection. Only if "
+    "goal.months_sooner_per_100_extra is given may you mention a payoff-time effect, "
+    "and ONLY as roughly that many months sooner for each extra $100 per month; NEVER "
+    "scale it up for larger amounts or invent a different month count. If there is no "
+    "\"goal\" block, do not mention the loan at all. "
     "Reply with STRICT JSON only, no prose outside it, in exactly this shape: "
     '{"summary": "<one sentence>", "suggestions": ["<tip>", "<tip>"]}'
 )

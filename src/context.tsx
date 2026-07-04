@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 
 export type { LoanFacts, LoanFactsInput } from './api';
@@ -312,7 +312,7 @@ export interface AppContext {
 	aiInsightsLoading: boolean;
 	aiInsightsError: boolean;
 	refreshAiInsights: () => Promise<void>;
-	generateAiInsights: () => Promise<void>;
+	generateAiInsights: (goal?: AiGoalSignal | null) => Promise<void>;
 	homeLoan: HomeLoanState;
 	homeLoanLoading: boolean;
 	homeLoanError: boolean;
@@ -458,11 +458,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 			// the user can still generate.
 		}
 	}, []);
-	const generateAiInsights = useCallback(async () => {
+	// `goal` is passed IN by the caller (computed from live state at tap time), not
+	// read from a closure here — so this stays a stable useCallback([]) and can never
+	// send a stale goal.
+	const generateAiInsights = useCallback(async (goal?: AiGoalSignal | null) => {
 		setAiInsightsLoading(true);
 		setAiInsightsError(false);
 		try {
-			setAiInsights(await apiGenerateAiInsights());
+			setAiInsights(await apiGenerateAiInsights(goal));
 		} catch {
 			setAiInsightsError(true);
 		} finally {
@@ -1243,6 +1246,43 @@ export function paydownView(s: AppContext, today?: Date): PaydownView {
     return { mode: 'ahead', freedomLabel, aheadLabel: `${y}y ${m}m`, interestDodged: dodged, interestDodgedLabel: fmt(dodged) };
   }
   return { ...base, mode: 'flat', freedomLabel };
+}
+
+// The home-loan goal signal sent with an AI-insights generate request (WHIT-134),
+// so the advice can tie spend cuts to becoming mortgage-free sooner. Pure over the
+// SAME payoff projection as paydownView (the single source of truth — we never
+// rebuild the amortization) + `today` (injected for tests).
+//
+// Returns null when there is no honest payoff signal to send — 'unready' (facts or
+// balance not loaded) or 'none' (the loan never pays off, so there's no date). In
+// the payoff cases (partial/flat/ahead) it carries the projected month, the current
+// extra, and an EXACT sensitivity: how many whole months the payoff moves in per
+// additional $100/month. Payoff time is convex in the payment, so this holds for
+// $100 only — callers/the model must not extrapolate it to larger amounts.
+export function aiGoalSignal(s: AppContext, today?: Date): AiGoalSignal | null {
+  const pv = paydownView(s, today);
+  if (pv.mode !== 'partial' && pv.mode !== 'flat' && pv.mode !== 'ahead') return null;
+
+  const facts = s.loanFacts;
+  const balance = s.homeLoan.balance;
+  // pv is a payoff mode, so paydownView already proved facts are ready + balance is
+  // finite; re-guard so TS narrows and a future change can't leak a NaN.
+  if (!loanFactsReady(facts) || typeof balance !== 'number' || !Number.isFinite(balance)) return null;
+
+  const i = facts.ratePct / 100 / MONTHS_PER_YEAR;
+  const withExtra = amortize(balance, i, facts.baseRepay + facts.extra);
+  const withMore = amortize(balance, i, facts.baseRepay + facts.extra + 100);
+  const monthsSooner =
+    withExtra && withMore && withExtra.periods - withMore.periods >= 0.5
+      ? Math.round(withExtra.periods - withMore.periods)
+      : null;
+
+  return {
+    payoff_mode: pv.mode,
+    mortgage_free_date: pv.freedomLabel,
+    current_extra_monthly: facts.extra,
+    months_sooner_per_100_extra: monthsSooner,
+  };
 }
 
 export interface LastRepaymentView {

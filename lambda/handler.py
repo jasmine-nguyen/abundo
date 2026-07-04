@@ -104,7 +104,7 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # event unmarked, so BankSync's retry re-processes it. The old `except ClientError`
     # swallowed the error into an ignored return dict, so the handler reported 200 "ok"
     # with nothing written; it was also dead — handle_database_error converts every
-    # ClientError to a RuntimeError before it could reach here (WHIT-83).
+    # ClientError to a DatabaseError before it could reach here (WHIT-83, WHIT-127).
     repo.insert_or_reconcile(normalised_transactions)
 
     # After the write succeeds, fire any budget-threshold crossing (best-effort).

@@ -32,6 +32,13 @@ const CATS = [
   { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7FD49B', bucket: 'Living', recent: 0 },
 ] as const;
 
+// Loan state defaults so aiGoalSignal(s) (called at render) resolves. All-null facts
+// + no balance -> 'unready' -> null goal -> the spend-only privacy note. Override
+// per-test to exercise the goal-attached path.
+const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+// A ready loan that pays off ahead of schedule -> aiGoalSignal returns a real signal.
+const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
+
 function state(over: Partial<AppContext>): AppContext {
   return {
     breakdown: {},
@@ -42,6 +49,8 @@ function state(over: Partial<AppContext>): AppContext {
     aiInsightsError: false,
     refreshAiInsights,
     generateAiInsights,
+    loanFacts: NO_LOAN_FACTS,
+    homeLoan: { balance: null, asOf: null },
     category: (id: string | null) => CATS.find((c) => c.id === id),
     ...over,
   } as unknown as AppContext;
@@ -132,9 +141,9 @@ it('keeps rows visible when a refresh is in flight (does not flash Loading)', ()
 it('shows the idle prompt + the analyse button before any AI insight exists', () => {
   mockState = state({ breakdown: {}, aiInsights: null });
   render(<Insights />);
-  expect(screen.getByText('AI insights')).toBeTruthy();
+  expect(screen.getByText('Worth a look')).toBeTruthy();
   expect(screen.getByText('Analyse my spending')).toBeTruthy();
-  // The privacy note is always present so sending data is a conscious choice.
+  // The full privacy note is present before the first send so it's a conscious choice.
   expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
 });
 
@@ -143,6 +152,45 @@ it('tapping "Analyse my spending" calls generateAiInsights', () => {
   render(<Insights />);
   fireEvent.press(screen.getByText('Analyse my spending'));
   expect(generateAiInsights).toHaveBeenCalled();
+});
+
+it('keeps the note spend-only (no loan figures) when the loan goal is not ready', () => {
+  mockState = state({ breakdown: {}, aiInsights: null });   // NO_LOAN_FACTS default
+  render(<Insights />);
+  expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
+  expect(screen.queryByText(/home-loan figures/)).toBeNull();
+});
+
+it('names home-loan figures in the note + sends a goal once the loan is ready (WHIT-134)', () => {
+  mockState = state({
+    breakdown: {},
+    aiInsights: null,
+    loanFacts: READY_LOAN_FACTS,
+    homeLoan: { balance: 528000, asOf: null },
+  });
+  render(<Insights />);
+  // Disclosure now names the loan figures (they leave the device only in this case).
+  expect(screen.getByText(/home-loan figures \(balance, rate, repayments\)/)).toBeTruthy();
+  // And the generate call carries the payoff signal, not just spend.
+  fireEvent.press(screen.getByText('Analyse my spending'));
+  expect(generateAiInsights).toHaveBeenCalledWith(
+    expect.objectContaining({ payoff_mode: 'ahead', mortgage_free_date: expect.any(String) }));
+});
+
+it('the COMPACT refresh also forwards the goal (not an empty request) with loan figures named', () => {
+  // The design-pass refresh is a SEPARATE onPress from the big button — prove the goal
+  // rides it too, and the populated note names loan figures when a goal is attached.
+  mockState = state({
+    breakdown: {},
+    aiInsights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    loanFacts: READY_LOAN_FACTS,
+    homeLoan: { balance: 528000, asOf: null },
+  });
+  render(<Insights />);
+  expect(screen.getByText(/Re-analysing sends your category spend totals and home-loan figures/)).toBeTruthy();
+  fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
+  expect(generateAiInsights).toHaveBeenCalledWith(
+    expect.objectContaining({ payoff_mode: 'ahead', mortgage_free_date: expect.any(String) }));
 });
 
 it('renders the AI summary + each suggestion once generated', () => {
@@ -158,14 +206,68 @@ it('renders the AI summary + each suggestion once generated', () => {
   expect(screen.getByText('You are pacing well this cycle.')).toBeTruthy();
   expect(screen.getByText('Trim $20 from Coffee')).toBeTruthy();
   expect(screen.getByText('Watch Groceries')).toBeTruthy();
-  // With an insight present the button offers a re-run.
-  expect(screen.getByText('Re-analyse my spending')).toBeTruthy();
+  // With an insight present the re-run is a compact refresh control (not a big button)
+  // and the disclosure is the compact, forward-looking form (Anthropic still named).
+  expect(screen.getByLabelText('Re-analyse my spending')).toBeTruthy();
+  expect(screen.queryByText('Analyse my spending')).toBeNull();
+  expect(screen.getByText(/Re-analysing sends your category spend totals to Anthropic/)).toBeTruthy();
+});
+
+it('tapping the compact refresh re-runs generation', () => {
+  mockState = state({
+    breakdown: {},
+    aiInsights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+  });
+  render(<Insights />);
+  fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
+  expect(generateAiInsights).toHaveBeenCalled();
+});
+
+it('shows a "generated ago" stamp from the timestamp', () => {
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  mockState = state({
+    breakdown: {},
+    aiInsights: { summary: 'ok', suggestions: [], generated_at: twoDaysAgo, cycle_start: '2026-06-25', cached: true },
+  });
+  render(<Insights />);
+  expect(screen.getByText('2d ago')).toBeTruthy();
+});
+
+it('keeps the insight visible + swaps the refresh for a spinner while re-running', () => {
+  mockState = state({
+    breakdown: {},
+    aiInsights: { summary: 'still here', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    aiInsightsLoading: true,
+  });
+  render(<Insights />);
+  // The old advice stays put (no flash to empty)...
+  expect(screen.getByText('still here')).toBeTruthy();
+  // ...and the tappable refresh is replaced by the busy spinner (positive assertion so
+  // this fails if the swap regresses).
+  expect(screen.getByTestId('ai-refresh-busy')).toBeTruthy();
+  expect(screen.queryByLabelText('Re-analyse my spending')).toBeNull();
+});
+
+it('surfaces a failed re-analyse without dropping the existing advice', () => {
+  // hasAi stays true on a re-run failure -> the error must still be shown (a silent
+  // stop would leave stale advice with no signal). The refresh stays tappable to retry.
+  mockState = state({
+    breakdown: {},
+    aiInsights: { summary: 'keep me', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    aiInsightsError: true,
+  });
+  render(<Insights />);
+  expect(screen.getByText('keep me')).toBeTruthy();          // advice retained
+  expect(screen.getByText(/Couldn’t refresh/)).toBeTruthy(); // failure is announced
+  expect(screen.getByLabelText('Re-analyse my spending')).toBeTruthy(); // retry available
 });
 
 it('shows a retryable error when generation failed', () => {
   mockState = state({ breakdown: {}, aiInsights: null, aiInsightsError: true });
   render(<Insights />);
   expect(screen.getByText(/Couldn’t generate insights/)).toBeTruthy();
+  // On the error path the first-run button becomes an explicit retry.
+  expect(screen.getByText('Try again')).toBeTruthy();
 });
 
 it('refreshes any cached AI insight when the tab gains focus', () => {

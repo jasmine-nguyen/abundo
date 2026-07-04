@@ -14,6 +14,7 @@ import base64
 import copy
 import json
 
+import pytest
 from botocore.exceptions import ClientError
 
 
@@ -359,13 +360,26 @@ def test_delete_cascade_conflict_is_best_effort(handler):
 
 
 def test_delete_cascade_db_error_is_best_effort(handler):
-    # Same tolerance for a DB fault surfaced as RuntimeError by handle_database_error.
+    # Same tolerance for a DB fault surfaced as DatabaseError by handle_database_error
+    # (WHIT-127): the narrowed cascade catch must still swallow it and return 200.
     repo = FakeCategoryRepo()
-    budget = FakeBudgetRepo(raises=RuntimeError("Database delete budget failed"))
+    budget = FakeBudgetRepo(raises=handler.DatabaseError("Database delete budget failed"))
 
     resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
     assert resp["statusCode"] == 200
+
+
+def test_delete_cascade_non_db_runtimeerror_is_not_swallowed(handler):
+    # WHIT-127's whole point: the cascade catch is now DatabaseError-specific, so an
+    # UNRELATED RuntimeError (a logic bug in delete_budget, not a DB fault) must NOT
+    # be masked as a best-effort 200 — it propagates (→ Lambda 500) so the bug
+    # surfaces. Fail-on-revert: widening the catch back to RuntimeError reddens this.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(raises=RuntimeError("bug: not a DB error"))
+
+    with pytest.raises(RuntimeError, match="bug"):
+        handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
 
 def test_delete_dispatch(handler, monkeypatch):

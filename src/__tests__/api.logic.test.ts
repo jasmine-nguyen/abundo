@@ -58,7 +58,18 @@ describe('AI insights (WHIT-104)', () => {
     expect(url).toBe(`${API}/insights/ai`);
     expect(opts.method).toBe('POST');
     expect(opts.headers.Authorization).toBe('Bearer test-token');
+    // No goal -> body carries {goal: null}, JSON content-type.
+    expect(opts.headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(opts.body)).toEqual({ goal: null });
     expect(out).toEqual(AI);
+  });
+
+  it('generateAiInsights sends the home-loan goal in the body when supplied (WHIT-134)', async () => {
+    fetchMock.mockReturnValue(okJson(AI));
+    const goal = { payoff_mode: 'ahead' as const, mortgage_free_date: 'Nov 2042', current_extra_monthly: 500, months_sooner_per_100_extra: 7 };
+    await generateAiInsights(goal);
+    const [, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(JSON.parse(opts.body)).toEqual({ goal });
   });
 
   it('fetchAiInsights throws on a not-OK response', async () => {

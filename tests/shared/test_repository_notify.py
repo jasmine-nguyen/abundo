@@ -75,12 +75,12 @@ def test_mark_writes_a_ttl(shared):
     assert isinstance(item["expires_at"], int) and item["expires_at"] > 0
 
 
-def test_client_error_surfaces_as_runtime_error(shared, client_error):
+def test_client_error_surfaces_as_database_error(shared, client_error, database_error):
     r = _repo(shared)
 
     def boom(**kwargs):
         raise client_error("InternalServerError")
 
     r._table.update_item = boom
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         r.mark_fired("2026-07-01", 14, "groceries#80")
