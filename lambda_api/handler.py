@@ -52,8 +52,11 @@ from banksync_enrichments import (
 from encoders import DecimalEncoder
 import base64
 import json
+import logging
 import math
 import re
+
+logger = logging.getLogger(__name__)
 
 
 def lambda_handler(event, context):
@@ -85,7 +88,7 @@ def lambda_handler(event, context):
             return update_category(event, CategoryRepository())
 
         if path.startswith(f"{CATEGORY_PATH}/") and method == "DELETE":
-            return delete_category(event, CategoryRepository())
+            return delete_category(event, CategoryRepository(), BudgetRepository())
 
         if path == BUDGET_PATH and method == "GET":
             # Window is derived server-side from the stored pay cycle; a stale
@@ -346,9 +349,13 @@ def update_category(event: dict, repo: CategoryRepository) -> dict:
     return _json_response(200, {**updated, "recent": 0})
 
 
-def delete_category(event: dict, repo: CategoryRepository) -> dict:
-    """DELETE /categories/{id} — hard-delete a category. No server-side cascade;
-    transactions still referencing the id render as Uncategorized client-side.
+def delete_category(
+    event: dict, repo: CategoryRepository, budget_repo: BudgetRepository
+) -> dict:
+    """DELETE /categories/{id} — hard-delete a category, then cascade-delete its
+    budget target so a stale target can't linger (and silently reappear if a
+    same-slug category is later re-created). Transactions still referencing the id
+    render as Uncategorized client-side (intended — they need re-filing).
     """
     cat_id = (event.get("pathParameters") or {}).get("id")
     if not cat_id:
@@ -358,6 +365,16 @@ def delete_category(event: dict, repo: CategoryRepository) -> dict:
         repo.delete_category(cat_id)
     except CategoryNotFoundError:
         return _json_response(404, {"error": "category not found"})
+
+    # Cascade AFTER the category is gone. Category-first is the safe failure order:
+    # a failed cascade only leaves the orphan target (today's behaviour, recoverable),
+    # whereas deleting the budget first then failing the category delete would drop a
+    # target for a still-live category — real loss. Per WHIT-73 the cascade must not
+    # fail the delete, so it is best-effort: log and return 200 if it can't complete.
+    try:
+        budget_repo.delete_budget(cat_id)
+    except (VersionConflictError, RuntimeError) as e:
+        logger.warning("budget cascade failed for deleted category %s: %s", cat_id, e)
 
     return _json_response(200, {"id": cat_id})
 

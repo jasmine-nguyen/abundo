@@ -99,3 +99,37 @@ class BudgetRepository:
                     handle_database_error(e, "set budget")
                 # The version moved under us; loop retries once.
         raise VersionConflictError("set_budget: exhausted retries under write contention")
+
+    def delete_budget(self, cat_id: str) -> None:
+        """Remove a category's budget target, if any — the cascade run when a
+        category is deleted, so a stale target can't linger (and silently reappear
+        if a same-slug category is later re-created).
+
+        Idempotent no-op when the target is absent — the common case, since most
+        categories never carry a budget — so it neither seeds the config item nor
+        bumps the version in that case. When a target exists, REMOVE its map key
+        under the same optimistic-lock guard as set_budget, retrying once on a race.
+        """
+        for _attempt in range(2):
+            item = self._get_config()
+            if item is None or cat_id not in item["items"]:
+                return  # no target for this id -> nothing to cascade
+            version = item["version"]
+            try:
+                self._get_table().update_item(
+                    Key=_BUDGETS_KEY,
+                    # REMOVE drops one map key; SET bumps the version. The config item stays.
+                    UpdateExpression="REMOVE #items.#id SET #v = :next",
+                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
+                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
+                    ExpressionAttributeValues={
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                return
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "delete budget")
+                # The version moved under us; loop re-reads and retries once.
+        raise VersionConflictError("delete_budget: exhausted retries under write contention")

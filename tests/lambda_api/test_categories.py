@@ -55,6 +55,20 @@ class FakeCategoryRepo:
         return cat_id
 
 
+class FakeBudgetRepo:
+    """Handler-level stand-in for BudgetRepository — records the cascade delete
+    (WHIT-73) and can be armed to raise, to exercise the best-effort path."""
+
+    def __init__(self, raises=None):
+        self._raises = raises
+        self.delete_calls = []
+
+    def delete_budget(self, cat_id):
+        self.delete_calls.append(cat_id)
+        if self._raises is not None:
+            raise self._raises
+
+
 def _categories_event(body='{"name": "Gym", "bucket": "Lifestyle", "icon": "dumbbell"}', is_b64=False):
     return {
         "rawPath": "/categories",
@@ -297,41 +311,74 @@ def test_update_dispatch(handler, monkeypatch):
 
 def test_delete_success(handler):
     repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo()
 
-    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo)
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "coffee"}
     assert repo.delete_calls == ["coffee"]
+    assert budget.delete_calls == ["coffee"]           # WHIT-73: cascade the target
 
 
 def test_delete_missing_id_returns_404(handler):
     repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo()
     event = _category_item_event("DELETE", body=None)
     event["pathParameters"] = {}
 
-    resp = handler.delete_category(event, repo)
+    resp = handler.delete_category(event, repo, budget)
 
     assert resp["statusCode"] == 404
     assert repo.delete_calls == []
+    assert budget.delete_calls == []                   # nothing deleted -> no cascade
 
 
 def test_delete_unknown_id_returns_404(handler):
     repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
+    budget = FakeBudgetRepo()
 
-    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo)
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
 
     assert resp["statusCode"] == 404
+    # Category delete failed -> the cascade must NOT run (never touch the budget of a
+    # category that still exists).
+    assert budget.delete_calls == []
+
+
+def test_delete_cascade_conflict_is_best_effort(handler):
+    # A version conflict on the cascade must NOT fail the delete — the category is
+    # already gone; the orphan just persists (today's behaviour). Returns 200.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(raises=handler.VersionConflictError("contention"))
+
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
+
+    assert resp["statusCode"] == 200
+    assert budget.delete_calls == ["coffee"]
+
+
+def test_delete_cascade_db_error_is_best_effort(handler):
+    # Same tolerance for a DB fault surfaced as RuntimeError by handle_database_error.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(raises=RuntimeError("Database delete budget failed"))
+
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budget)
+
+    assert resp["statusCode"] == 200
 
 
 def test_delete_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo()
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: budget)
 
     resp = handler.lambda_handler(_category_item_event("DELETE", body=None), None)
 
     assert resp["statusCode"] == 200
     assert repo.delete_calls == ["coffee"]
+    assert budget.delete_calls == ["coffee"]           # route wires the cascade
 
 
 def _ccfe():
