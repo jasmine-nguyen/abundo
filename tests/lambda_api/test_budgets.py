@@ -649,7 +649,8 @@ def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monk
     # next payday) must NOT smear into this cycle, while both cycle_start and today
     # count. Fails on the old `today+1` end (would sum 30); passes on the fix (sums 20).
     from datetime import date
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 1, 16))
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
@@ -668,7 +669,8 @@ def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatc
     # cycle_start (last cycle's spend) must NOT count in this cycle, while cycle_start
     # itself does. Locks the start bound the same way the end bound is locked.
     from datetime import date
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 1, 16))
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-02"},  # day before cycle_start -> OUT
@@ -685,7 +687,8 @@ def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatc
     # WHIT-75 for the PENDING bucket: a pending authorisation dated tomorrow must not
     # leak in either — pending stays 0, today's pending still counts.
     from datetime import date
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 1, 16))
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "pending"), "date": "2024-01-16"},  # today    -> IN
@@ -701,7 +704,8 @@ def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
     # Boundary independence from cycle length: with a 30-day cycle the end is still
     # `today`, so a txn dated tomorrow is excluded and cycle_start still counts.
     from datetime import date
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 2, 1))  # 29 days on -> cycle_start 2024-01-03
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 2, 1))  # 29 days on -> cycle_start 2024-01-03
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
@@ -725,7 +729,8 @@ def test_current_cycle_window_injectable_today_is_deterministic(handler):
 def test_current_cycle_window_defaults_to_melbourne_today(handler, monkeypatch):
     from datetime import date
     # With no explicit `today`, the window uses _melbourne_today().
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 2, 15))
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 2, 15))
     start, end = handler.current_cycle_window("2024-01-03", 14)
     assert (start, end) == ("2024-02-14", "2024-02-15")
 
@@ -737,8 +742,9 @@ def test_melbourne_today_maps_utc_instant_to_local_date(handler, monkeypatch):
         @classmethod
         def now(cls, tz=None):
             return datetime(2024, 6, 30, 15, 30, tzinfo=timezone.utc).astimezone(tz)
-    monkeypatch.setattr(handler, "datetime", _FrozenDatetime)
-    assert handler._melbourne_today().isoformat() == "2024-07-01"
+    import spend
+    monkeypatch.setattr(spend, "datetime", _FrozenDatetime)
+    assert spend._melbourne_today().isoformat() == "2024-07-01"
 
 
 def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypatch):
@@ -746,8 +752,9 @@ def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypa
     from zoneinfo import ZoneInfoNotFoundError
     # Simulate tzdata missing from the layer: ZoneInfo raises. The budget path must
     # degrade to UTC, not 500.
-    monkeypatch.setattr(handler, "_MELBOURNE", None)
+    import spend
+    monkeypatch.setattr(spend, "_MELBOURNE", None)
     def _boom(name):
         raise ZoneInfoNotFoundError(name)
-    monkeypatch.setattr(handler, "ZoneInfo", _boom)
-    assert handler._melbourne_today() == datetime.now(timezone.utc).date()
+    monkeypatch.setattr(spend, "ZoneInfo", _boom)
+    assert spend._melbourne_today() == datetime.now(timezone.utc).date()

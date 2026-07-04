@@ -5,6 +5,9 @@ ACCOUNT_ID_MAP = {
 }
 PENDING_STATUS = "pending"
 POSTED_STATUS = "posted"
+# Mirrors shared/constants.py (the webhook loads the shared copy) — the budget-alert
+# debounce marker TTL (WHIT-22). Kept equal here for the WHIT-136 sync guard.
+NOTIFY_TTL_SECONDS = 60 * 24 * 60 * 60
 MAX_PAGE_SIZE = 100
 # Imported at module load by the layer's repository_transaction (which this API
 # lambda uses for reads) even though only the webhook dead-letters. Must stay equal

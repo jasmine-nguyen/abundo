@@ -212,7 +212,8 @@ def test_breakdown_applies_current_cycle_window(handler, monkeypatch):
     # The window is the current pay cycle (Melbourne clock), inclusive [start, today].
     # A tomorrow-dated txn is excluded; older-than-7-days but in-cycle spend is IN
     # (guards the FEED_WINDOW_DAYS trap that made a client-side derivation wrong).
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2024, 1, 16))
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN (13 days ago)
