@@ -162,14 +162,32 @@ class TransactionRepository:
             handle_database_error(e, "read")
 
     def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
-        """Retrieves all pending transaction of an account using the account_id"""
-        try:
-            response = self._get_table().query(
-                KeyConditionExpression=Key("pk").eq(_build_pk(account_id)),
-                FilterExpression=Attr("status").eq(PENDING_STATUS),
-            )
+        """Retrieves all pending transactions of an account using the account_id.
 
-            return response.get("Items", [])
+        Follows pagination (WHIT-82): DynamoDB caps a query at 1MB per page and the
+        ``status == pending`` FilterExpression is applied AFTER that scan, per page.
+        Reading only the first page would leave a pending row that sits beyond it
+        invisible to reconciliation — a silent duplicate + lost category, no error.
+        So we loop on LastEvaluatedKey and accumulate across every page.
+        """
+        try:
+            table = self._get_table()
+            key_condition = Key("pk").eq(_build_pk(account_id))
+            items: list[dict] = []
+            start_key = None
+            while True:
+                kwargs = {
+                    "KeyConditionExpression": key_condition,
+                    "FilterExpression": Attr("status").eq(PENDING_STATUS),
+                }
+                if start_key is not None:
+                    kwargs["ExclusiveStartKey"] = start_key
+                response = table.query(**kwargs)
+                items.extend(response.get("Items", []))
+                start_key = response.get("LastEvaluatedKey")
+                if not start_key:
+                    break
+            return items
         except ClientError as e:
             handle_database_error(e, "read")
 
