@@ -3,7 +3,7 @@
 // (incl. encodeURIComponent + server-default field/operator omission), and the
 // not-OK throw. fetch is mocked; no network. WHIT-52 Slice 2.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights } from '../api';
+import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice } from '../api';
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
@@ -125,6 +125,31 @@ describe('deleteEnrichment', () => {
     expect(url).toBe(`${API}/enrichments/a%2Fb`);
     expect(opts.method).toBe('DELETE');
     expect(opts.headers.Authorization).toBe('Bearer test-token');
+  });
+});
+
+describe('registerDevice', () => {
+  it('POSTs /devices with the Bearer token and the {token} body', async () => {
+    fetchMock.mockReturnValue(okJson({ token: 'ExpoPushToken[x]' }));
+    const out = await registerDevice('ExpoPushToken[x]');
+    const [url, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe(`${API}/devices`);
+    expect(opts.method).toBe('POST');
+    expect(opts.headers['Content-Type']).toBe('application/json');
+    expect(opts.headers.Authorization).toBe('Bearer test-token');
+    expect(JSON.parse(opts.body)).toEqual({ token: 'ExpoPushToken[x]' });
+    expect(out).toEqual({ token: 'ExpoPushToken[x]' });
+  });
+
+  it('throws on a not-OK response', async () => {
+    fetchMock.mockReturnValue(notOk(400));
+    await expect(registerDevice('ExpoPushToken[x]')).rejects.toThrow('API error: 400');
+  });
+
+  it('throws (never calls fetch) when the token secret is missing', async () => {
+    delete process.env.EXPO_PUBLIC_API_TOKEN;
+    await expect(registerDevice('ExpoPushToken[x]')).rejects.toThrow('Missing EXPO_PUBLIC_API_TOKEN');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

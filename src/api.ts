@@ -502,3 +502,24 @@ export async function generateAiInsights(): Promise<AiInsights> {
 
   return response.json();
 }
+
+/**
+ * Register this device's Expo push token so the server can send it notifications.
+ * Auth-gated (the /devices route sits behind the same shared-secret authorizer as
+ * /enrichments), so it presents the Bearer token like the enrichments calls. The
+ * server stores tokens in a Set, so re-registering the same token is a no-op.
+ *
+ * @param token - The device's `ExpoPushToken[...]` value.
+ * @returns The registered token, echoed by the server.
+ * @throws If the response status is not OK (400 invalid token, 401 auth).
+ */
+export async function registerDevice(token: string): Promise<{ token: string }> {
+  const response = await fetch(`${API_BASE}/devices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ token }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}

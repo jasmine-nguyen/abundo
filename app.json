@@ -7,6 +7,7 @@
       "expo-font",
       "expo-splash-screen",
       "expo-status-bar",
+      "expo-notifications",
       "@react-native-community/datetimepicker"
     ],
     "name": "whittle",
