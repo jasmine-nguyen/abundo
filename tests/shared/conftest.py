@@ -89,7 +89,7 @@ _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 # shared/ modules whose bare names collide with the sibling suites.
 _REIMPORT = (
     "constants", "models", "encoders", "repository_base", "repository_transaction",
-    "repository_balance",
+    "repository_balance", "repository_loanfacts",
 )
 
 
@@ -111,10 +111,11 @@ def shared():
     import encoders
     import repository_transaction
     import repository_balance
+    import repository_loanfacts
 
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
-        balance=repository_balance,
+        balance=repository_balance, loanfacts=repository_loanfacts,
     )
     try:
         yield ns
@@ -231,6 +232,14 @@ def repo(shared):
 def balance_repo(shared):
     """A shared HomeLoanBalanceRepository backed by an in-memory FakeTable."""
     r = shared.balance.HomeLoanBalanceRepository()
+    r._table = FakeTable()
+    return r
+
+
+@pytest.fixture
+def loanfacts_repo(shared):
+    """A shared LoanFactsRepository backed by an in-memory FakeTable."""
+    r = shared.loanfacts.LoanFactsRepository()
     r._table = FakeTable()
     return r
 

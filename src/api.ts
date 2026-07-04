@@ -214,6 +214,56 @@ export async function fetchHomeLoan(): Promise<HomeLoan> {
   return response.json();
 }
 
+/**
+ * The user-entered home-loan facts no bank feed provides (Loan facts card).
+ * Every field is null until the user saves the form the first time — the app
+ * shows a friendly "set this up" state rather than fabricating defaults.
+ */
+export interface LoanFacts {
+  original: number | null;   // original loan amount
+  homeValue: number | null;  // current property value
+  lvr: number | null;        // loan-to-value ratio, a fraction 0–1
+  ratePct: number | null;    // interest rate, a percent
+  baseRepay: number | null;  // scheduled repayment per cycle
+  extra: number | null;      // extra repayment per cycle
+}
+
+/** The saved shape — all six fields present (what the form PUTs). */
+export interface LoanFactsInput {
+  original: number; homeValue: number; lvr: number; ratePct: number; baseRepay: number; extra: number;
+}
+
+/**
+ * Fetch the user's saved loan facts. Returns all-null fields until the user has
+ * saved them (so the caller shows a set-up prompt), never an error for "unset".
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchLoanFacts(): Promise<LoanFacts> {
+  const response = await fetch(`${API_BASE}/loanfacts`);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Save (replace) the user's loan facts — all six fields together.
+ *
+ * @param facts - The full { original, homeValue, lvr (fraction), ratePct, baseRepay, extra }.
+ * @returns The saved facts.
+ * @throws If the response status is not OK (e.g. 400 on an invalid field).
+ */
+export async function setLoanFacts(facts: LoanFactsInput): Promise<LoanFactsInput> {
+  const response = await fetch(`${API_BASE}/loanfacts`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(facts),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /** The persisted pay cycle: window length in days + the last pay date. */
 export interface PayCycle {
   length: number;        // 7 | 14 | 30 (Weekly / Fortnightly / Monthly)

@@ -23,6 +23,9 @@ import Goals from '../../app/(tabs)/goals';
 function state(over: Partial<AppContext>): AppContext {
   return {
     homeLoan: { balance: null, asOf: null },
+    // Loan facts saved by default (property value + LVR set) so equity renders;
+    // pass an all-null loanFacts to exercise the "set this up" empty state.
+    loanFacts: { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 },
     category: (id: string | null) => undefined,
     ...over,
   } as unknown as AppContext;
@@ -96,4 +99,35 @@ it('Goal-tab Sprint summary invites a tap before the balance loads', () => {
   render(<Goals />);
   expect(screen.getByText('The 36-month plan')).toBeTruthy();
   expect(screen.getByText('Tap to see your live progress')).toBeTruthy();
+});
+
+// --- empty state (loan facts not set) ----------------------------------------
+
+const EMPTY_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+
+it('Goal tab shows a set-up prompt (not fake numbers) when loan facts are unset', () => {
+  mockState = state({
+    goal: GOAL as AppContext['goal'],
+    fireRepayment: jest.fn() as AppContext['fireRepayment'],
+    loanFacts: EMPTY_FACTS,
+    homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' },
+  });
+  render(<Goals />);
+  // The real live balance still shows; the fake "$67,100 whittled" seed does not.
+  expect(screen.getByText('$596,642')).toBeTruthy();
+  expect(screen.getByText('Set up loan details →')).toBeTruthy();
+  expect(screen.queryByText(/whittled so far/i)).toBeNull();
+  expect(screen.queryByText('Mortgage-free')).toBeNull();  // seed projection hidden until set up
+});
+
+it('milestone screen shows an equity set-up prompt when the property value is unset', () => {
+  mockState = state({ loanFacts: EMPTY_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  render(<Milestone />);
+  // Balance + sprint plan still render (they only need the live balance)...
+  expect(screen.getByText('$596,642')).toBeTruthy();
+  expect(screen.getByText('The 36-month plan')).toBeTruthy();
+  // ...but equity is a prompt, not a fabricated figure.
+  expect(screen.getByText(/Add your property value/)).toBeTruthy();
+  fireEvent.press(screen.getByText('Add loan details →'));
+  expect(mockPush).toHaveBeenCalledWith('/loan');
 });

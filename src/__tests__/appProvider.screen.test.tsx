@@ -27,6 +27,7 @@ beforeEach(() => {
   mockApi.fetchPayCycle.mockResolvedValue({ length: 14, last_pay_date: '2024-01-03' });
   mockApi.fetchBudgets.mockResolvedValue({});
   mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
+  mockApi.fetchLoanFacts.mockResolvedValue({ original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null });
   mockApi.listEnrichments.mockResolvedValue([]);
 });
 
@@ -228,4 +229,36 @@ it('refreshHomeLoan flags an error when the fetch fails (not a permanent spinner
   const result = await mount();
   await waitFor(() => expect(result.current.homeLoanError).toBe(true));
   expect(result.current.homeLoan.balance).toBeNull();
+});
+
+// --- loan facts (Loan facts card) --------------------------------------------
+
+const FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
+
+it('refreshLoanFacts loads saved facts on mount', async () => {
+  mockApi.fetchLoanFacts.mockResolvedValue(FACTS);
+  const result = await mount();
+  await waitFor(() => expect(result.current.loanFacts.homeValue).toBe(770000));
+  expect(result.current.loanFacts.original).toBe(600000);
+});
+
+it('saveLoanFacts persists + optimistically updates, returns true', async () => {
+  mockApi.setLoanFacts.mockResolvedValue(FACTS);
+  const result = await mount();
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.saveLoanFacts(FACTS); });
+  expect(ok).toBe(true);
+  expect(mockApi.setLoanFacts).toHaveBeenCalledWith(FACTS);
+  expect(result.current.loanFacts.homeValue).toBe(770000);
+});
+
+it('saveLoanFacts rolls back + toasts on failure', async () => {
+  mockApi.setLoanFacts.mockRejectedValue(new Error('x'));
+  const result = await mount();  // mounts with all-null facts (beforeEach)
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.saveLoanFacts(FACTS); });
+  expect(ok).toBe(false);
+  // Rolled back to the pre-save (unset) state; the user is told.
+  expect(result.current.loanFacts.homeValue).toBeNull();
+  expect(result.current.toast).toBe('Could not save loan details. Please try again.');
 });

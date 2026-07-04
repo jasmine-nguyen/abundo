@@ -11,6 +11,8 @@ from constants import (
     FEED_WINDOW_DAYS,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_PATH,
+    LOANFACTS_FIELD_MAX,
+    LOANFACTS_PATH,
     MAX_PAGE_SIZE,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
@@ -31,6 +33,7 @@ from repository import (
     CategoryRepository,
     DuplicateCategoryError,
     HomeLoanBalanceRepository,
+    LoanFactsRepository,
     PayCycleRepository,
     TransactionRepository,
     VersionConflictError,
@@ -96,6 +99,12 @@ def lambda_handler(event, context):
 
         if path == HOMELOAN_PATH and method == "GET":
             return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
+
+        if path == LOANFACTS_PATH and method == "GET":
+            return _json_response(200, get_loanfacts(LoanFactsRepository()))
+
+        if path == LOANFACTS_PATH and method == "PUT":
+            return set_loanfacts(event, LoanFactsRepository())
 
         if path == PAYCYCLE_PATH and method == "GET":
             return _json_response(200, PayCycleRepository().get_paycycle())
@@ -671,6 +680,67 @@ def get_homeloan(repo: HomeLoanBalanceRepository) -> dict:
         "as_of": stored["as_of"],
         "currency": stored["currency"],
     }
+
+
+# The user-entered loan-facts fields, in the order the form + response use them.
+_LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
+
+
+def get_loanfacts(repo: LoanFactsRepository) -> dict:
+    """GET /loanfacts — the user's saved home-loan facts (Loan facts card).
+
+    Returns the six fields as numbers once saved, or an all-null sentinel while
+    unset (still 200) so the client can show a friendly "set this up" state and
+    the app never displays a value the user didn't enter. DecimalEncoder renders
+    the stored Decimals as JSON numbers.
+    """
+    stored = repo.get_loanfacts()
+    if stored is None:
+        return {field: None for field in _LOANFACTS_FIELDS}
+    return stored
+
+
+def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
+    """PUT /loanfacts — save (replace) the user's home-loan facts.
+
+    Body: all six of {original, homeValue, lvr, ratePct, baseRepay, extra}. The
+    whole object is required and replaced together (like /paycycle) — there is no
+    partial save, so the app is never left with a half-set object. Each field is
+    validated like a budget target (reject bool, require a finite number); amounts
+    must be > 0 (extra >= 0, an optional top-up), lvr is a fraction in (0, 1], and
+    ratePct a percent in (0, 100]. Stored via Decimal(str(...)) to avoid float drift.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    values = {}
+    for field in _LOANFACTS_FIELDS:
+        v = body.get(field)
+        # bool is an int subclass, so reject it before the numeric check.
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return _json_response(400, {"error": f"{field} must be a number"})
+        if not math.isfinite(v):
+            return _json_response(400, {"error": f"{field} must be a finite number"})
+        values[field] = v
+
+    # extra is an optional top-up (>= 0); every other amount must be positive.
+    if values["extra"] < 0:
+        return _json_response(400, {"error": "extra must be >= 0"})
+    for field in ("original", "homeValue", "baseRepay"):
+        if values[field] <= 0:
+            return _json_response(400, {"error": f"{field} must be > 0"})
+    # Dollar amounts share the budget ceiling; lvr/ratePct have tighter bounds below.
+    for field in ("original", "homeValue", "baseRepay", "extra"):
+        if values[field] > LOANFACTS_FIELD_MAX:
+            return _json_response(400, {"error": f"{field} too large"})
+    if not (0 < values["lvr"] <= 1):
+        return _json_response(400, {"error": "lvr must be a fraction between 0 and 1"})
+    if not (0 < values["ratePct"] <= 100):
+        return _json_response(400, {"error": "ratePct must be between 0 and 100"})
+
+    saved = repo.set_loanfacts(**{k: Decimal(str(v)) for k, v in values.items()})
+    return _json_response(200, saved)
 
 
 def set_budget(event: dict, repo: BudgetRepository) -> dict:

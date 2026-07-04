@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useAppContext } from '../../src/context';
+import { useAppContext, loanFactsReady } from '../../src/context';
 import { SectionLabel } from '../../src/components/ui';
 
 export default function Settings() {
@@ -32,7 +32,8 @@ export default function Settings() {
         <View style={styles.group}>
           <Row icon="tag" label="Categories" value={String(s.categories.length)} onPress={() => router.push('/category')} />
           <Row icon="sliders" label="Automation rules" value={String(s.rules.length)} onPress={() => router.push('/rules')} />
-          <Row icon="calendar" label="Pay cycle" value={s.cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} last />
+          <Row icon="calendar" label="Pay cycle" value={s.cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} />
+          <Row icon="building" label="Loan details" value={loanFactsReady(s.loanFacts) ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
         </View>
 
         <SectionLabel>PREFERENCES</SectionLabel>

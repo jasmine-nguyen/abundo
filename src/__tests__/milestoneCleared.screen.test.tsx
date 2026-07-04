@@ -23,6 +23,7 @@ import Milestone from '../../app/milestone';
 function state(over: Partial<AppContext>): AppContext {
   return {
     homeLoan: { balance: null, asOf: null },
+    loanFacts: { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 },
     category: () => undefined,
     ...over,
   } as unknown as AppContext;

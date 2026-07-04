@@ -4,7 +4,7 @@
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName } from '../context';
 import type { AppContext, Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
-import type { CategorySpend } from '../api';
+import type { CategorySpend, LoanFacts } from '../api';
 
 export function cat(over: Partial<Category> = {}): Category {
   return { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52, ...over };
@@ -33,6 +33,12 @@ const GOAL: Goal = {
   lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
 };
 
+// A fully-set loan-facts fixture (the default). property value 770000 + LVR 0.8
+// keep milestoneView's equity numbers matching the milestone-plan reference; pass
+// EMPTY_LOAN_FACTS explicitly to exercise the "not set yet" empty state.
+export const LOAN_FACTS: LoanFacts = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
+export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+
 interface StateOver {
   categories?: Category[];
   budgets?: Budget[];
@@ -40,6 +46,7 @@ interface StateOver {
   breakdown?: Record<string, CategorySpend>;
   goal?: Goal;
   homeLoan?: HomeLoanState;
+  loanFacts?: LoanFacts;
   cycleLen?: number;
   daysLeft?: number;
 }
@@ -56,6 +63,7 @@ export function makeState(over: StateOver = {}): AppContext {
     breakdown: over.breakdown ?? {},
     goal: over.goal ?? GOAL,
     homeLoan: over.homeLoan ?? { balance: null, asOf: null },
+    loanFacts: over.loanFacts ?? LOAN_FACTS,
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
     category: (id: string | null) => categories.find((c) => c.id === id),

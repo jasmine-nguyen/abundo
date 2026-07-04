@@ -7,6 +7,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, setTransactionCategory, fetchPayCycle, setPayCycle, setBudget, fetchHomeLoan,
+  fetchLoanFacts, setLoanFacts,
 } from '../api';
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
@@ -75,6 +76,30 @@ describe('reads', () => {
     expect(url).toBe(`${API}/homeloan`);
     expect(opts).toBeUndefined();            // plain GET, no options object
     expect(out).toEqual(body);
+  });
+
+  it('fetchLoanFacts GETs /loanfacts (all-null when unset)', async () => {
+    const body = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+    fetchMock.mockReturnValue(okJson(body));
+    const out = await fetchLoanFacts();
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/loanfacts`);
+    expect(opts).toBeUndefined();
+    expect(out).toEqual(body);
+  });
+});
+
+describe('loan-facts write', () => {
+  it('setLoanFacts PUTs /loanfacts with all six fields, no auth', async () => {
+    const facts = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
+    fetchMock.mockReturnValue(okJson(facts));
+    await setLoanFacts(facts);
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/loanfacts`);
+    expect(opts.method).toBe('PUT');
+    expect(opts.headers['Content-Type']).toBe('application/json');
+    noAuth(opts);
+    expect(JSON.parse(opts.body)).toEqual(facts);
   });
 });
 
@@ -145,6 +170,8 @@ describe('every fetcher throws on a not-OK response', () => {
     ['fetchBudgets', () => fetchBudgets(14)],
     ['fetchPayCycle', () => fetchPayCycle()],
     ['fetchHomeLoan', () => fetchHomeLoan()],
+    ['fetchLoanFacts', () => fetchLoanFacts()],
+    ['setLoanFacts', () => setLoanFacts({ original: 1, homeValue: 1, lvr: 0.8, ratePct: 5, baseRepay: 1, extra: 0 })],
     ['createCategory', () => createCategory({ name: 'X', bucket: 'Living', icon: 'cart' })],
     ['updateCategory', () => updateCategory('x', { name: 'X', bucket: 'Living', icon: 'cart' })],
     ['deleteCategory', () => deleteCategory('x')],

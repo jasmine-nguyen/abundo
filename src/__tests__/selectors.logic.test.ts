@@ -3,7 +3,7 @@
 // (makeState), like the sibling budget/format selector tests.
 import { describe, it, expect } from '@jest/globals';
 import { budgetEditInfo, goalView } from '../context';
-import { makeState, cat, budget } from './factory';
+import { makeState, cat, budget, EMPTY_LOAN_FACTS } from './factory';
 
 describe('budgetEditInfo', () => {
   it('is in "set" mode with no existing budget, deriving avg from category.recent', () => {
@@ -35,12 +35,65 @@ describe('budgetEditInfo', () => {
 });
 
 describe('goalView', () => {
-  it('computes paid-off, usable equity, and contribution from the goal', () => {
-    const v = goalView(makeState());
-    // GOAL: original 500000, balance 432900, homeValue 640000, baseRepay 1240, extra 200
-    expect(v.paidOff).toBe(67100);                       // 500000 - 432900
-    expect(v.paidPct).toBeCloseTo((67100 / 500000) * 100, 5);
-    expect(v.usableEquity).toBe(79100);                  // round(640000*0.8) - 432900
+  it('computes paid-off, usable equity, and contribution from saved facts + the live balance', () => {
+    // LOAN_FACTS: original 500000, homeValue 770000, lvr 0.8, baseRepay 1240, extra 200.
+    // The live balance comes from s.homeLoan (WHIT-8), NOT the seed goal.balance
+    // (432900). A distinct value (430000) pins the source: reading goal.balance
+    // instead would give paidOff 67100/equity 183100 and fail here.
+    const v = goalView(makeState({ homeLoan: { balance: 430000, asOf: null } }));
+    expect(v.factsReady).toBe(true);
+    expect(v.paidOff).toBe(70000);                       // 500000 - 430000 (live)
+    expect(v.paidPct).toBeCloseTo((70000 / 500000) * 100, 5);
+    expect(v.usableEquity).toBe(186000);                 // round(770000*0.8) - 430000
     expect(v.contribution).toBe(1440);                   // baseRepay + extra
+  });
+
+  it('is not ready and nulls the figures until loan facts are saved', () => {
+    const v = goalView(makeState({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 432900, asOf: null } }));
+    expect(v.factsReady).toBe(false);
+    expect(v.paidOff).toBeNull();
+    expect(v.usableEquity).toBeNull();
+    expect(v.contribution).toBeNull();
+    // The live balance is still surfaced — the one thing we genuinely know.
+    expect(v.balanceLabel).toBe('$432,900');
+  });
+
+  // Edge cells the happy path hides (qa gap tests).
+  it('facts saved but balance NULL: contribution shows, payoff/equity stay null, label "—"', () => {
+    const v = goalView(makeState({ homeLoan: { balance: null, asOf: null } }));
+    expect(v.factsReady).toBe(true);
+    expect(v.balanceKnown).toBe(false);
+    expect(v.balanceLabel).toBe('—');
+    expect(v.contribution).toBe(1440);   // needs only the facts
+    expect(v.paidOff).toBeNull();         // needs the live balance -> stays null
+    expect(v.paidPct).toBe(0);
+    expect(v.usableEquity).toBeNull();
+    expect(v.depositPct).toBe(0);         // null equity -> 0, never NaN
+  });
+
+  it('facts unset AND balance NULL: everything null, "—", no crash', () => {
+    const v = goalView(makeState({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: null, asOf: null } }));
+    expect(v.factsReady).toBe(false);
+    expect(v.balanceKnown).toBe(false);
+    expect(v.balanceLabel).toBe('—');
+    expect(v.paidOff).toBeNull();
+    expect(v.contribution).toBeNull();
+    expect(v.usableEquity).toBeNull();
+    expect(v.depositPct).toBe(0);
+  });
+
+  it('live balance ABOVE the original loan: paidOff goes negative, paidPct clamps to 0', () => {
+    // The real mistype case: original 500000 (LOAN_FACTS) but the live balance is
+    // 596642 (> original). paidOff must be truthful (negative), the % bar clamped.
+    const v = goalView(makeState({ homeLoan: { balance: 596642, asOf: null } }));
+    expect(v.paidOff).toBe(-96642);
+    expect(v.paidPct).toBe(0);
+  });
+
+  it('usable equity computes to exactly 0 (balance == property×LVR): 0, not null, depositPct 0', () => {
+    // homeValue 770000 × lvr 0.8 = 616000; a balance of 616000 -> equity exactly 0.
+    const v = goalView(makeState({ homeLoan: { balance: 616000, asOf: null } }));
+    expect(v.usableEquity).toBe(0);
+    expect(v.depositPct).toBe(0);
   });
 });

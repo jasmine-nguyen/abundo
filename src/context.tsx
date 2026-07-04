@@ -1,7 +1,21 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
-import { MILESTONES, PROPERTY_VALUE, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
+
+export type { LoanFacts, LoanFactsInput } from './api';
+
+// The empty loan-facts shape shown until the user saves the form. Kept as a
+// module const so every "unset" origin (initial state, a failed fetch) agrees.
+const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+
+// Loan facts are "ready" only when the user has saved all six fields — until then
+// the app shows a set-up prompt instead of any fabricated number. Narrows to
+// LoanFactsInput so callers can read the fields as plain numbers.
+export function loanFactsReady(f: LoanFacts): f is LoanFactsInput {
+  return typeof f.original === 'number' && typeof f.homeValue === 'number' && typeof f.lvr === 'number'
+    && typeof f.ratePct === 'number' && typeof f.baseRepay === 'number' && typeof f.extra === 'number';
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -251,6 +265,9 @@ export interface AppContext {
 	homeLoanLoading: boolean;
 	homeLoanError: boolean;
 	refreshHomeLoan: () => Promise<void>;
+	loanFacts: LoanFacts;
+	refreshLoanFacts: () => Promise<void>;
+	saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
 	refreshPayCycle: () => Promise<void>;
 	enrichmentsLoading: boolean;
 	enrichmentsError: string | null;
@@ -397,6 +414,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, []);
 
+	// User-entered loan facts (Loan facts card). Starts empty (all null) — the app
+	// shows a "set this up" state until the user saves, never a fabricated default.
+	// A failed fetch (no catch, like refreshPayCycle) leaves the current state
+	// intact rather than nulling it.
+	const [loanFacts, setLoanFacts] = useState<LoanFacts>(EMPTY_LOAN_FACTS);
+	const refreshLoanFacts = useCallback(async () => {
+		setLoanFacts(await fetchLoanFacts());
+	}, []);
+
 	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
 	const [enrichmentsError, setEnrichmentsError] = useState<string | null>(null);
 	const refreshEnrichments = useCallback(async () => {
@@ -418,8 +444,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshCategories();
 		refreshPayCycle();
 		refreshHomeLoan();
+		refreshLoanFacts();
 		refreshEnrichments();
-	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshEnrichments]);
+	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshLoanFacts, refreshEnrichments]);
 
 	// Re-fetch budgets + breakdown on mount and whenever the pay-cycle length (the
 	// window) changes — both are computed over the current cycle.
@@ -476,6 +503,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setPayday = useCallback((last_pay_date: string) => {
     persistPayCycle({ ...payCycle, last_pay_date }, payCycle);
   }, [persistPayCycle, payCycle]);
+
+  // Save the loan-facts form: optimistic local update, PUT the whole object, roll
+  // back + toast on failure (same pattern as persistPayCycle/saveBudget). Returns
+  // true on success so the form can navigate back only when the save stuck.
+  const saveLoanFacts = useCallback(async (next: LoanFactsInput): Promise<boolean> => {
+    const prev = loanFacts;
+    setLoanFacts(next);
+    try {
+      await apiSetLoanFacts(next);
+      return true;
+    } catch {
+      setLoanFacts(prev);
+      showToast('Could not save loan details. Please try again.');
+      return false;
+    }
+  }, [loanFacts, showToast]);
 
   const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);
 
@@ -747,9 +790,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -987,17 +1030,51 @@ export function budgetEditInfo(s: AppContext, categoryId: string) {
   };
 }
 
+// The Goal-tab hero + equity + contribution, computed from the user's saved loan
+// facts (Loan facts card) and the LIVE balance (WHIT-8's s.homeLoan) — never the
+// old seed. `factsReady` is false until the user saves the form: the screen then
+// shows a friendly "set this up" state instead of any fabricated number. The
+// display-only projection fields (freedomDate/interestSaved/lastRepay via `G`)
+// remain seed for now — Cards 2/3 make those real.
 export function goalView(s: AppContext) {
   const G = s.goal;
-  const paidOff = G.original - G.balance;
-  const paidPct = Math.max(0, Math.min(100, (paidOff / G.original) * 100));
-  // Same formula the milestone screen uses (computeUsableEquity), so the two
-  // can't drift; the Goal tab passes its own illustrative homeValue.
-  const usableEquity = computeUsableEquity(G.homeValue, G.balance);
+  const facts = s.loanFacts;
+  const factsReady = loanFactsReady(facts);
+  const liveBalance = s.homeLoan.balance;                 // real balance, null until loaded
+  const balanceKnown = typeof liveBalance === 'number';
+
+  let original: number | null = null;
+  let baseRepay: number | null = null;
+  let extra: number | null = null;
+  let contribution: number | null = null;
+  let paidOff: number | null = null;
+  let paidPct = 0;
+  let usableEquity: number | null = null;
+
+  // Use the type guard inline so `facts` narrows to concrete numbers here.
+  if (loanFactsReady(facts)) {
+    original = facts.original;
+    baseRepay = facts.baseRepay;
+    extra = facts.extra;
+    contribution = facts.baseRepay + facts.extra;
+    // Real payoff progress + equity also need the live balance.
+    if (typeof liveBalance === 'number') {
+      paidOff = facts.original - liveBalance;
+      paidPct = Math.max(0, Math.min(100, (paidOff / facts.original) * 100));
+      usableEquity = computeUsableEquity(facts.homeValue, liveBalance, facts.lvr);
+    }
+  }
+
   const depositTarget = 90000;
-  const depositPct = Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100));
-  const contribution = G.baseRepay + G.extra;
-  return { G, paidOff, paidPct, usableEquity, depositTarget, depositPct, contribution };
+  const depositPct = usableEquity != null ? Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100)) : 0;
+
+  return {
+    G, factsReady,
+    liveBalance, balanceKnown, balanceLabel: balanceKnown ? fmt(liveBalance!) : '—',
+    original, paidOff, paidPct,
+    usableEquity, depositTarget, depositPct,
+    baseRepay, extra, contribution,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,7 +1082,7 @@ export function goalView(s: AppContext) {
 // ---------------------------------------------------------------------------
 
 export interface MilestoneRow {
-  sprint: number; label: string; targetBalance: number; targetEquity: number;
+  sprint: number; label: string; targetBalance: number; targetEquity: number | null;
   targetDate: string; cleared: boolean;
 }
 
@@ -1014,8 +1091,9 @@ export interface MilestoneView {
   balance: number;                 // 0 when unknown — gate on hasBalance
   balanceLabel: string;
   asOf: string | null;
-  propertyValue: number;
-  usableEquity: number;
+  equityKnown: boolean;            // false until the user has saved property value + LVR
+  propertyValue: number | null;
+  usableEquity: number | null;
   usableEquityLabel: string;
   overallPct: number;              // 0..100 from the Sprint 0 balance down to the final target
   clearedCount: number;
@@ -1058,11 +1136,17 @@ export function milestoneView(s: AppContext, today?: Date): MilestoneView {
   const hasBalance = typeof rawBalance === 'number';
   const balance = hasBalance ? rawBalance! : 0;
 
+  // Equity needs the user's saved property value + LVR (Loan facts card); until
+  // they're set, equity figures show a "set this up" state rather than a fake number.
+  const homeValue = s.loanFacts.homeValue;
+  const lvr = s.loanFacts.lvr;
+  const equityKnown = typeof homeValue === 'number' && typeof lvr === 'number';
+
   const rows: MilestoneRow[] = MILESTONES.map((m) => ({
     sprint: m.sprint,
     label: m.label,
     targetBalance: m.targetBalance,
-    targetEquity: computeUsableEquity(PROPERTY_VALUE, m.targetBalance),
+    targetEquity: equityKnown ? computeUsableEquity(homeValue!, m.targetBalance, lvr!) : null,
     targetDate: m.targetDate,
     // A milestone is cleared once the balance is at or below its target (paying
     // down). Unknown balance clears nothing.
@@ -1081,7 +1165,7 @@ export function milestoneView(s: AppContext, today?: Date): MilestoneView {
     ? Math.max(0, Math.min(100, ((start - balance) / (start - end)) * 100))
     : 0;
 
-  const equity = hasBalance ? computeUsableEquity(PROPERTY_VALUE, balance) : 0;
+  const equity = equityKnown && hasBalance ? computeUsableEquity(homeValue!, balance, lvr!) : null;
 
   let schedule: MilestoneView['schedule'] = null;
   if (hasBalance) {
@@ -1104,9 +1188,10 @@ export function milestoneView(s: AppContext, today?: Date): MilestoneView {
     balance,
     balanceLabel: hasBalance ? fmt(balance) : '—',
     asOf: s.homeLoan.asOf,
-    propertyValue: PROPERTY_VALUE,
+    equityKnown,
+    propertyValue: equityKnown ? homeValue! : null,
     usableEquity: equity,
-    usableEquityLabel: hasBalance ? fmt(equity) : '—',
+    usableEquityLabel: equity != null ? fmt(equity) : '—',
     overallPct,
     clearedCount,
     total: rows.length,

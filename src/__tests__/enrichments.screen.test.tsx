@@ -21,6 +21,7 @@ beforeEach(() => {
   mockApi.fetchPayCycle.mockResolvedValue({ length: 14, last_pay_date: '2024-01-03' });
   mockApi.fetchBudgets.mockResolvedValue({});
   mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
+  mockApi.fetchLoanFacts.mockResolvedValue({ original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null });
   mockApi.listEnrichments.mockResolvedValue([]);
 });
 

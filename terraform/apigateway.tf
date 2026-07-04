@@ -91,6 +91,21 @@ resource "aws_apigatewayv2_route" "get_homeloan_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# Loan facts: read (GET /loanfacts) + save (PUT /loanfacts) the user-entered
+# home-loan inputs. Reuse the lambda_api integration; the /*/* invoke permission
+# already covers these, so no new integration or lambda permission is needed.
+resource "aws_apigatewayv2_route" "get_loanfacts_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "GET /loanfacts"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "put_loanfacts_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "PUT /loanfacts"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 # Pay cycle: read current (GET /paycycle) + set length + last pay date (PUT
 # /paycycle). Reuse the lambda_api integration; the /*/* invoke permission
 # already covers these, so no new integration or lambda permission is needed.
