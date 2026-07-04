@@ -182,3 +182,31 @@ class TransactionRepository:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return False
             handle_database_error(e, "write")
+
+    def update_transaction_categories(
+        self, updates: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        """Set the category on many transactions, best-effort (WHIT-70).
+
+        Each update is {"id", "category"}. Applied INDEPENDENTLY: resolve the row's
+        keys via the GSI, then conditionally update, so one unknown or vanished id
+        yields a per-item "not_found" rather than failing the whole batch. Returns
+        [{"id", "status"}] in input order, status ∈ {"updated", "not_found"}. A
+        partial UpdateItem loop (not batch_writer, which is put-only and would
+        overwrite the whole row; not transact_write_items, whose all-or-nothing
+        would let one stale id sink the entire sweep).
+        """
+        results: list[dict[str, str]] = []
+        for item in updates:
+            transaction_id = item["id"]
+            keys = self.get_transaction_keys_by_id(transaction_id)
+            if keys is None:
+                results.append({"id": transaction_id, "status": "not_found"})
+                continue
+            updated = self.update_transaction_category(
+                keys["pk"], keys["sk"], item["category"]
+            )
+            results.append(
+                {"id": transaction_id, "status": "updated" if updated else "not_found"}
+            )
+        return results

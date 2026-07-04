@@ -24,6 +24,7 @@ from constants import (
     RULE_FIELDS,
     RULE_OPERATORS,
     SPEND_BUCKETS,
+    TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
     UNCATEGORIZED_KEY,
 )
@@ -65,6 +66,11 @@ def lambda_handler(event, context):
         if path == TRANSACTION_PATH and method == "GET":
             repo = TransactionRepository()
             return _json_response(200, get_recent_transactions(repo))
+
+        # Collection route (batch) BEFORE the item route. "/transactions" does not
+        # start with "/transactions/", so the two are disjoint regardless of order.
+        if path == TRANSACTION_PATH and method == "PATCH":
+            return patch_transactions_batch(event, TransactionRepository())
 
         if path.startswith(f"{TRANSACTION_PATH}/") and method == "PATCH":
             return patch_transaction_category(event, TransactionRepository())
@@ -195,6 +201,41 @@ def patch_transaction_category(event: dict, repo: TransactionRepository) -> dict
         return _json_response(404, {"error": "transaction not found"})
 
     return _json_response(200, {"transaction_id": transaction_id, "category": category})
+
+
+def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:
+    """PATCH /transactions — set the category on many transactions in one request.
+
+    Body: {"updates": [{"id": "<txn id>", "category": "<non-empty string>"}, ...]}.
+    This exists so the "All from this merchant" sweep persists in ONE round-trip
+    instead of N single PATCHes. Each update is applied INDEPENDENTLY (best-effort):
+    the response is {"results": [{"id", "status"}, ...]} where status is "updated"
+    or "not_found", so one unknown/vanished row doesn't fail the whole batch. Per-
+    item validation mirrors the single route (any non-empty category string — the
+    taxonomy is not enforced here, matching PATCH /transactions/{id}). A missing/
+    non-list/empty `updates`, an oversized batch, or a malformed item is a 400.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    updates = body.get("updates")
+    if not isinstance(updates, list) or not updates:
+        return _json_response(400, {"error": "updates is required"})
+    if len(updates) > TRANSACTION_BATCH_MAX:
+        return _json_response(400, {"error": f"too many updates (max {TRANSACTION_BATCH_MAX})"})
+    for item in updates:
+        if not isinstance(item, dict):
+            return _json_response(400, {"error": "each update must be an object"})
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            return _json_response(400, {"error": "id is required"})
+        category = item.get("category")
+        if not isinstance(category, str) or not category.strip():
+            return _json_response(400, {"error": "category is required"})
+
+    results = repo.update_transaction_categories(updates)
+    return _json_response(200, {"results": results})
 
 
 def get_recent_transactions(repo: TransactionRepository) -> list[dict]:

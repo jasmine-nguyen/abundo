@@ -33,6 +33,31 @@ class FakeRepo:
         return self._update_result
 
 
+class FakeBatchRepo:
+    """Stand-in for TransactionRepository's batch category write. Records the updates
+    it was handed and returns a configurable per-item results list (default: every
+    id 'updated'), so the handler's validation + response-shaping is what's tested."""
+
+    def __init__(self, results=None):
+        self._results = results
+        self.batch_calls = []
+
+    def update_transaction_categories(self, updates):
+        self.batch_calls.append(updates)
+        if self._results is not None:
+            return self._results
+        return [{"id": u["id"], "status": "updated"} for u in updates]
+
+
+def _batch_event(body, is_b64=False):
+    return {
+        "rawPath": "/transactions",
+        "requestContext": {"http": {"method": "PATCH"}},
+        "body": body,
+        "isBase64Encoded": is_b64,
+    }
+
+
 class FakeRecentFeedRepo:
     """Stand-in for TransactionRepository for get_recent_transactions.
 
@@ -169,7 +194,123 @@ def test_patch_blank_category_returns_400(handler):
     assert resp["statusCode"] == 400
 
 
+# --- batch PATCH /transactions (WHIT-70) -------------------------------------
+
+
+def test_batch_success_applies_all_and_shapes_results(handler):
+    repo = FakeBatchRepo()
+    body = '{"updates": [{"id": "t1", "category": "coffee"}, {"id": "t2", "category": "coffee"}]}'
+
+    resp = handler.patch_transactions_batch(_batch_event(body), repo)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {
+        "results": [{"id": "t1", "status": "updated"}, {"id": "t2", "status": "updated"}]
+    }
+    # The handler forwarded exactly the parsed updates to the repo (one call).
+    assert repo.batch_calls == [[{"id": "t1", "category": "coffee"}, {"id": "t2", "category": "coffee"}]]
+
+
+def test_batch_passes_through_per_item_status(handler):
+    # A mixed result (one unknown id) is the repo's call; the handler returns it as-is.
+    repo = FakeBatchRepo(results=[{"id": "t1", "status": "updated"}, {"id": "gone", "status": "not_found"}])
+    body = '{"updates": [{"id": "t1", "category": "coffee"}, {"id": "gone", "category": "coffee"}]}'
+
+    resp = handler.patch_transactions_batch(_batch_event(body), repo)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["results"] == [
+        {"id": "t1", "status": "updated"}, {"id": "gone", "status": "not_found"}
+    ]
+
+
+def test_batch_decodes_base64_body(handler):
+    repo = FakeBatchRepo()
+    encoded = base64.b64encode(b'{"updates": [{"id": "t1", "category": "coffee"}]}').decode()
+
+    resp = handler.patch_transactions_batch(_batch_event(encoded, is_b64=True), repo)
+
+    assert resp["statusCode"] == 200
+    assert repo.batch_calls == [[{"id": "t1", "category": "coffee"}]]
+
+
+def test_batch_missing_updates_returns_400(handler):
+    repo = FakeBatchRepo()
+    resp = handler.patch_transactions_batch(_batch_event('{"note": "x"}'), repo)
+    assert resp["statusCode"] == 400
+    assert repo.batch_calls == []   # never reached the repo
+
+
+def test_batch_empty_updates_returns_400(handler):
+    resp = handler.patch_transactions_batch(_batch_event('{"updates": []}'), FakeBatchRepo())
+    assert resp["statusCode"] == 400
+
+
+def test_batch_updates_not_a_list_returns_400(handler):
+    resp = handler.patch_transactions_batch(_batch_event('{"updates": "t1"}'), FakeBatchRepo())
+    assert resp["statusCode"] == 400
+
+
+def test_batch_oversized_returns_400(handler):
+    # TRANSACTION_BATCH_MAX + 1 items is rejected before any write.
+    n = handler.TRANSACTION_BATCH_MAX + 1
+    items = ", ".join(f'{{"id": "t{i}", "category": "coffee"}}' for i in range(n))
+    repo = FakeBatchRepo()
+    resp = handler.patch_transactions_batch(_batch_event(f'{{"updates": [{items}]}}'), repo)
+    assert resp["statusCode"] == 400
+    assert repo.batch_calls == []
+
+
+def test_batch_item_not_object_returns_400(handler):
+    resp = handler.patch_transactions_batch(_batch_event('{"updates": [1, 2]}'), FakeBatchRepo())
+    assert resp["statusCode"] == 400
+
+
+def test_batch_item_missing_id_returns_400(handler):
+    resp = handler.patch_transactions_batch(_batch_event('{"updates": [{"category": "coffee"}]}'), FakeBatchRepo())
+    assert resp["statusCode"] == 400
+
+
+def test_batch_item_blank_category_returns_400(handler):
+    resp = handler.patch_transactions_batch(_batch_event('{"updates": [{"id": "t1", "category": "   "}]}'), FakeBatchRepo())
+    assert resp["statusCode"] == 400
+
+
+def test_batch_invalid_json_returns_400(handler):
+    resp = handler.patch_transactions_batch(_batch_event("not json"), FakeBatchRepo())
+    assert resp["statusCode"] == 400
+
+
+def test_batch_exactly_max_succeeds(handler):
+    # Boundary on the OTHER side of the >MAX reject: exactly TRANSACTION_BATCH_MAX
+    # items must be ACCEPTED and reach the repo (a `>=` would wrongly 400 a full batch).
+    n = handler.TRANSACTION_BATCH_MAX
+    updates = [{"id": f"t{i}", "category": "coffee"} for i in range(n)]
+    repo = FakeBatchRepo()
+
+    resp = handler.patch_transactions_batch(_batch_event(json.dumps({"updates": updates})), repo)
+
+    assert resp["statusCode"] == 200
+    assert len(repo.batch_calls[0]) == n
+    assert len(json.loads(resp["body"])["results"]) == n
+
+
 # --- dispatch / regression (through lambda_handler) --------------------------
+
+
+def test_batch_dispatches_and_does_not_hit_single_handler(handler, monkeypatch):
+    # PATCH /transactions (collection) must route to the batch handler, NOT the
+    # /{id} item handler. Guards against a future startswith broadening swallowing it.
+    repo = FakeBatchRepo()
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
+    monkeypatch.setattr(handler, "patch_transaction_category",
+                        lambda *a, **k: pytest.fail("collection PATCH reached the item handler"))
+
+    resp = handler.lambda_handler(_batch_event('{"updates": [{"id": "t1", "category": "coffee"}]}'), None)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {"results": [{"id": "t1", "status": "updated"}]}
+    assert repo.batch_calls == [[{"id": "t1", "category": "coffee"}]]
 
 
 def test_patch_dispatches_through_lambda_handler(handler, monkeypatch):

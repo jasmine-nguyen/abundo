@@ -32,6 +32,15 @@ resource "aws_apigatewayv2_route" "patch_transaction_category_route" {
   target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
 }
 
+# Batch PATCH: set the category on many transactions in one request (WHIT-70).
+# Distinct from the {id} item route above ("/transactions" != "/transactions/{id}").
+# Open, like the single PATCH; the /*/* invoke permission already covers it.
+resource "aws_apigatewayv2_route" "patch_transactions_batch_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "PATCH /transactions"
+  target    = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+}
+
 # Category taxonomy CRUD (list/create); reuse the lambda_api integration.
 # The /*/* invoke permission already covers these, so no new lambda permission.
 resource "aws_apigatewayv2_route" "get_categories_route" {

@@ -30,6 +30,10 @@ beforeEach(() => {
   mockApi.fetchLoanFacts.mockResolvedValue({ original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null });
   mockApi.fetchRepayment.mockResolvedValue({ amount: null, date: null, principal: null, interest: null });
   mockApi.listEnrichments.mockResolvedValue([]);
+  // Batch category write (WHIT-70): default to "all updated", echoing the ids sent.
+  mockApi.setTransactionCategories.mockImplementation(
+    async (updates: { id: string; category: string }[]) =>
+      ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
 });
 
 async function mount() {
@@ -77,7 +81,6 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
     { ...TXN, transaction_id: 't2' },
     { ...TXN, transaction_id: 't3', description: 'WOOLWORTHS NEAR COLES ST', merchant_name: 'Woolworths' },
   ]);
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
   mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   const result = await mount();
   await waitFor(() => expect(result.current.transactions).toHaveLength(3));
@@ -85,7 +88,10 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.setTransactionCategory).toHaveBeenCalledTimes(2);   // t1 + t2 only, NOT t3
+  // ONE batch call (WHIT-70), not N single PATCHes — carrying t1 + t2 only, NOT t3.
+  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
+  expect(mockApi.setTransactionCategory).not.toHaveBeenCalled();
+  expect(mockApi.setTransactionCategories.mock.calls[0][0].map((u) => u.id).sort()).toEqual(['t1', 't2']);
   expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
 
   const byId = Object.fromEntries(result.current.transactions.map((t) => [t.transaction_id, t.category]));
@@ -105,7 +111,6 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
     { ...TXN, transaction_id: 't2', category: 'FOOD_AND_DRINK' },  // raw enum, same merchant -> MUST sweep
     { ...TXN, transaction_id: 't3', category: 'groceries' },       // real user category -> must NOT touch
   ]);
-  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
   mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   const result = await mount();
   await waitFor(() => expect(result.current.transactions).toHaveLength(3));
@@ -113,11 +118,153 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  // t1 (null) + t2 (raw enum) swept; t3 (already groceries) left alone.
-  const swept = mockApi.setTransactionCategory.mock.calls.map((c) => c[0]).sort();
+  // t1 (null) + t2 (raw enum) swept in ONE batch; t3 (already groceries) left alone.
+  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
+  const swept = mockApi.setTransactionCategories.mock.calls[0][0].map((u) => u.id).sort();
   expect(swept).toEqual(['t1', 't2']);
   const byId = Object.fromEntries(result.current.transactions.map((t) => [t.transaction_id, t.category]));
   expect(byId.t2).toBe('groceries');   // the FOOD_AND_DRINK charge is now filed
+});
+
+it('applyCategory(all) rolls back only the ids the batch reports as not saved', async () => {
+  // Partial server success: the batch files t1 but reports t2 not_found. Only t2
+  // reverts (to uncategorised); t1 stays filed. Rollback keys BY ID, not position.
+  mockApi.fetchTransactions.mockResolvedValue([
+    { ...TXN, transaction_id: 't1', category: null },
+    { ...TXN, transaction_id: 't2', category: null },
+  ]);
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.setTransactionCategories.mockResolvedValue({
+    results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }],
+  });
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(2));
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  const byId = Object.fromEntries(result.current.transactions.map((t) => [t.transaction_id, t.category]));
+  expect(byId.t1).toBe('groceries');   // saved -> stays
+  expect(byId.t2).toBeNull();          // not_found -> reverted
+  expect(result.current.toast).toBe('Could not save some categories. Please try again.');
+});
+
+it('applyCategory(all) rolls back ALL ids when the whole batch call rejects', async () => {
+  mockApi.fetchTransactions.mockResolvedValue([
+    { ...TXN, transaction_id: 't1', category: null },
+    { ...TXN, transaction_id: 't2', category: null },
+  ]);
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.setTransactionCategories.mockRejectedValue(new Error('network'));
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(2));
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  const byId = Object.fromEntries(result.current.transactions.map((t) => [t.transaction_id, t.category]));
+  expect(byId.t1).toBeNull();
+  expect(byId.t2).toBeNull();
+  expect(result.current.toast).toBe('Could not save some categories. Please try again.');
+});
+
+it('applyCategory(all) refreshes budgets + breakdown when at least one charge saved', async () => {
+  mockApi.fetchTransactions.mockResolvedValue([
+    { ...TXN, transaction_id: 't1', category: null },
+    { ...TXN, transaction_id: 't2', category: null },
+  ]);
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  // Partial: t1 saved, t2 not — still >=1 saved, so spend changed -> refresh MUST fire.
+  mockApi.setTransactionCategories.mockResolvedValue({
+    results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }],
+  });
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(2));
+  mockApi.fetchBudgets.mockClear();
+  mockApi.fetchBreakdown.mockClear();
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.fetchBudgets).toHaveBeenCalled();
+  expect(mockApi.fetchBreakdown).toHaveBeenCalled();
+});
+
+it('applyCategory(all) does NOT refresh budgets/breakdown when the whole batch fails', async () => {
+  mockApi.fetchTransactions.mockResolvedValue([
+    { ...TXN, transaction_id: 't1', category: null },
+    { ...TXN, transaction_id: 't2', category: null },
+  ]);
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.setTransactionCategories.mockRejectedValue(new Error('network'));
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(2));
+  mockApi.fetchBudgets.mockClear();
+  mockApi.fetchBreakdown.mockClear();
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  // All reverted -> nothing persisted -> spend unchanged -> no wasted refetch.
+  expect(mockApi.fetchBudgets).not.toHaveBeenCalled();
+  expect(mockApi.fetchBreakdown).not.toHaveBeenCalled();
+});
+
+it('applyCategory(all) does NOT call the batch when the sweep is empty', async () => {
+  // Origin doesn't count to a budget -> excluded from sameMerchantIds -> empty set.
+  // A real server 400s on {updates:[]}; the client must not send it at all (E1 fix).
+  mockApi.fetchTransactions.mockResolvedValue([
+    { ...TXN, transaction_id: 't1', category: null, counts_to_budget: false },
+  ]);
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(1));
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.setTransactionCategories).not.toHaveBeenCalled();
+});
+
+it('applyCategory(all) splits a >100 sweep into chunks of 100 (WHIT-70 chunking)', async () => {
+  // 150 same-merchant uncategorised charges -> the sweep must send TWO batch calls
+  // (100 + 50), not one oversized request the server would 400.
+  const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
+  mockApi.fetchTransactions.mockResolvedValue(many);
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(150));
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(2);
+  const sizes = mockApi.setTransactionCategories.mock.calls.map((c) => c[0].length).sort((a, b) => b - a);
+  expect(sizes).toEqual([100, 50]);
+  // Both chunks succeed (default echo mock) -> all 150 filed.
+  expect(result.current.transactions.filter((t) => t.category === 'groceries')).toHaveLength(150);
+});
+
+it('applyCategory(all) reverts only the failed chunk when one of several rejects', async () => {
+  const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
+  mockApi.fetchTransactions.mockResolvedValue(many);
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  // First chunk (100) succeeds; second chunk (50) rejects -> only those 50 revert.
+  mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) => {
+    if (updates.length !== 100) throw new Error('chunk failed');
+    return { results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) };
+  });
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(150));
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't0', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  const byId = Object.fromEntries(result.current.transactions.map((t) => [t.transaction_id, t.category]));
+  expect(byId.t0).toBe('groceries');   // first chunk (t0..t99) saved
+  expect(byId.t149).toBeNull();        // second chunk (t100..t149) rejected -> reverted
+  expect(result.current.transactions.filter((t) => t.category === 'groceries')).toHaveLength(100);
+  expect(result.current.toast).toBe('Could not save some categories. Please try again.');
 });
 
 // --- saveBudget --------------------------------------------------------------

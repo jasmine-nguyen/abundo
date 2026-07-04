@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 
 export type { LoanFacts, LoanFactsInput } from './api';
@@ -72,6 +72,12 @@ export const BUCKET_COLOR: Record<Bucket, string> = {
   Living: '#7FA9F0', Lifestyle: '#E59BD0', Income: '#35d9a0', Savings: '#C7A8F0',
 };
 export const PALETTE = ['#E8A87C', '#7FD49B', '#F08C8C', '#8AB4F8', '#F2A0C9', '#C7A8F0', '#F2C94C', '#6FD0C9', '#8FD46B', '#B0A8F0'];
+
+// Max charges per batch category write. Mirrors the server's TRANSACTION_BATCH_MAX
+// (lambda_api/constants.py) — the "All from this merchant" sweep splits into chunks
+// of this size so a large merchant spans multiple requests instead of tripping the
+// server's per-request cap. Keep the two equal.
+const CATEGORY_BATCH_LIMIT = 100;
 
 // ---------------------------------------------------------------------------
 // Seed data (ported verbatim from Whittle.dc.html)
@@ -586,11 +592,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast(`Rule saved — future ${cleanName(transaction.description)} charges file as ${category.name}.`);
       setSheet(null); // close the confirm sheet
 
-      // Persist the rule AND each transaction in parallel. The rule outcome is
-      // first; the rest align 1:1 with sameMerchantIds.
-      const [ruleOutcome, ...outcomes] = await Promise.allSettled([
+      // Persist the rule AND all the categorisations. The rule hits BankSync; the
+      // charges go through the batch endpoint (WHIT-70) instead of N single PATCHes.
+      // The server caps one request at CATEGORY_BATCH_LIMIT rows, so split into
+      // chunks under that cap and send them together — one chunk for a normal sweep,
+      // more only for an unusually large merchant. An empty sweep yields no chunks
+      // (no call at all — the server would 400 an empty body).
+      const updates = sameMerchantIds.map((id) => ({ id, category: categoryId }));
+      const chunks: { id: string; category: string }[][] = [];
+      for (let i = 0; i < updates.length; i += CATEGORY_BATCH_LIMIT) {
+        chunks.push(updates.slice(i, i + CATEGORY_BATCH_LIMIT));
+      }
+      const [ruleOutcome, ...chunkOutcomes] = await Promise.allSettled([
         createEnrichment({ value: ruleValue, categoryId }),
-        ...sameMerchantIds.map((id) => apiSetTransactionCategory(id, categoryId)),
+        ...chunks.map((chunk) => apiSetTransactionCategories(chunk)),
       ]);
 
       // Reconcile the optimistic rule: swap in the real BankSync id on success (so
@@ -603,8 +618,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       }
 
-      // outcomes[index] is the result for sameMerchantIds[index]. Keep the failures.
-      const failedIds = sameMerchantIds.filter((id, index) => outcomes[index].status === 'rejected');
+      // Failures, mapped BY ID (not array position — never trust server order),
+      // merged across every chunk. An id is "saved" only if some chunk returned it
+      // with status 'updated'; a rejected chunk (or a malformed/missing `results`,
+      // guarded by `?? []`) leaves its ids absent -> treated as failed -> reverted.
+      const savedIds = new Set<string>();
+      for (const outcome of chunkOutcomes) {
+        if (outcome.status !== 'fulfilled') continue;
+        for (const r of outcome.value.results ?? []) {
+          if (r.status === 'updated') savedIds.add(r.id);
+        }
+      }
+      const failedIds = sameMerchantIds.filter((id) => !savedIds.has(id));
       if (failedIds.length > 0) {
         // Roll back only the ones whose save failed (back to uncategorised).
         setTransactions((prev) =>
