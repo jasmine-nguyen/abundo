@@ -137,7 +137,10 @@ function ConfirmSheet() {
         Apply to just '{merchantLabel(tx)}', or set a rule so every charge from this merchant files itself?
       </Text>
       <Pressable onPress={() => s.applyCategory('all')} style={[styles.btn, styles.btnPrimary]}>
-        <Text style={styles.btnPrimaryText}>Every {merchantLabel(tx)} charge</Text>
+        {/* Fixed label (not the interpolated merchant): the merchant is already named
+            in the sub-text above, and a raw/long descriptor made this button ugly and
+            wrap. Pairs with "Just this one" below. */}
+        <Text style={styles.btnPrimaryText}>All from this merchant</Text>
       </Pressable>
       <Pressable onPress={() => s.applyCategory('one')} style={[styles.btn, styles.btnGhost]}>
         <Text style={styles.btnGhostText}>Just this one</Text>
