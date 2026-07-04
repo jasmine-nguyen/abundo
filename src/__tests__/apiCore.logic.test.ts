@@ -1,13 +1,13 @@
-// Logic tests for the core (non-enrichment) src/api.ts network layer: URL,
-// method, headers, body shape, url-encoding, JSON return, and the not-OK throw
-// for every fetcher. These endpoints are UNAUTHENTICATED (only /enrichments sends
-// a Bearer token — see api.logic.test.ts), so each test also confirms no
-// Authorization header leaks onto them. fetch is mocked; no network. (WHIT-89)
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+// Logic tests for the core src/api.ts network layer: URL, method, headers, body
+// shape, url-encoding, JSON return, and the not-OK throw for every fetcher. As of
+// WHIT-110 EVERY app route is auth-gated, so each call must send the Bearer token
+// (Authorization: Bearer <EXPO_PUBLIC_API_TOKEN>) — these tests assert it on all of
+// them. fetch is mocked; no network. (WHIT-89, WHIT-110)
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
-  fetchBudgets, setTransactionCategory, setTransactionCategories, fetchPayCycle, setPayCycle, setBudget, fetchHomeLoan,
-  fetchLoanFacts, setLoanFacts, fetchRepayment,
+  fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories, fetchPayCycle,
+  setPayCycle, setBudget, fetchHomeLoan, fetchLoanFacts, setLoanFacts, fetchRepayment,
 } from '../api';
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
@@ -22,85 +22,106 @@ function notOk(status: number) {
 let fetchMock: jest.Mock;
 
 beforeEach(() => {
-  // Deliberately DON'T set EXPO_PUBLIC_API_TOKEN: these calls must not touch auth,
-  // so if one wrongly called authHeaders() it would throw and fail the test.
+  // Every route is now gated -> the client must present the token, so set it.
+  process.env.EXPO_PUBLIC_API_TOKEN = 'test-token';
   fetchMock = jest.fn();
   (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+});
+
+afterEach(() => {
+  // Don't leak the token into other test files sharing this worker.
+  delete process.env.EXPO_PUBLIC_API_TOKEN;
 });
 
 function lastCall(): [string, any] {
   return fetchMock.mock.calls[0] as [string, any];
 }
-function noAuth(opts: any) {
-  // GET calls pass no options/headers; write calls pass only Content-Type.
-  const headers = (opts && opts.headers) || {};
-  expect(headers.Authorization).toBeUndefined();
+function expectAuth(opts: any) {
+  // Every gated route must carry the Bearer token (WHIT-110).
+  expect(opts.headers.Authorization).toBe('Bearer test-token');
 }
 
 describe('reads', () => {
-  it('fetchTransactions GETs /transactions and returns the list', async () => {
+  it('fetchTransactions GETs /transactions with the Bearer token and returns the list', async () => {
     fetchMock.mockReturnValue(okJson([{ transaction_id: 't1' }]));
     const out = await fetchTransactions();
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/transactions`);
-    expect(opts).toBeUndefined();            // plain GET, no options object
+    expectAuth(opts);
     expect(out).toEqual([{ transaction_id: 't1' }]);
   });
 
-  it('fetchCategories GETs /categories', async () => {
+  it('fetchCategories GETs /categories with the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson([{ id: 'groceries' }]));
     const out = await fetchCategories();
-    expect(lastCall()[0]).toBe(`${API}/categories`);
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/categories`);
+    expectAuth(opts);
     expect(out).toEqual([{ id: 'groceries' }]);
   });
 
-  it('fetchBudgets GETs /budgets with a url-encoded days param', async () => {
+  it('fetchBudgets GETs /budgets with a url-encoded days param + the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ groceries: { target: 100, posted: 0, pending: 0 } }));
     const out = await fetchBudgets(14);
-    expect(lastCall()[0]).toBe(`${API}/budgets?days=14`);
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/budgets?days=14`);
+    expectAuth(opts);
     expect(out).toEqual({ groceries: { target: 100, posted: 0, pending: 0 } });
   });
 
-  it('fetchPayCycle GETs /paycycle', async () => {
+  it('fetchBreakdown GETs /breakdown with a url-encoded days param + the Bearer token', async () => {
+    // WHIT-110: /breakdown had no network test at all — the one most likely to ship
+    // gated-but-tokenless and 401 the Insights tab. Lock it.
+    fetchMock.mockReturnValue(okJson({ coffee: { posted: 20, pending: 5 } }));
+    const out = await fetchBreakdown(14);
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/breakdown?days=14`);
+    expectAuth(opts);
+    expect(out).toEqual({ coffee: { posted: 20, pending: 5 } });
+  });
+
+  it('fetchPayCycle GETs /paycycle with the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ length: 14, last_pay_date: '2026-06-06' }));
     const out = await fetchPayCycle();
-    expect(lastCall()[0]).toBe(`${API}/paycycle`);
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/paycycle`);
+    expectAuth(opts);
     expect(out).toEqual({ length: 14, last_pay_date: '2026-06-06' });
   });
 
-  it('fetchHomeLoan GETs /homeloan and returns the balance shape', async () => {
+  it('fetchHomeLoan GETs /homeloan with the Bearer token', async () => {
     const body = { balance: 596642.43, as_of: '2026-07-04T00:24:37.614Z', currency: 'AUD' };
     fetchMock.mockReturnValue(okJson(body));
     const out = await fetchHomeLoan();
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/homeloan`);
-    expect(opts).toBeUndefined();            // plain GET, no options object
+    expectAuth(opts);
     expect(out).toEqual(body);
   });
 
-  it('fetchLoanFacts GETs /loanfacts (all-null when unset)', async () => {
+  it('fetchLoanFacts GETs /loanfacts with the Bearer token (all-null when unset)', async () => {
     const body = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
     fetchMock.mockReturnValue(okJson(body));
     const out = await fetchLoanFacts();
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/loanfacts`);
-    expect(opts).toBeUndefined();
+    expectAuth(opts);
     expect(out).toEqual(body);
   });
 
-  it('fetchRepayment GETs /repayment and returns the repayment shape', async () => {
+  it('fetchRepayment GETs /repayment with the Bearer token', async () => {
     const body = { amount: 1440, date: '2026-07-01', principal: 1208, interest: 232 };
     fetchMock.mockReturnValue(okJson(body));
     const out = await fetchRepayment();
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/repayment`);
-    expect(opts).toBeUndefined();
+    expectAuth(opts);
     expect(out).toEqual(body);
   });
 });
 
 describe('loan-facts write', () => {
-  it('setLoanFacts PUTs /loanfacts with all six fields, no auth', async () => {
+  it('setLoanFacts PUTs /loanfacts with all six fields + the Bearer token', async () => {
     const facts = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
     fetchMock.mockReturnValue(okJson(facts));
     await setLoanFacts(facts);
@@ -108,78 +129,82 @@ describe('loan-facts write', () => {
     expect(url).toBe(`${API}/loanfacts`);
     expect(opts.method).toBe('PUT');
     expect(opts.headers['Content-Type']).toBe('application/json');
-    noAuth(opts);
+    expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual(facts);
   });
 });
 
 describe('category writes', () => {
-  it('createCategory POSTs /categories with the input body', async () => {
+  it('createCategory POSTs /categories with the input body + the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ id: 'gym', name: 'Gym' }));
     await createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' });
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/categories`);
     expect(opts.method).toBe('POST');
     expect(opts.headers['Content-Type']).toBe('application/json');
-    noAuth(opts);
+    expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' });
   });
 
-  it('updateCategory PATCHes /categories/{id} url-encoded', async () => {
+  it('updateCategory PATCHes /categories/{id} url-encoded with the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ id: 'a/b' }));
     await updateCategory('a/b', { name: 'X', bucket: 'Living', icon: 'cart' });
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/categories/a%2Fb`);
     expect(opts.method).toBe('PATCH');
+    expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual({ name: 'X', bucket: 'Living', icon: 'cart' });
   });
 
-  it('deleteCategory DELETEs /categories/{id} url-encoded', async () => {
+  it('deleteCategory DELETEs /categories/{id} url-encoded with the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ id: 'a/b' }));
     await deleteCategory('a/b');
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/categories/a%2Fb`);   // special char proves the encoding
     expect(opts.method).toBe('DELETE');
-    noAuth(opts);
+    expectAuth(opts);
   });
 });
 
 describe('transaction + budget + paycycle writes', () => {
-  it('setTransactionCategory PATCHes /transactions/{id} with {category}', async () => {
+  it('setTransactionCategory PATCHes /transactions/{id} with {category} + the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ transaction_id: 't1', category: 'coffee' }));
     await setTransactionCategory('t 1', 'coffee');
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/transactions/t%201`);
     expect(opts.method).toBe('PATCH');
+    expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual({ category: 'coffee' });
   });
 
-  it('setTransactionCategories PATCHes /transactions (collection) with {updates}', async () => {
+  it('setTransactionCategories PATCHes /transactions (collection) with {updates} + the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ results: [{ id: 't1', status: 'updated' }] }));
     const out = await setTransactionCategories([{ id: 't1', category: 'coffee' }, { id: 't2', category: 'coffee' }]);
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/transactions`);          // collection route, no /{id}
     expect(opts.method).toBe('PATCH');
+    expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual({ updates: [{ id: 't1', category: 'coffee' }, { id: 't2', category: 'coffee' }] });
-    noAuth(opts);                                       // open route, no Bearer
     expect(out).toEqual({ results: [{ id: 't1', status: 'updated' }] });
   });
 
-  it('setPayCycle PUTs /paycycle with the full cycle', async () => {
+  it('setPayCycle PUTs /paycycle with the full cycle + the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ length: 30, last_pay_date: '2026-06-01' }));
     await setPayCycle({ length: 30, last_pay_date: '2026-06-01' });
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/paycycle`);
     expect(opts.method).toBe('PUT');
+    expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual({ length: 30, last_pay_date: '2026-06-01' });
   });
 
-  it('setBudget PUTs /budgets/{categoryId} url-encoded with {target}', async () => {
+  it('setBudget PUTs /budgets/{categoryId} url-encoded with {target} + the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ id: 'a/b', target: 300 }));
     await setBudget('a/b', 300);
     const [url, opts] = lastCall();
     expect(url).toBe(`${API}/budgets/a%2Fb`);   // special char proves the encoding
     expect(opts.method).toBe('PUT');
+    expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual({ target: 300 });
   });
 });
@@ -189,6 +214,7 @@ describe('every fetcher throws on a not-OK response', () => {
     ['fetchTransactions', () => fetchTransactions()],
     ['fetchCategories', () => fetchCategories()],
     ['fetchBudgets', () => fetchBudgets(14)],
+    ['fetchBreakdown', () => fetchBreakdown(14)],
     ['fetchPayCycle', () => fetchPayCycle()],
     ['fetchHomeLoan', () => fetchHomeLoan()],
     ['fetchLoanFacts', () => fetchLoanFacts()],
@@ -206,5 +232,15 @@ describe('every fetcher throws on a not-OK response', () => {
   it.each(cases)('%s throws API error on 500', async (_name, call) => {
     fetchMock.mockReturnValue(notOk(500));
     await expect(call()).rejects.toThrow('API error: 500');
+  });
+});
+
+describe('auth token required', () => {
+  it('a read throws (and never calls fetch) when the token is missing', async () => {
+    // Now that reads are gated, a missing EXPO_PUBLIC_API_TOKEN fails loudly rather
+    // than silently sending no credential (mirrors the enrichments contract).
+    delete process.env.EXPO_PUBLIC_API_TOKEN;
+    await expect(fetchTransactions()).rejects.toThrow('Missing EXPO_PUBLIC_API_TOKEN');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

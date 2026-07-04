@@ -31,8 +31,8 @@ resource "aws_ssm_parameter" "anthropic_api_key" {
   }
 }
 
-# Shared-secret token the API Gateway authorizer checks on the /enrichments
-# routes (WHIT-52). Terraform seeds a placeholder; set the real random value
+# Shared-secret token the API Gateway authorizer checks on every app route
+# (WHIT-52; extended to all routes by WHIT-110). Terraform seeds a placeholder; set the real random value
 # out-of-band (console/CLI) and inject the same value into the app config.
 # ignore_changes keeps Terraform from overwriting it on subsequent applies.
 resource "aws_ssm_parameter" "api_auth_token" {

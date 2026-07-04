@@ -2,10 +2,12 @@ import { Transaction, Category, Bucket } from "./context";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
 /**
- * The shared-secret token the app presents to the auth-gated /enrichments routes
- * (the only gated endpoints — every other call here is open).
+ * The shared-secret token the app presents to the API's authorizer. Every app
+ * route is gated (WHIT-110) — the only open endpoint is the inbound BankSync
+ * webhook, which the app never calls — so every function here sends it.
  *
- * Read at CALL time, not as a module const: the Expo bundler rewrites
+ * This is a single shared secret baked into the bundle: a speed bump, not per-user
+ * auth (that's WHIT-97). Read at CALL time, not as a module const: the Expo bundler rewrites
  * `process.env.EXPO_PUBLIC_API_TOKEN` to read from a live env reference, so a
  * module-level capture would freeze an early/undefined value (and break tests
  * that set the var before calling). Throws loudly if unset — better a clear
@@ -40,7 +42,7 @@ export interface EnrichmentRule {
  * @throws If the response status is not OK.
  */
 export async function fetchTransactions(): Promise<Transaction[]> {
-  const response = await fetch(`${API_BASE}/transactions`);
+  const response = await fetch(`${API_BASE}/transactions`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -53,7 +55,7 @@ export async function fetchTransactions(): Promise<Transaction[]> {
  * @throws If the response status is not OK.
  */
 export async function fetchCategories(): Promise<Category[]> {
-  const response = await fetch(`${API_BASE}/categories`);
+  const response = await fetch(`${API_BASE}/categories`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -72,7 +74,7 @@ export async function createCategory(
 ): Promise<Category> {
   const response = await fetch(`${API_BASE}/categories`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(input),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
@@ -95,7 +97,7 @@ export async function updateCategory(
 ): Promise<Category> {
   const response = await fetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(input),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
@@ -114,6 +116,7 @@ export async function updateCategory(
 export async function deleteCategory(id: string): Promise<{ id: string }> {
   const response = await fetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
@@ -137,7 +140,7 @@ export interface BudgetRollup {
  * @throws If the response status is not OK.
  */
 export async function fetchBudgets(days: number): Promise<Record<string, BudgetRollup>> {
-  const response = await fetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`);
+  const response = await fetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -160,7 +163,7 @@ export interface CategorySpend {
  * @throws If the response status is not OK.
  */
 export async function fetchBreakdown(days: number): Promise<Record<string, CategorySpend>> {
-  const response = await fetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}`);
+  const response = await fetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -180,7 +183,7 @@ export async function setTransactionCategory(
 ): Promise<{ transaction_id: string; category: string }> {
   const response = await fetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ category }),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
@@ -199,7 +202,7 @@ export interface BatchCategoryResult {
  * behind "All from this merchant", replacing N parallel single PATCHes. Each
  * update is applied independently server-side; the returned `results` carry a
  * per-item status (keyed by `id`, not position) so the caller can roll back only
- * the ones that didn't land. Open route, like the single PATCH — no auth header.
+ * the ones that didn't land. Auth-gated like every app route (WHIT-110).
  *
  * @throws If the response status is not OK.
  */
@@ -208,7 +211,7 @@ export async function setTransactionCategories(
 ): Promise<{ results: BatchCategoryResult[] }> {
   const response = await fetch(`${API_BASE}/transactions`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ updates }),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
@@ -236,7 +239,7 @@ export interface HomeLoan {
  * @throws If the response status is not OK.
  */
 export async function fetchHomeLoan(): Promise<HomeLoan> {
-  const response = await fetch(`${API_BASE}/homeloan`);
+  const response = await fetch(`${API_BASE}/homeloan`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -262,7 +265,7 @@ export interface Repayment {
  * @throws If the response status is not OK.
  */
 export async function fetchRepayment(): Promise<Repayment> {
-  const response = await fetch(`${API_BASE}/repayment`);
+  const response = await fetch(`${API_BASE}/repayment`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -294,7 +297,7 @@ export interface LoanFactsInput {
  * @throws If the response status is not OK.
  */
 export async function fetchLoanFacts(): Promise<LoanFacts> {
-  const response = await fetch(`${API_BASE}/loanfacts`);
+  const response = await fetch(`${API_BASE}/loanfacts`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -310,7 +313,7 @@ export async function fetchLoanFacts(): Promise<LoanFacts> {
 export async function setLoanFacts(facts: LoanFactsInput): Promise<LoanFactsInput> {
   const response = await fetch(`${API_BASE}/loanfacts`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(facts),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
@@ -332,7 +335,7 @@ export interface PayCycle {
  * @throws If the response status is not OK.
  */
 export async function fetchPayCycle(): Promise<PayCycle> {
-  const response = await fetch(`${API_BASE}/paycycle`);
+  const response = await fetch(`${API_BASE}/paycycle`, { headers: authHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -350,7 +353,7 @@ export async function fetchPayCycle(): Promise<PayCycle> {
 export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
   const response = await fetch(`${API_BASE}/paycycle`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(cycle),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
@@ -373,7 +376,7 @@ export async function setBudget(
 ): Promise<{ id: string; target: number }> {
   const response = await fetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ target }),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
