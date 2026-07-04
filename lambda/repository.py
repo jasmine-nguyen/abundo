@@ -150,23 +150,6 @@ class TransactionRepository:
         except ClientError as e:
             handle_database_error(e, "read")
 
-    def get_recent_transactions(
-        self, account_id: str, start_date: str, end_date: str
-    ) -> list[dict]:
-        if not account_id or not start_date or not end_date:
-            return []
-
-        try:
-            response = self._get_table().query(
-                KeyConditionExpression=Key("pk").eq(_build_pk(account_id))
-                & Key("sk").between(_build_sk(None), f"{_build_sk(None)}~"),
-                ScanIndexForward=False,
-            )
-
-            return response.get("Items", [])
-        except ClientError as e:
-            handle_database_error(e, "read")
-
     def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
         """Retrieves all pending transactions of an account using the account_id.
 
@@ -199,9 +182,8 @@ class TransactionRepository:
 
     def get_all_transactions_for_account(self, account_id: str) -> list[dict]:
         """Every stored transaction row — pending AND posted — for an account,
-        paginated (WHIT-82 pattern). Used by the one-time dedupe cleanup (WHIT-80);
-        unlike get_recent_transactions this follows LastEvaluatedKey, so no row is
-        truncated at DynamoDB's 1MB page."""
+        paginated (WHIT-82 pattern). Used by the one-time dedupe cleanup (WHIT-80):
+        follows LastEvaluatedKey so no row is truncated at DynamoDB's 1MB page."""
         try:
             table = self._get_table()
             key_condition = Key("pk").eq(_build_pk(account_id))
