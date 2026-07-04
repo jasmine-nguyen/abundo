@@ -92,12 +92,12 @@ def test_list_before_any_register_is_empty(shared):
     assert _repo(shared).list_tokens() == []
 
 
-def test_client_error_surfaces_as_runtime_error(shared, client_error):
+def test_client_error_surfaces_as_database_error(shared, client_error, database_error):
     r = _repo(shared)
 
     def boom(**kwargs):
         raise client_error("InternalServerError")
 
     r._table.update_item = boom
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         r.register("ExpoPushToken[a]")

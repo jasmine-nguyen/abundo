@@ -9,6 +9,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
 from models import Transaction
 from constants import DEAD_LETTER_TTL_SECONDS, PENDING_STATUS, TIP_HEADROOM
+from repository_errors import DatabaseError
 
 REGION_NAME = "ap-southeast-2"
 RESOURCE_NAME = "dynamodb"
@@ -16,11 +17,11 @@ TABLE_NAME = "whittle-dynamodb-table"
 
 
 def handle_database_error(e: ClientError, action: str) -> NoReturn:
-    """Logs an AWS client error and re-raises it as a RuntimeError."""
+    """Logs an AWS client error and re-raises it as a DatabaseError (WHIT-127)."""
     error_code = e.response["Error"]["Code"]
     error_message = e.response["Error"]["Message"]
     print(f"DynamoDB Error [{error_code}]: {error_message}")
-    raise RuntimeError(f"Database {action} failed: {error_message}") from e
+    raise DatabaseError(f"Database {action} failed: {error_message}") from e
 
 
 def sanitise_transaction(txn: Transaction) -> dict[str, Any]:

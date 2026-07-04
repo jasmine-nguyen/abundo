@@ -103,14 +103,14 @@ def test_insert_transactions_writes_one_row_per_transaction(repo):
     assert len(repo._table.store) == 2
 
 
-def test_insert_transactions_maps_database_error(repo, shared, client_error, monkeypatch):
-    # A ClientError from the batch write is re-raised as a RuntimeError by
+def test_insert_transactions_maps_database_error(repo, shared, client_error, database_error, monkeypatch):
+    # A ClientError from the batch write is re-raised as a DatabaseError by
     # handle_database_error, never leaked as a raw botocore error.
     def boom():
         raise client_error("ProvisionedThroughputExceededException")
 
     monkeypatch.setattr(repo._table, "batch_writer", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         repo.insert_transactions([{"account_id": "a", "transaction_id": "t"}])
 
 
@@ -222,12 +222,12 @@ def test_get_by_date_range_caps_limit_at_max_page_size(repo, shared, monkeypatch
     assert captured["Limit"] == shared.repository.MAX_PAGE_SIZE
 
 
-def test_get_by_date_range_maps_database_error(repo, client_error, monkeypatch):
+def test_get_by_date_range_maps_database_error(repo, client_error, database_error, monkeypatch):
     def boom(**kwargs):
         raise client_error("InternalServerError")
 
     monkeypatch.setattr(repo._table, "query", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         repo.get_transactions_by_date_range("acct", None, None)
 
 
@@ -255,12 +255,12 @@ def test_get_pending_empty_when_none_pending(repo):
     assert repo.get_pending_transactions_for_account("acct") == []
 
 
-def test_get_pending_maps_database_error(repo, client_error, monkeypatch):
+def test_get_pending_maps_database_error(repo, client_error, database_error, monkeypatch):
     def boom(**kwargs):
         raise client_error("InternalServerError")
 
     monkeypatch.setattr(repo._table, "query", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         repo.get_pending_transactions_for_account("acct")
 
 
@@ -298,12 +298,12 @@ def test_get_keys_by_id_returns_first_of_multiple_matches(repo):
     )
 
 
-def test_get_keys_by_id_maps_database_error(repo, client_error, monkeypatch):
+def test_get_keys_by_id_maps_database_error(repo, client_error, database_error, monkeypatch):
     def boom(**kwargs):
         raise client_error("InternalServerError")
 
     monkeypatch.setattr(repo._table, "query", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         repo.get_transaction_keys_by_id("t1")
 
 
@@ -324,13 +324,13 @@ def test_update_category_returns_false_when_row_gone(repo):
     assert repo.update_transaction_category("ACCOUNT#x", "TXN#gone", "FOOD") is False
 
 
-def test_update_category_maps_other_database_error(repo, client_error, monkeypatch):
+def test_update_category_maps_other_database_error(repo, client_error, database_error, monkeypatch):
     # A non-conditional ClientError is still routed through handle_database_error.
     def boom(**kwargs):
         raise client_error("InternalServerError")
 
     monkeypatch.setattr(repo._table, "update_item", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         repo.update_transaction_category("pk", "sk", "FOOD")
 
 
@@ -449,9 +449,9 @@ def test_batch_writes_category_value_verbatim(repo):
     assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "FOOD_AND_DRINK"
 
 
-def test_batch_real_client_error_propagates_not_swallowed(repo, client_error, monkeypatch):
+def test_batch_real_client_error_propagates_not_swallowed(repo, client_error, database_error, monkeypatch):
     # MONEY-SAFETY: a NON-conditional ClientError on the write (throttle / 5xx) must
-    # propagate as RuntimeError — NOT be quietly recorded as 'not_found'. A false
+    # propagate as a DatabaseError — NOT be quietly recorded as 'not_found'. A false
     # 'not_found' would tell the client "row gone, revert" while the row is fine.
     repo._table.store = {
         ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1"},
@@ -462,11 +462,11 @@ def test_batch_real_client_error_propagates_not_swallowed(repo, client_error, mo
 
     monkeypatch.setattr(repo._table, "update_item", boom)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         repo.update_transaction_categories([{"id": "t1", "category": "coffee"}])
 
 
-def test_batch_error_midloop_keeps_earlier_write_then_raises(repo, client_error, monkeypatch):
+def test_batch_error_midloop_keeps_earlier_write_then_raises(repo, client_error, database_error, monkeypatch):
     # The best-effort loop is NOT transactional: if the write throws on the 2nd item,
     # the 1st item's write has ALREADY landed. Documents the partial-write reality
     # (the divergence tracked as tech-debt).
@@ -487,7 +487,7 @@ def test_batch_error_midloop_keeps_earlier_write_then_raises(repo, client_error,
 
     monkeypatch.setattr(repo._table, "update_item", spy)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(database_error):
         repo.update_transaction_categories([
             {"id": "t1", "category": "coffee"},
             {"id": "t2", "category": "coffee"},

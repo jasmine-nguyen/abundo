@@ -39,6 +39,7 @@ from repository import (
     BudgetRepository,
     CategoryNotFoundError,
     CategoryRepository,
+    DatabaseError,
     DeviceRepository,
     DuplicateCategoryError,
     HomeLoanBalanceRepository,
@@ -420,7 +421,7 @@ def delete_category(
     # fail the delete, so it is best-effort: log and return 200 if it can't complete.
     try:
         budget_repo.delete_budget(cat_id)
-    except (VersionConflictError, RuntimeError) as e:
+    except (VersionConflictError, DatabaseError) as e:
         logger.warning("budget cascade failed for deleted category %s: %s", cat_id, e)
 
     return _json_response(200, {"id": cat_id})

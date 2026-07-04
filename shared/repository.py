@@ -15,6 +15,7 @@ been bitten by before.
 from repository_base import handle_database_error
 from repository_errors import (
     CategoryNotFoundError,
+    DatabaseError,
     DuplicateCategoryError,
     VersionConflictError,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "DuplicateCategoryError",
     "CategoryNotFoundError",
     "VersionConflictError",
+    "DatabaseError",
     "SEED_CATEGORIES",
     "CATEGORY_PALETTE",
     "sanitise_transaction",
