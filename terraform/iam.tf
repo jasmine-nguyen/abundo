@@ -179,6 +179,10 @@ resource "aws_iam_role_policy" "lambda_api_ssm" {
     }]
   })
 }
+# Webhook lambda SSM reads: its own BankSync webhook secret, plus the Expo access
+# token that the shared push sender (shared/push.py) uses. The webhook is the
+# push sender's runtime — it fires budget/milestone alerts (the notification
+# cards that build on this foundation).
 resource "aws_iam_role_policy" "lambda_ssm" {
   name = "${var.project_name}-lambda-ssm"
   role = aws_iam_role.lambda_exec.id
@@ -192,6 +196,7 @@ resource "aws_iam_role_policy" "lambda_ssm" {
       ]
       Resource = [
         aws_ssm_parameter.banksync_webhook_secret.arn,
+        aws_ssm_parameter.expo_access_token.arn,
       ]
     }]
   })

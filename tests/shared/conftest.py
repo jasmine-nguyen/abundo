@@ -90,7 +90,7 @@ _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 _REIMPORT = (
     "constants", "models", "encoders", "repository_base", "repository_transaction",
     "repository_balance", "repository_loanfacts", "repository_budget",
-    "repository_insight", "repository_errors",
+    "repository_errors", "repository_insight", "repository_device", "push",
 )
 
 
@@ -115,11 +115,14 @@ def shared():
     import repository_loanfacts
     import repository_budget
     import repository_insight
+    import repository_device
+    import push
 
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
         balance=repository_balance, loanfacts=repository_loanfacts,
         budget=repository_budget, insight=repository_insight,
+        device=repository_device, push=push,
     )
     try:
         yield ns

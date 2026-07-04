@@ -43,3 +43,18 @@ resource "aws_ssm_parameter" "api_auth_token" {
     ignore_changes = [value]
   }
 }
+
+# Expo access token (a PAT) used by the push sender (shared/push.py). The Expo
+# project has "Enhanced Security for Push Notifications" enabled, so every push
+# send must carry Authorization: Bearer <this token>. Terraform seeds a
+# placeholder; set the real PAT out-of-band (console/CLI) and ignore_changes
+# keeps applies from overwriting it. Read by the webhook lambda (the push sender's
+# runtime — see the lambda_ssm grant in iam.tf).
+resource "aws_ssm_parameter" "expo_access_token" {
+  name  = "/${var.project_name}/expo-access-token"
+  type  = "SecureString"
+  value = "placeholder"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

@@ -205,6 +205,18 @@ resource "aws_apigatewayv2_route" "delete_enrichment_route" {
   authorizer_id      = aws_apigatewayv2_authorizer.enrichments.id
 }
 
+# Device push-token registration (POST /devices). Reuse the lambda_api
+# integration (its /*/* invoke permission already covers it), but gate it behind
+# the shared-secret authorizer — registering a token controls who receives the
+# user's notifications, so it is NOT left open like the read routes.
+resource "aws_apigatewayv2_route" "post_device_route" {
+  api_id             = aws_apigatewayv2_api.api.id
+  route_key          = "POST /devices"
+  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.enrichments.id
+}
+
 # AI spending insights (WHIT-104): GET reads the per-cycle cache, POST generates
 # (the paid Anthropic call). Reuse the lambda_api integration; gate BOTH behind the
 # shared-secret authorizer (like /enrichments) since a call costs money.
