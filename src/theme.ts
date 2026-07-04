@@ -58,3 +58,19 @@ export function fmt2(n: number): string {
   return (n < 0 ? '-' : '+') + '$' +
     Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+// A short "when did this happen" label from an ISO timestamp (e.g. "just now",
+// "5m ago", "3h ago", "2d ago"). `now` is injectable so it can be unit-tested
+// deterministically. Returns '' for a null/blank/unparseable input so callers can
+// simply hide the stamp. Future timestamps (clock skew) clamp to "just now".
+export function agoLabel(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const mins = Math.floor((now - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}

@@ -3,7 +3,7 @@
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel, cycleName } from '../context';
-import { fmt, fmt2, tint } from '../theme';
+import { fmt, fmt2, tint, agoLabel } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -49,5 +49,30 @@ describe('cycleName', () => {
     expect(cycleName(7)).toBe('Weekly');
     expect(cycleName(14)).toBe('Fortnightly');
     expect(cycleName(30)).toBe('Monthly');
+  });
+});
+
+describe('agoLabel', () => {
+  const now = Date.parse('2026-07-04T12:00:00Z');
+  const at = (mins: number) => new Date(now - mins * 60000).toISOString();
+
+  it('buckets the elapsed time into a short label', () => {
+    expect(agoLabel(at(0), now)).toBe('just now');
+    expect(agoLabel(at(5), now)).toBe('5m ago');
+    expect(agoLabel(at(59), now)).toBe('59m ago');
+    expect(agoLabel(at(60), now)).toBe('1h ago');
+    expect(agoLabel(at(23 * 60), now)).toBe('23h ago');
+    expect(agoLabel(at(24 * 60), now)).toBe('1d ago');
+    expect(agoLabel(at(2 * 24 * 60), now)).toBe('2d ago');
+  });
+
+  it('returns empty for null/blank/unparseable input (caller hides the stamp)', () => {
+    expect(agoLabel(null, now)).toBe('');
+    expect(agoLabel('', now)).toBe('');
+    expect(agoLabel('not-a-date', now)).toBe('');
+  });
+
+  it('clamps a future timestamp (clock skew) to "just now"', () => {
+    expect(agoLabel(at(-10), now)).toBe('just now');
   });
 });
