@@ -231,8 +231,8 @@ resource "aws_lambda_function" "balance_poller" {
   }
 }
 
-# API Gateway authorizer: checks the shared-secret token on the /enrichments
-# routes (WHIT-52). Only needs the shared layer for constants.py/ssm.py; no
+# API Gateway authorizer: checks the shared-secret token on every app route
+# (WHIT-52; extended to all routes by WHIT-110). Only needs the shared layer for constants.py/ssm.py; no
 # DynamoDB. TABLE_NAME is not set — it never touches the table.
 resource "aws_lambda_function" "authorizer" {
   function_name    = "${var.project_name}-authorizer"
