@@ -45,12 +45,27 @@ CATEGORY_PATH = "/categories"
 # Allowed spending buckets (mirrors the client Bucket union in src/context.tsx).
 CATEGORY_BUCKETS = {"Living", "Lifestyle", "Income", "Savings"}
 
+# Buckets whose spend appears in the category-breakdown screen (WHIT-23). Income
+# and Savings carry positive amounts, so summing -amount clamps them to $0 rows;
+# a *spend* view excludes them. A subset of CATEGORY_BUCKETS.
+SPEND_BUCKETS = {"Living", "Lifestyle"}
+
 # Icon assigned when a create request omits one (a valid key in src/icons.tsx).
 DEFAULT_CATEGORY_ICON = "tag"
 
 # --- Budgets (per-category pay-cycle targets) ------------------------------
 # API Gateway route path for the budget-target endpoints (GET all, PUT one).
 BUDGET_PATH = "/budgets"
+
+# --- Category breakdown (spend by category for the current cycle, WHIT-23) --
+# API Gateway route path for the breakdown endpoint (GET only).
+BREAKDOWN_PATH = "/breakdown"
+
+# Sentinel category id for the "Uncategorized" bucket in the breakdown response:
+# spend that counts to budget but whose category isn't in the taxonomy (a raw
+# BankSync enum, a deleted category's dangling id, or null). _slugify strips '_',
+# so no real category id can ever collide with this key.
+UNCATEGORIZED_KEY = "__uncategorized__"
 
 # --- Pay cycle (persisted length + payday last_pay_date) --------------------------
 # API Gateway route path for the pay-cycle endpoints (GET current, PUT to set).

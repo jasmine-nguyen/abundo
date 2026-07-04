@@ -4,6 +4,7 @@
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName } from '../context';
 import type { AppContext, Category, Transaction, Budget, Goal } from '../context';
+import type { CategorySpend } from '../api';
 
 export function cat(over: Partial<Category> = {}): Category {
   return { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52, ...over };
@@ -22,6 +23,10 @@ export function budget(over: Partial<Budget> = {}): Budget {
   return { id: 'coffee', budget: 100, posted: 40, pending: 10, ...over };
 }
 
+export function spend(over: Partial<CategorySpend> = {}): CategorySpend {
+  return { posted: 40, pending: 10, ...over };
+}
+
 const GOAL: Goal = {
   original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
   ratePct: 5.74, baseRepay: 1240, extra: 200, freedomDate: 'Aug 2045', aheadLabel: '4y 3m', interestSaved: 58200,
@@ -32,6 +37,7 @@ interface StateOver {
   categories?: Category[];
   budgets?: Budget[];
   transactions?: Transaction[];
+  breakdown?: Record<string, CategorySpend>;
   goal?: Goal;
   cycleLen?: number;
   daysLeft?: number;
@@ -46,6 +52,7 @@ export function makeState(over: StateOver = {}): AppContext {
     categories,
     budgets: over.budgets ?? [],
     transactions: over.transactions ?? [],
+    breakdown: over.breakdown ?? {},
     goal: over.goal ?? GOAL,
     cycleLen,
     daysLeft: over.daysLeft ?? 7,

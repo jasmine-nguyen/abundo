@@ -8,6 +8,7 @@ import { useAppContext, countUncategorized } from '../../src/context';
 
 const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
+  { name: 'insights', label: 'Insights', icon: 'navInsights' },
   { name: 'transactions', label: 'Transactions', icon: 'navTx' },
   { name: 'goals', label: 'Goal', icon: 'navGoals' },
   { name: 'settings', label: 'Settings', icon: 'navSettings' },
@@ -46,7 +47,7 @@ function TabBar({ state, navigation }: TabBarShape) {
               <Glyph name={meta.icon} size={24} color={color} />
               {meta.name === 'transactions' && hasUncategorized && <View style={styles.dot} />}
             </View>
-            <Text style={[styles.label, { color }]}>{meta.label}</Text>
+            <Text style={[styles.label, { color }]} numberOfLines={1}>{meta.label}</Text>
           </Pressable>
         );
       })}
@@ -58,6 +59,7 @@ export default function TabsLayout() {
   return (
     <Tabs screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: C.bg } }} tabBar={(props) => <TabBar {...(props as unknown as TabBarShape)} />}>
       <Tabs.Screen name="budgets" />
+      <Tabs.Screen name="insights" />
       <Tabs.Screen name="transactions" />
       <Tabs.Screen name="goals" />
       <Tabs.Screen name="settings" />
@@ -66,8 +68,10 @@ export default function TabsLayout() {
 }
 
 const styles = StyleSheet.create({
-  bar: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingTop: 10, paddingHorizontal: 24, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.hairline },
-  item: { width: 76, alignItems: 'center', gap: 5 },
+  bar: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingTop: 10, paddingHorizontal: 8, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.hairline },
+  // flex:1 (not a fixed width) so the items share the row evenly — with 5 tabs a
+  // fixed 76pt width overflowed narrow phones (5×76 + padding > 390pt).
+  item: { flex: 1, minWidth: 0, alignItems: 'center', gap: 5 },
   label: { fontFamily: FONT.body, fontSize: 10.5, fontWeight: '600' },
   dot: { position: 'absolute', top: -3, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad, borderWidth: 2, borderColor: C.bg },
 });

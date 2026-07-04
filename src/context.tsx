@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -188,6 +188,9 @@ export interface AppContext {
 	refreshCategories: () => Promise<void>;
 	budgetsLoading: boolean;
 	refreshBudgets: () => Promise<void>;
+	breakdown: Record<string, CategorySpend>;
+	breakdownLoading: boolean;
+	refreshBreakdown: () => Promise<void>;
 	refreshPayCycle: () => Promise<void>;
 	enrichmentsLoading: boolean;
 	enrichmentsError: string | null;
@@ -294,6 +297,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		setPayCycle(cycle);
 	}, []);
 
+	// Spend-by-category for the current cycle (the Insights tab). Same window as
+	// the budgets rollup, so keyed on the pay-cycle length; refreshed on the tab's
+	// focus and whenever a categorisation changes (see the refreshBreakdown() calls
+	// alongside refreshBudgets()).
+	const [breakdown, setBreakdown] = useState<Record<string, CategorySpend>>({});
+	const [breakdownLoading, setBreakdownLoading] = useState(false);
+	const refreshBreakdown = useCallback(async () => {
+		setBreakdownLoading(true);
+		try {
+			setBreakdown(await fetchBreakdown(payCycle.length));
+		} finally {
+			setBreakdownLoading(false);
+		}
+	}, [payCycle.length]);
+
 	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
 	const [enrichmentsError, setEnrichmentsError] = useState<string | null>(null);
 	const refreshEnrichments = useCallback(async () => {
@@ -317,10 +335,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshEnrichments();
 	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshEnrichments]);
 
-	// Re-fetch budgets on mount and whenever the pay-cycle length (the window) changes.
+	// Re-fetch budgets + breakdown on mount and whenever the pay-cycle length (the
+	// window) changes — both are computed over the current cycle.
 	useEffect(() => {
 		refreshBudgets();
-	}, [refreshBudgets]);
+		refreshBreakdown();
+	}, [refreshBudgets, refreshBreakdown]);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -352,12 +372,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         await apiSetPayCycle(next);
         await refreshBudgets();
+        refreshBreakdown();
       } catch {
         setPayCycle(prev);
         showToast('Could not save pay cycle. Please try again.');
       }
     },
-    [refreshBudgets, showToast],
+    [refreshBudgets, refreshBreakdown, showToast],
   );
 
   // Change the window length (Weekly/Fortnightly/Monthly), keeping the last_pay_date.
@@ -453,8 +474,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // Transactions filed fine; only the future-rule failed to persist.
         showToast('Filed, but could not save the rule for future charges.');
       }
-      // Some categorisations persisted -> refresh the bars so budget spend updates.
-      if (failedIds.length < sameMerchantIds.length) refreshBudgets();
+      // Some categorisations persisted -> refresh the bars + breakdown so spend updates.
+      if (failedIds.length < sameMerchantIds.length) { refreshBudgets(); refreshBreakdown(); }
       return;
     }
 
@@ -472,6 +493,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       await apiSetTransactionCategory(txId, categoryId);
       refreshBudgets(); // reflect the new categorisation in the budget bars
+      refreshBreakdown(); // ...and in the category breakdown
     } catch {
       // Save failed — undo the optimistic change, putting the old category back.
       setTransactions((prev) =>
@@ -481,7 +503,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }));
       showToast('Could not save category. Please try again.');
     }
-  }, [sheet, transactions, categories, showToast, refreshBudgets]);
+  }, [sheet, transactions, categories, showToast, refreshBudgets, refreshBreakdown]);
 
   const saveBudget = useCallback(
     async (categoryId: string, value: number): Promise<boolean> => {
@@ -542,13 +564,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setBudgets((prev) => prev.filter((b) => b.id !== id));
       setRules((prev) => prev.filter((r) => r.categoryId !== id));
       setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
+      // The deleted category's in-cycle spend now falls into Uncategorized on the
+      // breakdown; re-pull so the Insights tab reflects that. (Budgets already
+      // dropped the row locally above.)
+      refreshBreakdown();
       showToast('Category deleted.');
       return true;
     } catch {
       showToast('Could not delete category. Please try again.');
       return false;
     }
-  }, [showToast]);
+  }, [showToast, refreshBreakdown]);
 
   // Optimistically remove the rule, then delete it in BankSync; on failure put it
   // back where it was and tell the user. A temp-id rule (mid-create) deletes fine
@@ -632,9 +658,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -711,6 +737,49 @@ export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: num
     });
   }
   return { rows, totBudget, totSpent, totRemain };
+}
+
+// The sentinel category id the /breakdown endpoint uses for spend that counts to
+// budget but has no home in the taxonomy (a raw BankSync enum, a deleted category,
+// or null). Mirrors UNCATEGORIZED_KEY in lambda_api/constants.py.
+export const UNCATEGORIZED_KEY = '__uncategorized__';
+
+export interface CategoryBreakdownRow {
+  id: string; name: string; color: string; icon: string; chipBg: string;
+  spent: number; posted: number; pending: number;
+  spentLabel: string; pct: number; uncategorized: boolean;
+}
+
+// Spend by category for the current cycle (the Insights tab), sorted highest-first.
+// Pure over { breakdown, category }: joins the server's per-category posted/pending
+// (s.breakdown) with the taxonomy for name/icon/colour, and renders the "__uncategorized__"
+// bucket with the app's Uncategorized styling (matches transactionView). Zero-spend
+// rows are dropped; a real category id the server didn't fold but that's missing
+// locally is skipped defensively. `pct` is each row's share of the cycle total (bar width).
+export function categoryBreakdown(s: AppContext): { rows: CategoryBreakdownRow[]; total: number } {
+  const rows: CategoryBreakdownRow[] = [];
+  let total = 0;
+  for (const [id, spend] of Object.entries(s.breakdown)) {
+    const posted = spend.posted, pending = spend.pending, spent = posted + pending;
+    if (spent <= 0) continue;
+    let name: string, color: string, icon: string, chipBg: string;
+    if (id === UNCATEGORIZED_KEY) {
+      name = 'Uncategorized'; color = '#c9b3f5'; icon = 'q'; chipBg = 'rgba(160,130,240,.16)';
+    } else {
+      const c = s.category(id);
+      if (!c) continue;
+      name = c.name; color = c.color; icon = c.icon; chipBg = tint(c.color, 0.15);
+    }
+    total += spent;
+    rows.push({
+      id, name, color, icon, chipBg, spent, posted, pending,
+      spentLabel: pending > 0 ? `${fmt(spent)} · ${fmt(pending)} pending` : fmt(spent),
+      pct: 0, uncategorized: id === UNCATEGORIZED_KEY,
+    });
+  }
+  rows.sort((a, b) => b.spent - a.spent);
+  for (const r of rows) r.pct = total > 0 ? (r.spent / total) * 100 : 0;
+  return { rows, total };
 }
 
 export interface TransactionView {
