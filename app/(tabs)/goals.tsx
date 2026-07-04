@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useAppContext, goalView } from '../../src/context';
+import { useAppContext, goalView, milestoneView } from '../../src/context';
 import { Bar } from '../../src/components/ui';
 
 export default function Goals() {
@@ -12,6 +12,7 @@ export default function Goals() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const g = goalView(s);
+  const m = milestoneView(s);
   const G = g.G;
 
   return (
@@ -56,31 +57,39 @@ export default function Goals() {
           </View>
         </View>
 
-        {/* milestone chunks */}
-        <View style={styles.card}>
+        {/* 36-month milestone plan — real Sprint progress, taps into the full screen */}
+        <Pressable testID="milestone-link" onPress={() => router.push('/milestone')} style={styles.card}>
           <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>{g.chunksCleared} of {g.totalChunks} chunks cleared</Text>
-            <Text style={styles.cardHint}>$50k each</Text>
+            <Text style={styles.cardTitle}>
+              {m.hasBalance ? `${m.clearedCount} of ${m.total} sprints reached` : 'The 36-month plan'}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.cardHint}>Sprint plan</Text>
+              <Glyph name="chevron" size={15} color={C.textFaint} />
+            </View>
           </View>
           <View style={{ flexDirection: 'row', gap: 5 }}>
-            {Array.from({ length: g.totalChunks }).map((_, i) => (
-              <View key={i} style={{ flex: 1, height: 9, borderRadius: 3, backgroundColor: i < g.chunksCleared ? C.good : 'rgba(255,255,255,.12)' }} />
+            {m.rows.map((r) => (
+              <View key={r.sprint} style={{ flex: 1, height: 9, borderRadius: 3, backgroundColor: r.cleared ? C.good : 'rgba(255,255,255,.12)' }} />
             ))}
           </View>
           <View style={[styles.cardHead, { marginTop: 12, marginBottom: 0 }]}>
-            <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Next milestone: under {fmt(g.nextMs)}</Text>
-            <Text style={styles.cardHint}>{fmt(g.toNextMs)} to go</Text>
+            {m.hasBalance ? (
+              m.nextMilestone ? (
+                <>
+                  <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Next: under {fmt(m.nextMilestone.targetBalance)}</Text>
+                  <Text style={styles.cardHint}>{m.amountToNextLabel} to go</Text>
+                </>
+              ) : (
+                <Text style={[styles.cardTitle, { color: C.good, fontSize: 12.5 }]}>Target reached 🎉</Text>
+              )
+            ) : (
+              <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Tap to see your live progress</Text>
+            )}
           </View>
-        </View>
-
-        {/* milestone plan drill-in */}
-        <Pressable testID="milestone-link" onPress={() => router.push('/milestone')} style={styles.planLink}>
-          <View style={styles.planIcon}><Glyph name="target" size={19} color={C.accentSoft} /></View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.planTitle}>The 36-month milestone plan</Text>
-            <Text style={styles.planSub}>Live balance vs your Sprint 0–4 targets</Text>
-          </View>
-          <Glyph name="chevron" size={16} color={C.textFaint} />
+          {m.schedule && !m.schedule.onTrack && (
+            <Text style={[styles.planSchedule, { color: m.schedule.ahead ? C.good : C.warn }]}>{m.schedule.label}</Text>
+          )}
         </Pressable>
 
         {/* contribution */}
@@ -157,10 +166,7 @@ const styles = StyleSheet.create({
   cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },
   cardHint: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
 
-  planLink: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14, marginBottom: 12 },
-  planIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.12)', alignItems: 'center', justifyContent: 'center' },
-  planTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },
-  planSub: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, marginTop: 2 },
+  planSchedule: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', marginTop: 8 },
 
   contribCard: { backgroundColor: 'rgba(124,140,255,.1)', borderWidth: 1, borderColor: 'rgba(124,140,255,.22)', borderRadius: 18, padding: 16, marginBottom: 12 },
   contribEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter },

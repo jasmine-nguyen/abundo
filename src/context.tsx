@@ -923,18 +923,13 @@ export function goalView(s: AppContext) {
   const G = s.goal;
   const paidOff = G.original - G.balance;
   const paidPct = Math.max(0, Math.min(100, (paidOff / G.original) * 100));
-  const chunk = 50000;
-  const totalChunks = Math.round(G.original / chunk);
-  const chunksCleared = Math.floor(paidOff / chunk);
-  const nextMs = Math.floor((G.balance - 1) / chunk) * chunk;
-  const toNextMs = G.balance - nextMs;
   // Same formula the milestone screen uses (computeUsableEquity), so the two
   // can't drift; the Goal tab passes its own illustrative homeValue.
   const usableEquity = computeUsableEquity(G.homeValue, G.balance);
   const depositTarget = 90000;
   const depositPct = Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100));
   const contribution = G.baseRepay + G.extra;
-  return { G, paidOff, paidPct, chunk, totalChunks, chunksCleared, nextMs, toNextMs, usableEquity, depositTarget, depositPct, contribution };
+  return { G, paidOff, paidPct, usableEquity, depositTarget, depositPct, contribution };
 }
 
 // ---------------------------------------------------------------------------

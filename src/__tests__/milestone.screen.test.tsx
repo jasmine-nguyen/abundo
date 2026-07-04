@@ -71,9 +71,29 @@ const GOAL = {
   lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
 };
 
-it('navigates to /milestone from the Goal-tab drill-in', () => {
+it('navigates to /milestone from the Goal-tab Sprint summary', () => {
   mockState = state({ goal: GOAL as AppContext['goal'], fireRepayment: jest.fn() as AppContext['fireRepayment'] });
   render(<Goals />);
   fireEvent.press(screen.getByTestId('milestone-link'));
   expect(mockPush).toHaveBeenCalledWith('/milestone');
+});
+
+it('Goal-tab Sprint summary shows real progress when the balance has loaded', () => {
+  mockState = state({
+    goal: GOAL as AppContext['goal'],
+    fireRepayment: jest.fn() as AppContext['fireRepayment'],
+    homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' },
+  });
+  render(<Goals />);
+  // Real Sprint model (from the live balance), not the old $50k chunks.
+  expect(screen.getByText('0 of 5 sprints reached')).toBeTruthy();
+  expect(screen.getByText('Next: under $544,000')).toBeTruthy();
+  expect(screen.queryByText(/chunks cleared/)).toBeNull();
+});
+
+it('Goal-tab Sprint summary invites a tap before the balance loads', () => {
+  mockState = state({ goal: GOAL as AppContext['goal'], fireRepayment: jest.fn() as AppContext['fireRepayment'] });
+  render(<Goals />);
+  expect(screen.getByText('The 36-month plan')).toBeTruthy();
+  expect(screen.getByText('Tap to see your live progress')).toBeTruthy();
 });
