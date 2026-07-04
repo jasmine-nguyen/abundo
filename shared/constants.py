@@ -83,3 +83,9 @@ HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
 
 # API Gateway route path for the read API that the whittle app calls.
 TRANSACTION_PATH = "/transactions"
+
+# Retention window for FAILED# dead-letter items (WHIT-54). Written as a DynamoDB
+# TTL (epoch-seconds `expires_at`), so a stuck row auto-expires instead of
+# accumulating forever — long enough to notice + reprocess (see the recovery
+# lambda, WHIT-55), short enough not to pile up. 30 days.
+DEAD_LETTER_TTL_SECONDS = 30 * 24 * 60 * 60

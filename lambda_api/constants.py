@@ -6,6 +6,10 @@ ACCOUNT_ID_MAP = {
 PENDING_STATUS = "pending"
 POSTED_STATUS = "posted"
 MAX_PAGE_SIZE = 100
+# Imported at module load by the layer's repository_transaction (which this API
+# lambda uses for reads) even though only the webhook dead-letters. Must stay equal
+# to shared/constants.py (WHIT-54). 30 days.
+DEAD_LETTER_TTL_SECONDS = 30 * 24 * 60 * 60
 TRANSACTION_PATH = "/transactions"
 # Max items accepted by the batch PATCH /transactions endpoint (WHIT-70). The
 # route is open and the handler applies updates in a sequential per-item loop, so
