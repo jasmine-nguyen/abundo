@@ -14,3 +14,13 @@ class VersionConflictError(Exception):
     """A config-item write could not converge within its retry budget because a
     concurrent writer kept moving the optimistic-lock version (handler maps this
     to 409). Shared by every single-config-item repository."""
+
+
+class DatabaseError(Exception):
+    """A DynamoDB operation failed — raised by handle_database_error, chaining the
+    underlying botocore ClientError as its cause.
+
+    Deliberately a distinct type and NOT a RuntimeError (WHIT-127): an
+    `except DatabaseError` catches real DB faults without also swallowing an
+    unrelated RuntimeError from a logic bug. An uncaught DatabaseError still
+    surfaces as a Lambda 500, the same as the bare RuntimeError it replaced."""
