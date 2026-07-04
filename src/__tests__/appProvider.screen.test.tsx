@@ -92,6 +92,31 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
   expect(result.current.rules).toHaveLength(1);
 });
 
+it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank category, not just null ones', async () => {
+  // The "uncategorized" charges the user sees can carry a raw BankSync enum (e.g.
+  // FOOD_AND_DRINK), NOT null. The sweep must catch those too — a plain
+  // category==null check silently skipped them (the KKV bug). A charge already
+  // filed under a real user category must NOT be swept (don't overwrite it).
+  mockApi.fetchTransactions.mockResolvedValue([
+    { ...TXN, transaction_id: 't1', category: null },              // tapped origin (null)
+    { ...TXN, transaction_id: 't2', category: 'FOOD_AND_DRINK' },  // raw enum, same merchant -> MUST sweep
+    { ...TXN, transaction_id: 't3', category: 'groceries' },       // real user category -> must NOT touch
+  ]);
+  mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  const result = await mount();
+  await waitFor(() => expect(result.current.transactions).toHaveLength(3));
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  // t1 (null) + t2 (raw enum) swept; t3 (already groceries) left alone.
+  const swept = mockApi.setTransactionCategory.mock.calls.map((c) => c[0]).sort();
+  expect(swept).toEqual(['t1', 't2']);
+  const byId = Object.fromEntries(result.current.transactions.map((t) => [t.transaction_id, t.category]));
+  expect(byId.t2).toBe('groceries');   // the FOOD_AND_DRINK charge is now filed
+});
+
 // --- saveBudget --------------------------------------------------------------
 
 it('saveBudget persists a target and returns true', async () => {

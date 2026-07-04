@@ -417,12 +417,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Match future charges on a generalised merchant pattern, and categorise the
       // CURRENT uncategorised charges the rule will catch — but gated to the SAME
       // merchant (matchesRulePattern) so a promiscuous token can't sweep in a
-      // different merchant's charge.
+      // different merchant's charge. "Uncategorised" here MUST mean the same thing
+      // the app shows (categoryIsUnmapped): null OR a raw BankSync enum (e.g.
+      // FOOD_AND_DRINK) that isn't a user category — a plain `category == null`
+      // check silently skipped enum-tagged charges the user sees as Uncategorized.
       const ruleValue = rulePattern(transaction);
       const sameMerchantIds = transactions
         .filter((t) =>
           t.counts_to_budget &&
-          t.category == null &&
+          categoryIsUnmapped(t.category, (id) => categories.find((c) => c.id === id)) &&
           matchesRulePattern(t, ruleValue, transaction))
         .map((t) => t.transaction_id);
 
@@ -788,12 +791,26 @@ export interface TransactionView {
   categoryLabel: string; categoryColor: string; categoryWeight: '500' | '700'; tappable: boolean;
 }
 
+// The taxonomy test behind isUncategorized, taking the raw category id + a lookup,
+// so a caller that holds a category() lookup but not a full AppContext (the
+// categorize sweep in AppProvider) shares the EXACT same "uncategorized" rule.
+// A category id is unmapped when it's null OR points at an id not in the taxonomy
+// (e.g. a raw BankSync enum like FOOD_AND_DRINK). 'income' is a real bucket, never
+// uncategorized.
+export function categoryIsUnmapped(
+  categoryId: string | null,
+  lookup: (id: string | null) => Category | undefined,
+): boolean {
+  return categoryId !== 'income' && (categoryId == null || !lookup(categoryId));
+}
+
 // A transaction is uncategorized when it has no resolvable Whittle category: its
 // category is null, or it points at an id not in the taxonomy (e.g. a raw BankSync
 // category not yet mapped). 'income' is a category, not uncategorized. Single
-// source of truth so the row label, the tab list, and the badge always agree.
+// source of truth so the row label, the tab list, the badge — and the "apply to
+// all" sweep — always agree.
 export function isUncategorized(s: AppContext, t: Transaction): boolean {
-  return t.category !== 'income' && (t.category == null || !s.category(t.category));
+  return categoryIsUnmapped(t.category, s.category);
 }
 
 export function transactionView(s: AppContext, t: Transaction): TransactionView {
