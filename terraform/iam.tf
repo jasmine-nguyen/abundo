@@ -128,7 +128,11 @@ resource "aws_iam_role_policy" "lambda_logs" {
         "logs:PutLogEvents"
       ]
       Resource = [
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda:*"
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda:*",
+        # The reprocess lambda (WHIT-55) reuses this same lambda_exec role, so its
+        # own log group is granted here. The "-lambda:*" pattern above does NOT
+        # match "-lambda-reprocess" (the '-reprocess' breaks before the required ':').
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-reprocess:*"
       ]
     }]
   })
