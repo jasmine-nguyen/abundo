@@ -332,3 +332,166 @@ def test_update_category_maps_other_database_error(repo, client_error, monkeypat
     monkeypatch.setattr(repo._table, "update_item", boom)
     with pytest.raises(RuntimeError):
         repo.update_transaction_category("pk", "sk", "FOOD")
+
+
+# --------------------------------------------------------------------------- #
+# update_transaction_categories (batch, WHIT-70)                              #
+# --------------------------------------------------------------------------- #
+
+def test_batch_updates_every_row_and_reports_updated(repo):
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1", "category": "OLD"},
+        ("ACCOUNT#a", "TXN#t2"): {"pk": "ACCOUNT#a", "sk": "TXN#t2", "transaction_id": "t2", "category": "OLD"},
+    }
+
+    results = repo.update_transaction_categories([
+        {"id": "t1", "category": "coffee"},
+        {"id": "t2", "category": "groceries"},
+    ])
+
+    assert results == [
+        {"id": "t1", "status": "updated"},
+        {"id": "t2", "status": "updated"},
+    ]
+    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"
+    assert repo._table.store[("ACCOUNT#a", "TXN#t2")]["category"] == "groceries"
+
+
+def test_batch_unknown_id_is_not_found_others_still_written(repo):
+    # An id absent from the GSI → per-item 'not_found', in input order; the known id
+    # is still updated (best-effort, not all-or-nothing).
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1", "category": "OLD"},
+    }
+
+    results = repo.update_transaction_categories([
+        {"id": "ghost", "category": "coffee"},
+        {"id": "t1", "category": "coffee"},
+    ])
+
+    assert results == [
+        {"id": "ghost", "status": "not_found"},
+        {"id": "t1", "status": "updated"},
+    ]
+    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"
+
+
+def test_batch_conditional_fail_maps_not_found(repo, monkeypatch):
+    # Keys resolve, but the conditional update returns False (row vanished between
+    # lookup and write) → that id is 'not_found' and the batch keeps going.
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1"},
+    }
+    monkeypatch.setattr(repo, "update_transaction_category", lambda pk, sk, category: False)
+
+    results = repo.update_transaction_categories([{"id": "t1", "category": "coffee"}])
+
+    assert results == [{"id": "t1", "status": "not_found"}]
+
+
+def test_batch_empty_list_is_a_noop(repo):
+    assert repo.update_transaction_categories([]) == []
+
+
+def test_batch_preserves_input_order_with_mixed_outcomes(repo):
+    # >2 items, updated/not_found INTERLEAVED. Results must mirror INPUT order 1:1
+    # (not grouped by status, not reordered by which id resolved).
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1"},
+        ("ACCOUNT#a", "TXN#t3"): {"pk": "ACCOUNT#a", "sk": "TXN#t3", "transaction_id": "t3"},
+    }
+
+    results = repo.update_transaction_categories([
+        {"id": "t1", "category": "coffee"},
+        {"id": "ghost1", "category": "coffee"},
+        {"id": "t3", "category": "coffee"},
+        {"id": "ghost2", "category": "coffee"},
+    ])
+
+    assert results == [
+        {"id": "t1", "status": "updated"},
+        {"id": "ghost1", "status": "not_found"},
+        {"id": "t3", "status": "updated"},
+        {"id": "ghost2", "status": "not_found"},
+    ]
+
+
+def test_batch_duplicate_ids_both_applied_last_wins(repo):
+    # Same id twice in one batch: each processed independently -> both 'updated', the
+    # LAST category written wins on the row.
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1",
+                                  "transaction_id": "t1", "category": "OLD"},
+    }
+
+    results = repo.update_transaction_categories([
+        {"id": "t1", "category": "coffee"},
+        {"id": "t1", "category": "groceries"},
+    ])
+
+    assert results == [
+        {"id": "t1", "status": "updated"},
+        {"id": "t1", "status": "updated"},
+    ]
+    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "groceries"
+
+
+def test_batch_writes_category_value_verbatim(repo):
+    # The row stores the EXACT category string handed in (a raw BankSync enum here) —
+    # the repo neither normalises nor enforces the taxonomy.
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1",
+                                  "transaction_id": "t1", "category": "OLD"},
+    }
+
+    repo.update_transaction_categories([{"id": "t1", "category": "FOOD_AND_DRINK"}])
+
+    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "FOOD_AND_DRINK"
+
+
+def test_batch_real_client_error_propagates_not_swallowed(repo, client_error, monkeypatch):
+    # MONEY-SAFETY: a NON-conditional ClientError on the write (throttle / 5xx) must
+    # propagate as RuntimeError — NOT be quietly recorded as 'not_found'. A false
+    # 'not_found' would tell the client "row gone, revert" while the row is fine.
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1", "transaction_id": "t1"},
+    }
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    monkeypatch.setattr(repo._table, "update_item", boom)
+
+    with pytest.raises(RuntimeError):
+        repo.update_transaction_categories([{"id": "t1", "category": "coffee"}])
+
+
+def test_batch_error_midloop_keeps_earlier_write_then_raises(repo, client_error, monkeypatch):
+    # The best-effort loop is NOT transactional: if the write throws on the 2nd item,
+    # the 1st item's write has ALREADY landed. Documents the partial-write reality
+    # (the divergence tracked as tech-debt).
+    repo._table.store = {
+        ("ACCOUNT#a", "TXN#t1"): {"pk": "ACCOUNT#a", "sk": "TXN#t1",
+                                  "transaction_id": "t1", "category": "OLD"},
+        ("ACCOUNT#a", "TXN#t2"): {"pk": "ACCOUNT#a", "sk": "TXN#t2",
+                                  "transaction_id": "t2", "category": "OLD"},
+    }
+    original = repo._table.update_item
+    seen = []
+
+    def spy(**kwargs):
+        seen.append(kwargs["Key"]["sk"])
+        if len(seen) == 2:
+            raise client_error("InternalServerError")
+        return original(**kwargs)
+
+    monkeypatch.setattr(repo._table, "update_item", spy)
+
+    with pytest.raises(RuntimeError):
+        repo.update_transaction_categories([
+            {"id": "t1", "category": "coffee"},
+            {"id": "t2", "category": "coffee"},
+        ])
+
+    # First write committed before the raise (loop is not all-or-nothing).
+    assert repo._table.store[("ACCOUNT#a", "TXN#t1")]["category"] == "coffee"

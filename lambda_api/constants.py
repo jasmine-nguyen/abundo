@@ -7,6 +7,11 @@ PENDING_STATUS = "pending"
 POSTED_STATUS = "posted"
 MAX_PAGE_SIZE = 100
 TRANSACTION_PATH = "/transactions"
+# Max items accepted by the batch PATCH /transactions endpoint (WHIT-70). The
+# route is open and the handler applies updates in a sequential per-item loop, so
+# this bounds the work one request can queue. Real sweeps are tiny (uncategorised
+# charges in the 7-day feed window), so this only guards against an abusive body.
+TRANSACTION_BATCH_MAX = 100
 # Lookback window, in days, for the recent-transactions feed (get_recent_transactions).
 FEED_WINDOW_DAYS = 7
 

@@ -6,7 +6,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
-  fetchBudgets, setTransactionCategory, fetchPayCycle, setPayCycle, setBudget, fetchHomeLoan,
+  fetchBudgets, setTransactionCategory, setTransactionCategories, fetchPayCycle, setPayCycle, setBudget, fetchHomeLoan,
   fetchLoanFacts, setLoanFacts, fetchRepayment,
 } from '../api';
 
@@ -154,6 +154,17 @@ describe('transaction + budget + paycycle writes', () => {
     expect(JSON.parse(opts.body)).toEqual({ category: 'coffee' });
   });
 
+  it('setTransactionCategories PATCHes /transactions (collection) with {updates}', async () => {
+    fetchMock.mockReturnValue(okJson({ results: [{ id: 't1', status: 'updated' }] }));
+    const out = await setTransactionCategories([{ id: 't1', category: 'coffee' }, { id: 't2', category: 'coffee' }]);
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/transactions`);          // collection route, no /{id}
+    expect(opts.method).toBe('PATCH');
+    expect(JSON.parse(opts.body)).toEqual({ updates: [{ id: 't1', category: 'coffee' }, { id: 't2', category: 'coffee' }] });
+    noAuth(opts);                                       // open route, no Bearer
+    expect(out).toEqual({ results: [{ id: 't1', status: 'updated' }] });
+  });
+
   it('setPayCycle PUTs /paycycle with the full cycle', async () => {
     fetchMock.mockReturnValue(okJson({ length: 30, last_pay_date: '2026-06-01' }));
     await setPayCycle({ length: 30, last_pay_date: '2026-06-01' });
@@ -187,6 +198,7 @@ describe('every fetcher throws on a not-OK response', () => {
     ['updateCategory', () => updateCategory('x', { name: 'X', bucket: 'Living', icon: 'cart' })],
     ['deleteCategory', () => deleteCategory('x')],
     ['setTransactionCategory', () => setTransactionCategory('t1', 'c')],
+    ['setTransactionCategories', () => setTransactionCategories([{ id: 't1', category: 'c' }])],
     ['setPayCycle', () => setPayCycle({ length: 14, last_pay_date: '2026-06-06' })],
     ['setBudget', () => setBudget('groceries', 100)],
   ];

@@ -188,6 +188,34 @@ export async function setTransactionCategory(
   return response.json();
 }
 
+/** One transaction's outcome in a batch category update (WHIT-70). */
+export interface BatchCategoryResult {
+  id: string;
+  status: "updated" | "not_found";
+}
+
+/**
+ * Set the category on many transactions in ONE request (WHIT-70) — the batch
+ * behind "All from this merchant", replacing N parallel single PATCHes. Each
+ * update is applied independently server-side; the returned `results` carry a
+ * per-item status (keyed by `id`, not position) so the caller can roll back only
+ * the ones that didn't land. Open route, like the single PATCH — no auth header.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function setTransactionCategories(
+  updates: { id: string; category: string }[]
+): Promise<{ results: BatchCategoryResult[] }> {
+  const response = await fetch(`${API_BASE}/transactions`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ updates }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /**
  * The live home-loan balance (WHIT-8). `balance` is the outstanding mortgage
  * principal as a positive number; all three fields are null before the balance
