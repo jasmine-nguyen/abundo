@@ -46,6 +46,17 @@ MAX_PAGE_SIZE = 100
 # Status value marking a transaction as not yet posted.
 PENDING_STATUS = "pending"
 
+# Status value marking a settled transaction. Kept in the shared layer (as well as
+# the lambda_api shadow) so the shared spend summariser + budget-alert detection —
+# which the webhook lambda loads — can import it. (WHIT-136 sync guard.)
+POSTED_STATUS = "posted"
+
+# Retention window for a budget-alert debounce marker (WHIT-22). Written as a
+# DynamoDB TTL (epoch-seconds `expires_at`) so a marker self-cleans after its cycle
+# instead of accumulating. 60 days — comfortably longer than the max 30-day cycle
+# (a new cycle re-arms via a fresh pk, so the marker only needs to outlive its own).
+NOTIFY_TTL_SECONDS = 60 * 24 * 60 * 60
+
 # Maximum fraction by which a settled (posted) charge may exceed its pending
 # authorisation and still be reconciled as the SAME purchase — i.e. a tip added at
 # settlement (restaurants/delivery/rideshare). ONE-DIRECTIONAL: a tip only makes

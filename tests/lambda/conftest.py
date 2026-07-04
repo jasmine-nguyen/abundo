@@ -16,11 +16,17 @@ installs condition-recording ``Key``/``Attr`` (``_Field``) that ``FakeTable`` ca
 actually evaluate against a stored item.
 """
 
+import os
 import pathlib
 import sys
 import types
 
 import pytest
+
+# The webhook now imports the SHARED repository_transaction / repository_base
+# (for the budget-alert windowed read, WHIT-22), which read these at import time.
+os.environ.setdefault("AWS_REGION", "ap-southeast-2")
+os.environ.setdefault("TABLE_NAME", "test-table")
 
 
 class _Predicate:
@@ -106,7 +112,9 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Bare module names whose imports must resolve fresh per test: lambda/'s own copies
 # (handler / repository / banksync) plus the folded modules now provided by shared/
 # (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
-_REIMPORT = ("handler", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "dedupe_cleanup")
+_REIMPORT = ("handler", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "dedupe_cleanup",
+             "budget_alerts", "spend", "push", "repository_base", "repository_transaction", "repository_budget",
+             "repository_category", "repository_device", "repository_notify", "repository_paycycle")
 
 
 @pytest.fixture
@@ -140,10 +148,12 @@ def lam():
     import repository
     import reprocess
     import dedupe_cleanup
+    import budget_alerts
 
     ns = types.SimpleNamespace(
         repository=repository, banksync=banksync, handler=handler, models=models,
         merchant=merchant, reprocess=reprocess, dedupe_cleanup=dedupe_cleanup,
+        budget_alerts=budget_alerts,
     )
     try:
         yield ns
