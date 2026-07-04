@@ -215,6 +215,32 @@ export async function fetchHomeLoan(): Promise<HomeLoan> {
 }
 
 /**
+ * The most recent home-loan repayment (WHIT-115), derived server-side from the
+ * up-homeloan transaction history. `amount`/`date` are null when there is no
+ * repayment on record; `principal`/`interest` are null when the interest leg
+ * can't be paired (total-only — never a fabricated split).
+ */
+export interface Repayment {
+  amount: number | null;
+  date: string | null;       // ISO "YYYY-MM-DD"
+  principal: number | null;
+  interest: number | null;
+}
+
+/**
+ * Fetch the latest home-loan repayment. Returns a null-filled shape (not an
+ * error) when none is on record, so the caller shows a graceful empty state.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchRepayment(): Promise<Repayment> {
+  const response = await fetch(`${API_BASE}/repayment`);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * The user-entered home-loan facts no bank feed provides (Loan facts card).
  * Every field is null until the user saves the form the first time — the app
  * shows a friendly "set this up" state rather than fabricating defaults.

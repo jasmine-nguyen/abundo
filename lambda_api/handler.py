@@ -11,6 +11,7 @@ from constants import (
     FEED_WINDOW_DAYS,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_PATH,
+    INTEREST_CATEGORY,
     LOANFACTS_FIELD_MAX,
     LOANFACTS_PATH,
     MAX_PAGE_SIZE,
@@ -18,6 +19,8 @@ from constants import (
     PAYCYCLE_PATH,
     PENDING_STATUS,
     POSTED_STATUS,
+    REPAYMENT_INCOMING_TYPE,
+    REPAYMENT_PATH,
     RULE_FIELDS,
     RULE_OPERATORS,
     SPEND_BUCKETS,
@@ -99,6 +102,9 @@ def lambda_handler(event, context):
 
         if path == HOMELOAN_PATH and method == "GET":
             return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
+
+        if path == REPAYMENT_PATH and method == "GET":
+            return _json_response(200, get_repayment(TransactionRepository()))
 
         if path == LOANFACTS_PATH and method == "GET":
             return _json_response(200, get_loanfacts(LoanFactsRepository()))
@@ -680,6 +686,61 @@ def get_homeloan(repo: HomeLoanBalanceRepository) -> dict:
         "as_of": stored["as_of"],
         "currency": stored["currency"],
     }
+
+
+_REPAYMENT_NULL = {"amount": None, "date": None, "principal": None, "interest": None}
+
+
+def get_repayment(repo: TransactionRepository) -> dict:
+    """GET /repayment — the most recent home-loan repayment (WHIT-115).
+
+    Reads the FULL up-homeloan history newest-first (not the 7-day feed — repayments
+    are ~monthly), finds the latest incoming-transfer credit (the repayment leg,
+    anchored on the account + TRANSFER_INCOMING, never the description), and pairs
+    the interest (a separate BANK_FEES debit) when one falls in the same calendar
+    month, so principal = amount - |interest|. When no interest pairs, principal/
+    interest are null (total only — never a fabricated split). Null sentinel when
+    there is no repayment on record. DecimalEncoder renders the Decimals as numbers.
+    """
+    # One page (MAX_PAGE_SIZE) of the sparse mortgage account spans many months.
+    rows, _cursor = repo.get_transactions_by_date_range(
+        HOMELOAN_ACCOUNT_ID, None, None, MAX_PAGE_SIZE)
+
+    # A single malformed row (null/missing amount or date) must not 500 the card —
+    # skip anything we can't read rather than trusting the row shape.
+    def _num(value):
+        return value if isinstance(value, (int, float, Decimal)) else None
+
+    repayment = when = amount = None
+    for r in rows:
+        amt = _num(r.get("amount"))
+        if r.get("type") == REPAYMENT_INCOMING_TYPE and amt is not None and amt > 0 and r.get("date"):
+            repayment, when, amount = r, r["date"], amt
+            break
+    if repayment is None:
+        return dict(_REPAYMENT_NULL)
+
+    # Pair an interest leg only from the SAME calendar month (dates are YYYY-MM-DD),
+    # so this month's repayment can't mis-pair with an adjacent month's interest. Only
+    # a real interest DEBIT (negative BANK_FEES) counts — a positive fee reversal is not.
+    month = str(when)[:7]
+    interest = None
+    for r in rows:
+        if r.get("category") == INTEREST_CATEGORY and str(r.get("date", ""))[:7] == month:
+            amt = _num(r.get("amount"))
+            if amt is not None and amt < 0:
+                interest = abs(amt)   # stored negative; show the magnitude
+                break
+
+    # Only show a split when it's sensible: interest present and strictly less than
+    # the repayment. Otherwise total-only (never a negative or fabricated principal).
+    principal = None
+    if interest is not None and interest < amount:
+        principal = amount - interest
+    else:
+        interest = None
+
+    return {"amount": amount, "date": when, "principal": principal, "interest": interest}
 
 
 # The user-entered loan-facts fields, in the order the form + response use them.

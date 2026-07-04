@@ -26,6 +26,7 @@ function state(over: Partial<AppContext>): AppContext {
     // Loan facts saved by default (property value + LVR set) so equity renders;
     // pass an all-null loanFacts to exercise the "set this up" empty state.
     loanFacts: { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 },
+    repayment: { amount: null, date: null, principal: null, interest: null },
     category: (id: string | null) => undefined,
     ...over,
   } as unknown as AppContext;
@@ -130,4 +131,32 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   expect(screen.getByText(/Add your property value/)).toBeTruthy();
   fireEvent.press(screen.getByText('Add loan details →'));
   expect(mockPush).toHaveBeenCalledWith('/loan');
+});
+
+// --- Goal-tab last-repayment card (WHIT-115) ---------------------------------
+
+it('Goal tab shows the real last repayment (amount + date + split), no fake timestamp', () => {
+  mockState = state({
+    goal: GOAL as AppContext['goal'],
+    fireRepayment: jest.fn() as AppContext['fireRepayment'],
+    // A distinct amount (not 1440) so it doesn't collide with the contribution
+    // card's "$1,440" (baseRepay 1240 + extra 200) now the leading "−" is gone.
+    repayment: { amount: 1500, date: '2026-07-01', principal: 1268, interest: 232 },
+  });
+  render(<Goals />);
+  expect(screen.getByText(/Last repayment ·/)).toBeTruthy();
+  expect(screen.getByText('$1,268 principal · $232 interest')).toBeTruthy();
+  expect(screen.getByText('$1,500')).toBeTruthy();   // plain positive — a repayment toward the goal, not a debit
+  // The old hardcoded seed timestamp must be gone.
+  expect(screen.queryByText(/9:02am/)).toBeNull();
+});
+
+it('Goal tab shows a graceful empty state when there is no repayment on record', () => {
+  mockState = state({
+    goal: GOAL as AppContext['goal'],
+    fireRepayment: jest.fn() as AppContext['fireRepayment'],
+    repayment: { amount: null, date: null, principal: null, interest: null },
+  });
+  render(<Goals />);
+  expect(screen.getByText(/No repayment on record yet/)).toBeTruthy();
 });
