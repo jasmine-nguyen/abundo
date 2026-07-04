@@ -2,8 +2,8 @@ import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, fmt, tint } from '../../src/theme';
-import { Icon } from '../../src/icons';
+import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
+import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, categoryBreakdown } from '../../src/context';
 
 export default function Insights() {
@@ -22,6 +22,7 @@ export default function Insights() {
   const loading = s.breakdownLoading && rows.length === 0;
   const ai = s.aiInsights;
   const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
+  const ago = agoLabel(ai?.generated_at);
 
   return (
     <View style={{ flex: 1 }}>
@@ -38,17 +39,42 @@ export default function Insights() {
           <Text style={styles.heroSub}>spent across {rows.length} {rows.length === 1 ? 'category' : 'categories'}</Text>
         </View>
 
-        {/* AI: analyse this cycle's spend and suggest what to trim (WHIT-104) */}
+        {/* AI: a "coach" card — analyse this cycle's spend and suggest what to trim
+            (WHIT-104). Accent-tinted so it reads as advice, distinct from the plain
+            category rows below but calmer than the hero above. */}
         <View style={styles.aiCard}>
           <View style={styles.aiHeadRow}>
-            <Icon name="star" size={18} color={C.accent} />
-            <Text style={styles.aiTitle}>AI insights</Text>
+            <View style={styles.aiHeadLeft}>
+              <Text style={styles.aiEmoji}>👀</Text>
+              <Text style={styles.aiTitle}>Worth a look</Text>
+            </View>
+            {/* Once an insight exists the re-run is a quiet stamp + refresh, not a big
+                button — the card stays about the advice. Refresh spins while working. */}
+            {hasAi && (
+              <View style={styles.aiHeadRight}>
+                {/* A failed re-run keeps the old advice below, but must SAY it failed
+                    (not just silently stop) — the refresh stays tappable to retry. */}
+                {s.aiInsightsError
+                  ? <Text style={styles.aiStampErr}>Couldn’t refresh</Text>
+                  : !!ago && <Text style={styles.aiStamp}>{ago}</Text>}
+                {s.aiInsightsLoading
+                  ? <ActivityIndicator testID="ai-refresh-busy" size="small" color={C.accentSoft} />
+                  : <Pressable
+                      onPress={() => s.generateAiInsights()}
+                      hitSlop={10}
+                      accessibilityRole="button"
+                      accessibilityLabel="Re-analyse my spending"
+                    >
+                      <Glyph name="refresh" size={17} color={C.accentSoft} />
+                    </Pressable>}
+              </View>
+            )}
           </View>
 
           {hasAi && !!ai?.summary && <Text style={styles.aiSummary}>{ai.summary}</Text>}
           {hasAi && ai!.suggestions.map((tip, i) => (
             <View key={i} style={styles.aiTipRow}>
-              <Text style={styles.aiBullet}>•</Text>
+              <View style={styles.aiDiamond} />
               <Text style={styles.aiTip}>{tip}</Text>
             </View>
           ))}
@@ -56,21 +82,30 @@ export default function Insights() {
           {!hasAi && !s.aiInsightsLoading && !s.aiInsightsError && (
             <Text style={styles.aiIdle}>Get a few AI suggestions on where to cut back this cycle.</Text>
           )}
-          {s.aiInsightsError && (
+          {!hasAi && s.aiInsightsError && (
             <Text style={styles.aiError}>Couldn’t generate insights. Please try again.</Text>
           )}
 
-          <Pressable
-            style={[styles.aiBtn, s.aiInsightsLoading && styles.aiBtnBusy]}
-            disabled={s.aiInsightsLoading}
-            onPress={() => s.generateAiInsights()}
-          >
-            {s.aiInsightsLoading
-              ? <ActivityIndicator color={C.heroInk} />
-              : <Text style={styles.aiBtnText}>{hasAi ? 'Re-analyse my spending' : 'Analyse my spending'}</Text>}
-          </Pressable>
+          {/* Big button only on first run / empty; re-runs use the header refresh. */}
+          {!hasAi && (
+            <Pressable
+              style={[styles.aiBtn, s.aiInsightsLoading && styles.aiBtnBusy]}
+              disabled={s.aiInsightsLoading}
+              onPress={() => s.generateAiInsights()}
+            >
+              {s.aiInsightsLoading
+                ? <ActivityIndicator color={C.heroInk} />
+                : <Text style={styles.aiBtnText}>{s.aiInsightsError ? 'Try again' : 'Analyse my spending'}</Text>}
+            </Pressable>
+          )}
 
-          <Text style={styles.aiNote}>Sends your category spend totals to Anthropic to generate advice. Suggestions, not financial advice.</Text>
+          {/* Full disclosure before the first send (conscious choice); a compact
+              reminder once populated — but Anthropic is named in both. */}
+          <Text style={styles.aiNote}>
+            {hasAi
+              ? 'Category spend totals sent to Anthropic. Suggestions, not financial advice.'
+              : 'Sends your category spend totals to Anthropic to generate advice. Suggestions, not financial advice.'}
+          </Text>
         </View>
 
         {loading && <Text style={styles.empty}>Loading…</Text>}
@@ -126,13 +161,20 @@ const styles = StyleSheet.create({
 
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },
 
-  aiCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, marginBottom: 22 },
-  aiHeadRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  // Coach card: a soft accent wash + accent hairline so it reads as "advice",
+  // sitting between the loud hero and the plain category rows.
+  aiCard: { backgroundColor: tint(C.accent, 0.07), borderWidth: 1, borderColor: tint(C.accent, 0.22), borderRadius: 20, padding: 16, marginBottom: 22 },
+  aiHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  aiHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  aiEmoji: { fontSize: 15 },
+  aiHeadRight: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 20 },
   aiTitle: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
-  aiSummary: { fontFamily: FONT.body, fontSize: 14, color: C.textBright, lineHeight: 20, marginBottom: 10 },
-  aiTipRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  aiBullet: { fontFamily: FONT.body, fontSize: 14, color: C.accent, lineHeight: 20 },
-  aiTip: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textDim, lineHeight: 20 },
+  aiStamp: { fontFamily: FONT.body, fontSize: 12, color: C.textFaint },
+  aiStampErr: { fontFamily: FONT.body, fontSize: 12, color: C.bad },
+  aiSummary: { fontFamily: FONT.body, fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 12 },
+  aiTipRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
+  aiDiamond: { width: 6, height: 6, backgroundColor: C.accent, transform: [{ rotate: '45deg' }], marginTop: 7 },
+  aiTip: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textMid, lineHeight: 20 },
   aiIdle: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, lineHeight: 20, marginBottom: 12 },
   aiError: { fontFamily: FONT.body, fontSize: 14, color: C.bad, lineHeight: 20, marginBottom: 12 },
   aiBtn: { backgroundColor: C.accent, borderRadius: 14, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
