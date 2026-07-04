@@ -74,7 +74,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # leak across tests).
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
-    "banksync_enrichments",
+    "banksync_enrichments", "insights_ai",
 )
 
 
@@ -94,6 +94,31 @@ def handler():
 
     try:
         yield h
+    finally:
+        for name in _COLLIDING:
+            sys.modules.pop(name, None)
+        for name, mod in saved.items():
+            if mod is not None:
+                sys.modules[name] = mod
+
+
+@pytest.fixture
+def insights_ai():
+    """Import lambda_api/insights_ai.py in isolation for direct tests of the
+    Anthropic client (generate_suggestions / _parse_reply / get_api_key)."""
+    for d in (_SHARED_DIR, _LAMBDA_API_DIR):
+        while d in sys.path:
+            sys.path.remove(d)
+    sys.path.insert(0, _SHARED_DIR)
+    sys.path.insert(0, _LAMBDA_API_DIR)
+
+    saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
+    import insights_ai as ia
+
+    ia._api_key = None  # never leak a cached key across tests
+    ia.get_param = lambda path: "test-anthropic-key"
+    try:
+        yield ia
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)

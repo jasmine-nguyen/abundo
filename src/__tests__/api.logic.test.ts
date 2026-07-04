@@ -3,7 +3,7 @@
 // (incl. encodeURIComponent + server-default field/operator omission), and the
 // not-OK throw. fetch is mocked; no network. WHIT-52 Slice 2.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment } from '../api';
+import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights } from '../api';
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
@@ -36,6 +36,39 @@ describe('listEnrichments', () => {
     expect(url).toBe(`${API}/enrichments`);
     expect(opts.headers.Authorization).toBe('Bearer test-token');
     expect(out).toEqual([RULE]);
+  });
+});
+
+describe('AI insights (WHIT-104)', () => {
+  const AI = { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false };
+
+  it('fetchAiInsights GETs /insights/ai with the Bearer token', async () => {
+    fetchMock.mockReturnValue(okJson({ ...AI, summary: null, suggestions: [], cached: false }));
+    const out = await fetchAiInsights();
+    const [url, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe(`${API}/insights/ai`);
+    expect(opts.headers.Authorization).toBe('Bearer test-token');
+    expect(out.cached).toBe(false);
+  });
+
+  it('generateAiInsights POSTs /insights/ai with the Bearer token', async () => {
+    fetchMock.mockReturnValue(okJson(AI));
+    const out = await generateAiInsights();
+    const [url, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe(`${API}/insights/ai`);
+    expect(opts.method).toBe('POST');
+    expect(opts.headers.Authorization).toBe('Bearer test-token');
+    expect(out).toEqual(AI);
+  });
+
+  it('fetchAiInsights throws on a not-OK response', async () => {
+    fetchMock.mockReturnValue(notOk(401));
+    await expect(fetchAiInsights()).rejects.toThrow('API error: 401');
+  });
+
+  it('generateAiInsights throws on a 502 (AI unavailable)', async () => {
+    fetchMock.mockReturnValue(notOk(502));
+    await expect(generateAiInsights()).rejects.toThrow('API error: 502');
   });
 });
 

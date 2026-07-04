@@ -11,6 +11,8 @@ from constants import (
     FEED_WINDOW_DAYS,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_PATH,
+    INSIGHTS_AI_PATH,
+    INSIGHTS_PRIOR_CYCLES,
     INTEREST_CATEGORY,
     LOANFACTS_FIELD_MAX,
     LOANFACTS_PATH,
@@ -37,6 +39,7 @@ from repository import (
     CategoryRepository,
     DuplicateCategoryError,
     HomeLoanBalanceRepository,
+    InsightRepository,
     LoanFactsRepository,
     PayCycleRepository,
     TransactionRepository,
@@ -49,8 +52,10 @@ from banksync_enrichments import (
     list_rules,
     update_rule,
 )
+from insights_ai import AnthropicError, generate_suggestions
 from encoders import DecimalEncoder
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -108,6 +113,18 @@ def lambda_handler(event, context):
                 200,
                 list_category_breakdown(
                     CategoryRepository(), TransactionRepository(), PayCycleRepository()))
+
+        # AI spending insights (WHIT-104). GET reads the per-cycle cache (never
+        # pays); POST generates (the paid Anthropic call). Both are authorizer-gated
+        # at the API Gateway route, like /enrichments.
+        if path == INSIGHTS_AI_PATH and method == "GET":
+            return _json_response(200, get_ai_insights(
+                InsightRepository(), PayCycleRepository()))
+
+        if path == INSIGHTS_AI_PATH and method == "POST":
+            return generate_ai_insights(
+                CategoryRepository(), BudgetRepository(), TransactionRepository(),
+                PayCycleRepository(), InsightRepository())
 
         if path == HOMELOAN_PATH and method == "GET":
             return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
@@ -737,6 +754,157 @@ def list_category_breakdown(
     if uncategorized["posted"] > 0 or uncategorized["pending"] > 0:
         result[UNCATEGORIZED_KEY] = uncategorized
     return result
+
+
+def _window_category_spend(transactions: list[dict], categories: list[dict],
+                           targets: dict | None = None) -> list[dict]:
+    """Spend-bucket categories with spend in `transactions`, as float rows the model
+    can read: [{"name", "posted", "pending"}, ...]. Reuses summarise_transactions,
+    so the contribution rule (counts_to_budget, real category, NEGATIVE amount) is
+    identical to /breakdown. `targets` ({id: {"target": Decimal}}) is joined BY ID
+    here (while the id is in hand) so the correct budget lands on each row — category
+    display NAMES are not unique, so a name join would mis-attribute a budget."""
+    spend_ids = {c["id"] for c in categories if c.get("bucket") in SPEND_BUCKETS}
+    names = {c["id"]: c["name"] for c in categories}
+    rollup = summarise_transactions(transactions, spend_ids)
+    rows = []
+    for cid, entry in rollup.items():
+        row = {"name": names.get(cid, cid),
+               "posted": float(entry["posted"]),
+               "pending": float(entry["pending"])}
+        if targets and cid in targets:
+            row["budget"] = float(targets[cid]["target"])
+        rows.append((row["name"], cid, row))
+    # Sort by (name, id) so the row order is stable regardless of DynamoDB's
+    # transaction return order -> the input_hash is deterministic and cache hits are
+    # reliable (an unstable order would look like changed input and pay for a needless
+    # call). id breaks ties because display names are NOT unique.
+    rows.sort(key=lambda t: (t[0], t[1]))
+    return [row for _name, _cid, row in rows]
+
+
+def assemble_insight_input(
+    category_repo: CategoryRepository,
+    budget_repo: BudgetRepository,
+    transaction_repo: TransactionRepository,
+    paycycle_repo: PayCycleRepository,
+) -> tuple[dict, str]:
+    """Build the numbers-only model input for the AI insight, and the cache key.
+
+    Returns (model_input, cycle_start). model_input carries category spend
+    (posted/pending), budget targets, the uncategorized bucket, the pay cycle, and
+    INSIGHTS_PRIOR_CYCLES prior cycle(s) of category spend for trend — as plain
+    floats. NO loan data, NO transaction descriptions/merchants/account ids
+    (spend-only scope, WHIT-104). cycle_start is the stable per-cycle cache key.
+    """
+    categories = category_repo.list_categories()
+    cycle = paycycle_repo.get_paycycle()
+    length = cycle["length"]
+    start, end = current_cycle_window(cycle["last_pay_date"], length)
+
+    current = _fetch_windowed_transactions(transaction_repo, start, end)
+    targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
+    all_ids = {c["id"] for c in categories}
+
+    # Budgets join BY ID inside the helper (names aren't unique).
+    category_rows = _window_category_spend(current, categories, targets)
+
+    uncategorized = summarise_uncategorized(current, all_ids)
+    unc = None
+    if uncategorized["posted"] > 0 or uncategorized["pending"] > 0:
+        unc = {"posted": float(uncategorized["posted"]), "pending": float(uncategorized["pending"])}
+
+    # Prior full cycle(s): the window(s) immediately before cycle_start.
+    prior = []
+    cursor_start = date.fromisoformat(start)
+    for _ in range(INSIGHTS_PRIOR_CYCLES):
+        prev_end = cursor_start - timedelta(days=1)
+        prev_start = cursor_start - timedelta(days=length)
+        prev_txns = _fetch_windowed_transactions(
+            transaction_repo, prev_start.isoformat(), prev_end.isoformat())
+        prior.append({
+            "start": prev_start.isoformat(),
+            "end": prev_end.isoformat(),
+            "categories": _window_category_spend(prev_txns, categories),
+        })
+        cursor_start = prev_start
+
+    model_input = {
+        "cycle": {"length": length, "start": start, "end": end},
+        "currency": "AUD",
+        "categories": category_rows,
+        "uncategorized": unc,
+        "prior_cycles": prior,
+    }
+    return model_input, start
+
+
+def get_ai_insights(insight_repo: InsightRepository, paycycle_repo: PayCycleRepository) -> dict:
+    """GET /insights/ai — return the cached suggestions for the current cycle, or a
+    null sentinel if none has been generated yet. Never calls Anthropic, never
+    pays: generation is the POST. The client shows the cached result on load and a
+    "generate" button that POSTs."""
+    cycle = paycycle_repo.get_paycycle()
+    cycle_start, _end = current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    cached = insight_repo.get_insight(cycle_start)
+    if cached is None:
+        return {"summary": None, "suggestions": [], "generated_at": None,
+                "cycle_start": cycle_start, "cached": False}
+    return {
+        "summary": cached["summary"],
+        "suggestions": cached["suggestions"],
+        "generated_at": cached["generated_at"],
+        "cycle_start": cycle_start,
+        "cached": True,
+    }
+
+
+def generate_ai_insights(
+    category_repo: CategoryRepository,
+    budget_repo: BudgetRepository,
+    transaction_repo: TransactionRepository,
+    paycycle_repo: PayCycleRepository,
+    insight_repo: InsightRepository,
+) -> dict:
+    """POST /insights/ai — generate suggestions from the user's real figures via the
+    Anthropic API, cache them for the cycle, and return them.
+
+    Skips the paid call when a cached insight exists for this cycle AND the input is
+    unchanged (input_hash match) — so re-tapping "Analyse" mid-cycle is free unless
+    the numbers moved. On an Anthropic failure returns a 502 with an error body (no
+    key leaked) so the client shows a retry, not a silent success.
+    """
+    model_input, cycle_start = assemble_insight_input(
+        category_repo, budget_repo, transaction_repo, paycycle_repo)
+    input_hash = hashlib.sha256(
+        json.dumps(model_input, sort_keys=True, default=str).encode()).hexdigest()
+
+    cached = insight_repo.get_insight(cycle_start)
+    if cached is not None and cached.get("input_hash") == input_hash:
+        return _json_response(200, {
+            "summary": cached["summary"],
+            "suggestions": cached["suggestions"],
+            "generated_at": cached["generated_at"],
+            "cycle_start": cycle_start,
+            "cached": True,
+        })
+
+    try:
+        result = generate_suggestions(model_input)
+    except AnthropicError as e:
+        logger.warning("AI insight generation failed: upstream=%s", e.upstream_status)
+        return _json_response(502, {"error": "insights unavailable, please try again"})
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    insight_repo.put_insight(
+        cycle_start, result["summary"], result["suggestions"], generated_at, input_hash)
+    return _json_response(200, {
+        "summary": result["summary"],
+        "suggestions": result["suggestions"],
+        "generated_at": generated_at,
+        "cycle_start": cycle_start,
+        "cached": False,
+    })
 
 
 def get_homeloan(repo: HomeLoanBalanceRepository) -> dict:

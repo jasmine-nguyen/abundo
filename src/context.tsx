@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights } from './api';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 
 export type { LoanFacts, LoanFactsInput } from './api';
@@ -308,6 +308,11 @@ export interface AppContext {
 	breakdown: Record<string, CategorySpend>;
 	breakdownLoading: boolean;
 	refreshBreakdown: () => Promise<void>;
+	aiInsights: AiInsights | null;
+	aiInsightsLoading: boolean;
+	aiInsightsError: boolean;
+	refreshAiInsights: () => Promise<void>;
+	generateAiInsights: () => Promise<void>;
 	homeLoan: HomeLoanState;
 	homeLoanLoading: boolean;
 	homeLoanError: boolean;
@@ -437,6 +442,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 			setBreakdownLoading(false);
 		}
 	}, [payCycle.length]);
+
+	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
+	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
+	// true only when the last GENERATE failed, so the button can show a retry; a
+	// null-summary cache (nothing generated yet) is NOT an error.
+	const [aiInsights, setAiInsights] = useState<AiInsights | null>(null);
+	const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
+	const [aiInsightsError, setAiInsightsError] = useState(false);
+	const refreshAiInsights = useCallback(async () => {
+		try {
+			setAiInsights(await fetchAiInsights());
+		} catch {
+			// A failed cache read leaves the current state intact (no error surfaced);
+			// the user can still generate.
+		}
+	}, []);
+	const generateAiInsights = useCallback(async () => {
+		setAiInsightsLoading(true);
+		setAiInsightsError(false);
+		try {
+			setAiInsights(await apiGenerateAiInsights());
+		} catch {
+			setAiInsightsError(true);
+		} finally {
+			setAiInsightsLoading(false);
+		}
+	}, []);
 
 	// Live home-loan balance (WHIT-8). Separate from `goal` (seed data): the
 	// milestone screen reads this real balance, the Goal tab keeps its illustrative
@@ -867,9 +899,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
