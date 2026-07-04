@@ -108,4 +108,19 @@ describe('matchesRulePattern', () => {
     const other = txn({ transaction_id: 't2', description: "NICOLE'S CAFE", merchant_name: '' });
     expect(matchesRulePattern(other, rulePattern(origin), origin)).toBe(false);
   });
+
+  it('sweeps a no-merchant-name pending auth into its named posted twin (real DoorDash shape)', () => {
+    // Real BankSync data: the SETTLED charge carries a clean merchant_name, but the
+    // PENDING authorisation has NONE — only a noisy `POS AUTHORISATION … DD *…`
+    // description. Tapping the named posted charge must still sweep the pending in via
+    // the space-preserving description fallback (the merchant-similarity gate can't
+    // run without a candidate name).
+    const posted = txn({ description: 'DD *DOORDASH XUANBANHC    MELBOURNE', merchant_name: 'DOORDASH XUANBANHC' });
+    const pendingAuth = txn({
+      transaction_id: 't2',
+      description: 'POS AUTHORISATION         DD *DOORDASH XUANBANHC   +611800958316AU',
+      merchant_name: '',
+    });
+    expect(matchesRulePattern(pendingAuth, rulePattern(posted), posted)).toBe(true);
+  });
 });
