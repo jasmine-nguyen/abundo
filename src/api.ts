@@ -472,6 +472,25 @@ export interface AiInsights {
 }
 
 /**
+ * Home-loan goal signal sent with a generate request (WHIT-134) so the advice can
+ * tie spend cuts to becoming mortgage-free sooner. Derived on-device from WHIT-114's
+ * payoff projection (the single source of truth — the server does NOT recompute the
+ * amortization). Only sent when there's an honest payoff signal; null otherwise.
+ *
+ * - payoff_mode: which payoff case we're in ('partial' | 'flat' | 'ahead').
+ * - mortgage_free_date: the projected month-year, e.g. "Nov 2042".
+ * - current_extra_monthly: extra $/month currently paid on top of the scheduled repayment.
+ * - months_sooner_per_100_extra: months the payoff moves in for each additional
+ *   $100/month (exact, from the same amortization). null when it rounds to < 1 month.
+ */
+export interface AiGoalSignal {
+  payoff_mode: 'partial' | 'flat' | 'ahead';
+  mortgage_free_date: string;
+  current_extra_monthly: number;
+  months_sooner_per_100_extra: number | null;
+}
+
+/**
  * Read the cached AI insights for the current pay cycle WITHOUT generating (no
  * paid call). Returns a null-summary shape when none has been generated yet.
  * Auth-gated (the endpoint costs money, so it sits behind the token like
@@ -491,12 +510,18 @@ export async function fetchAiInsights(): Promise<AiInsights> {
  * action behind the "Analyse my spending" button. The server skips the paid call
  * when nothing has changed since the cached run. Auth-gated.
  *
+ * When a `goal` is supplied it's sent in the body so the advice can tie cuts to the
+ * mortgage-free date (WHIT-134). The signal is part of what the server hashes for its
+ * per-cycle cache, so a changed goal regenerates. Sending `{goal: null}` keeps the
+ * body shape stable and is treated exactly like the spend-only request.
+ *
  * @throws If the response status is not OK (401 auth, 502 when the AI is unavailable).
  */
-export async function generateAiInsights(): Promise<AiInsights> {
+export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<AiInsights> {
   const response = await fetch(`${API_BASE}/insights/ai`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ goal: goal ?? null }),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 

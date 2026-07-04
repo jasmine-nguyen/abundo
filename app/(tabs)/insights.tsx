@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, categoryBreakdown } from '../../src/context';
+import { useAppContext, categoryBreakdown, aiGoalSignal } from '../../src/context';
 
 export default function Insights() {
   const s = useAppContext();
@@ -23,6 +23,22 @@ export default function Insights() {
   const ai = s.aiInsights;
   const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
   const ago = agoLabel(ai?.generated_at);
+
+  // The home-loan goal signal (WHIT-134) — non-null only when there's an honest
+  // payoff projection to send. Computed here from live state and passed INTO
+  // generateAiInsights at tap time (never stale). Also drives the privacy note: we
+  // only claim loan figures are sent when a goal is actually attached.
+  const goal = aiGoalSignal(s);
+  const noteSends = goal
+    ? 'category spend totals and home-loan figures (balance, rate, repayments)'
+    : 'category spend totals';
+  // Forward-looking in BOTH states (what the next generate/re-analyse sends), keyed
+  // to the CURRENT loan readiness. Deliberately not past-tense: the shown insight may
+  // have been generated before loan facts were saved, so a "figures were sent" claim
+  // could be false — "re-analysing sends…" is always true.
+  const noteText = hasAi
+    ? `Re-analysing sends your ${noteSends} to Anthropic. Suggestions, not financial advice.`
+    : `Sends your ${noteSends} to Anthropic to generate advice. Suggestions, not financial advice.`;
 
   return (
     <View style={{ flex: 1 }}>
@@ -60,7 +76,7 @@ export default function Insights() {
                 {s.aiInsightsLoading
                   ? <ActivityIndicator testID="ai-refresh-busy" size="small" color={C.accentSoft} />
                   : <Pressable
-                      onPress={() => s.generateAiInsights()}
+                      onPress={() => s.generateAiInsights(goal)}
                       hitSlop={10}
                       accessibilityRole="button"
                       accessibilityLabel="Re-analyse my spending"
@@ -91,7 +107,7 @@ export default function Insights() {
             <Pressable
               style={[styles.aiBtn, s.aiInsightsLoading && styles.aiBtnBusy]}
               disabled={s.aiInsightsLoading}
-              onPress={() => s.generateAiInsights()}
+              onPress={() => s.generateAiInsights(goal)}
             >
               {s.aiInsightsLoading
                 ? <ActivityIndicator color={C.heroInk} />
@@ -100,12 +116,9 @@ export default function Insights() {
           )}
 
           {/* Full disclosure before the first send (conscious choice); a compact
-              reminder once populated — but Anthropic is named in both. */}
-          <Text style={styles.aiNote}>
-            {hasAi
-              ? 'Category spend totals sent to Anthropic. Suggestions, not financial advice.'
-              : 'Sends your category spend totals to Anthropic to generate advice. Suggestions, not financial advice.'}
-          </Text>
+              reminder once populated. Anthropic is named in both, and the loan
+              figures are named only when a goal is actually attached (WHIT-134). */}
+          <Text style={styles.aiNote}>{noteText}</Text>
         </View>
 
         {loading && <Text style={styles.empty}>Loading…</Text>}

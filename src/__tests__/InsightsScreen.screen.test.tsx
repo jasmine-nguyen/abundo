@@ -32,6 +32,13 @@ const CATS = [
   { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7FD49B', bucket: 'Living', recent: 0 },
 ] as const;
 
+// Loan state defaults so aiGoalSignal(s) (called at render) resolves. All-null facts
+// + no balance -> 'unready' -> null goal -> the spend-only privacy note. Override
+// per-test to exercise the goal-attached path.
+const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+// A ready loan that pays off ahead of schedule -> aiGoalSignal returns a real signal.
+const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
+
 function state(over: Partial<AppContext>): AppContext {
   return {
     breakdown: {},
@@ -42,6 +49,8 @@ function state(over: Partial<AppContext>): AppContext {
     aiInsightsError: false,
     refreshAiInsights,
     generateAiInsights,
+    loanFacts: NO_LOAN_FACTS,
+    homeLoan: { balance: null, asOf: null },
     category: (id: string | null) => CATS.find((c) => c.id === id),
     ...over,
   } as unknown as AppContext;
@@ -145,6 +154,45 @@ it('tapping "Analyse my spending" calls generateAiInsights', () => {
   expect(generateAiInsights).toHaveBeenCalled();
 });
 
+it('keeps the note spend-only (no loan figures) when the loan goal is not ready', () => {
+  mockState = state({ breakdown: {}, aiInsights: null });   // NO_LOAN_FACTS default
+  render(<Insights />);
+  expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
+  expect(screen.queryByText(/home-loan figures/)).toBeNull();
+});
+
+it('names home-loan figures in the note + sends a goal once the loan is ready (WHIT-134)', () => {
+  mockState = state({
+    breakdown: {},
+    aiInsights: null,
+    loanFacts: READY_LOAN_FACTS,
+    homeLoan: { balance: 528000, asOf: null },
+  });
+  render(<Insights />);
+  // Disclosure now names the loan figures (they leave the device only in this case).
+  expect(screen.getByText(/home-loan figures \(balance, rate, repayments\)/)).toBeTruthy();
+  // And the generate call carries the payoff signal, not just spend.
+  fireEvent.press(screen.getByText('Analyse my spending'));
+  expect(generateAiInsights).toHaveBeenCalledWith(
+    expect.objectContaining({ payoff_mode: 'ahead', mortgage_free_date: expect.any(String) }));
+});
+
+it('the COMPACT refresh also forwards the goal (not an empty request) with loan figures named', () => {
+  // The design-pass refresh is a SEPARATE onPress from the big button — prove the goal
+  // rides it too, and the populated note names loan figures when a goal is attached.
+  mockState = state({
+    breakdown: {},
+    aiInsights: { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false },
+    loanFacts: READY_LOAN_FACTS,
+    homeLoan: { balance: 528000, asOf: null },
+  });
+  render(<Insights />);
+  expect(screen.getByText(/Re-analysing sends your category spend totals and home-loan figures/)).toBeTruthy();
+  fireEvent.press(screen.getByLabelText('Re-analyse my spending'));
+  expect(generateAiInsights).toHaveBeenCalledWith(
+    expect.objectContaining({ payoff_mode: 'ahead', mortgage_free_date: expect.any(String) }));
+});
+
 it('renders the AI summary + each suggestion once generated', () => {
   mockState = state({
     breakdown: {},
@@ -159,10 +207,10 @@ it('renders the AI summary + each suggestion once generated', () => {
   expect(screen.getByText('Trim $20 from Coffee')).toBeTruthy();
   expect(screen.getByText('Watch Groceries')).toBeTruthy();
   // With an insight present the re-run is a compact refresh control (not a big button)
-  // and the disclosure is the shorter form (Anthropic still named).
+  // and the disclosure is the compact, forward-looking form (Anthropic still named).
   expect(screen.getByLabelText('Re-analyse my spending')).toBeTruthy();
   expect(screen.queryByText('Analyse my spending')).toBeNull();
-  expect(screen.getByText(/sent to Anthropic/)).toBeTruthy();
+  expect(screen.getByText(/Re-analysing sends your category spend totals to Anthropic/)).toBeTruthy();
 });
 
 it('tapping the compact refresh re-runs generation', () => {
