@@ -44,11 +44,19 @@ Target card (optional): $ARGUMENTS
 
 6. **Build it** per the approved plan. Make the smallest change that satisfies
    the "done" definition. Match the surrounding code's conventions.
+   - **Name things specifically.** Variables, functions, resources — a name should
+     say what the thing is. Avoid meaningless short forms (`t` for a transaction,
+     `r` for a repo) unless the full name is genuinely too long for a tight scope.
+     If a thing's purpose has changed, RENAME it to match — don't leave a name that
+     lies about what it now does.
+   - **If the card turns out stale/dead-code mid-build** (the planner should have
+     caught it, but you're closer to the code now), STOP and tell the user — the
+     right move may be to close/retarget the card or delete dead code, not build.
    - **Escalate, don't guess.** If you hit an architecturally significant or
      hard-to-reverse decision the plan didn't settle (new table/schema, sync vs
      async, a new dependency, a public API/auth choice), STOP and ask the user
-     — a short multiple-choice question — then continue. Never resolve such a
-     fork silently mid-implementation.
+     — a short multiple-choice question (AGENTS.md "Presenting a decision" format)
+     — then continue. Never resolve such a fork silently mid-implementation.
 
 7. **Write the first tests + self-check.** As the implementer, write tests as you
    build — the happy path + the acceptance criteria + the obvious edges. That's your
@@ -57,6 +65,13 @@ Target card (optional): $ARGUMENTS
    Python suite (`python -m pytest`) for Lambda work, and the JS suite + typecheck
    (`npm test`, `npx tsc --noEmit`) for client work. Fix what you broke. Report the
    results. Do not proceed to review with a red test suite unless the user says to.
+   - **Fail-on-revert your own new tests** — revert the fix (edit it back / git
+     stash), confirm the new test goes RED, restore. A test that still passes with
+     the fix reverted is worthless; don't wait for code-critic to catch it.
+   - **Deletion safety** — if the change deletes code, first prove nothing uses it:
+     grep every caller, test, re-export, and dynamic (`getattr`/string-dispatch)
+     reference across ALL lambdas that import it. Confirm the full suite is green
+     with it gone.
 
 ## Phase 3 — Verify (the gates that code-critic AND qa enforce)
 
@@ -126,7 +141,9 @@ Target card (optional): $ARGUMENTS
       (e.g. `WHIT-9 · Pay cycle + payday window`). Keep the qa agent's
       `## Manual (UI)` / `## Automatable (UI)` split intact, and link the automated
       test files that now cover the automatable checks. Link the page from the card.
-    - File the approved tech-debt cards to the board (`notion-create-pages`).
+    - File the approved tech-debt cards to the board (`notion-create-pages`). Once
+      the board assigns each a number, put it in the title per AGENTS.md "Filing
+      cards": `<TICKET> <icon> <title>`, so the card is searchable by number.
     - Update the worked card's `Status` (In Progress → Done, or as the user
       directs).
 
