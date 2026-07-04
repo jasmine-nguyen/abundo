@@ -36,6 +36,26 @@ BANKSYNC_TIMEOUT_SECONDS = 30
 # API Gateway route path for the enrichments (categorisation-rule) endpoints.
 ENRICHMENTS_PATH = "/enrichments"
 
+# --- AI spending insights (WHIT-104) ---------------------------------------
+# The Anthropic Messages API, called server-side from lambda_api/insights_ai.py
+# (urllib + SSM key + custom User-Agent, mirroring the BankSync client). The app
+# never holds the key. GET reads the per-cycle cache; POST generates.
+INSIGHTS_AI_PATH = "/insights/ai"
+ANTHROPIC_API_KEY_PATH = "/whittle/anthropic-api-key"
+ANTHROPIC_BASE_URL = "https://api.anthropic.com"
+ANTHROPIC_MESSAGES_PATH = "/v1/messages"
+ANTHROPIC_VERSION = "2023-06-01"
+# Start on Haiku 4.5 — cheap + plenty for a short "here are the totals, give tips"
+# call. Escalate to claude-opus-4-8 only if suggestions feel shallow.
+ANTHROPIC_MODEL = "claude-haiku-4-5"
+ANTHROPIC_MAX_TOKENS = 700
+# api.anthropic.com sits behind Cloudflare, which 403s the default urllib
+# User-Agent — the UA is load-bearing (same lesson as the BankSync client).
+ANTHROPIC_USER_AGENT = "whittle-lambda-api"
+ANTHROPIC_TIMEOUT_SECONDS = 30
+# How many PRIOR pay cycles of category spend to include for trend context.
+INSIGHTS_PRIOR_CYCLES = 1
+
 # Tier-1 rule vocabulary we let the app author. Kept to what we've VERIFIED
 # against BankSync (description contains / category equals, 2026-07-02); the
 # create handler rejects anything outside these so an unverified operator never

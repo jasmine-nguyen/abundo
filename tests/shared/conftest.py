@@ -90,7 +90,7 @@ _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 _REIMPORT = (
     "constants", "models", "encoders", "repository_base", "repository_transaction",
     "repository_balance", "repository_loanfacts", "repository_budget",
-    "repository_errors",
+    "repository_insight", "repository_errors",
 )
 
 
@@ -114,11 +114,12 @@ def shared():
     import repository_balance
     import repository_loanfacts
     import repository_budget
+    import repository_insight
 
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
         balance=repository_balance, loanfacts=repository_loanfacts,
-        budget=repository_budget,
+        budget=repository_budget, insight=repository_insight,
     )
     try:
         yield ns
@@ -235,6 +236,14 @@ def repo(shared):
 def balance_repo(shared):
     """A shared HomeLoanBalanceRepository backed by an in-memory FakeTable."""
     r = shared.balance.HomeLoanBalanceRepository()
+    r._table = FakeTable()
+    return r
+
+
+@pytest.fixture
+def insight_repo(shared):
+    """A shared InsightRepository backed by an in-memory FakeTable."""
+    r = shared.insight.InsightRepository()
     r._table = FakeTable()
     return r
 

@@ -173,6 +173,8 @@ resource "aws_iam_role_policy" "lambda_api_ssm" {
       ]
       Resource = [
         aws_ssm_parameter.banksync_api_key.arn,
+        # Anthropic key for AI spending insights (WHIT-104).
+        aws_ssm_parameter.anthropic_api_key.arn,
       ]
     }]
   })

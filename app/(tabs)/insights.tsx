@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt, tint } from '../../src/theme';
@@ -13,9 +13,15 @@ export default function Insights() {
 
   // Spend depends on the current cycle, so re-pull whenever the tab gains focus
   // (the window rolls over on payday, and categorising elsewhere moves the numbers).
-  useFocusEffect(useCallback(() => { s.refreshBreakdown(); }, [s.refreshBreakdown]));
+  // Also pull any AI insights already cached for this cycle (free — no generation).
+  useFocusEffect(useCallback(() => {
+    s.refreshBreakdown();
+    s.refreshAiInsights();
+  }, [s.refreshBreakdown, s.refreshAiInsights]));
 
   const loading = s.breakdownLoading && rows.length === 0;
+  const ai = s.aiInsights;
+  const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
 
   return (
     <View style={{ flex: 1 }}>
@@ -30,6 +36,41 @@ export default function Insights() {
           <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
           <Text style={styles.heroTotal}>{fmt(total)}</Text>
           <Text style={styles.heroSub}>spent across {rows.length} {rows.length === 1 ? 'category' : 'categories'}</Text>
+        </View>
+
+        {/* AI: analyse this cycle's spend and suggest what to trim (WHIT-104) */}
+        <View style={styles.aiCard}>
+          <View style={styles.aiHeadRow}>
+            <Icon name="star" size={18} color={C.accent} />
+            <Text style={styles.aiTitle}>AI insights</Text>
+          </View>
+
+          {hasAi && !!ai?.summary && <Text style={styles.aiSummary}>{ai.summary}</Text>}
+          {hasAi && ai!.suggestions.map((tip, i) => (
+            <View key={i} style={styles.aiTipRow}>
+              <Text style={styles.aiBullet}>•</Text>
+              <Text style={styles.aiTip}>{tip}</Text>
+            </View>
+          ))}
+
+          {!hasAi && !s.aiInsightsLoading && !s.aiInsightsError && (
+            <Text style={styles.aiIdle}>Get a few AI suggestions on where to cut back this cycle.</Text>
+          )}
+          {s.aiInsightsError && (
+            <Text style={styles.aiError}>Couldn’t generate insights. Please try again.</Text>
+          )}
+
+          <Pressable
+            style={[styles.aiBtn, s.aiInsightsLoading && styles.aiBtnBusy]}
+            disabled={s.aiInsightsLoading}
+            onPress={() => s.generateAiInsights()}
+          >
+            {s.aiInsightsLoading
+              ? <ActivityIndicator color={C.heroInk} />
+              : <Text style={styles.aiBtnText}>{hasAi ? 'Re-analyse my spending' : 'Analyse my spending'}</Text>}
+          </Pressable>
+
+          <Text style={styles.aiNote}>Sends your category spend totals to Anthropic to generate advice. Suggestions, not financial advice.</Text>
         </View>
 
         {loading && <Text style={styles.empty}>Loading…</Text>}
@@ -84,4 +125,18 @@ const styles = StyleSheet.create({
   track: { flexDirection: 'row', gap: 2, height: 8, marginTop: 14, backgroundColor: 'rgba(255,255,255,.05)', borderRadius: 5, overflow: 'hidden' },
 
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },
+
+  aiCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, marginBottom: 22 },
+  aiHeadRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  aiTitle: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
+  aiSummary: { fontFamily: FONT.body, fontSize: 14, color: C.textBright, lineHeight: 20, marginBottom: 10 },
+  aiTipRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  aiBullet: { fontFamily: FONT.body, fontSize: 14, color: C.accent, lineHeight: 20 },
+  aiTip: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textDim, lineHeight: 20 },
+  aiIdle: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, lineHeight: 20, marginBottom: 12 },
+  aiError: { fontFamily: FONT.body, fontSize: 14, color: C.bad, lineHeight: 20, marginBottom: 12 },
+  aiBtn: { backgroundColor: C.accent, borderRadius: 14, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+  aiBtnBusy: { opacity: 0.7 },
+  aiBtnText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.heroInk },
+  aiNote: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, lineHeight: 16, marginTop: 10 },
 });

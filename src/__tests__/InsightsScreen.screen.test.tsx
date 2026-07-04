@@ -4,7 +4,7 @@
 // the real categoryBreakdown selector runs over the mocked state.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 import { UNCATEGORIZED_KEY } from '../context';
 
@@ -24,6 +24,8 @@ jest.mock('expo-router', () => {
 import Insights from '../../app/(tabs)/insights';
 
 const refreshBreakdown = jest.fn();
+const refreshAiInsights = jest.fn();
+const generateAiInsights = jest.fn();
 
 const CATS = [
   { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 0 },
@@ -35,6 +37,11 @@ function state(over: Partial<AppContext>): AppContext {
     breakdown: {},
     breakdownLoading: false,
     refreshBreakdown,
+    aiInsights: null,
+    aiInsightsLoading: false,
+    aiInsightsError: false,
+    refreshAiInsights,
+    generateAiInsights,
     category: (id: string | null) => CATS.find((c) => c.id === id),
     ...over,
   } as unknown as AppContext;
@@ -42,6 +49,8 @@ function state(over: Partial<AppContext>): AppContext {
 
 beforeEach(() => {
   refreshBreakdown.mockClear();
+  refreshAiInsights.mockClear();
+  generateAiInsights.mockClear();
 });
 
 it('renders a row per spent category with the pending portion visible', () => {
@@ -54,8 +63,9 @@ it('renders a row per spent category with the pending portion visible', () => {
   render(<Insights />);
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.getByText('Groceries')).toBeTruthy();
-  // coffee has pending -> its sub-label calls it out
-  expect(screen.getByText(/pending/)).toBeTruthy();
+  // coffee has pending -> its sub-label calls it out ("$25 · $5 pending"). Anchor on
+  // the "$… pending" amount so it can't collide with the "Analyse my spending" button.
+  expect(screen.getByText(/\$5 pending/)).toBeTruthy();
 });
 
 it('shows the Uncategorized bucket as a row', () => {
@@ -115,4 +125,51 @@ it('keeps rows visible when a refresh is in flight (does not flash Loading)', ()
   render(<Insights />);
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
   expect(screen.queryByText('Loading…')).toBeNull();
+});
+
+// --- AI insights (WHIT-104) --------------------------------------------------
+
+it('shows the idle prompt + the analyse button before any AI insight exists', () => {
+  mockState = state({ breakdown: {}, aiInsights: null });
+  render(<Insights />);
+  expect(screen.getByText('AI insights')).toBeTruthy();
+  expect(screen.getByText('Analyse my spending')).toBeTruthy();
+  // The privacy note is always present so sending data is a conscious choice.
+  expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
+});
+
+it('tapping "Analyse my spending" calls generateAiInsights', () => {
+  mockState = state({ breakdown: {}, aiInsights: null });
+  render(<Insights />);
+  fireEvent.press(screen.getByText('Analyse my spending'));
+  expect(generateAiInsights).toHaveBeenCalled();
+});
+
+it('renders the AI summary + each suggestion once generated', () => {
+  mockState = state({
+    breakdown: {},
+    aiInsights: {
+      summary: 'You are pacing well this cycle.',
+      suggestions: ['Trim $20 from Coffee', 'Watch Groceries'],
+      generated_at: 't', cycle_start: '2026-06-25', cached: false,
+    },
+  });
+  render(<Insights />);
+  expect(screen.getByText('You are pacing well this cycle.')).toBeTruthy();
+  expect(screen.getByText('Trim $20 from Coffee')).toBeTruthy();
+  expect(screen.getByText('Watch Groceries')).toBeTruthy();
+  // With an insight present the button offers a re-run.
+  expect(screen.getByText('Re-analyse my spending')).toBeTruthy();
+});
+
+it('shows a retryable error when generation failed', () => {
+  mockState = state({ breakdown: {}, aiInsights: null, aiInsightsError: true });
+  render(<Insights />);
+  expect(screen.getByText(/Couldn’t generate insights/)).toBeTruthy();
+});
+
+it('refreshes any cached AI insight when the tab gains focus', () => {
+  mockState = state({ breakdown: {} });
+  render(<Insights />);
+  expect(refreshAiInsights).toHaveBeenCalled();
 });

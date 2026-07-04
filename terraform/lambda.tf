@@ -40,10 +40,11 @@ resource "null_resource" "prepare_lambda_api" {
     handler     = filesha256("${path.module}/../lambda_api/handler.py")
     constants   = filesha256("${path.module}/../lambda_api/constants.py")
     enrichments = filesha256("${path.module}/../lambda_api/banksync_enrichments.py")
+    insights    = filesha256("${path.module}/../lambda_api/insights_ai.py")
   }
 
   provisioner "local-exec" {
-    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/../lambda_api/banksync_enrichments.py ${path.module}/build/lambda_api/"
+    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/../lambda_api/banksync_enrichments.py ${path.module}/../lambda_api/insights_ai.py ${path.module}/build/lambda_api/"
   }
 }
 
