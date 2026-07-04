@@ -27,7 +27,7 @@ import Goals from '../../app/(tabs)/goals';
 
 const GOAL = {
   original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
-  ratePct: 5.74, baseRepay: 1240, extra: 200, freedomDate: 'Aug 2045', aheadLabel: '4y 3m', interestSaved: 58200,
+  ratePct: 5.74, baseRepay: 1240, extra: 200,
   lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
 };
 

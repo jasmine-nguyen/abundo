@@ -31,8 +31,8 @@ function fill(over: Partial<Record<'orig' | 'home' | 'lvr' | 'rate' | 'base' | '
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 770000'), v.home);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 80'), v.lvr);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 5.74'), v.rate);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 1240'), v.base);
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 200'), v.extra);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 3667'), v.base);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 500'), v.extra);
 }
 
 beforeEach(() => { mockBack.mockClear(); });

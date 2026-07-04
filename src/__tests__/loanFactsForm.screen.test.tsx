@@ -28,8 +28,8 @@ function fillValid() {
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 770000'), '770000');
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 80'), '80');       // LVR percent
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 5.74'), '5.74');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 1240'), '1240');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 200'), '200');
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 3667'), '1240');
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 500'), '200');
 }
 
 beforeEach(() => {
@@ -57,7 +57,7 @@ it('blocks an incomplete save with a toast and no API call', async () => {
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 600000'), '600000');
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 80'), '80');
   fireEvent.changeText(screen.getByPlaceholderText('e.g. 5.74'), '5.74');
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 1240'), '1240');
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 3667'), '1240');
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
 
   expect(saveLoanFacts).not.toHaveBeenCalled();

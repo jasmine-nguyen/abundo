@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useAppContext, goalView, milestoneView, lastRepaymentView } from '../../src/context';
+import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../../src/context';
 import { Bar } from '../../src/components/ui';
 
 export default function Goals() {
@@ -14,7 +14,7 @@ export default function Goals() {
   const g = goalView(s);
   const m = milestoneView(s);
   const lr = lastRepaymentView(s);
-  const G = g.G;
+  const p = paydownView(s);
 
   return (
     <View style={{ flex: 1 }}>
@@ -64,20 +64,38 @@ export default function Goals() {
           )}
         </View>
 
-        {/* freedom + interest — payoff projections (Cards 2/3). Shown once the loan
-            is set up; still seed until those cards compute them for real. */}
-        {g.factsReady && (
+        {/* freedom + interest — real payoff projection (WHIT-114) from the live
+            balance + saved facts. Three honest states: pays off with room to spare
+            (date + how much sooner/interest the extra saves), pays off only because
+            of the extra (date alone), or won't pay off at this rate (a nudge). */}
+        {p.mode === 'ahead' && (
           <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
             <View style={styles.miniCard}>
               <View style={styles.miniHead}><Glyph name="check" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Mortgage-free</Text></View>
-              <Text style={styles.miniValue}>{G.freedomDate}</Text>
-              <Text style={[styles.miniSub, { color: C.good }]}>{G.aheadLabel} early 🏁</Text>
+              <Text style={styles.miniValue}>{p.freedomLabel}</Text>
+              <Text style={[styles.miniSub, { color: C.good }]}>{p.aheadLabel} early 🏁</Text>
             </View>
             <View style={styles.miniCard}>
-              <View style={styles.miniHead}><Glyph name="dollar" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Interest dodged</Text></View>
-              <Text style={styles.miniValue}>{fmt(G.interestSaved)}</Text>
+              <View style={styles.miniHead}><Glyph name="dollar" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Interest you'll dodge</Text></View>
+              <Text style={styles.miniValue}>{p.interestDodgedLabel}</Text>
               <Text style={styles.miniSub}>never going to the bank</Text>
             </View>
+          </View>
+        )}
+        {(p.mode === 'partial' || p.mode === 'flat') && (
+          <View style={[styles.miniCard, { marginBottom: 12 }]}>
+            <View style={styles.miniHead}><Glyph name="check" size={15} color={C.accentSoft} /><Text style={styles.miniLabel}>Mortgage-free</Text></View>
+            <Text style={styles.miniValue}>{p.freedomLabel}</Text>
+            <Text style={[styles.miniSub, p.mode === 'partial' && { color: C.good }]}>
+              {p.mode === 'partial' ? 'Your extra repayment is what gets you there 🏁' : 'On your current repayments'}
+            </Text>
+          </View>
+        )}
+        {p.mode === 'none' && (
+          <View style={[styles.miniCard, { marginBottom: 12 }]}>
+            <View style={styles.miniHead}><Glyph name="clock" size={15} color={C.warn} /><Text style={styles.miniLabel}>Payoff</Text></View>
+            <Text style={[styles.miniValue, { fontSize: 15 }]}>Won't pay off at this rate</Text>
+            <Text style={styles.miniSub}>Increase your repayment to clear the loan.</Text>
           </View>
         )}
 
@@ -119,7 +137,7 @@ export default function Goals() {
         {/* contribution — from the user's saved scheduled + extra repayment */}
         {g.factsReady && (
           <View style={styles.contribCard}>
-            <Text style={styles.contribEyebrow}>HEADING TO THE LOAN THIS CYCLE</Text>
+            <Text style={styles.contribEyebrow}>HEADING TO THE LOAN THIS MONTH</Text>
             <Text style={styles.contribBig}>{fmt(g.contribution!)}</Text>
             <Text style={styles.contribBody}>
               {fmt(g.baseRepay!)} scheduled <Text style={styles.contribStrong}>+ {fmt(g.extra!)} extra</Text>. Every coffee you skipped is a brick out of the wall. 🧱
