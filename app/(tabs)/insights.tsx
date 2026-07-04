@@ -45,8 +45,8 @@ export default function Insights() {
         <View style={styles.aiCard}>
           <View style={styles.aiHeadRow}>
             <View style={styles.aiHeadLeft}>
-              <Glyph name="star" size={17} color={C.accent} />
-              <Text style={styles.aiTitle}>Wren’s take</Text>
+              <Text style={styles.aiEmoji}>👀</Text>
+              <Text style={styles.aiTitle}>Worth a look</Text>
             </View>
             {/* Once an insight exists the re-run is a quiet stamp + refresh, not a big
                 button — the card stays about the advice. Refresh spins while working. */}
@@ -165,7 +165,8 @@ const styles = StyleSheet.create({
   // sitting between the loud hero and the plain category rows.
   aiCard: { backgroundColor: tint(C.accent, 0.07), borderWidth: 1, borderColor: tint(C.accent, 0.22), borderRadius: 20, padding: 16, marginBottom: 22 },
   aiHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  aiHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  aiHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  aiEmoji: { fontSize: 15 },
   aiHeadRight: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 20 },
   aiTitle: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
   aiStamp: { fontFamily: FONT.body, fontSize: 12, color: C.textFaint },

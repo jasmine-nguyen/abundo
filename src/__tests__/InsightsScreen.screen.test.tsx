@@ -132,7 +132,7 @@ it('keeps rows visible when a refresh is in flight (does not flash Loading)', ()
 it('shows the idle prompt + the analyse button before any AI insight exists', () => {
   mockState = state({ breakdown: {}, aiInsights: null });
   render(<Insights />);
-  expect(screen.getByText('Wren’s take')).toBeTruthy();
+  expect(screen.getByText('Worth a look')).toBeTruthy();
   expect(screen.getByText('Analyse my spending')).toBeTruthy();
   // The full privacy note is present before the first send so it's a conscious choice.
   expect(screen.getByText(/Sends your category spend totals to Anthropic/)).toBeTruthy();
