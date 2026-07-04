@@ -114,21 +114,72 @@ export function rulePattern(t: Transaction): string {
   return desc;
 }
 
-// Whether transaction `t` should be swept into an "Every {merchant} charge" for a
-// rule whose match value is `pattern`, relative to the tapped `origin` charge.
-// Requires the rule's own `description contains pattern` match AND — when BOTH
-// charges carry a merchant name — that the merchants are the same, so a
-// promiscuous token (e.g. "METRO" inside "WOOLWORTHS METRO") can't pull a
-// different merchant's charge into the batch. When either charge lacks a merchant
-// name, the description match alone stands. An empty pattern falls back to exact
-// description equality (so `includes('')` can't sweep in everything).
+// Lowercase + strip every non-alphanumeric char, so BankSync's descriptor variants
+// for one merchant collapse to a comparable stem: `KKV INTERNATIONAL PTY Sunshine`
+// and `KKV INTERNATIONAL PTYSunshine` both start `kkvinternationalpty…`. Removing
+// spaces (not just punctuation) is deliberate — the variants differ by a space
+// (`PTY Sunshine` vs `PTYSunshine`), which a space-preserving normaliser would keep
+// apart.
+function normaliseMatch(s: string): string {
+  return (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Levenshtein edit distance (classic two-row DP). Small, dependency-free helper used
+// only to score how alike two merchant names are.
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 0; i < a.length; i++) {
+    const curr = [i + 1];
+    for (let j = 0; j < b.length; j++) {
+      const cost = a[i] === b[j] ? 0 : 1;
+      curr.push(Math.min(prev[j + 1] + 1, curr[j] + 1, prev[j] + cost));
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+// Fuzzy similarity of two normalised merchant names in [0,1]: 1 = identical, 0 =
+// nothing shared. `1 - editDistance/maxLen`, so a short trailing descriptor on a long
+// shared stem (KKV's `Sunshine`, 8 chars on a 19-char stem) scores ~0.70, while a
+// short name that merely LOOKS like a prefix of a different one scores ≤0.5
+// (`bp`/`bpay` ≈ 0.50, `sun`/`suncorp` ≈ 0.43, `metro`/`metropolis` = 0.50). The
+// threshold below is the single knob trading variant-spanning against merging two
+// genuinely different merchants.
+function merchantSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  return 1 - editDistance(a, b) / Math.max(a.length, b.length);
+}
+
+const MERCHANT_MATCH_THRESHOLD = 0.6;
+
+// Whether transaction `t` should be swept into an "All from this merchant" batch for
+// a rule whose match value is `pattern`, relative to the tapped `origin` charge.
+// Requires the rule's `description contains pattern` match (normalised) AND — when
+// BOTH charges carry a merchant name — that the two names are fuzzy-similar enough
+// (≥ MERCHANT_MATCH_THRESHOLD) to be the same merchant. That score is what tolerates
+// BankSync's descriptor variants (`KKV INTERNATIONAL PTY` vs `…PTYSunshine` ≈ 0.70)
+// while rejecting look-alikes that only share a short prefix (`BP` vs `BPAY` ≈ 0.50,
+// `Sun` vs `Suncorp` ≈ 0.43). When either charge lacks a merchant name the merchant
+// identity is unknown, so we fall back to a SPACE-PRESERVING description contains —
+// stricter than the normalised gate, so a punctuation-stripped adjacency can't sweep
+// in a different merchant (`NICOLE'S CAFE` must not match `COLES`). An empty/all-
+// punctuation pattern falls back to exact description equality.
 export function matchesRulePattern(t: Transaction, pattern: string, origin: Transaction): boolean {
-  if (!pattern) return t.description === origin.description;
-  if (!t.description.toLowerCase().includes(pattern.toLowerCase())) return false;
-  const originMerchant = (origin.merchant_name ?? '').trim().toLowerCase();
-  const candMerchant = (t.merchant_name ?? '').trim().toLowerCase();
-  if (originMerchant && candMerchant) return candMerchant === originMerchant;
-  return true;
+  const nPattern = normaliseMatch(pattern);
+  if (!nPattern) return t.description === origin.description;
+  const originMerchant = normaliseMatch(origin.merchant_name ?? '');
+  const candMerchant = normaliseMatch(t.merchant_name ?? '');
+  if (originMerchant && candMerchant) {
+    if (!normaliseMatch(t.description).includes(nPattern)) return false;
+    return merchantSimilarity(originMerchant, candMerchant) >= MERCHANT_MATCH_THRESHOLD;
+  }
+  // Merchant identity unknown → require the pattern to appear in the raw (space-
+  // preserving) description, so a stripped adjacency can't over-match.
+  return t.description.toLowerCase().includes(pattern.toLowerCase());
 }
 
 // The pay-cycle length -> its human name. Pure + exported so the provider and the
