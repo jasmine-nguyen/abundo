@@ -65,4 +65,47 @@ describe('matchesRulePattern', () => {
     expect(matchesRulePattern(a, '', b)).toBe(true);   // both empty desc -> equal
     expect(matchesRulePattern(c, '', b)).toBe(false);  // not equal -> excluded
   });
+
+  // WHIT-112: BankSync emits descriptor variants for one merchant. The sweep must
+  // span them (normalised match + fuzzy merchant-similarity gate), both directions.
+  it('spans BankSync descriptor variants of the same merchant (space vs no-space)', () => {
+    const originSun = txn({
+      description: 'POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU',
+      merchant_name: 'KKV INTERNATIONAL PTYSunshine',
+    });
+    const other = txn({
+      transaction_id: 't2',
+      description: 'SQ *KKV INTERNATIONAL PTY Sunshine',
+      merchant_name: 'KKV INTERNATIONAL PTY',
+    });
+    // tapping either variant sweeps the other (the space in "PTY Sunshine" no longer splits them)
+    expect(matchesRulePattern(other, rulePattern(originSun), originSun)).toBe(true);
+    expect(matchesRulePattern(originSun, rulePattern(other), other)).toBe(true);
+  });
+
+  it('does NOT merge two merchants that only share a short prefix (BP vs BPAY)', () => {
+    // The fuzzy score is what stops this: `bp` vs `bpay` scores ~0.50, below the
+    // 0.6 threshold, even though "bp" IS a prefix of "bpay" and the description
+    // gate passes. A raw prefix rule would wrongly sweep BPAY bills into BP fuel.
+    const origin = txn({ description: 'BP 1234 SYDNEY', merchant_name: 'BP' });
+    const other = txn({ transaction_id: 't2', description: 'BPAY BILL PAYMENT AGL', merchant_name: 'BPAY' });
+    expect(matchesRulePattern(other, rulePattern(origin), origin)).toBe(false);
+  });
+
+  it('excludes a coincidental substring when the candidate has a merchant name (Nicole vs Coles)', () => {
+    // Stripping punctuation makes "Nicole's" -> "nicoles" (contains "coles"), so the
+    // normalised description gate passes — the merchant similarity score must block it.
+    const origin = txn({ description: 'COLES 0900', merchant_name: 'Coles' });
+    const other = txn({ transaction_id: 't2', description: "NICOLE'S CAFE", merchant_name: "Nicole's Cafe" });
+    expect(matchesRulePattern(other, rulePattern(origin), origin)).toBe(false);
+  });
+
+  it('excludes a coincidental substring when the candidate has NO merchant name', () => {
+    // With no merchant name there's no score to lean on, so the fallback uses a
+    // space-preserving description contains: "nicole's cafe" does NOT contain "coles"
+    // (the space + apostrophe keep them apart), so it is correctly excluded.
+    const origin = txn({ description: 'COLES 0900', merchant_name: 'Coles' });
+    const other = txn({ transaction_id: 't2', description: "NICOLE'S CAFE", merchant_name: '' });
+    expect(matchesRulePattern(other, rulePattern(origin), origin)).toBe(false);
+  });
 });
