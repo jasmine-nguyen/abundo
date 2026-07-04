@@ -178,3 +178,52 @@ def test_posted_row_uses_merchant_name_column(lam):
     )
     assert txn["merchant_name"] == "KKV INTERNATIONAL PTY"
     assert txn["description"] == "SQ *KKV INTERNATIONAL PTY Sunshine"
+
+
+# --- WHIT-91: date-only enforcement on ingest --------------------------------
+# The budget window is a string range compare (Key("date").between(start, today))
+# and reconciliation exact-matches authorized_date; both assume bare YYYY-MM-DD.
+# normalise must slice any time component off on write so a BankSync format change
+# can't silently drop today's charge from the window.
+
+
+def test_date_kept_as_is_when_already_date_only(lam):
+    txn = _normalise(lam, date="2026-01-16", authorizedDate="2026-01-15")
+    assert txn["date"] == "2026-01-16"
+    assert txn["authorized_date"] == "2026-01-15"
+
+
+def test_datetime_date_is_truncated_to_date_only(lam):
+    txn = _normalise(lam, date="2026-01-16T10:00:00Z", authorizedDate="2026-01-15T23:30:00Z")
+    assert txn["date"] == "2026-01-16"
+    assert txn["authorized_date"] == "2026-01-15"
+
+
+def test_missing_authorized_date_stays_empty(lam):
+    # normalise defaults a missing authorizedDate to "" — _date_only must leave it "".
+    row = _row()
+    del row["authorizedDate"]
+    txn = lam.banksync.BankSyncClient.normalise(row)
+    assert txn["authorized_date"] == ""
+
+
+def test_datetime_date_logs_a_warning_naming_the_field(lam, caplog):
+    with caplog.at_level("WARNING"):
+        _normalise(lam, date="2026-01-16T10:00:00Z", authorizedDate="2026-01-15")
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("truncating" in m for m in msgs)
+    assert any("date carried" in m for m in msgs)          # the offending field is named
+
+
+def test_datetime_authorized_date_warning_names_authorized_date(lam, caplog):
+    # The warning must name the field that actually carried a time component, so a
+    # BankSync format change points at the right field in CloudWatch.
+    with caplog.at_level("WARNING"):
+        _normalise(lam, date="2026-01-16", authorizedDate="2026-01-15T23:30:00Z")
+    assert any("authorizedDate carried" in r.getMessage() for r in caplog.records)
+
+
+def test_date_only_input_logs_nothing(lam, caplog):
+    with caplog.at_level("WARNING"):
+        _normalise(lam, date="2026-01-16", authorizedDate="2026-01-15")
+    assert caplog.records == []

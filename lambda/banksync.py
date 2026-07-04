@@ -12,6 +12,28 @@ class UnknownAccountError(Exception):
     pass
 
 
+def _date_only(raw: str, field: str = "date") -> str:
+    """Return the ``YYYY-MM-DD`` prefix of a BankSync date, defending the invariant
+    the budget window relies on.
+
+    The budget window is a string range compare (``Key("date").between(start, end)``
+    with ``end = today``), which is sound *only* while dates are bare ``YYYY-MM-DD``:
+    a datetime like ``"2026-01-16T10:00:00Z"`` sorts *after* ``"2026-01-16"``, so
+    today's own charge would silently drop out of the window. BankSync sends
+    date-only today, but the field is an unconstrained string, so we normalise on
+    write rather than trust it.
+
+    Slice, don't reject: per WHIT-83/84 the webhook must never drop a transaction, so
+    a malformed value is truncated and logged (surfacing a format change in
+    CloudWatch) instead of raising.
+    """
+    text = str(raw)
+    head = text[:10]
+    if text != head:
+        logger.warning("%s carried more than YYYY-MM-DD, truncating: %r", field, text)
+    return head
+
+
 def resolve_account_id(banksync_account_id: str) -> str:
     internal_id = ACCOUNT_ID_MAP.get(banksync_account_id)
     if internal_id is None:
@@ -42,8 +64,10 @@ class BankSyncClient:
         internal_account_id = resolve_account_id(str(row["accountId"]))
         normalised: Transaction = {
             "transaction_id": str(row["id"]),
-            "date": row["date"],
-            "authorized_date": row.get("authorizedDate", ""),
+            # Date-only on write: the budget window (date range compare) and
+            # reconciliation (exact authorized_date match) both assume YYYY-MM-DD.
+            "date": _date_only(row["date"]),
+            "authorized_date": _date_only(row.get("authorizedDate", ""), "authorizedDate"),
             "description": row["description"],
             # description stays RAW (rules + audit rely on it); merchant_name is the
             # cleaned display name derived from it / merchantName (see merchant.py).
