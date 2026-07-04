@@ -7,6 +7,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { C } from '../src/theme';
 import { AppProvider } from '../src/context';
 import { Overlays } from '../src/components/Overlays';
+import { registerForPushNotificationsAsync } from '../src/push';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -46,6 +47,12 @@ export default function RootLayout() {
   useEffect(() => {
     if (ready) SplashScreen.hideAsync().catch(() => {});
   }, [ready]);
+
+  // Once per launch: ask notification permission + register this device's push
+  // token. Best-effort (never throws); a no-op on web/simulator/denial.
+  useEffect(() => {
+    registerForPushNotificationsAsync();
+  }, []);
 
   if (!ready) return <View style={{ flex: 1, backgroundColor: C.bg }} />;
 
