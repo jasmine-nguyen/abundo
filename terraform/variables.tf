@@ -19,3 +19,12 @@ variable "sync_schedule_expression" {
   type        = string
   default     = "rate(1 hour)"
 }
+
+# Cadence for the home-loan balance poll (WHIT-8). Daily is plenty — a mortgage
+# balance changes at most once a day (a repayment or interest posting). Accepts
+# any EventBridge Scheduler expression.
+variable "balance_poll_schedule_expression" {
+  description = "EventBridge Scheduler expression controlling how often the home-loan balance is polled"
+  type        = string
+  default     = "rate(1 day)"
+}

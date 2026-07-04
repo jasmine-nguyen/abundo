@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext, goalView } from '../../src/context';
@@ -9,6 +10,7 @@ import { Bar } from '../../src/components/ui';
 export default function Goals() {
   const s = useAppContext();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const g = goalView(s);
   const G = g.G;
 
@@ -70,6 +72,16 @@ export default function Goals() {
             <Text style={styles.cardHint}>{fmt(g.toNextMs)} to go</Text>
           </View>
         </View>
+
+        {/* milestone plan drill-in */}
+        <Pressable testID="milestone-link" onPress={() => router.push('/milestone')} style={styles.planLink}>
+          <View style={styles.planIcon}><Glyph name="target" size={19} color={C.accentSoft} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.planTitle}>The 36-month milestone plan</Text>
+            <Text style={styles.planSub}>Live balance vs your Sprint 0–4 targets</Text>
+          </View>
+          <Glyph name="chevron" size={16} color={C.textFaint} />
+        </Pressable>
 
         {/* contribution */}
         <View style={styles.contribCard}>
@@ -144,6 +156,11 @@ const styles = StyleSheet.create({
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },
   cardHint: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
+
+  planLink: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14, marginBottom: 12 },
+  planIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.12)', alignItems: 'center', justifyContent: 'center' },
+  planTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },
+  planSub: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, marginTop: 2 },
 
   contribCard: { backgroundColor: 'rgba(124,140,255,.1)', borderWidth: 1, borderColor: 'rgba(124,140,255,.22)', borderRadius: 18, padding: 16, marginBottom: 12 },
   contribEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter },

@@ -60,5 +60,16 @@ SYNC_FEED_IDS = {
 # HTTP timeout, in seconds, for a single sync-trigger request to BankSync.
 SYNC_TIMEOUT_SECONDS = 30
 
+# BankSync (bid, aid) coordinates for the home-loan account, used by the balance
+# poller to call getBalance (`GET /v1/banks/{bid}/accounts/{aid}/balances`) and
+# read the live mortgage balance (WHIT-8). `aid` is the same value that keys
+# ACCOUNT_ID_MAP -> HOMELOAN_ACCOUNT_ID; `bid` is the Fiskil bank id, which lives
+# nowhere else in the config. If Up is ever re-linked and either id rotates the
+# poller 404s, logs, and leaves the last-good balance untouched (never zeroes it).
+HOMELOAN_BALANCE_SOURCE = {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"}
+
+# HTTP timeout, in seconds, for a single balance-poller request to BankSync.
+HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
+
 # API Gateway route path for the read API that the whittle app calls.
 TRANSACTION_PATH = "/transactions"

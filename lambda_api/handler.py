@@ -9,6 +9,8 @@ from constants import (
     DEFAULT_RULE_OPERATOR,
     ENRICHMENTS_PATH,
     FEED_WINDOW_DAYS,
+    HOMELOAN_ACCOUNT_ID,
+    HOMELOAN_PATH,
     MAX_PAGE_SIZE,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
@@ -28,6 +30,7 @@ from repository import (
     CategoryNotFoundError,
     CategoryRepository,
     DuplicateCategoryError,
+    HomeLoanBalanceRepository,
     PayCycleRepository,
     TransactionRepository,
     VersionConflictError,
@@ -90,6 +93,9 @@ def lambda_handler(event, context):
                 200,
                 list_category_breakdown(
                     CategoryRepository(), TransactionRepository(), PayCycleRepository()))
+
+        if path == HOMELOAN_PATH and method == "GET":
+            return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
 
         if path == PAYCYCLE_PATH and method == "GET":
             return _json_response(200, PayCycleRepository().get_paycycle())
@@ -645,6 +651,26 @@ def list_category_breakdown(
     if uncategorized["posted"] > 0 or uncategorized["pending"] > 0:
         result[UNCATEGORIZED_KEY] = uncategorized
     return result
+
+
+def get_homeloan(repo: HomeLoanBalanceRepository) -> dict:
+    """GET /homeloan — the latest live mortgage balance (WHIT-8).
+
+    Returns {"balance": <number>, "as_of": <iso>, "currency": <str>} from the row
+    the balance poller stores. Before the first poll lands there is no row, so we
+    return a null sentinel {"balance": None, ...} (still 200) rather than 404 —
+    the client's refreshHomeLoan then simply skips the overwrite and keeps its
+    placeholder, no error handling required. DecimalEncoder renders `balance` as a
+    JSON number.
+    """
+    stored = repo.get_balance(HOMELOAN_ACCOUNT_ID)
+    if stored is None:
+        return {"balance": None, "as_of": None, "currency": None}
+    return {
+        "balance": stored["balance"],
+        "as_of": stored["as_of"],
+        "currency": stored["currency"],
+    }
 
 
 def set_budget(event: dict, repo: BudgetRepository) -> dict:

@@ -62,6 +62,14 @@ data "archive_file" "sync_trigger_zip" {
   output_path = "${path.module}/artifacts/sync_trigger.zip"
 }
 
+# Balance-poller lambda source. Contains only handler.py; constants.py, ssm.py,
+# and repository.py come from the shared layer.
+data "archive_file" "balance_poller_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../lambda_balance_poller"
+  output_path = "${path.module}/artifacts/balance_poller.zip"
+}
+
 # Authorizer lambda source. Contains only handler.py; constants.py and ssm.py
 # come from the shared layer.
 data "archive_file" "authorizer_zip" {
@@ -136,6 +144,33 @@ resource "aws_lambda_function" "sync_trigger" {
   }
 }
 
+# Triggered daily by EventBridge Scheduler (see scheduler.tf) to poll the live Up
+# home-loan balance from BankSync (getBalance) and store it (WHIT-8). Needs the
+# shared layer (constants.py/ssm.py/repository.py) AND DynamoDB PutItem +
+# TABLE_NAME (unlike the sync trigger, which writes nothing itself).
+resource "aws_lambda_function" "balance_poller" {
+  function_name    = "${var.project_name}-balance-poller"
+  role             = aws_iam_role.balance_poller_exec.arn
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 60
+  memory_size      = 128
+  filename         = data.archive_file.balance_poller_zip.output_path
+  source_code_hash = data.archive_file.balance_poller_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.balance_poller.name
+  }
+}
+
 # API Gateway authorizer: checks the shared-secret token on the /enrichments
 # routes (WHIT-52). Only needs the shared layer for constants.py/ssm.py; no
 # DynamoDB. TABLE_NAME is not set — it never touches the table.
@@ -168,6 +203,11 @@ resource "aws_cloudwatch_log_group" "lambda_api" {
 
 resource "aws_cloudwatch_log_group" "sync_trigger" {
   name              = "/aws/lambda/${var.project_name}-sync-trigger"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "balance_poller" {
+  name              = "/aws/lambda/${var.project_name}-balance-poller"
   retention_in_days = 30
 }
 

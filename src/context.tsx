@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule } from './api';
+import { MILESTONES, PROPERTY_VALUE, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +42,10 @@ export interface Goal {
   aheadLabel: string; interestSaved: number;
   lastRepay: { amount: number; principal: number; interest: number; date: string };
 }
+// The live home-loan balance from BankSync (WHIT-8), kept SEPARATE from `goal`
+// (which is illustrative seed data). `balance` is the outstanding mortgage
+// principal as a positive number, null until the balance poller's first run lands.
+export interface HomeLoanState { balance: number | null; asOf: string | null; }
 export type Sheet =
   | { mode: 'picker'; txId: string }
   | { mode: 'confirm'; txId: string; categoryId: string }
@@ -191,6 +196,10 @@ export interface AppContext {
 	breakdown: Record<string, CategorySpend>;
 	breakdownLoading: boolean;
 	refreshBreakdown: () => Promise<void>;
+	homeLoan: HomeLoanState;
+	homeLoanLoading: boolean;
+	homeLoanError: boolean;
+	refreshHomeLoan: () => Promise<void>;
 	refreshPayCycle: () => Promise<void>;
 	enrichmentsLoading: boolean;
 	enrichmentsError: string | null;
@@ -312,6 +321,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, [payCycle.length]);
 
+	// Live home-loan balance (WHIT-8). Separate from `goal` (seed data): the
+	// milestone screen reads this real balance, the Goal tab keeps its illustrative
+	// figures. Null until the first fetch lands; a null-balance response (poller
+	// hasn't run yet) is a no-op that leaves the placeholder in place.
+	const [homeLoan, setHomeLoan] = useState<HomeLoanState>({ balance: null, asOf: null });
+	const [homeLoanLoading, setHomeLoanLoading] = useState(false);
+	// True when the last fetch failed (network/500) AND no balance has ever loaded,
+	// so the screen can show an honest error+retry instead of a permanent spinner.
+	// A null-balance response (poller hasn't run) is NOT an error — it's a no-op.
+	const [homeLoanError, setHomeLoanError] = useState(false);
+	const refreshHomeLoan = useCallback(async () => {
+		setHomeLoanLoading(true);
+		setHomeLoanError(false);
+		try {
+			const hl = await fetchHomeLoan();
+			if (typeof hl.balance === 'number') {
+				setHomeLoan({ balance: hl.balance, asOf: hl.as_of });
+			}
+		} catch {
+			setHomeLoanError(true);
+		} finally {
+			setHomeLoanLoading(false);
+		}
+	}, []);
+
 	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
 	const [enrichmentsError, setEnrichmentsError] = useState<string | null>(null);
 	const refreshEnrichments = useCallback(async () => {
@@ -332,8 +366,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshTransactions();
 		refreshCategories();
 		refreshPayCycle();
+		refreshHomeLoan();
 		refreshEnrichments();
-	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshEnrichments]);
+	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshEnrichments]);
 
 	// Re-fetch budgets + breakdown on mount and whenever the pay-cycle length (the
 	// window) changes — both are computed over the current cycle.
@@ -658,9 +693,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -893,9 +928,129 @@ export function goalView(s: AppContext) {
   const chunksCleared = Math.floor(paidOff / chunk);
   const nextMs = Math.floor((G.balance - 1) / chunk) * chunk;
   const toNextMs = G.balance - nextMs;
-  const usableEquity = Math.max(0, Math.round(G.homeValue * 0.8 - G.balance));
+  // Same formula the milestone screen uses (computeUsableEquity), so the two
+  // can't drift; the Goal tab passes its own illustrative homeValue.
+  const usableEquity = computeUsableEquity(G.homeValue, G.balance);
   const depositTarget = 90000;
   const depositPct = Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100));
   const contribution = G.baseRepay + G.extra;
   return { G, paidOff, paidPct, chunk, totalChunks, chunksCleared, nextMs, toNextMs, usableEquity, depositTarget, depositPct, contribution };
+}
+
+// ---------------------------------------------------------------------------
+// Home Loan Milestone screen (WHIT-8)
+// ---------------------------------------------------------------------------
+
+export interface MilestoneRow {
+  sprint: number; label: string; targetBalance: number; targetEquity: number;
+  targetDate: string; cleared: boolean;
+}
+
+export interface MilestoneView {
+  hasBalance: boolean;             // false until the live balance has loaded
+  balance: number;                 // 0 when unknown — gate on hasBalance
+  balanceLabel: string;
+  asOf: string | null;
+  propertyValue: number;
+  usableEquity: number;
+  usableEquityLabel: string;
+  overallPct: number;              // 0..100 from the Sprint 0 balance down to the final target
+  clearedCount: number;
+  total: number;
+  nextMilestone: MilestoneRow | null;
+  amountToNext: number;
+  amountToNextLabel: string;
+  rows: MilestoneRow[];
+  schedule: {
+    ahead: boolean; onTrack: boolean; deltaAmount: number; expectedBalance: number; label: string;
+  } | null;                        // null until the live balance has loaded
+}
+
+// The planned loan balance on day `t` (UTC-midnight ms), read off the piecewise-
+// linear curve through the Sprint anchors: flat before Sprint 0 and after the
+// final target, linearly interpolated between. The MILESTONES invariant
+// (strictly increasing dates) guarantees the interpolation denominator is never
+// zero. Pure over MILESTONES.
+function expectedBalanceAt(t: number): number {
+  const first = MILESTONES[0];
+  const last = MILESTONES[MILESTONES.length - 1];
+  if (t <= milestoneTime(first)) return first.targetBalance;
+  if (t >= milestoneTime(last)) return last.targetBalance;
+  for (let i = 1; i < MILESTONES.length; i++) {
+    const a = MILESTONES[i - 1], b = MILESTONES[i];
+    const ta = milestoneTime(a), tb = milestoneTime(b);
+    if (t < tb) {
+      return a.targetBalance + (b.targetBalance - a.targetBalance) * ((t - ta) / (tb - ta));
+    }
+  }
+  return last.targetBalance; // unreachable (t < last handled above), keeps TS happy
+}
+
+// Progress against the Sprint 0–4 paydown plan (WHIT-8). Pure over the live
+// home-loan balance (s.homeLoan) + the MILESTONES constants + `today` (injected
+// for tests). Until the balance loads, hasBalance is false and the schedule
+// verdict is null so the screen can show a waiting state instead of fake numbers.
+export function milestoneView(s: AppContext, today?: Date): MilestoneView {
+  const rawBalance = s.homeLoan.balance;
+  const hasBalance = typeof rawBalance === 'number';
+  const balance = hasBalance ? rawBalance! : 0;
+
+  const rows: MilestoneRow[] = MILESTONES.map((m) => ({
+    sprint: m.sprint,
+    label: m.label,
+    targetBalance: m.targetBalance,
+    targetEquity: computeUsableEquity(PROPERTY_VALUE, m.targetBalance),
+    targetDate: m.targetDate,
+    // A milestone is cleared once the balance is at or below its target (paying
+    // down). Unknown balance clears nothing.
+    cleared: hasBalance && balance <= m.targetBalance,
+  }));
+
+  const clearedCount = rows.filter((r) => r.cleared).length;
+  // The next milestone is the first (earliest, highest-balance) target still
+  // above the current balance. null once every target is reached.
+  const next = hasBalance ? rows.find((r) => !r.cleared) ?? null : null;
+  const amountToNext = next ? balance - next.targetBalance : 0;
+
+  const start = MILESTONES[0].targetBalance;
+  const end = MILESTONES[MILESTONES.length - 1].targetBalance;
+  const overallPct = hasBalance
+    ? Math.max(0, Math.min(100, ((start - balance) / (start - end)) * 100))
+    : 0;
+
+  const equity = hasBalance ? computeUsableEquity(PROPERTY_VALUE, balance) : 0;
+
+  let schedule: MilestoneView['schedule'] = null;
+  if (hasBalance) {
+    const now = today ?? new Date();
+    const t = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const expectedBalance = expectedBalanceAt(t);
+    const delta = expectedBalance - balance;   // >0 => balance lower than planned => ahead
+    const deltaAmount = Math.abs(delta);
+    const ahead = delta > 0;
+    // Within ~$100 of plan reads as on track rather than a distracting tiny delta.
+    const onTrack = deltaAmount < 100;
+    const label = onTrack
+      ? 'On track with the plan'
+      : `${fmt(deltaAmount)} ${ahead ? 'ahead of' : 'behind'} schedule`;
+    schedule = { ahead, onTrack, deltaAmount, expectedBalance, label };
+  }
+
+  return {
+    hasBalance,
+    balance,
+    balanceLabel: hasBalance ? fmt(balance) : '—',
+    asOf: s.homeLoan.asOf,
+    propertyValue: PROPERTY_VALUE,
+    usableEquity: equity,
+    usableEquityLabel: hasBalance ? fmt(equity) : '—',
+    overallPct,
+    clearedCount,
+    total: rows.length,
+    nextMilestone: next,
+    amountToNext,
+    amountToNextLabel: next ? fmt(amountToNext) : '—',
+    rows,
+    schedule,
+  };
 }

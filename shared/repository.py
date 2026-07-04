@@ -26,12 +26,14 @@ from repository_category import (
 )
 from repository_budget import BudgetRepository
 from repository_paycycle import PayCycleRepository
+from repository_balance import HomeLoanBalanceRepository
 
 __all__ = [
     "TransactionRepository",
     "CategoryRepository",
     "BudgetRepository",
     "PayCycleRepository",
+    "HomeLoanBalanceRepository",
     "DuplicateCategoryError",
     "CategoryNotFoundError",
     "VersionConflictError",

@@ -188,6 +188,32 @@ export async function setTransactionCategory(
   return response.json();
 }
 
+/**
+ * The live home-loan balance (WHIT-8). `balance` is the outstanding mortgage
+ * principal as a positive number; all three fields are null before the balance
+ * poller's first run has stored a value.
+ */
+export interface HomeLoan {
+  balance: number | null;
+  as_of: string | null;   // ISO timestamp BankSync reported the balance
+  currency: string | null;
+}
+
+/**
+ * Fetch the latest live home-loan balance. Returns a null-filled shape (not an
+ * error) before the poller has stored anything, so the caller can simply keep
+ * its placeholder until a real balance lands.
+ *
+ * @returns The stored { balance, as_of, currency } (balance null if unpolled).
+ * @throws If the response status is not OK.
+ */
+export async function fetchHomeLoan(): Promise<HomeLoan> {
+  const response = await fetch(`${API_BASE}/homeloan`);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /** The persisted pay cycle: window length in days + the last pay date. */
 export interface PayCycle {
   length: number;        // 7 | 14 | 30 (Weekly / Fortnightly / Monthly)

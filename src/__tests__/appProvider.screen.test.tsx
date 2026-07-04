@@ -26,6 +26,7 @@ beforeEach(() => {
   mockApi.fetchCategories.mockResolvedValue([{ ...CAT }]);
   mockApi.fetchPayCycle.mockResolvedValue({ length: 14, last_pay_date: '2024-01-03' });
   mockApi.fetchBudgets.mockResolvedValue({});
+  mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
   mockApi.listEnrichments.mockResolvedValue([]);
 });
 
@@ -178,4 +179,28 @@ it('deleteCategory returns false + toasts on failure', async () => {
   await act(async () => { ok = await result.current.deleteCategory('groceries'); });
   expect(ok).toBe(false);
   expect(result.current.toast).toBe('Could not delete category. Please try again.');
+});
+
+// --- refreshHomeLoan (WHIT-8) ------------------------------------------------
+
+it('refreshHomeLoan overwrites the live balance on mount', async () => {
+  mockApi.fetchHomeLoan.mockResolvedValue({ balance: 596642.43, as_of: '2026-07-04T00:24:37.614Z', currency: 'AUD' });
+  const result = await mount();
+  await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
+  expect(result.current.homeLoan.asOf).toBe('2026-07-04T00:24:37.614Z');
+});
+
+it('refreshHomeLoan keeps the placeholder when the balance is null (unpolled)', async () => {
+  mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
+  const result = await mount();
+  // A null-balance response is a no-op: the seed placeholder (null) stands, no throw.
+  expect(result.current.homeLoan.balance).toBeNull();
+  expect(result.current.homeLoanError).toBe(false);
+});
+
+it('refreshHomeLoan flags an error when the fetch fails (not a permanent spinner)', async () => {
+  mockApi.fetchHomeLoan.mockRejectedValue(new Error('network'));
+  const result = await mount();
+  await waitFor(() => expect(result.current.homeLoanError).toBe(true));
+  expect(result.current.homeLoan.balance).toBeNull();
 });
