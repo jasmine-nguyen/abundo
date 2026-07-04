@@ -53,6 +53,7 @@ export const GLYPH: Record<string, string> = {
   navTx: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></g>',
   navGoals: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.6" fill="currentColor"/></g>',
   navSettings: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.5 12a7.5 7.5 0 0 0-.13-1.4l2-1.5-2-3.4-2.3 1a7.5 7.5 0 0 0-2.4-1.4L14.3 2.5h-4l-.4 2.4a7.5 7.5 0 0 0-2.4 1.4l-2.3-1-2 3.4 2 1.5a7.5 7.5 0 0 0 0 2.8l-2 1.5 2 3.4 2.3-1a7.5 7.5 0 0 0 2.4 1.4l.4 2.4h4l.4-2.4a7.5 7.5 0 0 0 2.4-1.4l2.3 1 2-3.4-2-1.5c.08-.46.13-.92.13-1.4z"/></g>',
+  navInsights: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 12V3.5"/><path d="M12 12l7.4 4.2"/></g>',
 };
 
 function wrap(inner: string, color: string): string {

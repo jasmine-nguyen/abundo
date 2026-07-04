@@ -143,6 +143,29 @@ export async function fetchBudgets(days: number): Promise<Record<string, BudgetR
   return response.json();
 }
 
+/** A category's computed spend for the current pay cycle. */
+export interface CategorySpend {
+  posted: number;   // settled (posted) spend
+  pending: number;  // not-yet-settled (pending) spend
+}
+
+/**
+ * Fetch spend by category for the current pay cycle (WHIT-23) — every category
+ * with spend this cycle, plus the special "__uncategorized__" bucket for spend
+ * that counts to budget but isn't in the taxonomy. Empty {} when nothing had spend.
+ *
+ * @param days - The client's pay-cycle length. The server derives the window from
+ *   the stored pay cycle and ignores this; kept for symmetry with fetchBudgets.
+ * @returns A map of category id to its { posted, pending }.
+ * @throws If the response status is not OK.
+ */
+export async function fetchBreakdown(days: number): Promise<Record<string, CategorySpend>> {
+  const response = await fetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}`);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /**
  * Set (persist) a single transaction's category.
  *

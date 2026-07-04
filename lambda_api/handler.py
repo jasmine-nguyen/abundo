@@ -1,5 +1,6 @@
 from constants import (
     ACCOUNT_ID_MAP,
+    BREAKDOWN_PATH,
     BUDGET_PATH,
     CATEGORY_BUCKETS,
     CATEGORY_PATH,
@@ -15,7 +16,9 @@ from constants import (
     POSTED_STATUS,
     RULE_FIELDS,
     RULE_OPERATORS,
+    SPEND_BUCKETS,
     TRANSACTION_PATH,
+    UNCATEGORIZED_KEY,
 )
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -79,6 +82,14 @@ def lambda_handler(event, context):
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
             return set_budget(event, BudgetRepository())
+
+        if path == BREAKDOWN_PATH and method == "GET":
+            # Spend by category for the current cycle (window derived server-side
+            # from the stored pay cycle, like /budgets).
+            return _json_response(
+                200,
+                list_category_breakdown(
+                    CategoryRepository(), TransactionRepository(), PayCycleRepository()))
 
         if path == PAYCYCLE_PATH and method == "GET":
             return _json_response(200, PayCycleRepository().get_paycycle())
@@ -498,6 +509,36 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> di
     return totals
 
 
+def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) -> dict:
+    """Sum posted vs pending spend that counts to budget but has no home in the
+    taxonomy: a raw BankSync category (e.g. "MEDICAL"), a deleted category's
+    dangling id, or a null category. The complement of what summarise_transactions
+    rolls up — same contribution rule (counts_to_budget, spend is a NEGATIVE
+    amount) and the same >= 0 clamp. The income sentinel ("income") is excluded,
+    matching the client's isUncategorized so the two views agree.
+
+    Returns {"posted": Decimal, "pending": Decimal}, both >= 0.
+    """
+    totals = {"posted": Decimal(0), "pending": Decimal(0)}
+    for transaction in transactions:
+        if not transaction.get("counts_to_budget"):
+            continue
+        category = transaction.get("category")
+        if category == "income" or category in taxonomy_ids:
+            continue
+        status = transaction.get("status")
+        if status == PENDING_STATUS:
+            bucket = "pending"
+        elif status == POSTED_STATUS:
+            bucket = "posted"
+        else:
+            continue  # unknown status -> don't guess a bucket
+        totals[bucket] += -Decimal(str(transaction.get("amount", 0)))
+    totals["posted"] = max(Decimal(0), totals["posted"])
+    totals["pending"] = max(Decimal(0), totals["pending"])
+    return totals
+
+
 # Safety ceiling on cursor-follow iterations per account. A bounded date-range
 # query terminates on its own (LastEvaluatedKey eventually None), so reaching this
 # many pages for a single account means the cursor is not advancing — a repo/
@@ -567,6 +608,42 @@ def list_budgets(
             "posted": spend["posted"] if spend else Decimal(0),
             "pending": spend["pending"] if spend else Decimal(0),
         }
+    return result
+
+
+def list_category_breakdown(
+    category_repo: CategoryRepository,
+    transaction_repo: TransactionRepository,
+    paycycle_repo: PayCycleRepository,
+) -> dict:
+    """GET /breakdown — spend (posted + pending) per category for the current pay
+    cycle, plus an "Uncategorized" bucket. The visual companion to /budgets: where
+    the money actually went, not just budgeted categories.
+
+    Same window + summariser as list_budgets, but over ALL spend-bucket categories
+    rather than only budgeted ones. Income/Savings categories are excluded
+    (SPEND_BUCKETS): they carry positive amounts that would clamp to $0 rows in a
+    spend view. A category with no spend this cycle is omitted (summarise_transactions
+    only returns contributors). The Uncategorized bucket (spend that counts to
+    budget but isn't in the taxonomy — a raw enum, a deleted category, or null) is
+    added only when it has spend, so a fully-categorised cycle shows no phantom row.
+
+    Response: {"<category_id>": {"posted": Decimal, "pending": Decimal}, ...,
+    optionally "__uncategorized__": {...}}. Empty {} when nothing had spend.
+    """
+    categories = category_repo.list_categories()
+    cycle = paycycle_repo.get_paycycle()
+    start, end = current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+
+    all_ids = {c["id"] for c in categories}
+    spend_ids = {c["id"] for c in categories if c.get("bucket") in SPEND_BUCKETS}
+
+    result = summarise_transactions(transactions, spend_ids)
+
+    uncategorized = summarise_uncategorized(transactions, all_ids)
+    if uncategorized["posted"] > 0 or uncategorized["pending"] > 0:
+        result[UNCATEGORIZED_KEY] = uncategorized
     return result
 
 
