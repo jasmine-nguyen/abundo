@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
 from models import Transaction
-from constants import PENDING_STATUS, TIP_HEADROOM
+from constants import DEAD_LETTER_TTL_SECONDS, PENDING_STATUS, TIP_HEADROOM
 
 REGION_NAME = "ap-southeast-2"
 RESOURCE_NAME = "dynamodb"
@@ -110,13 +110,18 @@ class TransactionRepository:
 
         items = []
         for transaction in failed_transactions:
+            now = datetime.now(timezone.utc)
             item = {
                 "pk": "FAILED",
                 # A uuid disambiguates two failures written in the same microsecond,
                 # whose isoformat timestamps would otherwise collide and overwrite
                 # each other (WHIT-84) — matches shared/repository_transaction.py.
-                "sk": f"{datetime.now(timezone.utc).isoformat()}#{uuid.uuid4()}",
+                "sk": f"{now.isoformat()}#{uuid.uuid4()}",
                 "raw": json.dumps(transaction),
+                # failed_at: readable "how long stuck". expires_at: DynamoDB TTL
+                # (epoch seconds) so old dead-letter rows auto-expire (WHIT-54).
+                "failed_at": now.isoformat(),
+                "expires_at": int(now.timestamp()) + DEAD_LETTER_TTL_SECONDS,
             }
             items.append(item)
         self._batch_put(items, "save_failed_transactions")

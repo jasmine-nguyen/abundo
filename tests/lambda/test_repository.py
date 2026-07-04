@@ -129,3 +129,23 @@ def test_get_pending_single_page_returns_all_and_queries_once(repo):
 
     assert sorted(t["transaction_id"] for t in pendings) == ["a", "c"]
     assert repo._table.query_calls == 1
+
+
+def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, lam, monkeypatch):
+    # WHIT-54: dead-letter rows carry a readable failed_at (ISO) + an expires_at
+    # DynamoDB TTL (epoch seconds) 30 days out. Matches the shared copy.
+    frozen = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen
+
+    monkeypatch.setattr(lam.repository, "datetime", _FrozenDatetime)
+
+    repo.save_failed_transactions([{"id": "a"}])
+
+    (_, item), = [(k, v) for k, v in repo._table.store.items() if k[0] == "FAILED"]
+    assert item["failed_at"] == frozen.isoformat()
+    assert item["expires_at"] == int(frozen.timestamp()) + 30 * 24 * 60 * 60
+    assert isinstance(item["expires_at"], int)

@@ -10,7 +10,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
-from constants import MAX_PAGE_SIZE, PENDING_STATUS
+from constants import DEAD_LETTER_TTL_SECONDS, MAX_PAGE_SIZE, PENDING_STATUS
 from models import Transaction
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
@@ -63,10 +63,15 @@ class TransactionRepository:
 
         items = []
         for transaction in failed_transactions:
+            now = datetime.now(timezone.utc)
             item = {
                 "pk": "FAILED",
-                "sk": f"{datetime.now(timezone.utc).isoformat()}#{uuid.uuid4()}",
+                "sk": f"{now.isoformat()}#{uuid.uuid4()}",
                 "raw": json.dumps(transaction),
+                # failed_at: readable "how long stuck". expires_at: DynamoDB TTL
+                # (epoch seconds) so old dead-letter rows auto-expire (WHIT-54).
+                "failed_at": now.isoformat(),
+                "expires_at": int(now.timestamp()) + DEAD_LETTER_TTL_SECONDS,
             }
             items.append(item)
         self._batch_put(items, "save_failed_transactions")
