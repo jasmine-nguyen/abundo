@@ -8,8 +8,8 @@ import { useAppContext, countUncategorized } from '../../src/context';
 
 const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
-  { name: 'insights', label: 'Insights', icon: 'navInsights' },
   { name: 'transactions', label: 'Transactions', icon: 'navTx' },
+  { name: 'insights', label: 'Insights', icon: 'navInsights' },
   { name: 'goals', label: 'Goal', icon: 'navGoals' },
   { name: 'settings', label: 'Settings', icon: 'navSettings' },
 ] as const;
@@ -59,8 +59,8 @@ export default function TabsLayout() {
   return (
     <Tabs screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: C.bg } }} tabBar={(props) => <TabBar {...(props as unknown as TabBarShape)} />}>
       <Tabs.Screen name="budgets" />
-      <Tabs.Screen name="insights" />
       <Tabs.Screen name="transactions" />
+      <Tabs.Screen name="insights" />
       <Tabs.Screen name="goals" />
       <Tabs.Screen name="settings" />
     </Tabs>
