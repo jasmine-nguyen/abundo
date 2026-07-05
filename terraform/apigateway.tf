@@ -214,6 +214,29 @@ resource "aws_lambda_permission" "authorizer_invoke_permission" {
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/authorizers/${aws_apigatewayv2_authorizer.authorizer.id}"
 }
 
+# Native Cognito JWT authorizer (WHIT-97). DECLARED ONLY — attached to NO route.
+# Every route above still uses the shared-secret REQUEST authorizer, so adding
+# this can't drop or change auth on anything (rollout safety). It exists so the
+# client (WHIT-160) can be tested against a real JWT authorizer; the route
+# cutover from shared-secret to JWT is WHIT-162. No aws_lambda_permission is
+# needed — JWT authorizers are validated natively by API Gateway, not via Lambda.
+#
+# `audience` = the app client id. This matches Cognito ID tokens (whose `aud`
+# claim is the client id). Cognito ACCESS tokens carry `client_id` instead of
+# `aud`, so when WHIT-162 attaches this authorizer the client MUST send the ID
+# token — or this audience config must be revisited.
+resource "aws_apigatewayv2_authorizer" "jwt" {
+  api_id           = aws_apigatewayv2_api.api.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "${var.project_name}-jwt-authorizer"
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.app.id]
+    issuer   = local.cognito_issuer_url
+  }
+}
+
 # Enrichments (BankSync categorisation rules): list/create/delete. Reuse the
 # lambda_api integration (its /*/* invoke permission already covers these), gated
 # behind the shared-secret authorizer like every other app route.

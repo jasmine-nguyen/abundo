@@ -1,0 +1,149 @@
+# Cognito single-user login (WHIT-97) — card 1 of the auth epic.
+#
+# This adds the identity infrastructure only: a user pool, a public PKCE app
+# client, a Hosted UI domain, and (optionally) Google/Apple federated IdPs. The
+# API Gateway JWT authorizer that consumes this pool lives in apigateway.tf and
+# is DECLARED-BUT-UNATTACHED — no route is switched to JWT here. The existing
+# shared-secret authorizer keeps guarding every route (rollout safety), so a
+# Cognito misconfig can't lock anyone out of the API. Route cutover is WHIT-162.
+#
+# SINGLE-USER GATE — IMPORTANT: `allow_admin_create_user_only` below only blocks
+# self-service username/password signup. Federated login (Google/Apple) still
+# auto-provisions a Cognito user for ANY account that completes the Hosted UI
+# flow. That is harmless while no route uses the JWT authorizer, but WHIT-162
+# MUST NOT cut routes over to JWT until a Pre-Sign-Up allowlist Lambda rejects
+# non-allowlisted emails. Tracked as a hard blocker on WHIT-162.
+
+locals {
+  # Single source of truth for the pool's OIDC issuer. The JWT authorizer
+  # validates tokens against this and the client (WHIT-160) trusts the exported
+  # copy — they MUST stay byte-identical, so build the string once.
+  cognito_issuer_url = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.pool.id}"
+}
+
+resource "aws_cognito_user_pool" "pool" {
+  name                     = "${var.project_name}-user-pool"
+  username_attributes      = ["email"]
+  auto_verified_attributes = ["email"]
+
+  # Single-user: only an admin (you, via console/CLI) creates the one user. No
+  # public self-service signup. (Does not gate federated login — see note above.)
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+  }
+
+  password_policy {
+    minimum_length    = 12
+    require_lowercase = true
+    require_uppercase = true
+    require_numbers   = true
+    require_symbols   = true
+  }
+
+  # This pool holds the account's only login — guard against an accidental
+  # `terraform destroy` wiping it.
+  deletion_protection = "ACTIVE"
+}
+
+# --- Federated identity providers -------------------------------------------
+# Both are count-gated on their credential variable: with the default empty
+# value the IdP is skipped entirely, so `terraform apply` succeeds before you
+# have the external credentials. Supply them via TF_VAR_* env vars (NOT a
+# committed *.tfvars — see terraform/.gitignore) and re-apply to light them up.
+
+resource "aws_cognito_identity_provider" "google" {
+  count         = var.google_client_id != "" ? 1 : 0
+  user_pool_id  = aws_cognito_user_pool.pool.id
+  provider_name = "Google"
+  provider_type = "Google"
+
+  provider_details = {
+    client_id        = var.google_client_id
+    client_secret    = var.google_client_secret
+    authorize_scopes = "openid email profile"
+  }
+
+  attribute_mapping = {
+    email = "email"
+  }
+
+  # The count-gate keys off google_client_id alone; Google also needs the
+  # secret. Fail at plan with a clear message instead of an opaque AWS 400
+  # mid-apply if only the id was supplied.
+  lifecycle {
+    precondition {
+      condition     = var.google_client_secret != ""
+      error_message = "google_client_id is set but google_client_secret is empty — Google sign-in needs both."
+    }
+  }
+}
+
+resource "aws_cognito_identity_provider" "apple" {
+  count         = var.apple_services_id != "" ? 1 : 0
+  user_pool_id  = aws_cognito_user_pool.pool.id
+  provider_name = "SignInWithApple"
+  provider_type = "SignInWithApple"
+
+  provider_details = {
+    client_id        = var.apple_services_id
+    team_id          = var.apple_team_id
+    key_id           = var.apple_key_id
+    private_key      = var.apple_private_key
+    authorize_scopes = "email name"
+  }
+
+  attribute_mapping = {
+    email = "email"
+  }
+
+  # The count-gate keys off apple_services_id alone; Apple also needs team_id,
+  # key_id and the .p8 private key. Fail at plan with a clear message instead of
+  # an opaque AWS 400 mid-apply if the set is incomplete.
+  lifecycle {
+    precondition {
+      condition     = var.apple_team_id != "" && var.apple_key_id != "" && var.apple_private_key != ""
+      error_message = "apple_services_id is set but apple_team_id, apple_key_id or apple_private_key is empty — Apple sign-in needs all four."
+    }
+  }
+}
+
+# --- Public PKCE app client --------------------------------------------------
+resource "aws_cognito_user_pool_client" "app" {
+  name         = "${var.project_name}-app-client"
+  user_pool_id = aws_cognito_user_pool.pool.id
+
+  # Public client: no secret, authorization-code flow with PKCE (WHIT-160).
+  generate_secret                      = false
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = ["openid", "email", "profile"]
+
+  callback_urls = var.auth_callback_urls
+  logout_urls   = var.auth_logout_urls
+
+  # Only advertise IdPs that were actually created (COGNITO always; Google/Apple
+  # only when their credentials were supplied). Keeps the client valid whether
+  # or not the federated IdPs exist yet.
+  supported_identity_providers = concat(
+    ["COGNITO"],
+    var.google_client_id != "" ? ["Google"] : [],
+    var.apple_services_id != "" ? ["SignInWithApple"] : [],
+  )
+
+  # The client lists Google/Apple in supported_identity_providers, so it must be
+  # created after those IdPs exist. depends_on on a count=0 resource is a no-op.
+  depends_on = [
+    aws_cognito_identity_provider.google,
+    aws_cognito_identity_provider.apple,
+  ]
+}
+
+# --- Hosted UI domain --------------------------------------------------------
+# Prefix domain (<prefix>.auth.<region>.amazoncognito.com). No ACM cert / custom
+# domain needed — the JWT authorizer keys off the pool's issuer URL, not this
+# domain. NOTE: the prefix must be globally unique across ALL AWS accounts; if
+# `whittle-auth` is taken, `apply` errors — change var.cognito_domain_prefix.
+resource "aws_cognito_user_pool_domain" "hosted_ui" {
+  domain       = var.cognito_domain_prefix
+  user_pool_id = aws_cognito_user_pool.pool.id
+}
