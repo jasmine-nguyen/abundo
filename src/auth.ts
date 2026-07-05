@@ -26,6 +26,9 @@
 
 // Types only — erased at compile, so nothing native loads on import.
 import type { DiscoveryDocument, TokenResponse } from "expo-auth-session";
+// Type-only (erased): the SDK itself is lazy-`require`d inside signInWithPassword so
+// the node `logic` jest project can still import this module. WHIT-178.
+import type { CognitoUser, CognitoUserSession } from "amazon-cognito-identity-js";
 
 /**
  * Where the returning-user auth state can be, from the gate's point of view.
@@ -33,6 +36,16 @@ import type { DiscoveryDocument, TokenResponse } from "expo-auth-session";
  * the user passes Face ID / Touch ID.
  */
 export type AuthStatus = "loading" | "authed" | "anon" | "locked";
+
+/**
+ * Result of a native email/password sign-in (WHIT-178). `challenge` surfaces
+ * Cognito's NEW_PASSWORD_REQUIRED (an admin-created user's first login) for WHIT-181
+ * to complete; `error` is a friendly, user-facing message. Never a thrown exception.
+ */
+export type SignInResult =
+  | { ok: true }
+  | { ok: false; challenge: "NEW_PASSWORD_REQUIRED" }
+  | { ok: false; error: string };
 
 /** The in-memory token set. `issuedAt`/`expiresIn` are seconds (OAuth convention). */
 interface Session {
@@ -53,6 +66,13 @@ const REFRESH_TOKEN_KEY = "whittle.cognito.refreshToken";
 // ID blindly). Written AFTER the token, deleted with it. Flag-independent, so a
 // session created while biometrics are off is still found when the flag flips on.
 const SESSION_SENTINEL_KEY = "whittle.cognito.hasSession";
+// WHIT-178: which surface minted the session — "srp" (native email/password via
+// InitiateAuth) vs absent/"oauth" (Hosted UI / federated Google). The REFRESH path
+// must match the mint surface: an SRP-minted refresh token isn't reliably redeemable
+// at the OAuth /oauth2/token endpoint (it can come back with no id token), so SRP
+// sessions refresh via InitiateAuth REFRESH_TOKEN_AUTH. Unguarded like the sentinel
+// (not secret); read on cold launch. Absent = a pre-WHIT-178 OAuth session.
+const AUTH_METHOD_KEY = "whittle.cognito.authMethod";
 // Refresh this many seconds BEFORE the id token actually expires, to absorb clock
 // skew / in-flight latency (a device clock a little fast must not send a token the
 // API already considers expired).
@@ -68,6 +88,13 @@ let refreshInFlight: Promise<string | undefined> | null = null;
 // Single-flight for the biometric unlock, so overlapping unlock() calls share one
 // guarded read (= one Face ID prompt) instead of stacking prompts.
 let unlockInFlight: Promise<boolean> | null = null;
+// WHIT-178: single-flight for native password sign-in, so a double-tap can't spawn
+// two authenticate attempts racing on the seated session / the challenge singleton.
+let signInInFlight: Promise<SignInResult> | null = null;
+// WHIT-178: the CognitoUser mid-NEW_PASSWORD_REQUIRED challenge, stashed so WHIT-181
+// can complete it against the SAME attempt. Reset at the start of every attempt (so a
+// stale one never lingers) and only set when the challenge fires. --- WHIT-181 SEAM ---
+let pendingChallengeUser: CognitoUser | null = null;
 const listeners = new Set<() => void>();
 
 /** Current gate status, read synchronously by the auth hook's initial render. */
@@ -96,6 +123,13 @@ function hostedUiDomain(): string | undefined {
 
 function appClientId(): string | undefined {
   return process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
+}
+
+// WHIT-178: the User Pool id (e.g. `ap-southeast-2_xxxx`), needed by the Cognito SDK
+// for native sign-in and by the InitiateAuth refresh. The SDK derives the AWS region
+// from the `<region>_...` prefix, so no separate region var is needed.
+function userPoolId(): string | undefined {
+  return process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID;
 }
 
 // The OAuth endpoints all live on the Hosted UI domain (…amazoncognito.com), NOT
@@ -221,6 +255,112 @@ export async function signIn(): Promise<boolean> {
   }
 }
 
+// If Cognito ever returns a challenge the app doesn't implement (the pool has no MFA
+// today), the SDK would invoke an undefined callback and throw outside our promise —
+// so we handle every challenge and resolve to this rather than break the never-throw
+// contract. WHIT-178.
+const UNSUPPORTED_CHALLENGE = "This account needs a sign-in step the app doesn't support yet.";
+
+/**
+ * Native email/password sign-in (WHIT-178) via the Cognito SDK's SRP flow — no Hosted
+ * UI, and the password never leaves the device in the clear. On success the session
+ * is seated through the SAME machinery as the Hosted UI path (refresh token
+ * persisted, sentinel written, status → 'authed'), so Face ID + refresh keep working.
+ * Surfaces NEW_PASSWORD_REQUIRED (an admin-created user's first login) for WHIT-181.
+ * Never throws — bad credentials, a challenge, or offline all resolve to a result.
+ * Single-flight so a double-tap can't stack two attempts.
+ */
+export function signInWithPassword(email: string, password: string): Promise<SignInResult> {
+  if (!signInInFlight) {
+    signInInFlight = runPasswordSignIn(email, password).finally(() => {
+      signInInFlight = null;
+    });
+  }
+  return signInInFlight;
+}
+
+async function runPasswordSignIn(email: string, password: string): Promise<SignInResult> {
+  const clientId = appClientId();
+  const poolId = userPoolId();
+  if (!clientId || !poolId) {
+    return { ok: false, error: "Sign-in isn't set up. Check the app configuration." };
+  }
+  pendingChallengeUser = null; // clear any stale challenge from a prior attempt
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Cognito = require("amazon-cognito-identity-js");
+    const pool = new Cognito.CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
+    const user: CognitoUser = new Cognito.CognitoUser({ Username: email, Pool: pool });
+    const details = new Cognito.AuthenticationDetails({ Username: email, Password: password });
+    return await new Promise<SignInResult>((resolve) => {
+      user.authenticateUser(details, {
+        onSuccess: (session: CognitoUserSession) => {
+          seatCognitoSession(session)
+            .then(() => resolve({ ok: true }))
+            .catch(() => resolve({ ok: false, error: "Couldn't finish signing in. Try again." }));
+        },
+        onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
+        newPasswordRequired: () => {
+          pendingChallengeUser = user; // WHIT-181 completes it against this attempt
+          resolve({ ok: false, challenge: "NEW_PASSWORD_REQUIRED" });
+        },
+        // The pool has no MFA today; handle the rest defensively so an unexpected
+        // challenge can't call an undefined callback and throw past us.
+        mfaRequired: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+        totpRequired: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+        customChallenge: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+        mfaSetup: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+        selectMFAType: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+      });
+    });
+  } catch (err) {
+    // A synchronous SDK throw (misconfig, missing crypto polyfill) → friendly result.
+    return { ok: false, error: mapCognitoError(err) };
+  }
+}
+
+// Seat a Cognito SDK session into the in-memory + persisted machinery, exactly like
+// the Hosted UI path (signIn, above): refresh token FIRST, then the sentinel (the
+// "token before sentinel" landmine), record the SRP auth method (so refresh uses the
+// matching surface), cache the tokens, go 'authed'. WHIT-178.
+async function seatCognitoSession(session: CognitoUserSession): Promise<void> {
+  const idToken = session.getIdToken().getJwtToken();
+  const accessToken = session.getAccessToken().getJwtToken();
+  // decodePayload() gives ABSOLUTE iat/exp; cacheToken/isNearExpiry want issuedAt
+  // (absolute) + expiresIn (a DURATION), so pass exp - iat — NOT exp.
+  const claims = session.getIdToken().decodePayload() as { iat: number; exp: number };
+  const refreshToken = session.getRefreshToken().getToken();
+  await setRefreshToken(refreshToken);
+  await setSessionSentinel();
+  await setAuthMethod("srp");
+  cacheToken({ idToken, accessToken, issuedAt: claims.iat, expiresIn: claims.exp - claims.iat, refreshToken });
+  setStatus("authed");
+}
+
+// Map a Cognito SDK error to a friendly string. UserNotFound and NotAuthorized map to
+// the SAME message so the UI never reveals whether an email is registered (paired
+// with prevent_user_existence_errors on the client). WHIT-178.
+function mapCognitoError(err: unknown): string {
+  const e = (err ?? {}) as { code?: string; name?: string; message?: string };
+  const code = e.code ?? e.name ?? "";
+  const message = e.message ?? "";
+  if (code === "NotAuthorizedException" && /attempts exceeded/i.test(message)) {
+    return "Too many attempts. Try again in a bit.";
+  }
+  if (code === "NotAuthorizedException" || code === "UserNotFoundException") {
+    return "Incorrect email or password.";
+  }
+  if (code === "TooManyRequestsException" || code === "LimitExceededException") {
+    return "Too many attempts. Try again in a bit.";
+  }
+  if (code === "UserNotConfirmedException") return "Your account isn't verified yet.";
+  if (code === "PasswordResetRequiredException") return "You need to reset your password.";
+  if (!code || /network/i.test(code) || /network|timeout/i.test(message)) {
+    return "You appear to be offline. Check your connection.";
+  }
+  return "Couldn't sign in. Try again.";
+}
+
 /**
  * Return a valid Cognito **ID token** (the token the WHIT-97 JWT authorizer
  * accepts — its `aud` is the app client id; access tokens carry `client_id`, not
@@ -243,15 +383,27 @@ export async function getAuthToken(): Promise<string | undefined> {
   return refreshInFlight;
 }
 
-// Core token refresh: swap the given refresh token for a fresh id token via the
-// Cognito token endpoint, updating the in-memory cache (and, if the token rotated,
-// the guarded keychain). Returns the new id token, or undefined on any failure.
-// Deliberately does NOT touch the gate status or clear the session — the CALLER owns
-// the terminal status. That is what lets unlock() keep a failed OFFLINE refresh at
-// 'locked' instead of the getAuthToken/restore path's clearSession() broadcasting a
-// transient 'anon' (which flashed a login redirect for one frame before the lock
-// screen painted). WHIT-171.
+// Core token refresh: swap the given refresh token for a fresh id token, updating the
+// in-memory cache (and, if the token rotated, the guarded keychain). Returns the new
+// id token, or undefined on any failure. Deliberately does NOT touch the gate status
+// or clear the session — the CALLER owns the terminal status. That is what lets
+// unlock() keep a failed OFFLINE refresh at 'locked' instead of the
+// getAuthToken/restore path's clearSession() broadcasting a transient 'anon' (which
+// flashed a login redirect for one frame before the lock screen painted). WHIT-171.
+//
+// WHIT-178: refresh on the surface that MINTED the session. SRP/native-password
+// sessions go through InitiateAuth REFRESH_TOKEN_AUTH (their refresh token isn't
+// reliably redeemable at the OAuth /oauth2/token endpoint); Hosted-UI / federated
+// (OAuth) sessions refresh at /oauth2/token as before.
 async function refreshTokens(refreshToken: string): Promise<string | undefined> {
+  const method = await getAuthMethod();
+  return method === "srp"
+    ? refreshViaInitiateAuth(refreshToken)
+    : refreshViaOAuth(refreshToken);
+}
+
+// OAuth (Hosted UI / federated Google) refresh: the /oauth2/token refresh grant.
+async function refreshViaOAuth(refreshToken: string): Promise<string | undefined> {
   const domain = hostedUiDomain();
   const clientId = appClientId();
   if (!domain || !clientId) return undefined;
@@ -267,6 +419,52 @@ async function refreshTokens(refreshToken: string): Promise<string | undefined> 
     // only overwrite when a rotated one is actually returned.
     if (token.refreshToken) await setRefreshToken(token.refreshToken);
     return token.idToken;
+  } catch {
+    return undefined;
+  }
+}
+
+// SRP (native email/password) refresh: InitiateAuth REFRESH_TOKEN_AUTH against the
+// cognito-idp endpoint (region derived from the pool id). Public client → no
+// SECRET_HASH. Always returns an id token on success (unlike the OAuth grant for an
+// SRP-minted token). WHIT-178.
+async function refreshViaInitiateAuth(refreshToken: string): Promise<string | undefined> {
+  const clientId = appClientId();
+  const poolId = userPoolId();
+  if (!clientId || !poolId) return undefined;
+  const region = poolId.split("_")[0];
+  try {
+    const res = await fetch(`https://cognito-idp.${region}.amazonaws.com/`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-amz-json-1.1",
+        "x-amz-target": "AWSCognitoIdentityProviderService.InitiateAuth",
+      },
+      body: JSON.stringify({
+        AuthFlow: "REFRESH_TOKEN_AUTH",
+        ClientId: clientId,
+        AuthParameters: { REFRESH_TOKEN: refreshToken },
+      }),
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as {
+      AuthenticationResult?: { IdToken?: string; AccessToken?: string; RefreshToken?: string; ExpiresIn?: number };
+    };
+    const r = data.AuthenticationResult;
+    if (!r?.IdToken) return undefined;
+    cacheToken({
+      idToken: r.IdToken,
+      accessToken: r.AccessToken ?? "",
+      // InitiateAuth returns ExpiresIn as a DURATION (seconds); pair it with "now" as
+      // the issue time — cacheToken/isNearExpiry treat expiresIn as a duration.
+      issuedAt: Math.floor(Date.now() / 1000),
+      expiresIn: r.ExpiresIn ?? 3600,
+      // Refresh responses omit the refresh token; cacheToken falls back to the cached
+      // one, and REFRESH_TOKEN_AUTH keeps the existing token valid.
+      refreshToken: r.RefreshToken,
+    });
+    if (r.RefreshToken) await setRefreshToken(r.RefreshToken);
+    return r.IdToken;
   } catch {
     return undefined;
   }
@@ -460,11 +658,30 @@ async function setSessionSentinel(): Promise<void> {
   await SecureStore.setItemAsync(SESSION_SENTINEL_KEY, "1");
 }
 
+// WHIT-178: record/read which surface minted the session, so the refresh path can
+// match it. Unguarded (not secret); a missing value reads as null → OAuth path.
+async function setAuthMethod(method: "srp" | "oauth"): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const SecureStore = require("expo-secure-store");
+  await SecureStore.setItemAsync(AUTH_METHOD_KEY, method);
+}
+
+async function getAuthMethod(): Promise<string | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const SecureStore = require("expo-secure-store");
+    return await SecureStore.getItemAsync(AUTH_METHOD_KEY);
+  } catch {
+    return null; // unreadable → default to the OAuth refresh path
+  }
+}
+
 async function clearStoredSession(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const SecureStore = require("expo-secure-store");
   await SecureStore.deleteItemAsync(SESSION_SENTINEL_KEY);
   await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+  await SecureStore.deleteItemAsync(AUTH_METHOD_KEY);
 }
 
 // --- gate decision (pure — the fail-on-revert-testable core of the auth gate) -----

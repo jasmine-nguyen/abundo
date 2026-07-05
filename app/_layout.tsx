@@ -1,3 +1,8 @@
+// WHIT-178: MUST be the first import. The Cognito SDK's SRP sign-in needs
+// crypto.getRandomValues, which React Native/Hermes does not provide — without this
+// polyfill (loaded before anything that reaches src/auth) native sign-in throws on
+// device (or, worse, falls back to weak randomness). No effect in the jest node env.
+import 'react-native-get-random-values';
 import React, { useEffect } from 'react';
 import { Platform, View, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';

@@ -134,6 +134,11 @@ resource "aws_cognito_user_pool_client" "app" {
   # JWT authorizer audience stay valid.
   explicit_auth_flows = ["ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
 
+  # WHIT-178: return a generic "incorrect username or password" for a bad login
+  # instead of distinguishing UserNotFound from NotAuthorized — so the native login
+  # form can't be used to probe which emails are registered. In-place update.
+  prevent_user_existence_errors = "ENABLED"
+
   callback_urls = var.auth_callback_urls
   logout_urls   = var.auth_logout_urls
 
