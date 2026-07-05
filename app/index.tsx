@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Rect, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { C, FONT } from '../src/theme';
-import { Glyph } from '../src/icons';
-import { signIn } from '../src/auth';
+import { signInWithPassword, signInWithGoogle } from '../src/auth';
 
-// Required so a returning OAuth redirect can dismiss the auth browser and resolve
-// the pending promptAsync (a no-op on native, where promptAsync resolves directly).
+// Required so a returning OAuth redirect (Google) can dismiss the auth browser and
+// resolve the pending promptAsync (a no-op on native, where promptAsync resolves).
 WebBrowser.maybeCompleteAuthSession();
 
 function Logo() {
@@ -28,23 +27,68 @@ function Logo() {
   );
 }
 
+// WHIT-180: the real native login. Email/password (WHIT-178 SRP) + Continue with
+// Google (WHIT-179, straight to Google's sheet). The old Hosted-UI "AWS Cognito"
+// button, the placeholder Face ID button, and the "Create account" link are gone;
+// real Face ID lives on the lock screen (AuthGate), not here.
 export default function Login() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
-  const [signingIn, setSigningIn] = useState(false);
+  const [busy, setBusy] = useState<'password' | 'google' | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const go = () => router.replace('/(tabs)/budgets');
+  const disabled = busy !== null;
+  // Don't fire a pointless round-trip (and a confusing "incorrect password") on blank
+  // fields — keep Log in disabled until both are non-empty.
+  const canSubmit = email.trim().length > 0 && pass.length > 0;
 
-  // Real Cognito Hosted UI sign-in (WHIT-160). On success we enter the app; on
-  // cancel/failure we stay on the login screen. signIn() never throws.
-  const continueWithCognito = async () => {
-    if (signingIn) return;
-    setSigningIn(true);
-    const ok = await signIn();
-    setSigningIn(false);
-    if (ok) go();
+  const logIn = async () => {
+    if (busy || !canSubmit) return;
+    setError(null);
+    setBusy('password');
+    let res: Awaited<ReturnType<typeof signInWithPassword>>;
+    try {
+      res = await signInWithPassword(email, pass);
+    } catch {
+      // signInWithPassword is never-throw by contract; this is belt-and-braces so a
+      // future throw path can never leave the spinner stuck forever.
+      setBusy(null);
+      setError('Something went wrong. Please try again.');
+      return;
+    }
+    setBusy(null); // clear BEFORE navigating, so we never setState after unmount
+    if (res.ok) {
+      go();
+      return;
+    }
+    if ('challenge' in res) {
+      // NEW_PASSWORD_REQUIRED — the full set-a-password flow lands in WHIT-181.
+      setError('This account needs a new password set before you can sign in.');
+      return;
+    }
+    setError(res.error);
   };
+
+  const withGoogle = async () => {
+    if (busy) return;
+    setError(null);
+    setBusy('google');
+    let ok = false;
+    try {
+      ok = await signInWithGoogle();
+    } catch {
+      setBusy(null);
+      return;
+    }
+    setBusy(null);
+    if (ok) go();
+    // A false result is almost always a user cancel — stay quietly on the screen.
+  };
+
+  // WHIT-182 (stub): the real reset-by-email flow isn't built yet.
+  const forgot = () => setError('Password reset is coming soon. For now, reset it from the AWS console.');
 
   return (
     <ScrollView
@@ -57,6 +101,12 @@ export default function Login() {
         <Text style={styles.tagline}>Whittle the mortgage down to nothing.</Text>
       </View>
 
+      {error ? (
+        <View style={styles.errorBox} testID="login-error">
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+
       <View style={{ gap: 12 }}>
         <View>
           <Text style={styles.label}>EMAIL</Text>
@@ -66,8 +116,11 @@ export default function Login() {
             placeholder="you@email.com"
             placeholderTextColor={C.placeholder}
             autoCapitalize="none"
+            autoCorrect={false}
             keyboardType="email-address"
+            editable={!disabled}
             style={styles.input}
+            testID="login-email"
           />
         </View>
         <View>
@@ -78,55 +131,52 @@ export default function Login() {
             placeholder="••••••••"
             placeholderTextColor={C.placeholder}
             secureTextEntry
+            editable={!disabled}
+            returnKeyType="go"
+            onSubmitEditing={logIn}
             style={styles.input}
+            testID="login-password"
           />
         </View>
 
-        <Pressable onPress={go} style={styles.primaryBtn}>
-          <Text style={styles.primaryText}>Log in</Text>
+        <Pressable onPress={logIn} disabled={disabled || !canSubmit} style={[styles.primaryBtn, { opacity: disabled || !canSubmit ? 0.6 : 1 }]} testID="login-submit">
+          {busy === 'password' ? <ActivityIndicator color={C.accentInk} /> : <Text style={styles.primaryText}>Log in</Text>}
+        </Pressable>
+
+        <Pressable onPress={forgot} disabled={disabled} style={styles.forgotBtn} testID="login-forgot">
+          <Text style={styles.forgotText}>Forgot password?</Text>
         </Pressable>
 
         <View style={styles.dividerRow}>
           <View style={styles.divider} />
-          <Text style={styles.dividerText}>or continue with</Text>
+          <Text style={styles.dividerText}>or</Text>
           <View style={styles.divider} />
         </View>
 
-        <Pressable
-          onPress={continueWithCognito}
-          disabled={signingIn}
-          style={[styles.altBtn, { backgroundColor: C.card, opacity: signingIn ? 0.6 : 1 }]}
-        >
-          <Glyph name="building" size={20} color="#ff9900" />
-          <Text style={styles.altText}>{signingIn ? 'Signing in…' : 'Continue with AWS Cognito'}</Text>
-        </Pressable>
-        <Pressable onPress={go} style={[styles.altBtn, { backgroundColor: 'transparent' }]}>
-          <Glyph name="target" size={20} color="#e2e2e8" />
-          <Text style={styles.altText}>Log in with Face ID</Text>
+        <Pressable onPress={withGoogle} disabled={disabled} style={[styles.altBtn, { opacity: disabled ? 0.6 : 1 }]} testID="login-google">
+          <Text style={styles.altText}>{busy === 'google' ? 'Connecting…' : 'Continue with Google'}</Text>
         </Pressable>
       </View>
-
-      <Text style={styles.footer}>
-        New to Whittle? <Text style={styles.footerLink}>Create account</Text>
-      </Text>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 26 },
-  brand: { alignItems: 'center', marginBottom: 38 },
+  brand: { alignItems: 'center', marginBottom: 30 },
   wordmark: { fontFamily: FONT.display, fontWeight: '800', fontSize: 34, color: '#fff', letterSpacing: -1, marginTop: 18 },
   tagline: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 5 },
   label: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: C.textMid, marginHorizontal: 2, marginBottom: 7 },
   input: { width: '100%', paddingVertical: 15, paddingHorizontal: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', backgroundColor: C.card, borderRadius: 14, color: '#fff', fontFamily: FONT.body, fontSize: 15 },
-  primaryBtn: { marginTop: 6, paddingVertical: 16, borderRadius: 15, backgroundColor: C.accent, alignItems: 'center' },
+  primaryBtn: { marginTop: 6, paddingVertical: 16, borderRadius: 15, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center', minHeight: 53 },
   primaryText: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.accentInk },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 8 },
+  forgotBtn: { alignSelf: 'center', paddingVertical: 4 },
+  forgotText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.accentSoft },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 4 },
   divider: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,.08)' },
   dividerText: { fontFamily: FONT.body, fontSize: 12, color: C.textFaint },
-  altBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingVertical: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', borderRadius: 15 },
+  altBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingVertical: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', borderRadius: 15, minHeight: 50 },
   altText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: '#e2e2e8' },
-  footer: { textAlign: 'center', marginTop: 26, fontFamily: FONT.body, fontSize: 14, color: '#83838d' },
-  footerLink: { color: C.accentSoft, fontWeight: '600' },
+  errorBox: { backgroundColor: 'rgba(255,107,107,.12)', borderWidth: 1, borderColor: 'rgba(255,107,107,.35)', borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginBottom: 14 },
+  errorText: { fontFamily: FONT.body, fontSize: 13.5, color: C.bad, textAlign: 'center' },
 });
