@@ -8,6 +8,7 @@ import { C } from '../src/theme';
 import { AppProvider } from '../src/context';
 import { Overlays } from '../src/components/Overlays';
 import { registerForPushNotificationsAsync } from '../src/push';
+import { AuthGate } from '../src/AuthGate';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -60,16 +61,18 @@ export default function RootLayout() {
 
   const app = (
     <View style={isWeb ? styles.deviceWeb : styles.deviceNative}>
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: C.bg },
-          animation: 'slide_from_right',
-        }}
-      >
-        <Stack.Screen name="index" />
-        <Stack.Screen name="(tabs)" />
-      </Stack>
+      <AuthGate>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: C.bg },
+            animation: 'slide_from_right',
+          }}
+        >
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(tabs)" />
+        </Stack>
+      </AuthGate>
       <Overlays />
     </View>
   );

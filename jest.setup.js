@@ -57,6 +57,29 @@ jest.mock('expo-font', () => ({
   loadAsync: jest.fn(),
 }));
 
+// Auth native modules (WHIT-160) have no JS-only impl; stub them so any screen that
+// transitively imports src/auth (via app/index or the auth gate) renders headlessly.
+// Tests that exercise the auth flow itself mock these per-case with real behaviour.
+jest.mock('expo-web-browser', () => ({
+  maybeCompleteAuthSession: jest.fn(),
+  openAuthSessionAsync: jest.fn(async () => ({ type: 'dismiss' })),
+}));
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: jest.fn(async () => null),
+  setItemAsync: jest.fn(async () => undefined),
+  deleteItemAsync: jest.fn(async () => undefined),
+}));
+jest.mock('expo-auth-session', () => ({
+  makeRedirectUri: jest.fn(() => 'acme://oauthredirect'),
+  exchangeCodeAsync: jest.fn(),
+  refreshAsync: jest.fn(),
+  ResponseType: { Code: 'code' },
+  AuthRequest: class {
+    promptAsync = jest.fn(async () => ({ type: 'dismiss' }));
+    codeVerifier = 'verifier';
+  },
+}));
+
 // Silence the act(...) / animation warnings that RN emits in the test renderer and
 // add nothing to signal.
 jest.spyOn(console, 'warn').mockImplementation(() => {});

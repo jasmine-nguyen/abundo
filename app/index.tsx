@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Rect, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { C, FONT } from '../src/theme';
 import { Glyph } from '../src/icons';
+import { signIn } from '../src/auth';
+
+// Required so a returning OAuth redirect can dismiss the auth browser and resolve
+// the pending promptAsync (a no-op on native, where promptAsync resolves directly).
+WebBrowser.maybeCompleteAuthSession();
 
 function Logo() {
   return (
@@ -27,7 +33,18 @@ export default function Login() {
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
+  const [signingIn, setSigningIn] = useState(false);
   const go = () => router.replace('/(tabs)/budgets');
+
+  // Real Cognito Hosted UI sign-in (WHIT-160). On success we enter the app; on
+  // cancel/failure we stay on the login screen. signIn() never throws.
+  const continueWithCognito = async () => {
+    if (signingIn) return;
+    setSigningIn(true);
+    const ok = await signIn();
+    setSigningIn(false);
+    if (ok) go();
+  };
 
   return (
     <ScrollView
@@ -75,9 +92,13 @@ export default function Login() {
           <View style={styles.divider} />
         </View>
 
-        <Pressable onPress={go} style={[styles.altBtn, { backgroundColor: C.card }]}>
+        <Pressable
+          onPress={continueWithCognito}
+          disabled={signingIn}
+          style={[styles.altBtn, { backgroundColor: C.card, opacity: signingIn ? 0.6 : 1 }]}
+        >
           <Glyph name="building" size={20} color="#ff9900" />
-          <Text style={styles.altText}>Continue with AWS Cognito</Text>
+          <Text style={styles.altText}>{signingIn ? 'Signing in…' : 'Continue with AWS Cognito'}</Text>
         </Pressable>
         <Pressable onPress={go} style={[styles.altBtn, { backgroundColor: 'transparent' }]}>
           <Glyph name="target" size={20} color="#e2e2e8" />
