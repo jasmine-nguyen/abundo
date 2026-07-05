@@ -20,11 +20,29 @@ export const ICON: Record<string, string> = {
   book: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4.5H16a1.5 1.5 0 0 1 1.5 1.5v13.5H7A1.5 1.5 0 0 1 5.5 18z"/><path d="M5.5 4.5A1.5 1.5 0 0 0 4 6v13.5"/></g>',
   tag: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5 7.5 3.5 12 8l-4 4zM7.5 12.5l9-9 4 4-9 9z"/><circle cx="6" cy="6" r=".7" fill="currentColor"/></g>',
   q: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 9.3a2.9 2.9 0 0 1 5.5 1.1c0 1.9-2.7 2.3-2.7 4.2"/><circle cx="12" cy="18" r=".9" fill="currentColor" stroke="none"/></g>',
+  // Hand-drawn category icons (WHIT-158) — outline, currentColor, 1.9 stroke to match
+  // the set: money/general (briefcase…medical) + common budget categories below.
+  briefcase: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7.5" width="18" height="12" rx="2.2"/><path d="M8.5 7.5V6a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v1.5"/><path d="M3 12.5h18"/></g>',
+  cash: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></g>',
+  bank: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5 12 4l8 5.5"/><path d="M5.5 10v7.5M9.5 10v7.5M14.5 10v7.5M18.5 10v7.5"/><path d="M3.5 20.5h17"/></g>',
+  coins: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6.5" rx="6.5" ry="2.5"/><path d="M5.5 6.5v5c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5v-5"/><path d="M5.5 11.5v5c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5v-5"/></g>',
+  heart: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20C12 20 4.5 15.5 4.5 10.2A3.8 3.8 0 0 1 12 8a3.8 3.8 0 0 1 7.5 2.2C19.5 15.5 12 20 12 20z"/></g>',
+  star: '<path d="M12 3.5l2.5 5.1 5.6.8-4 3.9 1 5.6-5-2.6-5 2.6 1-5.6-4-3.9 5.6-.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/>',
+  music: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17.5V6l10-2v11.5"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/></g>',
+  medical: '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="17" height="12.5" rx="2.5"/><path d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4h5A1.5 1.5 0 0 1 16 5.5V7"/><path d="M12 10.5v5.5M9.2 13.2h5.6"/></g>',
+  education: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2 9l10 5 10-5-10-5z"/><path d="M6 11v4c0 1.1 2.7 2.5 6 2.5s6-1.4 6-2.5v-4"/><path d="M22 9v5"/></g>',
+  parking: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M9.5 17V7h3.5a3 3 0 0 1 0 6H9.5"/></g>',
+  entertainment: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2 1.8 1.8 0 0 0 0 3.6V14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1.9a1.8 1.8 0 0 0 0-3.6z"/><path d="M15 6.7v10.6"/></g>',
+  subscription: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 9a8 8 0 0 1 13-4.2L20 7"/><path d="M20 3.5V7h-3.5"/><path d="M19.5 15a8 8 0 0 1-13 4.2L4 17"/><path d="M4 20.5V17h3.5"/></g>',
+  takeout: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.3a8 5 0 0 1 16 0z"/><path d="M5.2 14.6h13.6"/><path d="M5 17.4h14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/></g>',
+  vet: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.3" cy="12" r="1.35"/><circle cx="9.6" cy="9.6" r="1.35"/><circle cx="13.1" cy="9.6" r="1.35"/><path d="M9.7 13c-2.5 0-4.4 1.7-4.4 3.7 0 1.4 1.4 2 4.4 2s4.4-.6 4.4-2c0-2-1.9-3.7-4.4-3.7z"/><path d="M18.5 4.5v4.6M16.2 6.8h4.6"/></g>',
+  improvement: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="12" height="5" rx="1.5"/><path d="M15.5 6.5H18a1.5 1.5 0 0 1 1.5 1.5v1a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 0 10.5 12v2"/><rect x="9" y="14" width="3" height="7" rx="1.2"/></g>',
+  insurance: '<g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.3 3 7.4 7 8.8 4-1.4 7-4.5 7-8.8V6l-7-3z"/><path d="m9 11.5 2 2 4-4"/></g>',
 };
 
 // 'tag' is the server's default icon (DEFAULT_CATEGORY_ICON) — include it so a
 // category created without an icon renders and is pickable in the edit form.
-export const ICON_KEYS = ['coffee', 'cart', 'food', 'car', 'health', 'pets', 'bolt', 'bag', 'home', 'film', 'plane', 'gift', 'phone', 'dumbbell', 'book', 'tag'];
+export const ICON_KEYS = ['coffee', 'cart', 'food', 'car', 'health', 'pets', 'bolt', 'bag', 'home', 'film', 'plane', 'gift', 'phone', 'dumbbell', 'book', 'tag', 'briefcase', 'cash', 'bank', 'coins', 'heart', 'star', 'music', 'medical', 'education', 'parking', 'entertainment', 'subscription', 'takeout', 'vet', 'improvement', 'insurance'];
 
 // UI chrome glyphs (chevrons, plus, search, etc.) used outside the category set.
 export const GLYPH: Record<string, string> = {
