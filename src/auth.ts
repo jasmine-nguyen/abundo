@@ -16,12 +16,24 @@
 // level (only `import type`), and there is no module-top side effect. Native
 // modules are lazy-`require`d inside the functions that use them, so the `logic`
 // jest project (node env, no native mocks) can import this file without crashing.
+//
+// WHIT-161 (Face ID): when EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED === 'true' AND the
+// device supports biometrics, the refresh token is stored in a biometric-locked
+// keychain item (`requireAuthentication`) — reading it pops Face ID / Touch ID,
+// which IS the unlock. The token is then cached in memory for the session so
+// hourly refreshes never re-prompt; the app re-locks (drops the cache, re-reads)
+// on resume. Also ships dark (default off); a device with no biometrics stores
+// unguarded and never locks out.
 
 // Types only — erased at compile, so nothing native loads on import.
 import type { DiscoveryDocument, TokenResponse } from "expo-auth-session";
 
-/** Where the returning-user auth state can be, from the gate's point of view. */
-export type AuthStatus = "loading" | "authed" | "anon";
+/**
+ * Where the returning-user auth state can be, from the gate's point of view.
+ * `locked` (WHIT-161) = a session exists but is sealed behind biometrics until
+ * the user passes Face ID / Touch ID.
+ */
+export type AuthStatus = "loading" | "authed" | "anon" | "locked";
 
 /** The in-memory token set. `issuedAt`/`expiresIn` are seconds (OAuth convention). */
 interface Session {
@@ -29,10 +41,19 @@ interface Session {
   accessToken: string;
   issuedAt: number;
   expiresIn: number;
+  // Held in memory after the one-time biometric unlock so silent refreshes reuse
+  // it instead of re-reading the guarded keychain (= re-prompting). Cognito omits
+  // the refresh token on refresh, so it's preserved across refreshes.
+  refreshToken: string | undefined;
 }
 
 // SecureStore key for the long-lived refresh token. Single-user, so one fixed key.
 const REFRESH_TOKEN_KEY = "whittle.cognito.refreshToken";
+// Unguarded marker written in lockstep with the refresh token, so the gate can
+// tell "a session exists" WITHOUT reading the guarded token (which would pop Face
+// ID blindly). Written AFTER the token, deleted with it. Flag-independent, so a
+// session created while biometrics are off is still found when the flag flips on.
+const SESSION_SENTINEL_KEY = "whittle.cognito.hasSession";
 // Refresh this many seconds BEFORE the id token actually expires, to absorb clock
 // skew / in-flight latency (a device clock a little fast must not send a token the
 // API already considers expired).
@@ -45,6 +66,9 @@ let status: AuthStatus = "loading";
 // refresh (AppProvider fires ~9 data fetches on mount — without this they would
 // each fire their own refreshAsync and race to overwrite the cache).
 let refreshInFlight: Promise<string | undefined> | null = null;
+// Single-flight for the biometric unlock, so overlapping unlock() calls share one
+// guarded read (= one Face ID prompt) instead of stacking prompts.
+let unlockInFlight: Promise<boolean> | null = null;
 const listeners = new Set<() => void>();
 
 /** Current gate status, read synchronously by the auth hook's initial render. */
@@ -87,18 +111,51 @@ function discovery(domain: string): DiscoveryDocument {
   };
 }
 
-function cacheToken(token: Pick<TokenResponse, "idToken" | "accessToken" | "issuedAt" | "expiresIn">): void {
+function cacheToken(
+  token: Pick<TokenResponse, "idToken" | "accessToken" | "issuedAt" | "expiresIn" | "refreshToken">,
+): void {
   session = {
     idToken: token.idToken,
     accessToken: token.accessToken,
     issuedAt: token.issuedAt,
     expiresIn: token.expiresIn ?? 0,
+    // Keep the refresh token in memory: a refresh response omits it (Cognito reuses
+    // the existing one), so fall back to the one already cached rather than losing it.
+    refreshToken: token.refreshToken ?? session?.refreshToken,
   };
 }
 
 function clearSession(): void {
   session = null;
   setStatus("anon");
+}
+
+// Biometric lock is active only when the flag is on AND the device can actually
+// store/read a value behind biometrics. Exposed for the gate's launch decision.
+export function canBiometricLock(): boolean {
+  if (process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED !== "true") return false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const SecureStore = require("expo-secure-store");
+    return SecureStore.canUseBiometricAuthentication() === true;
+  } catch {
+    return false;
+  }
+}
+
+// The SecureStore options that guard the refresh token behind biometrics. Returns
+// the guarded options only when biometric locking is active; otherwise `{}` (an
+// unguarded item, byte-compatible with WHIT-160 storage) so a device without
+// biometrics is never locked out.
+function secureOpts(): Record<string, unknown> {
+  if (!canBiometricLock()) return {};
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const SecureStore = require("expo-secure-store");
+  return {
+    requireAuthentication: true,
+    authenticationPrompt: "Unlock Whittle",
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  };
 }
 
 function isNearExpiry(s: Session): boolean {
@@ -149,8 +206,13 @@ export async function signIn(): Promise<boolean> {
 
     // Persist the refresh token BEFORE caching in memory, so a keychain write
     // failure leaves us cleanly signed-out (returns false) rather than "signed in"
-    // in memory with nothing durable to restore from.
-    if (token.refreshToken) await setRefreshToken(token.refreshToken);
+    // in memory with nothing durable to restore from. Write the token FIRST, then
+    // the sentinel — so a failed/cancelled guarded write never leaves a "session
+    // exists" marker pointing at a token that isn't there.
+    if (token.refreshToken) {
+      await setRefreshToken(token.refreshToken);
+      await setSessionSentinel();
+    }
     cacheToken(token);
     setStatus("authed");
     return true;
@@ -169,6 +231,10 @@ export async function signIn(): Promise<boolean> {
  * secret.
  */
 export async function getAuthToken(): Promise<string | undefined> {
+  // Locked (WHIT-161): never read the biometric-guarded key here — that would pop
+  // Face ID outside the lock-screen flow and, on success, silently reveal the app.
+  // The dedicated unlock() path is the only place allowed to read while locked.
+  if (status === "locked") return undefined;
   if (session?.idToken && !isNearExpiry(session)) return session.idToken;
   if (!refreshInFlight) {
     refreshInFlight = refreshFromStoredToken().finally(() => {
@@ -180,7 +246,12 @@ export async function getAuthToken(): Promise<string | undefined> {
 
 async function refreshFromStoredToken(): Promise<string | undefined> {
   try {
-    const refreshToken = await getRefreshToken();
+    // Prefer the in-memory refresh token (seeded by signIn or by the one-time
+    // biometric unlock): this keeps hourly refreshes from re-reading the guarded
+    // keychain and re-prompting Face ID. Only fall back to a keychain read (which,
+    // when guarded, IS the prompt) when memory is empty — a cold, non-biometric
+    // launch, where the read is unguarded and silent.
+    const refreshToken = session?.refreshToken ?? (await getRefreshToken());
     if (!refreshToken) {
       clearSession();
       return undefined;
@@ -234,7 +305,7 @@ export async function signOut(): Promise<void> {
   // leave the user "signed in" in memory with a live token.
   clearSession();
   try {
-    await deleteRefreshToken();
+    await clearStoredSession();
     const domain = hostedUiDomain();
     const clientId = appClientId();
     if (!domain || !clientId) return;
@@ -250,23 +321,119 @@ export async function signOut(): Promise<void> {
   }
 }
 
+// --- biometric unlock (WHIT-161) ------------------------------------------------
+
+/**
+ * Whether a session marker is stored, WITHOUT reading the guarded token (which
+ * would pop Face ID). The gate uses this on launch to decide "show the lock
+ * screen" vs "no session, sign in". Never throws.
+ */
+export async function hasStoredSession(): Promise<boolean> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const SecureStore = require("expo-secure-store");
+    return (await SecureStore.getItemAsync(SESSION_SENTINEL_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reveal a locked session by reading the biometric-guarded refresh token — that
+ * read IS the Face ID / Touch ID prompt — then silently refreshing. Success →
+ * `authed`. A cancelled prompt (read throws) or a failed refresh → stays `locked`
+ * (the lock screen offers retry + sign-in-again). A `null` read (no token, or the
+ * key was invalidated because biometrics changed) → clear the stale session and
+ * drop to `anon` for a clean re-login. Never throws.
+ */
+export function unlock(): Promise<boolean> {
+  // Single-flight: a double-tap on the lock screen's Unlock button, or a launch
+  // unlock overlapping a resume unlock, must not stack two Face ID prompts. Share
+  // the one in-flight attempt (mirrors the refresh single-flight).
+  if (!unlockInFlight) {
+    unlockInFlight = performUnlock().finally(() => {
+      unlockInFlight = null;
+    });
+  }
+  return unlockInFlight;
+}
+
+async function performUnlock(): Promise<boolean> {
+  setStatus("locked");
+  try {
+    // The guarded keychain read is the biometric prompt.
+    const refreshToken = await getRefreshToken();
+    if (!refreshToken) {
+      // No token, or biometrics changed and invalidated the guarded key → treat as
+      // "session gone" and re-login rather than dead-ending on the lock screen.
+      await clearStoredSession();
+      clearSession(); // → anon
+      return false;
+    }
+    // Seed the in-memory refresh token so the refresh below (and every later hourly
+    // refresh) reuses it — one biometric prompt per launch/resume, never per refresh.
+    session = { idToken: undefined, accessToken: "", issuedAt: 0, expiresIn: 0, refreshToken };
+    const idToken = await refreshFromStoredToken();
+    if (idToken) {
+      setStatus("authed");
+      return true;
+    }
+    // Valid-looking token but the refresh failed (e.g. offline): keep the session
+    // stored and stay locked so the user can retry.
+    setStatus("locked");
+    return false;
+  } catch {
+    // Read threw — typically the user cancelled the prompt. Stay locked; retry and
+    // sign-in-again remain available, so we never hard-lock.
+    setStatus("locked");
+    return false;
+  }
+}
+
+/** Drop the in-memory session (incl. the refresh token) and re-seal to `locked`. */
+export function lock(): void {
+  session = null;
+  setStatus("locked");
+}
+
+/**
+ * Launch decision for the gate: if biometrics are active and a stored session
+ * exists, seal it (`locked`) and prompt to unlock; otherwise take the normal
+ * WHIT-160 restore path. Never throws.
+ */
+export async function unlockOrRestore(): Promise<void> {
+  if (canBiometricLock() && (await hasStoredSession())) {
+    await unlock();
+  } else {
+    await restoreSession();
+  }
+}
+
 // --- SecureStore wrappers (lazy require; web/simulator throw is swallowed) --------
 
 async function setRefreshToken(value: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const SecureStore = require("expo-secure-store");
-  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, value);
+  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, value, secureOpts());
 }
 
 async function getRefreshToken(): Promise<string | null> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const SecureStore = require("expo-secure-store");
-  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY, secureOpts());
 }
 
-async function deleteRefreshToken(): Promise<void> {
+async function setSessionSentinel(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const SecureStore = require("expo-secure-store");
+  // Unguarded: the whole point is to read it without a biometric prompt.
+  await SecureStore.setItemAsync(SESSION_SENTINEL_KEY, "1");
+}
+
+async function clearStoredSession(): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const SecureStore = require("expo-secure-store");
+  await SecureStore.deleteItemAsync(SESSION_SENTINEL_KEY);
   await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
 }
 

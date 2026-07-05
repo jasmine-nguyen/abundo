@@ -68,6 +68,10 @@ jest.mock('expo-secure-store', () => ({
   getItemAsync: jest.fn(async () => null),
   setItemAsync: jest.fn(async () => undefined),
   deleteItemAsync: jest.fn(async () => undefined),
+  // WHIT-161: biometric-lock API. Default: device can't use biometrics, so screen
+  // tests store unguarded and never enter the locked path unless a test opts in.
+  canUseBiometricAuthentication: jest.fn(() => false),
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
 }));
 jest.mock('expo-auth-session', () => ({
   makeRedirectUri: jest.fn(() => 'acme://oauthredirect'),

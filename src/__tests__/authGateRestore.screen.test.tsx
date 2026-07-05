@@ -28,12 +28,14 @@ jest.mock('expo-router', () => ({
 // A real listener set so subscribe/notify behave like production; getStatus reads a
 // mutable variable; restoreSession flips it to 'anon' and notifies (as the real
 // setStatus would after a failed silent refresh).
-let mockCurrentStatus: 'loading' | 'authed' | 'anon' = 'loading';
+let mockCurrentStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'loading';
 const mockListeners = new Set<() => void>();
-const mockRestoreSpy = jest.fn(async () => {
+// The gate's launch call (WHIT-161: unlockOrRestore, which decides biometric-unlock
+// vs normal restore). Here it stands in for the resolved launch → flips to 'anon'
+// and notifies, exactly as the real setStatus would after a failed silent refresh.
+const mockLaunchSpy = jest.fn(async () => {
   mockCurrentStatus = 'anon';
   mockListeners.forEach((l) => l());
-  return false;
 });
 jest.mock('../auth', () => {
   const actual = jest.requireActual('../auth') as typeof import('../auth');
@@ -41,7 +43,8 @@ jest.mock('../auth', () => {
     ...actual, // keep the REAL gateRedirect
     getStatus: () => mockCurrentStatus,
     subscribe: (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); },
-    restoreSession: () => mockRestoreSpy(),
+    unlockOrRestore: () => mockLaunchSpy(),
+    restoreSession: () => mockLaunchSpy(),
   };
 });
 
@@ -49,7 +52,7 @@ import { AuthGate } from '../AuthGate';
 
 beforeEach(() => {
   mockRedirectSpy.mockClear();
-  mockRestoreSpy.mockClear();
+  mockLaunchSpy.mockClear();
   mockListeners.clear();
   mockCurrentStatus = 'loading';
   mockSegments = ['(tabs)', 'budgets']; // an anon user deep on a protected route
@@ -65,8 +68,8 @@ it('transitions loading -> anon via the subscribe listener and then redirects', 
       <Text testID="child">app</Text>
     </AuthGate>,
   );
-  // restoreSession ran on mount and drove the re-render.
-  expect(mockRestoreSpy).toHaveBeenCalledTimes(1);
+  // the launch call (unlockOrRestore) ran on mount and drove the re-render.
+  expect(mockLaunchSpy).toHaveBeenCalledTimes(1);
   // The redirect only appears if the gate re-rendered off 'loading' via the listener.
   expect(await screen.findByTestId('redirect')).toBeTruthy();
   expect(mockRedirectSpy).toHaveBeenCalledWith('/');

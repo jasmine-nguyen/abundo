@@ -8,7 +8,13 @@
       "expo-splash-screen",
       "expo-status-bar",
       "expo-notifications",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "Whittle uses Face ID to unlock your account and protect your login."
+        }
+      ]
     ],
     "name": "whittle",
     "slug": "whittle",
