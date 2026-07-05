@@ -440,6 +440,8 @@ function mapCognitoError(err: unknown): string {
   if (code === "UserNotConfirmedException") return "Your account isn't verified yet.";
   if (code === "PasswordResetRequiredException") return "You need to reset your password.";
   if (code === "InvalidPasswordException") return "That password doesn't meet the requirements. Try a stronger one.";
+  if (code === "CodeMismatchException") return "That code isn't right. Check it and try again.";
+  if (code === "ExpiredCodeException") return "That code has expired. Request a new one.";
   if (!code || /network/i.test(code) || /network|timeout/i.test(message)) {
     return "You appear to be offline. Check your connection.";
   }
@@ -495,6 +497,64 @@ async function runCompleteNewPassword(newPassword: string): Promise<CompletePass
           selectMFAType: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
         },
       );
+    });
+  } catch (err) {
+    return { ok: false, error: mapCognitoError(err) };
+  }
+}
+
+/**
+ * WHIT-182: request a password-reset code. Cognito emails a one-time code to the
+ * account's verified email. Resolves ok whether the SDK reports the send via
+ * `onSuccess` or `inputVerificationCode`. Stateless (a fresh CognitoUser); never throws.
+ */
+export async function requestPasswordReset(email: string): Promise<CompletePasswordResult> {
+  const clientId = appClientId();
+  const poolId = userPoolId();
+  if (!clientId || !poolId) return { ok: false, error: "Sign-in isn't set up. Check the app configuration." };
+  const username = email.trim().toLowerCase();
+  if (!username) return { ok: false, error: "Enter your email first." };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Cognito = require("amazon-cognito-identity-js");
+    const pool = new Cognito.CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
+    const user: CognitoUser = new Cognito.CognitoUser({ Username: username, Pool: pool });
+    return await new Promise<CompletePasswordResult>((resolve) => {
+      user.forgotPassword({
+        onSuccess: () => resolve({ ok: true }),
+        inputVerificationCode: () => resolve({ ok: true }),
+        onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
+      });
+    });
+  } catch (err) {
+    return { ok: false, error: mapCognitoError(err) };
+  }
+}
+
+/**
+ * WHIT-182: confirm a password reset with the emailed code + a new password. On
+ * success the user then signs in with the new password (this does NOT return tokens,
+ * so it does not seat a session). Stateless; never throws.
+ */
+export async function confirmPasswordReset(
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<CompletePasswordResult> {
+  const clientId = appClientId();
+  const poolId = userPoolId();
+  if (!clientId || !poolId) return { ok: false, error: "Sign-in isn't set up. Check the app configuration." };
+  const username = email.trim().toLowerCase();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Cognito = require("amazon-cognito-identity-js");
+    const pool = new Cognito.CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
+    const user: CognitoUser = new Cognito.CognitoUser({ Username: username, Pool: pool });
+    return await new Promise<CompletePasswordResult>((resolve) => {
+      user.confirmPassword(code.trim(), newPassword, {
+        onSuccess: () => resolve({ ok: true }),
+        onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
+      });
     });
   } catch (err) {
     return { ok: false, error: mapCognitoError(err) };
