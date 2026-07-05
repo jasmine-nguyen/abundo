@@ -71,8 +71,8 @@ it('a cancelled Google sign-in (false) stays on the screen, no navigation', asyn
   expect(mockReplace).not.toHaveBeenCalled();
 });
 
-it('Forgot password shows the coming-soon stub (WHIT-182), never crashes', () => {
-  const { getByTestId, getByText } = render(<Login />);
+it('Forgot password opens the reset-code request form (WHIT-182)', () => {
+  const { getByTestId } = render(<Login />);
   fireEvent.press(getByTestId('login-forgot'));
-  expect(getByText(/coming soon/i)).toBeTruthy();
+  expect(getByTestId('forgot-request-form')).toBeTruthy();
 });
