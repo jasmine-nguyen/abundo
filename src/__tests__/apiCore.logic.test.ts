@@ -1,15 +1,19 @@
 // Logic tests for the core src/api.ts network layer: URL, method, headers, body
 // shape, url-encoding, JSON return, and the not-OK throw for every fetcher. As of
-// WHIT-110 EVERY app route is auth-gated, so each call must send the Bearer token
-// (Authorization: Bearer <EXPO_PUBLIC_API_TOKEN>) — these tests assert it on all of
-// them. fetch is mocked; no network. (WHIT-89, WHIT-110)
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+// WHIT-162 every app route is JWT-gated, so each call sends the Cognito ID token
+// (Authorization: Bearer <id token>) — these tests assert it on all of them, with
+// getAuthToken mocked. fetch is mocked; no network. (WHIT-89, WHIT-110, WHIT-162)
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories, fetchPayCycle,
   setPayCycle, setBudget, fetchHomeLoan, fetchLoanFacts, setLoanFacts, fetchRepayment,
 } from '../api';
 
+jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+import { getAuthToken } from '../auth';
+
+const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
 function okJson(body: unknown) {
@@ -22,15 +26,11 @@ function notOk(status: number) {
 let fetchMock: jest.Mock;
 
 beforeEach(() => {
-  // Every route is now gated -> the client must present the token, so set it.
-  process.env.EXPO_PUBLIC_API_TOKEN = 'test-token';
+  // Every route authenticates with the Cognito ID token (WHIT-162); mock a signed-in
+  // session returning a fixed token so the Bearer assertions below hold.
+  mockGetAuthToken.mockReset().mockResolvedValue('test-token');
   fetchMock = jest.fn();
   (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
-});
-
-afterEach(() => {
-  // Don't leak the token into other test files sharing this worker.
-  delete process.env.EXPO_PUBLIC_API_TOKEN;
 });
 
 function lastCall(): [string, any] {
@@ -236,11 +236,11 @@ describe('every fetcher throws on a not-OK response', () => {
 });
 
 describe('auth token required', () => {
-  it('a read throws (and never calls fetch) when the token is missing', async () => {
-    // Now that reads are gated, a missing EXPO_PUBLIC_API_TOKEN fails loudly rather
-    // than silently sending no credential (mirrors the enrichments contract).
-    delete process.env.EXPO_PUBLIC_API_TOKEN;
-    await expect(fetchTransactions()).rejects.toThrow('Missing EXPO_PUBLIC_API_TOKEN');
+  it('a read throws (and never calls fetch) when there is no Cognito session', async () => {
+    // With the static secret retired (WHIT-162), a call with no session fails loudly
+    // rather than sending an empty Bearer.
+    mockGetAuthToken.mockResolvedValue(undefined);
+    await expect(fetchTransactions()).rejects.toThrow('Not signed in');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

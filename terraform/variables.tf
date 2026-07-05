@@ -10,6 +10,16 @@ variable "project_name" {
   default     = "whittle"
 }
 
+# Emails permitted to sign in (WHIT-162). The Cognito Pre-Sign-Up trigger rejects
+# any federated (Google/Apple) account whose email isn't in this list at account
+# creation — the single-user gate. Supplied to the Lambda via the ALLOWED_EMAILS
+# env var. Add a backup address here + re-apply if your login method ever changes.
+variable "allowed_login_emails" {
+  description = "Emails allowed to sign in via Cognito (single-user allowlist)"
+  type        = list(string)
+  default     = ["me.jasminenguyen@gmail.com"]
+}
+
 # Cadence for the self-hosted BankSync sync. Default is hourly (24x/day) to keep
 # transactions fresh, bypassing BankSync's daily UI cap. Assumes no per-call rate
 # quota beyond that cap. Accepts any EventBridge Scheduler expression, e.g.

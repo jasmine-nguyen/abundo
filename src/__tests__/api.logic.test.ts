@@ -1,10 +1,14 @@
 // Logic test: the enrichments api-client functions. Verifies the Authorization
-// header (Bearer + EXPO_PUBLIC_API_TOKEN), the request body/method/url shape
-// (incl. encodeURIComponent + server-default field/operator omission), and the
-// not-OK throw. fetch is mocked; no network. WHIT-52 Slice 2.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+// header (Bearer + Cognito ID token, getAuthToken mocked), the request
+// body/method/url shape (incl. encodeURIComponent + server-default field/operator
+// omission), and the not-OK throw. fetch is mocked; no network. (WHIT-52, WHIT-162)
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice } from '../api';
 
+jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+import { getAuthToken } from '../auth';
+
+const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
 function okJson(body: unknown) {
@@ -17,13 +21,10 @@ function notOk(status: number) {
 let fetchMock: jest.Mock;
 
 beforeEach(() => {
-  process.env.EXPO_PUBLIC_API_TOKEN = 'test-token';
+  // WHIT-162: authenticate with the Cognito ID token; mock a signed-in session.
+  mockGetAuthToken.mockReset().mockResolvedValue('test-token');
   fetchMock = jest.fn();
   (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
-});
-
-afterEach(() => {
-  delete process.env.EXPO_PUBLIC_API_TOKEN;
 });
 
 const RULE = { id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' };
@@ -157,17 +158,17 @@ describe('registerDevice', () => {
     await expect(registerDevice('ExpoPushToken[x]')).rejects.toThrow('API error: 400');
   });
 
-  it('throws (never calls fetch) when the token secret is missing', async () => {
-    delete process.env.EXPO_PUBLIC_API_TOKEN;
-    await expect(registerDevice('ExpoPushToken[x]')).rejects.toThrow('Missing EXPO_PUBLIC_API_TOKEN');
+  it('throws (never calls fetch) when there is no Cognito session', async () => {
+    mockGetAuthToken.mockResolvedValue(undefined);
+    await expect(registerDevice('ExpoPushToken[x]')).rejects.toThrow('Not signed in');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
 describe('auth + error handling', () => {
-  it('throws (never calls fetch) when the token is missing', async () => {
-    delete process.env.EXPO_PUBLIC_API_TOKEN;
-    await expect(listEnrichments()).rejects.toThrow('Missing EXPO_PUBLIC_API_TOKEN');
+  it('throws (never calls fetch) when there is no Cognito session', async () => {
+    mockGetAuthToken.mockResolvedValue(undefined);
+    await expect(listEnrichments()).rejects.toThrow('Not signed in');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

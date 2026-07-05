@@ -105,13 +105,16 @@ it('shows a placeholder (no child, no redirect) while loading', () => {
   expect(screen.queryByTestId('child')).toBeNull();
 });
 
-it('never redirects when the gate flag is off — renders children as today', () => {
+it('gate is UNCONDITIONAL (WHIT-162): redirects an anon user even with no flag set', () => {
+  // The static secret is retired, so login is mandatory — the gate no longer keys
+  // off EXPO_PUBLIC_AUTH_GATE_ENABLED. Even with it unset, an anon user on a
+  // protected route is sent to login.
   delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
   mockGetStatus.mockReturnValue('anon');
   mockSegments = ['(tabs)', 'budgets'];
   renderGate();
-  expect(mockRedirectSpy).not.toHaveBeenCalled();
-  expect(screen.getByTestId('child')).toBeTruthy();
+  expect(mockRedirectSpy).toHaveBeenCalledWith('/');
+  expect(screen.queryByTestId('child')).toBeNull();
 });
 
 it('does not redirect before the navigator is mounted (mounted guard)', () => {

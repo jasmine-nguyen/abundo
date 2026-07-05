@@ -1,11 +1,15 @@
-// WHIT-110 gap tests. apiCore.logic.test.ts locks the Bearer header on each fetcher
-// and the missing-token throw for fetchTransactions only. This file adds:
-//  (1) the missing-token contract for EVERY exported api.ts fetcher — read AND write —
-//      so no function can silently send `Bearer undefined` and 401 instead of failing;
-//  (2) proof the token is read PER CALL (not frozen at module load), guarding the
-//      call-time-read design api.ts's comment depends on.
-// fetch is mocked; no network.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+// WHIT-110 gap tests, updated for WHIT-162 (static secret retired). Every app route
+// is now guarded by the Cognito JWT authorizer, so the client authenticates with
+// the ID token (getAuthToken). This file locks:
+//  (1) the no-session contract for EVERY exported api.ts fetcher — read AND write —
+//      so no function can silently send an empty Bearer and 401 instead of failing;
+//  (2) proof the token is read PER CALL (getAuthToken invoked each time), not frozen.
+// '../auth' and fetch are mocked; no network.
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+
+jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
+
+import { getAuthToken } from '../auth';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories,
@@ -14,6 +18,7 @@ import {
   deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice,
 } from '../api';
 
+const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
 function okJson(body: unknown) {
@@ -23,16 +28,13 @@ function okJson(body: unknown) {
 let fetchMock: jest.Mock;
 
 beforeEach(() => {
+  mockGetAuthToken.mockReset();
   fetchMock = jest.fn();
   (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
 });
 
-afterEach(() => {
-  delete process.env.EXPO_PUBLIC_API_TOKEN;
-});
-
-// One call per exported fetcher. If any forgot the token gate it would call fetch with
-// `Bearer undefined` instead of throwing — this table catches that for all of them.
+// One call per exported fetcher. If any forgot the auth gate it would call fetch with
+// an empty Bearer instead of throwing — this table catches that for all of them.
 const ALL_FETCHERS: [string, () => Promise<unknown>][] = [
   ['fetchTransactions', () => fetchTransactions()],
   ['fetchCategories', () => fetchCategories()],
@@ -59,27 +61,27 @@ const ALL_FETCHERS: [string, () => Promise<unknown>][] = [
   ['registerDevice', () => registerDevice('ExpoPushToken[x]')],
 ];
 
-describe('every gated fetcher fails loudly when the token is missing (WHIT-110)', () => {
+describe('every fetcher fails loudly with no Cognito session (WHIT-162)', () => {
   it.each(ALL_FETCHERS)(
-    '%s throws Missing EXPO_PUBLIC_API_TOKEN and never calls fetch',
+    '%s throws "Not signed in" and never calls fetch',
     async (_name, call) => {
-      delete process.env.EXPO_PUBLIC_API_TOKEN;
-      await expect(call()).rejects.toThrow('Missing EXPO_PUBLIC_API_TOKEN');
+      mockGetAuthToken.mockResolvedValue(undefined);
+      await expect(call()).rejects.toThrow('Not signed in');
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
 });
 
-describe('the token is read per-call, not frozen at module load', () => {
-  it('uses the CURRENT EXPO_PUBLIC_API_TOKEN value on each call', async () => {
+describe('the ID token is read per-call, not frozen at module load', () => {
+  it('uses the CURRENT token getAuthToken returns on each call', async () => {
     fetchMock.mockReturnValue(okJson([]));
 
-    process.env.EXPO_PUBLIC_API_TOKEN = 'token-A';
+    mockGetAuthToken.mockResolvedValueOnce('token-A');
     await fetchTransactions();
     expect((fetchMock.mock.calls[0][1] as any).headers.Authorization).toBe('Bearer token-A');
     expect(fetchMock.mock.calls[0][0]).toBe(`${API}/transactions`);
 
-    process.env.EXPO_PUBLIC_API_TOKEN = 'token-B';
+    mockGetAuthToken.mockResolvedValueOnce('token-B');
     await fetchTransactions();
     expect((fetchMock.mock.calls[1][1] as any).headers.Authorization).toBe('Bearer token-B');
   });
