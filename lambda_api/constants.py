@@ -130,6 +130,11 @@ REPAYMENT_PATH = "/repayment"
 # unrelated card payments on up-spending, so neither is used to identify it.
 REPAYMENT_INCOMING_TYPE = "TRANSFER_INCOMING"
 
+# Minimum home-loan repayment amount (dollars) that fires a push (WHIT-15). Mirrors
+# shared/constants.py (the webhook loads the shared copy); kept equal here for the
+# WHIT-136 sync guard, as a plain int so no Decimal import is needed.
+MIN_REPAYMENT_NOTIFY = 10
+
 # Interest posts as a separate BANK_FEES debit on the up-homeloan account. When one
 # falls in the same calendar month as the repayment, principal = repayment - |interest|.
 INTEREST_CATEGORY = "BANK_FEES"
