@@ -99,7 +99,8 @@ function PickerSheet() {
   if (sh?.mode !== 'picker') return null;
   const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
-  const categories = s.categories;
+  // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
+  const categories = [...s.categories].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
@@ -113,7 +114,7 @@ function PickerSheet() {
             <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
               <Icon name={c.icon} size={19} color={c.color} />
             </View>
-            <Text style={styles.pickName}>{c.name}</Text>
+            <Text testID="pickerCatName" style={styles.pickName}>{c.name}</Text>
             <Glyph name="chevron" size={16} color={C.textFaint} />
           </Pressable>
         ))}
@@ -160,7 +161,8 @@ function AddRuleSheet() {
   const editing = sh?.mode === 'addrule' && sh.ruleId ? s.rules.find((r) => r.id === sh.ruleId) : undefined;
   const [pattern, setPattern] = useState(editing?.pattern ?? '');
   const [categoryId, setCategoryId] = useState<string | null>(editing?.categoryId ?? null);
-  const categories = s.categories;
+  // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
+  const categories = [...s.categories].sort((a, b) => a.name.localeCompare(b.name));
   const canSave = pattern.trim().length > 0 && !!categoryId;
   const submit = () => {
     if (!canSave) return;

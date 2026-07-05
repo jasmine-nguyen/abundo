@@ -60,6 +60,24 @@ describe('Categorize picker (WHIT-158)', () => {
     render(<Overlays />);
     expect(screen.getByText('-$52.50')).toBeTruthy();
   });
+
+  it('lists categories alphabetically, so a newly-created one is not stranded at the bottom', () => {
+    // Supplied in creation order (Zebra, Apple, Mango) -> must render sorted.
+    const cats = [
+      { id: 'z', name: 'Zebra', icon: 'tag', color: '#fff', bucket: 'Lifestyle', recent: 0 },
+      { id: 'a', name: 'Apple', icon: 'tag', color: '#fff', bucket: 'Lifestyle', recent: 0 },
+      { id: 'm', name: 'Mango', icon: 'tag', color: '#fff', bucket: 'Lifestyle', recent: 0 },
+    ];
+    mockState = {
+      sheet: { mode: 'picker', txId: 't1' },
+      transactions: [{ transaction_id: 't1', amount: -10, description: 'X' }],
+      categories: cats, toast: null, notif: null,
+      category: (id: string) => cats.find((c) => c.id === id), ...sheetFns,
+    } as unknown as AppContext;
+    render(<Overlays />);
+    const names = screen.getAllByTestId('pickerCatName').map((n) => n.props.children);
+    expect(names).toEqual(['Apple', 'Mango', 'Zebra']);
+  });
 });
 
 it('the rule sheet also offers income categories (WHIT-158)', () => {
