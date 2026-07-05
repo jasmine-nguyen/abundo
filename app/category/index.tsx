@@ -12,7 +12,9 @@ export default function CategoryList() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const budgeted = s.budgets.map((b) => b.id);
-  const groups = BUCKETS.filter((bk) => bk !== 'Income')
+  // Every bucket that has categories, INCLUDING Income (WHIT-158) — income
+  // categories are creatable + assignable, so they must be visible + manageable here.
+  const groups = BUCKETS
     .map((bk) => ({ label: bk, color: BUCKET_COLOR[bk], items: s.categories.filter((c) => c.bucket === bk) }))
     .filter((g) => g.items.length);
 

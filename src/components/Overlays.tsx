@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, tint } from '../theme';
+import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel } from '../context';
 
@@ -99,12 +99,14 @@ function PickerSheet() {
   if (sh?.mode !== 'picker') return null;
   const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
-  const categories = s.categories.filter((c) => c.bucket !== 'Income');
+  const categories = s.categories;
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
       <Text style={styles.sheetMerchant}>{merchantLabel(tx)}</Text>
-      <Text style={styles.sheetAmount}>{'-$' + Math.abs(tx.amount).toFixed(2)}</Text>
+      {/* Sign-aware: an income transaction is positive, so a hardcoded "-$" would
+          misread it as spend once income categories are pickable (WHIT-158). */}
+      <Text style={styles.sheetAmount}>{fmt2(tx.amount)}</Text>
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
         {categories.map((c) => (
           <Pressable key={c.id} onPress={() => s.chooseCategory(c.id)} style={styles.pickRow}>
@@ -158,7 +160,7 @@ function AddRuleSheet() {
   const editing = sh?.mode === 'addrule' && sh.ruleId ? s.rules.find((r) => r.id === sh.ruleId) : undefined;
   const [pattern, setPattern] = useState(editing?.pattern ?? '');
   const [categoryId, setCategoryId] = useState<string | null>(editing?.categoryId ?? null);
-  const categories = s.categories.filter((c) => c.bucket !== 'Income');
+  const categories = s.categories;
   const canSave = pattern.trim().length > 0 && !!categoryId;
   const submit = () => {
     if (!canSave) return;
