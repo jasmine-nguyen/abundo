@@ -14,6 +14,9 @@ from standardwebhooks.webhooks import Webhook
 # (`repository_transaction`, a different module from the webhook's local
 # `repository`) because only it has get_transactions_by_date_range.
 import budget_alerts
+# Home-loan repayment pushes (WHIT-15): a second best-effort detector on the same
+# write path — when a posted repayment credit lands, send one encouraging push.
+import repayment_alerts
 from repository_transaction import TransactionRepository as WindowRepo
 from repository_budget import BudgetRepository
 from repository_category import CategoryRepository
@@ -118,3 +121,15 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
             )
         except Exception:
             logger.exception("budget-alert fire failed (ignored)")
+
+    # And send a push for any home-loan repayment in the batch (WHIT-15). Independent
+    # of the budget-alert block and its own best-effort — a failure here must never
+    # affect the write or the budget alert.
+    try:
+        repayment_alerts.notify_repayments(
+            normalised_transactions,
+            device_repo=DeviceRepository(),
+            notify_repo=NotifyRepository(),
+        )
+    except Exception:
+        logger.exception("repayment notification failed (ignored)")

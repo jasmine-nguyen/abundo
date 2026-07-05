@@ -84,3 +84,68 @@ def test_client_error_surfaces_as_database_error(shared, client_error, database_
     r._table.update_item = boom
     with pytest.raises(database_error):
         r.mark_fired("2026-07-01", 14, "groceries#80")
+
+
+# --- repayment-notify markers (WHIT-15), keyed on transaction id --------------
+
+
+def test_no_repayment_markers_before_any_fire(shared):
+    assert _repo(shared).fired_repayments() == set()
+
+
+def test_mark_repayment_then_read_round_trips(shared):
+    r = _repo(shared)
+    r.mark_repayment_fired("txn-1")
+    assert r.fired_repayments() == {"txn-1"}
+
+
+def test_mark_repayment_is_idempotent(shared):
+    r = _repo(shared)
+    r.mark_repayment_fired("txn-1")
+    r.mark_repayment_fired("txn-1")
+    assert r.fired_repayments() == {"txn-1"}
+
+
+def test_two_repayment_ids_coexist(shared):
+    r = _repo(shared)
+    r.mark_repayment_fired("txn-1")
+    r.mark_repayment_fired("txn-2")
+    assert r.fired_repayments() == {"txn-1", "txn-2"}
+
+
+def test_repayment_markers_isolated_from_cycle_markers(shared):
+    # The repayment set lives under its own pk, isolated from the per-cycle markers.
+    r = _repo(shared)
+    r.mark_fired("2026-07-01", 14, "groceries#80")
+    r.mark_repayment_fired("txn-1")
+    assert r.fired_repayments() == {"txn-1"}
+    assert r.fired_markers("2026-07-01", 14) == {"groceries#80"}
+
+
+def test_mark_repayment_writes_a_ttl(shared):
+    r = _repo(shared)
+    r.mark_repayment_fired("txn-1")
+    item = r._table.store[("NOTIFY#REPAYMENT", "FIRED")]
+    assert isinstance(item["expires_at"], int) and item["expires_at"] > 0
+
+
+def test_repayment_read_error_surfaces_as_database_error(shared, client_error, database_error):
+    r = _repo(shared)
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    r._table.get_item = boom
+    with pytest.raises(database_error):
+        r.fired_repayments()
+
+
+def test_repayment_mark_error_surfaces_as_database_error(shared, client_error, database_error):
+    r = _repo(shared)
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    r._table.update_item = boom
+    with pytest.raises(database_error):
+        r.mark_repayment_fired("txn-1")

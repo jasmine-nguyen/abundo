@@ -19,6 +19,21 @@ assert HOMELOAN_ACCOUNT_ID in ACCOUNT_ID_MAP.values(), (
     "HOMELOAN_ACCOUNT_ID must be one of ACCOUNT_ID_MAP's values"
 )
 
+# A home-loan repayment CREDIT leg lands on the up-homeloan account as an incoming
+# transfer (positive amount) — the same identity the read API's get_repayment uses
+# (WHIT-115). The webhook's repayment-push detector (WHIT-15) anchors on the account
+# + this type, so it can't drift from the budget rule or the description ("Transfer
+# from Spending" varies). Mirrors lambda_api/constants.py (which shadows this layer at
+# /var/task); kept equal here so the webhook lambda — which has no shadow — can import
+# it. (WHIT-136 sync guard.)
+REPAYMENT_INCOMING_TYPE = "TRANSFER_INCOMING"
+
+# Minimum home-loan repayment amount (dollars) that fires a push (WHIT-15). The real
+# Up feed carries tiny "OHA test" repayments ($1/$2/$5); this floor skips them. A
+# plain int (not Decimal) so the WHIT-136 mirror in lambda_api/constants.py needs no
+# Decimal import; `Decimal(amount) >= 10` compares cleanly.
+MIN_REPAYMENT_NOTIFY = 10
+
 # Raw BankSync categories that are transfers/loan movements between the user's OWN
 # accounts (own-account transfers, investments, card payments, home-loan repayments) —
 # not discretionary spend, so they don't count toward a spending budget (WHIT-50).
