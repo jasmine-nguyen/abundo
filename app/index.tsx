@@ -153,6 +153,7 @@ export default function Login() {
 
   const submitReset = async () => {
     if (busy || !canReset) return;
+    setNotice(null); // clear the "code sent" notice so it can't stack above an error
     if (newPass !== confirmPass) {
       setError('Those passwords don’t match.');
       return;
