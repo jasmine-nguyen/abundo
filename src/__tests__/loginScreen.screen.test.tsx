@@ -45,13 +45,13 @@ it('shows the error message on a failed sign-in and does NOT navigate', async ()
   expect(mockReplace).not.toHaveBeenCalled();
 });
 
-it('surfaces the NEW_PASSWORD_REQUIRED challenge as a message, no navigation', async () => {
+it('the NEW_PASSWORD_REQUIRED challenge flips into the set-password form, no navigation', async () => {
   mockSignInWithPassword.mockResolvedValue({ ok: false, challenge: 'NEW_PASSWORD_REQUIRED' });
-  const { getByTestId, findByText } = render(<Login />);
+  const { getByTestId, findByTestId } = render(<Login />);
   fireEvent.changeText(getByTestId('login-email'), 'me@x.com');
   fireEvent.changeText(getByTestId('login-password'), 'temp');
   fireEvent.press(getByTestId('login-submit'));
-  expect(await findByText(/new password/i)).toBeTruthy();
+  expect(await findByTestId('newpass-form')).toBeTruthy(); // WHIT-181: set-password step
   expect(mockReplace).not.toHaveBeenCalled();
 });
 
