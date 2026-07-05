@@ -12,7 +12,8 @@ const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
 
 const mockSignOut = jest.fn(async () => {});
-jest.mock('../../src/auth', () => ({ signOut: () => mockSignOut() }));
+// WHIT-180: Settings now also reads getCurrentUser for the profile card.
+jest.mock('../../src/auth', () => ({ signOut: () => mockSignOut(), getCurrentUser: () => null }));
 
 // Minimal context so the screen renders headlessly (it only reads a few fields).
 jest.mock('../../src/context', () => ({

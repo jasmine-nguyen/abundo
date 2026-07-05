@@ -287,6 +287,30 @@ export async function signInWithGoogle(): Promise<boolean> {
   return hostedUiAuthorize({ identity_provider: "Google" });
 }
 
+/**
+ * The signed-in user's identity, decoded from the cached ID token (WHIT-180). `email`
+ * is always present; `name`/`picture` come from federated (Google) logins. Returns
+ * null when signed out. Synchronous and non-reactive — read at render; the identity
+ * doesn't change within a session. Uses the SDK's decoder (lazy-required) for robust
+ * base64url + UTF-8 handling.
+ */
+export function getCurrentUser(): { email?: string; name?: string; picture?: string } | null {
+  const jwt = session?.idToken;
+  if (!jwt) return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { CognitoIdToken } = require("amazon-cognito-identity-js");
+    const claims = new CognitoIdToken({ IdToken: jwt }).decodePayload() as {
+      email?: string;
+      name?: string;
+      picture?: string;
+    };
+    return { email: claims.email, name: claims.name, picture: claims.picture };
+  } catch {
+    return null;
+  }
+}
+
 // If Cognito ever returns a challenge the app doesn't implement (the pool has no MFA
 // today), the SDK would invoke an undefined callback and throw outside our promise —
 // so we handle every challenge and resolve to this rather than break the never-throw

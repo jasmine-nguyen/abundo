@@ -1,17 +1,35 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext, loanFactsReady } from '../../src/context';
-import { signOut } from '../../src/auth';
+import { signOut, getCurrentUser } from '../../src/auth';
 import { SectionLabel } from '../../src/components/ui';
+
+// WHIT-180: avatar initials from the real signed-in identity (name → first+last
+// initial; else the first two letters of the email).
+function initialsFrom(u: { email?: string; name?: string } | null): string {
+  if (u?.name) {
+    const parts = u.name.trim().split(/\s+/).filter(Boolean);
+    const first = parts[0]?.[0] ?? '';
+    const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+    return (first + last).toUpperCase() || '?';
+  }
+  if (u?.email) return u.email.slice(0, 2).toUpperCase();
+  return '?';
+}
 
 export default function Settings() {
   const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  // WHIT-180: real identity from the Cognito ID token, not the "Jordan Diaz" mock.
+  const user = getCurrentUser();
+  const displayName = user?.name ?? user?.email ?? 'Signed in';
+  const secondLine = user?.name ? user?.email : undefined; // avoid repeating the email
 
   // WHIT-176: actually END the session, don't just navigate. signOut() drops the
   // in-memory session synchronously (→ status 'anon'), clears the stored refresh
@@ -32,10 +50,14 @@ export default function Settings() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         {/* profile */}
         <View style={styles.profile}>
-          <View style={styles.avatar}><Text style={styles.avatarText}>JD</Text></View>
+          {user?.picture ? (
+            <Image source={{ uri: user.picture }} style={styles.avatarImg} />
+          ) : (
+            <View style={styles.avatar}><Text style={styles.avatarText}>{initialsFrom(user)}</Text></View>
+          )}
           <View style={{ flex: 1 }}>
-            <Text style={styles.profileName}>Jordan Diaz</Text>
-            <Text style={styles.profileEmail}>jordan@whittle.app</Text>
+            <Text style={styles.profileName} numberOfLines={1}>{displayName}</Text>
+            {secondLine ? <Text style={styles.profileEmail} numberOfLines={1}>{secondLine}</Text> : null}
           </View>
         </View>
 
@@ -85,6 +107,7 @@ const styles = StyleSheet.create({
 
   profile: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, marginBottom: 18 },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#7079e3', alignItems: 'center', justifyContent: 'center' },
+  avatarImg: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#7079e3' },
   avatarText: { fontFamily: FONT.display, fontWeight: '800', fontSize: 19, color: C.heroInk },
   profileName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.text },
   profileEmail: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 1 },
