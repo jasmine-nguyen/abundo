@@ -206,12 +206,15 @@ function isNearExpiry(s: Session): boolean {
 }
 
 /**
- * Run the Hosted UI sign-in: open the browser, exchange the code (with the PKCE
- * verifier) for tokens, persist the refresh token. Returns whether a session was
+ * Run the Hosted UI authorization-code + PKCE flow: open the browser, exchange the
+ * code (with the PKCE verifier) for tokens, persist the refresh token, and seat the
+ * session as an OAuth session. `extraParams` are appended to the /oauth2/authorize
+ * request — e.g. `{ identity_provider: "Google" }` makes Cognito redirect STRAIGHT to
+ * Google, skipping its chooser page (WHIT-179). Returns whether a session was
  * established. Never throws — a cancel, a network error, or missing config all
  * resolve to `false`.
  */
-export async function signIn(): Promise<boolean> {
+async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<boolean> {
   try {
     const domain = hostedUiDomain();
     const clientId = appClientId();
@@ -228,6 +231,7 @@ export async function signIn(): Promise<boolean> {
       responseType: AuthSession.ResponseType.Code,
       scopes: ["openid", "email", "profile"],
       usePKCE: true,
+      ...(extraParams ? { extraParams } : {}),
     });
 
     const result = await request.promptAsync(disco);
@@ -243,16 +247,12 @@ export async function signIn(): Promise<boolean> {
       disco,
     );
 
-    // Persist the refresh token BEFORE caching in memory, so a keychain write
-    // failure leaves us cleanly signed-out (returns false) rather than "signed in"
-    // in memory with nothing durable to restore from. Write the token FIRST, then
-    // the sentinel — so a failed/cancelled guarded write never leaves a "session
-    // exists" marker pointing at a token that isn't there.
+    // Persist the refresh token BEFORE caching in memory, so a keychain write failure
+    // leaves us cleanly signed-out (returns false). Order: token → provenance →
+    // sentinel (the "session ready" marker, written last). WHIT-178: record "oauth" so
+    // the freshest mint overwrites any stale "srp" and the OAuth session refreshes via
+    // /oauth2/token, not InitiateAuth.
     if (token.refreshToken) {
-      // Order: token → provenance → sentinel (the sentinel is the "session ready"
-      // marker, written last). WHIT-178: record "oauth" so the freshest mint always
-      // overwrites any stale "srp" left by a prior in-memory-only clearSession() —
-      // otherwise this OAuth session could be mis-routed to the InitiateAuth refresh.
       await setRefreshToken(token.refreshToken);
       await setAuthMethod("oauth");
       await setSessionSentinel();
@@ -265,6 +265,26 @@ export async function signIn(): Promise<boolean> {
     // User cancel, network, popup dismissed — stay signed-out, never crash.
     return false;
   }
+}
+
+/**
+ * Hosted UI sign-in showing the full chooser (Cognito login + any federated IdPs).
+ * KEPT so the current login screen keeps working; WHIT-180 replaces it with the
+ * native form + signInWithGoogle. Never throws.
+ */
+export async function signIn(): Promise<boolean> {
+  return hostedUiAuthorize();
+}
+
+/**
+ * Sign in with Google (WHIT-179): the same Hosted UI PKCE flow, but with
+ * `identity_provider=Google` so Cognito redirects STRAIGHT to Google's own consent
+ * sheet — the user never sees the Cognito chooser page. Federated → provenance
+ * "oauth" (refreshes at /oauth2/token). The Pre-Sign-Up allowlist still gates which
+ * Google accounts may sign up. Never throws.
+ */
+export async function signInWithGoogle(): Promise<boolean> {
+  return hostedUiAuthorize({ identity_provider: "Google" });
 }
 
 // If Cognito ever returns a challenge the app doesn't implement (the pool has no MFA
