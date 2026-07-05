@@ -40,13 +40,25 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const go = () => router.replace('/(tabs)/budgets');
   const disabled = busy !== null;
+  // Don't fire a pointless round-trip (and a confusing "incorrect password") on blank
+  // fields — keep Log in disabled until both are non-empty.
+  const canSubmit = email.trim().length > 0 && pass.length > 0;
 
   const logIn = async () => {
-    if (busy) return;
+    if (busy || !canSubmit) return;
     setError(null);
     setBusy('password');
-    const res = await signInWithPassword(email, pass);
-    setBusy(null);
+    let res: Awaited<ReturnType<typeof signInWithPassword>>;
+    try {
+      res = await signInWithPassword(email, pass);
+    } catch {
+      // signInWithPassword is never-throw by contract; this is belt-and-braces so a
+      // future throw path can never leave the spinner stuck forever.
+      setBusy(null);
+      setError('Something went wrong. Please try again.');
+      return;
+    }
+    setBusy(null); // clear BEFORE navigating, so we never setState after unmount
     if (res.ok) {
       go();
       return;
@@ -63,7 +75,13 @@ export default function Login() {
     if (busy) return;
     setError(null);
     setBusy('google');
-    const ok = await signInWithGoogle();
+    let ok = false;
+    try {
+      ok = await signInWithGoogle();
+    } catch {
+      setBusy(null);
+      return;
+    }
     setBusy(null);
     if (ok) go();
     // A false result is almost always a user cancel — stay quietly on the screen.
@@ -121,7 +139,7 @@ export default function Login() {
           />
         </View>
 
-        <Pressable onPress={logIn} disabled={disabled} style={[styles.primaryBtn, { opacity: disabled ? 0.6 : 1 }]} testID="login-submit">
+        <Pressable onPress={logIn} disabled={disabled || !canSubmit} style={[styles.primaryBtn, { opacity: disabled || !canSubmit ? 0.6 : 1 }]} testID="login-submit">
           {busy === 'password' ? <ActivityIndicator color={C.accentInk} /> : <Text style={styles.primaryText}>Log in</Text>}
         </Pressable>
 

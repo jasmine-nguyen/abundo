@@ -300,12 +300,12 @@ export function getCurrentUser(): { email?: string; name?: string; picture?: str
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { CognitoIdToken } = require("amazon-cognito-identity-js");
-    const claims = new CognitoIdToken({ IdToken: jwt }).decodePayload() as {
-      email?: string;
-      name?: string;
-      picture?: string;
-    };
-    return { email: claims.email, name: claims.name, picture: claims.picture };
+    const claims = new CognitoIdToken({ IdToken: jwt }).decodePayload() as Record<string, unknown>;
+    // Coerce to string | undefined — a malformed token must never push a non-string
+    // claim into the profile <Text>/initials. `email` is normally present, but that's
+    // a token guarantee, not a code one, so callers degrade gracefully.
+    const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+    return { email: str(claims.email), name: str(claims.name), picture: str(claims.picture) };
   } catch {
     return null;
   }

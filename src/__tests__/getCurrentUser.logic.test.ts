@@ -83,4 +83,18 @@ describe('getCurrentUser', () => {
     });
     expect(auth.getCurrentUser()).toBeNull();
   });
+
+  it('trusts the token: no email claim still returns a NON-null identity (Settings degrades)', async () => {
+    const auth = loadAuth();
+    await signInSeat(auth);
+    mockDecodePayload.mockReturnValue({ name: 'No Email User' });
+    expect(auth.getCurrentUser()).toEqual({ email: undefined, name: 'No Email User', picture: undefined });
+  });
+
+  it('coerces non-string claims to undefined (malformed token → nothing weird in the UI)', async () => {
+    const auth = loadAuth();
+    await signInSeat(auth);
+    mockDecodePayload.mockReturnValue({ email: 123 as unknown as string, name: { x: 1 } as unknown as string });
+    expect(auth.getCurrentUser()).toEqual({ email: undefined, name: undefined, picture: undefined });
+  });
 });

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,15 +9,21 @@ import { signOut, getCurrentUser } from '../../src/auth';
 import { SectionLabel } from '../../src/components/ui';
 
 // WHIT-180: avatar initials from the real signed-in identity (name → first+last
-// initial; else the first two letters of the email).
-function initialsFrom(u: { email?: string; name?: string } | null): string {
-  if (u?.name) {
-    const parts = u.name.trim().split(/\s+/).filter(Boolean);
+// initial; else the first two letters of the email's local part). A whitespace-only
+// name falls through to the email; `?` only when there's nothing usable. Exported for
+// direct unit testing.
+export function initialsFrom(u: { email?: string; name?: string } | null): string {
+  const name = u?.name?.trim();
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean);
     const first = parts[0]?.[0] ?? '';
     const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
     return (first + last).toUpperCase() || '?';
   }
-  if (u?.email) return u.email.slice(0, 2).toUpperCase();
+  if (u?.email) {
+    const alnum = u.email.replace(/[^a-z0-9]/gi, ''); // drop @/dots so we never show "X@"
+    if (alnum) return alnum.slice(0, 2).toUpperCase();
+  }
   return '?';
 }
 
@@ -28,8 +34,13 @@ export default function Settings() {
 
   // WHIT-180: real identity from the Cognito ID token, not the "Jordan Diaz" mock.
   const user = getCurrentUser();
-  const displayName = user?.name ?? user?.email ?? 'Signed in';
-  const secondLine = user?.name ? user?.email : undefined; // avoid repeating the email
+  const name = user?.name?.trim() || undefined; // ignore a whitespace-only name
+  const displayName = name ?? user?.email ?? 'Signed in';
+  const secondLine = name ? user?.email : undefined; // avoid repeating the email
+  // Google photo, with a fallback to initials if the URL is blank or fails to load.
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const photoUri = user?.picture?.trim() ? user.picture : undefined;
+  const showPhoto = !!photoUri && !photoFailed;
 
   // WHIT-176: actually END the session, don't just navigate. signOut() drops the
   // in-memory session synchronously (→ status 'anon'), clears the stored refresh
@@ -50,8 +61,8 @@ export default function Settings() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         {/* profile */}
         <View style={styles.profile}>
-          {user?.picture ? (
-            <Image source={{ uri: user.picture }} style={styles.avatarImg} />
+          {showPhoto ? (
+            <Image source={{ uri: photoUri }} onError={() => setPhotoFailed(true)} style={styles.avatarImg} />
           ) : (
             <View style={styles.avatar}><Text style={styles.avatarText}>{initialsFrom(user)}</Text></View>
           )}

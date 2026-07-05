@@ -38,6 +38,8 @@ it('Log in calls signInWithPassword with the entered creds and enters the app on
 it('shows the error message on a failed sign-in and does NOT navigate', async () => {
   mockSignInWithPassword.mockResolvedValue({ ok: false, error: 'Incorrect email or password.' });
   const { getByTestId, findByText } = render(<Login />);
+  fireEvent.changeText(getByTestId('login-email'), 'me@x.com');
+  fireEvent.changeText(getByTestId('login-password'), 'wrong');
   fireEvent.press(getByTestId('login-submit'));
   expect(await findByText('Incorrect email or password.')).toBeTruthy();
   expect(mockReplace).not.toHaveBeenCalled();
@@ -46,6 +48,8 @@ it('shows the error message on a failed sign-in and does NOT navigate', async ()
 it('surfaces the NEW_PASSWORD_REQUIRED challenge as a message, no navigation', async () => {
   mockSignInWithPassword.mockResolvedValue({ ok: false, challenge: 'NEW_PASSWORD_REQUIRED' });
   const { getByTestId, findByText } = render(<Login />);
+  fireEvent.changeText(getByTestId('login-email'), 'me@x.com');
+  fireEvent.changeText(getByTestId('login-password'), 'temp');
   fireEvent.press(getByTestId('login-submit'));
   expect(await findByText(/new password/i)).toBeTruthy();
   expect(mockReplace).not.toHaveBeenCalled();
