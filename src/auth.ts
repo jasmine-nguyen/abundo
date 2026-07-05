@@ -47,6 +47,13 @@ export type SignInResult =
   | { ok: false; challenge: "NEW_PASSWORD_REQUIRED" }
   | { ok: false; error: string };
 
+/**
+ * Result of completing the NEW_PASSWORD_REQUIRED challenge (WHIT-181). It is the
+ * terminal step, so — unlike a fresh sign-in — it can never surface another challenge;
+ * a narrower union than SignInResult (no `challenge` variant).
+ */
+export type CompletePasswordResult = { ok: true } | { ok: false; error: string };
+
 /** The in-memory token set. `issuedAt`/`expiresIn` are seconds (OAuth convention). */
 interface Session {
   idToken: string | undefined;
@@ -91,6 +98,8 @@ let unlockInFlight: Promise<boolean> | null = null;
 // WHIT-178: single-flight for native password sign-in, so a double-tap can't spawn
 // two authenticate attempts racing on the seated session / the challenge singleton.
 let signInInFlight: Promise<SignInResult> | null = null;
+// WHIT-181: single-flight for completing the NEW_PASSWORD_REQUIRED challenge.
+let completeInFlight: Promise<CompletePasswordResult> | null = null;
 // WHIT-178: the CognitoUser mid-NEW_PASSWORD_REQUIRED challenge, stashed so WHIT-181
 // can complete it against the SAME attempt. Reset at the start of every attempt (so a
 // stale one never lingers) and only set when the challenge fires. --- WHIT-181 SEAM ---
@@ -430,10 +439,126 @@ function mapCognitoError(err: unknown): string {
   }
   if (code === "UserNotConfirmedException") return "Your account isn't verified yet.";
   if (code === "PasswordResetRequiredException") return "You need to reset your password.";
+  if (code === "InvalidPasswordException") return "That password doesn't meet the requirements. Try a stronger one.";
+  if (code === "CodeMismatchException") return "That code isn't right. Check it and try again.";
+  if (code === "ExpiredCodeException") return "That code has expired. Request a new one.";
   if (!code || /network/i.test(code) || /network|timeout/i.test(message)) {
     return "You appear to be offline. Check your connection.";
   }
   return "Couldn't sign in. Try again.";
+}
+
+/**
+ * Complete the NEW_PASSWORD_REQUIRED challenge (WHIT-181) that signInWithPassword
+ * surfaced: set the user's real password against the SAME attempt
+ * (`pendingChallengeUser`) and, on success, seat the session. A weak/invalid password
+ * keeps the challenge alive so the user can retry; a missing/expired challenge → asks
+ * them to sign in again. Never throws. Single-flight against a double-tap.
+ */
+export function completeNewPassword(newPassword: string): Promise<CompletePasswordResult> {
+  if (!completeInFlight) {
+    completeInFlight = runCompleteNewPassword(newPassword).finally(() => {
+      completeInFlight = null;
+    });
+  }
+  return completeInFlight;
+}
+
+async function runCompleteNewPassword(newPassword: string): Promise<CompletePasswordResult> {
+  const user = pendingChallengeUser;
+  if (!user) {
+    return { ok: false, error: "Your sign-in expired. Please sign in again." };
+  }
+  try {
+    return await new Promise<CompletePasswordResult>((resolve) => {
+      user.completeNewPasswordChallenge(
+        newPassword,
+        {}, // no additional required attributes for the single-user pool
+        {
+          onSuccess: (cognitoSession: CognitoUserSession) => {
+            pendingChallengeUser = null;
+            seatCognitoSession(cognitoSession)
+              .then(() => resolve({ ok: true }))
+              .catch(async () => {
+                // Mirror the WHIT-178 sign-in rollback: a partial seat must not leave
+                // an orphaned refresh token in the keychain.
+                clearSession();
+                await clearStoredSession().catch(() => {});
+                resolve({ ok: false, error: "Couldn't finish signing in. Try again." });
+              });
+          },
+          // Keep pendingChallengeUser on failure (e.g. a too-weak password) so the user
+          // can retry against the same challenge without signing in again.
+          onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
+          mfaRequired: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          totpRequired: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          customChallenge: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          mfaSetup: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          selectMFAType: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+        },
+      );
+    });
+  } catch (err) {
+    return { ok: false, error: mapCognitoError(err) };
+  }
+}
+
+/**
+ * WHIT-182: request a password-reset code. Cognito emails a one-time code to the
+ * account's verified email. Resolves ok whether the SDK reports the send via
+ * `onSuccess` or `inputVerificationCode`. Stateless (a fresh CognitoUser); never throws.
+ */
+export async function requestPasswordReset(email: string): Promise<CompletePasswordResult> {
+  const clientId = appClientId();
+  const poolId = userPoolId();
+  if (!clientId || !poolId) return { ok: false, error: "Sign-in isn't set up. Check the app configuration." };
+  const username = email.trim().toLowerCase();
+  if (!username) return { ok: false, error: "Enter your email first." };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Cognito = require("amazon-cognito-identity-js");
+    const pool = new Cognito.CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
+    const user: CognitoUser = new Cognito.CognitoUser({ Username: username, Pool: pool });
+    return await new Promise<CompletePasswordResult>((resolve) => {
+      user.forgotPassword({
+        onSuccess: () => resolve({ ok: true }),
+        inputVerificationCode: () => resolve({ ok: true }),
+        onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
+      });
+    });
+  } catch (err) {
+    return { ok: false, error: mapCognitoError(err) };
+  }
+}
+
+/**
+ * WHIT-182: confirm a password reset with the emailed code + a new password. On
+ * success the user then signs in with the new password (this does NOT return tokens,
+ * so it does not seat a session). Stateless; never throws.
+ */
+export async function confirmPasswordReset(
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<CompletePasswordResult> {
+  const clientId = appClientId();
+  const poolId = userPoolId();
+  if (!clientId || !poolId) return { ok: false, error: "Sign-in isn't set up. Check the app configuration." };
+  const username = email.trim().toLowerCase();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Cognito = require("amazon-cognito-identity-js");
+    const pool = new Cognito.CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
+    const user: CognitoUser = new Cognito.CognitoUser({ Username: username, Pool: pool });
+    return await new Promise<CompletePasswordResult>((resolve) => {
+      user.confirmPassword(code.trim(), newPassword, {
+        onSuccess: () => resolve({ ok: true }),
+        onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
+      });
+    });
+  } catch (err) {
+    return { ok: false, error: mapCognitoError(err) };
+  }
 }
 
 /**

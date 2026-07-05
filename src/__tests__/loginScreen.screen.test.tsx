@@ -45,13 +45,13 @@ it('shows the error message on a failed sign-in and does NOT navigate', async ()
   expect(mockReplace).not.toHaveBeenCalled();
 });
 
-it('surfaces the NEW_PASSWORD_REQUIRED challenge as a message, no navigation', async () => {
+it('the NEW_PASSWORD_REQUIRED challenge flips into the set-password form, no navigation', async () => {
   mockSignInWithPassword.mockResolvedValue({ ok: false, challenge: 'NEW_PASSWORD_REQUIRED' });
-  const { getByTestId, findByText } = render(<Login />);
+  const { getByTestId, findByTestId } = render(<Login />);
   fireEvent.changeText(getByTestId('login-email'), 'me@x.com');
   fireEvent.changeText(getByTestId('login-password'), 'temp');
   fireEvent.press(getByTestId('login-submit'));
-  expect(await findByText(/new password/i)).toBeTruthy();
+  expect(await findByTestId('newpass-form')).toBeTruthy(); // WHIT-181: set-password step
   expect(mockReplace).not.toHaveBeenCalled();
 });
 
@@ -71,8 +71,8 @@ it('a cancelled Google sign-in (false) stays on the screen, no navigation', asyn
   expect(mockReplace).not.toHaveBeenCalled();
 });
 
-it('Forgot password shows the coming-soon stub (WHIT-182), never crashes', () => {
-  const { getByTestId, getByText } = render(<Login />);
+it('Forgot password opens the reset-code request form (WHIT-182)', () => {
+  const { getByTestId } = render(<Login />);
   fireEvent.press(getByTestId('login-forgot'));
-  expect(getByText(/coming soon/i)).toBeTruthy();
+  expect(getByTestId('forgot-request-form')).toBeTruthy();
 });
