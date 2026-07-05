@@ -410,3 +410,65 @@ it('saveLoanFacts rolls back + toasts on failure', async () => {
   expect(result.current.loanFacts.homeValue).toBeNull();
   expect(result.current.toast).toBe('Could not save loan details. Please try again.');
 });
+
+// --- WHIT-74: read/load-failure banner ---------------------------------------
+// A failed mount fetch / pull-to-refresh READ must raise loadError (drives the
+// global "couldn't load" banner) instead of silently leaving an empty app, keep the
+// seeded categories as the offline fallback, and be clearable/retryable. Writes are
+// unaffected — they keep their own toast+rollback and must NOT raise this banner.
+
+it('a read failure on mount raises loadError but keeps the seeded categories', async () => {
+  mockApi.fetchCategories.mockRejectedValue(new Error('offline'));
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  await waitFor(() => expect(result.current.loadError).toBe(true));
+  // Fallback held: the full seed set (many categories, incl. seed-only 'coffee')
+  // stands — NOT the single-item mock payload that a successful fetch would install.
+  expect(result.current.categories.length).toBeGreaterThan(1);
+  expect(result.current.categories.some((c) => c.id === 'coffee')).toBe(true);
+});
+
+it.each([
+  ['fetchTransactions', () => mockApi.fetchTransactions.mockRejectedValue(new Error('x'))],
+  ['fetchBudgets', () => mockApi.fetchBudgets.mockRejectedValue(new Error('x'))],
+  ['fetchPayCycle', () => mockApi.fetchPayCycle.mockRejectedValue(new Error('x'))],
+])('a failing %s on mount raises loadError', async (_name, reject) => {
+  reject();
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  await waitFor(() => expect(result.current.loadError).toBe(true));
+});
+
+it('retryLoad clears the banner and reloads once the network recovers', async () => {
+  mockApi.fetchTransactions.mockRejectedValue(new Error('offline'));
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  await waitFor(() => expect(result.current.loadError).toBe(true));
+
+  mockApi.fetchTransactions.mockResolvedValue([{ ...TXN }]);
+  await act(async () => { result.current.retryLoad(); });
+
+  await waitFor(() => expect(result.current.loadError).toBe(false));
+  expect(result.current.transactions.length).toBeGreaterThan(0);
+});
+
+it('a retry that still fails keeps the banner up', async () => {
+  mockApi.fetchTransactions.mockRejectedValue(new Error('offline'));
+  const { result } = renderHook(() => useAppContext(), { wrapper });
+  await waitFor(() => expect(result.current.loadError).toBe(true));
+
+  // Still offline across the retry → the flag comes straight back.
+  await act(async () => { result.current.retryLoad(); });
+  await waitFor(() => expect(result.current.loadError).toBe(true));
+});
+
+it('a failed background refreshBudgets does NOT raise the banner (write re-syncs stay silent)', async () => {
+  // The write paths (saveBudget/applyCategory/persistPayCycle) fire refreshBudgets to
+  // re-sync after a successful save. If that follow-up GET fails it must NOT surface
+  // the global read banner on top of the write's own green toast — refreshBudgets is
+  // deliberately not self-flagging. (Mount/retry flag it at the call site instead.)
+  const result = await mount();
+  expect(result.current.loadError).toBe(false);
+
+  mockApi.fetchBudgets.mockRejectedValue(new Error('5xx'));
+  await act(async () => { await result.current.refreshBudgets().catch(() => {}); });
+
+  expect(result.current.loadError).toBe(false);
+});

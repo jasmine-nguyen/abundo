@@ -30,11 +30,34 @@ export function Overlays() {
   const s = useAppContext();
   return (
     <>
+      <LoadErrorBanner />
       <NotifBanner />
       <Toast />
       <SheetHost />
       {/* picker -> confirm reuse the same modal stack via store.sheet */}
     </>
+  );
+}
+
+// Global "couldn't load" banner for READ failures (offline / 5xx on a mount fetch
+// or pull-to-refresh). Non-blocking (sits above content, doesn't cover it) and
+// tappable — unlike Toast — so the user can Retry. Reads/loads are the only thing
+// that raises loadError; writes surface their own toast + rollback. Anchored at the
+// top with a safe-area inset, like NotifBanner.
+function LoadErrorBanner() {
+  const { loadError, retryLoad } = useAppContext();
+  const insets = useSafeAreaInsets();
+  if (!loadError) return null;
+  return (
+    <View testID="loadErrorBanner" style={[styles.loadErrWrap, { top: insets.top + 8 }]}>
+      <View style={styles.loadErr}>
+        <View style={styles.loadErrDot} />
+        <Text style={styles.loadErrText}>Couldn't load — you may be offline</Text>
+        <Pressable testID="loadErrorRetry" onPress={retryLoad} hitSlop={8} style={styles.loadErrRetry}>
+          <Text style={styles.loadErrRetryText}>Retry</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -298,6 +321,14 @@ const styles = StyleSheet.create({
   toastWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 200 },
   toast: { maxWidth: '88%', backgroundColor: '#26262f', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', paddingVertical: 11, paddingHorizontal: 16, borderRadius: 14 },
   toastText: { fontFamily: FONT.body, color: '#f1f1f4', fontSize: 13.5, textAlign: 'center' },
+  // load-error banner (read failures). Sits just under a notif's z so the rare notif
+  // wins if both are up at once.
+  loadErrWrap: { position: 'absolute', left: 12, right: 12, zIndex: 250 },
+  loadErr: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(34,34,40,.94)', borderWidth: 1, borderColor: tint(C.bad, 0.5), borderRadius: 16, paddingVertical: 12, paddingHorizontal: 14 },
+  loadErrDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad },
+  loadErrText: { flex: 1, fontFamily: FONT.body, fontSize: 13.5, color: '#e6e6ea' },
+  loadErrRetry: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 10, backgroundColor: tint(C.bad, 0.16) },
+  loadErrRetryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.badBright },
   // notif
   notifWrap: { position: 'absolute', left: 12, right: 12, zIndex: 300 },
   notif: { backgroundColor: 'rgba(34,34,40,.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', borderRadius: 20, padding: 14 },

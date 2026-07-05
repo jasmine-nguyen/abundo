@@ -326,6 +326,9 @@ export interface AppContext {
 	enrichmentsLoading: boolean;
 	enrichmentsError: string | null;
 	refreshEnrichments: () => Promise<void>;
+	// Global read-failure banner (offline / 5xx on mount or pull-to-refresh).
+	loadError: boolean;
+	retryLoad: () => void;
 }
 
 /**
@@ -383,12 +386,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<string | null>(null);
   const [notif, setNotif] = useState<{ body: string; time: string } | null>(null);
 
+	// True when a mount fetch or pull-to-refresh READ failed (offline / 5xx), so the
+	// global "couldn't load" banner (see Overlays) can offer a Retry instead of the
+	// app silently showing an empty feed. Writes have their own toast+rollback; this
+	// is reads only. Cleared solely by retryLoad — never on an individual success, so
+	// a fast parallel-mount refresh can't wipe an error a slower sibling just set.
+	const [loadError, setLoadError] = useState(false);
+
 	const [transactionsLoading, setTransactionsLoading] = useState(false);
 	const refreshTransactions = useCallback(async () => {
 		setTransactionsLoading(true);
 		try {
 			const data = await fetchTransactions();
 			setTransactions(data);
+		} catch {
+			// Surface the global load-error banner; keep whatever transactions we had.
+			setLoadError(true);
 		} finally{
 			setTransactionsLoading(false);
 		}
@@ -400,6 +413,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		try {
 			const data = await fetchCategories();
 			setCategories(data.map(toCategory));
+		} catch {
+			// Keep the seeded categories as the offline fallback, but make the failure
+			// visible via the banner rather than looking like a fresh empty app.
+			setLoadError(true);
 		} finally {
 			setCategoriesLoading(false);
 		}
@@ -424,8 +441,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	}, [payCycle.length]);
 
 	const refreshPayCycle = useCallback(async () => {
-		const cycle = await fetchPayCycle();
-		setPayCycle(cycle);
+		try {
+			const cycle = await fetchPayCycle();
+			setPayCycle(cycle);
+		} catch {
+			// Leave the sensible default cycle in place, but flag the banner.
+			setLoadError(true);
+		}
 	}, []);
 
 	// Spend-by-category for the current cycle (the Insights tab). Same window as
@@ -500,19 +522,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
 	// User-entered loan facts (Loan facts card). Starts empty (all null) — the app
 	// shows a "set this up" state until the user saves, never a fabricated default.
-	// A failed fetch (no catch, like refreshPayCycle) leaves the current state
-	// intact rather than nulling it.
+	// A failed fetch leaves the current state intact rather than nulling it, and
+	// flags the global load-error banner.
 	const [loanFacts, setLoanFacts] = useState<LoanFacts>(EMPTY_LOAN_FACTS);
 	const refreshLoanFacts = useCallback(async () => {
-		setLoanFacts(await fetchLoanFacts());
+		try {
+			setLoanFacts(await fetchLoanFacts());
+		} catch {
+			setLoadError(true);
+		}
 	}, []);
 
 	// Most recent home-loan repayment (WHIT-115), derived server-side from the
 	// up-homeloan history. Null-filled until loaded / when none is on record — the
-	// card shows a graceful empty state. Same no-catch pattern as refreshLoanFacts.
+	// card shows a graceful empty state. Same catch-and-flag pattern as refreshLoanFacts.
 	const [repayment, setRepayment] = useState<Repayment>({ amount: null, date: null, principal: null, interest: null });
 	const refreshRepayment = useCallback(async () => {
-		setRepayment(await fetchRepayment());
+		try {
+			setRepayment(await fetchRepayment());
+		} catch {
+			setLoadError(true);
+		}
 	}, []);
 
 	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
@@ -531,6 +561,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, []);
 
+	// The "couldn't load" banner's Retry (and the Transactions pull-to-refresh) — a
+	// full reload of every mount read, and the single point that clears the flag.
+	// Reloads the home-loan + rules reads too (they have their own error surfaces, so
+	// they don't feed loadError, but a global Retry should still recover them). The
+	// pure reads self-flag on failure; refreshBudgets/refreshBreakdown are shared with
+	// the write paths, so they DON'T flag internally (a background re-sync after a
+	// successful save mustn't raise the banner) — here, in a load context, we attach
+	// the flag at the call site.
+	const retryLoad = useCallback(() => {
+		setLoadError(false);
+		refreshTransactions();
+		refreshCategories();
+		refreshPayCycle();
+		refreshLoanFacts();
+		refreshRepayment();
+		refreshHomeLoan();
+		refreshEnrichments();
+		refreshBudgets().catch(() => setLoadError(true));
+		refreshBreakdown().catch(() => setLoadError(true));
+	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshLoanFacts, refreshRepayment, refreshHomeLoan, refreshEnrichments, refreshBudgets, refreshBreakdown]);
+
 	useEffect(() => {
 		refreshTransactions();
 		refreshCategories();
@@ -542,10 +593,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshLoanFacts, refreshRepayment, refreshEnrichments]);
 
 	// Re-fetch budgets + breakdown on mount and whenever the pay-cycle length (the
-	// window) changes — both are computed over the current cycle.
+	// window) changes — both are computed over the current cycle. These callbacks are
+	// shared with write paths, so they don't flag the banner themselves; flag it here
+	// (the mount/window load) via the call site, matching retryLoad.
 	useEffect(() => {
-		refreshBudgets();
-		refreshBreakdown();
+		refreshBudgets().catch(() => setLoadError(true));
+		refreshBreakdown().catch(() => setLoadError(true));
 	}, [refreshBudgets, refreshBreakdown]);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -902,9 +955,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, retryLoad
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, retryLoad]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
