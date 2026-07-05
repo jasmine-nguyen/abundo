@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Rect, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { C, FONT } from '../src/theme';
-import { signInWithPassword, signInWithGoogle } from '../src/auth';
+import { signInWithPassword, signInWithGoogle, completeNewPassword } from '../src/auth';
 
 // Required so a returning OAuth redirect (Google) can dismiss the auth browser and
 // resolve the pending promptAsync (a no-op on native, where promptAsync resolves).
@@ -38,11 +38,17 @@ export default function Login() {
   const [pass, setPass] = useState('');
   const [busy, setBusy] = useState<'password' | 'google' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // WHIT-181: 'newPassword' mode is the set-a-password step for an admin-created
+  // user's first login (Cognito's NEW_PASSWORD_REQUIRED challenge).
+  const [mode, setMode] = useState<'signin' | 'newPassword'>('signin');
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
   const go = () => router.replace('/(tabs)/budgets');
   const disabled = busy !== null;
   // Don't fire a pointless round-trip (and a confusing "incorrect password") on blank
   // fields — keep Log in disabled until both are non-empty.
   const canSubmit = email.trim().length > 0 && pass.length > 0;
+  const canSetPassword = newPass.length > 0 && confirmPass.length > 0;
 
   const logIn = async () => {
     if (busy || !canSubmit) return;
@@ -64,11 +70,51 @@ export default function Login() {
       return;
     }
     if ('challenge' in res) {
-      // NEW_PASSWORD_REQUIRED — the full set-a-password flow lands in WHIT-181.
-      setError('This account needs a new password set before you can sign in.');
+      // NEW_PASSWORD_REQUIRED (WHIT-181) — switch to the set-a-password step.
+      setError(null);
+      setNewPass('');
+      setConfirmPass('');
+      setMode('newPassword');
       return;
     }
     setError(res.error);
+  };
+
+  const setPassword = async () => {
+    if (busy || !canSetPassword) return;
+    if (newPass !== confirmPass) {
+      setError('Those passwords don’t match.');
+      return;
+    }
+    setError(null);
+    setBusy('password');
+    let res: Awaited<ReturnType<typeof completeNewPassword>>;
+    try {
+      res = await completeNewPassword(newPass);
+    } catch {
+      setBusy(null);
+      setError('Something went wrong. Please try again.');
+      return;
+    }
+    setBusy(null);
+    if (res.ok) {
+      go();
+      return;
+    }
+    // A stale/expired challenge → back to sign in; anything else stays for a retry.
+    if ('challenge' in res) {
+      backToSignin();
+      setError('Your sign-in expired. Please sign in again.');
+      return;
+    }
+    setError(res.error);
+  };
+
+  const backToSignin = () => {
+    setMode('signin');
+    setError(null);
+    setNewPass('');
+    setConfirmPass('');
   };
 
   const withGoogle = async () => {
@@ -107,6 +153,45 @@ export default function Login() {
         </View>
       ) : null}
 
+      {mode === 'newPassword' ? (
+        <View style={{ gap: 12 }} testID="newpass-form">
+          <Text style={[styles.tagline, { textAlign: 'center', marginBottom: 2 }]}>Set a new password to finish signing in.</Text>
+          <View>
+            <Text style={styles.label}>NEW PASSWORD</Text>
+            <TextInput
+              value={newPass}
+              onChangeText={setNewPass}
+              placeholder="••••••••"
+              placeholderTextColor={C.placeholder}
+              secureTextEntry
+              editable={!disabled}
+              style={styles.input}
+              testID="newpass-new"
+            />
+          </View>
+          <View>
+            <Text style={styles.label}>CONFIRM PASSWORD</Text>
+            <TextInput
+              value={confirmPass}
+              onChangeText={setConfirmPass}
+              placeholder="••••••••"
+              placeholderTextColor={C.placeholder}
+              secureTextEntry
+              editable={!disabled}
+              returnKeyType="go"
+              onSubmitEditing={setPassword}
+              style={styles.input}
+              testID="newpass-confirm"
+            />
+          </View>
+          <Pressable onPress={setPassword} disabled={disabled || !canSetPassword} style={[styles.primaryBtn, { opacity: disabled || !canSetPassword ? 0.6 : 1 }]} testID="newpass-submit">
+            {busy === 'password' ? <ActivityIndicator color={C.accentInk} /> : <Text style={styles.primaryText}>Set password &amp; sign in</Text>}
+          </Pressable>
+          <Pressable onPress={backToSignin} disabled={disabled} style={styles.forgotBtn} testID="newpass-back">
+            <Text style={styles.forgotText}>← Back to sign in</Text>
+          </Pressable>
+        </View>
+      ) : (
       <View style={{ gap: 12 }}>
         <View>
           <Text style={styles.label}>EMAIL</Text>
@@ -157,6 +242,7 @@ export default function Login() {
           <Text style={styles.altText}>{busy === 'google' ? 'Connecting…' : 'Continue with Google'}</Text>
         </Pressable>
       </View>
+      )}
     </ScrollView>
   );
 }

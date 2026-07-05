@@ -91,6 +91,8 @@ let unlockInFlight: Promise<boolean> | null = null;
 // WHIT-178: single-flight for native password sign-in, so a double-tap can't spawn
 // two authenticate attempts racing on the seated session / the challenge singleton.
 let signInInFlight: Promise<SignInResult> | null = null;
+// WHIT-181: single-flight for completing the NEW_PASSWORD_REQUIRED challenge.
+let completeInFlight: Promise<SignInResult> | null = null;
 // WHIT-178: the CognitoUser mid-NEW_PASSWORD_REQUIRED challenge, stashed so WHIT-181
 // can complete it against the SAME attempt. Reset at the start of every attempt (so a
 // stale one never lingers) and only set when the challenge fires. --- WHIT-181 SEAM ---
@@ -430,10 +432,60 @@ function mapCognitoError(err: unknown): string {
   }
   if (code === "UserNotConfirmedException") return "Your account isn't verified yet.";
   if (code === "PasswordResetRequiredException") return "You need to reset your password.";
+  if (code === "InvalidPasswordException") return "That password doesn't meet the requirements. Try a stronger one.";
   if (!code || /network/i.test(code) || /network|timeout/i.test(message)) {
     return "You appear to be offline. Check your connection.";
   }
   return "Couldn't sign in. Try again.";
+}
+
+/**
+ * Complete the NEW_PASSWORD_REQUIRED challenge (WHIT-181) that signInWithPassword
+ * surfaced: set the user's real password against the SAME attempt
+ * (`pendingChallengeUser`) and, on success, seat the session. A weak/invalid password
+ * keeps the challenge alive so the user can retry; a missing/expired challenge → asks
+ * them to sign in again. Never throws. Single-flight against a double-tap.
+ */
+export function completeNewPassword(newPassword: string): Promise<SignInResult> {
+  if (!completeInFlight) {
+    completeInFlight = runCompleteNewPassword(newPassword).finally(() => {
+      completeInFlight = null;
+    });
+  }
+  return completeInFlight;
+}
+
+async function runCompleteNewPassword(newPassword: string): Promise<SignInResult> {
+  const user = pendingChallengeUser;
+  if (!user) {
+    return { ok: false, error: "Your sign-in expired. Please sign in again." };
+  }
+  try {
+    return await new Promise<SignInResult>((resolve) => {
+      user.completeNewPasswordChallenge(
+        newPassword,
+        {}, // no additional required attributes for the single-user pool
+        {
+          onSuccess: (cognitoSession: CognitoUserSession) => {
+            pendingChallengeUser = null;
+            seatCognitoSession(cognitoSession)
+              .then(() => resolve({ ok: true }))
+              .catch(() => resolve({ ok: false, error: "Couldn't finish signing in. Try again." }));
+          },
+          // Keep pendingChallengeUser on failure (e.g. a too-weak password) so the user
+          // can retry against the same challenge without signing in again.
+          onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
+          mfaRequired: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          totpRequired: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          customChallenge: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          mfaSetup: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+          selectMFAType: () => resolve({ ok: false, error: UNSUPPORTED_CHALLENGE }),
+        },
+      );
+    });
+  } catch (err) {
+    return { ok: false, error: mapCognitoError(err) };
+  }
 }
 
 /**
