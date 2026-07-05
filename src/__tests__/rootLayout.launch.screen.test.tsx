@@ -33,7 +33,14 @@ jest.mock('expo-router', () => {
   const React = require('react');
   const Stack: any = ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children);
   Stack.Screen = () => null;
-  return { Stack };
+  // AuthGate (added WHIT-160) calls these; the gate flag is off in this test, so it
+  // just renders children — but the hooks must exist so the layout mounts.
+  return {
+    Stack,
+    Redirect: () => null,
+    useSegments: () => [],
+    useRootNavigationState: () => ({ key: 'root' }),
+  };
 });
 // AppProvider fires data fetches on mount; stub it to a passthrough so the mount
 // stays hermetic and we test only the launch effect.
