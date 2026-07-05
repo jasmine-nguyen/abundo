@@ -195,6 +195,59 @@ def test_income_clawback_does_not_fire_a_spend_alert(alerts, monkeypatch):
     assert sent == []
 
 
+def test_orphan_income_target_clawback_does_not_fire(alerts, monkeypatch):
+    # WHIT-168: an income earn-target whose category was DELETED but whose budget row
+    # survived a failed best-effort cascade is an "orphan" — its id is in targets but
+    # absent from the live taxonomy. The alert path can no longer see bucket == Income,
+    # so a lone negative clawback (-4000 → +4000 read as spend) would cross 0.8*5000 and
+    # fire a false push. The live-category membership filter drops the orphan → silent.
+    # Fails on the pre-WHIT-168 `set(targets) - income_ids` code (orphan not in income_ids).
+    new = _txn("rev1", "salary", -4000, "posted")  # clawback under a now-deleted income cat
+    sent, notify, _ = _run(
+        alerts, monkeypatch, budgets={"salary": {"target": Decimal("5000")}},
+        before=[], normalised=[new],
+        cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"}],  # salary NOT here
+    )
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_orphan_spend_target_no_longer_fires(alerts, monkeypatch):
+    # WHIT-168 incidental behaviour (locked deliberately): a target whose SPEND category
+    # was deleted also stops alerting — a deleted category shouldn't push, and its name
+    # would only render as a raw id. groceries budget crosses 80% on spend, but groceries
+    # is absent from the live taxonomy (only a different category exists), so no push.
+    new = _txn("g1", "groceries", -85, "posted")  # would cross 0.8*100 if not orphaned
+    sent, notify, _ = _run(
+        alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+        before=[], normalised=[new],
+        cats=[{"id": "coffee", "name": "Coffee", "bucket": "Lifestyle"}],  # groceries NOT here
+    )
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_orphan_dropped_but_live_target_in_same_batch_still_fires(alerts, monkeypatch):
+    # WHIT-168 (qa gap, not covered by the orphan-ALONE tests): the live-category
+    # membership filter must drop ONLY the orphan, never a co-batched live target.
+    # salary is an ORPHAN income target (id absent from live cats); its -4000 clawback
+    # would read as +4000 spend and cross 0.8*5000 on the pre-WHIT-168 code. groceries is
+    # a LIVE spend target crossing 80% in the SAME write. Correct: exactly ONE push
+    # (groceries), only the groceries#80 marker. On a revert (`set(targets) - income_ids`)
+    # the orphan stays in target_ids and ALSO fires -> 2 pushes + a salary#80 marker.
+    orphan_clawback = _txn("rev1", "salary", -4000, "posted")   # deleted income cat -> orphan
+    live_spend = _txn("g1", "groceries", -85, "posted")         # crosses 0.8*100
+    sent, notify, _ = _run(
+        alerts, monkeypatch,
+        budgets={"salary": {"target": Decimal("5000")}, "groceries": {"target": Decimal("100")}},
+        before=[], normalised=[orphan_clawback, live_spend],
+        cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"}],  # salary NOT here
+    )
+    assert len(sent) == 1
+    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}  # no salary marker
+
+
 def test_spend_alert_still_fires_alongside_an_excluded_income_target(alerts, monkeypatch):
     # WHIT-69 regression (authored by qa): excluding Income-bucket targets from the
     # crossing check must NOT suppress a real spend crossing in the SAME batch.
