@@ -171,6 +171,49 @@ def test_raw_uppercase_enum_category_never_matches_a_budget(alerts, monkeypatch)
     assert sent == []
 
 
+def test_income_floor_target_never_fires_an_alert(alerts, monkeypatch):
+    # WHIT-69: a target on an Income category is an earn-target (a floor), not a spend
+    # ceiling. Income-bucket targets are excluded from the crossing check, so a big
+    # paycheck never trips the 80%/100% "you've spent your budget" thresholds.
+    new = _txn("pay1", "salary", 6000, "posted")  # income >> the 5000 target
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"salary": {"target": Decimal("5000")}},
+                           before=[], normalised=[new],
+                           cats=[{"id": "salary", "name": "Salary", "bucket": "Income"}])
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_income_clawback_does_not_fire_a_spend_alert(alerts, monkeypatch):
+    # The load-bearing edge: a LONE negative amount (a payroll reversal) filed under an
+    # income category flows through summarise_transactions as +positive spend (-(-4000)),
+    # which would cross 80% of the 5000 target (4000 == 0.8*5000) if income weren't
+    # excluded. The bucket exclusion is what keeps this silent — revert it and this fires.
+    new = _txn("rev1", "salary", -4000, "posted")  # clawback, negative, alone
+    sent, _, _ = _run(alerts, monkeypatch, budgets={"salary": {"target": Decimal("5000")}},
+                      before=[], normalised=[new],
+                      cats=[{"id": "salary", "name": "Salary", "bucket": "Income"}])
+    assert sent == []
+
+
+def test_spend_alert_still_fires_alongside_an_excluded_income_target(alerts, monkeypatch):
+    # WHIT-69 regression (authored by qa): excluding Income-bucket targets from the
+    # crossing check must NOT suppress a real spend crossing in the SAME batch.
+    # Groceries crosses 80% while the income Salary paycheck is (correctly) ignored —
+    # exactly one push, for spend.
+    spend_new = _txn("g1", "groceries", -85, "posted")   # 85% of the 100 ceiling -> 80%
+    income_new = _txn("s1", "salary", 6000, "posted")     # well over the 5000 floor -> silent
+    sent, notify, _ = _run(
+        alerts, monkeypatch,
+        budgets={"groceries": {"target": Decimal("100")}, "salary": {"target": Decimal("5000")}},
+        before=[], normalised=[spend_new, income_new],
+        cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"},
+              {"id": "salary", "name": "Salary", "bucket": "Income"}],
+    )
+    assert len(sent) == 1
+    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}  # no salary marker
+
+
 def test_debounce_blocks_a_second_event_same_threshold(alerts, monkeypatch):
     notify = FakeNotifyRepo()
     notify.mark_fired("2026-07-01", 14, "groceries#80")  # already fired this cycle

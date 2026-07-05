@@ -224,6 +224,21 @@ class FakePayCycleRepo:
         return dict(self._cycle)
 
 
+class FakeCategoryRepo:
+    """Stand-in for CategoryRepository — serves a fixed taxonomy so list_budgets can
+    infer a target's direction (Income bucket => earn-target). Empty by default: an
+    unknown bucket falls to the spend/ceiling default, which is how every pre-WHIT-69
+    budget test expects a plain spend category to roll up."""
+
+    def __init__(self, categories=None):
+        self._categories = categories or []
+        self.list_calls = 0
+
+    def list_categories(self):
+        self.list_calls += 1
+        return [dict(c) for c in self._categories]
+
+
 def test_list_budgets_rollup_shape(handler):
     budget_repo = FakeBudgetRepo(budgets={
         "coffee": {"target": Decimal("58")},
@@ -237,7 +252,7 @@ def test_list_budgets_rollup_shape(handler):
         _transaction("coffee", -9, "posted", counts=False),  # excluded (!counts_to_budget)
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
     assert result == {
         "coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("12")},
@@ -248,7 +263,7 @@ def test_list_budgets_rollup_shape(handler):
 def test_list_budgets_no_spend_is_zero(handler):
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
 
-    result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]), FakePayCycleRepo())
+    result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]), FakePayCycleRepo(), FakeCategoryRepo())
 
     assert result == {"coffee": {"target": Decimal("58"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
@@ -257,12 +272,14 @@ def test_list_budgets_empty_skips_txn_scan(handler):
     budget_repo = FakeBudgetRepo()  # no targets
     txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50)])
     paycycle_repo = FakePayCycleRepo()
+    category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
 
-    result = handler.list_budgets(budget_repo, txn_repo, paycycle_repo)
+    result = handler.list_budgets(budget_repo, txn_repo, paycycle_repo, category_repo)
 
     assert result == {}
-    assert txn_repo.calls == []          # no budgets -> don't scan transactions
-    assert paycycle_repo.get_calls == 0  # ...and don't even read the pay cycle
+    assert txn_repo.calls == []            # no budgets -> don't scan transactions
+    assert paycycle_repo.get_calls == 0    # ...and don't even read the pay cycle
+    assert category_repo.list_calls == 0   # ...nor read the taxonomy (short-circuit first)
 
 
 def test_list_budgets_paginates(handler):
@@ -273,9 +290,103 @@ def test_list_budgets_paginates(handler):
         ([_transaction("coffee", -25, "posted")], None),           # page 2, done
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
     assert result["coffee"]["posted"] == Decimal("65")  # 40 + 25 summed across pages
+
+
+# --- handler-level: GET /budgets income earn-targets (WHIT-69) ---------------
+
+
+def test_list_budgets_income_target_rolls_up_positive_earnings(handler):
+    # An Income-bucket target sums POSITIVE earnings (a floor), while a spend target
+    # in the same call still sums spend from the NEGATIVE amounts. Both come back in
+    # the same shape.
+    budget_repo = FakeBudgetRepo(budgets={
+        "salary": {"target": Decimal("5000")},
+        "coffee": {"target": Decimal("58")},
+    })
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("salary", 3000, "posted"),   # income (positive) -> earned
+        _transaction("salary", 500, "pending"),    # income pending    -> earned pending
+        _transaction("coffee", -50, "posted"),     # spend             -> spent
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "salary", "bucket": "Income"},
+        {"id": "coffee", "bucket": "Lifestyle"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {
+        "salary": {"target": Decimal("5000"), "posted": Decimal("3000"), "pending": Decimal("500")},
+        "coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")},
+    }
+
+
+def test_list_budgets_income_target_no_earnings_is_zero(handler):
+    # An income target with no income yet this cycle shows 0 earned (not omitted).
+    budget_repo = FakeBudgetRepo(budgets={"salary": {"target": Decimal("5000")}})
+    txn_repo = FakeTransactionRepo(transactions=[])
+    category_repo = FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"salary": {"target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_income_clawback_clamps_to_zero(handler):
+    # A reversal/clawback (negative amount) in an income category reduces earnings and
+    # clamps at 0 — never a negative earnings bar.
+    budget_repo = FakeBudgetRepo(budgets={"salary": {"target": Decimal("5000")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("salary", 3000, "posted"),
+        _transaction("salary", -4000, "posted"),  # clawback bigger than earnings
+    ])
+    category_repo = FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["salary"]["posted"] == Decimal("0")
+
+
+def test_list_budgets_income_id_named_income_still_counts(handler):
+    # A user income category whose id slugs to the literal "income" (same string the
+    # spend summariser skips as a sentinel) is a real earn-target and MUST count —
+    # summarise_income gates on income_ids membership, not the sentinel skip.
+    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("5000")}})
+    txn_repo = FakeTransactionRepo(transactions=[_transaction("income", 3000, "posted")])
+    category_repo = FakeCategoryRepo(categories=[{"id": "income", "bucket": "Income"}])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["income"] == {"target": Decimal("5000"), "posted": Decimal("3000"), "pending": Decimal("0")}
+
+
+def test_list_budgets_savings_bucket_target_treated_as_spend(handler):
+    # WHIT-69 is Income-only: a Savings-bucket target is NOT an earn-target. It falls
+    # to the spend/ceiling default (positive savings amounts clamp to 0 spend), so its
+    # rollup stays 0 rather than showing earnings.
+    budget_repo = FakeBudgetRepo(budgets={"nest_egg": {"target": Decimal("1000")}})
+    txn_repo = FakeTransactionRepo(transactions=[_transaction("nest_egg", 800, "posted")])
+    category_repo = FakeCategoryRepo(categories=[{"id": "nest_egg", "bucket": "Savings"}])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["nest_egg"] == {"target": Decimal("1000"), "posted": Decimal("0"), "pending": Decimal("0")}
+
+
+def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
+    # A target whose category no longer exists (unknown bucket) can't be inferred as
+    # income -> it defaults to the spend ceiling, the existing safe behaviour.
+    budget_repo = FakeBudgetRepo(budgets={"ghost": {"target": Decimal("5000")}})
+    txn_repo = FakeTransactionRepo(transactions=[_transaction("ghost", 3000, "posted")])
+    category_repo = FakeCategoryRepo(categories=[])  # ghost not in taxonomy
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    # Positive amount summed as spend clamps to 0 (not earnings) -> ceiling default.
+    assert result["ghost"] == {"target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}
 
 
 # --- handler-level: dispatch -------------------------------------------------
@@ -287,6 +398,7 @@ def test_get_budgets_dispatch(handler, monkeypatch):
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: FakePayCycleRepo())
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
 
     resp = handler.lambda_handler(
         {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}, None)
@@ -305,6 +417,7 @@ def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(handler, "PayCycleRepository",
                         lambda: FakePayCycleRepo(length=14, last_pay_date="2024-01-03"))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
 
     resp = handler.lambda_handler({
         "rawPath": "/budgets",
@@ -540,6 +653,64 @@ def test_summarise_skips_unknown_status(handler):
     assert handler.summarise_transactions(txns, {"coffee"}) == {}
 
 
+# --- summarise_income: the earn-target counterpart (WHIT-69) ------------------
+
+
+def test_summarise_income_routes_posted_and_pending(handler):
+    # Income is stored POSITIVE; posted -> posted bucket, pending -> pending bucket.
+    txns = [_transaction("salary", 3000, "posted"), _transaction("salary", 500, "pending")]
+
+    result = handler.summarise_income(txns, {"salary"})
+
+    assert result == {"salary": {"posted": Decimal("3000"), "pending": Decimal("500")}}
+
+
+def test_summarise_income_sums_and_ignores_non_income_ids(handler):
+    txns = [
+        _transaction("salary", 3000), _transaction("salary", 200),   # summed
+        _transaction("coffee", -50),                                  # not an income id
+        _transaction("side_gig", 400),                               # income id not targeted
+        _transaction("salary", 99, counts=False),                    # not counts_to_budget
+    ]
+
+    result = handler.summarise_income(txns, {"salary"})
+
+    assert result == {"salary": {"posted": Decimal("3200"), "pending": Decimal("0")}}
+    assert "coffee" not in result and "side_gig" not in result
+
+
+def test_summarise_income_clawback_reduces_and_clamps(handler):
+    # A negative amount (reversal/clawback) reduces earnings; a net-negative clamps to 0.
+    reduced = handler.summarise_income(
+        [_transaction("salary", 3000), _transaction("salary", -1000)], {"salary"})
+    assert reduced["salary"]["posted"] == Decimal("2000")
+
+    clamped = handler.summarise_income([_transaction("salary", -1000)], {"salary"})
+    assert clamped["salary"]["posted"] == Decimal("0")
+
+
+def test_summarise_income_does_not_skip_income_sentinel_id(handler):
+    # summarise_transactions skips the literal "income" sentinel; summarise_income must
+    # NOT — a user income category can slug to "income" and is a real target.
+    result = handler.summarise_income([_transaction("income", 3000, "posted")], {"income"})
+
+    assert result == {"income": {"posted": Decimal("3000"), "pending": Decimal("0")}}
+
+
+def test_summarise_income_skips_unknown_status(handler):
+    assert handler.summarise_income([_transaction("salary", 3000, status="settled")], {"salary"}) == {}
+
+
+def test_summarise_income_empty(handler):
+    assert handler.summarise_income([], {"salary"}) == {}
+
+
+def test_spend_contribution_income_sign_returns_positive(handler):
+    # sign=+1 keeps a positive income amount positive (posted bucket).
+    assert handler._spend_contribution(_transaction("salary", 3000, "posted"), sign=1) == (
+        "posted", Decimal("3000"))
+
+
 # --- _spend_contribution: the shared helper both summarisers call (WHIT-106) --
 
 
@@ -658,7 +829,7 @@ def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monk
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-17"},  # tomorrow    -> OUT
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
     assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][2] == "2024-01-16"  # queried end bound is today, not today+1
@@ -677,7 +848,7 @@ def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatc
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start            -> IN
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
     assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("10"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][1] == "2024-01-03"  # queried start bound is cycle_start
@@ -695,7 +866,7 @@ def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatc
         {**_transaction("coffee", -10, "pending"), "date": "2024-01-17"},  # tomorrow -> OUT
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo())
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
     assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("0"), "pending": Decimal("10")}}
 
@@ -713,7 +884,7 @@ def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
         {**_transaction("coffee", -10, "posted"), "date": "2024-02-02"},  # tomorrow    -> OUT
     ])
 
-    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(length=30))
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(length=30), FakeCategoryRepo())
 
     assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][2] == "2024-02-01"  # end bound is today regardless of length

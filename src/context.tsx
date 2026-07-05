@@ -958,13 +958,45 @@ export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: num
   for (const b of s.budgets) {
     const c = s.category(b.id);
     if (!c) continue;
-    // posted/pending come from the server rollup (computed over the window).
-    const pending = b.pending, posted = b.posted, spent = posted + pending, remain = b.budget - spent;
+    // posted/pending come from the server rollup (computed over the window). For an
+    // Income category the rollup is positive EARNINGS, not spend.
+    const pending = b.pending, posted = b.posted, actual = posted + pending;
+    const target = b.budget * elapsed;
+    const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
+
+    if (c.bucket === 'Income') {
+      // Earn-target (floor): over-is-good, so the direction and colours invert —
+      // never red, being under target early in the cycle is calm, not alarming.
+      // Income rows are kept OUT of the spend hero totals (a floor is a different
+      // unit from a spend ceiling), but still listed. `over` stays false so nothing
+      // downstream flips the row red.
+      const met = actual >= b.budget;
+      const pendingPct = Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
+      let paceLabel: string, paceColor: string;
+      if (met) { paceLabel = fmt(actual - b.budget) + ' over target'; paceColor = '#35d9a0'; }
+      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = '#35d9a0'; }
+      else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = '#cfd2ff'; }
+      else { paceLabel = 'on pace'; paceColor = '#35d9a0'; }
+      const spentLabel = pending > 0
+        ? `${fmt(actual)} earned (${fmt(pending)} pending) of ${fmt(b.budget)}`
+        : `${fmt(actual)} earned of ${fmt(b.budget)}`;
+      rows.push({
+        id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
+        spentLabel,
+        remainAmount: fmt(met ? actual - b.budget : b.budget - actual),
+        remainLabel: met ? 'over target' : 'to go',
+        remainColor: met ? '#35d9a0' : '#cfd2ff',
+        postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
+        pendingTint: tint(c.color, 0.45), paceLabel, paceColor, over: false,
+      });
+      continue;
+    }
+
+    // Spend budget (ceiling): under-is-good, over is red.
+    const spent = actual, remain = b.budget - spent;
     totBudget += b.budget; totSpent += spent; totRemain += remain;
     const over = spent > b.budget;
-    const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
-    const target = b.budget * elapsed;
     let paceLabel: string, paceColor: string;
     if (over) { paceLabel = fmt(spent - b.budget) + ' over budget'; paceColor = '#ff6b6b'; }
     else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = '#f4b740'; }
@@ -1092,13 +1124,11 @@ export function budgetDetail(s: AppContext, categoryId: string) {
   const b = s.budgets.find((x) => x.id === categoryId);
   if (!c || !b) return null;
   const elapsed = elapsedFrac(s);
-  // posted/pending come from the server rollup (computed over the window).
-  const pending = b.pending, posted = b.posted, spent = posted + pending;
-  const over = spent > b.budget;
+  const isIncome = c.bucket === 'Income';
+  // posted/pending come from the server rollup (computed over the window). For an
+  // Income category this is positive EARNINGS toward an earn-target, not spend.
+  const pending = b.pending, posted = b.posted, actual = posted + pending;
   const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
-  const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
-  const remain = b.budget - spent;
-  const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
   const relSeen = new Map<string, Transaction[]>();
   const relOrder: string[] = [];
   for (const t of s.transactions.filter((t) => t.category === b.id)) {
@@ -1107,16 +1137,42 @@ export function budgetDetail(s: AppContext, categoryId: string) {
     relSeen.get(label)!.push(t);
   }
   const relGroups = relOrder.map((label) => ({ label, items: relSeen.get(label)! }));
+  const daysLeftLabel = `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`;
+  const targetPct = Math.round(elapsed * 100);
+  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relGroups, relEmpty: relGroups.length === 0 };
+
+  if (isIncome) {
+    // Earn-target (floor): over-is-good, so the status is never red. Under target
+    // early in the cycle is calm ("keep earning"), not an "ease up" warning.
+    const met = actual >= b.budget;
+    const pendingPct = Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
+    const toGo = Math.max(0, b.budget - actual);
+    const perDay = toGo > 0 ? toGo / Math.max(1, s.daysLeft) : 0;
+    return {
+      ...common,
+      spentBig: fmt(actual), ofBudget: 'of ' + fmt(b.budget),
+      statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
+      statusColor: met ? '#35d9a0' : '#cfd2ff',
+      postedPct, pendingPct,
+      postedColor: c.color, pendingTint: tint(c.color, 0.45),
+      dailyLabel: met ? 'Target reached' : `${fmt(perDay)}/day to target`,
+    };
+  }
+
+  // Spend budget (ceiling): under-is-good, over is red.
+  const spent = actual;
+  const over = spent > b.budget;
+  const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
+  const remain = b.budget - spent;
+  const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
   return {
-    name: c.name, icon: c.icon, color: c.color,
+    ...common,
     spentBig: fmt(spent), ofBudget: 'of ' + fmt(b.budget),
     statusLabel: over ? 'Over budget — ease up' : 'On target — keep it up',
     statusColor: over ? '#ff6b6b' : '#35d9a0',
-    daysLeftLabel: `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`,
-    postedPct, pendingPct, targetPct: Math.round(elapsed * 100),
+    postedPct, pendingPct,
     postedColor: over ? '#ff6b6b' : c.color, pendingTint: tint(over ? '#ff6b6b' : c.color, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
-    relGroups, relEmpty: relGroups.length === 0,
   };
 }
 

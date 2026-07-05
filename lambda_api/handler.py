@@ -13,6 +13,7 @@ from constants import (
     FEED_WINDOW_DAYS,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_PATH,
+    INCOME_BUCKET,
     INSIGHTS_AI_PATH,
     INSIGHTS_PRIOR_CYCLES,
     INTEREST_CATEGORY,
@@ -59,6 +60,7 @@ from spend import (
     _melbourne_today,
     _spend_contribution,
     current_cycle_window,
+    summarise_income,
     summarise_transactions,
     summarise_uncategorized,
 )
@@ -111,7 +113,8 @@ def lambda_handler(event, context):
             return _json_response(
                 200,
                 list_budgets(
-                    BudgetRepository(), TransactionRepository(), PayCycleRepository()))
+                    BudgetRepository(), TransactionRepository(), PayCycleRepository(),
+                    CategoryRepository()))
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
             return set_budget(event, BudgetRepository())
@@ -595,17 +598,24 @@ def list_budgets(
     budget_repo: BudgetRepository,
     transaction_repo: TransactionRepository,
     paycycle_repo: PayCycleRepository,
+    category_repo: CategoryRepository,
 ) -> dict:
-    """GET /budgets — per budgeted category, the target plus posted/pending spend
-    computed on-read (approach C) over the current pay-cycle window.
+    """GET /budgets — per budgeted category, the target plus posted/pending computed
+    on-read (approach C) over the current pay-cycle window.
 
     The window resets on the user's payday: it reads the stored pay cycle and sums
     transactions over the inclusive [cycle_start, today]. posted/pending are summed from the
     window's transactions (nothing stored), so a pending->posted settlement or an
     amount change is reflected on the next call with no bookkeeping. Every budgeted
-    id appears; a category with no spend this window is posted/pending 0.
+    id appears; a category with no activity this window is posted/pending 0.
     DecimalEncoder renders all three as JSON numbers. Empty {} before any target is
-    set — and the pay-cycle read AND the transaction scan are both skipped.
+    set — and the pay-cycle read, category read AND the transaction scan are all skipped.
+
+    A budget on an Income-bucket category is an earn-target (floor, over-is-good,
+    WHIT-69): its posted/pending are POSITIVE earnings (summarise_income), not spend.
+    Direction is inferred from the category's bucket, so the stored shape is unchanged
+    and the client flips only the good/bad visuals. An orphan target whose category is
+    unknown (or a non-Income bucket) is summed as spend — the existing ceiling default.
     """
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     if not targets:
@@ -613,14 +623,20 @@ def list_budgets(
     cycle = paycycle_repo.get_paycycle()
     start, end = current_cycle_window(cycle["last_pay_date"], cycle["length"])
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
-    rollups = summarise_transactions(transactions, set(targets))
+
+    bucket_by_id = {c["id"]: c.get("bucket") for c in category_repo.list_categories()}
+    income_ids = {cat_id for cat_id in targets if bucket_by_id.get(cat_id) == INCOME_BUCKET}
+    spend_ids = set(targets) - income_ids
+
+    rollups = summarise_transactions(transactions, spend_ids)
+    rollups.update(summarise_income(transactions, income_ids))
     result = {}
     for cat_id, entry in targets.items():
-        spend = rollups.get(cat_id)
+        rollup = rollups.get(cat_id)
         result[cat_id] = {
             "target": entry["target"],
-            "posted": spend["posted"] if spend else Decimal(0),
-            "pending": spend["pending"] if spend else Decimal(0),
+            "posted": rollup["posted"] if rollup else Decimal(0),
+            "pending": rollup["pending"] if rollup else Decimal(0),
         }
     return result
 
