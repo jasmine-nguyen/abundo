@@ -73,6 +73,9 @@ describe('guarded storage options', () => {
     await signInOk(auth);
     const write = mockSetItem.mock.calls.find((c) => c[0] === REFRESH_KEY)!;
     expect(write[2]).toEqual({});
+    // WHIT-170: the delete-then-create dance is guarded-only — an unguarded write
+    // never prompts, so it must NOT delete the key first.
+    expect(mockDeleteItem.mock.calls.filter((c) => c[0] === REFRESH_KEY)).toHaveLength(0);
   });
 
   it('stores GUARDED (requireAuthentication) when flag on AND device supports biometrics', async () => {
@@ -131,6 +134,44 @@ describe('unlock', () => {
     expect(auth.getStatus()).toBe('authed');
     // the guarded read happened, with the biometric options
     expect(refreshReads()[0][1]).toMatchObject({ requireAuthentication: true });
+  });
+
+  it('offline unlock (guarded read OK, refresh FAILS) stays locked WITHOUT flashing anon', async () => {
+    // WHIT-171: on a good biometric read but a failed refresh (offline), unlock must
+    // own the terminal 'locked' status. The old shared refresh path called
+    // clearSession() → broadcast a transient 'anon' before unlock re-set 'locked', so
+    // the gate rendered one Redirect('/') login-flash frame. Fail-on-revert: routing
+    // performUnlock back through refreshFromStoredToken makes 'anon' reappear here.
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
+    mockRefresh.mockRejectedValue(new Error('offline'));
+    const auth = loadAuth();
+
+    const seen: string[] = [];
+    auth.subscribe(() => seen.push(auth.getStatus()));
+
+    await expect(auth.unlock()).resolves.toBe(false);
+    expect(auth.getStatus()).toBe('locked');
+    expect(seen).not.toContain('anon'); // no login-redirect flash before the lock screen
+  });
+
+  it('WHIT-170: the guarded token write deletes-then-creates (silent CREATE, not a prompting UPDATE)', async () => {
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R0' : null));
+    // Rotation ON: the refresh response carries a NEW refresh token, so it is written
+    // back — the exact path that would re-prompt Face ID via an in-place UPDATE.
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', refreshToken: 'R1', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await expect(auth.unlock()).resolves.toBe(true);
+    // the rotated token was persisted...
+    const rotatedSet = mockSetItem.mock.calls.find((c) => c[0] === REFRESH_KEY && c[1] === 'R1');
+    expect(rotatedSet).toBeTruthy();
+    // ...and its guarded write deleted the key FIRST (create path), so no update-prompt.
+    const delIdx = mockDeleteItem.mock.calls.findIndex((c) => c[0] === REFRESH_KEY);
+    const setIdx = mockSetItem.mock.calls.findIndex((c) => c[0] === REFRESH_KEY && c[1] === 'R1');
+    expect(delIdx).toBeGreaterThanOrEqual(0);
+    expect(mockDeleteItem.mock.invocationCallOrder[delIdx]).toBeLessThan(
+      mockSetItem.mock.invocationCallOrder[setIdx],
+    );
   });
 
   it('stays LOCKED when the biometric read throws (user cancelled)', async () => {
