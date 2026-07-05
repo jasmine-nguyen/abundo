@@ -47,6 +47,13 @@ export type SignInResult =
   | { ok: false; challenge: "NEW_PASSWORD_REQUIRED" }
   | { ok: false; error: string };
 
+/**
+ * Result of completing the NEW_PASSWORD_REQUIRED challenge (WHIT-181). It is the
+ * terminal step, so — unlike a fresh sign-in — it can never surface another challenge;
+ * a narrower union than SignInResult (no `challenge` variant).
+ */
+export type CompletePasswordResult = { ok: true } | { ok: false; error: string };
+
 /** The in-memory token set. `issuedAt`/`expiresIn` are seconds (OAuth convention). */
 interface Session {
   idToken: string | undefined;
@@ -92,7 +99,7 @@ let unlockInFlight: Promise<boolean> | null = null;
 // two authenticate attempts racing on the seated session / the challenge singleton.
 let signInInFlight: Promise<SignInResult> | null = null;
 // WHIT-181: single-flight for completing the NEW_PASSWORD_REQUIRED challenge.
-let completeInFlight: Promise<SignInResult> | null = null;
+let completeInFlight: Promise<CompletePasswordResult> | null = null;
 // WHIT-178: the CognitoUser mid-NEW_PASSWORD_REQUIRED challenge, stashed so WHIT-181
 // can complete it against the SAME attempt. Reset at the start of every attempt (so a
 // stale one never lingers) and only set when the challenge fires. --- WHIT-181 SEAM ---
@@ -446,7 +453,7 @@ function mapCognitoError(err: unknown): string {
  * keeps the challenge alive so the user can retry; a missing/expired challenge → asks
  * them to sign in again. Never throws. Single-flight against a double-tap.
  */
-export function completeNewPassword(newPassword: string): Promise<SignInResult> {
+export function completeNewPassword(newPassword: string): Promise<CompletePasswordResult> {
   if (!completeInFlight) {
     completeInFlight = runCompleteNewPassword(newPassword).finally(() => {
       completeInFlight = null;
@@ -455,13 +462,13 @@ export function completeNewPassword(newPassword: string): Promise<SignInResult> 
   return completeInFlight;
 }
 
-async function runCompleteNewPassword(newPassword: string): Promise<SignInResult> {
+async function runCompleteNewPassword(newPassword: string): Promise<CompletePasswordResult> {
   const user = pendingChallengeUser;
   if (!user) {
     return { ok: false, error: "Your sign-in expired. Please sign in again." };
   }
   try {
-    return await new Promise<SignInResult>((resolve) => {
+    return await new Promise<CompletePasswordResult>((resolve) => {
       user.completeNewPasswordChallenge(
         newPassword,
         {}, // no additional required attributes for the single-user pool
@@ -470,7 +477,13 @@ async function runCompleteNewPassword(newPassword: string): Promise<SignInResult
             pendingChallengeUser = null;
             seatCognitoSession(cognitoSession)
               .then(() => resolve({ ok: true }))
-              .catch(() => resolve({ ok: false, error: "Couldn't finish signing in. Try again." }));
+              .catch(async () => {
+                // Mirror the WHIT-178 sign-in rollback: a partial seat must not leave
+                // an orphaned refresh token in the keychain.
+                clearSession();
+                await clearStoredSession().catch(() => {});
+                resolve({ ok: false, error: "Couldn't finish signing in. Try again." });
+              });
           },
           // Keep pendingChallengeUser on failure (e.g. a too-weak password) so the user
           // can retry against the same challenge without signing in again.

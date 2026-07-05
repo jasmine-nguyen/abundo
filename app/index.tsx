@@ -101,12 +101,8 @@ export default function Login() {
       go();
       return;
     }
-    // A stale/expired challenge → back to sign in; anything else stays for a retry.
-    if ('challenge' in res) {
-      backToSignin();
-      setError('Your sign-in expired. Please sign in again.');
-      return;
-    }
+    // Any failure — a too-weak password, or an expired challenge (whose message tells
+    // the user to sign in again) — stays on the form with the message + the Back link.
     setError(res.error);
   };
 
