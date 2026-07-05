@@ -146,14 +146,24 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     targets = ctx["targets"]
     categories = category_repo.list_categories()
     names = {c["id"]: c["name"] for c in categories}
-    # Income-bucket targets are earn-targets (floors, over-is-good), not spend
-    # ceilings — the 80/100% "you've spent your budget" alert must never fire for
-    # them (WHIT-69). Excluding them here is stronger than relying on income summing
-    # to 0: a negative-amount reversal/clawback would otherwise read as POSITIVE spend
-    # and could trip a threshold. "Income" is the bucket literal (no `constants`
-    # import, so no WHIT-136 shared-constant mirror is dragged into this module).
-    income_ids = {c["id"] for c in categories if c.get("bucket") == "Income"}
-    target_ids = set(targets) - income_ids
+    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
+    # Only fire for a target whose category is CURRENTLY live AND not an Income
+    # earn-target. Two exclusions, one filter:
+    #   * Income buckets are floors (over-is-good), not spend ceilings — the
+    #     80/100% "you've spent your budget" push must never fire for them (WHIT-69).
+    #   * A target whose category is GONE (an orphan left by a failed best-effort
+    #     delete-cascade, lambda_api/handler.py) can't be classified, so it's dropped
+    #     too — otherwise a negative clawback against an orphaned income target would
+    #     read as POSITIVE spend (_spend_contribution flips the sign) and fire a false
+    #     alert (WHIT-168). A deleted category shouldn't push regardless of its bucket,
+    #     and its name would only render as a raw id.
+    # A positive membership test (not `set(targets) - income_ids`) is what closes the
+    # orphan hole: subtraction kept unknown-category targets in. "Income" is the bucket
+    # literal — no `constants` import, so no WHIT-136 shared-constant mirror is dragged in.
+    # NOTE: list_budgets (the /budgets read) intentionally still sums an orphan as spend;
+    # the asymmetry is deliberate — this card is about the false push, not the display.
+    target_ids = {cat_id for cat_id in targets
+                  if cat_id in bucket_by_id and bucket_by_id[cat_id] != "Income"}
     before = summarise_transactions(ctx["before_rows"], target_ids)
     after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), target_ids)
 
