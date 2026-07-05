@@ -243,39 +243,57 @@ export async function getAuthToken(): Promise<string | undefined> {
   return refreshInFlight;
 }
 
-async function refreshFromStoredToken(): Promise<string | undefined> {
+// Core token refresh: swap the given refresh token for a fresh id token via the
+// Cognito token endpoint, updating the in-memory cache (and, if the token rotated,
+// the guarded keychain). Returns the new id token, or undefined on any failure.
+// Deliberately does NOT touch the gate status or clear the session — the CALLER owns
+// the terminal status. That is what lets unlock() keep a failed OFFLINE refresh at
+// 'locked' instead of the getAuthToken/restore path's clearSession() broadcasting a
+// transient 'anon' (which flashed a login redirect for one frame before the lock
+// screen painted). WHIT-171.
+async function refreshTokens(refreshToken: string): Promise<string | undefined> {
+  const domain = hostedUiDomain();
+  const clientId = appClientId();
+  if (!domain || !clientId) return undefined;
   try {
-    // Prefer the in-memory refresh token (seeded by signIn or by the one-time
-    // biometric unlock): this keeps hourly refreshes from re-reading the guarded
-    // keychain and re-prompting Face ID. Only fall back to a keychain read (which,
-    // when guarded, IS the prompt) when memory is empty — a cold, non-biometric
-    // launch, where the read is unguarded and silent.
-    const refreshToken = session?.refreshToken ?? (await getRefreshToken());
-    if (!refreshToken) {
-      clearSession();
-      return undefined;
-    }
-    const domain = hostedUiDomain();
-    const clientId = appClientId();
-    if (!domain || !clientId) return undefined;
-
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const AuthSession = require("expo-auth-session");
     const token: TokenResponse = await AuthSession.refreshAsync(
       { clientId, refreshToken },
       { tokenEndpoint: `${domain}/oauth2/token` },
     );
-
     cacheToken(token);
     // Cognito omits the refresh token on refresh (the existing one stays valid);
     // only overwrite when a rotated one is actually returned.
     if (token.refreshToken) await setRefreshToken(token.refreshToken);
-    setStatus("authed");
     return token.idToken;
   } catch {
+    return undefined;
+  }
+}
+
+// Restore/refresh for the NON-biometric paths (getAuthToken, restoreSession): pull
+// the stored refresh token and swap it for a fresh id token. On success → 'authed';
+// on any failure → clearSession() ('anon', so the gate sends the user to login). The
+// biometric unlock path does NOT use this — it owns 'locked' on failure (WHIT-171).
+async function refreshFromStoredToken(): Promise<string | undefined> {
+  // Prefer the in-memory refresh token (seeded by signIn or by the one-time
+  // biometric unlock): this keeps hourly refreshes from re-reading the guarded
+  // keychain and re-prompting Face ID. Only fall back to a keychain read (which,
+  // when guarded, IS the prompt) when memory is empty — a cold, non-biometric
+  // launch, where the read is unguarded and silent.
+  const refreshToken = session?.refreshToken ?? (await getRefreshToken());
+  if (!refreshToken) {
     clearSession();
     return undefined;
   }
+  const idToken = await refreshTokens(refreshToken);
+  if (idToken) {
+    setStatus("authed");
+    return idToken;
+  }
+  clearSession();
+  return undefined;
 }
 
 /**
@@ -372,13 +390,16 @@ async function performUnlock(): Promise<boolean> {
     // Seed the in-memory refresh token so the refresh below (and every later hourly
     // refresh) reuses it — one biometric prompt per launch/resume, never per refresh.
     session = { idToken: undefined, accessToken: "", issuedAt: 0, expiresIn: 0, refreshToken };
-    const idToken = await refreshFromStoredToken();
+    // Refresh via the pure helper (NOT refreshFromStoredToken): on an offline failure
+    // it must NOT broadcast 'anon'. unlock owns the terminal status here, so the gate
+    // never renders a stray login redirect before the lock screen. WHIT-171.
+    const idToken = await refreshTokens(refreshToken);
     if (idToken) {
       setStatus("authed");
       return true;
     }
     // Valid-looking token but the refresh failed (e.g. offline): keep the session
-    // stored and stay locked so the user can retry.
+    // stored and stay locked so the user can retry — no transient 'anon' flash.
     setStatus("locked");
     return false;
   } catch {
@@ -413,7 +434,17 @@ export async function unlockOrRestore(): Promise<void> {
 async function setRefreshToken(value: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const SecureStore = require("expo-secure-store");
-  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, value, secureOpts());
+  const opts = secureOpts();
+  // WHIT-170: on iOS, UPDATING an existing requireAuthentication item re-prompts Face
+  // ID (per expo-secure-store). When the item is guarded, delete first so the write
+  // takes the CREATE path, which is silent — otherwise a rotated refresh token
+  // (Cognito rotation enabled) would pop Face ID on an otherwise-silent hourly
+  // refresh, and a second time inside unlock(). Deletion never prompts; on a fresh
+  // install the delete is a harmless no-op. Unguarded writes don't prompt — skip it.
+  if (opts.requireAuthentication) {
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+  }
+  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, value, opts);
 }
 
 async function getRefreshToken(): Promise<string | null> {
