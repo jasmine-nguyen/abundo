@@ -95,6 +95,11 @@ let signInInFlight: Promise<SignInResult> | null = null;
 // can complete it against the SAME attempt. Reset at the start of every attempt (so a
 // stale one never lingers) and only set when the challenge fires. --- WHIT-181 SEAM ---
 let pendingChallengeUser: CognitoUser | null = null;
+// WHIT-178: the live session's mint surface, cached in memory so an hourly refresh
+// routes to the right endpoint even if the unguarded method-key read transiently
+// fails; a cold launch (null) falls back to the stored value. Set on seat / signIn,
+// cleared on clearSession.
+let sessionAuthMethod: "srp" | "oauth" | null = null;
 const listeners = new Set<() => void>();
 
 /** Current gate status, read synchronously by the auth hook's initial render. */
@@ -160,6 +165,7 @@ function cacheToken(
 
 function clearSession(): void {
   session = null;
+  sessionAuthMethod = null;
   setStatus("anon");
 }
 
@@ -243,9 +249,15 @@ export async function signIn(): Promise<boolean> {
     // the sentinel — so a failed/cancelled guarded write never leaves a "session
     // exists" marker pointing at a token that isn't there.
     if (token.refreshToken) {
+      // Order: token → provenance → sentinel (the sentinel is the "session ready"
+      // marker, written last). WHIT-178: record "oauth" so the freshest mint always
+      // overwrites any stale "srp" left by a prior in-memory-only clearSession() —
+      // otherwise this OAuth session could be mis-routed to the InitiateAuth refresh.
       await setRefreshToken(token.refreshToken);
+      await setAuthMethod("oauth");
       await setSessionSentinel();
     }
+    sessionAuthMethod = "oauth";
     cacheToken(token);
     setStatus("authed");
     return true;
@@ -286,18 +298,28 @@ async function runPasswordSignIn(email: string, password: string): Promise<SignI
     return { ok: false, error: "Sign-in isn't set up. Check the app configuration." };
   }
   pendingChallengeUser = null; // clear any stale challenge from a prior attempt
+  // Normalise the email: trim stray whitespace and lower-case it (Cognito email
+  // usernames are case-insensitive) so a valid user isn't rejected over casing/spaces.
+  const username = email.trim().toLowerCase();
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Cognito = require("amazon-cognito-identity-js");
     const pool = new Cognito.CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
-    const user: CognitoUser = new Cognito.CognitoUser({ Username: email, Pool: pool });
-    const details = new Cognito.AuthenticationDetails({ Username: email, Password: password });
+    const user: CognitoUser = new Cognito.CognitoUser({ Username: username, Pool: pool });
+    const details = new Cognito.AuthenticationDetails({ Username: username, Password: password });
     return await new Promise<SignInResult>((resolve) => {
       user.authenticateUser(details, {
-        onSuccess: (session: CognitoUserSession) => {
-          seatCognitoSession(session)
+        onSuccess: (cognitoSession: CognitoUserSession) => {
+          seatCognitoSession(cognitoSession)
             .then(() => resolve({ ok: true }))
-            .catch(() => resolve({ ok: false, error: "Couldn't finish signing in. Try again." }));
+            .catch(async () => {
+              // A partial seat (e.g. a keychain write threw) must NOT leave a durable
+              // "zombie" session that mis-restores next launch — roll back any writes
+              // before reporting failure. WHIT-178.
+              clearSession();
+              await clearStoredSession().catch(() => {});
+              resolve({ ok: false, error: "Couldn't finish signing in. Try again." });
+            });
         },
         onFailure: (err: unknown) => resolve({ ok: false, error: mapCognitoError(err) }),
         newPasswordRequired: () => {
@@ -323,17 +345,26 @@ async function runPasswordSignIn(email: string, password: string): Promise<SignI
 // the Hosted UI path (signIn, above): refresh token FIRST, then the sentinel (the
 // "token before sentinel" landmine), record the SRP auth method (so refresh uses the
 // matching surface), cache the tokens, go 'authed'. WHIT-178.
-async function seatCognitoSession(session: CognitoUserSession): Promise<void> {
-  const idToken = session.getIdToken().getJwtToken();
-  const accessToken = session.getAccessToken().getJwtToken();
+async function seatCognitoSession(cognitoSession: CognitoUserSession): Promise<void> {
+  const idToken = cognitoSession.getIdToken().getJwtToken();
+  const accessToken = cognitoSession.getAccessToken().getJwtToken();
   // decodePayload() gives ABSOLUTE iat/exp; cacheToken/isNearExpiry want issuedAt
-  // (absolute) + expiresIn (a DURATION), so pass exp - iat — NOT exp.
-  const claims = session.getIdToken().decodePayload() as { iat: number; exp: number };
-  const refreshToken = session.getRefreshToken().getToken();
+  // (absolute) + expiresIn (a DURATION), so pass exp - iat — NOT exp. Guard missing
+  // claims so a malformed token can't make expiresIn NaN (which reads as "always
+  // stale" and would bounce the user one frame after a "successful" sign-in).
+  const claims = cognitoSession.getIdToken().decodePayload() as { iat?: number; exp?: number };
+  const nowS = Math.floor(Date.now() / 1000);
+  const iat = typeof claims.iat === "number" ? claims.iat : nowS;
+  const exp = typeof claims.exp === "number" ? claims.exp : iat + 3600;
+  const refreshToken = cognitoSession.getRefreshToken().getToken();
+  // Order: token → provenance → sentinel. The sentinel is the "session ready" marker,
+  // written LAST — so a mid-seat write failure never leaves a restorable session with
+  // no provenance. (A throw here rejects up to onSuccess, which rolls back.)
   await setRefreshToken(refreshToken);
-  await setSessionSentinel();
   await setAuthMethod("srp");
-  cacheToken({ idToken, accessToken, issuedAt: claims.iat, expiresIn: claims.exp - claims.iat, refreshToken });
+  await setSessionSentinel();
+  sessionAuthMethod = "srp";
+  cacheToken({ idToken, accessToken, issuedAt: iat, expiresIn: exp - iat, refreshToken });
   setStatus("authed");
 }
 
@@ -396,7 +427,9 @@ export async function getAuthToken(): Promise<string | undefined> {
 // reliably redeemable at the OAuth /oauth2/token endpoint); Hosted-UI / federated
 // (OAuth) sessions refresh at /oauth2/token as before.
 async function refreshTokens(refreshToken: string): Promise<string | undefined> {
-  const method = await getAuthMethod();
+  // In-memory method wins (robust to a transient method-key read error mid-session);
+  // fall back to the stored value on a cold launch. WHIT-178.
+  const method = sessionAuthMethod ?? (await getAuthMethod());
   return method === "srp"
     ? refreshViaInitiateAuth(refreshToken)
     : refreshViaOAuth(refreshToken);
