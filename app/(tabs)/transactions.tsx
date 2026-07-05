@@ -33,7 +33,10 @@ export default function Transactions() {
 				refreshControl={
 					<RefreshControl
 						refreshing={s.transactionsLoading}
-						onRefresh={s.refreshTransactions}
+						// Pull-to-refresh routes through retryLoad (not just refreshTransactions)
+						// so it reloads everything AND clears the "couldn't load" banner on a
+						// successful pull — the same behaviour as the banner's own Retry.
+						onRefresh={s.retryLoad}
 						tintColor="#7c8cff"
 					/>
 				}>
