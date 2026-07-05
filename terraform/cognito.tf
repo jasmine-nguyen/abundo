@@ -125,6 +125,15 @@ resource "aws_cognito_user_pool_client" "app" {
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
 
+  # WHIT-177: native (non-Hosted-UI) auth. USER_SRP_AUTH lets the app's own login
+  # form authenticate email/password directly via SRP — the password never leaves
+  # the device in the clear — so we can retire the Hosted UI page. REFRESH_TOKEN_AUTH
+  # keeps sessions alive. The Hosted UI OAuth flows above are KEPT: federated Google
+  # (WHIT-179) still redirects through them. In-place update — the client id is
+  # unchanged, so the app's EXPO_PUBLIC_COGNITO_APP_CLIENT_ID and the API Gateway
+  # JWT authorizer audience stay valid.
+  explicit_auth_flows = ["ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+
   callback_urls = var.auth_callback_urls
   logout_urls   = var.auth_logout_urls
 
