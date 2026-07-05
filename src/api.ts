@@ -3,40 +3,19 @@ import { getAuthToken } from "./auth";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
 /**
- * The shared-secret token the app presents to the API's authorizer. Every app
- * route is gated (WHIT-110) — the only open endpoint is the inbound BankSync
- * webhook, which the app never calls — so every function here sends it.
- *
- * This is a single shared secret baked into the bundle: a speed bump, not per-user
- * auth (that's WHIT-97). Read at CALL time, not as a module const: the Expo bundler rewrites
- * `process.env.EXPO_PUBLIC_API_TOKEN` to read from a live env reference, so a
- * module-level capture would freeze an early/undefined value (and break tests
- * that set the var before calling). Throws loudly if unset — better a clear
- * error than silently sending `Bearer undefined` and getting a 401 on every
- * rule action. EXPO_PUBLIC_API_TOKEN must be set at build/export time.
- */
-function apiToken(): string {
-  const token = process.env.EXPO_PUBLIC_API_TOKEN;
-  if (!token) {
-    throw new Error("Missing EXPO_PUBLIC_API_TOKEN");
-  }
-  return token;
-}
-
-/**
- * Build the Authorization header. SHIPS DARK (WHIT-160): the Cognito token is only
- * used when EXPO_PUBLIC_AUTH_USE_COGNITO === 'true' (default off). Until WHIT-162
- * attaches the JWT authorizer to the routes, every route is still gated by the
- * shared secret, so a Cognito token would 403 — hence the static secret stays the
- * default even when a Cognito session exists. When the flag IS on but there's no
- * session yet, we still fall back to the static secret rather than send nothing.
+ * Build the Authorization header from the Cognito ID token (WHIT-162). Every app
+ * route is now guarded by the API Gateway JWT authorizer, so the token is the
+ * user's Cognito ID token (`getAuthToken`), not the old baked-in static secret —
+ * which has been retired. Throws "Not signed in" when there is no session, so a
+ * pre-login fetch fails loudly (the caller catches it) rather than sending an
+ * empty Bearer and getting a confusing 401 on every call. The auth gate
+ * (src/AuthGate.tsx) forces login before the app is usable, and src/context.tsx
+ * reloads once auth lands, so this throw is only hit transiently before sign-in.
  */
 async function authHeaders(): Promise<Record<string, string>> {
-  if (process.env.EXPO_PUBLIC_AUTH_USE_COGNITO === "true") {
-    const idToken = await getAuthToken();
-    if (idToken) return { Authorization: `Bearer ${idToken}` };
-  }
-  return { Authorization: `Bearer ${apiToken()}` };
+  const idToken = await getAuthToken();
+  if (!idToken) throw new Error("Not signed in");
+  return { Authorization: `Bearer ${idToken}` };
 }
 
 /**
@@ -557,9 +536,9 @@ export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<Ai
 
 /**
  * Register this device's Expo push token so the server can send it notifications.
- * Auth-gated (the /devices route sits behind the same shared-secret authorizer as
- * /enrichments), so it presents the Bearer token like the enrichments calls. The
- * server stores tokens in a Set, so re-registering the same token is a no-op.
+ * Auth-gated (the /devices route is behind the Cognito JWT authorizer, like every
+ * app route), so it presents the Bearer ID token like the other calls. The server
+ * stores tokens in a Set, so re-registering the same token is a no-op.
  *
  * @param token - The device's `ExpoPushToken[...]` value.
  * @returns The registered token, echoed by the server.

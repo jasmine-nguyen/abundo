@@ -5,12 +5,11 @@
 // id/access token in memory, and refreshes silently. Best-effort / never-throw,
 // mirroring src/push.ts: a failure resolves to "not signed in", never a crash.
 //
-// SHIPS DARK: this module is fully wired and tested, but src/api.ts only sends a
-// Cognito token when EXPO_PUBLIC_AUTH_USE_COGNITO === 'true' (default off). The
-// JWT authorizer WHIT-97 added is attached to NO route yet (route cutover is
-// WHIT-162), so every route is still gated by the shared secret — sending a
-// Cognito token today would 403. Until WHIT-162, the flag stays off and the app
-// keeps using the static secret.
+// LIVE AUTH (WHIT-162): the static secret is retired — src/api.ts authenticates
+// every request with the Cognito ID token this module provides (getAuthToken), and
+// all API Gateway routes are guarded by the Cognito JWT authorizer. There is no
+// static fallback: with no session, an API call fails "Not signed in" and the auth
+// gate forces login.
 //
 // NODE-SAFE ON IMPORT: no native module or react-native is imported at the top
 // level (only `import type`), and there is no module-top side effect. Native
@@ -88,8 +87,8 @@ function setStatus(next: AuthStatus): void {
   listeners.forEach((l) => l());
 }
 
-// --- config (read at call time, like src/api.ts apiToken, so exports are inlined
-// at build and tests can set them per-case) --------------------------------------
+// --- config (read at CALL time, not captured at module load, so the Expo bundler's
+// inlined EXPO_PUBLIC_* values resolve correctly and tests can set them per-case) --
 
 function hostedUiDomain(): string | undefined {
   return process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
@@ -227,8 +226,8 @@ export async function signIn(): Promise<boolean> {
  * accepts — its `aud` is the app client id; access tokens carry `client_id`, not
  * `aud`, and would be rejected). Returns the cached id token when fresh; otherwise
  * refreshes once from the stored refresh token (single-flight). `undefined` when
- * there is no session or the refresh fails — callers fall back to the static
- * secret.
+ * there is no session or the refresh fails — the caller (src/api.ts authHeaders)
+ * then throws "Not signed in" (there is no static-secret fallback since WHIT-162).
  */
 export async function getAuthToken(): Promise<string | undefined> {
   // Locked (WHIT-161): never read the biometric-guarded key here — that would pop

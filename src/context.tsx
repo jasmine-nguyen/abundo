@@ -2,6 +2,7 @@ import React, { createContext, useContext, useMemo, useRef, useState, useCallbac
 import { tint, fmt } from './theme';
 import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
+import { subscribe as subscribeAuthStatus, getStatus as getAuthStatus } from './auth';
 
 export type { LoanFacts, LoanFactsInput } from './api';
 
@@ -600,6 +601,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshBudgets().catch(() => setLoadError(true));
 		refreshBreakdown().catch(() => setLoadError(true));
 	}, [refreshBudgets, refreshBreakdown]);
+
+	// WHIT-162: with the static secret retired, the mount reads above throw "Not
+	// signed in" until the user has a Cognito session — and they never re-run on
+	// their own. AppProvider mounts ABOVE the auth gate, so those reads fire at
+	// launch before login. Re-load everything the moment auth flips to 'authed'
+	// (after sign-in, or after a Face ID unlock), so the app populates instead of
+	// stranding the "couldn't load" banner over empty data.
+	useEffect(() => {
+		const unsubscribe = subscribeAuthStatus(() => {
+			if (getAuthStatus() === 'authed') retryLoad();
+		});
+		return unsubscribe;
+	}, [retryLoad]);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

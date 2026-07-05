@@ -1,9 +1,9 @@
-// WHIT-160 — the BARE-HEADER DELETE call sites (deleteCategory / deleteEnrichment)
-// must also flow through buildHeaders so they carry the Cognito ID token under the
-// flag and the static secret with it off. authHeaders.logic.test.ts only proves the
-// GET (fetchTransactions) and the two spread POST sites; these two DELETEs — which
-// pass NO extra headers — are the untested bare sites.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+// WHIT-160/162 — the BARE-HEADER DELETE call sites (deleteCategory / deleteEnrichment)
+// must also flow through buildHeaders so they carry the Cognito ID token and throw
+// (never send an empty Bearer) when there's no session. authHeaders.logic.test.ts
+// proves the GET + the two spread POST sites; these two DELETEs pass NO extra
+// headers, so they're the separately-worth-locking bare sites.
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
 
@@ -18,41 +18,33 @@ const lastHeaders = (): Record<string, string> =>
   (fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }])[1].headers;
 
 beforeEach(() => {
-  process.env.EXPO_PUBLIC_API_TOKEN = 'static-secret';
   mockGetAuthToken.mockReset();
   fetchMock = jest.fn().mockReturnValue(okJson({ id: 'x' }));
   (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
 });
-afterEach(() => {
-  delete process.env.EXPO_PUBLIC_API_TOKEN;
-  delete process.env.EXPO_PUBLIC_AUTH_USE_COGNITO;
-});
 
 describe('deleteCategory (bare-header DELETE)', () => {
-  it('flag off -> static secret', async () => {
-    mockGetAuthToken.mockResolvedValue('COGNITO_ID_TOKEN');
-    await deleteCategory('c1');
-    expect(lastHeaders().Authorization).toBe('Bearer static-secret');
-  });
-  it('flag on + session -> Cognito ID token', async () => {
-    process.env.EXPO_PUBLIC_AUTH_USE_COGNITO = 'true';
+  it('carries the Cognito ID token', async () => {
     mockGetAuthToken.mockResolvedValue('COGNITO_ID_TOKEN');
     await deleteCategory('c1');
     expect(lastHeaders().Authorization).toBe('Bearer COGNITO_ID_TOKEN');
+  });
+  it('throws "Not signed in" with no session (never sends an empty Bearer)', async () => {
+    mockGetAuthToken.mockResolvedValue(undefined);
+    await expect(deleteCategory('c1')).rejects.toThrow('Not signed in');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
 describe('deleteEnrichment (bare-header DELETE)', () => {
-  it('flag on + session -> Cognito ID token', async () => {
-    process.env.EXPO_PUBLIC_AUTH_USE_COGNITO = 'true';
+  it('carries the Cognito ID token', async () => {
     mockGetAuthToken.mockResolvedValue('COGNITO_ID_TOKEN');
     await deleteEnrichment('e1');
     expect(lastHeaders().Authorization).toBe('Bearer COGNITO_ID_TOKEN');
   });
-  it('flag on + NO session -> static-secret fallback (never sends an empty Bearer)', async () => {
-    process.env.EXPO_PUBLIC_AUTH_USE_COGNITO = 'true';
+  it('throws "Not signed in" with no session', async () => {
     mockGetAuthToken.mockResolvedValue(undefined);
-    await deleteEnrichment('e1');
-    expect(lastHeaders().Authorization).toBe('Bearer static-secret');
+    await expect(deleteEnrichment('e1')).rejects.toThrow('Not signed in');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

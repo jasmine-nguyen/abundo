@@ -1,15 +1,15 @@
-// Auth gate (WHIT-160 + WHIT-161). Wraps the router tree in app/_layout.tsx.
+// Auth gate (WHIT-160/161/162). Wraps the router tree in app/_layout.tsx.
 //
-// WHIT-160: redirects based on session state, but only when
-// EXPO_PUBLIC_AUTH_GATE_ENABLED === 'true' (default off). With the flag off it
-// renders children unchanged, so today's behaviour (any tab reachable) is exactly
-// preserved. The redirect DECISION is the pure gateRedirect() in src/auth.ts.
+// WHIT-162: login is MANDATORY — the static secret is retired, so the app can't
+// function signed-out. The gate is unconditional: a signed-out user on any
+// protected route is redirected to the login screen. The redirect DECISION is the
+// pure gateRedirect() in src/auth.ts.
 //
 // WHIT-161 (Face ID): when biometric locking is active (EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED
 // on + supported device) and a stored session exists, the gate seals the app to a
 // 'locked' state on launch and on resume-from-background, showing a lock screen
-// until the biometric-guarded keychain read (the Face ID prompt) succeeds. Ships
-// dark: with the flag off, none of this runs.
+// until the biometric-guarded keychain read (the Face ID prompt) succeeds. Face ID
+// stays OPT-IN (the flag); login itself is not optional.
 import React, { useEffect, useState } from "react";
 import { View, Text, Pressable, StyleSheet, AppState } from "react-native";
 import { Redirect, useSegments, useRootNavigationState } from "expo-router";
@@ -19,7 +19,6 @@ import {
   gateRedirect,
   getStatus,
   subscribe,
-  restoreSession,
   unlockOrRestore,
   canBiometricLock,
   unlock,
@@ -32,12 +31,11 @@ function useAuthSession(): AuthStatus {
   const [current, setCurrent] = useState<AuthStatus>(getStatus());
   useEffect(() => {
     const unsubscribe = subscribe(() => setCurrent(getStatus()));
-    const gateOn = process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED === "true";
-
-    // Launch: with the gate on, biometric-unlock a stored session (or normal
-    // restore); with it off, behave exactly like WHIT-160.
-    if (gateOn) void unlockOrRestore();
-    else void restoreSession();
+    // WHIT-162: login is mandatory (the static secret is retired), so the launch
+    // path is unconditional — biometric-unlock a stored session if biometrics are
+    // active (checked inside unlockOrRestore/canBiometricLock), else a normal restore.
+    // Face ID stays opt-in via EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED (canBiometricLock).
+    void unlockOrRestore();
 
     // Resume re-lock: on a genuine background→active return, drop the in-memory
     // token and re-prompt. The biometric sheet itself sends the app to 'inactive'
@@ -48,7 +46,6 @@ function useAuthSession(): AuthStatus {
       if (
         previousState === "background" &&
         nextState === "active" &&
-        gateOn &&
         canBiometricLock() &&
         getStatus() === "authed"
       ) {
@@ -87,7 +84,7 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
   const segments = useSegments();
   const navState = useRootNavigationState();
 
-  const enabled = process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED === "true";
+  // WHIT-162: the gate is unconditional — login is required to use the app.
   const navReady = navState?.key != null;
   // The login screen is the ONLY root route with no segments. Everything else —
   // the (tabs) group AND root-level detail screens like /loan, /rules,
@@ -96,17 +93,17 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
   // route yields an empty array at runtime.)
   const onIndex = (segments as string[]).length === 0;
 
-  // A biometric-sealed session shows the lock screen until Face ID succeeds. Only
-  // reachable when the gate is on (biometric status is never set otherwise).
-  if (enabled && status === "locked") return <LockScreen />;
+  // A biometric-sealed session shows the lock screen until Face ID succeeds
+  // ('locked' is only ever set when biometrics are active).
+  if (status === "locked") return <LockScreen />;
 
-  // While restoring a returning session, hold a plain background instead of flashing
-  // a protected screen (only when the gate is on — off means render as today).
-  if (enabled && status === "loading") {
+  // While restoring a returning session, hold a plain background instead of
+  // flashing a protected screen.
+  if (status === "loading") {
     return <View style={{ flex: 1, backgroundColor: C.bg }} />;
   }
 
-  const target = gateRedirect({ enabled, navReady, status, onIndex });
+  const target = gateRedirect({ enabled: true, navReady, status, onIndex });
   if (target) return <Redirect href={target} />;
 
   return <>{children}</>;

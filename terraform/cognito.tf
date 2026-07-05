@@ -43,6 +43,13 @@ resource "aws_cognito_user_pool" "pool" {
   # This pool holds the account's only login — guard against an accidental
   # `terraform destroy` wiping it.
   deletion_protection = "ACTIVE"
+
+  # WHIT-162: single-user allowlist. The Pre-Sign-Up trigger rejects any email not
+  # in var.allowed_login_emails, so federated (Google/Apple) sign-up can't
+  # provision arbitrary users — the gate that admin-create-only can't provide.
+  lambda_config {
+    pre_sign_up = aws_lambda_function.presignup.arn
+  }
 }
 
 # --- Federated identity providers -------------------------------------------

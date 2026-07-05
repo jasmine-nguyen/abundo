@@ -4,21 +4,19 @@
 // the parity gap: a 200 whose body is NOT valid JSON must propagate (like every
 // other fetcher's `return response.json()`), so push.ts's outer try/catch is the
 // thing that swallows it — the api layer itself never hides it. fetch is mocked.
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { registerDevice } from '../api';
+
+// WHIT-162: registerDevice authenticates with the Cognito ID token; mock a session.
+jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
 
 const API = 'https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com';
 
 let fetchMock: jest.Mock;
 
 beforeEach(() => {
-  process.env.EXPO_PUBLIC_API_TOKEN = 'test-token';
   fetchMock = jest.fn();
   (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
-});
-
-afterEach(() => {
-  delete process.env.EXPO_PUBLIC_API_TOKEN;
 });
 
 describe('registerDevice — edge/error parity', () => {
