@@ -9,6 +9,10 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 
 jest.mock('../api');
+// WHIT-174: the load-error banner is now an AUTHED-only concern (a signed-out
+// mount's reads throw "Not signed in" and must NOT raise it). These tests drive the
+// provider as a signed-in user, so pin the auth status to 'authed'.
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
 

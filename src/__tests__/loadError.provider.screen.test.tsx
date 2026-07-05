@@ -11,6 +11,9 @@ import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 
 jest.mock('../api');
+// WHIT-174: the banner only fires when authed (a signed-out mount's reads throw
+// "Not signed in" and must stay silent). These cases model the signed-in user.
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
 

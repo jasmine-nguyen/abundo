@@ -394,6 +394,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// a fast parallel-mount refresh can't wipe an error a slower sibling just set.
 	const [loadError, setLoadError] = useState(false);
 
+	// WHIT-174: the banner means "you're signed in but your data wouldn't load."
+	// AppProvider mounts ABOVE the auth gate, so the mount reads fire at launch —
+	// before login — and throw "Not signed in" until there's a Cognito session
+	// (the static secret is retired, WHIT-162). Those pre-login failures must NOT
+	// raise the banner over the login screen, so only flag a read failure once we're
+	// authed. The auth-status subscription below reloads everything the moment login
+	// (or a Face ID unlock) flips us to 'authed', so real post-login failures still
+	// surface the banner.
+	const flagLoadError = useCallback(() => {
+		if (getAuthStatus() === 'authed') setLoadError(true);
+	}, []);
+
 	const [transactionsLoading, setTransactionsLoading] = useState(false);
 	const refreshTransactions = useCallback(async () => {
 		setTransactionsLoading(true);
@@ -402,11 +414,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 			setTransactions(data);
 		} catch {
 			// Surface the global load-error banner; keep whatever transactions we had.
-			setLoadError(true);
+			flagLoadError();
 		} finally{
 			setTransactionsLoading(false);
 		}
-	}, []);
+	}, [flagLoadError]);
 
 	const [categoriesLoading, setCategoriesLoading] = useState(false);
 	const refreshCategories = useCallback(async () => {
@@ -417,11 +429,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		} catch {
 			// Keep the seeded categories as the offline fallback, but make the failure
 			// visible via the banner rather than looking like a fresh empty app.
-			setLoadError(true);
+			flagLoadError();
 		} finally {
 			setCategoriesLoading(false);
 		}
-	}, []);
+	}, [flagLoadError]);
 
 	const [budgetsLoading, setBudgetsLoading] = useState(false);
 	const refreshBudgets = useCallback(async () => {
@@ -447,9 +459,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 			setPayCycle(cycle);
 		} catch {
 			// Leave the sensible default cycle in place, but flag the banner.
-			setLoadError(true);
+			flagLoadError();
 		}
-	}, []);
+	}, [flagLoadError]);
 
 	// Spend-by-category for the current cycle (the Insights tab). Same window as
 	// the budgets rollup, so keyed on the pay-cycle length; refreshed on the tab's
@@ -530,9 +542,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		try {
 			setLoanFacts(await fetchLoanFacts());
 		} catch {
-			setLoadError(true);
+			flagLoadError();
 		}
-	}, []);
+	}, [flagLoadError]);
 
 	// Most recent home-loan repayment (WHIT-115), derived server-side from the
 	// up-homeloan history. Null-filled until loaded / when none is on record — the
@@ -542,9 +554,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		try {
 			setRepayment(await fetchRepayment());
 		} catch {
-			setLoadError(true);
+			flagLoadError();
 		}
-	}, []);
+	}, [flagLoadError]);
 
 	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
 	const [enrichmentsError, setEnrichmentsError] = useState<string | null>(null);
@@ -579,9 +591,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshRepayment();
 		refreshHomeLoan();
 		refreshEnrichments();
-		refreshBudgets().catch(() => setLoadError(true));
-		refreshBreakdown().catch(() => setLoadError(true));
-	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshLoanFacts, refreshRepayment, refreshHomeLoan, refreshEnrichments, refreshBudgets, refreshBreakdown]);
+		refreshBudgets().catch(() => flagLoadError());
+		refreshBreakdown().catch(() => flagLoadError());
+	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshLoanFacts, refreshRepayment, refreshHomeLoan, refreshEnrichments, refreshBudgets, refreshBreakdown, flagLoadError]);
 
 	useEffect(() => {
 		refreshTransactions();
@@ -598,9 +610,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// shared with write paths, so they don't flag the banner themselves; flag it here
 	// (the mount/window load) via the call site, matching retryLoad.
 	useEffect(() => {
-		refreshBudgets().catch(() => setLoadError(true));
-		refreshBreakdown().catch(() => setLoadError(true));
-	}, [refreshBudgets, refreshBreakdown]);
+		refreshBudgets().catch(() => flagLoadError());
+		refreshBreakdown().catch(() => flagLoadError());
+	}, [refreshBudgets, refreshBreakdown, flagLoadError]);
 
 	// WHIT-162: with the static secret retired, the mount reads above throw "Not
 	// signed in" until the user has a Cognito session — and they never re-run on
