@@ -5,12 +5,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext, loanFactsReady } from '../../src/context';
+import { signOut } from '../../src/auth';
 import { SectionLabel } from '../../src/components/ui';
 
 export default function Settings() {
   const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  // WHIT-176: actually END the session, don't just navigate. signOut() drops the
+  // in-memory session synchronously (→ status 'anon'), clears the stored refresh
+  // token + sentinel, and best-effort clears the Hosted UI cookie. Without it, a
+  // bare router.replace('/') left the session intact and the auth gate bounced the
+  // still-authed user straight back into the tabs — i.e. no working log out.
+  const logOut = () => {
+    void signOut();
+    router.replace('/');
+  };
 
   return (
     <View style={{ flex: 1 }}>
@@ -45,7 +56,7 @@ export default function Settings() {
               <View style={[styles.knob, { left: s.alerts ? 21 : 3 }]} />
             </Pressable>
           </View>
-          <Pressable onPress={() => router.replace('/')} style={[styles.rowBase, { borderBottomWidth: 0 }]}>
+          <Pressable testID="settings-logout" onPress={logOut} style={[styles.rowBase, { borderBottomWidth: 0 }]}>
             <View style={[styles.rowIcon, { backgroundColor: 'rgba(255,107,107,.12)' }]}><Glyph name="logout" size={19} color={C.bad} /></View>
             <Text style={[styles.rowLabel, { color: C.bad }]}>Log out</Text>
           </Pressable>
