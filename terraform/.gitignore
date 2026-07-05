@@ -2,3 +2,7 @@
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
+# Never commit variable files — they hold the Google client secret / Apple .p8
+# key for the Cognito IdPs (WHIT-97). Supply those via TF_VAR_* env vars.
+*.tfvars
+*.tfvars.json
