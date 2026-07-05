@@ -12,7 +12,9 @@ export default function BudgetPick() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const budgeted = s.budgets.map((b) => b.id);
-  const list = s.categories.filter((c) => !budgeted.includes(c.id) && c.bucket !== 'Income');
+  // Income categories are pickable too: their budget is an earn-target / floor
+  // (over-is-good, WHIT-69), not a spend ceiling.
+  const list = s.categories.filter((c) => !budgeted.includes(c.id));
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>

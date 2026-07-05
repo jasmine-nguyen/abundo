@@ -69,17 +69,21 @@ def current_cycle_window(last_pay_date: str, length: int, today: date | None = N
     return cycle_start.isoformat(), end.isoformat()
 
 
-def _spend_contribution(transaction: dict) -> tuple[str, Decimal] | None:
-    """The (bucket, spend) a transaction adds to a budget summary, or None if it
-    doesn't count. Shared by summarise_transactions and summarise_uncategorized:
-    they differ only in WHICH categories they roll up, not in how a contributing
-    transaction maps to a bucket + amount.
+def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal] | None:
+    """The (bucket, amount) a transaction adds to a budget summary, or None if it
+    doesn't count. Shared by summarise_transactions, summarise_uncategorized and
+    summarise_income: they differ only in WHICH categories they roll up and the
+    direction of the amount, not in how a contributing transaction maps to a bucket.
 
     Contributes only if `counts_to_budget` is truthy and `status` is a known
-    pending/posted (an unknown status is skipped, never guessed). Spend is stored
-    as a NEGATIVE amount, so the returned spend is `-amount` — a refund (positive
-    amount) yields a negative contribution that reduces the total; callers clamp
-    each bucket at >= 0.
+    pending/posted (an unknown status is skipped, never guessed).
+
+    `sign` flips the stored amount into a positive contribution:
+      * spend (default `sign=-1`): stored NEGATIVE, so `-amount` is positive spend —
+        a refund (positive amount) yields a negative contribution that reduces it.
+      * income (`sign=+1`): stored POSITIVE, so `+amount` is positive earnings —
+        a reversal/clawback (negative amount) reduces it.
+    Callers clamp each bucket at >= 0.
     """
     if not transaction.get("counts_to_budget"):
         return None
@@ -90,7 +94,7 @@ def _spend_contribution(transaction: dict) -> tuple[str, Decimal] | None:
         bucket = "posted"
     else:
         return None  # unknown status -> don't guess a bucket
-    return bucket, -Decimal(str(transaction.get("amount", 0)))
+    return bucket, sign * Decimal(str(transaction.get("amount", 0)))
 
 
 def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> dict[str, dict]:
@@ -145,4 +149,39 @@ def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) ->
         totals[bucket] += spend
     totals["posted"] = max(Decimal(0), totals["posted"])
     totals["pending"] = max(Decimal(0), totals["pending"])
+    return totals
+
+
+def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str, dict]:
+    """Sum posted vs pending EARNINGS per income-target category over `transactions`
+    — the earn-target counterpart of summarise_transactions (WHIT-69).
+
+    Income earn-targets are floors (over-is-good), so this rolls up the POSITIVE
+    amount (`sign=+1`) rather than spend. A transaction contributes only if it counts
+    to budget (see `_spend_contribution`) AND its `category` is in `income_ids` — the
+    ids of the user's Income-bucket categories that carry a target. Unlike the spend
+    summariser it does NOT special-case the raw "income" sentinel: income *categories*
+    have their own ids (never the sentinel), and gating purely on `income_ids`
+    membership is the correct filter (a user category that happens to slug to "income"
+    is a real target and must count). Each bucket is clamped at >= 0 so a reversal
+    can't drive an earnings bar negative.
+
+    Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
+    that had at least one contributing transaction — the same shape as
+    summarise_transactions, so a caller can merge the two uniformly.
+    """
+    totals: dict[str, dict] = {}
+    for transaction in transactions:
+        category = transaction.get("category")
+        if category not in income_ids:
+            continue
+        contribution = _spend_contribution(transaction, sign=1)
+        if contribution is None:
+            continue
+        bucket, earned = contribution
+        entry = totals.setdefault(category, {"posted": Decimal(0), "pending": Decimal(0)})
+        entry[bucket] += earned
+    for entry in totals.values():
+        entry["posted"] = max(Decimal(0), entry["posted"])
+        entry["pending"] = max(Decimal(0), entry["pending"])
     return totals

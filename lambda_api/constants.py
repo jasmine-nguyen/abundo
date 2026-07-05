@@ -82,6 +82,12 @@ CATEGORY_BUCKETS = {"Living", "Lifestyle", "Income", "Savings"}
 # a *spend* view excludes them. A subset of CATEGORY_BUCKETS.
 SPEND_BUCKETS = {"Living", "Lifestyle"}
 
+# The bucket whose category targets are earn-targets (floors, over-is-good) rather
+# than spend ceilings (WHIT-69). A budget on an Income-bucket category rolls up the
+# POSITIVE earnings for the cycle instead of spend. Lambda_api-only (no shared module
+# imports it), so the WHIT-136 sync guard doesn't require a shared mirror.
+INCOME_BUCKET = "Income"
+
 # Icon assigned when a create request omits one (a valid key in src/icons.tsx).
 DEFAULT_CATEGORY_ICON = "tag"
 

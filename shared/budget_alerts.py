@@ -144,7 +144,16 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     if ctx is None:
         return
     targets = ctx["targets"]
-    target_ids = set(targets)
+    categories = category_repo.list_categories()
+    names = {c["id"]: c["name"] for c in categories}
+    # Income-bucket targets are earn-targets (floors, over-is-good), not spend
+    # ceilings — the 80/100% "you've spent your budget" alert must never fire for
+    # them (WHIT-69). Excluding them here is stronger than relying on income summing
+    # to 0: a negative-amount reversal/clawback would otherwise read as POSITIVE spend
+    # and could trip a threshold. "Income" is the bucket literal (no `constants`
+    # import, so no WHIT-136 shared-constant mirror is dragged into this module).
+    income_ids = {c["id"] for c in categories if c.get("bucket") == "Income"}
+    target_ids = set(targets) - income_ids
     before = summarise_transactions(ctx["before_rows"], target_ids)
     after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), target_ids)
 
@@ -162,7 +171,6 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     if not crossings:
         return
 
-    names = {c["id"]: c["name"] for c in category_repo.list_categories()}
     last_pay_date, length = ctx["last_pay_date"], ctx["length"]
     fired = notify_repo.fired_markers(last_pay_date, length)
 
