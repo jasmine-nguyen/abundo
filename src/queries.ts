@@ -4,7 +4,7 @@
 // other screens migrate in later cards, so the old context store stays intact until
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
 import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, listEnrichments } from './api';
 import type { BudgetRollup, CategorySpend, EnrichmentRule, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
 import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
@@ -121,8 +121,24 @@ export function useLoanFactsQuery(enabled: boolean) {
 export function selectHomeLoan(raw: HomeLoan): HomeLoanState {
   return { balance: raw.balance, asOf: raw.as_of };
 }
+// WHIT-204: keep-last-good for the live balance. The poller can return a NULL balance
+// (its row not yet written) AFTER a real one has loaded; without this, selectHomeLoan would
+// map that null straight through and drop the Goal/milestone hero back to its "—"/"Fetching…"
+// placeholder. As `structuralSharing`, this runs on every fetch — on BOTH the raw `HomeLoan`
+// and the selected `HomeLoanState`, which each carry `.balance`: if the incoming balance is
+// null but the previous value had a non-null one, keep the previous (same reference → the
+// observer memoises `select`, so the loaded HomeLoanState survives). A first-ever null
+// (oldData undefined) still yields null — a genuine "not polled yet" success, not a drop.
+// Otherwise defer to replaceEqualDeep (TanStack's own default) so a deeply-equal refetch
+// preserves referential identity and doesn't churn a re-render.
+function keepLastGoodBalance<T>(oldData: T | undefined, newData: T): T {
+  const prev = oldData as { balance: number | null } | undefined;
+  const next = newData as { balance: number | null } | undefined;
+  if (next?.balance == null && prev != null && prev.balance != null) return oldData as T;
+  return replaceEqualDeep(oldData, newData);
+}
 export function useHomeLoanQuery(enabled: boolean) {
-  return useQuery({ queryKey: homeLoanKey, queryFn: fetchHomeLoan, enabled, select: selectHomeLoan });
+  return useQuery({ queryKey: homeLoanKey, queryFn: fetchHomeLoan, enabled, select: selectHomeLoan, structuralSharing: keepLastGoodBalance });
 }
 
 // WHIT-197: the most recent home-loan repayment (server-derived). Null-filled when
@@ -182,6 +198,48 @@ export function usePayCycle(): PayCycleData {
   return { payCycle, cycleLen, daysLeft, cycleName: () => cycleName(cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
 }
 
+// --- shared screen-composite status plumbing (WHIT-204) ----------------------
+// Every screen composite below repeats the SAME four status fields over its underlying
+// queries. Hoisted here so the subtle semantics live in one place:
+//   - isLoading = OR of the queries' `.isLoading`. Load-bearing: v5 `.isLoading` is
+//     `isPending && isFetching`, NOT `isPending` — a DISABLED (auth-gated, or dependency-
+//     errored) query reports isPending:true but isLoading:false, so ORing isLoading never
+//     strands a spinner over an errored dependency (the way ORing isPending would). This is
+//     the WHIT-188 code-critic/qa #1 fix, now enforced in ONE place.
+//   - isError  = OR of the queries' `.isError`.
+//   - refetch  = fire every query (the inline Retry / pull-to-refresh).
+//   - refetchStale = fire only the queries whose data has gone stale (focus refresh with no
+//     request storm), gated on each query result's built-in `.isStale`.
+// It's a hook (calls useCallback), hence the `use` prefix. Passing the `queries` array
+// straight as the useCallback deps reproduces each composite's former
+// `useCallback(fn, [q1, q2, …])` element-for-element (React compares deps with Object.is),
+// preserving the refetch/refetchStale IDENTITY the consumers' useFocusEffect depends on to
+// avoid a re-subscribe storm. Each call site passes a fixed-length array, so the deps length
+// is stable across renders.
+interface CombinedQueryStatus {
+  isLoading: boolean;
+  isError: boolean;
+  refetch: () => void;
+  refetchStale: () => void;
+}
+// The minimal slice of a query result the plumbing reads — every UseQueryResult satisfies it
+// structurally, so composites pass their query objects straight in without a cast.
+interface ScreenQuery {
+  isLoading: boolean;
+  isError: boolean;
+  isStale: boolean;
+  refetch: () => unknown;
+}
+function useCombineScreenQueries(queries: ScreenQuery[]): CombinedQueryStatus {
+  const isLoading = queries.some((q) => q.isLoading);
+  const isError = queries.some((q) => q.isError);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the query array IS the deps
+  const refetch = useCallback(() => { queries.forEach((q) => { q.refetch(); }); }, queries);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the query array IS the deps
+  const refetchStale = useCallback(() => { queries.forEach((q) => { if (q.isStale) q.refetch(); }); }, queries);
+  return { isLoading, isError, refetch, refetchStale };
+}
+
 // --- the Budgets screen's composite view -------------------------------------
 export interface BudgetsScreenData {
   budgets: Budget[];
@@ -213,35 +271,14 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string) => byId.get(id), [byId]);
 
-  // isLoading (isPending && isFetching), NOT isPending: a DISABLED query reports
-  // isPending:true in v5, so basing the spinner on isPending would keep spinning after
-  // the pay-cycle read ERRORED (which leaves budgets disabled) — stranding the user with
-  // no Retry (code-critic/qa #1). isLoading is false for a disabled query, so an errored
-  // dependency surfaces the error state instead of an endless spinner.
-  const isLoading = payCycleQuery.isLoading || budgetsQuery.isLoading || categoriesQuery.isLoading;
-  const isError = payCycleQuery.isError || budgetsQuery.isError || categoriesQuery.isError;
-
-  const refetch = useCallback(() => {
-    payCycleQuery.refetch();
-    budgetsQuery.refetch();
-    categoriesQuery.refetch();
-  }, [payCycleQuery, budgetsQuery, categoriesQuery]);
-
-  const refetchStale = useCallback(() => {
-    if (payCycleQuery.isStale) payCycleQuery.refetch();
-    if (budgetsQuery.isStale) budgetsQuery.refetch();
-    if (categoriesQuery.isStale) categoriesQuery.refetch();
-  }, [payCycleQuery, budgetsQuery, categoriesQuery]);
+  const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, categoriesQuery]);
 
   return {
     budgets: budgetsQuery.data ?? [],
     category,
     cycleLen,
     daysLeft,
-    isLoading,
-    isError,
-    refetch,
-    refetchStale,
+    ...status,
   };
 }
 
@@ -274,24 +311,8 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
 
-  // isLoading (not isPending) so a disabled query doesn't strand a spinner — see the
-  // note in useBudgetsScreenData.
-  const isLoading = payCycleQuery.isLoading || budgetsQuery.isLoading || transactionsQuery.isLoading || categoriesQuery.isLoading;
-  const isError = payCycleQuery.isError || budgetsQuery.isError || transactionsQuery.isError || categoriesQuery.isError;
-
-  const refetch = useCallback(() => {
-    payCycleQuery.refetch();
-    budgetsQuery.refetch();
-    transactionsQuery.refetch();
-    categoriesQuery.refetch();
-  }, [payCycleQuery, budgetsQuery, transactionsQuery, categoriesQuery]);
-
-  const refetchStale = useCallback(() => {
-    if (payCycleQuery.isStale) payCycleQuery.refetch();
-    if (budgetsQuery.isStale) budgetsQuery.refetch();
-    if (transactionsQuery.isStale) transactionsQuery.refetch();
-    if (categoriesQuery.isStale) categoriesQuery.refetch();
-  }, [payCycleQuery, budgetsQuery, transactionsQuery, categoriesQuery]);
+  // WHIT-204: the 7th composite folded into the shared helper (same plumbing as the six).
+  const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, transactionsQuery, categoriesQuery]);
 
   return {
     category,
@@ -299,10 +320,7 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
     transactions: transactionsQuery.data ?? [],
     cycleLen,
     daysLeft,
-    isLoading,
-    isError,
-    refetch,
-    refetchStale,
+    ...status,
   };
 }
 
@@ -335,24 +353,9 @@ export function useInsightsScreenData(): InsightsScreenData {
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string) => byId.get(id), [byId]);
 
-  // isLoading (not isPending) so a disabled query doesn't strand a spinner — see the
-  // note in useBudgetsScreenData.
-  const isLoading = payCycleQuery.isLoading || breakdownQuery.isLoading || categoriesQuery.isLoading;
-  const isError = payCycleQuery.isError || breakdownQuery.isError || categoriesQuery.isError;
+  const status = useCombineScreenQueries([payCycleQuery, breakdownQuery, categoriesQuery]);
 
-  const refetch = useCallback(() => {
-    payCycleQuery.refetch();
-    breakdownQuery.refetch();
-    categoriesQuery.refetch();
-  }, [payCycleQuery, breakdownQuery, categoriesQuery]);
-
-  const refetchStale = useCallback(() => {
-    if (payCycleQuery.isStale) payCycleQuery.refetch();
-    if (breakdownQuery.isStale) breakdownQuery.refetch();
-    if (categoriesQuery.isStale) categoriesQuery.refetch();
-  }, [payCycleQuery, breakdownQuery, categoriesQuery]);
-
-  return { breakdown: breakdownQuery.data ?? {}, category, isLoading, isError, refetch, refetchStale };
+  return { breakdown: breakdownQuery.data ?? {}, category, ...status };
 }
 
 // --- the Transactions screen's composite view (WHIT-190a) --------------------
@@ -376,30 +379,17 @@ export function useTransactionsScreenData(): TransactionsScreenData {
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
 
-  const isLoading = transactionsQuery.isLoading || categoriesQuery.isLoading;
-  const isError = transactionsQuery.isError || categoriesQuery.isError;
+  const status = useCombineScreenQueries([transactionsQuery, categoriesQuery]);
   // isFetching (not isLoading) drives pull-to-refresh: isLoading is false once data is
   // cached, so a pull-refresh of an already-loaded list must spin on isFetching instead.
+  // Kept OUT of the shared helper — it's a Transactions-only extra.
   const isFetching = transactionsQuery.isFetching || categoriesQuery.isFetching;
-
-  const refetch = useCallback(() => {
-    transactionsQuery.refetch();
-    categoriesQuery.refetch();
-  }, [transactionsQuery, categoriesQuery]);
-
-  const refetchStale = useCallback(() => {
-    if (transactionsQuery.isStale) transactionsQuery.refetch();
-    if (categoriesQuery.isStale) categoriesQuery.refetch();
-  }, [transactionsQuery, categoriesQuery]);
 
   return {
     transactions: transactionsQuery.data ?? [],
     category,
-    isLoading,
-    isError,
     isFetching,
-    refetch,
-    refetchStale,
+    ...status,
   };
 }
 
@@ -425,26 +415,12 @@ export function useSettingsScreenData(): SettingsScreenData {
   const categoriesQuery = useCategoriesQuery(authed);
   const loanFactsQuery = useLoanFactsQuery(authed);
 
-  const isLoading = categoriesQuery.isLoading || loanFactsQuery.isLoading;
-  const isError = categoriesQuery.isError || loanFactsQuery.isError;
-
-  const refetch = useCallback(() => {
-    categoriesQuery.refetch();
-    loanFactsQuery.refetch();
-  }, [categoriesQuery, loanFactsQuery]);
-
-  const refetchStale = useCallback(() => {
-    if (categoriesQuery.isStale) categoriesQuery.refetch();
-    if (loanFactsQuery.isStale) loanFactsQuery.refetch();
-  }, [categoriesQuery, loanFactsQuery]);
+  const status = useCombineScreenQueries([categoriesQuery, loanFactsQuery]);
 
   return {
     categoriesCount: categoriesQuery.data?.length ?? 0,
     loanReady: loanFactsQuery.data ? loanFactsReady(loanFactsQuery.data) : false,
-    isLoading,
-    isError,
-    refetch,
-    refetchStale,
+    ...status,
   };
 }
 
@@ -466,20 +442,11 @@ export function useRulesScreenData(): RulesScreenData {
   const authed = useIsAuthed();
   const rulesQuery = useRulesQuery(authed);
 
-  const refetch = useCallback(() => {
-    rulesQuery.refetch();
-  }, [rulesQuery]);
-
-  const refetchStale = useCallback(() => {
-    if (rulesQuery.isStale) rulesQuery.refetch();
-  }, [rulesQuery]);
+  const status = useCombineScreenQueries([rulesQuery]);
 
   return {
     rules: rulesQuery.data ?? [],
-    isLoading: rulesQuery.isLoading,
-    isError: rulesQuery.isError,
-    refetch,
-    refetchStale,
+    ...status,
   };
 }
 
@@ -519,31 +486,15 @@ export function useGoalScreenData(): GoalScreenData {
   const repaymentQuery = useRepaymentQuery(authed);
   const loanFactsQuery = useLoanFactsQuery(authed);
 
-  // isLoading (not isPending) so a disabled query doesn't strand a spinner — see the
-  // note in useBudgetsScreenData.
-  const isLoading = homeLoanQuery.isLoading || repaymentQuery.isLoading || loanFactsQuery.isLoading;
-  const isError = homeLoanQuery.isError || repaymentQuery.isError || loanFactsQuery.isError;
-
-  const refetch = useCallback(() => {
-    homeLoanQuery.refetch();
-    repaymentQuery.refetch();
-    loanFactsQuery.refetch();
-  }, [homeLoanQuery, repaymentQuery, loanFactsQuery]);
-
-  const refetchStale = useCallback(() => {
-    if (homeLoanQuery.isStale) homeLoanQuery.refetch();
-    if (repaymentQuery.isStale) repaymentQuery.refetch();
-    if (loanFactsQuery.isStale) loanFactsQuery.refetch();
-  }, [homeLoanQuery, repaymentQuery, loanFactsQuery]);
+  const status = useCombineScreenQueries([homeLoanQuery, repaymentQuery, loanFactsQuery]);
 
   return {
     loanFacts: loanFactsQuery.data ?? EMPTY_LOAN_FACTS,
     homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
     repayment: repaymentQuery.data ?? EMPTY_REPAYMENT,
-    isLoading,
-    isError,
+    // homeLoanError: the balance read's OWN error, kept separate from the aggregate so the
+    // milestone "Couldn't load your balance" hero keys on it, not a repayment/facts failure.
     homeLoanError: homeLoanQuery.isError,
-    refetch,
-    refetchStale,
+    ...status,
   };
 }
