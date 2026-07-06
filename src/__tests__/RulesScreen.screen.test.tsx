@@ -1,10 +1,15 @@
 // Screen test: the Rules screen (WHIT-52 Slice 2). Verifies the loading and
 // error+retry states and that a loaded rule renders + its trash button calls
-// deleteRule. Context is injected via the jest.mock('../context') pattern.
+// deleteRule. WHIT-195: the rule list now comes from the cached ['rules'] query, so
+// useRulesScreenData is mocked; setSheet/deleteRule/category stay on the store.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import type { AppContext } from '../context';
+import type { AppContext, Rule } from '../context';
+import type { RulesScreenData } from '../queries';
+
+let mockRules: RulesScreenData;
+jest.mock('../queries', () => ({ useRulesScreenData: () => mockRules }));
 
 let mockState: AppContext;
 jest.mock('../context', () => {
@@ -15,23 +20,34 @@ jest.mock('../context', () => {
 // Header pulls in expo-router (a native module that can't load headlessly) and
 // isn't under test here — stub it out so the screen renders in jest.
 jest.mock('../components/Header', () => ({ Header: () => null }));
+jest.mock('expo-router', () => ({ useFocusEffect: () => {} }));
 
 import Rules from '../../app/rules';
 
 const fns = {
   setSheet: jest.fn(),
   deleteRule: jest.fn(),
-  refreshEnrichments: jest.fn(),
+  refetch: jest.fn(),
+  refetchStale: jest.fn(),
 };
 
-function state(over: Partial<AppContext>): AppContext {
+function rulesData(over: Partial<RulesScreenData> = {}): RulesScreenData {
   return {
     rules: [],
-    enrichmentsLoading: false,
-    enrichmentsError: null,
+    isLoading: false,
+    isError: false,
+    refetch: fns.refetch,
+    refetchStale: fns.refetchStale,
+    ...over,
+  };
+}
+
+function state(over: Partial<AppContext> = {}): AppContext {
+  return {
     category: (id: string | null) =>
       id === 'subs' ? { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 } : undefined,
-    ...fns,
+    setSheet: fns.setSheet,
+    deleteRule: fns.deleteRule,
     ...over,
   } as unknown as AppContext;
 }
@@ -39,25 +55,28 @@ function state(over: Partial<AppContext>): AppContext {
 beforeEach(() => {
   fns.setSheet.mockClear();
   fns.deleteRule.mockClear();
-  fns.refreshEnrichments.mockClear();
+  fns.refetch.mockClear();
+  fns.refetchStale.mockClear();
+  mockState = state();
+  mockRules = rulesData();
 });
 
-it('shows a loading state while rules load', () => {
-  mockState = state({ enrichmentsLoading: true, rules: [] });
+it('shows a loading state while rules load (nothing cached yet)', () => {
+  mockRules = rulesData({ isLoading: true, rules: [] });
   render(<Rules />);
   expect(screen.getByText('Loading rules…')).toBeTruthy();
 });
 
-it('shows an error with a retry that refreshes', () => {
-  mockState = state({ enrichmentsError: 'Could not load rules.' });
+it('shows an error with a retry that refetches', () => {
+  mockRules = rulesData({ isError: true });
   render(<Rules />);
-  expect(screen.getByText('Could not load rules.')).toBeTruthy();
+  expect(screen.getByText('Could not load your rules.')).toBeTruthy();
   fireEvent.press(screen.getByText('Retry'));
-  expect(fns.refreshEnrichments).toHaveBeenCalled();
+  expect(fns.refetch).toHaveBeenCalled();
 });
 
 it('renders a rule and deletes it via the trash button', () => {
-  mockState = state({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }] });
+  mockRules = rulesData({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }] as Rule[] });
   render(<Rules />);
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   expect(screen.getByText('Subscriptions')).toBeTruthy();
@@ -66,8 +85,14 @@ it('renders a rule and deletes it via the trash button', () => {
 });
 
 it('tapping a rule body opens the edit sheet with its id', () => {
-  mockState = state({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }] });
+  mockRules = rulesData({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }] as Rule[] });
   render(<Rules />);
   fireEvent.press(screen.getByTestId('edit-rule-e1'));
   expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addrule', ruleId: 'e1' });
+});
+
+it('renders the NEW badge on a freshly-created rule (isNew survives the cache mirror)', () => {
+  mockRules = rulesData({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: true }] as Rule[] });
+  render(<Rules />);
+  expect(screen.getByText('NEW')).toBeTruthy();
 });

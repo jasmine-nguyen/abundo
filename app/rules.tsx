@@ -1,14 +1,21 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint } from '../src/theme';
 import { Icon, Glyph } from '../src/icons';
 import { useAppContext } from '../src/context';
+import { useRulesScreenData } from '../src/queries';
 import { Header } from '../src/components/Header';
 
 export default function Rules() {
-  const s = useAppContext();
+  const s = useAppContext(); // setSheet + deleteRule (writers) and category (label, stays on the store)
   const insets = useSafeAreaInsets();
+
+  // WHIT-195: the rule list now comes from the cached ['rules'] query. Re-check on focus,
+  // but only if the cache has gone stale (no request storm).
+  const { rules, isLoading, isError, refetch, refetchStale } = useRulesScreenData();
+  useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -24,24 +31,24 @@ export default function Rules() {
         <View style={styles.intro}>
           <View style={styles.introIcon}><Glyph name="sliders" size={22} color={C.accentSoft} /></View>
           <Text style={styles.introText}>
-            Rules categorize matching merchants the moment a transaction lands — <Text style={styles.introBold}>posted or pending</Text>. You have {s.rules.length} active {s.rules.length === 1 ? 'rule' : 'rules'}.
+            Rules categorize matching merchants the moment a transaction lands — <Text style={styles.introBold}>posted or pending</Text>. You have {rules.length} active {rules.length === 1 ? 'rule' : 'rules'}.
           </Text>
         </View>
 
-        {s.enrichmentsError ? (
+        {isError ? (
           <View style={styles.stateCard}>
-            <Text style={styles.stateText}>{s.enrichmentsError}</Text>
-            <Pressable onPress={() => s.refreshEnrichments()} style={styles.retryBtn}>
+            <Text style={styles.stateText}>Could not load your rules.</Text>
+            <Pressable onPress={() => refetch()} style={styles.retryBtn}>
               <Text style={styles.retryText}>Retry</Text>
             </Pressable>
           </View>
-        ) : s.enrichmentsLoading && s.rules.length === 0 ? (
+        ) : isLoading && rules.length === 0 ? (
           <View style={styles.stateCard}>
             <ActivityIndicator color={C.accentSoft} />
             <Text style={styles.stateText}>Loading rules…</Text>
           </View>
         ) : (
-          s.rules.map((r) => {
+          rules.map((r) => {
             const c = s.category(r.categoryId);
             const color = c?.color ?? '#888';
             return (
