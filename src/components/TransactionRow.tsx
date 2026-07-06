@@ -2,11 +2,13 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { C, FONT } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, transactionView, Transaction } from '../context';
+import { useAppContext, transactionView, Transaction, Category } from '../context';
 
-export function TransactionRow({ t }: { t: Transaction }) {
+// WHIT-203: the category taxonomy comes in as a prop (from the screen's query composite),
+// so the row doesn't read the store for it. openPicker stays on the store (client-state).
+export function TransactionRow({ t, category }: { t: Transaction; category: (id: string | null) => Category | undefined }) {
   const s = useAppContext();
-  const v = transactionView(s, t);
+  const v = transactionView({ category }, t);
   const onPress = v.tappable ? () => s.openPicker(t.transaction_id) : undefined;
   return (
     <Pressable

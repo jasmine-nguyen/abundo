@@ -10,7 +10,7 @@ import { render, screen } from '@testing-library/react-native';
 import type { AppContext } from '../context';
 
 let mockInsights: ReturnType<typeof insightsData>;
-jest.mock('../queries', () => ({ useInsightsScreenData: () => mockInsights }));
+jest.mock('../queries', () => ({ useInsightsScreenData: () => mockInsights, useGoalScreenData: () => ({ loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null }, homeLoan: { balance: null, asOf: null }, repayment: { amount: null, date: null, principal: null, interest: null }, isLoading: false, isError: false, homeLoanError: false, refetch: jest.fn(), refetchStale: jest.fn() }) }));
 
 let mockState: AppContext;
 jest.mock('../context', () => {

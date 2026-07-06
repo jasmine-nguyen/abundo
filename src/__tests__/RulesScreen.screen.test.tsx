@@ -9,7 +9,7 @@ import type { AppContext, Rule } from '../context';
 import type { RulesScreenData } from '../queries';
 
 let mockRules: RulesScreenData;
-jest.mock('../queries', () => ({ useRulesScreenData: () => mockRules }));
+jest.mock('../queries', () => ({ useRulesScreenData: () => mockRules, useCategories: () => ({ categories: [], category: mockState.category, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }) }));
 
 let mockState: AppContext;
 jest.mock('../context', () => {

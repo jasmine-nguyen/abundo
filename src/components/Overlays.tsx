@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel } from '../context';
+import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle } from '../queries';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -27,7 +28,6 @@ function formatLastPayDate(iso: string): string {
 }
 
 export function Overlays() {
-  const s = useAppContext();
   return (
     <>
       <LoadErrorBanner />
@@ -121,13 +121,17 @@ function SheetHost() {
 }
 
 function PickerSheet() {
-  const s = useAppContext();
+  const s = useAppContext(); // sheet + chooseCategory (client-state)
+  // WHIT-203: the transaction + category list come from the cached query layer (warm
+  // from the always-mounted tab bar), not the old store.
+  const { transactions } = useTransactionsScreenData();
+  const { categories: cats } = useCategories();
   const sh = s.sheet;
   if (sh?.mode !== 'picker') return null;
-  const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
+  const tx = transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
   // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
-  const categories = [...s.categories].sort((a, b) => a.name.localeCompare(b.name));
+  const categories = [...cats].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
@@ -151,11 +155,13 @@ function PickerSheet() {
 }
 
 function ConfirmSheet() {
-  const s = useAppContext();
+  const s = useAppContext(); // sheet + applyCategory (client-state / writer)
+  const { transactions } = useTransactionsScreenData();
+  const { category } = useCategories();
   const sh = s.sheet;
   if (sh?.mode !== 'confirm') return null;
-  const tx = s.transactions.find((t) => t.transaction_id === sh.txId);
-  const c = s.category(sh.categoryId);
+  const tx = transactions.find((t) => t.transaction_id === sh.txId);
+  const c = category(sh.categoryId);
   if (!tx || !c) return null;
   return (
     <View>
@@ -180,16 +186,18 @@ function ConfirmSheet() {
 }
 
 function AddRuleSheet() {
-  const s = useAppContext();
+  const s = useAppContext(); // sheet + updateRule + saveManualRule (writers)
+  const { rules } = useRulesScreenData();
+  const { categories: cats } = useCategories();
   const sh = s.sheet;
   // ruleId present -> editing an existing rule; prefill from it. The sheet is
   // keyed on ruleId (see SheetHost), so it remounts per rule and these
   // initialisers re-run.
-  const editing = sh?.mode === 'addrule' && sh.ruleId ? s.rules.find((r) => r.id === sh.ruleId) : undefined;
+  const editing = sh?.mode === 'addrule' && sh.ruleId ? rules.find((r) => r.id === sh.ruleId) : undefined;
   const [pattern, setPattern] = useState(editing?.pattern ?? '');
   const [categoryId, setCategoryId] = useState<string | null>(editing?.categoryId ?? null);
   // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
-  const categories = [...s.categories].sort((a, b) => a.name.localeCompare(b.name));
+  const categories = [...cats].sort((a, b) => a.name.localeCompare(b.name));
   const canSave = pattern.trim().length > 0 && !!categoryId;
   const submit = () => {
     if (!canSave) return;
@@ -237,7 +245,11 @@ function AddRuleSheet() {
 }
 
 function PayCycleSheet() {
-  const s = useAppContext();
+  const s = useAppContext(); // setPayCycleLength + setPayday + setSheet (writers/client-state)
+  // WHIT-203: the current pay cycle is read from the query layer; the length/payday
+  // writes double-write the ['payCycle'] cache (persistPayCycle), so a selection reflects
+  // here immediately.
+  const { payCycle } = usePayCycle();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
   const isIOS = Platform.OS === 'ios';
   // iOS shows a COMPACT date pill inline (tap -> calendar popover), so it needs no
@@ -263,7 +275,7 @@ function PayCycleSheet() {
       <Text style={styles.confirmSub}>Budgets reset and pace is measured across this period.</Text>
       <View style={{ marginTop: 14, gap: 10 }}>
         {opts.map((o) => {
-          const sel = s.payCycle.length === o.len;
+          const sel = payCycle.length === o.len;
           return (
             <Pressable
               key={o.len}
@@ -283,7 +295,7 @@ function PayCycleSheet() {
         <View style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}>
           <Text style={[styles.cycleText, { color: C.textMid }]}>Set date</Text>
           <DateTimePicker
-            value={parseLastPayDate(s.payCycle.last_pay_date)}
+            value={parseLastPayDate(payCycle.last_pay_date)}
             mode="date"
             display="compact"          // small native date pill, not the big inline grid
             maximumDate={today}
@@ -297,13 +309,13 @@ function PayCycleSheet() {
           onPress={() => setShowAndroidPicker(true)}
           style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
         >
-          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatLastPayDate(s.payCycle.last_pay_date)}</Text>
+          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatLastPayDate(payCycle.last_pay_date)}</Text>
           <Glyph name="calendar" size={18} color={C.textDim} />
         </Pressable>
       )}
       {!isIOS && showAndroidPicker && (
         <DateTimePicker
-          value={parseLastPayDate(s.payCycle.last_pay_date)}
+          value={parseLastPayDate(payCycle.last_pay_date)}
           mode="date"
           display="default"
           maximumDate={today}

@@ -14,6 +14,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
+jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
 
 import { Overlays } from '../components/Overlays';
 

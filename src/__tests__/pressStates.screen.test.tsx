@@ -36,7 +36,7 @@ function flat(node: Node, pressed: boolean) {
 }
 
 it('a tappable row dims (opacity 0.6) on press and is solid at rest', () => {
-  const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} />);
+  const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
   const row = pressable(UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] });
   expect(row.props.disabled).toBeFalsy();          // tappable → can enter pressed state
   expect(flat(row, false).opacity).toBeUndefined(); // at rest: no dim
@@ -44,7 +44,7 @@ it('a tappable row dims (opacity 0.6) on press and is solid at rest', () => {
 });
 
 it('a non-tappable (categorized) row is disabled, so it never dims', () => {
-  const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx1', category: 'coffee' })} />);
+  const { UNSAFE_root } = render(<TransactionRow t={txn({ transaction_id: 'tx1', category: 'coffee' })} category={mockState.category} />);
   const row = pressable(UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] });
   expect(row.props.disabled).toBe(true);
   expect(row.props.onPress).toBeUndefined();

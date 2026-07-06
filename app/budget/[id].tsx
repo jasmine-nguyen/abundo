@@ -4,16 +4,19 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, budgetDetail, transactionView, Transaction } from '../../src/context';
+import { budgetDetail, transactionView, Transaction, Category } from '../../src/context';
+import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { WhittleBar } from '../../src/components/ui';
 
 export default function BudgetDetail() {
-  const s = useAppContext();
+  // WHIT-203: the rollup + this category's transactions now come from the cached query
+  // layer (fed to budgetDetail as a narrow input) instead of the eager store.
+  const d = useBudgetDetailScreenData();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const bd = budgetDetail(s, id);
+  const bd = budgetDetail(d, id);
 
   if (!bd) {
     return (
@@ -67,7 +70,7 @@ export default function BudgetDetail() {
         {bd.relGroups.map((g) => (
           <View key={g.label} style={{ marginTop: 6 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => <DetailTransactionRow key={t.transaction_id} t={t} />)}
+            {g.items.map((t) => <DetailTransactionRow key={t.transaction_id} t={t} category={d.category} />)}
           </View>
         ))}
         {bd.relEmpty && <Text style={styles.empty}>No transactions in this category in the last 7 days.</Text>}
@@ -76,10 +79,9 @@ export default function BudgetDetail() {
   );
 }
 
-function DetailTransactionRow({ t }: { t: Transaction }) {
-  const s = useAppContext();
-  const v = transactionView(s, t);
-  const c = s.category(t.category);
+function DetailTransactionRow({ t, category }: { t: Transaction; category: (id: string | null) => Category | undefined }) {
+  const v = transactionView({ category }, t);
+  const c = category(t.category);
   return (
     <View style={styles.txRow}>
       <View style={[styles.txChip, { backgroundColor: v.chipBg }]}><Icon name={v.icon} size={22} color={v.iconColor} /></View>

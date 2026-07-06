@@ -17,7 +17,7 @@ const ACCOUNTS = [
 ];
 
 export default function Transactions() {
-  const s = useAppContext(); // retryLoad (banner-clear on pull); TransactionRow reads its own category
+  const s = useAppContext(); // retryLoad (banner-clear on pull); category is passed to each TransactionRow
   const [tab, setTab] = useState<Tab>('all');
   // WHIT-190a: transactions now come from the cached, auth-gated query layer.
   const { transactions, category, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
@@ -101,7 +101,7 @@ export default function Transactions() {
         {tab !== 'accounts' && !showSpinner && !showError && groups.map((g) => (
           <View key={g.label} style={{ marginTop: 18 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} />)}
+            {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} category={category} />)}
           </View>
         ))}
 
