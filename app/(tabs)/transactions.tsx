@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
-import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, transactionGroups, countUncategorized } from '../../src/context';
+import { useTransactionsScreenData } from '../../src/queries';
 import { TransactionRow } from '../../src/components/TransactionRow';
 
 type Tab = 'all' | 'uncategorized' | 'accounts';
@@ -15,11 +17,22 @@ const ACCOUNTS = [
 ];
 
 export default function Transactions() {
-  const s = useAppContext();
+  const s = useAppContext(); // retryLoad (banner-clear on pull); TransactionRow reads its own category
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('all');
-  const uncategorizedCount = countUncategorized(s);
-  const groups = transactionGroups(s, tab === 'uncategorized' ? 'uncategorized' : 'all');
+  // WHIT-190a: transactions now come from the cached, auth-gated query layer.
+  const { transactions, category, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
+  useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
+
+  const view = { transactions, category };
+  const uncategorizedCount = countUncategorized(view);
+  const groups = transactionGroups(view, tab === 'uncategorized' ? 'uncategorized' : 'all');
+
+  const showError = isError && transactions.length === 0;
+  const showSpinner = !showError && isLoading && transactions.length === 0;
+  // Pull-to-refresh: refetch the query AND run retryLoad so the old store reloads and
+  // the "couldn't load" banner clears — the WHIT-74 behaviour.
+  const onRefresh = useCallback(() => { refetch(); s.retryLoad(); }, [refetch, s.retryLoad]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -29,14 +42,13 @@ export default function Transactions() {
         <View style={styles.searchBtn}><Glyph name="search" size={20} color={C.textMid} /></View>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false} 
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}
 				refreshControl={
 					<RefreshControl
-						refreshing={s.transactionsLoading}
-						// Pull-to-refresh routes through retryLoad (not just refreshTransactions)
-						// so it reloads everything AND clears the "couldn't load" banner on a
-						// successful pull — the same behaviour as the banner's own Retry.
-						onRefresh={s.retryLoad}
+						// Spin only while refreshing data we ALREADY have — the inline spinner owns
+						// the cold-load state, so the two don't both spin at once (code-critic).
+						refreshing={isFetching && transactions.length > 0}
+						onRefresh={onRefresh}
 						tintColor="#7c8cff"
 					/>
 				}>
@@ -64,14 +76,28 @@ export default function Transactions() {
           </View>
         )}
 
-        {tab !== 'accounts' && groups.map((g) => (
+        {tab !== 'accounts' && showSpinner && (
+          <View testID="transactions-loading" style={styles.rowsState}>
+            <ActivityIndicator color={C.accent} />
+          </View>
+        )}
+        {tab !== 'accounts' && showError && (
+          <View testID="transactions-error" style={styles.rowsState}>
+            <Text style={styles.stateText}>Couldn't load your transactions.</Text>
+            <Pressable testID="transactions-retry" onPress={refetch} style={styles.retryBtn}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {tab !== 'accounts' && !showSpinner && !showError && groups.map((g) => (
           <View key={g.label} style={{ marginTop: 18 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
             {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} />)}
           </View>
         ))}
 
-        {tab === 'uncategorized' && uncategorizedCount === 0 && (
+        {tab === 'uncategorized' && !showSpinner && !showError && uncategorizedCount === 0 && (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}><Glyph name="check" size={32} color={C.good} /></View>
             <Text style={styles.emptyTitle}>All caught up</Text>
@@ -141,4 +167,9 @@ const styles = StyleSheet.create({
   acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   acctBal: { fontFamily: FONT.display, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
+
+  rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
+  stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
+  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

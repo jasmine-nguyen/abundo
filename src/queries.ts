@@ -5,10 +5,10 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle } from './api';
+import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions } from './api';
 import type { BudgetRollup, CategorySpend, PayCycle } from './api';
 import { cycleClock, toBudget, toCategory } from './context';
-import type { Budget, Category } from './context';
+import type { Budget, Category, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
 // --- auth gating -------------------------------------------------------------
@@ -33,6 +33,10 @@ export const budgetsKey = (cycleLen: number) => ['budgets', cycleLen] as const;
 // Breakdown (spend-by-category, the Insights tab) windows on the cycle length too, so
 // it's keyed the same way — a cycle-length change refetches the right window.
 export const breakdownKey = (cycleLen: number) => ['breakdown', cycleLen] as const;
+// Transactions aren't windowed (fetchTransactions takes no args), so a flat key. Kept
+// in sync with the literal ['transactions'] the categorise write uses in context.tsx
+// (context imports queryClient directly, not this key, to avoid a circular import).
+export const transactionsKey = ['transactions'] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
@@ -75,6 +79,11 @@ export function useBreakdownQuery(cycleLen: number, enabled: boolean) {
     queryFn: () => fetchBreakdown(cycleLen),
     enabled,
   });
+}
+
+// WHIT-190a: the full transaction list (un-windowed).
+export function useTransactionsQuery(enabled: boolean) {
+  return useQuery({ queryKey: transactionsKey, queryFn: fetchTransactions, enabled });
 }
 
 // --- the Budgets screen's composite view -------------------------------------
@@ -187,4 +196,52 @@ export function useInsightsScreenData(): InsightsScreenData {
   }, [payCycleQuery, breakdownQuery, categoriesQuery]);
 
   return { breakdown: breakdownQuery.data ?? {}, category, isLoading, isError, refetch, refetchStale };
+}
+
+// --- the Transactions screen's composite view (WHIT-190a) --------------------
+export interface TransactionsScreenData {
+  transactions: Transaction[];
+  category: (id: string | null) => Category | undefined;
+  isLoading: boolean; // first load, nothing cached yet → spinner
+  isError: boolean; // a read failed after retries → inline retry
+  isFetching: boolean; // any fetch in flight (incl. a background refetch) → pull-to-refresh spinner
+  refetch: () => void; // force refresh (inline Retry / pull)
+  refetchStale: () => void; // focus refresh — only refetches stale queries
+}
+
+/** Transactions + the category taxonomy for the row selectors. No pay-cycle window. */
+export function useTransactionsScreenData(): TransactionsScreenData {
+  const authed = useIsAuthed();
+  const transactionsQuery = useTransactionsQuery(authed);
+  const categoriesQuery = useCategoriesQuery(authed);
+
+  const categories = categoriesQuery.data ?? [];
+  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
+
+  const isLoading = transactionsQuery.isLoading || categoriesQuery.isLoading;
+  const isError = transactionsQuery.isError || categoriesQuery.isError;
+  // isFetching (not isLoading) drives pull-to-refresh: isLoading is false once data is
+  // cached, so a pull-refresh of an already-loaded list must spin on isFetching instead.
+  const isFetching = transactionsQuery.isFetching || categoriesQuery.isFetching;
+
+  const refetch = useCallback(() => {
+    transactionsQuery.refetch();
+    categoriesQuery.refetch();
+  }, [transactionsQuery, categoriesQuery]);
+
+  const refetchStale = useCallback(() => {
+    if (transactionsQuery.isStale) transactionsQuery.refetch();
+    if (categoriesQuery.isStale) categoriesQuery.refetch();
+  }, [transactionsQuery, categoriesQuery]);
+
+  return {
+    transactions: transactionsQuery.data ?? [],
+    category,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+    refetchStale,
+  };
 }
