@@ -378,8 +378,9 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
 
 // Map a server enrichment rule into the client `Rule` shape. `value` -> `pattern`
 // (what the list renders); loaded rules are never "new". Module-level (like
-// toCategory/toBudget) so refreshEnrichments stays a stable callback.
-function toRule(raw: EnrichmentRule): Rule {
+// toCategory/toBudget) so refreshEnrichments stays a stable callback. Exported
+// (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
+export function toRule(raw: EnrichmentRule): Rule {
   return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator };
 }
 
@@ -393,6 +394,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // from /enrichments on mount (no fake seeds — a failed load shows an error, not
   // undeletable placeholder rules).
   const [rules, setRules] = useState<Rule[]>([]);
+  // WHIT-195: mirror every optimistic rule edit into the ['rules'] query cache (the
+  // migrated Rules screen reads it) as well as the old store (the AddRuleSheet + the
+  // Settings rules-count still read the store). Applies the SAME functional updater to
+  // both so they stay in lockstep — including the client-only isNew "NEW" badge, which a
+  // refetch would reset to false. Guard an evicted/absent cache (gcTime is finite): when
+  // the Rules screen was never opened there's nothing to patch, and opening it fetches
+  // fresh. Literal ['rules'] key (not the queries.ts const) to avoid a circular import.
+  const patchRules = useCallback((fn: (prev: Rule[]) => Rule[]) => {
+    setRules(fn);
+    queryClient.setQueryData<Rule[]>(['rules'], (prev) => (prev ? fn(prev) : prev));
+  }, []);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
   // Seeded to the server default; refreshPayCycle() overwrites it from the API on
   // mount. last_pay_date is an ISO "YYYY-MM-DD" payday date (was a weekday name pre-P14).
@@ -788,7 +800,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Optimistically add the rule; a durable BankSync rule is created below.
       // Keep its temp id so we can swap in the server id or roll it back.
       const tempRuleId = 'tmp-' + Date.now();
-      setRules((prev) => [
+      patchRules((prev) => [
         { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
         ...prev,
       ]);
@@ -816,9 +828,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (ruleOutcome.status === 'fulfilled') {
         // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
         // false for the load path, where rules genuinely aren't new).
-        setRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(ruleOutcome.value), isNew: true } : r)));
+        patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(ruleOutcome.value), isNew: true } : r)));
       } else {
-        setRules((prev) => prev.filter((r) => r.id !== tempRuleId));
+        patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       }
 
       // Failures, mapped BY ID (not array position — never trust server order),
@@ -875,7 +887,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }));
       showToast('Could not save category. Please try again.');
     }
-  }, [sheet, transactions, categories, showToast, refreshBudgets, refreshBreakdown]);
+  }, [sheet, transactions, categories, showToast, refreshBudgets, refreshBreakdown, patchRules]);
 
   const saveBudget = useCallback(
     async (categoryId: string, value: number): Promise<boolean> => {
@@ -934,7 +946,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Uncategorized via isUncategorized).
       setCategories((prev) => prev.filter((c) => c.id !== id));
       setBudgets((prev) => prev.filter((b) => b.id !== id));
-      setRules((prev) => prev.filter((r) => r.categoryId !== id));
+      patchRules((prev) => prev.filter((r) => r.categoryId !== id));
       setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
       // The deleted category's in-cycle spend now falls into Uncategorized on the
       // breakdown; re-pull so the Insights tab reflects that. (Budgets already
@@ -946,7 +958,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast('Could not delete category. Please try again.');
       return false;
     }
-  }, [showToast, refreshBreakdown]);
+  }, [showToast, refreshBreakdown, patchRules]);
 
   // Optimistically remove the rule, then delete it in BankSync; on failure put it
   // back where it was and tell the user. A temp-id rule (mid-create) deletes fine
@@ -956,18 +968,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const index = rules.findIndex((r) => r.id === id);
     if (index === -1) return;
     const removed = rules[index];
-    setRules((prev) => prev.filter((r) => r.id !== id));
+    patchRules((prev) => prev.filter((r) => r.id !== id));
     try {
       await deleteEnrichment(id);
     } catch {
-      setRules((prev) => {
+      patchRules((prev) => {
         const next = [...prev];
         next.splice(Math.min(index, next.length), 0, removed);
         return next;
       });
       showToast('Could not delete rule. Please try again.');
     }
-  }, [rules, showToast]);
+  }, [rules, showToast, patchRules]);
 
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
@@ -977,19 +989,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!value || !categoryId) return;
     const c = categories.find((x) => x.id === categoryId);
     const tempRuleId = 'tmp-' + Date.now();
-    setRules((prev) => [{ id: tempRuleId, pattern: value, categoryId, isNew: true }, ...prev]);
+    patchRules((prev) => [{ id: tempRuleId, pattern: value, categoryId, isNew: true }, ...prev]);
     setSheet(null);
     if (c) showToast(`Rule added — ${value} files as ${c.name}.`);
     try {
       const created = await createEnrichment({ value, categoryId });
       // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
       // false for the load path, where rules genuinely aren't new).
-      setRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
+      patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
     } catch {
-      setRules((prev) => prev.filter((r) => r.id !== tempRuleId));
+      patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       showToast('Could not save rule. Please try again.');
     }
-  }, [categories, showToast]);
+  }, [categories, showToast, patchRules]);
 
   // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
   // failure. The rule's field/operator are preserved (passed through) so a
@@ -999,18 +1011,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!value || !categoryId) return;
     const before = rules.find((r) => r.id === id);
     if (!before) return;
-    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, pattern: value, categoryId } : r)));
+    patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, pattern: value, categoryId } : r)));
     setSheet(null);
     const c = categories.find((x) => x.id === categoryId);
     if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
     try {
       const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator });
-      setRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
+      patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
     } catch {
-      setRules((prev) => prev.map((r) => (r.id === id ? before : r)));
+      patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
       showToast('Could not update rule. Please try again.');
     }
-  }, [rules, categories, showToast]);
+  }, [rules, categories, showToast, patchRules]);
 
   const fireRepayment = useCallback(() => {
     const principal = 1208;

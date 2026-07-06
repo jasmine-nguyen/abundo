@@ -5,10 +5,10 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment } from './api';
-import type { BudgetRollup, CategorySpend, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
-import { cycleClock, loanFactsReady, toBudget, toCategory, EMPTY_LOAN_FACTS } from './context';
-import type { Budget, Category, HomeLoanState, Transaction } from './context';
+import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, listEnrichments } from './api';
+import type { BudgetRollup, CategorySpend, EnrichmentRule, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
+import { cycleClock, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
+import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
 // --- auth gating -------------------------------------------------------------
@@ -45,10 +45,25 @@ export const loanFactsKey = ['loanFacts'] as const;
 // repayment is server-derived), so no in-context literal to keep in sync.
 export const homeLoanKey = ['homeLoan'] as const;
 export const repaymentKey = ['repayment'] as const;
+// The categorisation rules (the Rules screen). Un-windowed flat key, kept in sync with
+// the literal ['rules'] the rule writes double-write in context.tsx (context imports
+// queryClient directly, not this key, to avoid a circular import) — WHIT-195.
+export const rulesKey = ['rules'] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
   return raw.map(toCategory);
+}
+// WHIT-195: map the server enrichment rules into the client Rule shape (value→pattern,
+// isNew:false for loaded rules). Reuses the same toRule the store uses, so the cache and
+// the store's optimistic double-write agree field-for-field.
+export function selectRules(raw: EnrichmentRule[]): Rule[] {
+  // Fail LOUDLY on a malformed /enrichments payload (a wrapped or changed shape) — the
+  // query rejects → the Rules screen shows its error card + Retry — rather than a cryptic
+  // "raw.map is not a function" or silently rendering "0 rules" over data the user has.
+  // Array.isArray also rejects null/undefined.
+  if (!Array.isArray(raw)) throw new Error(`selectRules: expected an array from /enrichments, got ${typeof raw}`);
+  return raw.map(toRule);
 }
 export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
   return Object.entries(rollups)
@@ -114,6 +129,14 @@ export function useHomeLoanQuery(enabled: boolean) {
 // none is on record — a graceful empty state, not an error.
 export function useRepaymentQuery(enabled: boolean) {
   return useQuery({ queryKey: repaymentKey, queryFn: fetchRepayment, enabled });
+}
+
+// WHIT-195: the categorisation rules. Mapped in the queryFn (not `select`) so the cache
+// holds Rule[] — the same shape the store's optimistic double-write mirrors, which lets a
+// freshly-created rule carry its client-only isNew "NEW" badge through the coexistence
+// window (a raw-EnrichmentRule cache couldn't).
+export function useRulesQuery(enabled: boolean) {
+  return useQuery({ queryKey: rulesKey, queryFn: async () => selectRules(await listEnrichments()), enabled });
 }
 
 // --- the Budgets screen's composite view -------------------------------------
@@ -288,8 +311,10 @@ export interface SettingsScreenData {
 
 /**
  * The two Settings rows that read server data — the categories count and whether loan
- * facts are set. Rules + pay-cycle + alerts + the profile identity stay on the old
- * store / auth (rules migrate in WHIT-195).
+ * facts are set. Pay-cycle + alerts + the profile identity stay on the old store / auth.
+ * The rules COUNT also stays on the store: WHIT-195 migrated the Rules *screen* onto the
+ * ['rules'] query, but the rule writes double-write the store too, so Settings' count
+ * stays consistent without coupling a third query into this composite's loading state.
  */
 export function useSettingsScreenData(): SettingsScreenData {
   const authed = useIsAuthed();
@@ -314,6 +339,41 @@ export function useSettingsScreenData(): SettingsScreenData {
     loanReady: loanFactsQuery.data ? loanFactsReady(loanFactsQuery.data) : false,
     isLoading,
     isError,
+    refetch,
+    refetchStale,
+  };
+}
+
+// --- the Rules screen's composite view (WHIT-195) ----------------------------
+export interface RulesScreenData {
+  rules: Rule[];
+  isLoading: boolean; // first load, nothing cached yet → spinner
+  isError: boolean; // the read failed after retries → inline retry
+  refetch: () => void; // force a refresh (the inline Retry button)
+  refetchStale: () => void; // focus refresh — only refetches when stale
+}
+
+/**
+ * The Rules screen's data — just the categorisation rules. The category taxonomy that
+ * labels each rule stays on the old store (s.category) until the WHIT-192 cleanup, so a
+ * categories outage degrades a rule's label to "—" rather than erroring the whole screen.
+ */
+export function useRulesScreenData(): RulesScreenData {
+  const authed = useIsAuthed();
+  const rulesQuery = useRulesQuery(authed);
+
+  const refetch = useCallback(() => {
+    rulesQuery.refetch();
+  }, [rulesQuery]);
+
+  const refetchStale = useCallback(() => {
+    if (rulesQuery.isStale) rulesQuery.refetch();
+  }, [rulesQuery]);
+
+  return {
+    rules: rulesQuery.data ?? [],
+    isLoading: rulesQuery.isLoading,
+    isError: rulesQuery.isError,
     refetch,
     refetchStale,
   };
