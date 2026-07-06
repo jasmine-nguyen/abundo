@@ -9,20 +9,22 @@ import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
 
 const mockReplace = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
+jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }), useFocusEffect: () => {} }));
 
 const mockSignOut = jest.fn(async () => {});
 // WHIT-180: Settings now also reads getCurrentUser for the profile card.
 jest.mock('../../src/auth', () => ({ signOut: () => mockSignOut(), getCurrentUser: () => null }));
 
-// Minimal context so the screen renders headlessly (it only reads a few fields).
+// WHIT-191a: the categories count + loan-facts status now come from a query composite.
+jest.mock('../../src/queries', () => ({
+  useSettingsScreenData: () => ({ categoriesCount: 0, loanReady: false, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
+}));
+
+// Minimal context so the screen renders headlessly (rules/pay-cycle/alerts stay on the store).
 jest.mock('../../src/context', () => ({
-  loanFactsReady: () => false,
   useAppContext: () => ({
-    categories: [],
     rules: [],
     cycleName: () => 'Fortnightly',
-    loanFacts: {},
     alerts: true,
     toggleAlerts: jest.fn(),
     setSheet: jest.fn(),

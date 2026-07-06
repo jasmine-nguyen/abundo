@@ -705,6 +705,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setLoanFacts(next);
     try {
       await apiSetLoanFacts(next);
+      // WHIT-191a: mirror the save into the ['loanFacts'] query cache (Settings reads it)
+      // and invalidate to reconcile with the server. ONLY ['loanFacts'] — home-loan
+      // balance + repayment don't depend on loan facts server-side (the payoff projection
+      // is client-derived). The old store is already updated above for the unmigrated
+      // readers (milestone, Insights aiGoalSignal, the loan form).
+      queryClient.setQueryData(['loanFacts'], next);
+      queryClient.invalidateQueries({ queryKey: ['loanFacts'] });
       return true;
     } catch {
       setLoanFacts(prev);

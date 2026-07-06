@@ -3,10 +3,11 @@
 // (one + all), saveBudget, saveCategory (create + edit), deleteCategory — success
 // and failure/rollback — plus the toCategory mapper (categories load from a
 // mocked non-empty fetch). renderHook drives useAppContext directly.
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
+import { queryClient } from '../queryClient';
 
 jest.mock('../api');
 // WHIT-174: the load-error banner is now an AUTHED-only concern (a signed-out
@@ -26,6 +27,11 @@ const TXN = {
 } as const;
 
 beforeEach(() => {
+  // WHIT-191a: applyCategory patches the ['transactions'] cache in the module-singleton
+  // queryClient (gcTime 5min → live timers). Clear it around each test so those timers
+  // don't outlive the suite and trip the "worker failed to exit" warning in the full run
+  // (mirrors transactionsCategorize / loanFactsWrite).
+  queryClient.clear();
   mockApi.fetchTransactions.mockResolvedValue([{ ...TXN }]);
   mockApi.fetchCategories.mockResolvedValue([{ ...CAT }]);
   mockApi.fetchPayCycle.mockResolvedValue({ length: 14, last_pay_date: '2024-01-03' });
@@ -38,6 +44,9 @@ beforeEach(() => {
   mockApi.setTransactionCategories.mockImplementation(
     async (updates: { id: string; category: string }[]) =>
       ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
+});
+afterEach(() => {
+  queryClient.clear();
 });
 
 async function mount() {

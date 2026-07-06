@@ -5,9 +5,9 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions } from './api';
-import type { BudgetRollup, CategorySpend, PayCycle } from './api';
-import { cycleClock, toBudget, toCategory } from './context';
+import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts } from './api';
+import type { BudgetRollup, CategorySpend, LoanFacts, PayCycle } from './api';
+import { cycleClock, loanFactsReady, toBudget, toCategory } from './context';
 import type { Budget, Category, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -37,6 +37,9 @@ export const breakdownKey = (cycleLen: number) => ['breakdown', cycleLen] as con
 // in sync with the literal ['transactions'] the categorise write uses in context.tsx
 // (context imports queryClient directly, not this key, to avoid a circular import).
 export const transactionsKey = ['transactions'] as const;
+// Loan facts (the Settings "Loan details" row + the loan form). Un-windowed flat key,
+// kept in sync with the literal ['loanFacts'] the saveLoanFacts write uses in context.tsx.
+export const loanFactsKey = ['loanFacts'] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
@@ -84,6 +87,11 @@ export function useBreakdownQuery(cycleLen: number, enabled: boolean) {
 // WHIT-190a: the full transaction list (un-windowed).
 export function useTransactionsQuery(enabled: boolean) {
   return useQuery({ queryKey: transactionsKey, queryFn: fetchTransactions, enabled });
+}
+
+// WHIT-191a: the user's home-loan facts (un-windowed).
+export function useLoanFactsQuery(enabled: boolean) {
+  return useQuery({ queryKey: loanFactsKey, queryFn: fetchLoanFacts, enabled });
 }
 
 // --- the Budgets screen's composite view -------------------------------------
@@ -241,6 +249,49 @@ export function useTransactionsScreenData(): TransactionsScreenData {
     isLoading,
     isError,
     isFetching,
+    refetch,
+    refetchStale,
+  };
+}
+
+// --- the Settings screen's composite view (WHIT-191a) ------------------------
+export interface SettingsScreenData {
+  categoriesCount: number;
+  loanReady: boolean; // whether loan facts are fully filled in ("Edit" vs "Set up")
+  isLoading: boolean; // first load, nothing cached → show "…" instead of a misleading "0"
+  isError: boolean;
+  refetch: () => void;
+  refetchStale: () => void;
+}
+
+/**
+ * The two Settings rows that read server data — the categories count and whether loan
+ * facts are set. Rules + pay-cycle + alerts + the profile identity stay on the old
+ * store / auth (rules migrate in WHIT-195).
+ */
+export function useSettingsScreenData(): SettingsScreenData {
+  const authed = useIsAuthed();
+  const categoriesQuery = useCategoriesQuery(authed);
+  const loanFactsQuery = useLoanFactsQuery(authed);
+
+  const isLoading = categoriesQuery.isLoading || loanFactsQuery.isLoading;
+  const isError = categoriesQuery.isError || loanFactsQuery.isError;
+
+  const refetch = useCallback(() => {
+    categoriesQuery.refetch();
+    loanFactsQuery.refetch();
+  }, [categoriesQuery, loanFactsQuery]);
+
+  const refetchStale = useCallback(() => {
+    if (categoriesQuery.isStale) categoriesQuery.refetch();
+    if (loanFactsQuery.isStale) loanFactsQuery.refetch();
+  }, [categoriesQuery, loanFactsQuery]);
+
+  return {
+    categoriesCount: categoriesQuery.data?.length ?? 0,
+    loanReady: loanFactsQuery.data ? loanFactsReady(loanFactsQuery.data) : false,
+    isLoading,
+    isError,
     refetch,
     refetchStale,
   };

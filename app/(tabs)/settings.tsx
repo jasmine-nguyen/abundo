@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Image } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useAppContext, loanFactsReady } from '../../src/context';
+import { useAppContext } from '../../src/context';
+import { useSettingsScreenData } from '../../src/queries';
 import { signOut, getCurrentUser } from '../../src/auth';
 import { SectionLabel } from '../../src/components/ui';
 
@@ -28,9 +29,14 @@ export function initialsFrom(u: { email?: string; name?: string } | null): strin
 }
 
 export default function Settings() {
-  const s = useAppContext();
+  const s = useAppContext(); // rules, pay-cycle, alerts (rules migrate in WHIT-195)
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  // WHIT-191a: the two server-backed rows (categories count + loan-facts status) now come
+  // from the cached query layer. "…" while first-loading so the count never flashes "0".
+  const { categoriesCount, loanReady, isLoading, refetchStale } = useSettingsScreenData();
+  useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-180: real identity from the Cognito ID token, not the "Jordan Diaz" mock.
   const user = getCurrentUser();
@@ -74,10 +80,10 @@ export default function Settings() {
 
         <SectionLabel>SETUP</SectionLabel>
         <View style={styles.group}>
-          <Row icon="tag" label="Categories" value={String(s.categories.length)} onPress={() => router.push('/category')} />
+          <Row icon="tag" label="Categories" value={isLoading ? '…' : String(categoriesCount)} onPress={() => router.push('/category')} />
           <Row icon="sliders" label="Automation rules" value={String(s.rules.length)} onPress={() => router.push('/rules')} />
           <Row icon="calendar" label="Pay cycle" value={s.cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} />
-          <Row icon="building" label="Loan details" value={loanFactsReady(s.loanFacts) ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
+          <Row icon="building" label="Loan details" value={isLoading ? '…' : loanReady ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
         </View>
 
         <SectionLabel>PREFERENCES</SectionLabel>
