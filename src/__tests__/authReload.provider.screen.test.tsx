@@ -70,7 +70,8 @@ it('re-fires every mount read when auth transitions to authed (post-login recove
   expect(mockApi.fetchHomeLoan).toHaveBeenCalledTimes(1);
   expect(mockApi.listEnrichments).toHaveBeenCalledTimes(1);
   expect(mockApi.fetchBudgets).toHaveBeenCalledTimes(1);
-  expect(mockApi.fetchBreakdown).toHaveBeenCalledTimes(1);
+  // WHIT-189: breakdown is NOT part of the auth-flip reload — the Insights query owns it.
+  expect(mockApi.fetchBreakdown).not.toHaveBeenCalled();
 });
 
 it('does NOT reload on a transition to anon (only authed triggers the reload)', async () => {

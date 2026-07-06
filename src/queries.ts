@@ -5,8 +5,8 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchBudgets, fetchCategories, fetchPayCycle } from './api';
-import type { BudgetRollup, PayCycle } from './api';
+import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle } from './api';
+import type { BudgetRollup, CategorySpend, PayCycle } from './api';
 import { cycleClock, toBudget, toCategory } from './context';
 import type { Budget, Category } from './context';
 import { getStatus, subscribe } from './auth';
@@ -30,6 +30,9 @@ export const payCycleKey = ['payCycle'] as const;
 // Budgets window on the pay-cycle length, so the length is part of the key — changing
 // the cycle length refetches the correctly-windowed rollup rather than serving stale.
 export const budgetsKey = (cycleLen: number) => ['budgets', cycleLen] as const;
+// Breakdown (spend-by-category, the Insights tab) windows on the cycle length too, so
+// it's keyed the same way — a cycle-length change refetches the right window.
+export const breakdownKey = (cycleLen: number) => ['breakdown', cycleLen] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
@@ -61,6 +64,16 @@ export function useBudgetsQuery(cycleLen: number, enabled: boolean) {
     queryFn: () => fetchBudgets(cycleLen),
     enabled,
     select: selectBudgets,
+  });
+}
+
+// Breakdown is already the Record<category id, {posted, pending}> the selector wants,
+// so no `select`. WHIT-189.
+export function useBreakdownQuery(cycleLen: number, enabled: boolean) {
+  return useQuery({
+    queryKey: breakdownKey(cycleLen),
+    queryFn: () => fetchBreakdown(cycleLen),
+    enabled,
   });
 }
 
@@ -125,4 +138,53 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     refetch,
     refetchStale,
   };
+}
+
+// --- the Insights screen's composite view (WHIT-189) -------------------------
+export interface InsightsScreenData {
+  breakdown: Record<string, CategorySpend>;
+  category: (id: string) => Category | undefined;
+  isLoading: boolean; // actively loading with nothing cached yet → show a spinner
+  isError: boolean; // a read failed after its retries → show the inline retry
+  refetch: () => void; // force a refresh (the inline Retry button)
+  refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
+}
+
+/**
+ * The Insights tab's spend-by-category data, assembled from the auth-gated queries.
+ * Breakdown windows on the pay-cycle length, so it fetches only once the real pay cycle
+ * has loaded (never with the default length then again with the real one). The AI-
+ * insights feature on that screen stays on the old context store — it is NOT here.
+ */
+export function useInsightsScreenData(): InsightsScreenData {
+  const authed = useIsAuthed();
+  const payCycleQuery = usePayCycleQuery(authed);
+  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
+  const { cycleLen } = cycleClock(payCycle);
+
+  const breakdownQuery = useBreakdownQuery(cycleLen, authed && payCycleQuery.isSuccess);
+  const categoriesQuery = useCategoriesQuery(authed);
+
+  const categories = categoriesQuery.data ?? [];
+  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const category = useCallback((id: string) => byId.get(id), [byId]);
+
+  // isLoading (not isPending) so a disabled query doesn't strand a spinner — see the
+  // note in useBudgetsScreenData.
+  const isLoading = payCycleQuery.isLoading || breakdownQuery.isLoading || categoriesQuery.isLoading;
+  const isError = payCycleQuery.isError || breakdownQuery.isError || categoriesQuery.isError;
+
+  const refetch = useCallback(() => {
+    payCycleQuery.refetch();
+    breakdownQuery.refetch();
+    categoriesQuery.refetch();
+  }, [payCycleQuery, breakdownQuery, categoriesQuery]);
+
+  const refetchStale = useCallback(() => {
+    if (payCycleQuery.isStale) payCycleQuery.refetch();
+    if (breakdownQuery.isStale) breakdownQuery.refetch();
+    if (categoriesQuery.isStale) categoriesQuery.refetch();
+  }, [payCycleQuery, breakdownQuery, categoriesQuery]);
+
+  return { breakdown: breakdownQuery.data ?? {}, category, isLoading, isError, refetch, refetchStale };
 }

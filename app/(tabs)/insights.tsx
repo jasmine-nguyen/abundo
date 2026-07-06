@@ -5,21 +5,28 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, categoryBreakdown, aiGoalSignal } from '../../src/context';
+import { useInsightsScreenData } from '../../src/queries';
 
 export default function Insights() {
   const s = useAppContext();
   const insets = useSafeAreaInsets();
-  const { rows, total } = categoryBreakdown(s);
+  // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer;
+  // the AI-insights feature below still reads the context store (`s`).
+  const { breakdown, category, isLoading, isError, refetch, refetchStale } = useInsightsScreenData();
+  const { rows, total } = categoryBreakdown({ breakdown, category });
 
-  // Spend depends on the current cycle, so re-pull whenever the tab gains focus
-  // (the window rolls over on payday, and categorising elsewhere moves the numbers).
-  // Also pull any AI insights already cached for this cycle (free — no generation).
+  // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via the
+  // store. Spend depends on the current cycle (rolls over on payday; categorising
+  // elsewhere moves the numbers); AI is any insight already cached for this cycle.
   useFocusEffect(useCallback(() => {
-    s.refreshBreakdown();
+    refetchStale();
     s.refreshAiInsights();
-  }, [s.refreshBreakdown, s.refreshAiInsights]));
+  }, [refetchStale, s.refreshAiInsights]));
 
-  const loading = s.breakdownLoading && rows.length === 0;
+  // Cache-first, error before spinner (mirrors Budgets). The hero + rows depend on
+  // breakdown; the AI card does NOT, so it stays visible through a breakdown load/error.
+  const showError = isError && rows.length === 0;
+  const showSpinner = !showError && isLoading && rows.length === 0;
   const ai = s.aiInsights;
   const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
   const ago = agoLabel(ai?.generated_at);
@@ -51,8 +58,20 @@ export default function Insights() {
         <View style={styles.hero}>
           <View style={styles.heroBlob} />
           <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
-          <Text style={styles.heroTotal}>{fmt(total)}</Text>
-          <Text style={styles.heroSub}>spent across {rows.length} {rows.length === 1 ? 'category' : 'categories'}</Text>
+          {/* Never show a confident "$0" over a load/error — the total reads breakdown,
+              which isn't ready yet. A legit zero-spend cycle (loaded, no rows) still
+              shows $0. WHIT-189. */}
+          {showSpinner || showError ? (
+            <>
+              <Text style={styles.heroTotal}>—</Text>
+              <Text style={styles.heroSub}>{showError ? "Couldn't load" : 'Loading…'}</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.heroTotal}>{fmt(total)}</Text>
+              <Text style={styles.heroSub}>spent across {rows.length} {rows.length === 1 ? 'category' : 'categories'}</Text>
+            </>
+          )}
         </View>
 
         {/* AI: a "coach" card — analyse this cycle's spend and suggest what to trim
@@ -121,8 +140,20 @@ export default function Insights() {
           <Text style={styles.aiNote}>{noteText}</Text>
         </View>
 
-        {loading && <Text style={styles.empty}>Loading…</Text>}
-        {!loading && rows.length === 0 && (
+        {showSpinner && (
+          <View testID="insights-loading" style={styles.rowsState}>
+            <ActivityIndicator color={C.accent} />
+          </View>
+        )}
+        {showError && (
+          <View testID="insights-error" style={styles.rowsState}>
+            <Text style={styles.empty}>Couldn't load your spending.</Text>
+            <Pressable testID="insights-retry" onPress={refetch} style={styles.retryBtn}>
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          </View>
+        )}
+        {!showSpinner && !showError && rows.length === 0 && (
           <Text style={styles.empty}>No spending yet this pay cycle.</Text>
         )}
 
@@ -173,6 +204,9 @@ const styles = StyleSheet.create({
   track: { flexDirection: 'row', gap: 2, height: 8, marginTop: 14, backgroundColor: 'rgba(255,255,255,.05)', borderRadius: 5, overflow: 'hidden' },
 
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },
+  rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 14 },
+  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 
   // Coach card: a soft accent wash + accent hairline so it reads as "advice",
   // sitting between the loud hero and the plain category rows.
