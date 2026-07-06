@@ -17,158 +17,151 @@ resource "aws_apigatewayv2_integration" "get_transactions_integration" {
   payload_format_version = "2.0"
 }
 
-resource "aws_apigatewayv2_route" "get_transactions_route" {
+# Every authenticated app route shares one shape: the lambda_api integration
+# (get_transactions_integration) + the Cognito JWT authorizer, differing only by
+# route_key. Collapsed from 23 near-identical resources into a single for_each
+# (WHIT-153). No new aws_lambda_permission is needed for any of these —
+# get_transactions_invoke_permission grants apigateway invoke over
+# ${execution_arn}/*/* (any method + route), so adding a route_key here needs no new
+# permission or integration.
+#
+# NOTE: "POST /webhook/banksync" is deliberately NOT in this set — it targets the
+# banksync_webhook_integration and is public (no authorizer). It stays a standalone
+# resource at the bottom of this file.
+locals {
+  app_route_keys = toset([
+    "GET /transactions",
+    "PATCH /transactions/{id}",
+    "PATCH /transactions",
+    "GET /categories",
+    "POST /categories",
+    "PATCH /categories/{id}",
+    "DELETE /categories/{id}",
+    "GET /budgets",
+    "PUT /budgets/{category}",
+    "GET /breakdown",
+    "GET /homeloan",
+    "GET /repayment",
+    "GET /loanfacts",
+    "PUT /loanfacts",
+    "GET /paycycle",
+    "PUT /paycycle",
+    "GET /enrichments",
+    "POST /enrichments",
+    "PUT /enrichments/{id}",
+    "DELETE /enrichments/{id}",
+    "POST /devices",
+    "GET /insights/ai",
+    "POST /insights/ai",
+  ])
+}
+
+resource "aws_apigatewayv2_route" "app" {
+  for_each           = local.app_route_keys
   api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /transactions"
+  route_key          = each.value
   target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
-# PATCH a single transaction's category; reuses the lambda_api integration.
-# No new lambda permission needed: get_transactions_invoke_permission already
-# grants apigateway invoke over ${execution_arn}/*/* (any method + route).
-resource "aws_apigatewayv2_route" "patch_transaction_category_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "PATCH /transactions/{id}"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+# WHIT-153: collapsed 23 identical routes into aws_apigatewayv2_route.app (for_each).
+# Without these moved{} blocks terraform would DESTROY+RECREATE every route, briefly
+# dropping every API route on live infra. moved{} makes it a pure state rename — the
+# plan shows only moves (0 add / 0 change / 0 destroy). Same pattern as the authorizer
+# moved{} below. These can be garbage-collected in a later card once the rename is
+# applied and confirmed.
+moved {
+  from = aws_apigatewayv2_route.get_transactions_route
+  to   = aws_apigatewayv2_route.app["GET /transactions"]
 }
-
-# Batch PATCH: set the category on many transactions in one request (WHIT-70).
-# Distinct from the {id} item route above ("/transactions" != "/transactions/{id}").
-# The /*/* invoke permission already covers it.
-resource "aws_apigatewayv2_route" "patch_transactions_batch_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "PATCH /transactions"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.patch_transaction_category_route
+  to   = aws_apigatewayv2_route.app["PATCH /transactions/{id}"]
 }
-
-# Category taxonomy CRUD (list/create); reuse the lambda_api integration.
-# The /*/* invoke permission already covers these, so no new lambda permission.
-resource "aws_apigatewayv2_route" "get_categories_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /categories"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.patch_transactions_batch_route
+  to   = aws_apigatewayv2_route.app["PATCH /transactions"]
 }
-
-resource "aws_apigatewayv2_route" "post_category_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "POST /categories"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.get_categories_route
+  to   = aws_apigatewayv2_route.app["GET /categories"]
 }
-
-resource "aws_apigatewayv2_route" "patch_category_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "PATCH /categories/{id}"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.post_category_route
+  to   = aws_apigatewayv2_route.app["POST /categories"]
 }
-
-resource "aws_apigatewayv2_route" "delete_category_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "DELETE /categories/{id}"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.patch_category_route
+  to   = aws_apigatewayv2_route.app["PATCH /categories/{id}"]
 }
-
-# Budget targets: read all (GET /budgets) + set one (PUT /budgets/{category}).
-# Reuse the lambda_api integration; the /*/* invoke permission already covers
-# these, so no new integration or lambda permission is needed.
-resource "aws_apigatewayv2_route" "get_budgets_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /budgets"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.delete_category_route
+  to   = aws_apigatewayv2_route.app["DELETE /categories/{id}"]
 }
-
-resource "aws_apigatewayv2_route" "put_budget_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "PUT /budgets/{category}"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.get_budgets_route
+  to   = aws_apigatewayv2_route.app["GET /budgets"]
 }
-
-# Category breakdown (WHIT-23): spend by category for the current cycle. Reuse the
-# lambda_api integration; the /*/* invoke permission already covers it, so no new
-# integration or lambda permission is needed.
-resource "aws_apigatewayv2_route" "get_breakdown_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /breakdown"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.put_budget_route
+  to   = aws_apigatewayv2_route.app["PUT /budgets/{category}"]
 }
-
-# Home-loan balance (WHIT-8): the live mortgage balance the poller stores. Reuse
-# the lambda_api integration; the /*/* invoke permission already covers it, so no
-# new integration or lambda permission is needed.
-resource "aws_apigatewayv2_route" "get_homeloan_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /homeloan"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.get_breakdown_route
+  to   = aws_apigatewayv2_route.app["GET /breakdown"]
 }
-
-# Last home-loan repayment (WHIT-115): the most recent repayment derived from the
-# up-homeloan transaction history. Reuse the lambda_api integration; the /*/*
-# invoke permission already covers it, so no new integration or permission.
-resource "aws_apigatewayv2_route" "get_repayment_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /repayment"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.get_homeloan_route
+  to   = aws_apigatewayv2_route.app["GET /homeloan"]
 }
-
-# Loan facts: read (GET /loanfacts) + save (PUT /loanfacts) the user-entered
-# home-loan inputs. Reuse the lambda_api integration; the /*/* invoke permission
-# already covers these, so no new integration or lambda permission is needed.
-resource "aws_apigatewayv2_route" "get_loanfacts_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /loanfacts"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.get_repayment_route
+  to   = aws_apigatewayv2_route.app["GET /repayment"]
 }
-
-resource "aws_apigatewayv2_route" "put_loanfacts_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "PUT /loanfacts"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.get_loanfacts_route
+  to   = aws_apigatewayv2_route.app["GET /loanfacts"]
 }
-
-# Pay cycle: read current (GET /paycycle) + set length + last pay date (PUT
-# /paycycle). Reuse the lambda_api integration; the /*/* invoke permission
-# already covers these, so no new integration or lambda permission is needed.
-resource "aws_apigatewayv2_route" "get_paycycle_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /paycycle"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.put_loanfacts_route
+  to   = aws_apigatewayv2_route.app["PUT /loanfacts"]
 }
-
-resource "aws_apigatewayv2_route" "put_paycycle_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "PUT /paycycle"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+moved {
+  from = aws_apigatewayv2_route.get_paycycle_route
+  to   = aws_apigatewayv2_route.app["GET /paycycle"]
+}
+moved {
+  from = aws_apigatewayv2_route.put_paycycle_route
+  to   = aws_apigatewayv2_route.app["PUT /paycycle"]
+}
+moved {
+  from = aws_apigatewayv2_route.get_enrichments_route
+  to   = aws_apigatewayv2_route.app["GET /enrichments"]
+}
+moved {
+  from = aws_apigatewayv2_route.post_enrichment_route
+  to   = aws_apigatewayv2_route.app["POST /enrichments"]
+}
+moved {
+  from = aws_apigatewayv2_route.put_enrichment_route
+  to   = aws_apigatewayv2_route.app["PUT /enrichments/{id}"]
+}
+moved {
+  from = aws_apigatewayv2_route.delete_enrichment_route
+  to   = aws_apigatewayv2_route.app["DELETE /enrichments/{id}"]
+}
+moved {
+  from = aws_apigatewayv2_route.post_device_route
+  to   = aws_apigatewayv2_route.app["POST /devices"]
+}
+moved {
+  from = aws_apigatewayv2_route.get_insights_ai_route
+  to   = aws_apigatewayv2_route.app["GET /insights/ai"]
+}
+moved {
+  from = aws_apigatewayv2_route.post_insights_ai_route
+  to   = aws_apigatewayv2_route.app["POST /insights/ai"]
 }
 
 resource "aws_lambda_permission" "get_transactions_invoke_permission" {
@@ -231,71 +224,6 @@ resource "aws_apigatewayv2_authorizer" "jwt" {
     audience = [aws_cognito_user_pool_client.app.id]
     issuer   = local.cognito_issuer_url
   }
-}
-
-# Enrichments (BankSync categorisation rules): list/create/delete. Reuse the
-# lambda_api integration (its /*/* invoke permission already covers these), gated
-# behind the Cognito JWT authorizer like every other app route.
-resource "aws_apigatewayv2_route" "get_enrichments_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /enrichments"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
-}
-
-resource "aws_apigatewayv2_route" "post_enrichment_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "POST /enrichments"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
-}
-
-resource "aws_apigatewayv2_route" "put_enrichment_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "PUT /enrichments/{id}"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
-}
-
-resource "aws_apigatewayv2_route" "delete_enrichment_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "DELETE /enrichments/{id}"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
-}
-
-# Device push-token registration (POST /devices). Reuse the lambda_api
-# integration (its /*/* invoke permission already covers it), gated behind the
-# Cognito JWT authorizer like every other app route.
-resource "aws_apigatewayv2_route" "post_device_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "POST /devices"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
-}
-
-# AI spending insights (WHIT-104): GET reads the per-cycle cache, POST generates
-# (the paid Anthropic call). Reuse the lambda_api integration; gated behind the
-# Cognito JWT authorizer like every app route (a call also costs money).
-resource "aws_apigatewayv2_route" "get_insights_ai_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "GET /insights/ai"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
-}
-
-resource "aws_apigatewayv2_route" "post_insights_ai_route" {
-  api_id             = aws_apigatewayv2_api.api.id
-  route_key          = "POST /insights/ai"
-  target             = "integrations/${aws_apigatewayv2_integration.get_transactions_integration.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
 # banksync webhook endpoint used by banksync to push transaction data
