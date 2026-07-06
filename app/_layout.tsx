@@ -16,6 +16,7 @@ import { AppProvider } from '../src/context';
 import { Overlays } from '../src/components/Overlays';
 import { registerForPushNotificationsAsync } from '../src/push';
 import { AuthGate } from '../src/AuthGate';
+import { useReduceMotion } from '../src/motion/useReduceMotion';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -51,6 +52,7 @@ function useAppFonts(): boolean {
 
 export default function RootLayout() {
   const ready = useAppFonts();
+  const reduceMotion = useReduceMotion();
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync().catch(() => {});
@@ -73,7 +75,8 @@ export default function RootLayout() {
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: C.bg },
-            animation: 'slide_from_right',
+            // Push transition (WHIT-184): native slide, off under OS reduce-motion.
+            animation: reduceMotion ? 'none' : 'slide_from_right',
           }}
         >
           <Stack.Screen name="index" />

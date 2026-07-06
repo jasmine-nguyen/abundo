@@ -9,7 +9,13 @@ export function TransactionRow({ t }: { t: Transaction }) {
   const v = transactionView(s, t);
   const onPress = v.tappable ? () => s.openPicker(t.transaction_id) : undefined;
   return (
-    <Pressable onPress={onPress} style={styles.row} disabled={!v.tappable}>
+    <Pressable
+      onPress={onPress}
+      disabled={!v.tappable}
+      // WHIT-184 taste: a tappable row dims on press so it doesn't feel dead. A
+      // disabled (non-tappable) row never enters the pressed state, so it stays solid.
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+    >
       <View style={[styles.chip, { backgroundColor: v.chipBg }]}>
         <Icon name={v.icon} size={22} color={v.iconColor} />
       </View>
@@ -32,6 +38,7 @@ export function TransactionRow({ t }: { t: Transaction }) {
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 13, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: C.hairline },
+  rowPressed: { opacity: 0.6 },
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   merchant: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },

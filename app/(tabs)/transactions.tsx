@@ -1,11 +1,12 @@
 import React, { useCallback, useState } from 'react';
-import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, transactionGroups, countUncategorized } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
+import { useScrollChrome, HEADER_BODY_HEIGHT } from '../../src/motion/useScrollChrome';
 import { TransactionRow } from '../../src/components/TransactionRow';
 
 type Tab = 'all' | 'uncategorized' | 'accounts';
@@ -34,15 +35,24 @@ export default function Transactions() {
   // the "couldn't load" banner clears — the WHIT-74 behaviour.
   const onRefresh = useCallback(() => { refetch(); s.retryLoad(); }, [refetch, s.retryLoad]);
 
+  // Scroll-to-hide chrome (WHIT-184): the header floats over the list and slides up on
+  // scroll-down; the list is inset by the header height so nothing sits under it at rest.
+  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
+  const { onScroll, scrollEventThrottle, headerStyle } = useScrollChrome(headerHeight);
+
   return (
     <View style={{ flex: 1 }}>
-      <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
+      <Animated.View style={[styles.header, { paddingTop: insets.top + 6 }, headerStyle]}>
         <View style={{ width: 40 }} />
         <Text style={styles.headerTitle}>Transactions</Text>
         <View style={styles.searchBtn}><Glyph name="search" size={20} color={C.textMid} /></View>
-      </View>
+      </Animated.View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}
+      <ScrollView
+        onScroll={onScroll}
+        scrollEventThrottle={scrollEventThrottle}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingTop: headerHeight, paddingBottom: 120 }}
+        showsVerticalScrollIndicator={false}
 				refreshControl={
 					<RefreshControl
 						// Spin only while refreshing data we ALREADY have — the inline spinner owns
@@ -126,7 +136,7 @@ export default function Transactions() {
 
 function Seg({ label, active, onPress, flex, badge }: { label: string; active: boolean; onPress: () => void; flex: number; badge?: number }) {
   return (
-    <Pressable onPress={onPress} style={[styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && styles.segPressed]}>
       <Text style={[styles.segText, { color: active ? '#13132e' : C.textMid }]}>{label}</Text>
       {badge !== undefined && (
         <View style={[styles.badge, { backgroundColor: active ? 'rgba(19,19,46,.18)' : 'rgba(255,107,107,.2)' }]}>
@@ -138,12 +148,16 @@ function Seg({ label, active, onPress, flex, badge }: { label: string; active: b
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
+  // Floats over the list (absolute + zIndex) so hiding it reclaims the space; the bg
+  // masks list content scrolling under it. paddingTop (insets) is applied inline.
+  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: C.bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
   headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
   searchBtn: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,.06)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   seg: { flexDirection: 'row', gap: 4, padding: 4, backgroundColor: C.card, borderRadius: 14, marginBottom: 8 },
   segBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },
+  // WHIT-184 taste: press feedback on the segmented control.
+  segPressed: { opacity: 0.6 },
   segText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600' },
   badge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
   badgeText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700' },
