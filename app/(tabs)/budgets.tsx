@@ -1,11 +1,12 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
+import { useScrollChrome, HEADER_BODY_HEIGHT } from '../../src/motion/useScrollChrome';
 import { WhittleBar } from '../../src/components/ui';
 
 export default function Budgets() {
@@ -29,15 +30,20 @@ export default function Budgets() {
   const showError = isError && rows.length === 0;
   const showSpinner = !showError && isLoading && rows.length === 0;
 
+  // Scroll-to-hide chrome (WHIT-184): header floats over the list and slides up on
+  // scroll-down; the list is inset by the header height so nothing sits under it at rest.
+  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
+  const { onScroll, scrollEventThrottle, headerStyle } = useScrollChrome(headerHeight);
+
   return (
     <View style={{ flex: 1 }}>
-      <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
+      <Animated.View style={[styles.header, { paddingTop: insets.top + 6 }, headerStyle]}>
         <View style={{ width: 40 }} />
         <Text style={styles.headerTitle}>Budgets</Text>
         <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBtn}>
           <Glyph name="plus" size={22} color={C.accentSoft} />
         </Pressable>
-      </View>
+      </Animated.View>
 
       {showSpinner ? (
         <View testID="budgets-loading" style={styles.centered}>
@@ -51,7 +57,11 @@ export default function Budgets() {
           </Pressable>
         </View>
       ) : (
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        onScroll={onScroll}
+        scrollEventThrottle={scrollEventThrottle}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingTop: headerHeight, paddingBottom: 120 }}
+        showsVerticalScrollIndicator={false}>
         {/* hero */}
         <View style={styles.hero}>
           <View style={styles.heroBlob1} />
@@ -114,7 +124,9 @@ export default function Budgets() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
+  // Floats over the list (absolute + zIndex) so hiding it reclaims the space; the bg
+  // masks list content scrolling under it. paddingTop (insets) is applied inline.
+  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: C.bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
   headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
   addBtn: { width: 40, height: 40, backgroundColor: 'rgba(124,140,255,.16)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
