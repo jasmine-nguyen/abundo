@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext } from '../../src/context';
-import { useSettingsScreenData } from '../../src/queries';
+import { useSettingsScreenData, useRulesScreenData, usePayCycle } from '../../src/queries';
 import { signOut, getCurrentUser } from '../../src/auth';
 import { SectionLabel } from '../../src/components/ui';
 import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
@@ -30,13 +30,16 @@ export function initialsFrom(u: { email?: string; name?: string } | null): strin
 }
 
 export default function Settings() {
-  const s = useAppContext(); // rules, pay-cycle, alerts (rules migrate in WHIT-195)
+  const s = useAppContext(); // alerts toggle + setSheet (client-state)
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   // WHIT-191a: the two server-backed rows (categories count + loan-facts status) now come
   // from the cached query layer. "…" while first-loading so the count never flashes "0".
   const { categoriesCount, loanReady, isLoading, refetchStale } = useSettingsScreenData();
+  // WHIT-203: the rules count + pay-cycle name also come off the query layer now.
+  const { rules } = useRulesScreenData();
+  const { cycleName } = usePayCycle();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-180: real identity from the Cognito ID token, not the "Jordan Diaz" mock.
@@ -82,8 +85,8 @@ export default function Settings() {
         <SectionLabel>SETUP</SectionLabel>
         <View style={styles.group}>
           <Row icon="tag" label="Categories" value={isLoading ? '…' : String(categoriesCount)} onPress={() => router.push('/category')} />
-          <Row icon="sliders" label="Automation rules" value={String(s.rules.length)} onPress={() => router.push('/rules')} />
-          <Row icon="calendar" label="Pay cycle" value={s.cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} />
+          <Row icon="sliders" label="Automation rules" value={String(rules.length)} onPress={() => router.push('/rules')} />
+          <Row icon="calendar" label="Pay cycle" value={cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} />
           <Row icon="building" label="Loan details" value={isLoading ? '…' : loanReady ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
         </View>
 

@@ -1,20 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, budgetEditInfo } from '../../src/context';
+import { useAppContext, budgetEditInfo, cycleName } from '../../src/context';
+import { useBudgetsScreenData } from '../../src/queries';
 import { queryClient } from '../../src/queryClient';
 import { Header } from '../../src/components/Header';
 
 export default function BudgetEdit() {
-  const s = useAppContext();
+  const s = useAppContext(); // saveBudget writer stays on the store
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { categoryId } = useLocalSearchParams<{ categoryId: string; from?: string }>();
-  const info = budgetEditInfo(s, categoryId);
+  // WHIT-203: the taxonomy + budgets + cycle name feed budgetEditInfo from the query layer.
+  const { budgets, category, cycleLen } = useBudgetsScreenData();
+  const info = budgetEditInfo({ budgets, category, cycleName: () => cycleName(cycleLen) }, categoryId);
   const [input, setInput] = useState(info.existing ? String(info.existing.budget) : '');
+  // WHIT-203: `budgets` may resolve after mount (cold cache), so the useState seed above can
+  // miss an existing budget — re-seed the amount when it arrives.
+  useEffect(() => {
+    if (info.existing) setInput(String(info.existing.budget));
+  }, [info.existing?.budget]);
   const [histOpen, setHistOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 

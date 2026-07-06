@@ -25,6 +25,8 @@ const mockFetchLoanFacts = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchCategories: () => mockFetchCategories(),
   fetchLoanFacts: () => mockFetchLoanFacts(),
+  listEnrichments: () => Promise.resolve([{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }]),
+  fetchPayCycle: () => Promise.resolve({ length: 14, last_pay_date: '2024-01-03' }),
 }));
 
 // Real selectors (loanFactsReady) + composite deps; stub only the store-backed rows.

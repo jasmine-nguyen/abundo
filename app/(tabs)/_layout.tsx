@@ -4,7 +4,8 @@ import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { useAppContext, countUncategorized } from '../../src/context';
+import { countUncategorized } from '../../src/context';
+import { useTransactionsScreenData } from '../../src/queries';
 import { NavBarsProvider, useNavBars } from '../../src/motion/NavBarsContext';
 import { NavBarsRouteReset } from '../../src/motion/NavBarsRouteReset';
 import { useReduceMotion } from '../../src/motion/useReduceMotion';
@@ -25,10 +26,14 @@ type TabBarShape = {
   };
 };
 
-function TabBar({ state, navigation }: TabBarShape) {
+export function TabBar({ state, navigation }: TabBarShape) {
   const insets = useSafeAreaInsets();
-  const store = useAppContext();
-  const hasUncategorized = countUncategorized(store) > 0;
+  // WHIT-203: the tab bar is always mounted, so it owns its OWN transactions+categories
+  // query for the uncategorized dot (the same keys the Transactions tab uses, so they
+  // dedup — and this keeps them warm for the Picker/Confirm sheets too). Once the eager
+  // store load is gone (WHIT-192) nothing else would keep the badge fed app-wide.
+  const { transactions, category } = useTransactionsScreenData();
+  const hasUncategorized = countUncategorized({ transactions, category }) > 0;
   // Scroll-to-hide (WHIT-184): the bar floats (position:absolute, so the scene fills
   // full height and content scrolls under it), and slides straight down out of view
   // when `visibility` → 0. Measure the bar's own height so the hidden state translates
@@ -59,7 +64,7 @@ function TabBar({ state, navigation }: TabBarShape) {
           >
             <View>
               <Glyph name={meta.icon} size={24} color={color} />
-              {meta.name === 'transactions' && hasUncategorized && <View style={styles.dot} />}
+              {meta.name === 'transactions' && hasUncategorized && <View testID="tab-uncat-dot" style={styles.dot} />}
             </View>
             <Text style={[styles.label, { color }]} numberOfLines={1}>{meta.label}</Text>
           </Pressable>

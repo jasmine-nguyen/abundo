@@ -4,19 +4,21 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext } from '../../src/context';
+import { useBudgetsScreenData, useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 
 export default function BudgetPick() {
-  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const budgeted = s.budgets.map((b) => b.id);
+  // WHIT-203: budgets + the pickable category list come from the cached query layer.
+  const { budgets } = useBudgetsScreenData();
+  const { categories } = useCategories();
+  const budgeted = budgets.map((b) => b.id);
   // Income categories are pickable too: their budget is an earn-target / floor
   // (over-is-good, WHIT-69), not a spend ceiling. Savings is NOT budgetable here:
   // savings is an account balance, not categorised spend, so a Savings target renders
   // a permanently-empty bar — excluded until a real account-balance goal exists (WHIT-201).
-  const list = s.categories.filter((c) => !budgeted.includes(c.id) && c.bucket !== 'Savings');
+  const list = categories.filter((c) => !budgeted.includes(c.id) && c.bucket !== 'Savings');
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>

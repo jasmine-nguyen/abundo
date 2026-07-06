@@ -689,12 +689,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const persistPayCycle = useCallback(
     async (next: { length: number; last_pay_date: string }, prev: { length: number; last_pay_date: string }) => {
       setPayCycle(next);
+      // WHIT-203: mirror into the ['payCycle'] cache so the (migrated) pay-cycle sheet +
+      // Settings row reflect the change instantly; roll both back together on failure.
+      queryClient.setQueryData(['payCycle'], next);
       try {
         await apiSetPayCycle(next);
         await refreshBudgets();
         refreshBreakdown();
+        // The window (length and/or payday) changed, so the server rollups move — refetch
+        // the migrated Budgets/Insights reads.
+        queryClient.invalidateQueries({ queryKey: ['budgets'] });
+        queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       } catch {
         setPayCycle(prev);
+        queryClient.setQueryData(['payCycle'], prev);
         showToast('Could not save pay cycle. Please try again.');
       }
     },
@@ -921,13 +929,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         if (editId) {
           const updated = await updateCategory(editId, { name, bucket: form.bucket, icon: form.icon });
-          setCategories((prev) => prev.map((c) => (c.id === editId ? toCategory(updated) : c)));
+          const fn = (prev: Category[]) => prev.map((c) => (c.id === editId ? toCategory(updated) : c));
+          setCategories(fn);
+          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? fn(prev) : prev));
           showToast('Category updated.');
         } else {
           const created = await createCategory({ name, bucket: form.bucket, icon: form.icon });
-          setCategories((prev) => [...prev, toCategory(created)]);
+          const fn = (prev: Category[]) => [...prev, toCategory(created)];
+          setCategories(fn);
+          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? fn(prev) : prev));
           showToast('Category created.');
         }
+        // WHIT-203: the setQueryData above shows the change instantly on the migrated
+        // category screens / pickers (parity with deleteCategory); the invalidate then
+        // reconciles with the server. Safe to invalidate — the category genuinely exists
+        // server-side, so a refetch can't resurrect a stale one.
+        queryClient.invalidateQueries({ queryKey: ['categories'] });
         return true;
       } catch {
         showToast('Could not save category. Please try again.');
@@ -948,10 +965,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setBudgets((prev) => prev.filter((b) => b.id !== id));
       patchRules((prev) => prev.filter((r) => r.categoryId !== id));
       setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
+      // WHIT-203: mirror the same client-side cascade into the query caches the migrated
+      // screens read (category list, budget screens, tab badge, pickers). setQueryData —
+      // NOT invalidate — because the server does no cascade, so a refetch would resurrect
+      // the just-dropped budget/rule/txn-tag. Budgets are windowed, so patch every
+      // ['budgets', *] entry. Rules are already mirrored by patchRules above.
+      queryClient.setQueryData<Category[]>(['categories'], (prev) => prev?.filter((c) => c.id !== id));
+      queryClient.setQueriesData<Budget[]>({ queryKey: ['budgets'] }, (prev) => prev?.filter((b) => b.id !== id));
+      queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => prev?.map((t) => (t.category === id ? { ...t, category: null } : t)));
       // The deleted category's in-cycle spend now falls into Uncategorized on the
       // breakdown; re-pull so the Insights tab reflects that. (Budgets already
       // dropped the row locally above.)
       refreshBreakdown();
+      queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       showToast('Category deleted.');
       return true;
     } catch {
@@ -1294,7 +1320,24 @@ export function countUncategorized(s: TransactionListInput) {
   return s.transactions.filter((t) => t.counts_to_budget && isUncategorized(s, t)).length;
 }
 
-export function budgetDetail(s: AppContext, categoryId: string) {
+// The narrow read-input for the budget-detail + budget-edit selectors (WHIT-203) — they
+// read only the taxonomy lookup + budgets (+ transactions/cycle for detail), never the
+// whole store. Narrowing lets the migrated budget screens feed cached query data straight
+// in; the full AppContext still satisfies these structurally.
+export interface BudgetDetailInput {
+  category: (id: string) => Category | undefined;
+  budgets: Budget[];
+  transactions: Transaction[];
+  cycleLen: number;
+  daysLeft: number;
+}
+export interface BudgetEditInput {
+  category: (id: string) => Category | undefined;
+  budgets: Budget[];
+  cycleName: () => string;
+}
+
+export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const c = s.category(categoryId);
   const b = s.budgets.find((x) => x.id === categoryId);
   if (!c || !b) return null;
@@ -1354,7 +1397,7 @@ export function budgetDetail(s: AppContext, categoryId: string) {
   };
 }
 
-export function budgetEditInfo(s: AppContext, categoryId: string) {
+export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
   const c = s.category(categoryId);
   const existing = s.budgets.find((b) => b.id === categoryId);
   // An Income category's budget is an earn-target (a floor), not a spend ceiling

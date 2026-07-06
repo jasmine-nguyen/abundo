@@ -4,27 +4,30 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, BUCKETS, BUCKET_COLOR } from '../../src/context';
+import { BUCKETS, BUCKET_COLOR } from '../../src/context';
+import { useBudgetsScreenData, useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 
 export default function CategoryList() {
-  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const budgeted = s.budgets.map((b) => b.id);
+  // WHIT-203: the category list + which are budgeted come from the cached query layer.
+  const { budgets } = useBudgetsScreenData();
+  const { categories, isLoading: categoriesLoading } = useCategories();
+  const budgeted = budgets.map((b) => b.id);
   // Every bucket that has categories, INCLUDING Income (WHIT-158) — income
   // categories are creatable + assignable, so they must be visible + manageable here.
   const groups = BUCKETS
-    .map((bk) => ({ label: bk, color: BUCKET_COLOR[bk], items: s.categories.filter((c) => c.bucket === bk) }))
+    .map((bk) => ({ label: bk, color: BUCKET_COLOR[bk], items: categories.filter((c) => c.bucket === bk) }))
     .filter((g) => g.items.length);
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Categories" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
-        {s.categories.length === 0 && (
+        {categories.length === 0 && (
           <Text style={styles.emptyText}>
-            {s.categoriesLoading ? 'Loading categories…' : 'No categories yet.'}
+            {categoriesLoading ? 'Loading categories…' : 'No categories yet.'}
           </Text>
         )}
         {groups.map((g) => (

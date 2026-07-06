@@ -28,7 +28,7 @@ beforeEach(() => {
 
 it('renders merchant, amount and category for a categorized row', () => {
   mockState = stateWith();
-  render(<TransactionRow t={txn({ merchant_name: 'Woolworths', amount: -12.5, category: 'coffee' })} />);
+  render(<TransactionRow t={txn({ merchant_name: 'Woolworths', amount: -12.5, category: 'coffee' })} category={mockState.category} />);
   expect(screen.getByText('Woolworths')).toBeTruthy();
   expect(screen.getByText('-$12.50')).toBeTruthy();
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
@@ -36,13 +36,13 @@ it('renders merchant, amount and category for a categorized row', () => {
 
 it('shows a Pending pill for a pending transaction', () => {
   mockState = stateWith();
-  render(<TransactionRow t={txn({ status: 'pending', category: 'coffee' })} />);
+  render(<TransactionRow t={txn({ status: 'pending', category: 'coffee' })} category={mockState.category} />);
   expect(screen.getByText('Pending')).toBeTruthy();
 });
 
 it('an uncategorized row is labelled Uncategorized and opens the picker on tap', () => {
   mockState = stateWith();
-  render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} />);
+  render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
   const label = screen.getByText('Uncategorized');
   expect(label).toBeTruthy();
   fireEvent.press(label);
@@ -51,7 +51,7 @@ it('an uncategorized row is labelled Uncategorized and opens the picker on tap',
 
 it('a categorized row does not open the picker on tap', () => {
   mockState = stateWith();
-  render(<TransactionRow t={txn({ transaction_id: 'tx1', category: 'coffee' })} />);
+  render(<TransactionRow t={txn({ transaction_id: 'tx1', category: 'coffee' })} category={mockState.category} />);
   fireEvent.press(screen.getByText('Cafes & Coffee'));
   expect(openPicker).not.toHaveBeenCalled();
 });

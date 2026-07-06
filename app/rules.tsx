@@ -5,16 +5,17 @@ import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint } from '../src/theme';
 import { Icon, Glyph } from '../src/icons';
 import { useAppContext } from '../src/context';
-import { useRulesScreenData } from '../src/queries';
+import { useRulesScreenData, useCategories } from '../src/queries';
 import { Header } from '../src/components/Header';
 
 export default function Rules() {
-  const s = useAppContext(); // setSheet + deleteRule (writers) and category (label, stays on the store)
+  const s = useAppContext(); // setSheet + deleteRule (writers)
   const insets = useSafeAreaInsets();
 
-  // WHIT-195: the rule list now comes from the cached ['rules'] query. Re-check on focus,
-  // but only if the cache has gone stale (no request storm).
+  // WHIT-195: the rule list comes from the cached ['rules'] query; WHIT-203: the category
+  // label per rule now comes from the shared taxonomy hook (not the old store).
   const { rules, isLoading, isError, refetch, refetchStale } = useRulesScreenData();
+  const { category } = useCategories();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   return (
@@ -49,7 +50,7 @@ export default function Rules() {
           </View>
         ) : (
           rules.map((r) => {
-            const c = s.category(r.categoryId);
+            const c = category(r.categoryId);
             const color = c?.color ?? '#888';
             return (
               <View key={r.id} style={styles.row}>

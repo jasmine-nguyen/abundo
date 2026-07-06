@@ -5,16 +5,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, categoryBreakdown, aiGoalSignal } from '../../src/context';
-import { useInsightsScreenData } from '../../src/queries';
+import { useInsightsScreenData, useGoalScreenData } from '../../src/queries';
 import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 
 export default function Insights() {
-  const s = useAppContext();
+  const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
   const insets = useSafeAreaInsets();
-  // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer;
-  // the AI-insights feature below still reads the context store (`s`).
+  // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
   const { breakdown, category, isLoading, isError, refetch, refetchStale } = useInsightsScreenData();
   const { rows, total } = categoryBreakdown({ breakdown, category });
+  // WHIT-203: the goal signal's inputs (loan facts + live balance) come off the query
+  // layer now, so it survives the WHIT-192 store teardown.
+  const { loanFacts, homeLoan } = useGoalScreenData();
 
   // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via the
   // store. Spend depends on the current cycle (rolls over on payday; categorising
@@ -36,7 +38,7 @@ export default function Insights() {
   // payoff projection to send. Computed here from live state and passed INTO
   // generateAiInsights at tap time (never stale). Also drives the privacy note: we
   // only claim loan figures are sent when a goal is actually attached.
-  const goal = aiGoalSignal(s);
+  const goal = aiGoalSignal({ loanFacts, homeLoan });
   const noteSends = goal
     ? 'category spend totals and home-loan figures (balance, rate, repayments)'
     : 'category spend totals';

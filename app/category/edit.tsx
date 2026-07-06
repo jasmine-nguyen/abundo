@@ -1,27 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, BUCKETS, BUCKET_COLOR, Bucket } from '../../src/context';
+import { useCategories } from '../../src/queries';
 import { ICON_KEYS } from '../../src/icons';
 import { Header } from '../../src/components/Header';
 
 export default function CategoryEdit() {
-  const s = useAppContext();
+  const s = useAppContext(); // saveCategory / deleteCategory writers stay on the store
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { categoryId } = useLocalSearchParams<{ categoryId?: string }>();
-  const existing = categoryId ? s.category(categoryId) : undefined;
+  // WHIT-203: the prefill lookup reads the cached taxonomy.
+  const { category } = useCategories();
+  const existing = categoryId ? category(categoryId) : undefined;
 
   const [name, setName] = useState(existing?.name ?? '');
   const [bucket, setBucket] = useState<Bucket>(existing?.bucket ?? 'Lifestyle');
   const [icon, setIcon] = useState(existing?.icon ?? 'coffee');
+  // WHIT-203: the useState seeds run once, but on the query layer `existing` may resolve a
+  // beat AFTER mount (cold cache / deep-link). Re-seed when it arrives so an edit never
+  // shows — or SAVES — a blank "create" form over a real category.
+  useEffect(() => {
+    if (existing) { setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon); }
+  }, [existing]);
 
   const color = existing?.color ?? C.accent;
   const [submitting, setSubmitting] = useState(false);
-  const canSave = name.trim().length > 0 && !submitting;
+  // Block save while editing a category whose taxonomy hasn't loaded yet — otherwise a save
+  // would write the default bucket/icon back over the real ones.
+  const editingUnloaded = !!categoryId && !existing;
+  const canSave = name.trim().length > 0 && !submitting && !editingUnloaded;
 
   const save = async () => {
     if (!canSave) return;

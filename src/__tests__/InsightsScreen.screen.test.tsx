@@ -12,7 +12,7 @@ import { UNCATEGORIZED_KEY } from '../context';
 
 // Breakdown data — the query composite.
 let mockInsights: ReturnType<typeof insightsData>;
-jest.mock('../queries', () => ({ useInsightsScreenData: () => mockInsights }));
+jest.mock('../queries', () => ({ useInsightsScreenData: () => mockInsights, useGoalScreenData: () => ({ loanFacts: mockState.loanFacts, homeLoan: mockState.homeLoan, repayment: { amount: null, date: null, principal: null, interest: null }, isLoading: false, isError: false, homeLoanError: false, refetch: jest.fn(), refetchStale: jest.fn() }) }));
 
 // AI state — the context store.
 let mockState: AppContext;

@@ -3,7 +3,8 @@ import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT } from '../src/theme';
-import { useAppContext } from '../src/context';
+import { useAppContext, EMPTY_LOAN_FACTS } from '../src/context';
+import { useLoanFactsQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
 import type { LoanFactsInput } from '../src/api';
 
@@ -12,10 +13,11 @@ import type { LoanFactsInput } from '../src/api';
 const numText = (n: number | null) => (n == null ? '' : String(n));
 
 export default function Loan() {
-  const s = useAppContext();
+  const s = useAppContext(); // showToast + saveLoanFacts (write) stay on the store
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const f = s.loanFacts;
+  // WHIT-203: seed the form from the cached loan-facts query instead of the eager store.
+  const f = useLoanFactsQuery(useIsAuthed()).data ?? EMPTY_LOAN_FACTS;
 
   // Seed each input from the saved facts (empty when unset). By the time the user
   // reaches this screen the mount fetch has resolved, so these reflect saved data.

@@ -7,7 +7,7 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, listEnrichments } from './api';
 import type { BudgetRollup, CategorySpend, EnrichmentRule, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
-import { cycleClock, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
+import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -139,6 +139,49 @@ export function useRulesQuery(enabled: boolean) {
   return useQuery({ queryKey: rulesKey, queryFn: async () => selectRules(await listEnrichments()), enabled });
 }
 
+// WHIT-203: the shared category-taxonomy hook. Every screen/overlay that only needs to
+// LABEL something by category (the rules list, transaction rows, the pickers, the tab
+// badge, the category screens) reads it from here — the single auth-gated ['categories']
+// query — instead of the old store's `s.categories`/`s.category`. Surfaces both the array
+// (callers that filter/sort the pickable list) and the null-tolerant `category(id)` lookup.
+export interface CategoriesData {
+  categories: Category[];
+  category: (id: string | null) => Category | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  refetch: () => void;
+  refetchStale: () => void;
+}
+export function useCategories(): CategoriesData {
+  const authed = useIsAuthed();
+  const categoriesQuery = useCategoriesQuery(authed);
+  const categories = categoriesQuery.data ?? [];
+  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
+  const refetch = useCallback(() => { categoriesQuery.refetch(); }, [categoriesQuery]);
+  const refetchStale = useCallback(() => { if (categoriesQuery.isStale) categoriesQuery.refetch(); }, [categoriesQuery]);
+  return { categories, category, isLoading: categoriesQuery.isLoading, isError: categoriesQuery.isError, refetch, refetchStale };
+}
+
+// WHIT-203: the shared pay-cycle hook — for the readers that need the cycle name / window
+// but not the whole Budgets composite (the Settings "Pay cycle" row, the pay-cycle sheet).
+// Falls back to the server default so cycleName/window are sensible before the read lands.
+export interface PayCycleData {
+  payCycle: PayCycle;
+  cycleLen: number;
+  daysLeft: number;
+  cycleName: () => string;
+  isLoading: boolean;
+  isError: boolean;
+}
+export function usePayCycle(): PayCycleData {
+  const authed = useIsAuthed();
+  const payCycleQuery = usePayCycleQuery(authed);
+  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
+  const { cycleLen, daysLeft } = cycleClock(payCycle);
+  return { payCycle, cycleLen, daysLeft, cycleName: () => cycleName(cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
+}
+
 // --- the Budgets screen's composite view -------------------------------------
 export interface BudgetsScreenData {
   budgets: Budget[];
@@ -193,6 +236,67 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   return {
     budgets: budgetsQuery.data ?? [],
     category,
+    cycleLen,
+    daysLeft,
+    isLoading,
+    isError,
+    refetch,
+    refetchStale,
+  };
+}
+
+// --- the budget-detail screen's composite view (WHIT-203) --------------------
+// app/budget/[id].tsx feeds budgetDetail(s, id), which reads the taxonomy + budgets +
+// the category's transactions + the cycle window. Same shape as the Budgets composite
+// plus the transaction list.
+export interface BudgetDetailScreenData {
+  category: (id: string | null) => Category | undefined;
+  budgets: Budget[];
+  transactions: Transaction[];
+  cycleLen: number;
+  daysLeft: number;
+  isLoading: boolean;
+  isError: boolean;
+  refetch: () => void;
+  refetchStale: () => void;
+}
+export function useBudgetDetailScreenData(): BudgetDetailScreenData {
+  const authed = useIsAuthed();
+  const payCycleQuery = usePayCycleQuery(authed);
+  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
+  const { cycleLen, daysLeft } = cycleClock(payCycle);
+
+  const budgetsQuery = useBudgetsQuery(cycleLen, authed && payCycleQuery.isSuccess);
+  const transactionsQuery = useTransactionsQuery(authed);
+  const categoriesQuery = useCategoriesQuery(authed);
+
+  const categories = categoriesQuery.data ?? [];
+  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
+
+  // isLoading (not isPending) so a disabled query doesn't strand a spinner — see the
+  // note in useBudgetsScreenData.
+  const isLoading = payCycleQuery.isLoading || budgetsQuery.isLoading || transactionsQuery.isLoading || categoriesQuery.isLoading;
+  const isError = payCycleQuery.isError || budgetsQuery.isError || transactionsQuery.isError || categoriesQuery.isError;
+
+  const refetch = useCallback(() => {
+    payCycleQuery.refetch();
+    budgetsQuery.refetch();
+    transactionsQuery.refetch();
+    categoriesQuery.refetch();
+  }, [payCycleQuery, budgetsQuery, transactionsQuery, categoriesQuery]);
+
+  const refetchStale = useCallback(() => {
+    if (payCycleQuery.isStale) payCycleQuery.refetch();
+    if (budgetsQuery.isStale) budgetsQuery.refetch();
+    if (transactionsQuery.isStale) transactionsQuery.refetch();
+    if (categoriesQuery.isStale) categoriesQuery.refetch();
+  }, [payCycleQuery, budgetsQuery, transactionsQuery, categoriesQuery]);
+
+  return {
+    category,
+    budgets: budgetsQuery.data ?? [],
+    transactions: transactionsQuery.data ?? [],
     cycleLen,
     daysLeft,
     isLoading,
