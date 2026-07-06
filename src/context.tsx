@@ -329,8 +329,16 @@ export interface AppContext {
 	refreshEnrichments: () => Promise<void>;
 	// Global read-failure banner (offline / 5xx on mount or pull-to-refresh).
 	loadError: boolean;
+	// TEMP DIAGNOSTIC (WHIT-185): the actual failing read + error message, shown in
+	// the banner so we can root-cause the post-login/cold-relaunch load failure on a
+	// real device without the Xcode console. Remove once the cause is pinned.
+	loadErrorDetail: string | null;
 	retryLoad: () => void;
 }
+
+// TEMP DIAGNOSTIC (WHIT-185): a read's error → a short "<source>: <message>" string
+// for the banner (e.g. "transactions: API error: 401"). Remove with the banner detail.
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
  * Map a raw category object from the categories API into the client-side
@@ -393,6 +401,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// is reads only. Cleared solely by retryLoad — never on an individual success, so
 	// a fast parallel-mount refresh can't wipe an error a slower sibling just set.
 	const [loadError, setLoadError] = useState(false);
+	// TEMP DIAGNOSTIC (WHIT-185): the failing read + message behind the banner.
+	const [loadErrorDetail, setLoadErrorDetail] = useState<string | null>(null);
 
 	// WHIT-174: the banner means "you're signed in but your data wouldn't load."
 	// AppProvider mounts ABOVE the auth gate, so the mount reads fire at launch —
@@ -402,8 +412,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// authed. The auth-status subscription below reloads everything the moment login
 	// (or a Face ID unlock) flips us to 'authed', so real post-login failures still
 	// surface the banner.
-	const flagLoadError = useCallback(() => {
-		if (getAuthStatus() === 'authed') setLoadError(true);
+	// TEMP DIAGNOSTIC (WHIT-185): `detail` carries "<read>: <error>" for the banner.
+	const flagLoadError = useCallback((detail?: string) => {
+		if (getAuthStatus() === 'authed') {
+			setLoadError(true);
+			setLoadErrorDetail(detail ?? null);
+		}
 	}, []);
 
 	const [transactionsLoading, setTransactionsLoading] = useState(false);
@@ -412,9 +426,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		try {
 			const data = await fetchTransactions();
 			setTransactions(data);
-		} catch {
+		} catch (e) {
 			// Surface the global load-error banner; keep whatever transactions we had.
-			flagLoadError();
+			flagLoadError('transactions: ' + errText(e));
 		} finally{
 			setTransactionsLoading(false);
 		}
@@ -426,10 +440,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		try {
 			const data = await fetchCategories();
 			setCategories(data.map(toCategory));
-		} catch {
+		} catch (e) {
 			// Keep the seeded categories as the offline fallback, but make the failure
 			// visible via the banner rather than looking like a fresh empty app.
-			flagLoadError();
+			flagLoadError('categories: ' + errText(e));
 		} finally {
 			setCategoriesLoading(false);
 		}
@@ -457,9 +471,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		try {
 			const cycle = await fetchPayCycle();
 			setPayCycle(cycle);
-		} catch {
+		} catch (e) {
 			// Leave the sensible default cycle in place, but flag the banner.
-			flagLoadError();
+			flagLoadError('payCycle: ' + errText(e));
 		}
 	}, [flagLoadError]);
 
@@ -584,6 +598,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// the flag at the call site.
 	const retryLoad = useCallback(() => {
 		setLoadError(false);
+		setLoadErrorDetail(null); // TEMP DIAGNOSTIC (WHIT-185)
 		refreshTransactions();
 		refreshCategories();
 		refreshPayCycle();
@@ -591,8 +606,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshRepayment();
 		refreshHomeLoan();
 		refreshEnrichments();
-		refreshBudgets().catch(() => flagLoadError());
-		refreshBreakdown().catch(() => flagLoadError());
+		refreshBudgets().catch((e) => flagLoadError('budgets: ' + errText(e)));
+		refreshBreakdown().catch((e) => flagLoadError('breakdown: ' + errText(e)));
 	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshLoanFacts, refreshRepayment, refreshHomeLoan, refreshEnrichments, refreshBudgets, refreshBreakdown, flagLoadError]);
 
 	useEffect(() => {
@@ -610,8 +625,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// shared with write paths, so they don't flag the banner themselves; flag it here
 	// (the mount/window load) via the call site, matching retryLoad.
 	useEffect(() => {
-		refreshBudgets().catch(() => flagLoadError());
-		refreshBreakdown().catch(() => flagLoadError());
+		refreshBudgets().catch((e) => flagLoadError('budgets: ' + errText(e)));
+		refreshBreakdown().catch((e) => flagLoadError('breakdown: ' + errText(e)));
 	}, [refreshBudgets, refreshBreakdown, flagLoadError]);
 
 	// WHIT-162: with the static secret retired, the mount reads above throw "Not
@@ -981,9 +996,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, retryLoad
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, loadErrorDetail, retryLoad
     };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, retryLoad]);
+  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, loadErrorDetail, retryLoad]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

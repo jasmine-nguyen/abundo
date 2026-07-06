@@ -45,14 +45,18 @@ export function Overlays() {
 // that raises loadError; writes surface their own toast + rollback. Anchored at the
 // top with a safe-area inset, like NotifBanner.
 function LoadErrorBanner() {
-  const { loadError, retryLoad } = useAppContext();
+  const { loadError, loadErrorDetail, retryLoad } = useAppContext();
   const insets = useSafeAreaInsets();
   if (!loadError) return null;
   return (
     <View testID="loadErrorBanner" style={[styles.loadErrWrap, { top: insets.top + 8 }]}>
       <View style={styles.loadErr}>
         <View style={styles.loadErrDot} />
-        <Text style={styles.loadErrText}>Couldn't load — you may be offline</Text>
+        {/* TEMP DIAGNOSTIC (WHIT-185): show the real failing read + error so we can
+            root-cause on-device. Reverts to the friendly copy once the cause is pinned. */}
+        <Text style={styles.loadErrText}>
+          {loadErrorDetail ? `Couldn't load — ${loadErrorDetail}` : "Couldn't load — you may be offline"}
+        </Text>
         <Pressable testID="loadErrorRetry" onPress={retryLoad} hitSlop={8} style={styles.loadErrRetry}>
           <Text style={styles.loadErrRetryText}>Retry</Text>
         </Pressable>
