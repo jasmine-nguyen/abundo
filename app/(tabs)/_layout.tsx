@@ -37,7 +37,9 @@ function TabBar({ state, navigation }: TabBarShape) {
         return (
           <Pressable
             key={route.key}
-            style={styles.item}
+            // Press feedback (WHIT-184 taste): instant dim + slight shrink on tap so a
+            // tab doesn't feel dead. Pure visual — no animation lib, no data path.
+            style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
             onPress={() => {
               const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
               if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
@@ -72,6 +74,8 @@ const styles = StyleSheet.create({
   // flex:1 (not a fixed width) so the items share the row evenly — with 5 tabs a
   // fixed 76pt width overflowed narrow phones (5×76 + padding > 390pt).
   item: { flex: 1, minWidth: 0, alignItems: 'center', gap: 5 },
+  // WHIT-184 taste: pressed-state feedback for the tab buttons.
+  itemPressed: { opacity: 0.55, transform: [{ scale: 0.92 }] },
   label: { fontFamily: FONT.body, fontSize: 10.5, fontWeight: '600' },
   dot: { position: 'absolute', top: -3, right: 4, width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad, borderWidth: 2, borderColor: C.bg },
 });
