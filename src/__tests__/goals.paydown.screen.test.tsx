@@ -10,41 +10,31 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
-import type { AppContext } from '../context';
+import { makeGoalData } from './factory';
+import type { GoalScreenData } from '../queries';
 
-let mockState: AppContext;
+// WHIT-197: loanFacts/homeLoan/repayment now come from useGoalScreenData() (mocked);
+// the real paydownView selector still runs over the injected composite data, so these
+// fail if the selector reverts. fireRepayment stays on the store (useAppContext mock).
+let mockGoal: GoalScreenData;
+jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => mockState };
+  return { ...actual, useAppContext: () => ({ fireRepayment: jest.fn() }) };
 });
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush, back: jest.fn() }),
+  useFocusEffect: () => {},
 }));
 
 import Goals from '../../app/(tabs)/goals';
 
-const GOAL = {
-  original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
-  ratePct: 5.74, baseRepay: 1240, extra: 200,
-  lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
-};
+// The payoff-mode math needs a specific facts fixture (higher original + baseRepay than
+// the shared LOAN_FACTS default), so this suite overrides makeGoalData's loanFacts default.
 const SET_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
-const NO_REPAYMENT = { amount: null, date: null, principal: null, interest: null };
-
-function state(over: Partial<AppContext>): AppContext {
-  return {
-    homeLoan: { balance: null, asOf: null },
-    loanFacts: SET_FACTS,
-    repayment: NO_REPAYMENT,
-    goal: GOAL,
-    cycleLen: 14,                      // fortnightly by default
-    category: (_id: string | null) => undefined,
-    fireRepayment: jest.fn(),
-    ...over,
-  } as unknown as AppContext;
-}
+const goalData = (over: Partial<GoalScreenData> = {}) => makeGoalData({ loanFacts: SET_FACTS, ...over });
 
 beforeEach(() => {
   mockPush.mockClear();
@@ -53,7 +43,7 @@ beforeEach(() => {
 afterEach(() => { jest.useRealTimers(); });
 
 it("'ahead': shows the real date + '4y 1m early' + '$83,331' dodged, NOT the old seed", () => {
-  mockState = state({ homeLoan: { balance: 528000, asOf: null } });
+  mockGoal = goalData({ homeLoan: { balance: 528000, asOf: null } });
   render(<Goals />);
   expect(screen.getByText('Nov 2042')).toBeTruthy();
   expect(screen.getByText('4y 1m early 🏁')).toBeTruthy();
@@ -66,7 +56,7 @@ it("'ahead': shows the real date + '4y 1m early' + '$83,331' dodged, NOT the old
 });
 
 it("'partial': one card with the date + 'your extra gets you there', no dodged figure", () => {
-  mockState = state({ homeLoan: { balance: 815000, asOf: null } });
+  mockGoal = goalData({ homeLoan: { balance: 815000, asOf: null } });
   render(<Goals />);
   expect(screen.getByText('Jun 2074')).toBeTruthy();
   expect(screen.getByText('Your extra repayment is what gets you there 🏁')).toBeTruthy();
@@ -75,7 +65,7 @@ it("'partial': one card with the date + 'your extra gets you there', no dodged f
 });
 
 it("'flat': the date on 'current repayments', no 'early' claim", () => {
-  mockState = state({ homeLoan: { balance: 528000, asOf: null }, loanFacts: { ...SET_FACTS, extra: 0 } });
+  mockGoal = goalData({ homeLoan: { balance: 528000, asOf: null }, loanFacts: { ...SET_FACTS, extra: 0 } });
   render(<Goals />);
   expect(screen.getByText('Dec 2046')).toBeTruthy();
   expect(screen.getByText('On your current repayments')).toBeTruthy();
@@ -83,7 +73,7 @@ it("'flat': the date on 'current repayments', no 'early' claim", () => {
 });
 
 it("'none': the honest 'won't pay off' nudge, no fabricated date", () => {
-  mockState = state({ homeLoan: { balance: 900000, asOf: null } }); // payment < interest
+  mockGoal = goalData({ homeLoan: { balance: 900000, asOf: null } }); // payment < interest
   render(<Goals />);
   expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
   expect(screen.getByText(/Increase your repayment/)).toBeTruthy();
@@ -91,7 +81,7 @@ it("'none': the honest 'won't pay off' nudge, no fabricated date", () => {
 });
 
 it("'unready' (balance not loaded): renders NO payoff card at all", () => {
-  mockState = state({ homeLoan: { balance: null, asOf: null } });
+  mockGoal = goalData({ homeLoan: { balance: null, asOf: null } });
   render(<Goals />);
   expect(screen.queryByText('Mortgage-free')).toBeNull();
   expect(screen.queryByText("Won't pay off at this rate")).toBeNull();

@@ -13,7 +13,9 @@ import { queryClient } from './queryClient';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
 // module const so every "unset" origin (initial state, a failed fetch) agrees.
-const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+// Exported (WHIT-197) so the Goal/milestone query composite has the same all-null
+// default before the loan-facts read resolves.
+export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
 // Loan facts are "ready" only when the user has saved all six fields — until then
 // the app shows a set-up prompt instead of any fabricated number. Narrows to
@@ -1364,12 +1366,22 @@ export function budgetEditInfo(s: AppContext, categoryId: string) {
   };
 }
 
+// The narrow read-inputs for the Goal-tab + milestone selectors (WHIT-197). These
+// five selectors read ONLY the user's loan facts + the live home-loan balance (and,
+// for the repayment card, the last repayment) — never the pay cycle, categories, or
+// the seed goal. Narrowing the param to exactly what they read lets the Goal/milestone
+// screens feed cached query data straight in (type-checked, not cast), while the full
+// AppContext still satisfies these structurally for the store readers (Insights
+// aiGoalSignal, the loan form) that stay on the store until the WHIT-192 cleanup.
+export interface GoalViewInput { loanFacts: LoanFacts; homeLoan: HomeLoanState; }
+export interface RepaymentViewInput { repayment: Repayment; }
+
 // The Goal-tab hero + equity + contribution, computed from the user's saved loan
 // facts (Loan facts card) and the LIVE balance (WHIT-8's s.homeLoan) — never the
 // old seed. `factsReady` is false until the user saves the form: the screen then
 // shows a friendly "set this up" state instead of any fabricated number. The
 // payoff projection (mortgage-free date + interest dodged) lives in paydownView.
-export function goalView(s: AppContext) {
+export function goalView(s: GoalViewInput) {
   const facts = s.loanFacts;
   const factsReady = loanFactsReady(facts);
   const liveBalance = s.homeLoan.balance;                 // real balance, null until loaded
@@ -1431,7 +1443,7 @@ export interface PaydownView {
   interestDodgedLabel: string | null;   // fmt(interestDodged); set only in 'ahead'
 }
 
-export function paydownView(s: AppContext, today?: Date): PaydownView {
+export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
   const base: PaydownView = {
     mode: 'unready', freedomLabel: '',
     aheadLabel: null, interestDodged: null, interestDodgedLabel: null,
@@ -1481,7 +1493,7 @@ export function paydownView(s: AppContext, today?: Date): PaydownView {
 // extra, and an EXACT sensitivity: how many whole months the payoff moves in per
 // additional $100/month. Payoff time is convex in the payment, so this holds for
 // $100 only — callers/the model must not extrapolate it to larger amounts.
-export function aiGoalSignal(s: AppContext, today?: Date): AiGoalSignal | null {
+export function aiGoalSignal(s: GoalViewInput, today?: Date): AiGoalSignal | null {
   const pv = paydownView(s, today);
   if (pv.mode !== 'partial' && pv.mode !== 'flat' && pv.mode !== 'ahead') return null;
 
@@ -1518,7 +1530,7 @@ export interface LastRepaymentView {
 // repayment from s.repayment (server-derived), or a graceful empty state when
 // none is on record. The principal/interest split shows only when the server
 // could pair the interest leg — never a fabricated split. Pure over s.repayment.
-export function lastRepaymentView(s: AppContext): LastRepaymentView {
+export function lastRepaymentView(s: RepaymentViewInput): LastRepaymentView {
   const r = s.repayment;
   if (r.amount == null || r.date == null) {
     return { present: false, amountLabel: '', whenLabel: '', splitLabel: null };
@@ -1583,7 +1595,7 @@ function expectedBalanceAt(t: number): number {
 // home-loan balance (s.homeLoan) + the MILESTONES constants + `today` (injected
 // for tests). Until the balance loads, hasBalance is false and the schedule
 // verdict is null so the screen can show a waiting state instead of fake numbers.
-export function milestoneView(s: AppContext, today?: Date): MilestoneView {
+export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   const rawBalance = s.homeLoan.balance;
   const hasBalance = typeof rawBalance === 'number';
   const balance = hasBalance ? rawBalance! : 0;

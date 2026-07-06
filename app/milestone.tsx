@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt } from '../src/theme';
 import { Glyph } from '../src/icons';
-import { useAppContext, milestoneView } from '../src/context';
+import { milestoneView } from '../src/context';
+import { useGoalScreenData } from '../src/queries';
 import { Bar } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 
@@ -18,10 +19,15 @@ function monthYear(iso: string): string {
 }
 
 export default function Milestone() {
-  const s = useAppContext();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const v = milestoneView(s);
+
+  // WHIT-197: the live balance + loan facts now come from the cached query layer.
+  // Re-check on focus only when stale. `homeLoanError` is the balance read's OWN error
+  // (not the aggregate) — a repayment/loanFacts failure must not show as a balance error.
+  const { loanFacts, homeLoan, homeLoanError, refetch, refetchStale } = useGoalScreenData();
+  useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
+  const v = milestoneView({ loanFacts, homeLoan });
 
   const scheduleColor = !v.schedule
     ? C.textDim
@@ -60,10 +66,10 @@ export default function Milestone() {
                 </View>
               )}
             </>
-          ) : s.homeLoanError ? (
+          ) : homeLoanError ? (
             <View style={styles.waiting}>
               <Text style={styles.waitingText}>Couldn't load your balance.</Text>
-              <Pressable onPress={() => s.refreshHomeLoan()} style={styles.retryBtn}>
+              <Pressable onPress={() => refetch()} style={styles.retryBtn}>
                 <Text style={styles.retryText}>Retry</Text>
               </Pressable>
             </View>
@@ -125,7 +131,7 @@ export default function Milestone() {
             <>
               <View style={styles.equityHead}>
                 <Text style={styles.equityBig}>{v.usableEquityLabel}</Text>
-                <Text style={styles.equityHint}>at {fmt(v.propertyValue!)} value · {Math.round((s.loanFacts.lvr ?? 0) * 100)}% LVR</Text>
+                <Text style={styles.equityHint}>at {fmt(v.propertyValue!)} value · {Math.round((loanFacts.lvr ?? 0) * 100)}% LVR</Text>
               </View>
               <Text style={styles.ipBody}>Usable equity = your LVR × the property value, minus what you still owe. Kill more principal, unlock more deposit. 📈</Text>
             </>
