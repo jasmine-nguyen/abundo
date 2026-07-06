@@ -1,10 +1,12 @@
-// WHIT-184 — the chrome motion primitives: the reduce-motion gate (instant vs tween)
-// and the safe no-provider default (bare screens must render without a ChromeProvider).
+// WHIT-184/200 — the nav-bars motion primitives: the reduce-motion gate (instant vs
+// tween) and the safe no-provider default (bare screens must render without a
+// NavBarsProvider). Also guards that the provider stays navigation-free — it renders
+// bare here with no router, which is why the route reset lives in NavBarsRouteReset.
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
 import React from 'react';
 import { Animated, Text } from 'react-native';
 import { render } from '@testing-library/react-native';
-import { applyVisibility, useChrome, ChromeProvider } from '../motion/ChromeContext';
+import { applyVisibility, useNavBars, NavBarsProvider } from '../motion/NavBarsContext';
 
 afterEach(() => { jest.restoreAllMocks(); });
 
@@ -29,25 +31,26 @@ describe('applyVisibility (reduce-motion gate)', () => {
   });
 });
 
-describe('ChromeContext default (no provider)', () => {
+describe('NavBarsContext default (no provider)', () => {
   function Probe() {
-    const { visibility, setChrome } = useChrome();
-    // Calling the default no-op setter must not throw, and visibility must be a real
-    // Animated.Value (interpolatable) so a bare screen's header style still builds.
-    setChrome('hidden');
-    const t = typeof visibility.interpolate;
-    return <Text testID="probe">{t}</Text>;
+    const { visibility, setNavBars, stateRef } = useNavBars();
+    // Calling the setter must not throw (a no-op under the default, a real setter under a
+    // provider); visibility must be a real Animated.Value (interpolatable) so a bare
+    // screen's header style still builds; and stateRef must exist (the scroll hook reads it).
+    setNavBars('hidden');
+    const ok = typeof visibility.interpolate === 'function' && stateRef != null && 'current' in stateRef;
+    return <Text testID="probe">{String(ok)}</Text>;
   }
 
-  it('renders a consumer with NO ChromeProvider without crashing', () => {
+  it('renders a consumer with NO NavBarsProvider without crashing', () => {
     const { getByTestId } = render(<Probe />);
-    expect(getByTestId('probe').props.children).toBe('function');
+    expect(getByTestId('probe').props.children).toBe('true');
   });
 
-  it('renders a consumer UNDER a ChromeProvider without crashing', () => {
+  it('renders a consumer UNDER a NavBarsProvider without crashing', () => {
     const { getByTestId } = render(
-      <ChromeProvider reduceMotion={false}><Probe /></ChromeProvider>,
+      <NavBarsProvider reduceMotion={false}><Probe /></NavBarsProvider>,
     );
-    expect(getByTestId('probe').props.children).toBe('function');
+    expect(getByTestId('probe').props.children).toBe('true');
   });
 });

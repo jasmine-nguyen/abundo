@@ -8,6 +8,7 @@ import { useAppContext } from '../../src/context';
 import { useSettingsScreenData } from '../../src/queries';
 import { signOut, getCurrentUser } from '../../src/auth';
 import { SectionLabel } from '../../src/components/ui';
+import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 
 // WHIT-180: avatar initials from the real signed-in identity (name → first+last
 // initial; else the first two letters of the email's local part). A whitespace-only
@@ -64,7 +65,7 @@ export default function Settings() {
         <Text style={styles.headerTitle}>Settings</Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: TAB_BAR_CLEARANCE }} showsVerticalScrollIndicator={false}>
         {/* profile */}
         <View style={styles.profile}>
           {showPhoto ? (

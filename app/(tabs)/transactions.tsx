@@ -1,12 +1,11 @@
 import React, { useCallback, useState } from 'react';
 import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, transactionGroups, countUncategorized } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
-import { useScrollChrome, HEADER_BODY_HEIGHT } from '../../src/motion/useScrollChrome';
+import { useNavBarsHeader, floatingHeaderStyle } from '../../src/motion/useNavBarsHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 
 type Tab = 'all' | 'uncategorized' | 'accounts';
@@ -19,7 +18,6 @@ const ACCOUNTS = [
 
 export default function Transactions() {
   const s = useAppContext(); // retryLoad (banner-clear on pull); TransactionRow reads its own category
-  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('all');
   // WHIT-190a: transactions now come from the cached, auth-gated query layer.
   const { transactions, category, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
@@ -35,14 +33,14 @@ export default function Transactions() {
   // the "couldn't load" banner clears — the WHIT-74 behaviour.
   const onRefresh = useCallback(() => { refetch(); s.retryLoad(); }, [refetch, s.retryLoad]);
 
-  // Scroll-to-hide chrome (WHIT-184): the header floats over the list and slides up on
-  // scroll-down; the list is inset by the header height so nothing sits under it at rest.
-  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
-  const { onScroll, scrollEventThrottle, headerStyle } = useScrollChrome(headerHeight);
+  // Scroll-to-hide the nav bars (WHIT-184): the header floats over the list and slides up
+  // on scroll-down; the list is inset so nothing sits under the bars at rest. All geometry
+  // (header height, top/bottom insets, scroll wiring) comes from the shared hook.
+  const { onScroll, scrollEventThrottle, headerStyle, headerPaddingTop, contentPadding } = useNavBarsHeader();
 
   return (
     <View style={{ flex: 1 }}>
-      <Animated.View style={[styles.header, { paddingTop: insets.top + 6 }, headerStyle]}>
+      <Animated.View style={[floatingHeaderStyle, { paddingTop: headerPaddingTop }, headerStyle]}>
         <View style={{ width: 40 }} />
         <Text style={styles.headerTitle}>Transactions</Text>
         <View style={styles.searchBtn}><Glyph name="search" size={20} color={C.textMid} /></View>
@@ -51,7 +49,7 @@ export default function Transactions() {
       <ScrollView
         onScroll={onScroll}
         scrollEventThrottle={scrollEventThrottle}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingTop: headerHeight, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 18, ...contentPadding }}
         showsVerticalScrollIndicator={false}
 				refreshControl={
 					<RefreshControl
@@ -148,9 +146,6 @@ function Seg({ label, active, onPress, flex, badge }: { label: string; active: b
 }
 
 const styles = StyleSheet.create({
-  // Floats over the list (absolute + zIndex) so hiding it reclaims the space; the bg
-  // masks list content scrolling under it. paddingTop (insets) is applied inline.
-  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: C.bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
   headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
   searchBtn: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,.06)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 

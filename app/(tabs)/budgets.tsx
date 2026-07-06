@@ -1,17 +1,15 @@
 import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
-import { useScrollChrome, HEADER_BODY_HEIGHT } from '../../src/motion/useScrollChrome';
+import { useNavBarsHeader, floatingHeaderStyle } from '../../src/motion/useNavBarsHeader';
 import { WhittleBar } from '../../src/components/ui';
 
 export default function Budgets() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
@@ -30,14 +28,14 @@ export default function Budgets() {
   const showError = isError && rows.length === 0;
   const showSpinner = !showError && isLoading && rows.length === 0;
 
-  // Scroll-to-hide chrome (WHIT-184): header floats over the list and slides up on
-  // scroll-down; the list is inset by the header height so nothing sits under it at rest.
-  const headerHeight = insets.top + HEADER_BODY_HEIGHT;
-  const { onScroll, scrollEventThrottle, headerStyle } = useScrollChrome(headerHeight);
+  // Scroll-to-hide the nav bars (WHIT-184): header floats over the list and slides up on
+  // scroll-down; the list is inset so nothing sits under the bars at rest. All geometry
+  // (header height, top/bottom insets, scroll wiring) comes from the shared hook.
+  const { onScroll, scrollEventThrottle, headerStyle, headerPaddingTop, contentPadding } = useNavBarsHeader();
 
   return (
     <View style={{ flex: 1 }}>
-      <Animated.View style={[styles.header, { paddingTop: insets.top + 6 }, headerStyle]}>
+      <Animated.View style={[floatingHeaderStyle, { paddingTop: headerPaddingTop }, headerStyle]}>
         <View style={{ width: 40 }} />
         <Text style={styles.headerTitle}>Budgets</Text>
         <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBtn}>
@@ -60,7 +58,7 @@ export default function Budgets() {
       <ScrollView
         onScroll={onScroll}
         scrollEventThrottle={scrollEventThrottle}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingTop: headerHeight, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 18, ...contentPadding }}
         showsVerticalScrollIndicator={false}>
         {/* hero */}
         <View style={styles.hero}>
@@ -124,9 +122,6 @@ export default function Budgets() {
 }
 
 const styles = StyleSheet.create({
-  // Floats over the list (absolute + zIndex) so hiding it reclaims the space; the bg
-  // masks list content scrolling under it. paddingTop (insets) is applied inline.
-  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: C.bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
   headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
   addBtn: { width: 40, height: 40, backgroundColor: 'rgba(124,140,255,.16)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 

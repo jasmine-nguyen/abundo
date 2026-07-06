@@ -6,6 +6,7 @@ import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, categoryBreakdown, aiGoalSignal } from '../../src/context';
 import { useInsightsScreenData } from '../../src/queries';
+import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 
 export default function Insights() {
   const s = useAppContext();
@@ -53,7 +54,7 @@ export default function Insights() {
         <Text style={styles.headerTitle}>Insights</Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: TAB_BAR_CLEARANCE }} showsVerticalScrollIndicator={false}>
         {/* hero: where the money went this cycle */}
         <View style={styles.hero}>
           <View style={styles.heroBlob} />

@@ -1,8 +1,8 @@
-// WHIT-184 GAP — the scroll-to-hide wiring on the BUDGETS screen. motionScroll.screen
-// only exercises Transactions; Budgets has its own useScrollChrome(headerHeight) call and
-// could be reverted (drop onScroll / scrollEventThrottle) with the Transactions test still
-// green. This locks: down → 'hidden', up → 'shown', jitter no-op, throttle 16, animated
-// header present. Fail-on-revert: unwire onScroll on budgets.tsx and the first assert flips.
+// WHIT-184/200 GAP — the scroll-to-hide wiring on the BUDGETS screen. motionScroll.screen
+// only exercises Transactions; Budgets has its own useNavBarsHeader() call and could be
+// reverted (drop onScroll / scrollEventThrottle) with the Transactions test still green.
+// This locks: down → 'hidden', up → 'shown', jitter no-op, throttle 16, animated header
+// present. Fail-on-revert: unwire onScroll on budgets.tsx and the first assert flips.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { ScrollView, Animated } from 'react-native';
@@ -25,17 +25,20 @@ jest.mock('expo-router', () => {
   };
 });
 
-// Spy the shared chrome setter; give it a real Animated.Value so the header style builds.
-const mockSetChrome = jest.fn();
-jest.mock('../motion/ChromeContext', () => {
+// Spy the shared setter; give it a real Animated.Value (header style builds) + the single
+// stateRef it writes (so the hook's dedup/direction runs against the shared source of truth).
+let mockStateRef: { current: 'shown' | 'hidden' } = { current: 'shown' };
+const mockSetNavBars = jest.fn((n: 'shown' | 'hidden') => { mockStateRef.current = n; });
+jest.mock('../motion/NavBarsContext', () => {
   const { Animated: RNAnimated } = require('react-native');
-  return { useChrome: () => ({ visibility: new RNAnimated.Value(1), setChrome: mockSetChrome }) };
+  return { useNavBars: () => ({ visibility: new RNAnimated.Value(1), setNavBars: mockSetNavBars, stateRef: mockStateRef }) };
 });
 
 import Budgets from '../../app/(tabs)/budgets';
 
 beforeEach(() => {
-  mockSetChrome.mockClear();
+  mockSetNavBars.mockClear();
+  mockStateRef = { current: 'shown' };
   mockBudgets = {
     budgets: [], category, cycleLen: 14, daysLeft: 7,
     isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn(),
@@ -46,22 +49,22 @@ function scrollTo(sv: { props: { onScroll: (e: unknown) => void } }, y: number) 
   sv.props.onScroll({ nativeEvent: { contentOffset: { y } } });
 }
 
-it('budgets: scrolling down hides the chrome, scrolling back up shows it', () => {
+it('budgets: scrolling down hides the nav bars, scrolling back up shows it', () => {
   const { UNSAFE_getAllByType } = render(<Budgets />);
   const sv = UNSAFE_getAllByType(ScrollView)[0] as unknown as { props: { onScroll: (e: unknown) => void } };
 
   scrollTo(sv, 120); // down past threshold, out of the top zone
-  expect(mockSetChrome).toHaveBeenLastCalledWith('hidden');
+  expect(mockSetNavBars).toHaveBeenLastCalledWith('hidden');
 
   scrollTo(sv, 20); // back up
-  expect(mockSetChrome).toHaveBeenLastCalledWith('shown');
+  expect(mockSetNavBars).toHaveBeenLastCalledWith('shown');
 });
 
-it('budgets: a tiny jitter scroll near the top does not toggle the chrome', () => {
+it('budgets: a tiny jitter scroll near the top does not toggle the nav bars', () => {
   const { UNSAFE_getAllByType } = render(<Budgets />);
   const sv = UNSAFE_getAllByType(ScrollView)[0] as unknown as { props: { onScroll: (e: unknown) => void } };
   scrollTo(sv, 3); // inside the top zone, already shown → no call
-  expect(mockSetChrome).not.toHaveBeenCalled();
+  expect(mockSetNavBars).not.toHaveBeenCalled();
 });
 
 it('budgets: exposes scrollEventThrottle=16 so onScroll fires while dragging', () => {
