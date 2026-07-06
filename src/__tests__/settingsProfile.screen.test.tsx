@@ -7,14 +7,15 @@ import { render } from '@testing-library/react-native';
 
 let mockUser: { email?: string; name?: string; picture?: string } | null = null;
 jest.mock('../../src/auth', () => ({ signOut: jest.fn(), getCurrentUser: () => mockUser }));
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: jest.fn(), push: jest.fn() }) }));
+jest.mock('expo-router', () => ({ useRouter: () => ({ replace: jest.fn(), push: jest.fn() }), useFocusEffect: () => {} }));
+// WHIT-191a: the categories count + loan-facts status now come from a query composite.
+jest.mock('../../src/queries', () => ({
+  useSettingsScreenData: () => ({ categoriesCount: 0, loanReady: false, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
+}));
 jest.mock('../../src/context', () => ({
-  loanFactsReady: () => false,
   useAppContext: () => ({
-    categories: [],
     rules: [],
     cycleName: () => 'Fortnightly',
-    loanFacts: {},
     alerts: true,
     toggleAlerts: jest.fn(),
     setSheet: jest.fn(),
