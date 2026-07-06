@@ -6,10 +6,12 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
-import type { AppContext } from '../context';
+import type { Category } from '../context';
 
-// Inject a controlled context but keep the real transactionView (same module).
-let mockState: AppContext;
+// WHIT-192: the row reads only openPicker (client-state) from the store now; the
+// category taxonomy arrives as a prop from the screen's query composite. So the mocked
+// context supplies just openPicker + a category() lookup for the tests to pass as a prop.
+let mockState: { openPicker: typeof openPicker; category: (id: string | null) => Category | undefined };
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
@@ -18,8 +20,8 @@ jest.mock('../context', () => {
 import { TransactionRow } from '../components/TransactionRow';
 
 const openPicker = jest.fn();
-function stateWith(t = {}) {
-  return { ...makeState({ categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', color: '#E8A87C' })] }), openPicker } as AppContext;
+function stateWith() {
+  return { openPicker, category: makeState({ categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', color: '#E8A87C' })] }).category };
 }
 
 beforeEach(() => {

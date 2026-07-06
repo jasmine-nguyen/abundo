@@ -5,9 +5,9 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
-import type { AppContext } from '../context';
+import type { ScreenState } from './support/screenQueryMocks';
 
-let mockState: AppContext;
+let mockState: ScreenState;
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
@@ -21,8 +21,8 @@ const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'home', color: '#C7A8F
 const INCOME = { id: 'salary', name: 'Salary', icon: 'briefcase', color: '#7fd49b', bucket: 'Income', recent: 4000 };
 const SPEND = { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52 };
 
-function state(over: Partial<AppContext>): AppContext {
-  return { categories: [], budgets: [], ...over } as unknown as AppContext;
+function state(over: Partial<ScreenState>): ScreenState {
+  return { categories: [], budgets: [], ...over };
 }
 
 describe('BudgetPick — Savings is not budgetable (WHIT-201)', () => {

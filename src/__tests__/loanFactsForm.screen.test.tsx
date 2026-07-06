@@ -6,7 +6,12 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
 
-let mockState: AppContext;
+// WHIT-192: loan.tsx reads saveLoanFacts + showToast off the store; the saved facts come
+// from useLoanFactsQuery (query layer, re-routed via screenQueryMocks). The fixture carries
+// those writers PLUS loanFacts purely to feed that query mock.
+type LoanFormState = Pick<AppContext, 'saveLoanFacts' | 'showToast'> & { loanFacts: LoanFacts };
+
+let mockState: LoanFormState;
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
@@ -20,8 +25,8 @@ import Loan from '../../app/loan';
 
 const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
-function state(over: Partial<AppContext>): AppContext {
-  return { loanFacts: EMPTY, saveLoanFacts: jest.fn(), showToast: jest.fn(), ...over } as unknown as AppContext;
+function state(over: Partial<LoanFormState>): LoanFormState {
+  return { loanFacts: EMPTY, saveLoanFacts: jest.fn() as LoanFormState['saveLoanFacts'], showToast: jest.fn() as AppContext['showToast'], ...over };
 }
 
 function fillValid() {
