@@ -153,9 +153,47 @@ describe('budgetDetail — income earn-targets', () => {
   });
 });
 
+// WHIT-201: a Savings-bucket budget has no meaningful rollup (savings is an account
+// balance, not categorised spend), so budgetViews skips it entirely — row AND totals —
+// and budgetDetail treats it as absent. New Savings budgets are blocked in the picker;
+// this covers one set before that / via re-bucketing.
+describe('budgetViews — Savings budgets are skipped (WHIT-201)', () => {
+  it('omits a Savings budget row and excludes it from the hero totals, while other buckets still render', () => {
+    const s = makeState({
+      categories: [
+        cat({ id: 'coffee', bucket: 'Lifestyle' }),
+        cat({ id: 'salary', name: 'Salary', bucket: 'Income' }),
+        cat({ id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings' }),
+      ],
+      budgets: [
+        budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 }),
+        budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }),
+        budget({ id: 'nest_egg', budget: 2000, posted: 0, pending: 0 }),
+      ],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
+    expect(rows.map((r) => r.id)).toEqual(['coffee', 'salary']);  // no nest_egg row
+    // Totals are the spend row only (income is excluded too, per WHIT-69); the $2000
+    // Savings target must NOT leak into totBudget.
+    expect(totBudget).toBe(100);
+    expect(totSpent).toBe(50);
+    expect(totRemain).toBe(50);
+  });
+});
+
 describe('budgetDetail', () => {
   it('returns null when the category or budget is missing', () => {
     expect(budgetDetail(makeState(), 'nope')).toBeNull();
+  });
+
+  it('returns null for a Savings-bucket budget (WHIT-201)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings' })],
+      budgets: [budget({ id: 'nest_egg', budget: 2000, posted: 0, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    expect(budgetDetail(s, 'nest_egg')).toBeNull();
   });
 
   it('pluralises the days-remaining label (1 day vs N days)', () => {

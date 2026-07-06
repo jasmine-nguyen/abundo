@@ -195,6 +195,39 @@ def test_income_clawback_does_not_fire_a_spend_alert(alerts, monkeypatch):
     assert sent == []
 
 
+def test_savings_target_never_fires_a_spend_alert(alerts, monkeypatch):
+    # WHIT-201: a Savings-bucket target is a floor (an account-balance goal), not a spend
+    # ceiling. A discretionary spend mis-filed into a Savings category flows through
+    # summarise_transactions as +85 spend and would cross 0.8*100 if Savings weren't
+    # excluded from the crossing check. The bucket exclusion keeps it silent — revert it
+    # (drop "Savings" from the filter) and this fires.
+    new = _txn("s1", "nest_egg", -85, "posted")  # spend mis-filed to a savings category
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"nest_egg": {"target": Decimal("100")}},
+                           before=[], normalised=[new],
+                           cats=[{"id": "nest_egg", "name": "Nest Egg", "bucket": "Savings"}])
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_spend_alert_fires_alongside_an_excluded_savings_target(alerts, monkeypatch):
+    # WHIT-201 regression (qa gap): excluding Savings-bucket targets from the crossing
+    # check must NOT suppress a real spend crossing in the SAME batch. Groceries crosses
+    # 80% while a spend mis-filed into a Savings category is (correctly) ignored — exactly
+    # one push, for spend. Guards against a filter change that over-drops the live target.
+    spend_new = _txn("g1", "groceries", -85, "posted")    # 85% of the 100 ceiling -> 80%
+    savings_new = _txn("s1", "nest_egg", -85, "posted")   # mis-filed to Savings -> silent
+    sent, notify, _ = _run(
+        alerts, monkeypatch,
+        budgets={"groceries": {"target": Decimal("100")}, "nest_egg": {"target": Decimal("100")}},
+        before=[], normalised=[spend_new, savings_new],
+        cats=[{"id": "groceries", "name": "Groceries", "bucket": "Living"},
+              {"id": "nest_egg", "name": "Nest Egg", "bucket": "Savings"}],
+    )
+    assert len(sent) == 1
+    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}  # no nest_egg marker
+
+
 def test_orphan_income_target_clawback_does_not_fire(alerts, monkeypatch):
     # WHIT-168: an income earn-target whose category was DELETED but whose budget row
     # survived a failed best-effort cascade is an "orphan" — its id is in targets but
