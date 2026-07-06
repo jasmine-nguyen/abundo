@@ -46,7 +46,7 @@ export default function BudgetEdit() {
           <View style={[styles.chip, { backgroundColor: tint(info.category.color, 0.15) }]}><Icon name={info.category.icon} size={30} color={info.category.color} /></View>
           <View>
             <Text style={styles.categoryName}>{info.category.name}</Text>
-            <Text style={styles.categoryRec}>Recommended: {info.recLabel}</Text>
+            <Text style={styles.categoryRec}>{info.hasRecommendation ? `Recommended: ${info.recLabel}` : info.recPrompt}</Text>
           </View>
         </View>
 
@@ -61,13 +61,15 @@ export default function BudgetEdit() {
           <TextInput value={input} onChangeText={(t) => setInput(t.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={C.placeholder} style={styles.amountInput} />
         </View>
 
-        <Pressable onPress={() => setInput(String(info.rec))} style={styles.recBtn}>
-          <Text style={styles.recBtnText}>{info.recommendCta}</Text>
-          <Text style={styles.recBtnAmount}>{info.recLabel}</Text>
-        </Pressable>
+        {info.hasRecommendation && (
+          <Pressable onPress={() => setInput(String(info.rec))} style={styles.recBtn}>
+            <Text style={styles.recBtnText}>{info.recommendCta}</Text>
+            <Text style={styles.recBtnAmount}>{info.recLabel}</Text>
+          </Pressable>
+        )}
 
         <Pressable onPress={() => setHistOpen((v) => !v)} style={styles.histToggle}>
-          <Text style={styles.histToggleText}>View spending history</Text>
+          <Text style={styles.histToggleText}>{info.historyToggleLabel}</Text>
           <View style={{ transform: [{ rotate: histOpen ? '180deg' : '0deg' }] }}>
             <Glyph name="chevronDown" size={20} color={C.textMid} />
           </View>

@@ -39,4 +39,15 @@ describe('BudgetPick — income is pickable (WHIT-69)', () => {
     expect(screen.queryByText('Salary')).toBeNull();          // already budgeted → excluded
     expect(screen.getByText('Side Gig')).toBeTruthy();        // not budgeted → still pickable
   });
+
+  // WHIT-169: an income row must NOT show its spend `recent` (4000) as an average —
+  // it shows an "earn-target" tag instead. A spend row still shows its avg.
+  it('shows "earn-target" for income rows, not a spend average, while spend rows keep theirs', () => {
+    mockState = state({ categories: [INCOME, SPEND] as any, budgets: [] });
+    render(<BudgetPick />);
+    expect(screen.getByText('earn-target')).toBeTruthy();     // income row's right side
+    expect(screen.queryByText('$4,000')).toBeNull();          // income spend-avg suppressed
+    expect(screen.getByText('$52')).toBeTruthy();             // spend control row keeps its avg
+    expect(screen.getByText('avg / fortnight')).toBeTruthy(); // ...and its label
+  });
 });

@@ -42,8 +42,16 @@ export default function BudgetPick() {
               <Text style={styles.bucket}>{c.bucket}</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.recent}>{fmt(c.recent)}</Text>
-              <Text style={styles.recentSub}>avg / fortnight</Text>
+              {c.bucket === 'Income' ? (
+                // Earn-target (floor), not spend — c.recent is a spend average, so
+                // showing it (or a misleading $0) here reads wrong (WHIT-169).
+                <Text style={styles.earnTag}>earn-target</Text>
+              ) : (
+                <>
+                  <Text style={styles.recent}>{fmt(c.recent)}</Text>
+                  <Text style={styles.recentSub}>avg / fortnight</Text>
+                </>
+              )}
             </View>
           </Pressable>
         ))}
@@ -63,6 +71,7 @@ const styles = StyleSheet.create({
   bucket: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   recent: { fontFamily: FONT.display, fontSize: 14.5, fontWeight: '700', color: '#cfd2ff' },
   recentSub: { fontFamily: FONT.body, fontSize: 11, color: C.textDim },
+  earnTag: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: '#35d9a0', backgroundColor: 'rgba(53,217,160,.12)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
   empty: { alignItems: 'center', paddingVertical: 50, paddingHorizontal: 24 },
   emptyText: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center' },
 });
