@@ -8,7 +8,11 @@
 // per test. Only the hooks a screen calls need to resolve; the rest are harmless stubs.
 // (Not a *.test.ts file, so the jest testMatch never runs it as a suite.)
 
-type AnyState = Record<string, unknown> & {
+// A store-shaped screen fixture. WHIT-192: the old eager store is gone, so screen tests
+// no longer type these against AppContext — they carry just the fields a screen's query
+// composite reads (re-routed here) plus any client-state (AI slice, openPicker, writers)
+// the screen still pulls off the provider. The index signature keeps it open for those.
+export type ScreenState = Record<string, unknown> & {
   categories?: { id: string }[];
   categoriesLoading?: boolean;
   budgets?: unknown[];
@@ -25,7 +29,7 @@ type AnyState = Record<string, unknown> & {
 
 const noop = () => {};
 
-export function queryMocksFromState(getState: () => AnyState) {
+export function queryMocksFromState(getState: () => ScreenState) {
   const st = () => getState() ?? {};
   const cats = () => (st().categories ?? []) as { id: string }[];
   const category = (id: string | null) => (id == null ? undefined : cats().find((c) => c.id === id));

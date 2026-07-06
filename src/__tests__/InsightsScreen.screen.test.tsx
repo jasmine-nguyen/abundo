@@ -7,15 +7,21 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import type { AppContext } from '../context';
+import type { AppContext, LoanFacts } from '../context';
 import { UNCATEGORIZED_KEY } from '../context';
+
+// WHIT-192: insights.tsx reads only the AI slice off the store; loanFacts/homeLoan come
+// from useGoalScreenData (query layer). The fixture carries the AI slice PLUS loanFacts/
+// homeLoan purely to feed the mocked useGoalScreenData below — they're no longer on the store.
+type InsightsState = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsightsError' | 'refreshAiInsights' | 'generateAiInsights'>
+  & { loanFacts: LoanFacts; homeLoan: { balance: number | null; asOf: string | null } };
 
 // Breakdown data — the query composite.
 let mockInsights: ReturnType<typeof insightsData>;
 jest.mock('../queries', () => ({ useInsightsScreenData: () => mockInsights, useGoalScreenData: () => ({ loanFacts: mockState.loanFacts, homeLoan: mockState.homeLoan, repayment: { amount: null, date: null, principal: null, interest: null }, isLoading: false, isError: false, homeLoanError: false, refetch: jest.fn(), refetchStale: jest.fn() }) }));
 
 // AI state — the context store.
-let mockState: AppContext;
+let mockState: InsightsState;
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
@@ -48,18 +54,18 @@ function insightsData(over: Partial<{ breakdown: Record<string, { posted: number
   return { breakdown: {}, category, isLoading: false, isError: false, refetch, refetchStale, ...over };
 }
 
-// The AI slice of the context store (aiGoalSignal reads loanFacts/homeLoan).
-function state(over: Partial<AppContext>): AppContext {
+// The AI slice of the context store (+ loanFacts/homeLoan the goal-query mock reads).
+function state(over: Partial<InsightsState>): InsightsState {
   return {
     aiInsights: null,
     aiInsightsLoading: false,
     aiInsightsError: false,
-    refreshAiInsights,
-    generateAiInsights,
+    refreshAiInsights: refreshAiInsights as AppContext['refreshAiInsights'],
+    generateAiInsights: generateAiInsights as AppContext['generateAiInsights'],
     loanFacts: NO_LOAN_FACTS,
     homeLoan: { balance: null, asOf: null },
     ...over,
-  } as unknown as AppContext;
+  };
 }
 
 beforeEach(() => {

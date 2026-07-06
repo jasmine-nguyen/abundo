@@ -5,13 +5,18 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import type { AppContext, Rule } from '../context';
+import type { AppContext, Rule, Category } from '../context';
 import type { RulesScreenData } from '../queries';
+
+// WHIT-192: rules.tsx reads only setSheet + deleteRule off the store; the taxonomy comes
+// from useCategories (query layer). The fixture carries those writers PLUS a category()
+// lookup purely to feed the mocked useCategories below.
+type RulesState = Pick<AppContext, 'setSheet' | 'deleteRule'> & { category: (id: string | null) => Category | undefined };
 
 let mockRules: RulesScreenData;
 jest.mock('../queries', () => ({ useRulesScreenData: () => mockRules, useCategories: () => ({ categories: [], category: mockState.category, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }) }));
 
-let mockState: AppContext;
+let mockState: RulesState;
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
@@ -42,14 +47,14 @@ function rulesData(over: Partial<RulesScreenData> = {}): RulesScreenData {
   };
 }
 
-function state(over: Partial<AppContext> = {}): AppContext {
+function state(over: Partial<RulesState> = {}): RulesState {
   return {
     category: (id: string | null) =>
       id === 'subs' ? { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 } : undefined,
-    setSheet: fns.setSheet,
-    deleteRule: fns.deleteRule,
+    setSheet: fns.setSheet as AppContext['setSheet'],
+    deleteRule: fns.deleteRule as AppContext['deleteRule'],
     ...over,
-  } as unknown as AppContext;
+  };
 }
 
 beforeEach(() => {

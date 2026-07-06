@@ -3,7 +3,7 @@ import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView, Activity
 import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, transactionGroups, countUncategorized } from '../../src/context';
+import { transactionGroups, countUncategorized } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { useNavBarsHeader, floatingHeaderStyle } from '../../src/motion/useNavBarsHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -17,7 +17,6 @@ const ACCOUNTS = [
 ];
 
 export default function Transactions() {
-  const s = useAppContext(); // retryLoad (banner-clear on pull); category is passed to each TransactionRow
   const [tab, setTab] = useState<Tab>('all');
   // WHIT-190a: transactions now come from the cached, auth-gated query layer.
   const { transactions, category, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
@@ -29,9 +28,10 @@ export default function Transactions() {
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
-  // Pull-to-refresh: refetch the query AND run retryLoad so the old store reloads and
-  // the "couldn't load" banner clears — the WHIT-74 behaviour.
-  const onRefresh = useCallback(() => { refetch(); s.retryLoad(); }, [refetch, s.retryLoad]);
+  // WHIT-192: pull-to-refresh re-fetches the visible transaction list. The other screens'
+  // reads (budgets, loan, rules, pay-cycle) each refresh themselves on focus via their own
+  // queries — pull no longer eagerly reloads the whole app off the retired store.
+  const onRefresh = useCallback(() => { refetch(); }, [refetch]);
 
   // Scroll-to-hide the nav bars (WHIT-184): the header floats over the list and slides up
   // on scroll-down; the list is inset so nothing sits under the bars at rest. All geometry

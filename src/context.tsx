@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory as apiDeleteCategory, fetchBudgets, fetchBreakdown, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, fetchPayCycle, setPayCycle as apiSetPayCycle, fetchHomeLoan, fetchLoanFacts, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, fetchRepayment, Repayment, BudgetRollup, CategorySpend, listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
-import { subscribe as subscribeAuthStatus, getStatus as getAuthStatus } from './auth';
 
 export type { LoanFacts, LoanFactsInput } from './api';
 // WHIT-190a: the categorise write double-writes the query cache (for the migrated
@@ -89,21 +88,9 @@ const CATEGORY_BATCH_LIMIT = 100;
 // ---------------------------------------------------------------------------
 // Seed data (ported verbatim from Whittle.dc.html)
 // ---------------------------------------------------------------------------
-const SEED_CATEGORIES: Category[] = [
-  { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52 },
-  { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7FD49B', bucket: 'Living', recent: 300 },
-  { id: 'eatingout', name: 'Eating Out', icon: 'food', color: '#F08C8C', bucket: 'Lifestyle', recent: 110 },
-  { id: 'transport', name: 'Transport', icon: 'car', color: '#8AB4F8', bucket: 'Living', recent: 60 },
-  { id: 'health', name: 'Health', icon: 'health', color: '#F2A0C9', bucket: 'Living', recent: 140 },
-  { id: 'pets', name: 'Pets', icon: 'pets', color: '#C7A8F0', bucket: 'Lifestyle', recent: 40 },
-  { id: 'utilities', name: 'Utilities', icon: 'bolt', color: '#F2C94C', bucket: 'Living', recent: 230 },
-  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#6FD0C9', bucket: 'Lifestyle', recent: 95 },
-  { id: 'fitness', name: 'Health & Fitness', icon: 'dumbbell', color: '#8FD46B', bucket: 'Lifestyle', recent: 64 },
-  { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#F0B27A', bucket: 'Lifestyle', recent: 46 },
-  { id: 'travel', name: 'Travel', icon: 'plane', color: '#6FB6D0', bucket: 'Lifestyle', recent: 0 },
-  { id: 'gifts', name: 'Gifts', icon: 'gift', color: '#E59BD0', bucket: 'Lifestyle', recent: 28 },
-  { id: 'phonenet', name: 'Phone & Internet', icon: 'phone', color: '#B0A8F0', bucket: 'Living', recent: 79 },
-];
+// WHIT-192: the old SEED_CATEGORIES fallback list is gone with the eager store — the
+// category taxonomy now loads from the ['categories'] query (which shows its own empty/
+// error states) rather than a fabricated seed. Only the illustrative demo goal remains.
 const SEED_GOAL: Goal = {
   original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
   ratePct: 5.74, baseRepay: 1240, extra: 200,
@@ -279,16 +266,16 @@ const REPAY_LINES = [
 // ---------------------------------------------------------------------------
 // AppContext
 // ---------------------------------------------------------------------------
+// WHIT-192: the eager server-data store is gone — every screen reads the TanStack
+// Query layer (src/queries) directly. AppContext now carries only what the query
+// layer can't: the demo goal + alerts toggle, ephemeral UI (sheet/toast/notif), the
+// write actions (which source their reads from the query cache), and the AI-insights
+// slice (still store-held pending its own migration).
 export interface AppContext {
-  // data
-  categories: Category[]; budgets: Budget[]; transactions: Transaction[]; rules: Rule[]; goal: Goal;
-  payCycle: { length: number; last_pay_date: string }; alerts: boolean;
-  daysLeft: number; cycleLen: number;
+  // data (client-only demo/seed state — not server reads)
+  goal: Goal; alerts: boolean;
   // ephemeral ui
   sheet: Sheet; toast: string | null; notif: { body: string; time: string } | null;
-  // helpers
-  category: (id: string | null) => Category | undefined;
-  cycleName: () => string;
   // actions
   setSheet: (s: Sheet) => void;
   showToast: (m: string) => void;
@@ -305,47 +292,17 @@ export interface AppContext {
   deleteRule: (id: string) => Promise<void>;
   saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
   updateRule: (id: string, pattern: string, categoryId: string) => Promise<void>;
+  saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
   fireRepayment: () => void;
 
-	transactionsLoading: boolean;
-	refreshTransactions: () => Promise<void>;
-	categoriesLoading: boolean;
-	refreshCategories: () => Promise<void>;
-	budgetsLoading: boolean;
-	refreshBudgets: () => Promise<void>;
-	breakdown: Record<string, CategorySpend>;
-	breakdownLoading: boolean;
-	refreshBreakdown: () => Promise<void>;
+	// AI spending insights (WHIT-104) — the last slice still held on the store; its
+	// migration to a query + mutation is tracked separately.
 	aiInsights: AiInsights | null;
 	aiInsightsLoading: boolean;
 	aiInsightsError: boolean;
 	refreshAiInsights: () => Promise<void>;
 	generateAiInsights: (goal?: AiGoalSignal | null) => Promise<void>;
-	homeLoan: HomeLoanState;
-	homeLoanLoading: boolean;
-	homeLoanError: boolean;
-	refreshHomeLoan: () => Promise<void>;
-	loanFacts: LoanFacts;
-	refreshLoanFacts: () => Promise<void>;
-	saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
-	repayment: Repayment;
-	refreshRepayment: () => Promise<void>;
-	refreshPayCycle: () => Promise<void>;
-	enrichmentsLoading: boolean;
-	enrichmentsError: string | null;
-	refreshEnrichments: () => Promise<void>;
-	// Global read-failure banner (offline / 5xx on mount or pull-to-refresh).
-	loadError: boolean;
-	// TEMP DIAGNOSTIC (WHIT-185): the actual failing read + error message, shown in
-	// the banner so we can root-cause the post-login/cold-relaunch load failure on a
-	// real device without the Xcode console. Remove once the cause is pinned.
-	loadErrorDetail: string | null;
-	retryLoad: () => void;
 }
-
-// TEMP DIAGNOSTIC (WHIT-185): a read's error → a short "<source>: <message>" string
-// for the banner (e.g. "transactions: API error: 401"). Remove with the banner detail.
-const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
  * Map a raw category object from the categories API into the client-side
@@ -368,17 +325,16 @@ export function toCategory(raw: any): Category {
   };
 }
 
-// Merge a server budget target into the client Budget shape. The /budgets
-// The server rollup owns the target AND the computed posted/pending spend for
-// the window, so we take all three straight from it. Module-level (like
-// toCategory) so refreshBudgets stays a stable callback.
+// Merge a server budget target into the client Budget shape. The server rollup owns
+// the target AND the computed posted/pending spend for the window, so we take all three
+// straight from it. Module-level + exported so the ['budgets'] query's selectBudgets
+// reuses the exact same mapping.
 export function toBudget(id: string, rollup: BudgetRollup): Budget {
   return { id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending };
 }
 
 // Map a server enrichment rule into the client `Rule` shape. `value` -> `pattern`
-// (what the list renders); loaded rules are never "new". Module-level (like
-// toCategory/toBudget) so refreshEnrichments stays a stable callback. Exported
+// (what the list renders); loaded rules are never "new". Module-level + exported
 // (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
 export function toRule(raw: EnrichmentRule): Rule {
   return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator };
@@ -387,129 +343,20 @@ export function toRule(raw: EnrichmentRule): Rule {
 const Ctx = createContext<AppContext | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [categories, setCategories] = useState<Category[]>(SEED_CATEGORIES);
-  const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  // Server (BankSync) is the source of truth for rules; start empty and load
-  // from /enrichments on mount (no fake seeds — a failed load shows an error, not
-  // undeletable placeholder rules).
-  const [rules, setRules] = useState<Rule[]>([]);
-  // WHIT-195: mirror every optimistic rule edit into the ['rules'] query cache (the
-  // migrated Rules screen reads it) as well as the old store (the AddRuleSheet + the
-  // Settings rules-count still read the store). Applies the SAME functional updater to
-  // both so they stay in lockstep — including the client-only isNew "NEW" badge, which a
-  // refetch would reset to false. Guard an evicted/absent cache (gcTime is finite): when
-  // the Rules screen was never opened there's nothing to patch, and opening it fetches
-  // fresh. Literal ['rules'] key (not the queries.ts const) to avoid a circular import.
-  const patchRules = useCallback((fn: (prev: Rule[]) => Rule[]) => {
-    setRules(fn);
-    queryClient.setQueryData<Rule[]>(['rules'], (prev) => (prev ? fn(prev) : prev));
-  }, []);
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
-  // Seeded to the server default; refreshPayCycle() overwrites it from the API on
-  // mount. last_pay_date is an ISO "YYYY-MM-DD" payday date (was a weekday name pre-P14).
-  const [payCycle, setPayCycle] = useState({ length: 14, last_pay_date: '2024-01-03' });
   const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [notif, setNotif] = useState<{ body: string; time: string } | null>(null);
-
-	// True when a mount fetch or pull-to-refresh READ failed (offline / 5xx), so the
-	// global "couldn't load" banner (see Overlays) can offer a Retry instead of the
-	// app silently showing an empty feed. Writes have their own toast+rollback; this
-	// is reads only. Cleared solely by retryLoad — never on an individual success, so
-	// a fast parallel-mount refresh can't wipe an error a slower sibling just set.
-	const [loadError, setLoadError] = useState(false);
-	// TEMP DIAGNOSTIC (WHIT-185): the failing read + message behind the banner.
-	const [loadErrorDetail, setLoadErrorDetail] = useState<string | null>(null);
-
-	// WHIT-174: the banner means "you're signed in but your data wouldn't load."
-	// AppProvider mounts ABOVE the auth gate, so the mount reads fire at launch —
-	// before login — and throw "Not signed in" until there's a Cognito session
-	// (the static secret is retired, WHIT-162). Those pre-login failures must NOT
-	// raise the banner over the login screen, so only flag a read failure once we're
-	// authed. The auth-status subscription below reloads everything the moment login
-	// (or a Face ID unlock) flips us to 'authed', so real post-login failures still
-	// surface the banner.
-	// TEMP DIAGNOSTIC (WHIT-185): `detail` carries "<read>: <error>" for the banner.
-	const flagLoadError = useCallback((detail?: string) => {
-		if (getAuthStatus() === 'authed') {
-			setLoadError(true);
-			setLoadErrorDetail(detail ?? null);
-		}
-	}, []);
-
-	const [transactionsLoading, setTransactionsLoading] = useState(false);
-	const refreshTransactions = useCallback(async () => {
-		setTransactionsLoading(true);
-		try {
-			const data = await fetchTransactions();
-			setTransactions(data);
-		} catch (e) {
-			// Surface the global load-error banner; keep whatever transactions we had.
-			flagLoadError('transactions: ' + errText(e));
-		} finally{
-			setTransactionsLoading(false);
-		}
-	}, [flagLoadError]);
-
-	const [categoriesLoading, setCategoriesLoading] = useState(false);
-	const refreshCategories = useCallback(async () => {
-		setCategoriesLoading(true);
-		try {
-			const data = await fetchCategories();
-			setCategories(data.map(toCategory));
-		} catch (e) {
-			// Keep the seeded categories as the offline fallback, but make the failure
-			// visible via the banner rather than looking like a fresh empty app.
-			flagLoadError('categories: ' + errText(e));
-		} finally {
-			setCategoriesLoading(false);
-		}
-	}, [flagLoadError]);
-
-	const [budgetsLoading, setBudgetsLoading] = useState(false);
-	const refreshBudgets = useCallback(async () => {
-		setBudgetsLoading(true);
-		try {
-			// Window length = the user's pay-cycle length, so the server sums spend
-			// over the matching period.
-			const map = await fetchBudgets(payCycle.length);
-			// Server owns which categories are budgeted and their spent/pending, so
-			// replace the array. Skip target<=0 rows so budget math never divides by zero.
-			setBudgets(
-				Object.entries(map)
-					.filter(([, rollup]) => rollup.target > 0)
-					.map(([id, rollup]) => toBudget(id, rollup)));
-		} finally {
-			setBudgetsLoading(false);
-		}
-	}, [payCycle.length]);
-
-	const refreshPayCycle = useCallback(async () => {
-		try {
-			const cycle = await fetchPayCycle();
-			setPayCycle(cycle);
-		} catch (e) {
-			// Leave the sensible default cycle in place, but flag the banner.
-			flagLoadError('payCycle: ' + errText(e));
-		}
-	}, [flagLoadError]);
-
-	// Spend-by-category for the current cycle (the Insights tab). Same window as
-	// the budgets rollup, so keyed on the pay-cycle length; refreshed on the tab's
-	// focus and whenever a categorisation changes (see the refreshBreakdown() calls
-	// alongside refreshBudgets()).
-	const [breakdown, setBreakdown] = useState<Record<string, CategorySpend>>({});
-	const [breakdownLoading, setBreakdownLoading] = useState(false);
-	const refreshBreakdown = useCallback(async () => {
-		setBreakdownLoading(true);
-		try {
-			setBreakdown(await fetchBreakdown(payCycle.length));
-		} finally {
-			setBreakdownLoading(false);
-		}
-	}, [payCycle.length]);
+  // WHIT-192: rule edits are mirrored straight into the ['rules'] query cache the Rules
+  // screen + Settings count read (the old eager store is gone). Applies the functional
+  // updater to the cache — including the client-only isNew "NEW" badge, which a refetch
+  // would reset to false. Guards an evicted/absent cache (gcTime is finite): when the
+  // Rules screen was never opened there's nothing to patch, and opening it fetches fresh.
+  // Literal ['rules'] key (not the queries.ts const) to avoid a circular import.
+  const patchRules = useCallback((fn: (prev: Rule[]) => Rule[]) => {
+    queryClient.setQueryData<Rule[]>(['rules'], (prev) => (prev ? fn(prev) : prev));
+  }, []);
 
 	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
 	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
@@ -541,127 +388,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, []);
 
-	// Live home-loan balance (WHIT-8). Separate from `goal` (seed data): the
-	// milestone screen reads this real balance, the Goal tab keeps its illustrative
-	// figures. Null until the first fetch lands; a null-balance response (poller
-	// hasn't run yet) is a no-op that leaves the placeholder in place.
-	const [homeLoan, setHomeLoan] = useState<HomeLoanState>({ balance: null, asOf: null });
-	const [homeLoanLoading, setHomeLoanLoading] = useState(false);
-	// True when the last fetch failed (network/500) AND no balance has ever loaded,
-	// so the screen can show an honest error+retry instead of a permanent spinner.
-	// A null-balance response (poller hasn't run) is NOT an error — it's a no-op.
-	const [homeLoanError, setHomeLoanError] = useState(false);
-	const refreshHomeLoan = useCallback(async () => {
-		setHomeLoanLoading(true);
-		setHomeLoanError(false);
-		try {
-			const hl = await fetchHomeLoan();
-			if (typeof hl.balance === 'number') {
-				setHomeLoan({ balance: hl.balance, asOf: hl.as_of });
-			}
-		} catch {
-			setHomeLoanError(true);
-		} finally {
-			setHomeLoanLoading(false);
-		}
-	}, []);
-
-	// User-entered loan facts (Loan facts card). Starts empty (all null) — the app
-	// shows a "set this up" state until the user saves, never a fabricated default.
-	// A failed fetch leaves the current state intact rather than nulling it, and
-	// flags the global load-error banner.
-	const [loanFacts, setLoanFacts] = useState<LoanFacts>(EMPTY_LOAN_FACTS);
-	const refreshLoanFacts = useCallback(async () => {
-		try {
-			setLoanFacts(await fetchLoanFacts());
-		} catch {
-			flagLoadError();
-		}
-	}, [flagLoadError]);
-
-	// Most recent home-loan repayment (WHIT-115), derived server-side from the
-	// up-homeloan history. Null-filled until loaded / when none is on record — the
-	// card shows a graceful empty state. Same catch-and-flag pattern as refreshLoanFacts.
-	const [repayment, setRepayment] = useState<Repayment>({ amount: null, date: null, principal: null, interest: null });
-	const refreshRepayment = useCallback(async () => {
-		try {
-			setRepayment(await fetchRepayment());
-		} catch {
-			flagLoadError();
-		}
-	}, [flagLoadError]);
-
-	const [enrichmentsLoading, setEnrichmentsLoading] = useState(false);
-	const [enrichmentsError, setEnrichmentsError] = useState<string | null>(null);
-	const refreshEnrichments = useCallback(async () => {
-		setEnrichmentsLoading(true);
-		setEnrichmentsError(null);
-		try {
-			const data = await listEnrichments();
-			setRules(data.map(toRule));
-		} catch {
-			// Surface a retryable error on the Rules screen rather than throwing.
-			setEnrichmentsError('Could not load rules.');
-		} finally {
-			setEnrichmentsLoading(false);
-		}
-	}, []);
-
-	// The "couldn't load" banner's Retry (and the Transactions pull-to-refresh) — a
-	// full reload of every mount read, and the single point that clears the flag.
-	// Reloads the home-loan + rules reads too (they have their own error surfaces, so
-	// they don't feed loadError, but a global Retry should still recover them). The
-	// pure reads self-flag on failure; refreshBudgets/refreshBreakdown are shared with
-	// the write paths, so they DON'T flag internally (a background re-sync after a
-	// successful save mustn't raise the banner) — here, in a load context, we attach
-	// the flag at the call site.
-	const retryLoad = useCallback(() => {
-		setLoadError(false);
-		setLoadErrorDetail(null); // TEMP DIAGNOSTIC (WHIT-185)
-		refreshTransactions();
-		refreshCategories();
-		refreshPayCycle();
-		refreshLoanFacts();
-		refreshRepayment();
-		refreshHomeLoan();
-		refreshEnrichments();
-		refreshBudgets().catch((e) => flagLoadError('budgets: ' + errText(e)));
-		// WHIT-189: breakdown is no longer part of the eager/retry load — the Insights
-		// tab fetches it on focus via a TanStack query, so a breakdown failure can't
-		// raise this global banner.
-	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshLoanFacts, refreshRepayment, refreshHomeLoan, refreshEnrichments, refreshBudgets, flagLoadError]);
-
-	useEffect(() => {
-		refreshTransactions();
-		refreshCategories();
-		refreshPayCycle();
-		refreshHomeLoan();
-		refreshLoanFacts();
-		refreshRepayment();
-		refreshEnrichments();
-	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshLoanFacts, refreshRepayment, refreshEnrichments]);
-
-	// Re-fetch budgets on mount and whenever the pay-cycle length (the window) changes.
-	// Shared with the write paths, so it doesn't flag the banner itself; flag it here
-	// (the mount/window load) via the call site, matching retryLoad. WHIT-189: breakdown
-	// no longer loads here — the Insights tab fetches it on focus via a query.
-	useEffect(() => {
-		refreshBudgets().catch((e) => flagLoadError('budgets: ' + errText(e)));
-	}, [refreshBudgets, flagLoadError]);
-
-	// WHIT-162: with the static secret retired, the mount reads above throw "Not
-	// signed in" until the user has a Cognito session — and they never re-run on
-	// their own. AppProvider mounts ABOVE the auth gate, so those reads fire at
-	// launch before login. Re-load everything the moment auth flips to 'authed'
-	// (after sign-in, or after a Face ID unlock), so the app populates instead of
-	// stranding the "couldn't load" banner over empty data.
-	useEffect(() => {
-		const unsubscribe = subscribeAuthStatus(() => {
-			if (getAuthStatus() === 'authed') retryLoad();
-		});
-		return unsubscribe;
-	}, [retryLoad]);
-
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const repayIdx = useRef(0);
@@ -673,74 +399,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clearTimeout(notifTimer.current);
   }, []);
 
-  const category = useCallback((id: string | null) => categories.find((c) => c.id === id), [categories]);
-  const cycleNameCb = useCallback(() => cycleName(payCycle.length), [payCycle.length]);
-
   const showToast = useCallback((m: string) => {
     setToast(m);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3400);
   }, []);
 
-  // Persist a changed pay cycle: update local state optimistically, PUT the full
-  // cycle (the server replaces both fields together), then refresh budgets. On
-  // failure roll back to `prev` and tell the user — same optimistic-write pattern
-  // as saveBudget/applyCategory. Defined below showToast so it can reference it.
+  // Persist a changed pay cycle: optimistically write the ['payCycle'] cache the
+  // migrated sheet + Settings row read, PUT the full cycle (the server replaces both
+  // fields together), then invalidate the windowed reads. Roll the cache back + toast
+  // on failure. WHIT-192: the caller mutates the CURRENT cached cycle — sourced here
+  // via getQueryData, not a store useState. If the ['payCycle'] read hasn't resolved
+  // (cold cache) we bail rather than persist a defaulted cycle, which would silently
+  // reset the sibling field (e.g. a Monthly user's length). The pay-cycle sheet warms
+  // this cache on open, so a cold write is a belt-and-braces guard, not the norm.
   const persistPayCycle = useCallback(
-    async (next: { length: number; last_pay_date: string }, prev: { length: number; last_pay_date: string }) => {
-      setPayCycle(next);
-      // WHIT-203: mirror into the ['payCycle'] cache so the (migrated) pay-cycle sheet +
-      // Settings row reflect the change instantly; roll both back together on failure.
+    async (mutate: (prev: { length: number; last_pay_date: string }) => { length: number; last_pay_date: string }) => {
+      const prev = queryClient.getQueryData<{ length: number; last_pay_date: string }>(['payCycle']);
+      if (!prev) return;
+      const next = mutate(prev);
       queryClient.setQueryData(['payCycle'], next);
       try {
         await apiSetPayCycle(next);
-        await refreshBudgets();
-        refreshBreakdown();
         // The window (length and/or payday) changed, so the server rollups move — refetch
         // the migrated Budgets/Insights reads.
         queryClient.invalidateQueries({ queryKey: ['budgets'] });
         queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       } catch {
-        setPayCycle(prev);
         queryClient.setQueryData(['payCycle'], prev);
         showToast('Could not save pay cycle. Please try again.');
       }
     },
-    [refreshBudgets, refreshBreakdown, showToast],
+    [showToast],
   );
 
   // Change the window length (Weekly/Fortnightly/Monthly), keeping the last_pay_date.
   const setPayCycleLength = useCallback((length: number) => {
-    persistPayCycle({ ...payCycle, length }, payCycle);
-  }, [persistPayCycle, payCycle]);
+    persistPayCycle((prev) => ({ ...prev, length }));
+  }, [persistPayCycle]);
 
   // Change the last pay date (a real past payday), keeping the length.
   const setPayday = useCallback((last_pay_date: string) => {
-    persistPayCycle({ ...payCycle, last_pay_date }, payCycle);
-  }, [persistPayCycle, payCycle]);
+    persistPayCycle((prev) => ({ ...prev, last_pay_date }));
+  }, [persistPayCycle]);
 
-  // Save the loan-facts form: optimistic local update, PUT the whole object, roll
-  // back + toast on failure (same pattern as persistPayCycle/saveBudget). Returns
-  // true on success so the form can navigate back only when the save stuck.
+  // Save the loan-facts form: optimistically write the ['loanFacts'] cache the Goal +
+  // Settings reads pull from, PUT the whole object, invalidate to reconcile. Roll the
+  // cache back + toast on failure (same optimistic pattern as persistPayCycle/saveBudget).
+  // Returns true on success so the form navigates back only when the save stuck. WHIT-192:
+  // sources prev from the query cache (EMPTY_LOAN_FACTS when cold — the same default the
+  // form shows), not a store useState.
   const saveLoanFacts = useCallback(async (next: LoanFactsInput): Promise<boolean> => {
-    const prev = loanFacts;
-    setLoanFacts(next);
+    const prev = queryClient.getQueryData<LoanFacts>(['loanFacts']) ?? EMPTY_LOAN_FACTS;
+    queryClient.setQueryData(['loanFacts'], next);
     try {
       await apiSetLoanFacts(next);
-      // WHIT-191a: mirror the save into the ['loanFacts'] query cache (Settings reads it)
-      // and invalidate to reconcile with the server. ONLY ['loanFacts'] — home-loan
-      // balance + repayment don't depend on loan facts server-side (the payoff projection
-      // is client-derived). The old store is already updated above for the unmigrated
-      // readers (milestone, Insights aiGoalSignal, the loan form).
-      queryClient.setQueryData(['loanFacts'], next);
       queryClient.invalidateQueries({ queryKey: ['loanFacts'] });
       return true;
     } catch {
-      setLoanFacts(prev);
+      queryClient.setQueryData(['loanFacts'], prev);
       showToast('Could not save loan details. Please try again.');
       return false;
     }
-  }, [loanFacts, showToast]);
+  }, [showToast]);
 
   const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);
 
@@ -754,6 +475,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // This is only ever triggered from the confirm sheet; ignore any other state.
     if (!sheet || sheet.mode !== 'confirm') return;
     const { txId, categoryId } = sheet;
+    // WHIT-192: source the transactions + taxonomy from the query cache the screens read
+    // (the eager store is gone). By the time the confirm sheet is open the Transactions
+    // list + pickers have warmed both caches; an empty fallback just closes the sheet.
+    const transactions = queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+    const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
     const transaction = transactions.find((t) => t.transaction_id === txId);
     const category = categories.find((c) => c.id === categoryId);
     if (!transaction || !category) {
@@ -761,19 +487,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // WHIT-190a: mirror every optimistic tx edit into the ['transactions'] query cache
-    // (the migrated list reads it) as well as the old store (tab badge + budget detail).
-    // Guard an evicted/absent cache (gcTime is finite).
+    // WHIT-190a: optimistic tx edits go straight into the ['transactions'] query cache the
+    // migrated list + tab badge + budget detail read. Guard an evicted/absent cache
+    // (gcTime is finite).
     const patchTransactions = (fn: (prev: Transaction[]) => Transaction[]) => {
-      setTransactions(fn);
       queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => (prev ? fn(prev) : prev));
     };
-    // After a categorisation persists: refresh the old store (budget detail reads it) AND
-    // invalidate the query cache the migrated screens read. The ['budgets']/['breakdown']/
-    // ['transactions'] invalidation is what closes the ≤45s staleness (WHIT-193).
+    // After a categorisation persists, invalidate the query caches the migrated screens
+    // read. The ['budgets']/['breakdown']/['transactions'] invalidation is what closes the
+    // ≤45s staleness (WHIT-193).
     const invalidateAfterCategorise = () => {
-      refreshBudgets();
-      refreshBreakdown();
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -895,23 +618,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }));
       showToast('Could not save category. Please try again.');
     }
-  }, [sheet, transactions, categories, showToast, refreshBudgets, refreshBreakdown, patchRules]);
+  }, [sheet, showToast, patchRules]);
 
   const saveBudget = useCallback(
     async (categoryId: string, value: number): Promise<boolean> => {
       if (value <= 0) return false;
-      const c = categories.find((x) => x.id === categoryId);
-      const existing = budgets.find((b) => b.id === categoryId);
+      // WHIT-192: the toast copy needs the category name + whether a budget already
+      // existed — both sourced from the query cache the screens read (the store is gone).
+      // The ['budgets', cycleLen] cache holds the RAW queryFn output, a
+      // Record<categoryId, BudgetRollup> keyed by id — useBudgetsQuery maps it to Budget[]
+      // via `select`, which getQueryData does NOT apply. Budgets are windowed, so scan
+      // every window via getQueriesData and look the id up as a KEY (a target>0 rollup is a
+      // real budget row, matching selectBudgets' own filter). Treating it as an array here
+      // would throw `.some is not a function` on the Record.
+      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      const existing = queryClient
+        .getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] })
+        .some(([, data]) => !!data && (data[categoryId]?.target ?? 0) > 0);
       try {
         const saved = await apiSetBudget(categoryId, value);
-        // Optimistically show the new target right away (keyed off the known
-        // categoryId). A brand-new budget starts at 0 spend locally...
-        setBudgets((prev) =>
-          prev.some((b) => b.id === categoryId)
-            ? prev.map((b) => (b.id === categoryId ? { ...b, budget: saved.target } : b))
-            : [...prev, { id: categoryId, budget: saved.target, posted: 0, pending: 0 }]);
-        // ...then pull the server rollup so its real posted/pending fill in.
-        refreshBudgets();
+        // The Budgets screen reads ['budgets', cycleLen] and app/budget/edit.tsx
+        // invalidates it after this returns true, so the just-saved target reconciles
+        // from the server rollup — no optimistic cache write needed here.
         if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(saved.target)}.`);
         return true;
       } catch {
@@ -919,7 +647,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
     },
-    [categories, budgets, showToast, refreshBudgets],
+    [showToast],
   );
 
   const saveCategory = useCallback(
@@ -929,15 +657,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         if (editId) {
           const updated = await updateCategory(editId, { name, bucket: form.bucket, icon: form.icon });
-          const fn = (prev: Category[]) => prev.map((c) => (c.id === editId ? toCategory(updated) : c));
-          setCategories(fn);
-          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? fn(prev) : prev));
+          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
           showToast('Category updated.');
         } else {
           const created = await createCategory({ name, bucket: form.bucket, icon: form.icon });
-          const fn = (prev: Category[]) => [...prev, toCategory(created)];
-          setCategories(fn);
-          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? fn(prev) : prev));
+          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, toCategory(created)] : prev));
           showToast('Category created.');
         }
         // WHIT-203: the setQueryData above shows the change instantly on the migrated
@@ -957,26 +681,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteCategory = useCallback(async (id: string): Promise<boolean> => {
     try {
       await apiDeleteCategory(id);
-      // Local cascade: drop the category's budget/rules and clear it off any
-      // referencing transaction (cosmetic — the server does no cascade, so on the
-      // next refresh those txns re-appear with the dangling id and render as
-      // Uncategorized via isUncategorized).
-      setCategories((prev) => prev.filter((c) => c.id !== id));
-      setBudgets((prev) => prev.filter((b) => b.id !== id));
-      patchRules((prev) => prev.filter((r) => r.categoryId !== id));
-      setTransactions((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
-      // WHIT-203: mirror the same client-side cascade into the query caches the migrated
-      // screens read (category list, budget screens, tab badge, pickers). setQueryData —
-      // NOT invalidate — because the server does no cascade, so a refetch would resurrect
-      // the just-dropped budget/rule/txn-tag. Budgets are windowed, so patch every
-      // ['budgets', *] entry. Rules are already mirrored by patchRules above.
+      // Client-side cascade into the query caches the migrated screens read (category
+      // list, budget screens, tab badge, pickers). setQueryData — NOT invalidate —
+      // because the server does no cascade, so a refetch would resurrect the just-dropped
+      // budget/rule/txn-tag (cosmetic: those txns re-appear with the dangling id and
+      // render as Uncategorized via isUncategorized). Budgets are windowed AND the
+      // ['budgets', *] cache holds the RAW Record<categoryId, BudgetRollup> (not the
+      // select'd Budget[]), so drop the deleted id's KEY from every window's Record —
+      // filtering it as an array would throw `.filter is not a function` and abort the
+      // rest of the cascade. Rules go through patchRules (same ['rules'] cache).
       queryClient.setQueryData<Category[]>(['categories'], (prev) => prev?.filter((c) => c.id !== id));
-      queryClient.setQueriesData<Budget[]>({ queryKey: ['budgets'] }, (prev) => prev?.filter((b) => b.id !== id));
+      queryClient.setQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] }, (prev) => {
+        if (!prev || !(id in prev)) return prev;
+        const { [id]: _removed, ...rest } = prev;
+        return rest;
+      });
+      patchRules((prev) => prev.filter((r) => r.categoryId !== id));
       queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => prev?.map((t) => (t.category === id ? { ...t, category: null } : t)));
       // The deleted category's in-cycle spend now falls into Uncategorized on the
-      // breakdown; re-pull so the Insights tab reflects that. (Budgets already
-      // dropped the row locally above.)
-      refreshBreakdown();
+      // breakdown; invalidate so the Insights tab re-pulls and reflects that.
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       showToast('Category deleted.');
       return true;
@@ -984,16 +707,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast('Could not delete category. Please try again.');
       return false;
     }
-  }, [showToast, refreshBreakdown, patchRules]);
+  }, [showToast, patchRules]);
 
   // Optimistically remove the rule, then delete it in BankSync; on failure put it
   // back where it was and tell the user. A temp-id rule (mid-create) deletes fine
   // too — the server DELETE is idempotent (unknown id -> 200), and a refresh
   // reconciles any brief create/delete race.
   const deleteRule = useCallback(async (id: string) => {
-    const index = rules.findIndex((r) => r.id === id);
+    // WHIT-192: source the rules snapshot (for the index/removed rollback) from the
+    // ['rules'] query cache the screen reads, not a store useState.
+    const current = queryClient.getQueryData<Rule[]>(['rules']) ?? [];
+    const index = current.findIndex((r) => r.id === id);
     if (index === -1) return;
-    const removed = rules[index];
+    const removed = current[index];
     patchRules((prev) => prev.filter((r) => r.id !== id));
     try {
       await deleteEnrichment(id);
@@ -1005,7 +731,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       showToast('Could not delete rule. Please try again.');
     }
-  }, [rules, showToast, patchRules]);
+  }, [showToast, patchRules]);
 
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
@@ -1013,7 +739,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const saveManualRule = useCallback(async (pattern: string, categoryId: string) => {
     const value = pattern.trim();
     if (!value || !categoryId) return;
-    const c = categories.find((x) => x.id === categoryId);
+    // WHIT-192: the toast copy needs the category name — sourced from the ['categories']
+    // query cache the screens read, not a store useState.
+    const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
     const tempRuleId = 'tmp-' + Date.now();
     patchRules((prev) => [{ id: tempRuleId, pattern: value, categoryId, isNew: true }, ...prev]);
     setSheet(null);
@@ -1027,7 +755,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       showToast('Could not save rule. Please try again.');
     }
-  }, [categories, showToast, patchRules]);
+  }, [showToast, patchRules]);
 
   // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
   // failure. The rule's field/operator are preserved (passed through) so a
@@ -1035,11 +763,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateRule = useCallback(async (id: string, pattern: string, categoryId: string) => {
     const value = pattern.trim();
     if (!value || !categoryId) return;
-    const before = rules.find((r) => r.id === id);
+    // WHIT-192: source the `before` snapshot (for rollback) + the category name from the
+    // query caches the screens read, not store useStates.
+    const before = queryClient.getQueryData<Rule[]>(['rules'])?.find((r) => r.id === id);
     if (!before) return;
     patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, pattern: value, categoryId } : r)));
     setSheet(null);
-    const c = categories.find((x) => x.id === categoryId);
+    const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
     if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
     try {
       const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator });
@@ -1048,7 +778,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
       showToast('Could not update rule. Please try again.');
     }
-  }, [rules, categories, showToast, patchRules]);
+  }, [showToast, patchRules]);
 
   const fireRepayment = useCallback(() => {
     const principal = 1208;
@@ -1059,18 +789,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     notifTimer.current = setTimeout(() => setNotif(null), 5600);
   }, []);
 
-  const value = useMemo<AppContext>(() => {
-    const { cycleLen, daysLeft } = cycleClock(payCycle);
-    return {
-    categories, budgets, transactions, rules, goal, payCycle, alerts, daysLeft, cycleLen,
+  const value = useMemo<AppContext>(() => ({
+    goal, alerts,
     sheet, toast, notif,
-    category, cycleName: cycleNameCb,
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, loadErrorDetail, retryLoad
-    };
-  }, [categories, budgets, transactions, rules, goal, payCycle, alerts, sheet, toast, notif, category, cycleNameCb, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, fireRepayment, transactionsLoading, refreshTransactions, categoriesLoading, refreshCategories, budgetsLoading, refreshBudgets, breakdown, breakdownLoading, refreshBreakdown, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights, homeLoan, homeLoanLoading, homeLoanError, refreshHomeLoan, loanFacts, refreshLoanFacts, saveLoanFacts, repayment, refreshRepayment, refreshPayCycle, enrichmentsLoading, enrichmentsError, refreshEnrichments, loadError, loadErrorDetail, retryLoad]);
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment,
+    aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
+  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -1118,9 +845,10 @@ export interface BudgetView {
 }
 
 // The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
-// caller feeding it query data — not the store — is type-checked field-by-field
-// instead of silently casting (WHIT-188). AppContext still satisfies it structurally,
-// so the existing selector logic tests pass an AppContext unchanged.
+// caller feeding it query data — not the store — is type-checked field-by-field instead
+// of silently casting (WHIT-188). WHIT-192: the store no longer carries these fields, so
+// the selector logic tests feed a plain fixture (see __tests__/factory.makeState) that
+// satisfies this shape structurally.
 export interface BudgetViewsInput {
   budgets: Budget[];
   category: (id: string) => Category | undefined;
@@ -1211,8 +939,8 @@ export interface CategoryBreakdownRow {
 
 // The exact slice categoryBreakdown reads. A narrow input (not the whole AppContext) so
 // the Insights screen can feed it query data — type-checked field-by-field, not cast
-// (WHIT-189, mirrors BudgetViewsInput). AppContext still satisfies it structurally, so
-// the existing selector logic tests pass an AppContext unchanged.
+// (WHIT-189, mirrors BudgetViewsInput). WHIT-192: the selector logic tests feed a plain
+// fixture (factory.makeState) that satisfies this shape structurally.
 export interface CategoryBreakdownInput {
   breakdown: Record<string, CategorySpend>;
   category: (id: string) => Category | undefined;
@@ -1323,7 +1051,7 @@ export function countUncategorized(s: TransactionListInput) {
 // The narrow read-input for the budget-detail + budget-edit selectors (WHIT-203) — they
 // read only the taxonomy lookup + budgets (+ transactions/cycle for detail), never the
 // whole store. Narrowing lets the migrated budget screens feed cached query data straight
-// in; the full AppContext still satisfies these structurally.
+// in (the eager store is gone as of WHIT-192).
 export interface BudgetDetailInput {
   category: (id: string) => Category | undefined;
   budgets: Budget[];
@@ -1433,10 +1161,10 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
 // The narrow read-inputs for the Goal-tab + milestone selectors (WHIT-197). These
 // five selectors read ONLY the user's loan facts + the live home-loan balance (and,
 // for the repayment card, the last repayment) — never the pay cycle, categories, or
-// the seed goal. Narrowing the param to exactly what they read lets the Goal/milestone
-// screens feed cached query data straight in (type-checked, not cast), while the full
-// AppContext still satisfies these structurally for the store readers (Insights
-// aiGoalSignal, the loan form) that stay on the store until the WHIT-192 cleanup.
+// the seed goal. Narrowing the param to exactly what they read lets the Goal/milestone/
+// Insights screens feed cached query data straight in (type-checked, not cast). WHIT-192
+// removed the eager store, so all callers now feed query data (or the Insights aiGoalSignal
+// via useGoalScreenData).
 export interface GoalViewInput { loanFacts: LoanFacts; homeLoan: HomeLoanState; }
 export interface RepaymentViewInput { repayment: Repayment; }
 

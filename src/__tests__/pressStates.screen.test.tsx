@@ -9,9 +9,10 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
-import type { AppContext } from '../context';
+import type { Category } from '../context';
 
-let mockState: AppContext;
+// WHIT-192: the row reads only openPicker from the store; category is a prop.
+let mockState: { openPicker: jest.Mock; category: (id: string | null) => Category | undefined };
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
@@ -22,7 +23,7 @@ import { TransactionRow } from '../components/TransactionRow';
 type Node = { props: { style: unknown; disabled?: boolean; onPress?: unknown } };
 
 beforeEach(() => {
-  mockState = { ...makeState({ categories: [cat({ id: 'coffee' })] }), openPicker: jest.fn() } as AppContext;
+  mockState = { openPicker: jest.fn(), category: makeState({ categories: [cat({ id: 'coffee' })] }).category };
 });
 
 // The row's Pressable is the only node whose `style` is a function (the pressed-state fn).

@@ -3,7 +3,7 @@
 // handful of AppContext fields, so we build just those and cast — no provider,
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName } from '../context';
-import type { AppContext, Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
+import type { Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
 import type { CategorySpend, LoanFacts, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
 
@@ -76,12 +76,15 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
   };
 }
 
-// Build a partial AppContext with a working category() lookup and cycleName(),
-// then cast. Only the fields the selectors touch are populated.
-export function makeState(over: StateOver = {}): AppContext {
+// Build the exact slice the pure selectors read — a category() lookup, cycleName(),
+// and the data fields — and return it as its concrete inferred shape. WHIT-192: the
+// selectors take NARROW inputs (BudgetViewsInput, GoalViewInput, ...) rather than the
+// whole AppContext (whose server-data fields are gone with the eager store), so this
+// structural fixture satisfies them field-by-field without any cast.
+export function makeState(over: StateOver = {}) {
   const categories = over.categories ?? [cat()];
   const cycleLen = over.cycleLen ?? 14;
-  const s = {
+  return {
     categories,
     budgets: over.budgets ?? [],
     transactions: over.transactions ?? [],
@@ -95,5 +98,4 @@ export function makeState(over: StateOver = {}): AppContext {
     category: (id: string | null) => categories.find((c) => c.id === id),
     cycleName: () => cycleName(cycleLen),
   };
-  return s as unknown as AppContext;
 }
