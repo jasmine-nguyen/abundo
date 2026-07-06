@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Animated, LayoutChangeEvent } from 'react-native';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext, countUncategorized } from '../../src/context';
-import { ChromeProvider, useChrome } from '../../src/motion/ChromeContext';
+import { NavBarsProvider, useNavBars } from '../../src/motion/NavBarsContext';
+import { NavBarsRouteReset } from '../../src/motion/NavBarsRouteReset';
 import { useReduceMotion } from '../../src/motion/useReduceMotion';
 
 const TABS = [
@@ -31,18 +32,12 @@ function TabBar({ state, navigation }: TabBarShape) {
   // Scroll-to-hide (WHIT-184): the bar floats (position:absolute, so the scene fills
   // full height and content scrolls under it), and slides straight down out of view
   // when `visibility` → 0. Measure the bar's own height so the hidden state translates
-  // it exactly off-screen regardless of safe-area inset.
-  const { visibility, setChrome } = useChrome();
+  // it exactly off-screen regardless of safe-area inset. Reset-to-shown lives in
+  // NavBarsRouteReset (one owner), so the bar isn't involved in that anymore.
+  const { visibility } = useNavBars();
   const [barHeight, setBarHeight] = useState(90);
   const onLayout = (e: LayoutChangeEvent) => setBarHeight(e.nativeEvent.layout.height);
   const translateY = visibility.interpolate({ inputRange: [0, 1], outputRange: [barHeight, 0] });
-
-  // Chrome hide/show is one value shared by every tab (the bar) and only the wired
-  // screens reset it. Reset to shown on any tab change here — the bar always renders, so
-  // this guarantees you never land on a tab with the bar stranded off-screen, including
-  // the screens that don't wire scroll-to-hide. (Provider dedups, so it's a no-op when
-  // already shown.)
-  useEffect(() => { setChrome('shown'); }, [state.index, setChrome]);
 
   return (
     <Animated.View onLayout={onLayout} style={[styles.bar, { paddingBottom: insets.bottom + 14, transform: [{ translateY }] }]}>
@@ -76,10 +71,13 @@ function TabBar({ state, navigation }: TabBarShape) {
 
 export default function TabsLayout() {
   // reduce-motion owns two things here: the native tab-switch animation, and (passed
-  // down) the scroll-to-hide chrome tween. Both fall back to instant when it's on.
+  // down) the scroll-to-hide nav-bars tween. Both fall back to instant when it's on.
   const reduceMotion = useReduceMotion();
   return (
-    <ChromeProvider reduceMotion={reduceMotion}>
+    <NavBarsProvider reduceMotion={reduceMotion}>
+      {/* Single owner of "reset bars to shown" — fires on any route change (tab switch
+          or a detail push/pop). Must sit inside the provider AND the navigator. */}
+      <NavBarsRouteReset />
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -96,7 +94,7 @@ export default function TabsLayout() {
         <Tabs.Screen name="goals" />
         <Tabs.Screen name="settings" />
       </Tabs>
-    </ChromeProvider>
+    </NavBarsProvider>
   );
 }
 

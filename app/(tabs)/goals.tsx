@@ -7,6 +7,7 @@ import { Glyph } from '../../src/icons';
 import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../../src/context';
 import { useGoalScreenData } from '../../src/queries';
 import { Bar } from '../../src/components/ui';
+import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 
 export default function Goals() {
   const s = useAppContext(); // kept only for s.fireRepayment (the demo alert button — not server data)
@@ -29,7 +30,7 @@ export default function Goals() {
         <Text style={styles.headerTitle}>Goal</Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: TAB_BAR_CLEARANCE }} showsVerticalScrollIndicator={false}>
         {/* hero — real payoff progress once loan facts are set, else a set-up prompt
             that still shows the one thing we genuinely know: the live balance. */}
         <View style={styles.hero}>
