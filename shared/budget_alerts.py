@@ -147,10 +147,14 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     categories = category_repo.list_categories()
     names = {c["id"]: c["name"] for c in categories}
     bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
-    # Only fire for a target whose category is CURRENTLY live AND not an Income
-    # earn-target. Two exclusions, one filter:
+    # Only fire for a target whose category is CURRENTLY live AND a spend ceiling
+    # (not an Income or Savings floor). Exclusions, one filter:
     #   * Income buckets are floors (over-is-good), not spend ceilings — the
     #     80/100% "you've spent your budget" push must never fire for them (WHIT-69).
+    #   * Savings buckets are floors too — savings is an account balance, not
+    #     categorised spend, so a Savings target must never fire either. A discretionary
+    #     spend mis-filed into a Savings category would otherwise read as spend against
+    #     the target and cross a threshold (WHIT-201).
     #   * A target whose category is GONE (an orphan left by a failed best-effort
     #     delete-cascade, lambda_api/handler.py) can't be classified, so it's dropped
     #     too — otherwise a negative clawback against an orphaned income target would
@@ -158,12 +162,13 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     #     alert (WHIT-168). A deleted category shouldn't push regardless of its bucket,
     #     and its name would only render as a raw id.
     # A positive membership test (not `set(targets) - income_ids`) is what closes the
-    # orphan hole: subtraction kept unknown-category targets in. "Income" is the bucket
-    # literal — no `constants` import, so no WHIT-136 shared-constant mirror is dragged in.
-    # NOTE: list_budgets (the /budgets read) intentionally still sums an orphan as spend;
-    # the asymmetry is deliberate — this card is about the false push, not the display.
+    # orphan hole: subtraction kept unknown-category targets in. "Income"/"Savings" are
+    # bucket literals — no `constants` import, so no WHIT-136 shared-constant mirror is
+    # dragged in. NOTE: list_budgets (the /budgets read) intentionally still sums these
+    # as spend; the asymmetry is deliberate — this card is about the false push, and the
+    # client hides Savings budget rows (WHIT-201).
     target_ids = {cat_id for cat_id in targets
-                  if cat_id in bucket_by_id and bucket_by_id[cat_id] != "Income"}
+                  if cat_id in bucket_by_id and bucket_by_id[cat_id] not in ("Income", "Savings")}
     before = summarise_transactions(ctx["before_rows"], target_ids)
     after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), target_ids)
 

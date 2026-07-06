@@ -129,3 +129,23 @@ it('the add-budget button navigates to the picker', async () => {
   fireEvent.press(screen.getByText('Add a budget'));
   expect(mockPush).toHaveBeenCalledWith('/budget/pick');
 });
+
+it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total (WHIT-201)', async () => {
+  // A stored Savings budget (reachable by re-bucketing an already-budgeted category, or
+  // a deep-linked write) must not render a row AND must not inflate the "of $X" pill.
+  // Exercises the whole query -> selectBudgets -> budgetViews -> render pipeline; reverting
+  // the budgetViews Savings skip (src/context.tsx) makes both assertions fail.
+  mockFetchCategories.mockReset().mockResolvedValue([
+    { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+    { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'home', color: '#C7A8F0', recent: 0 },
+  ]);
+  mockFetchBudgets.mockReset().mockResolvedValue({
+    coffee: { target: 100, posted: 40, pending: 10 },
+    nest_egg: { target: 2000, posted: 0, pending: 0 },
+  });
+  renderBudgets();
+  expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+  expect(screen.queryByText('Nest Egg')).toBeNull();      // Savings row hidden
+  expect(screen.getByText('of $100')).toBeTruthy();       // spend budget only
+  expect(screen.queryByText('of $2,100')).toBeNull();     // NOT spend + Savings target
+});

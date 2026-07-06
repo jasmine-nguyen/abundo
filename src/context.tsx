@@ -1097,6 +1097,12 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
   for (const b of s.budgets) {
     const c = s.category(b.id);
     if (!c) continue;
+    // Savings-bucket budgets have no meaningful rollup — savings for this app is an
+    // account balance, not categorised transactions, so a Savings target would render
+    // a permanently-empty spend bar. Skip it entirely (row AND totals) until a real
+    // account-balance goal exists (WHIT-201). New Savings budgets are already blocked
+    // in app/budget/pick.tsx; this also hides one set before that or via re-bucketing.
+    if (c.bucket === 'Savings') continue;
     // posted/pending come from the server rollup (computed over the window). For an
     // Income category the rollup is positive EARNINGS, not spend.
     const pending = b.pending, posted = b.posted, actual = posted + pending;
@@ -1280,6 +1286,9 @@ export function budgetDetail(s: AppContext, categoryId: string) {
   const c = s.category(categoryId);
   const b = s.budgets.find((x) => x.id === categoryId);
   if (!c || !b) return null;
+  // A Savings budget has no meaningful rollup (see budgetViews) — treat it as absent
+  // so the detail screen shows nothing broken (WHIT-201).
+  if (c.bucket === 'Savings') return null;
   const elapsed = elapsedFrac(s);
   const isIncome = c.bucket === 'Income';
   // posted/pending come from the server rollup (computed over the window). For an
