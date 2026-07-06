@@ -1,57 +1,79 @@
-// Screen test (WHIT-74 regression guard): the Transactions pull-to-refresh must be
-// wired to `retryLoad`, NOT `refreshTransactions`. This is the exact round-1 bug —
-// a successful pull did NOT clear the "couldn't load" banner because it only
-// re-fetched transactions. Nothing else in the suite renders the Transactions screen
-// and asserts the RefreshControl wiring, so a revert to onRefresh={s.refreshTransactions}
-// would otherwise pass green. Fail-on-revert: pulls apart onRefresh identity + call.
+// Screen test (WHIT-74 regression guard, retargeted for WHIT-190a): the Transactions
+// list is now query-fed, but pull-to-refresh must STILL invoke `retryLoad` — that's the
+// WHIT-74 guarantee (a successful pull reloads everything AND clears the "couldn't load"
+// banner, not just the transactions). Post-migration it ALSO refetches the query, and the
+// spinner binds to the query's `isFetching` (isLoading is false once data is cached, so it
+// would never spin on a pull of already-loaded data). Fail-on-revert: dropping retryLoad
+// from onRefresh (back to a query-only refresh) flips the first assertion.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render } from '@testing-library/react-native';
 import { RefreshControl } from 'react-native';
-import { makeState } from './factory';
 import type { AppContext } from '../context';
 
-// Inject a controlled context but keep the real transactionGroups/countUncategorized
-// selectors (same module), matching the TransactionRow.screen.test pattern.
+// The list is query-fed now — mock the composite.
+let mockTx: ReturnType<typeof txData>;
+jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+
+// useAppContext still supplies retryLoad (the banner-clear on pull).
 let mockState: AppContext;
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => mockState };
 });
 
+jest.mock('expo-router', () => {
+  const React = require('react');
+  return { useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), [cb]) };
+});
+
 import Transactions from '../../app/(tabs)/transactions';
 
 const retryLoad = jest.fn();
-const refreshTransactions = jest.fn();
+const refetch = jest.fn();
+const refetchStale = jest.fn();
 
-function stateWith(over: Partial<AppContext> = {}): AppContext {
-  return { ...makeState(), transactionsLoading: false, retryLoad, refreshTransactions, ...over } as AppContext;
+const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
+const ROW = {
+  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
+  description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
+  account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
+};
+const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
+
+function txData(over: Partial<{ transactions: unknown[]; isFetching: boolean }> = {}) {
+  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch, refetchStale, ...over };
 }
 
 beforeEach(() => {
   retryLoad.mockClear();
-  refreshTransactions.mockClear();
+  refetch.mockClear();
+  refetchStale.mockClear();
+  mockTx = txData();
+  mockState = { retryLoad, category } as unknown as AppContext;
 });
 
-it('pull-to-refresh onRefresh is retryLoad (the full reload), not refreshTransactions', () => {
-  mockState = stateWith();
-  const { UNSAFE_getByType } = render(<Transactions />);
-  const rc = UNSAFE_getByType(RefreshControl);
-  // Identity guard: reverting to s.refreshTransactions flips both of these.
-  expect(rc.props.onRefresh).toBe(retryLoad);
-  expect(rc.props.onRefresh).not.toBe(refreshTransactions);
-});
-
-it('firing the RefreshControl calls retryLoad once and never refreshTransactions', () => {
-  mockState = stateWith();
+it('pull-to-refresh invokes retryLoad (banner-clear) AND the query refetch', () => {
   const { UNSAFE_getByType } = render(<Transactions />);
   UNSAFE_getByType(RefreshControl).props.onRefresh();
-  expect(retryLoad).toHaveBeenCalledTimes(1);
-  expect(refreshTransactions).not.toHaveBeenCalled();
+  expect(retryLoad).toHaveBeenCalledTimes(1); // WHIT-74: reloads everything + clears the banner
+  expect(refetch).toHaveBeenCalledTimes(1); // + refreshes the query-backed list
 });
 
-it('the spinner is bound to transactionsLoading', () => {
-  mockState = stateWith({ transactionsLoading: true } as Partial<AppContext>);
+it('the pull-to-refresh spinner spins while refreshing data we already have', () => {
+  mockTx = txData({ transactions: [ROW], isFetching: true });
   const { UNSAFE_getByType } = render(<Transactions />);
   expect(UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
+});
+
+it('the pull spinner does NOT spin during a cold load (empty + fetching) — the inline spinner owns it', () => {
+  mockTx = txData({ transactions: [], isFetching: true });
+  const { UNSAFE_getByType } = render(<Transactions />);
+  expect(UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+});
+
+it('the spinner is down when nothing is fetching', () => {
+  mockTx = txData({ transactions: [ROW], isFetching: false });
+  const { UNSAFE_getByType } = render(<Transactions />);
+  expect(UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
 });

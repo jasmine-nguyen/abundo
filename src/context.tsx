@@ -5,6 +5,11 @@ import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from '
 import { subscribe as subscribeAuthStatus, getStatus as getAuthStatus } from './auth';
 
 export type { LoanFacts, LoanFactsInput } from './api';
+// WHIT-190a: the categorise write double-writes the query cache (for the migrated
+// Transactions list) alongside the old store (for the tab badge + budget detail).
+// Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
+// a circular import — ./queries imports from this module.
+import { queryClient } from './queryClient';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
 // module const so every "unset" origin (initial state, a failed fetch) agrees.
@@ -727,6 +732,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // WHIT-190a: mirror every optimistic tx edit into the ['transactions'] query cache
+    // (the migrated list reads it) as well as the old store (tab badge + budget detail).
+    // Guard an evicted/absent cache (gcTime is finite).
+    const patchTransactions = (fn: (prev: Transaction[]) => Transaction[]) => {
+      setTransactions(fn);
+      queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => (prev ? fn(prev) : prev));
+    };
+    // After a categorisation persists: refresh the old store (budget detail reads it) AND
+    // invalidate the query cache the migrated screens read. The ['budgets']/['breakdown']/
+    // ['transactions'] invalidation is what closes the ≤45s staleness (WHIT-193).
+    const invalidateAfterCategorise = () => {
+      refreshBudgets();
+      refreshBreakdown();
+      queryClient.invalidateQueries({ queryKey: ['budgets'] });
+      queryClient.invalidateQueries({ queryKey: ['breakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    };
+
     if (scope === 'all') {
       // "Every {merchant} charge": every OTHER uncategorised transaction from the
       // same merchant (matched by description) that counts toward a budget. Captured
@@ -747,7 +770,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .map((t) => t.transaction_id);
 
       // Optimistically file all of them under the chosen category (one state update).
-      setTransactions((prev) =>
+      patchTransactions((prev) =>
         prev.map((existing) => {
           if (!sameMerchantIds.includes(existing.transaction_id)) return existing;
           return { ...existing, category: categoryId };
@@ -802,8 +825,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       const failedIds = sameMerchantIds.filter((id) => !savedIds.has(id));
       if (failedIds.length > 0) {
-        // Roll back only the ones whose save failed (back to uncategorised).
-        setTransactions((prev) =>
+        // Roll back only the ones whose save failed (back to uncategorised) — same
+        // partial set on BOTH stores.
+        patchTransactions((prev) =>
           prev.map((existing) => {
             if (!failedIds.includes(existing.transaction_id)) return existing;
             return { ...existing, category: null };
@@ -813,15 +837,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // Transactions filed fine; only the future-rule failed to persist.
         showToast('Filed, but could not save the rule for future charges.');
       }
-      // Some categorisations persisted -> refresh the bars + breakdown so spend updates.
-      if (failedIds.length < sameMerchantIds.length) { refreshBudgets(); refreshBreakdown(); }
+      // Some categorisations persisted -> refresh the bars + breakdown so spend updates
+      // (old store) and invalidate the query cache (migrated screens).
+      if (failedIds.length < sameMerchantIds.length) invalidateAfterCategorise();
       return;
     }
 
     // scope === 'one': just this single transaction.
     const previousCategory = transaction.category;
     // Optimistically show the new category on this one transaction.
-    setTransactions((prev) =>
+    patchTransactions((prev) =>
       prev.map((existing) => {
         if (existing.transaction_id !== txId) return existing;
         return { ...existing, category: categoryId };
@@ -831,11 +856,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     try {
       await apiSetTransactionCategory(txId, categoryId);
-      refreshBudgets(); // reflect the new categorisation in the budget bars
-      refreshBreakdown(); // ...and in the category breakdown
+      invalidateAfterCategorise(); // budget bars + breakdown (old store) + query cache
     } catch {
-      // Save failed — undo the optimistic change, putting the old category back.
-      setTransactions((prev) =>
+      // Save failed — undo the optimistic change on BOTH stores, old category back.
+      patchTransactions((prev) =>
         prev.map((existing) => {
           if (existing.transaction_id !== txId) return existing;
           return { ...existing, category: previousCategory };
@@ -1197,11 +1221,20 @@ export function categoryIsUnmapped(
 // category not yet mapped). 'income' is a category, not uncategorized. Single
 // source of truth so the row label, the tab list, the badge — and the "apply to
 // all" sweep — always agree.
-export function isUncategorized(s: AppContext, t: Transaction): boolean {
+// The exact slice the transaction-list selectors read — a narrow input (not the whole
+// AppContext) so the migrated Transactions screen can feed it query data type-checked,
+// not cast (WHIT-190a, mirrors BudgetViewsInput). AppContext satisfies it structurally,
+// so every existing caller + the logic tests pass an AppContext unchanged.
+export interface TransactionListInput {
+  transactions: Transaction[];
+  category: (id: string | null) => Category | undefined;
+}
+
+export function isUncategorized(s: Pick<TransactionListInput, 'category'>, t: Transaction): boolean {
   return categoryIsUnmapped(t.category, s.category);
 }
 
-export function transactionView(s: AppContext, t: Transaction): TransactionView {
+export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Transaction): TransactionView {
   const c = t.category == null || t.category === 'income' ? undefined : s.category(t.category);
   const uncategorized = isUncategorized(s, t);
   const isIncome = t.category === 'income';
@@ -1218,7 +1251,7 @@ export function transactionView(s: AppContext, t: Transaction): TransactionView 
   };
 }
 
-export function transactionGroups(s: AppContext, tab: 'all' | 'uncategorized') {
+export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncategorized') {
   const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? t.counts_to_budget && isUncategorized(s, t) : true);
   const seen = new Map<string, Transaction[]>();
   const order: string[] = [];
@@ -1230,7 +1263,7 @@ export function transactionGroups(s: AppContext, tab: 'all' | 'uncategorized') {
   return order.map((label) => ({ label, items: seen.get(label)! }));
 }
 
-export function countUncategorized(s: AppContext) {
+export function countUncategorized(s: TransactionListInput) {
   return s.transactions.filter((t) => t.counts_to_budget && isUncategorized(s, t)).length;
 }
 
