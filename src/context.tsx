@@ -607,8 +607,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshHomeLoan();
 		refreshEnrichments();
 		refreshBudgets().catch((e) => flagLoadError('budgets: ' + errText(e)));
-		refreshBreakdown().catch((e) => flagLoadError('breakdown: ' + errText(e)));
-	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshLoanFacts, refreshRepayment, refreshHomeLoan, refreshEnrichments, refreshBudgets, refreshBreakdown, flagLoadError]);
+		// WHIT-189: breakdown is no longer part of the eager/retry load — the Insights
+		// tab fetches it on focus via a TanStack query, so a breakdown failure can't
+		// raise this global banner.
+	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshLoanFacts, refreshRepayment, refreshHomeLoan, refreshEnrichments, refreshBudgets, flagLoadError]);
 
 	useEffect(() => {
 		refreshTransactions();
@@ -620,14 +622,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 		refreshEnrichments();
 	}, [refreshTransactions, refreshCategories, refreshPayCycle, refreshHomeLoan, refreshLoanFacts, refreshRepayment, refreshEnrichments]);
 
-	// Re-fetch budgets + breakdown on mount and whenever the pay-cycle length (the
-	// window) changes — both are computed over the current cycle. These callbacks are
-	// shared with write paths, so they don't flag the banner themselves; flag it here
-	// (the mount/window load) via the call site, matching retryLoad.
+	// Re-fetch budgets on mount and whenever the pay-cycle length (the window) changes.
+	// Shared with the write paths, so it doesn't flag the banner itself; flag it here
+	// (the mount/window load) via the call site, matching retryLoad. WHIT-189: breakdown
+	// no longer loads here — the Insights tab fetches it on focus via a query.
 	useEffect(() => {
 		refreshBudgets().catch((e) => flagLoadError('budgets: ' + errText(e)));
-		refreshBreakdown().catch((e) => flagLoadError('breakdown: ' + errText(e)));
-	}, [refreshBudgets, refreshBreakdown, flagLoadError]);
+	}, [refreshBudgets, flagLoadError]);
 
 	// WHIT-162: with the static secret retired, the mount reads above throw "Not
 	// signed in" until the user has a Cognito session — and they never re-run on
@@ -1131,13 +1132,22 @@ export interface CategoryBreakdownRow {
   spentLabel: string; pct: number; uncategorized: boolean;
 }
 
+// The exact slice categoryBreakdown reads. A narrow input (not the whole AppContext) so
+// the Insights screen can feed it query data — type-checked field-by-field, not cast
+// (WHIT-189, mirrors BudgetViewsInput). AppContext still satisfies it structurally, so
+// the existing selector logic tests pass an AppContext unchanged.
+export interface CategoryBreakdownInput {
+  breakdown: Record<string, CategorySpend>;
+  category: (id: string) => Category | undefined;
+}
+
 // Spend by category for the current cycle (the Insights tab), sorted highest-first.
 // Pure over { breakdown, category }: joins the server's per-category posted/pending
 // (s.breakdown) with the taxonomy for name/icon/colour, and renders the "__uncategorized__"
 // bucket with the app's Uncategorized styling (matches transactionView). Zero-spend
 // rows are dropped; a real category id the server didn't fold but that's missing
 // locally is skipped defensively. `pct` is each row's share of the cycle total (bar width).
-export function categoryBreakdown(s: AppContext): { rows: CategoryBreakdownRow[]; total: number } {
+export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBreakdownRow[]; total: number } {
   const rows: CategoryBreakdownRow[] = [];
   let total = 0;
   for (const [id, spend] of Object.entries(s.breakdown)) {

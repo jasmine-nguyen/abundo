@@ -65,13 +65,14 @@ it('a failing mount read while SIGNED OUT does not raise the banner', async () =
   expect(result.current.loadError).toBe(false);
 });
 
-it('the breakdown mount call-site is also suppressed while signed out', async () => {
-  // Covers the .catch(() => flagLoadError()) call-site path, not just the
-  // in-catch self-flag reads.
-  mockApi.fetchBreakdown.mockRejectedValue(new Error('Not signed in'));
+it('the budgets mount call-site is also suppressed while signed out', async () => {
+  // Covers the .catch(() => flagLoadError()) call-site path, not just the in-catch
+  // self-flag reads. WHIT-189 retargeted this from breakdown (now Insights-owned) to
+  // budgets, which still uses the identical mount-effect call-site (context.tsx).
+  mockApi.fetchBudgets.mockRejectedValue(new Error('Not signed in'));
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
-  await waitFor(() => expect(mockApi.fetchBreakdown).toHaveBeenCalled());
+  await waitFor(() => expect(mockApi.fetchBudgets).toHaveBeenCalled());
   await flush();
 
   expect(result.current.loadError).toBe(false);

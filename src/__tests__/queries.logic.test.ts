@@ -2,13 +2,17 @@
 // mappers that turn raw API payloads into client shapes. No React/RN, so these run
 // in the fast logic project alongside the other selector tests.
 import { describe, it, expect } from '@jest/globals';
-import { selectBudgets, selectCategories, budgetsKey, categoriesKey, payCycleKey } from '../queries';
+import { selectBudgets, selectCategories, budgetsKey, breakdownKey, categoriesKey, payCycleKey } from '../queries';
 
 describe('query keys', () => {
   it('budgetsKey includes the cycle length so a window change refetches', () => {
     expect(budgetsKey(14)).toEqual(['budgets', 14]);
     expect(budgetsKey(30)).toEqual(['budgets', 30]);
     expect(budgetsKey(14)).not.toEqual(budgetsKey(30)); // different windows → different cache entries
+  });
+  it('breakdownKey includes the cycle length so a window change refetches', () => {
+    expect(breakdownKey(14)).toEqual(['breakdown', 14]);
+    expect(breakdownKey(30)).not.toEqual(breakdownKey(14));
   });
   it('the static keys are stable', () => {
     expect(categoriesKey).toEqual(['categories']);

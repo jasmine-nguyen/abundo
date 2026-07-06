@@ -1,10 +1,11 @@
 // Provider tests (WHIT-74) — the ADVERSARIAL half of the read/load-failure banner,
 // i.e. the gaps the implementer's 7 cases in appProvider.screen.test.tsx don't lock.
 // Their it.each covers fetchTransactions/fetchBudgets/fetchPayCycle; here we add the
-// remaining pure reads (loanFacts, repayment) + the breakdown mount call-site, prove
-// retryLoad is a FULL reload, prove home-loan/rules failures do NOT over-trigger the
-// global banner (they own their own error UI), and prove the mount effects raise no
-// unhandled promise rejection. Real AppProvider, ../api mocked.
+// remaining pure reads (loanFacts, repayment), prove breakdown is NOT loaded by the
+// provider (WHIT-189 — it moved to the Insights query), prove retryLoad is a FULL
+// reload, prove home-loan/rules failures do NOT over-trigger the global banner (they
+// own their own error UI), and prove the mount effects raise no unhandled promise
+// rejection. Real AppProvider, ../api mocked.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
@@ -48,16 +49,24 @@ async function mount() {
 }
 
 // --- the pure reads the implementer's it.each omits --------------------------
-// loanFacts + repayment self-flag in their catch; breakdown is flagged at the mount
-// call-site (.catch). All three must raise the banner.
+// loanFacts + repayment self-flag in their catch. Both must raise the banner.
 it.each([
   ['fetchLoanFacts', () => mockApi.fetchLoanFacts.mockRejectedValue(new Error('x'))],
   ['fetchRepayment', () => mockApi.fetchRepayment.mockRejectedValue(new Error('x'))],
-  ['fetchBreakdown', () => mockApi.fetchBreakdown.mockRejectedValue(new Error('x'))],
 ])('a failing %s on mount raises loadError', async (_name, reject) => {
   reject();
   const { result } = renderHook(() => useAppContext(), { wrapper });
   await waitFor(() => expect(result.current.loadError).toBe(true));
+});
+
+// WHIT-189: breakdown moved to the Insights focus-loaded query, so the provider no
+// longer fetches it — a breakdown failure can't raise the global banner (the literal
+// done-criterion: "a 503 on breakdown never hits the launch banner").
+it('does NOT fetch breakdown on mount, and a breakdown failure never raises the banner', async () => {
+  mockApi.fetchBreakdown.mockRejectedValue(new Error('5xx'));
+  const result = await mount();
+  expect(mockApi.fetchBreakdown).not.toHaveBeenCalled();
+  expect(result.current.loadError).toBe(false);
 });
 
 // --- reads with their OWN affordance must NOT raise the global banner ---------
@@ -102,19 +111,19 @@ it('retryLoad re-fires every mount read (a full global reload)', async () => {
   expect(mockApi.fetchLoanFacts).toHaveBeenCalledTimes(1);
   expect(mockApi.fetchRepayment).toHaveBeenCalledTimes(1);
   expect(mockApi.fetchBudgets).toHaveBeenCalledTimes(1);
-  expect(mockApi.fetchBreakdown).toHaveBeenCalledTimes(1);
   expect(mockApi.fetchHomeLoan).toHaveBeenCalledTimes(1);
   expect(mockApi.listEnrichments).toHaveBeenCalledTimes(1);
+  // WHIT-189: breakdown is NOT part of the reload — it's owned by the Insights query.
+  expect(mockApi.fetchBreakdown).not.toHaveBeenCalled();
 });
 
-// --- no console throw on mount when the shared reads fail ---------------------
-it('mount raises no unhandled promise rejection even when budgets + breakdown fail', async () => {
-  // refreshBudgets/refreshBreakdown are shared with the write paths, so they DON'T
-  // self-catch — the mount effect swallows their failure with a call-site .catch.
-  // Removing that .catch would surface an unhandled rejection to the console. This
-  // locks it: fail-on-revert if the .catch is dropped.
+// --- no console throw on mount when the shared read fails ---------------------
+it('mount raises no unhandled promise rejection even when budgets fails', async () => {
+  // refreshBudgets is shared with the write paths, so it DOESN'T self-catch — the mount
+  // effect swallows its failure with a call-site .catch. Removing that .catch would
+  // surface an unhandled rejection to the console. This locks it: fail-on-revert if the
+  // .catch is dropped.
   mockApi.fetchBudgets.mockRejectedValue(new Error('5xx'));
-  mockApi.fetchBreakdown.mockRejectedValue(new Error('5xx'));
 
   const unhandled: unknown[] = [];
   const onUnhandled = (reason: unknown) => unhandled.push(reason);
