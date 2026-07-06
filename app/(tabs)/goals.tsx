@@ -1,20 +1,27 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../../src/context';
+import { useGoalScreenData } from '../../src/queries';
 import { Bar } from '../../src/components/ui';
 
 export default function Goals() {
-  const s = useAppContext();
+  const s = useAppContext(); // kept only for s.fireRepayment (the demo alert button — not server data)
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const g = goalView(s);
-  const m = milestoneView(s);
-  const lr = lastRepaymentView(s);
-  const p = paydownView(s);
+
+  // WHIT-197: the live balance, last repayment, and loan facts now come from the cached
+  // query layer. Re-check on focus, but only if the cache has gone stale (no request storm).
+  const { loanFacts, homeLoan, repayment, refetchStale } = useGoalScreenData();
+  useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
+
+  const g = goalView({ loanFacts, homeLoan });
+  const m = milestoneView({ loanFacts, homeLoan });
+  const lr = lastRepaymentView({ repayment });
+  const p = paydownView({ loanFacts, homeLoan });
 
   return (
     <View style={{ flex: 1 }}>

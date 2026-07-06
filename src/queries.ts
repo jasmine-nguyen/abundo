@@ -5,10 +5,10 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts } from './api';
-import type { BudgetRollup, CategorySpend, LoanFacts, PayCycle } from './api';
-import { cycleClock, loanFactsReady, toBudget, toCategory } from './context';
-import type { Budget, Category, Transaction } from './context';
+import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment } from './api';
+import type { BudgetRollup, CategorySpend, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
+import { cycleClock, loanFactsReady, toBudget, toCategory, EMPTY_LOAN_FACTS } from './context';
+import type { Budget, Category, HomeLoanState, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
 // --- auth gating -------------------------------------------------------------
@@ -40,6 +40,11 @@ export const transactionsKey = ['transactions'] as const;
 // Loan facts (the Settings "Loan details" row + the loan form). Un-windowed flat key,
 // kept in sync with the literal ['loanFacts'] the saveLoanFacts write uses in context.tsx.
 export const loanFactsKey = ['loanFacts'] as const;
+// The live home-loan balance + the last repayment (the Goal tab + milestone screen).
+// Un-windowed flat keys — WHIT-197. No write path touches them (balance is poller-fed,
+// repayment is server-derived), so no in-context literal to keep in sync.
+export const homeLoanKey = ['homeLoan'] as const;
+export const repaymentKey = ['repayment'] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
@@ -92,6 +97,23 @@ export function useTransactionsQuery(enabled: boolean) {
 // WHIT-191a: the user's home-loan facts (un-windowed).
 export function useLoanFactsQuery(enabled: boolean) {
   return useQuery({ queryKey: loanFactsKey, queryFn: fetchLoanFacts, enabled });
+}
+
+// WHIT-197: the live home-loan balance. The API's `as_of` (snake) maps to the store's
+// `asOf` so the Goal/milestone selectors read the same HomeLoanState shape as before.
+// A null balance is a normal success (the poller hasn't run yet) — not an error — so
+// the screens keep their "—"/"Fetching…" placeholder rather than an error state.
+export function selectHomeLoan(raw: HomeLoan): HomeLoanState {
+  return { balance: raw.balance, asOf: raw.as_of };
+}
+export function useHomeLoanQuery(enabled: boolean) {
+  return useQuery({ queryKey: homeLoanKey, queryFn: fetchHomeLoan, enabled, select: selectHomeLoan });
+}
+
+// WHIT-197: the most recent home-loan repayment (server-derived). Null-filled when
+// none is on record — a graceful empty state, not an error.
+export function useRepaymentQuery(enabled: boolean) {
+  return useQuery({ queryKey: repaymentKey, queryFn: fetchRepayment, enabled });
 }
 
 // --- the Budgets screen's composite view -------------------------------------
@@ -292,6 +314,71 @@ export function useSettingsScreenData(): SettingsScreenData {
     loanReady: loanFactsQuery.data ? loanFactsReady(loanFactsQuery.data) : false,
     isLoading,
     isError,
+    refetch,
+    refetchStale,
+  };
+}
+
+// --- the Goal tab + milestone screen's composite view (WHIT-197) -------------
+// The all-null defaults the selectors see before the reads resolve — same "unset"
+// shapes the old store seeded, so goalView/milestoneView/lastRepaymentView render
+// their "—"/"set this up"/empty states rather than crashing on undefined.
+const EMPTY_HOME_LOAN: HomeLoanState = { balance: null, asOf: null };
+const EMPTY_REPAYMENT: Repayment = { amount: null, date: null, principal: null, interest: null };
+
+export interface GoalScreenData {
+  loanFacts: LoanFacts;
+  homeLoan: HomeLoanState;
+  repayment: Repayment;
+  isLoading: boolean; // first load, nothing cached yet
+  isError: boolean; // ANY of the three reads failed after retries
+  // The home-loan balance read's OWN error, kept separate from the aggregate: the
+  // milestone "Couldn't load your balance" hero must key on this, NOT isError — a
+  // repayment/loanFacts failure has nothing to do with the balance and must not
+  // masquerade as a balance error (plan-critic #1).
+  homeLoanError: boolean;
+  refetch: () => void;
+  refetchStale: () => void;
+}
+
+/**
+ * Everything the Goal tab + milestone screen read from the server — the live home-loan
+ * balance, the last repayment, and the user's loan facts — assembled from the auth-gated
+ * queries. The payoff/equity math (goalView/paydownView/milestoneView) is unchanged; it
+ * just reads these instead of the eager store. Insights aiGoalSignal + the loan form stay
+ * on the store until the WHIT-192 cleanup, so the loan-facts save's double-write keeps
+ * both in sync.
+ */
+export function useGoalScreenData(): GoalScreenData {
+  const authed = useIsAuthed();
+  const homeLoanQuery = useHomeLoanQuery(authed);
+  const repaymentQuery = useRepaymentQuery(authed);
+  const loanFactsQuery = useLoanFactsQuery(authed);
+
+  // isLoading (not isPending) so a disabled query doesn't strand a spinner — see the
+  // note in useBudgetsScreenData.
+  const isLoading = homeLoanQuery.isLoading || repaymentQuery.isLoading || loanFactsQuery.isLoading;
+  const isError = homeLoanQuery.isError || repaymentQuery.isError || loanFactsQuery.isError;
+
+  const refetch = useCallback(() => {
+    homeLoanQuery.refetch();
+    repaymentQuery.refetch();
+    loanFactsQuery.refetch();
+  }, [homeLoanQuery, repaymentQuery, loanFactsQuery]);
+
+  const refetchStale = useCallback(() => {
+    if (homeLoanQuery.isStale) homeLoanQuery.refetch();
+    if (repaymentQuery.isStale) repaymentQuery.refetch();
+    if (loanFactsQuery.isStale) loanFactsQuery.refetch();
+  }, [homeLoanQuery, repaymentQuery, loanFactsQuery]);
+
+  return {
+    loanFacts: loanFactsQuery.data ?? EMPTY_LOAN_FACTS,
+    homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
+    repayment: repaymentQuery.data ?? EMPTY_REPAYMENT,
+    isLoading,
+    isError,
+    homeLoanError: homeLoanQuery.isError,
     refetch,
     refetchStale,
   };

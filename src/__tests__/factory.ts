@@ -5,6 +5,7 @@
 import { cycleName } from '../context';
 import type { AppContext, Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
 import type { CategorySpend, LoanFacts, Repayment } from '../api';
+import type { GoalScreenData } from '../queries';
 
 export function cat(over: Partial<Category> = {}): Category {
   return { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52, ...over };
@@ -55,6 +56,24 @@ interface StateOver {
   repayment?: Repayment;
   cycleLen?: number;
   daysLeft?: number;
+}
+
+// The Goal tab + milestone screen composite (WHIT-197). Typed off the REAL
+// GoalScreenData so a screen test's mocked useGoalScreenData can't silently drift from
+// the production shape (a drift fails to compile here). Defaults: fully-set loan facts,
+// an un-loaded balance, no repayment, no error. Override per test via `over`.
+export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData {
+  return {
+    loanFacts: LOAN_FACTS,
+    homeLoan: { balance: null, asOf: null },
+    repayment: NO_REPAYMENT,
+    isLoading: false,
+    isError: false,
+    homeLoanError: false,
+    refetch: () => {},
+    refetchStale: () => {},
+    ...over,
+  };
 }
 
 // Build a partial AppContext with a working category() lookup and cycleName(),
