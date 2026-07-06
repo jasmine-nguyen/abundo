@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, budgetEditInfo } from '../../src/context';
+import { queryClient } from '../../src/queryClient';
 import { Header } from '../../src/components/Header';
 
 export default function BudgetEdit() {
@@ -26,6 +27,10 @@ export default function BudgetEdit() {
     setSubmitting(true);
     const ok = await s.saveBudget(categoryId, num);
     if (ok) {
+      // WHIT-188: the Budgets tab now reads the query cache, so mark budgets stale —
+      // otherwise the just-saved change wouldn't show until the 45s staleTime elapsed.
+      // Prefix key ['budgets'] matches every ['budgets', cycleLen] entry.
+      queryClient.invalidateQueries({ queryKey: ['budgets'] });
       router.dismissAll?.();
       router.replace('/(tabs)/budgets');
     } else {

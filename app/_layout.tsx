@@ -8,8 +8,10 @@ import { Platform, View, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { QueryClientProvider } from '@tanstack/react-query';
 import * as SplashScreen from 'expo-splash-screen';
 import { C } from '../src/theme';
+import { queryClient } from '../src/queryClient';
 import { AppProvider } from '../src/context';
 import { Overlays } from '../src/components/Overlays';
 import { registerForPushNotificationsAsync } from '../src/push';
@@ -84,10 +86,16 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <AppProvider>
-        <StatusBar style="light" />
-        {isWeb ? <View style={styles.backdrop}>{app}</View> : app}
-      </AppProvider>
+      {/* QueryClientProvider wraps OUTSIDE AppProvider (WHIT-188): later cards drain the
+          context store without disturbing the query cache. Queries stay auth-gated by
+          `enabled`, not DOM position, so sitting above AuthGate is fine — nothing fetches
+          until status is 'authed'. */}
+      <QueryClientProvider client={queryClient}>
+        <AppProvider>
+          <StatusBar style="light" />
+          {isWeb ? <View style={styles.backdrop}>{app}</View> : app}
+        </AppProvider>
+      </QueryClientProvider>
     </SafeAreaProvider>
   );
 }
