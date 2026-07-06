@@ -1,17 +1,33 @@
-import React from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useCallback } from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, budgetViews } from '../../src/context';
+import { budgetViews } from '../../src/context';
+import { useBudgetsScreenData } from '../../src/queries';
 import { WhittleBar } from '../../src/components/ui';
 
 export default function Budgets() {
-  const s = useAppContext();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
+  // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
+  // instead of the eager global store. A transient 5xx retries with backoff (no stuck
+  // banner); the inline error/retry below is the local fallback for a sustained failure.
+  const { budgets, category, cycleLen, daysLeft, isLoading, isError, refetch, refetchStale } = useBudgetsScreenData();
+
+  // Load-on-focus: refresh when the tab regains focus, but only if the data has gone
+  // stale (the window rolls over on payday; a save/categorise elsewhere moves numbers).
+  // Staleness-gated so hopping between tabs doesn't refetch on every tap.
+  useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
+
+  const { rows, totBudget, totSpent, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft });
+
+  // Cache-first: once we have any rows, keep showing them while a background refetch
+  // runs. Error takes precedence over the spinner — a failed read (e.g. the pay cycle)
+  // must never sit under an endless spinner with no Retry (code-critic/qa #1).
+  const showError = isError && rows.length === 0;
+  const showSpinner = !showError && isLoading && rows.length === 0;
 
   return (
     <View style={{ flex: 1 }}>
@@ -23,6 +39,18 @@ export default function Budgets() {
         </Pressable>
       </View>
 
+      {showSpinner ? (
+        <View testID="budgets-loading" style={styles.centered}>
+          <ActivityIndicator color={C.accent} />
+        </View>
+      ) : showError ? (
+        <View testID="budgets-error" style={styles.centered}>
+          <Text style={styles.errorText}>Couldn't load your budgets.</Text>
+          <Pressable testID="budgets-retry" onPress={refetch} style={styles.retryBtn}>
+            <Text style={styles.retryText}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : (
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         {/* hero */}
         <View style={styles.hero}>
@@ -30,7 +58,7 @@ export default function Budgets() {
           <View style={styles.heroBlob2} />
           <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 6 }}>
-            <Text style={styles.heroDays}>{s.daysLeft}</Text>
+            <Text style={styles.heroDays}>{daysLeft}</Text>
             <Text style={styles.heroDaysLabel}>days left</Text>
           </View>
           <View style={styles.heroBottom}>
@@ -80,6 +108,7 @@ export default function Budgets() {
           <Text style={styles.addBudgetText}>Add a budget</Text>
         </Pressable>
       </ScrollView>
+      )}
     </View>
   );
 }
@@ -119,4 +148,9 @@ const styles = StyleSheet.create({
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', backgroundColor: 'rgba(124,140,255,.07)', borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
+
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 16 },
+  errorText: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, textAlign: 'center' },
+  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

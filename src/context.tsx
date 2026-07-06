@@ -350,7 +350,7 @@ const errText = (e: unknown): string => (e instanceof Error ? e.message : String
  * @param raw - A single category record as returned by the categories API.
  * @returns A fully-populated `Category` safe to store and render.
  */
-function toCategory(raw: any): Category {
+export function toCategory(raw: any): Category {
   return {
     id: raw.id,
     name: raw.name,
@@ -365,7 +365,7 @@ function toCategory(raw: any): Category {
 // The server rollup owns the target AND the computed posted/pending spend for
 // the window, so we take all three straight from it. Module-level (like
 // toCategory) so refreshBudgets stays a stable callback.
-function toBudget(id: string, rollup: BudgetRollup): Budget {
+export function toBudget(id: string, rollup: BudgetRollup): Budget {
   return { id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending };
 }
 
@@ -1036,7 +1036,7 @@ export function cycleClock(
   return { cycleLen: length, daysLeft };
 }
 
-export function elapsedFrac(s: AppContext) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
+export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
 
 export interface BudgetView {
   id: string; name: string; color: string; icon: string; chipBg: string;
@@ -1045,7 +1045,18 @@ export interface BudgetView {
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
 }
 
-export function budgetViews(s: AppContext): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
+// The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
+// caller feeding it query data — not the store — is type-checked field-by-field
+// instead of silently casting (WHIT-188). AppContext still satisfies it structurally,
+// so the existing selector logic tests pass an AppContext unchanged.
+export interface BudgetViewsInput {
+  budgets: Budget[];
+  category: (id: string) => Category | undefined;
+  cycleLen: number;
+  daysLeft: number;
+}
+
+export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
   const elapsed = elapsedFrac(s);
   let totBudget = 0, totSpent = 0, totRemain = 0;
   const rows: BudgetView[] = [];
