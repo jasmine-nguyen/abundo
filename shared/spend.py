@@ -10,6 +10,7 @@ WHIT-22 needed it reachable from the webhook). Imports POSTED_STATUS/PENDING_STA
 from the shared constants (present in both constants files per the WHIT-136 guard).
 """
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -97,6 +98,43 @@ def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal
     return bucket, sign * Decimal(str(transaction.get("amount", 0)))
 
 
+def _summarise(
+    transactions: list[dict],
+    *,
+    keep: Callable[[str | None], bool],
+    key: Callable[[str | None], str],
+    sign: int = -1,
+) -> dict[str, dict]:
+    """The one summing loop shared by the three public summarisers (WHIT-167).
+
+    For each transaction: gate on `keep(category)`, map it to a result bucket via
+    `key(category)`, turn it into a posted/pending contribution via
+    `_spend_contribution(transaction, sign=sign)`, accumulate, then clamp every
+    bucket at >= 0 (a net refund/reversal can't drive a bar negative). The three
+    public functions differ ONLY in `keep` (which categories count), `key` (per-id
+    vs a single aggregate bucket), and `sign` (spend is -amount, income is +amount);
+    the clamp + accumulation rule lives here so a change to it can't drift between them.
+
+    Returns {key(category): {"posted": Decimal, "pending": Decimal}} for keys that had
+    at least one contributing transaction. Insertion order follows first contribution.
+    """
+    totals: dict[str, dict] = {}
+    for transaction in transactions:
+        category = transaction.get("category")
+        if not keep(category):
+            continue
+        contribution = _spend_contribution(transaction, sign=sign)
+        if contribution is None:
+            continue
+        bucket, amount = contribution
+        entry = totals.setdefault(key(category), {"posted": Decimal(0), "pending": Decimal(0)})
+        entry[bucket] += amount
+    for entry in totals.values():
+        entry["posted"] = max(Decimal(0), entry["posted"])
+        entry["pending"] = max(Decimal(0), entry["pending"])
+    return totals
+
+
 def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> dict[str, dict]:
     """Sum posted vs pending spend per budgeted category over `transactions`.
 
@@ -110,21 +148,11 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> di
     Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
     that had at least one contributing transaction.
     """
-    totals: dict[str, dict] = {}
-    for transaction in transactions:
-        category = transaction.get("category")
-        if category is None or category == "income" or category not in target_ids:
-            continue
-        contribution = _spend_contribution(transaction)
-        if contribution is None:
-            continue
-        bucket, spend = contribution
-        entry = totals.setdefault(category, {"posted": Decimal(0), "pending": Decimal(0)})
-        entry[bucket] += spend
-    for entry in totals.values():
-        entry["posted"] = max(Decimal(0), entry["posted"])
-        entry["pending"] = max(Decimal(0), entry["pending"])
-    return totals
+    return _summarise(
+        transactions,
+        keep=lambda category: category is not None and category != "income" and category in target_ids,
+        key=lambda category: category,
+    )
 
 
 def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) -> dict:
@@ -135,21 +163,15 @@ def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) ->
     amount) and the same >= 0 clamp. The income sentinel ("income") is excluded,
     matching the client's isUncategorized so the two views agree.
 
-    Returns {"posted": Decimal, "pending": Decimal}, both >= 0.
+    Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate
+    (every contributor folds into one bucket), not a per-category dict.
     """
-    totals = {"posted": Decimal(0), "pending": Decimal(0)}
-    for transaction in transactions:
-        category = transaction.get("category")
-        if category == "income" or category in taxonomy_ids:
-            continue
-        contribution = _spend_contribution(transaction)
-        if contribution is None:
-            continue
-        bucket, spend = contribution
-        totals[bucket] += spend
-    totals["posted"] = max(Decimal(0), totals["posted"])
-    totals["pending"] = max(Decimal(0), totals["pending"])
-    return totals
+    totals = _summarise(
+        transactions,
+        keep=lambda category: category != "income" and category not in taxonomy_ids,
+        key=lambda category: "__all__",
+    )
+    return totals.get("__all__", {"posted": Decimal(0), "pending": Decimal(0)})
 
 
 def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str, dict]:
@@ -170,18 +192,9 @@ def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str
     that had at least one contributing transaction — the same shape as
     summarise_transactions, so a caller can merge the two uniformly.
     """
-    totals: dict[str, dict] = {}
-    for transaction in transactions:
-        category = transaction.get("category")
-        if category not in income_ids:
-            continue
-        contribution = _spend_contribution(transaction, sign=1)
-        if contribution is None:
-            continue
-        bucket, earned = contribution
-        entry = totals.setdefault(category, {"posted": Decimal(0), "pending": Decimal(0)})
-        entry[bucket] += earned
-    for entry in totals.values():
-        entry["posted"] = max(Decimal(0), entry["posted"])
-        entry["pending"] = max(Decimal(0), entry["pending"])
-    return totals
+    return _summarise(
+        transactions,
+        keep=lambda category: category in income_ids,
+        key=lambda category: category,
+        sign=1,
+    )
