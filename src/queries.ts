@@ -52,6 +52,11 @@ export const rulesKey = ['rules'] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
+  // Fail LOUDLY on a malformed /categories payload (a wrapped or changed shape), mirroring
+  // selectRules — the query rejects → the screen shows its error card (and, on a first load,
+  // WHIT-194's categoriesError) instead of a cryptic "raw.map is not a function". Array.isArray
+  // also rejects null/undefined. A genuine empty taxonomy is `[]`, which passes.
+  if (!Array.isArray(raw)) throw new Error(`selectCategories: expected an array from /categories, got ${typeof raw}`);
   return raw.map(toCategory);
 }
 // WHIT-195: map the server enrichment rules into the client Rule shape (value→pattern,
@@ -330,6 +335,14 @@ export interface InsightsScreenData {
   category: (id: string) => Category | undefined;
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
+  // WHIT-194: categories failed with NO cached taxonomy — real-category breakdown rows
+  // can't be labelled, so the breakdown total is untrustworthy and the screen must show
+  // the error (not a partial hero built from just the taxonomy-free Uncategorized bucket).
+  // Guarded on data===undefined so it fires ONLY on a never-succeeded (first-load) read;
+  // a background-refetch failure over good cached taxonomy retains `data` (TanStack v5),
+  // keeps this false, and the cached rows keep rendering (cache-first preserved). This is
+  // NOT the bare `.isError` of homeLoanError — the data guard is what protects cache-first.
+  categoriesError: boolean;
   refetch: () => void; // force a refresh (the inline Retry button)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
 }
@@ -354,8 +367,11 @@ export function useInsightsScreenData(): InsightsScreenData {
   const category = useCallback((id: string) => byId.get(id), [byId]);
 
   const status = useCombineScreenQueries([payCycleQuery, breakdownQuery, categoriesQuery]);
+  // WHIT-194: see InsightsScreenData.categoriesError. `data === undefined` ⇒ the categories
+  // read has never succeeded, so there's no taxonomy to label real-category rows.
+  const categoriesError = categoriesQuery.isError && categoriesQuery.data === undefined;
 
-  return { breakdown: breakdownQuery.data ?? {}, category, ...status };
+  return { breakdown: breakdownQuery.data ?? {}, category, categoriesError, ...status };
 }
 
 // --- the Transactions screen's composite view (WHIT-190a) --------------------

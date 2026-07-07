@@ -12,7 +12,7 @@ export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
   const insets = useSafeAreaInsets();
   // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
-  const { breakdown, category, isLoading, isError, refetch, refetchStale } = useInsightsScreenData();
+  const { breakdown, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData();
   const { rows, total } = categoryBreakdown({ breakdown, category });
   // WHIT-203: the goal signal's inputs (loan facts + live balance) come off the query
   // layer now, so it survives the WHIT-192 store teardown.
@@ -28,7 +28,11 @@ export default function Insights() {
 
   // Cache-first, error before spinner (mirrors Budgets). The hero + rows depend on
   // breakdown; the AI card does NOT, so it stays visible through a breakdown load/error.
-  const showError = isError && rows.length === 0;
+  // WHIT-194: also error out when categories failed on first load (categoriesError) — even
+  // though breakdown may still hold a taxonomy-free Uncategorized row (rows.length > 0), the
+  // real-category rows all dropped, so the hero total would silently omit real spend. This is
+  // the Insights-only hole Budgets doesn't have (every Budgets row needs a category).
+  const showError = (isError && rows.length === 0) || categoriesError;
   const showSpinner = !showError && isLoading && rows.length === 0;
   const ai = s.aiInsights;
   const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
@@ -160,7 +164,9 @@ export default function Insights() {
           <Text style={styles.empty}>No spending yet this pay cycle.</Text>
         )}
 
-        {rows.map((r) => {
+        {/* WHIT-194: suppress the row list under an error — otherwise the surviving
+            taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
+        {!showError && rows.map((r) => {
           // Bar width is the row's share of the cycle total; within it, split posted
           // vs pending so the pending portion reads distinctly.
           const postedW = r.spent > 0 ? r.pct * (r.posted / r.spent) : 0;

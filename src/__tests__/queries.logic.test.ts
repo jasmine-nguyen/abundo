@@ -50,4 +50,13 @@ describe('selectCategories', () => {
     expect(out[1].recent).toBe(0); // default so budget math never sees undefined
     expect(typeof out[1].color).toBe('string'); // palette default
   });
+
+  it('throws (fails loud) on a malformed non-array payload — not a silent empty list', () => {
+    // WHIT-194: a wrapped/changed /categories shape must surface as the screen's error card
+    // (and, on a first load, categoriesError) rather than a cryptic "raw.map is not a function"
+    // or a confident "0 categories" over data the user actually has. Mirrors selectRules.
+    expect(() => selectCategories({ categories: [] } as unknown as unknown[])).toThrow(/expected an array/);
+    expect(() => selectCategories(null as unknown as unknown[])).toThrow(/expected an array/);
+    expect(() => selectCategories(undefined as unknown as unknown[])).toThrow(/expected an array/);
+  });
 });

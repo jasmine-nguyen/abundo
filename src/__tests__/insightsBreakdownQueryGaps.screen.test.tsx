@@ -77,22 +77,22 @@ beforeEach(() => {
 });
 
 describe('partial failure: categories down while breakdown succeeds', () => {
-  // With no taxonomy, categoryBreakdown drops every REAL-category row (category(id) is
-  // undefined) but the Uncategorized bucket needs no taxonomy, so it survives. Because a
-  // surviving row makes rows.length > 0, the inline error is suppressed and the screen
-  // shows a MISLEADING partial list + a hero total that omits the real categories. This
-  // test pins that ACTUAL behaviour (see the qa critique — flagged as a real bug,
-  // acceptable-for-scope pending WHIT-193 proper invalidation/coupling).
-  it('breakdown has real + uncategorized spend → only Uncategorized survives, and NO error is shown (misleading partial)', async () => {
+  // WHIT-194: with no taxonomy (categories failed on first load), categoryBreakdown drops
+  // every REAL-category row but the Uncategorized bucket survives (needs no taxonomy). That
+  // surviving row used to make rows.length > 0 and SUPPRESS the inline error, showing a hero
+  // total that silently omitted the real categories. The fix surfaces the error via the
+  // composite's `categoriesError` (categoriesQuery errored with no cached data), and gates
+  // the row list on !showError so the partial uncat row can't leak under the error card.
+  it('breakdown has real + uncategorized spend, categories failed on first load → the inline error IS shown (no partial hero)', async () => {
     mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
     mockFetchBreakdown.mockReset().mockResolvedValue({ coffee: { posted: 40, pending: 0 }, [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } });
     renderInsights(makeClient(false));
-    expect(await screen.findByText('Uncategorized')).toBeTruthy();
-    expect(screen.queryByText('Cafes & Coffee')).toBeNull(); // real row dropped (no taxonomy)
-    expect(screen.queryByTestId('insights-error')).toBeNull(); // surviving uncat row hides the error
-    // hero total is $25 (uncat only), NOT the full $65 — the real $40 is silently omitted.
+    expect(await screen.findByTestId('insights-error')).toBeTruthy();     // error surfaces now
+    expect(screen.getByText("Couldn't load")).toBeTruthy();               // ...and the hero says so
+    expect(screen.queryByText('Cafes & Coffee')).toBeNull();             // real row dropped (no taxonomy)
+    expect(screen.queryByText('Uncategorized')).toBeNull();              // surviving uncat row suppressed under the error
+    expect(screen.queryByText('$25')).toBeNull();                        // no partial hero/row total
     expect(screen.queryByText('$65')).toBeNull();
-    expect(screen.getAllByText('$25').length).toBeGreaterThanOrEqual(1);
   });
 
   it('breakdown has ONLY real-category spend → all rows drop → the inline error DOES surface', async () => {
