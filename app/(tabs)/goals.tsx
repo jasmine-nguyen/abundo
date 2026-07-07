@@ -6,7 +6,7 @@ import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../../src/context';
 import { useGoalScreenData } from '../../src/queries';
-import { Bar } from '../../src/components/ui';
+import { Bar, RetryButton } from '../../src/components/ui';
 import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
 
 export default function Goals() {
@@ -16,7 +16,7 @@ export default function Goals() {
 
   // WHIT-197: the live balance, last repayment, and loan facts now come from the cached
   // query layer. Re-check on focus, but only if the cache has gone stale (no request storm).
-  const { loanFacts, homeLoan, repayment, refetchStale } = useGoalScreenData();
+  const { loanFacts, homeLoan, repayment, repaymentError, homeLoanError, refetch, refetchStale } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   const g = goalView({ loanFacts, homeLoan });
@@ -60,6 +60,16 @@ export default function Goals() {
               <Pressable onPress={() => router.push('/loan')} style={styles.heroSetupBtn}>
                 <Text style={styles.heroSetupBtnText}>Set up loan details →</Text>
               </Pressable>
+            </>
+          ) : homeLoanError ? (
+            // WHIT-121 (#2): facts are set but the balance read FAILED. Show an error + Retry
+            // instead of the "once your balance loads" waiting copy — otherwise the Goal hero
+            // silently swallows a balance failure (the same silent-failure this card fixes for
+            // the repayment card). Mirrors milestone.tsx's homeLoanError hero branch.
+            <>
+              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+              <Text style={[styles.heroSetupBody, { marginTop: 6 }]} accessibilityLiveRegion="polite">Couldn't load your balance.</Text>
+              <RetryButton onPress={() => refetch()} label="Retry loading your balance" testID="hero-balance-retry" style={styles.heroSetupBtn} textStyle={styles.heroSetupBtnText} />
             </>
           ) : (
             // Facts are set, but the live balance hasn't loaded yet — don't imply
@@ -165,6 +175,20 @@ export default function Goals() {
               </View>
               <Text style={styles.repayAmount}>{lr.amountLabel}</Text>
             </View>
+          ) : repaymentError || lr.malformed ? (
+            // WHIT-121: the repayment read FAILED (repaymentError, no cached value) OR the
+            // server sent an unusable half-payload (lr.malformed — amount xor date). Either
+            // way show an error + Retry instead of the empty state, which would falsely tell a
+            // user they have no repayment. lr.present takes precedence above, so a cached
+            // repayment surviving a background-refetch failure still shows the real card.
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <View style={[styles.repayChip, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="arrowDown" size={22} color={C.textFaint} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.repayTitle}>Last repayment</Text>
+                <Text style={styles.repaySub} accessibilityLiveRegion="polite">Couldn't load your last repayment.</Text>
+              </View>
+              <RetryButton onPress={() => refetch()} label="Retry loading your last repayment" testID="repayment-retry" style={styles.repayRetryBtn} textStyle={styles.repayRetryText} />
+            </View>
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <View style={[styles.repayChip, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="arrowDown" size={22} color={C.textFaint} /></View>
@@ -260,6 +284,10 @@ const styles = StyleSheet.create({
   repayAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.good },
   repayBtn: { marginTop: 14, paddingVertical: 13, borderRadius: 14, backgroundColor: C.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   repayBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
+  // WHIT-121: the repayment-error Retry chip. Sits inline on the dark card, so it uses an
+  // accent tint (milestone's retryBtn is hero-ink, tuned for the light hero — wrong here).
+  repayRetryBtn: { backgroundColor: 'rgba(124,140,255,.14)', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14 },
+  repayRetryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSoft },
 
   ipChip: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(201,179,245,.16)', alignItems: 'center', justifyContent: 'center' },
   ipPct: { backgroundColor: 'rgba(201,179,245,.14)', paddingVertical: 3, paddingHorizontal: 9, borderRadius: 8 },

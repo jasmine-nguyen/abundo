@@ -87,8 +87,9 @@ const DEFAULT_PAY_CYCLE: PayCycle = { length: 14, last_pay_date: '2024-01-03' };
 // A query that ERRORED with nothing cached — a FIRST-LOAD failure, not a background-refetch
 // failure over good data (TanStack v5 retains `.data` on the latter). Composites use this to
 // force their error card ONLY when there's no last-good value to fall back on, so a failed
-// background refetch keeps the cached rows (cache-first). Powers payCycleError (WHIT-72) and
-// categoriesError (WHIT-194) — a bare `.isError` there would wrongly blank cached data.
+// background refetch keeps the cached rows (cache-first). Powers payCycleError (WHIT-72),
+// categoriesError (WHIT-194), and — since WHIT-121 — homeLoanError + repaymentError; a bare
+// `.isError` in any of them would wrongly surface an error over a cached last-good value.
 function firstLoadError(q: { isError: boolean; data: unknown }): boolean {
   return q.isError && q.data === undefined;
 }
@@ -368,8 +369,8 @@ export interface InsightsScreenData {
   // the error (not a partial hero built from just the taxonomy-free Uncategorized bucket).
   // Guarded on data===undefined so it fires ONLY on a never-succeeded (first-load) read;
   // a background-refetch failure over good cached taxonomy retains `data` (TanStack v5),
-  // keeps this false, and the cached rows keep rendering (cache-first preserved). This is
-  // NOT the bare `.isError` of homeLoanError — the data guard is what protects cache-first.
+  // keeps this false, and the cached rows keep rendering (cache-first preserved) — the same
+  // firstLoadError data-guard the goal reads use, so a cached last-good value always wins.
   categoriesError: boolean;
   refetch: () => void; // force a refresh (the inline Retry button)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
@@ -508,11 +509,25 @@ export interface GoalScreenData {
   repayment: Repayment;
   isLoading: boolean; // first load, nothing cached yet
   isError: boolean; // ANY of the three reads failed after retries
-  // The home-loan balance read's OWN error, kept separate from the aggregate: the
-  // milestone "Couldn't load your balance" hero must key on this, NOT isError — a
-  // repayment/loanFacts failure has nothing to do with the balance and must not
-  // masquerade as a balance error (plan-critic #1).
+  // The home-loan balance read's OWN error, kept separate from the aggregate: the Goal +
+  // milestone "Couldn't load your balance" heroes must key on this, NOT isError — a
+  // repayment/loanFacts failure has nothing to do with the balance and must not masquerade
+  // as a balance error (plan-critic #1). firstLoadError (isError with NOTHING cached), like
+  // repaymentError: a balance that once loaded (even a legitimately NULL "not polled yet"
+  // success) then hit a failed refetch keeps its cached value — the honest render is the
+  // waiting copy, not "couldn't load". Only a never-loaded read flags an error (WHIT-121).
   homeLoanError: boolean;
+  // The last-repayment read's OWN error, likewise kept separate from the aggregate
+  // (WHIT-121). Without it a failed repayment fetch falls back to EMPTY_REPAYMENT and the
+  // Goal card shows its "No repayment on record yet" empty state — falsely telling a user
+  // with a repayment they have none. The card keys its error+Retry affordance on this.
+  // This is firstLoadError (isError with NOTHING cached), NOT a bare .isError like
+  // homeLoanError: a repayment that once loaded EMPTY (a user who genuinely has none) then
+  // hits a failed background refetch retains its cached empty value — the honest render
+  // there is the empty state, not "couldn't load". A first-load failure (never any data) is
+  // the only case with nothing truthful to show, so it's the only one that flags an error.
+  // (homeLoanError uses the same firstLoadError rule — see above.)
+  repaymentError: boolean;
   refetch: () => void;
   refetchStale: () => void;
 }
@@ -538,8 +553,16 @@ export function useGoalScreenData(): GoalScreenData {
     homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
     repayment: repaymentQuery.data ?? EMPTY_REPAYMENT,
     // homeLoanError: the balance read's OWN error, kept separate from the aggregate so the
-    // milestone "Couldn't load your balance" hero keys on it, not a repayment/facts failure.
-    homeLoanError: homeLoanQuery.isError,
+    // Goal + milestone "Couldn't load your balance" heroes key on it, not a repayment/facts
+    // failure. firstLoadError (WHIT-121): a cached balance — real OR a legitimately-null "not
+    // polled yet" success — survives a failed background refetch as the honest waiting copy,
+    // never a false error; only a never-loaded read flags one.
+    homeLoanError: firstLoadError(homeLoanQuery),
+    // repaymentError: the last-repayment read's OWN error (WHIT-121), so the Goal card's
+    // error+Retry keys on it, not a balance/facts failure. firstLoadError (not bare .isError):
+    // only a never-loaded read flags an error, so a cached repayment — real OR genuinely empty
+    // — survives a failed background refetch and renders its honest last-good state.
+    repaymentError: firstLoadError(repaymentQuery),
     ...status,
   };
 }

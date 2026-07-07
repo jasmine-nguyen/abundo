@@ -6,7 +6,7 @@ import { C, FONT, fmt } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
-import { Bar } from '../src/components/ui';
+import { Bar, RetryButton } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -68,10 +68,8 @@ export default function Milestone() {
             </>
           ) : homeLoanError ? (
             <View style={styles.waiting}>
-              <Text style={styles.waitingText}>Couldn't load your balance.</Text>
-              <Pressable onPress={() => refetch()} style={styles.retryBtn}>
-                <Text style={styles.retryText}>Retry</Text>
-              </Pressable>
+              <Text style={styles.waitingText} accessibilityLiveRegion="polite">Couldn't load your balance.</Text>
+              <RetryButton onPress={() => refetch()} label="Retry loading your balance" testID="milestone-balance-retry" style={styles.retryBtn} textStyle={styles.retryText} />
             </View>
           ) : (
             <View style={styles.waiting}>

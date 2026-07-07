@@ -1327,6 +1327,11 @@ export interface LastRepaymentView {
   amountLabel: string;         // fmt(amount), '' when absent
   whenLabel: string;           // dateLabel(date), '' when absent
   splitLabel: string | null;   // "$X principal · $Y interest", or null (total only)
+  // WHIT-121: a partial/unusable payload — amount XOR date present, but not both. Distinct
+  // from a genuinely-empty repayment (all null): the card shows its error state for this,
+  // not the "No repayment on record yet" empty copy, because the server DID send something
+  // — we just can't render half a repayment. false whenever `present` is true.
+  malformed: boolean;
 }
 
 // The Goal-tab "last repayment" card (WHIT-115): the most recent real home-loan
@@ -1336,12 +1341,15 @@ export interface LastRepaymentView {
 export function lastRepaymentView(s: RepaymentViewInput): LastRepaymentView {
   const r = s.repayment;
   if (r.amount == null || r.date == null) {
-    return { present: false, amountLabel: '', whenLabel: '', splitLabel: null };
+    // Some field present but not the amount+date pair we need → malformed (an error), not
+    // the honest "none on record" empty. All-null is genuinely empty (malformed:false).
+    const malformed = r.amount != null || r.date != null;
+    return { present: false, amountLabel: '', whenLabel: '', splitLabel: null, malformed };
   }
   const splitLabel = r.principal != null && r.interest != null
     ? `${fmt(r.principal)} principal · ${fmt(r.interest)} interest`
     : null;
-  return { present: true, amountLabel: fmt(r.amount), whenLabel: dateLabel(r.date), splitLabel };
+  return { present: true, amountLabel: fmt(r.amount), whenLabel: dateLabel(r.date), splitLabel, malformed: false };
 }
 
 // ---------------------------------------------------------------------------

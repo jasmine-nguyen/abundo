@@ -33,4 +33,25 @@ describe('lastRepaymentView', () => {
     const v = lastRepaymentView(makeState({ repayment: { amount: 1440, date: null, principal: null, interest: null } }));
     expect(v.present).toBe(false);
   });
+
+  it('flags a partial payload (amount XOR date) as malformed, not genuinely empty (WHIT-121)', () => {
+    // A server that sent SOME field but not the amount+date pair we render → malformed (an
+    // error the card surfaces), distinct from all-null which is a genuine "none on record".
+    expect(lastRepaymentView(makeState({ repayment: { amount: 1440, date: null, principal: null, interest: null } })).malformed).toBe(true);
+    expect(lastRepaymentView(makeState({ repayment: { amount: null, date: '2026-07-01', principal: null, interest: null } })).malformed).toBe(true);
+    // All-null is genuinely empty (not malformed); a fully-present repayment is not malformed.
+    expect(lastRepaymentView(makeState({ repayment: NO_REPAYMENT })).malformed).toBe(false);
+    expect(lastRepaymentView(makeState({ repayment: REPAYMENT })).malformed).toBe(false);
+  });
+
+  // WHIT-121 boundary: `malformed` keys ONLY on the amount+date pair, never on the split
+  // legs. A fully-usable repayment (amount+date present) with a HALF split (principal set,
+  // interest null) is present:true / malformed:false — it renders the REAL card (total-only),
+  // NOT the error branch. Confirms a half-split isn't mistaken for a half-payment.
+  it('does NOT flag a half-split (amount+date present, interest null) as malformed (WHIT-121)', () => {
+    const v = lastRepaymentView(makeState({ repayment: { amount: 1440, date: '2026-07-01', principal: 1208, interest: null } }));
+    expect(v.present).toBe(true);
+    expect(v.malformed).toBe(false);
+    expect(v.splitLabel).toBeNull(); // never a fabricated split from a lone leg
+  });
 });

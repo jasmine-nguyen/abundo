@@ -66,7 +66,13 @@ it('shows an error + retry (not a permanent spinner) when the balance fetch fail
   // Distinct from the waiting spinner — an honest failure message.
   expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
   expect(screen.queryByText('Fetching your live balance…')).toBeNull();
-  fireEvent.press(screen.getByText('Retry'));
+  // WHIT-121 #4 parity: the milestone Retry now carries the same a11y contract as the Goal-tab
+  // ones (shared RetryButton). Assert the props so a regression on this copy is caught too.
+  const retry = screen.getByTestId('milestone-balance-retry');
+  expect(retry.props.accessibilityRole).toBe('button');
+  expect(retry.props.accessibilityLabel).toBe('Retry loading your balance');
+  expect(screen.getByText("Couldn't load your balance.").props.accessibilityLiveRegion).toBe('polite');
+  fireEvent.press(retry);
   expect(refetch).toHaveBeenCalled();
 });
 
@@ -104,15 +110,17 @@ it('Goal-tab Sprint summary invites a tap before the balance loads', () => {
   expect(screen.getByText('Tap to see your live progress')).toBeTruthy();
 });
 
-it('Goal tab degrades to "—" (no crash, no error banner) when the balance read fails', () => {
-  // The Goal tab deliberately has no error UI — a homeLoan failure leaves balance null,
-  // so the hero shows "—" and hides the projection, exactly as an un-loaded balance
-  // would. Locks the behavior-preserving "no spinner/error on the Goal tab" decision.
-  mockGoal = makeGoalData({ homeLoan: { balance: null, asOf: null }, homeLoanError: true, isError: true });
+it('Goal tab shows a balance error + Retry when the balance read fails (WHIT-121 #2)', () => {
+  // WHIT-121 (#2): with loan facts SET, a homeLoan failure now surfaces an error + Retry on
+  // the Goal hero instead of silently degrading to "—" — the Goal tab previously swallowed a
+  // balance failure. Mirrors milestone.tsx. The projection stays hidden (no fake numbers).
+  const refetch = jest.fn();
+  mockGoal = makeGoalData({ homeLoan: { balance: null, asOf: null }, homeLoanError: true, isError: true, refetch });
   render(<Goals />);
-  expect(screen.getByText('—')).toBeTruthy();
-  expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
+  expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
   expect(screen.queryByText('Mortgage-free')).toBeNull();
+  fireEvent.press(screen.getByTestId('hero-balance-retry'));
+  expect(refetch).toHaveBeenCalledTimes(1);
 });
 
 // --- empty state (loan facts not set) ----------------------------------------
