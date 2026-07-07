@@ -190,13 +190,18 @@ resource "aws_lambda_function" "age_out" {
   }
 }
 
+# WHIT-186: 512 MB (was 128, the smallest tier). Lambda scales CPU with memory, so 128 MB
+# gives the least CPU -> slow cold starts; under the app's ~9-read launch burst that tipped a
+# transient 503 on the heaviest read. 512 MB ~= 4x the CPU for a few cents/month at single-user
+# volume, cutting cold-start + on-read compute (the /breakdown and /budgets windowed-transaction
+# rollups). No provisioned concurrency — overkill for one user; revisit only if 503s persist.
 resource "aws_lambda_function" "lambda_api" {
   function_name    = "${var.project_name}-lambda-api"
   role             = aws_iam_role.lambda_api_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 60
-  memory_size      = 128
+  memory_size      = 512
   filename         = data.archive_file.lambda_api_zip.output_path
   source_code_hash = data.archive_file.lambda_api_zip.output_base64sha256
   layers           = [aws_lambda_layer_version.shared.arn]
