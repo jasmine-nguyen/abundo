@@ -243,11 +243,16 @@ class TransactionRepository:
         blind insert would leave two rows — a categorized pending + an uncategorized
         posted. Instead, for each POSTED transaction we find its pending twin, carry
         the pending row's `category` onto the posted row, and delete the stale
-        pending. Match order (see _find_pending_twin): exact `pending_transaction_id`
-        link (forward-compat), else same authorized_date + EXACT amount, else a
-        tip-adjusted match (same day + merchant + amount within TIP_HEADROOM above the
-        auth), else a same-id re-sync of an already-stored posted row. No match ->
-        a plain insert. A missing/racey match never raises: it degrades to insert.
+        pending. Match order per posting (see _find_exact_twin / _find_tip_twin):
+        exact `pending_transaction_id` link (forward-compat), else same
+        authorized_date + EXACT amount, else a tip-adjusted match (same day +
+        merchant + amount within TIP_HEADROOM above the auth), else a same-id re-sync
+        of an already-stored posted row. No match -> a plain insert. A missing/racey
+        match never raises: it degrades to insert.
+
+        WHIT-117: across a MULTI-ROW batch the twin search is two-pass (all exact
+        matches resolved before any tip match — see _reconcile_matches) so an exact
+        twin is never starved by a tip-eligible sibling posting processed first.
 
         Pending rows are inserted as-is. All inserts are batched at the end; stale
         pendings are deleted after.
@@ -259,6 +264,12 @@ class TransactionRepository:
         to_insert: list[Transaction] = []
         stale_pending_keys: list[tuple[str, str]] = []
 
+        # WHIT-117: resolve twins for the whole batch up front, exact-before-tip across
+        # rows. `posted_matches` is aligned to the posted rows in their original order;
+        # replaying it below keeps `to_insert` ordering and the resync fallback unchanged.
+        posted_txns = [t for t in transactions if t.get("status") != PENDING_STATUS]
+        posted_matches = iter(self._reconcile_matches(posted_txns, pending_pools))
+
         for txn in transactions:
             if txn.get("status") == PENDING_STATUS:
                 # Pending rows just insert. NOTE: a posted twin arriving in this SAME
@@ -269,7 +280,11 @@ class TransactionRepository:
                 to_insert.append(txn)
                 continue
 
-            match = self._find_pending_twin(txn, pending_pools)
+            # `posted_txns` and this branch share the same `status != PENDING_STATUS`
+            # predicate, so the iterator has exactly one entry per posted row. The
+            # default is a defensive guard: a should-never-happen over-run degrades to a
+            # plain insert (no reconcile) instead of a StopIteration that 500s the webhook.
+            _, match = next(posted_matches, (None, None))
             if match is not None:
                 to_insert.append(self._with_carried_category(txn, match))
                 match_key = (match["pk"], match["sk"])
@@ -292,19 +307,53 @@ class TransactionRepository:
         for pk, sk in stale_pending_keys:
             self._delete_pending_if_present(pk, sk)
 
-    def _find_pending_twin(
-        self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
-    ) -> Optional[dict]:
-        """Return AND consume the stored pending row that settled into `posted_txn`,
-        or None. Only ever returns a row taken from the account's pending scan, so
-        the caller never gets an unverified key. Consumed rows are removed from the
-        pool so one pending can't be claimed by two posted rows in the same batch.
+    def _reconcile_matches(
+        self, posted_txns: list[Transaction], pending_pools: dict[str, list[dict]]
+    ) -> list[tuple[Transaction, Optional[dict]]]:
+        """Match every posted row in a batch to its pending twin, EXACT-before-TIP
+        across the whole batch (WHIT-117). Returns (posted_txn, match_or_None) in the
+        original order of `posted_txns`.
+
+        Two passes over the SHARED pools: pass 1 resolves the exact twin (link /
+        exact-amount) of every posting; pass 2 runs the tip tier only on the postings
+        that pass 1 left unmatched. Because both passes pop from the same pool, an
+        exact twin is claimed before any tip match can reach it — so a pending that is
+        the exact twin of one posting is never starved by a tip-eligible sibling
+        posting that merely happens to be earlier in the batch. Each pending is still
+        popped at most once (money-safety), regardless of batch order.
         """
-        account_id = posted_txn["account_id"]
+        matches: list[Optional[dict]] = [None] * len(posted_txns)
+        unresolved: list[int] = []
+        for i, posted_txn in enumerate(posted_txns):
+            exact = self._find_exact_twin(posted_txn, pending_pools)
+            if exact is not None:
+                matches[i] = exact
+            else:
+                unresolved.append(i)
+        for i in unresolved:
+            matches[i] = self._find_tip_twin(posted_txns[i], pending_pools)
+        return list(zip(posted_txns, matches))
+
+    def _ensure_pool(
+        self, account_id: str, pending_pools: dict[str, list[dict]]
+    ) -> list[dict]:
+        """The account's pending rows, scanned once and cached in `pending_pools` so a
+        multi-row batch (and both reconcile passes) reuse one query per account."""
         pool = pending_pools.get(account_id)
         if pool is None:
             pool = list(self.get_pending_transactions_for_account(account_id))
             pending_pools[account_id] = pool
+        return pool
+
+    def _find_exact_twin(
+        self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
+    ) -> Optional[dict]:
+        """Return AND consume the pending row that is an EXACT twin of `posted_txn`
+        (link, then same authorized_date + exact amount), or None. Only ever returns a
+        row taken from the account's pending scan, so the caller never gets an
+        unverified key. Consumed rows are popped from the pool.
+        """
+        pool = self._ensure_pool(posted_txn["account_id"], pending_pools)
 
         # 1. Exact link (forward-compat; pending_transaction_id is null today). The
         #    pool IS the full account pending scan, so a link not in it means the
@@ -333,15 +382,28 @@ class TransactionRepository:
             # (lowest transaction_id) so behaviour is stable and testable.
             best = min(exact, key=lambda i: pool[i].get("transaction_id", ""))
             return pool.pop(best)
+        return None
 
-        # 3. Tip-adjusted settlement (WHIT-116): a tip added at settlement changes the
-        #    amount, so tier 2's exact match misses. Match same authorized_date + the
-        #    posted merchant appearing (word-for-word) in the pending's raw description
-        #    — pending rows carry no clean merchant_name, only the description — + a
-        #    settled amount within TIP_HEADROOM above the auth. The merchant gate plus
-        #    the one-directional amount headroom keep a coincidental same-day charge
-        #    (or a refund) from being swept in. tier 2 already claimed any exact-amount
-        #    twin, so this only sees strictly-larger-amount leftovers.
+    def _find_tip_twin(
+        self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
+    ) -> Optional[dict]:
+        """Return AND consume the pending row that settled into `posted_txn` with a tip
+        added (WHIT-116), or None. Runs only after every exact twin in the batch is
+        already claimed (see _reconcile_matches), so it only sees strictly-larger-amount
+        leftovers. Consumed rows are popped from the pool.
+        """
+        pool = self._ensure_pool(posted_txn["account_id"], pending_pools)
+
+        # A tip added at settlement changes the amount, so the exact-amount tier misses.
+        # Match same authorized_date + the posted merchant appearing (word-for-word) in
+        # the pending's raw description — pending rows carry no clean merchant_name, only
+        # the description — + a settled amount within TIP_HEADROOM above the auth. The
+        # merchant gate plus the one-directional amount headroom keep a coincidental
+        # same-day charge (or a refund) from being swept in.
+        authorized_date = posted_txn.get("authorized_date")
+        if not authorized_date:
+            return None
+        amount = posted_txn.get("amount")
         if amount is None:
             return None
         # A tip-adjusted match DELETES a pending, so require a merchant strong enough to
