@@ -965,11 +965,12 @@ def get_repayment(repo: TransactionRepository) -> dict:
 
     Reads the FULL up-homeloan history newest-first (not the 7-day feed — repayments
     are ~monthly), finds the latest incoming-transfer credit (the repayment leg,
-    anchored on the account + TRANSFER_INCOMING, never the description), and pairs
-    the interest (a separate BANK_FEES debit) when one falls in the same calendar
-    month, so principal = amount - |interest|. When no interest pairs, principal/
-    interest are null (total only — never a fabricated split). Null sentinel when
-    there is no repayment on record. DecimalEncoder renders the Decimals as numbers.
+    anchored on the account + TRANSFER_INCOMING, never the description), and sums
+    the interest (BANK_FEES debits) that fall in the same calendar month, so
+    principal = amount - |summed interest| (WHIT-120: a month can post more than one
+    interest leg). When no interest pairs, principal/interest are null (total only —
+    never a fabricated split). Null sentinel when there is no repayment on record.
+    DecimalEncoder renders the Decimals as numbers.
     """
     # One page (MAX_PAGE_SIZE) of the sparse mortgage account spans many months.
     rows, _cursor = repo.get_transactions_by_date_range(
@@ -989,17 +990,21 @@ def get_repayment(repo: TransactionRepository) -> dict:
     if repayment is None:
         return dict(_REPAYMENT_NULL)
 
-    # Pair an interest leg only from the SAME calendar month (dates are YYYY-MM-DD),
-    # so this month's repayment can't mis-pair with an adjacent month's interest. Only
-    # a real interest DEBIT (negative BANK_FEES) counts — a positive fee reversal is not.
+    # Sum the interest legs from the SAME calendar month (dates are YYYY-MM-DD), so
+    # this month's repayment can't mis-pair with an adjacent month's interest. Only real
+    # interest DEBITs (negative BANK_FEES) count — a positive fee reversal is not.
+    # WHIT-120: a month can post more than one interest leg; sum them all (don't stop at
+    # the newest), or the split understates interest and overstates principal. This assumes
+    # every same-month BANK_FEES debit on the homeloan account IS interest (confirmed for
+    # up-homeloan) — a mis-categorised non-interest fee here would inflate interest and
+    # deflate principal.
     month = str(when)[:7]
     interest = None
     for r in rows:
         if r.get("category") == INTEREST_CATEGORY and str(r.get("date", ""))[:7] == month:
             amt = _num(r.get("amount"))
             if amt is not None and amt < 0:
-                interest = abs(amt)   # stored negative; show the magnitude
-                break
+                interest = (interest or 0) + abs(amt)   # stored negative; accumulate magnitudes
 
     # Only show a split when it's sensible: interest present and strictly less than
     # the repayment. Otherwise total-only (never a negative or fabricated principal).
