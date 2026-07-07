@@ -29,6 +29,10 @@ import type { DiscoveryDocument, TokenResponse } from "expo-auth-session";
 // Type-only (erased): the SDK itself is lazy-`require`d inside signInWithPassword so
 // the node `logic` jest project can still import this module. WHIT-178.
 import type { CognitoUser, CognitoUserSession } from "amazon-cognito-identity-js";
+// WHIT-205: the TanStack Query cache singleton. queryClient.ts imports only
+// @tanstack/react-query (pure JS, no native module), so this keeps auth.ts node-safe
+// on import and adds no import cycle.
+import { queryClient } from "./queryClient";
 
 /**
  * Where the returning-user auth state can be, from the gate's point of view.
@@ -175,6 +179,13 @@ function cacheToken(
 function clearSession(): void {
   session = null;
   sessionAuthMethod = null;
+  // WHIT-205: drop the per-session query cache as the session ends. clearSession is the
+  // SINGLE choke point for every genuine "session gone -> 'anon'" transition (signOut, a
+  // refresh failure, an invalidated-biometric re-login), so a different account signing in
+  // within the 5-min gcTime can never render the previous account's cached rows. A same-user
+  // lock/refresh/unlock goes through setStatus directly and never reaches here, so unlock
+  // doesn't trigger a full refetch storm.
+  queryClient.clear();
   setStatus("anon");
 }
 
