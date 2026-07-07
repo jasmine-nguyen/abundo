@@ -27,12 +27,15 @@ export function useIsAuthed(): boolean {
 // --- query keys (exported so write paths can invalidate the cache) -----------
 export const categoriesKey = ['categories'] as const;
 export const payCycleKey = ['payCycle'] as const;
-// Budgets window on the pay-cycle length, so the length is part of the key — changing
-// the cycle length refetches the correctly-windowed rollup rather than serving stale.
-export const budgetsKey = (cycleLen: number) => ['budgets', cycleLen] as const;
-// Breakdown (spend-by-category, the Insights tab) windows on the cycle length too, so
-// it's keyed the same way — a cycle-length change refetches the right window.
-export const breakdownKey = (cycleLen: number) => ['breakdown', cycleLen] as const;
+// Budgets are un-windowed at the KEY (WHIT-72): the server derives the pay-cycle window
+// itself (GET /budgets ignores the client ?days=), so a flat key is correct — it lets
+// budgets fetch in PARALLEL with the pay cycle (no waterfall) and refetch exactly ONCE on
+// a cycle-length change (the explicit invalidateQueries(['budgets']) in persistPayCycle),
+// rather than a length change shifting the key AND the invalidate firing two fetches.
+export const budgetsKey = ['budgets'] as const;
+// Breakdown (spend-by-category, the Insights tab) is the same — server-derived window, so
+// a flat key: parallel fetch, single invalidate on a length change (WHIT-72).
+export const breakdownKey = ['breakdown'] as const;
 // Transactions aren't windowed (fetchTransactions takes no args), so a flat key. Kept
 // in sync with the literal ['transactions'] the categorise write uses in context.tsx
 // (context imports queryClient directly, not this key, to avoid a circular import).
@@ -81,6 +84,15 @@ export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
 // left" rather than NaN on the very first paint.
 const DEFAULT_PAY_CYCLE: PayCycle = { length: 14, last_pay_date: '2024-01-03' };
 
+// A query that ERRORED with nothing cached — a FIRST-LOAD failure, not a background-refetch
+// failure over good data (TanStack v5 retains `.data` on the latter). Composites use this to
+// force their error card ONLY when there's no last-good value to fall back on, so a failed
+// background refetch keeps the cached rows (cache-first). Powers payCycleError (WHIT-72) and
+// categoriesError (WHIT-194) — a bare `.isError` there would wrongly blank cached data.
+function firstLoadError(q: { isError: boolean; data: unknown }): boolean {
+  return q.isError && q.data === undefined;
+}
+
 // --- the individual queries (each auth-gated) --------------------------------
 export function useCategoriesQuery(enabled: boolean) {
   return useQuery({ queryKey: categoriesKey, queryFn: fetchCategories, enabled, select: selectCategories });
@@ -90,9 +102,11 @@ export function usePayCycleQuery(enabled: boolean) {
   return useQuery({ queryKey: payCycleKey, queryFn: fetchPayCycle, enabled });
 }
 
+// cycleLen is passed to fetchBudgets for the (inert) ?days= arg only — the KEY is flat, so
+// budgets fetches in parallel with the pay cycle and a length change doesn't shift it (WHIT-72).
 export function useBudgetsQuery(cycleLen: number, enabled: boolean) {
   return useQuery({
-    queryKey: budgetsKey(cycleLen),
+    queryKey: budgetsKey,
     queryFn: () => fetchBudgets(cycleLen),
     enabled,
     select: selectBudgets,
@@ -100,10 +114,10 @@ export function useBudgetsQuery(cycleLen: number, enabled: boolean) {
 }
 
 // Breakdown is already the Record<category id, {posted, pending}> the selector wants,
-// so no `select`. WHIT-189.
+// so no `select`. WHIT-189. Flat key + parallel fetch like budgets (WHIT-72).
 export function useBreakdownQuery(cycleLen: number, enabled: boolean) {
   return useQuery({
-    queryKey: breakdownKey(cycleLen),
+    queryKey: breakdownKey,
     queryFn: () => fetchBreakdown(cycleLen),
     enabled,
   });
@@ -253,15 +267,22 @@ export interface BudgetsScreenData {
   daysLeft: number;
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
+  // WHIT-72: the pay-cycle read failed with NO cached cycle. Budgets now fetch in parallel
+  // (not gated on the pay cycle), so a first-load pay-cycle failure would otherwise render
+  // budget rows against the DEFAULT cycle — a wrong "days left" + pace. Force the error card
+  // instead. Guarded on data===undefined so a background refetch over a cached cycle keeps
+  // the rows (cache-first), mirroring WHIT-194's categoriesError.
+  payCycleError: boolean;
   refetch: () => void; // force a refresh (the inline Retry button)
   refetchStale: () => void; // focus refresh — only refetches queries that have gone stale
 }
 
 /**
  * Everything the Budgets screen (and its budget math) needs, assembled from the
- * auth-gated queries. Budgets are keyed on the pay-cycle length, so they only fetch
- * once the real pay cycle has loaded — never with the default length and then again
- * with the real one.
+ * auth-gated queries. Budgets, pay cycle, and categories all fetch in PARALLEL on auth
+ * (WHIT-72): the budgets key is flat and the server derives its own window, so budgets no
+ * longer waits for the pay cycle — killing the cold-open waterfall. cycleLen/daysLeft for
+ * the hero still come from the pay-cycle query below, not the budgets payload.
  */
 export function useBudgetsScreenData(): BudgetsScreenData {
   const authed = useIsAuthed();
@@ -269,7 +290,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClock(payCycle);
 
-  const budgetsQuery = useBudgetsQuery(cycleLen, authed && payCycleQuery.isSuccess);
+  const budgetsQuery = useBudgetsQuery(cycleLen, authed);
   const categoriesQuery = useCategoriesQuery(authed);
 
   const categories = categoriesQuery.data ?? [];
@@ -277,12 +298,16 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const category = useCallback((id: string) => byId.get(id), [byId]);
 
   const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, categoriesQuery]);
+  // WHIT-72: a first-load pay-cycle failure (no cached cycle) → force the error card, else
+  // budgets would render against the DEFAULT cycle (wrong days-left/pace).
+  const payCycleError = firstLoadError(payCycleQuery);
 
   return {
     budgets: budgetsQuery.data ?? [],
     category,
     cycleLen,
     daysLeft,
+    payCycleError,
     ...status,
   };
 }
@@ -299,6 +324,7 @@ export interface BudgetDetailScreenData {
   daysLeft: number;
   isLoading: boolean;
   isError: boolean;
+  payCycleError: boolean; // WHIT-72: first-load pay-cycle failure → the pace/projection can't be trusted
   refetch: () => void;
   refetchStale: () => void;
 }
@@ -308,7 +334,7 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClock(payCycle);
 
-  const budgetsQuery = useBudgetsQuery(cycleLen, authed && payCycleQuery.isSuccess);
+  const budgetsQuery = useBudgetsQuery(cycleLen, authed); // parallel fetch, flat key (WHIT-72)
   const transactionsQuery = useTransactionsQuery(authed);
   const categoriesQuery = useCategoriesQuery(authed);
 
@@ -318,6 +344,7 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
 
   // WHIT-204: the 7th composite folded into the shared helper (same plumbing as the six).
   const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, transactionsQuery, categoriesQuery]);
+  const payCycleError = firstLoadError(payCycleQuery); // WHIT-72
 
   return {
     category,
@@ -325,6 +352,7 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
     transactions: transactionsQuery.data ?? [],
     cycleLen,
     daysLeft,
+    payCycleError,
     ...status,
   };
 }
@@ -349,9 +377,10 @@ export interface InsightsScreenData {
 
 /**
  * The Insights tab's spend-by-category data, assembled from the auth-gated queries.
- * Breakdown windows on the pay-cycle length, so it fetches only once the real pay cycle
- * has loaded (never with the default length then again with the real one). The AI-
- * insights feature on that screen stays on the old context store — it is NOT here.
+ * Breakdown, pay cycle, and categories fetch in PARALLEL on auth (WHIT-72): the breakdown
+ * key is flat and the server derives its own window, so it no longer waits for the pay
+ * cycle (kills the cold-open waterfall). The AI-insights feature on that screen stays on
+ * the old context store — it is NOT here.
  */
 export function useInsightsScreenData(): InsightsScreenData {
   const authed = useIsAuthed();
@@ -359,7 +388,7 @@ export function useInsightsScreenData(): InsightsScreenData {
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen } = cycleClock(payCycle);
 
-  const breakdownQuery = useBreakdownQuery(cycleLen, authed && payCycleQuery.isSuccess);
+  const breakdownQuery = useBreakdownQuery(cycleLen, authed); // parallel fetch, flat key (WHIT-72)
   const categoriesQuery = useCategoriesQuery(authed);
 
   const categories = categoriesQuery.data ?? [];
@@ -367,9 +396,9 @@ export function useInsightsScreenData(): InsightsScreenData {
   const category = useCallback((id: string) => byId.get(id), [byId]);
 
   const status = useCombineScreenQueries([payCycleQuery, breakdownQuery, categoriesQuery]);
-  // WHIT-194: see InsightsScreenData.categoriesError. `data === undefined` ⇒ the categories
-  // read has never succeeded, so there's no taxonomy to label real-category rows.
-  const categoriesError = categoriesQuery.isError && categoriesQuery.data === undefined;
+  // WHIT-194: see InsightsScreenData.categoriesError. firstLoadError ⇒ the categories read has
+  // never succeeded, so there's no taxonomy to label real-category rows (cache-first preserved).
+  const categoriesError = firstLoadError(categoriesQuery);
 
   return { breakdown: breakdownQuery.data ?? {}, category, categoriesError, ...status };
 }

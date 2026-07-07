@@ -18,7 +18,10 @@ export default function BudgetDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const bd = budgetDetail(d, id);
 
-  if (!bd) {
+  // WHIT-72: a first-load pay-cycle failure would render the detail's pace/projection
+  // against the DEFAULT cycle (wrong). This screen is reached from the Budgets tab (which
+  // now shows its error on payCycleError), so blanking here only guards a direct deep-link.
+  if (!bd || d.payCycleError) {
     return (
       <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
         <Header title="Budget" />

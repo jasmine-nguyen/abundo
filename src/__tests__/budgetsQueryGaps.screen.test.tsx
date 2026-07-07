@@ -69,7 +69,10 @@ describe('partial failure', () => {
     renderBudgets(makeClient(false));
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.getByTestId('budgets-retry')).toBeTruthy();
-    expect(mockFetchBudgets).toHaveBeenCalledWith(30); // pay cycle succeeded → real length
+    // WHIT-72: budgets fetches in PARALLEL now (not gated on payCycle), so it fires with the
+    // DEFAULT length (14) before the cycle resolves — and the flat key means it never
+    // refetches to 30. The server ignores the length anyway, so the response is still correct.
+    expect(mockFetchBudgets).toHaveBeenCalledWith(14);
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
   });
 
@@ -122,11 +125,11 @@ describe('auth transition mid-session', () => {
 });
 
 describe('save → cache invalidation', () => {
-  it("invalidate ['budgets'] prefix refetches the windowed ['budgets', 30] entry", async () => {
+  it("invalidate ['budgets'] refetches the budgets query", async () => {
     // edit.tsx invalidates the module-singleton queryClient (same instance _layout mounts
-    // — a static import, so identity is guaranteed). Behaviourally, prefix-invalidating
-    // ['budgets'] must refetch the windowed ['budgets', 30] entry; a local client with no
-    // gcTime timer proves that without leaking a background timer into the worker.
+    // — a static import, so identity is guaranteed). Behaviourally, invalidating ['budgets']
+    // must refetch the (flat, WHIT-72) budgets query; a local client with no gcTime timer
+    // proves that without leaking a background timer into the worker.
     const client = makeClient();
     render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
     expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
@@ -139,11 +142,55 @@ describe('save → cache invalidation', () => {
   });
 });
 
-// Regression lock for the isLoading fix (code-critic/qa #1): a sustained payCycle
-// failure leaves the budgets query disabled; a disabled v5 query is isPending:true, so
-// basing the spinner on isPending stranded the user on an endless spinner with no Retry.
-describe('payCycle failure must not strand a spinner', () => {
-  it('sustained payCycle failure → inline error + Retry, never an endless spinner', async () => {
+// WHIT-72: budgets no longer waterfalls behind the pay cycle.
+describe('parallel fetch (no waterfall)', () => {
+  it('budgets fetches immediately with the default length, not gated on the pay cycle', async () => {
+    // Hold the pay cycle unresolved; budgets must STILL fire (in parallel), with the default
+    // length (14). On the OLD gated code fetchBudgets would not be called until payCycle
+    // resolved — so this fails on revert.
+    let resolvePayCycle: (v: unknown) => void = () => {};
+    mockFetchPayCycle.mockReset().mockReturnValue(new Promise((r) => { resolvePayCycle = r; }));
+    renderBudgets();
+
+    await waitFor(() => expect(mockFetchBudgets).toHaveBeenCalled());
+    expect(mockFetchBudgets).toHaveBeenCalledWith(14);   // default length — cycle not yet loaded
+    expect(mockFetchPayCycle).toHaveBeenCalledTimes(1);  // fired in parallel, still pending
+
+    await act(async () => { resolvePayCycle(PAY_CYCLE); }); // settle to avoid an act() leak
+  });
+});
+
+// WHIT-72: a pay-cycle length change refetches budgets EXACTLY once (the explicit
+// invalidate), not twice. With the flat key, writing a new-length pay cycle no longer
+// shifts the budgets key, so it doesn't itself trigger a refetch — only the invalidate does.
+describe('length change refetches once, not twice', () => {
+  it('writing a new-length pay cycle does NOT refetch; the invalidate is the single refresh', async () => {
+    const client = makeClient();
+    render(React.createElement(QueryClientProvider, { client }, React.createElement(Budgets)));
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    const afterLoad = mockFetchBudgets.mock.calls.length;
+
+    // persistPayCycle writes the new-length cycle into the cache. With the flat key this must
+    // NOT trigger a budgets refetch on its own (the old windowed key WOULD have — refetch #1).
+    await act(async () => {
+      client.setQueryData(['payCycle'], { length: 14, last_pay_date: '2026-07-01' });
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(mockFetchBudgets.mock.calls.length).toBe(afterLoad); // no key-shift refetch
+
+    // ...and the explicit invalidate persistPayCycle fires is the SINGLE refresh.
+    await act(async () => { client.invalidateQueries({ queryKey: ['budgets'] }); });
+    await waitFor(() => expect(mockFetchBudgets.mock.calls.length).toBe(afterLoad + 1));
+  });
+});
+
+// A sustained payCycle failure must show the inline error + Retry, never a spinner and never
+// budgets-against-a-wrong-cycle. WHIT-72: budgets now fetch in PARALLEL, so on a payCycle
+// failure the rows would load (against the DEFAULT cycle) and suppress the old `isError &&
+// rows.length === 0` error — the payCycleError signal restores the error here. Fail-on-revert:
+// drop payCycleError from showError and this reverts to rendering rows with a wrong days-left.
+describe('payCycle failure must show the error, not budgets on a wrong cycle', () => {
+  it('sustained payCycle failure → inline error + Retry (payCycleError), never a spinner', async () => {
     mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
     renderBudgets(makeClient(false));
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();

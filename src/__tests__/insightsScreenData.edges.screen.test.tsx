@@ -46,8 +46,10 @@ it('a payCycle failure surfaces as isError and does NOT strand isLoading (payCyc
 
   await waitFor(() => expect(result.current.isError).toBe(true)); // payCycleQuery IS in the OR
   expect(result.current.isLoading).toBe(false);                   // errored dependency → inline error, not a forever spinner
-  // breakdown stays disabled behind payCycleQuery.isSuccess, so it never fetched the doomed window.
-  expect(mockFetchBreakdown).not.toHaveBeenCalled();
+  // WHIT-72: breakdown no longer waits behind payCycleQuery.isSuccess — it fetches in parallel
+  // with the default length (the server derives the window itself), so it DID fetch. The
+  // composite still surfaces isError via the payCycle failure in the OR.
+  await waitFor(() => expect(mockFetchBreakdown).toHaveBeenCalledWith(14));
 });
 
 // WHIT-194: the categoriesError signal that lets Insights distinguish a first-load categories

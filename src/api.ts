@@ -137,8 +137,8 @@ export interface BudgetRollup {
  * Fetch every budgeted category's target plus its computed posted/pending spend
  * for the current window. Empty {} before any target is set.
  *
- * @param days - Rolling window length (the client's pay-cycle length); the server
- *   sums spend over the last `days` days.
+ * @param days - The client's pay-cycle length. The server derives the window from the
+ *   stored pay cycle and ignores this (WHIT-72); kept for symmetry with fetchBreakdown.
  * @returns A map of category id to its { target, posted, pending }.
  * @throws If the response status is not OK.
  */
