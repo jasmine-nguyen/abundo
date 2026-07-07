@@ -659,6 +659,275 @@ def test_exact_and_tip_compete_for_one_pending_consumed_once(lam, repo):
     assert len(store) == 2                                          # no duplicate/ghost
 
 
+# --- WHIT-117: exact twin must not be starved by a tip sibling across rows ---
+# The companion of test_exact_and_tip_compete_for_one_pending_consumed_once (which
+# runs the BENIGN order, exact-first). Here the tip-eligible posting is FIRST. On the
+# old single-pass code it popped the one pending via the tip tier, so the exact posting
+# behind it inserted UNCATEGORISED. The two-pass resolves all exact twins before any tip,
+# so the exact posting wins its category regardless of batch order.
+
+
+def test_tip_first_does_not_starve_exact_twin(lam, repo):
+    # One pending -5.50 "coffee". Batch order: tip -6.00 FIRST, exact -5.50 SECOND.
+    # Fail-on-revert: on the single-pass code the -6.00 tip-pops the pending first, so
+    # -5.50 (B) inserts uncategorised — this asserts B carries "coffee".
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="C", amount=Decimal("-6.00"),   # tip-eligible for A, processed FIRST
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),   # EXACT twin of A, processed SECOND
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert (acc, "TXN#A") not in store                              # consumed once
+    assert store[(acc, "TXN#B")]["category"] == "coffee"           # exact twin won it
+    assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK"   # tip sibling -> plain insert
+    assert len(store) == 2                                          # no duplicate/ghost
+
+
+def test_exact_beats_tip_regardless_of_batch_order(lam, repo):
+    # The same one-pending / exact+tip conflict must resolve identically whichever order
+    # the two postings arrive in. Locks order-independence (a partial fix that only
+    # reordered the loop would still fail one of the two orders).
+    for order in (["B", "C"], ["C", "B"]):   # B=exact -5.50, C=tip -6.00
+        repo._table.store.clear()
+        _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                      authorized_date="2026-06-29", pending=True, category="coffee")
+        rows = {
+            "B": _norm(lam, txn_id="B", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                       pending=False, category="FOOD_AND_DRINK"),
+            "C": _norm(lam, txn_id="C", amount=Decimal("-6.00"), authorized_date="2026-06-29",
+                       pending=False, category="FOOD_AND_DRINK"),
+        }
+        repo.insert_or_reconcile([rows[order[0]], rows[order[1]]])
+
+        store = repo._table.store
+        acc = _acc(rows["B"])
+        assert store[(acc, "TXN#B")]["category"] == "coffee", order          # exact always wins
+        assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK", order  # tip never carries
+        assert (acc, "TXN#A") not in store, order
+        assert len(store) == 2, order
+
+
+def test_two_pass_is_scoped_per_account(lam, repo):
+    # The two-pass shares pools KEYED BY ACCOUNT, so exact-before-tip must not leak
+    # across accounts: account 1's exact twin must not defer or steal account 2's tip.
+    # Account 1: pending X1 -5.50, exact posting -5.50. Account 2: pending X2 -5.50,
+    # tip posting -6.00. Both must settle their own account's pending.
+    _ACCT2 = "3zVQJ8Btz_IRmqp78VrQnQ"  # -> up-spending (distinct from the default account)
+
+    def _bank2(txn_id, amount, pending, category):
+        row = _bank_row(txn_id, amount, authorized_date="2026-06-29",
+                        pending=pending, category=category)
+        row["accountId"] = _ACCT2
+        row["accountName"] = "Up Spending"
+        return lam.banksync.BankSyncClient.normalise(row)
+
+    _seed_pending(repo, lam, txn_id="X1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    repo.insert_transactions([_bank2("X2", Decimal("-5.50"), pending=True, category="groceries")])
+
+    batch = [
+        _norm(lam, txn_id="P1", amount=Decimal("-5.50"),   # acct1 exact twin of X1
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _bank2("P2", Decimal("-6.00"), pending=False, category="FOOD_AND_DRINK"),  # acct2 tip twin of X2
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc1 = "ACCOUNT#" + batch[0]["account_id"]
+    acc2 = "ACCOUNT#" + batch[1]["account_id"]
+    assert acc1 != acc2
+    assert store[(acc1, "TXN#P1")]["category"] == "coffee"      # acct1 settled its own pending
+    assert (acc1, "TXN#X1") not in store
+    assert store[(acc2, "TXN#P2")]["category"] == "groceries"   # acct2 settled its own pending
+    assert (acc2, "TXN#X2") not in store
+    assert len(store) == 2
+
+
+# ---------------------------------------------------------------------------
+# WHIT-117 GAP COVERAGE (adversarial half, authored by qa): multi-pending /
+# multi-posting conflicts, exact-tier money-safety, pass-2-on-emptied-pool, the
+# precomputed-match replay end-state, and degenerate batches. The four tests
+# above use ONE pending + ONE-or-two postings; these exercise the batch shapes
+# those miss. Each flips on the single-pass behaviour it names (two are refactor/
+# money-safety guards, labelled as such).
+# ---------------------------------------------------------------------------
+
+
+def test_two_pass_three_way_two_pendings_three_postings(lam, repo):
+    # GAP: two pendings, three postings, cross-eligible. X1 -5.50 "coffee" is the exact
+    # twin of E1 AND the tip twin of T1 (-6.00). X2 -10.00 "dinner" is the exact twin of
+    # E2. Batch order puts the TIP posting first.
+    #   two-pass (correct): E1 exact-claims X1, E2 exact-claims X2 in pass 1; T1's tip
+    #     finds an empty pool in pass 2 -> plain insert. Both exacts keep their category.
+    #   single-pass (revert): T1 tip-claims X1 first -> E1 inserts UNCATEGORISED.
+    _seed_pending(repo, lam, txn_id="X1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="X2", amount=Decimal("-10.00"),
+                  authorized_date="2026-06-29", pending=True, category="dinner")
+    batch = [
+        _norm(lam, txn_id="T1", amount=Decimal("-6.00"),   # tip-eligible for X1, FIRST
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="E1", amount=Decimal("-5.50"),   # EXACT twin of X1
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="E2", amount=Decimal("-10.00"),  # EXACT twin of X2
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#E1")]["category"] == "coffee"          # exact twin won it
+    assert store[(acc, "TXN#E2")]["category"] == "dinner"          # its exact twin too
+    assert store[(acc, "TXN#T1")]["category"] == "FOOD_AND_DRINK"  # tip sibling -> plain
+    assert (acc, "TXN#X1") not in store                            # each pending consumed
+    assert (acc, "TXN#X2") not in store                            #   exactly once
+    assert len(store) == 3                                         # no duplicate/ghost
+
+
+def test_pending_exact_for_one_and_tip_for_two_goes_to_exact(lam, repo):
+    # GAP: ONE pending X -5.50 "coffee" that is the exact twin of E and tip-eligible for
+    # TWO postings (T1 -6.00, T2 -6.50, both same day+merchant, within +25%). Both tips
+    # are ahead of the exact in the batch.
+    #   two-pass: E exact-claims X in pass 1; both tips hit an empty pool -> plain.
+    #   single-pass (revert): T1 tip-claims X, E inserts uncategorised.
+    _seed_pending(repo, lam, txn_id="X", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="T1", amount=Decimal("-6.00"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="T2", amount=Decimal("-6.50"),  # 5.50*1.25 = 6.875, still in
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="E", amount=Decimal("-5.50"),   # EXACT twin, processed LAST
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#E")]["category"] == "coffee"
+    assert store[(acc, "TXN#T1")]["category"] == "FOOD_AND_DRINK"
+    assert store[(acc, "TXN#T2")]["category"] == "FOOD_AND_DRINK"
+    assert (acc, "TXN#X") not in store
+    assert len(store) == 3
+
+
+def test_multiple_exact_twins_each_consumed_once(lam, repo):
+    # GAP (money-safety of the exact tier across a batch): two indistinguishable same-day
+    # same-amount pendings A1 "coffee" / A2 "tea" and two identical exact postings. Each
+    # pending must be popped exactly once (no posting claims a pending already taken) and
+    # the min-transaction_id tie-break is deterministic: the first posting takes A1.
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="tea")
+    batch = [
+        _norm(lam, txn_id="P1", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="P2", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#P1")]["category"] == "coffee"   # lowest-id pending -> 1st posting
+    assert store[(acc, "TXN#P2")]["category"] == "tea"      # the other pending, not re-claimed
+    assert (acc, "TXN#A1") not in store
+    assert (acc, "TXN#A2") not in store
+    assert len(store) == 2                                  # both consumed once, no ghost
+
+
+def test_lone_tip_still_matches_in_pass_two_within_batch(lam, repo):
+    # GAP (pass 2 on a pool pass 1 already popped from): E exact-settles X1 in pass 1;
+    # T is a lone tip of X2 with NO exact sibling anywhere. The tip must still reconcile
+    # in pass 2 against the pool that pass 1 partially emptied.
+    _seed_pending(repo, lam, txn_id="X1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="X2", amount=Decimal("-8.00"),
+                  authorized_date="2026-06-29", pending=True, category="lunch")
+    batch = [
+        _norm(lam, txn_id="E", amount=Decimal("-5.50"),   # exact twin of X1
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="T", amount=Decimal("-9.00"),   # tip of X2 (8*1.25=10), no exact
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#E")]["category"] == "coffee"
+    assert store[(acc, "TXN#T")]["category"] == "lunch"   # pass-2 tip fired on shared pool
+    assert (acc, "TXN#X1") not in store
+    assert (acc, "TXN#X2") not in store
+    assert len(store) == 2
+
+
+def test_resync_and_interleaved_pending_end_state(lam, repo):
+    # GAP (precomputed matches replayed via next(), with pending/posted interleaved). A
+    # posted resync produces a None match and a NEW pending row consumes NO match slot.
+    # This is an END-STATE guard: resync keeps the user category, the exact settle carries,
+    # the interleaved pending inserts. (It does NOT independently lock iterator alignment —
+    # the defensive `next(..., (None, None))` default would mask a misadvance into this same
+    # end-state.) Batch: [P exact-settles X] , [NP a brand-new pending] , [B same-id resync].
+    _seed_pending(repo, lam, txn_id="X", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    # B already stored as a POSTED, user-categorised row (the resync target).
+    _seed_pending(repo, lam, txn_id="B", amount=Decimal("-9.99"),
+                  authorized_date="2026-06-29", pending=False, category="Groceries")
+    batch = [
+        _norm(lam, txn_id="P", amount=Decimal("-5.50"),   # exact twin of X
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="NP", amount=Decimal("-3.00"),  # interleaved NEW pending
+              authorized_date="2026-06-29", pending=True, category="misc"),
+        _norm(lam, txn_id="B", amount=Decimal("-9.99"),   # same-id resync, raw category
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#P")]["category"] == "coffee"      # exact settle carried
+    assert store[(acc, "TXN#B")]["category"] == "Groceries"   # resync kept user category
+    assert store[(acc, "TXN#NP")]["category"] == "misc"       # interleaved pending inserted
+    assert (acc, "TXN#X") not in store                        # settled pending removed
+    assert len(store) == 3
+
+
+def test_reconcile_matches_empty_and_all_pending_batch(lam, repo):
+    # GAP (degenerate): _reconcile_matches over an empty posted list is []. An all-pending
+    # batch builds an empty match iterator, so the loop must insert every pending without
+    # calling next() (a StopIteration here would 500 the webhook).
+    assert repo._reconcile_matches([], {}) == []
+
+    batch = [
+        _norm(lam, txn_id="Q1", amount=Decimal("-1.00"),
+              authorized_date="2026-06-29", pending=True, category="a"),
+        _norm(lam, txn_id="Q2", amount=Decimal("-2.00"),
+              authorized_date="2026-06-29", pending=True, category="b"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#Q1")]["category"] == "a"
+    assert store[(acc, "TXN#Q2")]["category"] == "b"
+    assert len(store) == 2
+
+
 # --- direct locks on the new pure helpers -----------------------------------
 
 

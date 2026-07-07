@@ -100,8 +100,9 @@ class NoTwinRepo:
     def get_pending_transactions_for_account(self, account):
         return []
 
-    def _find_pending_twin(self, txn, pools):
-        return None
+    def _reconcile_matches(self, posted_txns, pools):
+        # WHIT-117: _simulate_after now drives the batch matcher; no twins here.
+        return [(txn, None) for txn in posted_txns]
 
     @staticmethod
     def _with_carried_category(txn, src):
@@ -432,7 +433,7 @@ def test_fire_failure_does_not_break_the_write(lam, monkeypatch):
 # the REAL webhook TransactionRepository, plus boundary / window / refund /
 # pagination gaps. The implementer's tests use NoTwinRepo (the reconcile path is
 # never exercised); these seed a real pending twin into a FakeTable so
-# _find_pending_twin / _with_carried_category run for real inside the Δ sim.
+# _reconcile_matches / _with_carried_category run for real inside the Δ sim.
 # Every assertion fails on a revert of the production behaviour it names.
 # ===========================================================================
 
@@ -494,6 +495,52 @@ def test_tip_adjusted_settlement_crosses_at_true_combined_and_carries_category(a
     assert len(sent) == 1
     assert sent[0][0] == "Heads up \U0001f440"  # the 80 copy, NOT the 100 copy
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
+
+
+def test_simulate_after_two_pass_matches_real_write_on_starvation_batch(alerts, repo, monkeypatch):
+    # WHIT-117 sim fidelity: _simulate_after must reproduce the two-pass exactly where it
+    # matters — a starvation batch. Pending -70 "groceries". Batch order: tip -80 FIRST,
+    # exact -70 SECOND (raw "FOOD_AND_DRINK" on both; only the carried groceries counts).
+    #   two-pass (correct): exact -70 pops the pending -> carries groceries -> groceries
+    #     combined = 70 (< 80) -> NO alert.
+    #   single-pass (bug):  tip -80 pops the pending first -> carries groceries onto -80 ->
+    #     groceries combined = 80 -> FIRES the 80 push.
+    # Asserting NO alert makes the sim's two-pass a hard gate: revert it and this fires.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries")
+    before = list(repo._table.store.values())
+    tip_first = _norm_real(alerts, txn_id="B", amount=Decimal("-80"), pending=False, category="FOOD_AND_DRINK")
+    exact_second = _norm_real(alerts, txn_id="C", amount=Decimal("-70"), pending=False, category="FOOD_AND_DRINK")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[tip_first, exact_second], webhook_repo=repo)
+    assert sent == []                                       # groceries = 70 < 80, exact won the carry
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_simulate_after_two_pass_survives_interleaved_pending(alerts, repo, monkeypatch):
+    # WHIT-117 sim GAP (authored by qa): the implementer's sim starvation test has the tip
+    # and exact postings ADJACENT. This inserts a NEW pending row BETWEEN them in
+    # `normalised`, so the two-pass must still resolve exact-before-tip with an interleaved
+    # pending in the batch. The hard gate is the ordering (RED on a single-pass revert); the
+    # interleaved pending just makes it realistic. NOTE: this does NOT independently lock
+    # iterator alignment — the defensive `next(..., (None, None))` default would mask a
+    # misadvance — it's an end-state check.
+    #   two-pass (correct): exact -70 (C) claims the pending -> groceries combined = 70
+    #     (< 80) -> NO push. The interleaved pending is unbudgeted "dining" -> ignored.
+    #   single-pass (revert): tip -80 (T) claims the pending -> groceries = 80 -> FIRES.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries")
+    before = list(repo._table.store.values())
+    tip_first = _norm_real(alerts, txn_id="T", amount=Decimal("-80"),
+                           pending=False, category="FOOD_AND_DRINK")
+    mid_pending = _norm_real(alerts, txn_id="D", amount=Decimal("-50"), pending=True,
+                             category="dining", merchant_name="OTHER MERCHANT",
+                             description="OTHER MERCHANT")
+    exact_second = _norm_real(alerts, txn_id="C", amount=Decimal("-70"),
+                              pending=False, category="FOOD_AND_DRINK")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[tip_first, mid_pending, exact_second],
+                           webhook_repo=repo)
+    assert sent == []                                        # exact won the carry; 70 < 80
+    assert notify.fired_markers("2026-07-01", 14) == set()
 
 
 def test_linked_settlement_carries_category_and_uses_settled_amount(alerts, repo, monkeypatch):

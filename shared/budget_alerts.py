@@ -107,17 +107,24 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
 def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
     """The windowed row set AFTER `insert_or_reconcile` applies `normalised`, built
     in memory from the pre-write snapshot — never a second (GSI-lagging) read. Mirrors
-    the reconcile decisions by reusing the repo's own `_find_pending_twin` /
-    `_with_carried_category`, so it can't drift from the real write."""
+    the reconcile decisions by driving the repo's own `_reconcile_matches` /
+    `_with_carried_category`, so it can't drift from the real write — including the
+    WHIT-117 two-pass (exact-before-tip across the batch)."""
     by_id = {r["transaction_id"]: r for r in ctx["before_rows"] if r.get("transaction_id") is not None}
-    pools = {a: list(rows) for a, rows in ctx["pending_pools"].items()}  # copy: _find_pending_twin pops
+    pools = {a: list(rows) for a, rows in ctx["pending_pools"].items()}  # copy: the matcher pops
+
+    # Same two-pass as the real write: resolve twins for the whole batch up front, then
+    # replay in `normalised` order so pending-inserts and the resync fallback keep their
+    # original interleaving (only the exact-vs-tip decision changed).
+    posted_txns = [t for t in normalised if t.get("status") != PENDING_STATUS]
+    posted_matches = iter(webhook_repo._reconcile_matches(posted_txns, pools))
 
     for txn in normalised:
         tid = txn["transaction_id"]
         if txn.get("status") == PENDING_STATUS:
             by_id[tid] = dict(txn)
             continue
-        match = webhook_repo._find_pending_twin(txn, pools)
+        _, match = next(posted_matches, (None, None))  # defensive: over-run -> no-match (see repo)
         if match is not None:
             merged = webhook_repo._with_carried_category(txn, match)
             by_id[merged["transaction_id"]] = dict(merged)
