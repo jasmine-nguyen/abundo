@@ -222,6 +222,94 @@ describe('signOut', () => {
     );
     await expect(auth.getAuthToken()).resolves.toBeUndefined();
   });
+
+  // WHIT-205: signOut goes through clearSession, which drops the TanStack Query cache — so a
+  // different account signing in within the 5-min gcTime can't render this session's rows.
+  it('clears the query cache so the next account cannot read this session\'s cached data', async () => {
+    mockStore.set(REFRESH_KEY, 'STORED_REFRESH');
+    const auth = loadAuth();
+    // The SAME singleton the loaded auth holds — require it post-loadAuth with no intervening
+    // resetModules, so it's the exact instance clearSession() clears.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { queryClient } = require('../queryClient') as typeof import('../queryClient');
+    queryClient.setQueryData(['homeLoan'], { balance: 596642.43, asOf: '2026-07-04' });
+    queryClient.setQueryData(['transactions'], [{ transaction_id: 't1' }]);
+
+    await auth.signOut();
+
+    expect(queryClient.getQueryData(['homeLoan'])).toBeUndefined();
+    expect(queryClient.getQueryData(['transactions'])).toBeUndefined();
+  });
+
+  // The clear is the FIRST statement of signOut, before any await — so a keychain/browser
+  // failure below can't leave the previous account's data cached.
+  it('clears the cache even when the logout endpoint throws (synchronous, before the await)', async () => {
+    mockStore.set(REFRESH_KEY, 'STORED_REFRESH');
+    mockOpenAuthSession.mockRejectedValueOnce(new Error('browser blew up'));
+    const auth = loadAuth();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { queryClient } = require('../queryClient') as typeof import('../queryClient');
+    queryClient.setQueryData(['homeLoan'], { balance: 1, asOf: null });
+
+    await auth.signOut(); // never throws (best-effort logout)
+
+    expect(queryClient.getQueryData(['homeLoan'])).toBeUndefined();
+  });
+});
+
+// WHIT-205 safety: a same-user re-lock (Face-ID resume) must NOT clear the cache, or every
+// unlock would force a full refetch storm of ~9 queries. lock() sets 'locked' directly and
+// never routes through clearSession, so the cache survives.
+describe('lock (WHIT-205 cache-survival)', () => {
+  it('does NOT clear the query cache — the same-user cache must survive a re-lock', () => {
+    const auth = loadAuth();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { queryClient } = require('../queryClient') as typeof import('../queryClient');
+    const homeLoan = { balance: 596642.43, asOf: '2026-07-04' };
+    queryClient.setQueryData(['homeLoan'], homeLoan);
+
+    auth.lock();
+
+    expect(auth.getStatus()).toBe('locked');
+    expect(queryClient.getQueryData(['homeLoan'])).toEqual(homeLoan); // survived the lock
+  });
+});
+
+// WHIT-205: clearSession is the SINGLE choke point for every "session gone -> anon" transition
+// — NOT just signOut. These lock the OTHER production route into it: a token-refresh FAILURE
+// (getAuthToken / restoreSession -> refreshFromStoredToken -> clearSession). If clearSession
+// stopped clearing, account A's cached rows would survive the drop-to-login and could render
+// under account B on re-auth. Fail-on-revert: remove queryClient.clear() and both assertions flip.
+describe('refresh-failure clears the query cache (WHIT-205 choke point)', () => {
+  it('getAuthToken -> clearSession on a failed refresh empties the cache and goes anon', async () => {
+    mockStore.set(REFRESH_KEY, 'STORED_REFRESH'); // a session exists…
+    mockRefresh.mockRejectedValue(new Error('offline')); // …but the refresh fails
+    const auth = loadAuth();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { queryClient } = require('../queryClient') as typeof import('../queryClient');
+    queryClient.setQueryData(['homeLoan'], { balance: 596642.43, asOf: '2026-07-04' });
+    queryClient.setQueryData(['budgets', 14], [{ id: 'coffee' }]);
+
+    await expect(auth.getAuthToken()).resolves.toBeUndefined(); // refresh failed -> no token
+
+    expect(auth.getStatus()).toBe('anon'); // dropped to login…
+    expect(queryClient.getQueryData(['homeLoan'])).toBeUndefined(); // …and A's rows are gone
+    expect(queryClient.getQueryData(['budgets', 14])).toBeUndefined();
+  });
+
+  it('restoreSession takes the SAME path — a failed launch refresh empties the cache', async () => {
+    mockStore.set(REFRESH_KEY, 'STORED_REFRESH');
+    mockRefresh.mockRejectedValue(new Error('offline'));
+    const auth = loadAuth();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { queryClient } = require('../queryClient') as typeof import('../queryClient');
+    queryClient.setQueryData(['transactions'], [{ transaction_id: 't1' }]);
+
+    await expect(auth.restoreSession()).resolves.toBe(false);
+
+    expect(auth.getStatus()).toBe('anon');
+    expect(queryClient.getQueryData(['transactions'])).toBeUndefined();
+  });
 });
 
 describe('gateRedirect (pure)', () => {
