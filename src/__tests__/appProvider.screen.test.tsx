@@ -312,6 +312,40 @@ it('saveBudget returns false + toasts on failure', async () => {
   expect(result.current.toast).toBe('Could not save budget. Please try again.');
 });
 
+it('saveBudget rejects a Savings-bucket category without calling the API (WHIT-202)', async () => {
+  // A Savings category can't carry a target (the Budgets screens skip it), so the writer
+  // must short-circuit before the doomed round-trip — the deep-link/back-door class.
+  seed();
+  queryClient.setQueryData(['categories'], [
+    { ...CAT },
+    { id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings', icon: 'piggy', color: '#8fd4c0', recent: 0 },
+  ]);
+  const result = mount();
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.saveBudget('nest_egg', 300); });
+  expect(ok).toBe(false);
+  expect(mockApi.setBudget).not.toHaveBeenCalled();
+  expect(result.current.toast).toBe("Savings categories can't be budgeted.");
+});
+
+it('saveBudget on an uncached (cold) category falls through to the server, not the Savings short-circuit (WHIT-202)', async () => {
+  // Cold ['categories'] cache: the category isn't cached, so saveBudget CANNOT know it's
+  // Savings — it must fall through to the server (the 400 backstop), never silently succeed
+  // or wrongly fire the Savings short-circuit. Here the server rejects; the writer surfaces
+  // the GENERIC save-failed toast. Fail-on-revert: if the short-circuit fired on an
+  // undefined bucket, setBudget would never be called and the toast would be the Savings copy.
+  seed(); // categories = [CAT] only; 'nest_egg' is NOT in the cache
+  mockApi.setBudget.mockRejectedValue(new Error('400'));
+  const result = mount();
+
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.saveBudget('nest_egg', 300); });
+
+  expect(mockApi.setBudget).toHaveBeenCalledWith('nest_egg', 300); // hit the server (no short-circuit)
+  expect(ok).toBe(false);
+  expect(result.current.toast).toBe('Could not save budget. Please try again.');
+});
+
 // --- saveCategory ------------------------------------------------------------
 
 it('saveCategory creates a new category', async () => {

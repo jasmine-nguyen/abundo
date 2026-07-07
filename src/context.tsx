@@ -632,6 +632,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // real budget row, matching selectBudgets' own filter). Treating it as an array here
       // would throw `.some is not a function` on the Record.
       const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      // WHIT-202: a Savings-bucket category can't carry a target — the screens skip it
+      // (budgetViews/budgetDetail), so a saved one is an invisible, un-editable phantom.
+      // Short-circuit before the doomed round-trip; the server rejects it too (belt +
+      // braces) for the deep-link back door. On a cold ['categories'] cache c is undefined
+      // and this can't fire — the server 400 is the backstop (a generic save-failed toast).
+      if (c?.bucket === 'Savings') {
+        showToast("Savings categories can't be budgeted.");
+        return false;
+      }
       const existing = queryClient
         .getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] })
         .some(([, data]) => !!data && (data[categoryId]?.target ?? 0) > 0);

@@ -88,6 +88,14 @@ SPEND_BUCKETS = {"Living", "Lifestyle"}
 # imports it), so the WHIT-136 sync guard doesn't require a shared mirror.
 INCOME_BUCKET = "Income"
 
+# The bucket whose categories cannot carry a budget target at all (WHIT-202). A Savings
+# category is a non-spend goal, not a pay-cycle ceiling/floor, so the client refuses to
+# render a target on it (budgetViews/budgetDetail skip Savings) — a stored one would be an
+# invisible, un-editable phantom. set_budget rejects a direct write and update_category
+# rejects re-bucketing a still-budgeted category into Savings. Lambda_api-only (no shared
+# module imports it), like INCOME_BUCKET, so the WHIT-136 sync guard needs no shared mirror.
+SAVINGS_BUCKET = "Savings"
+
 # Icon assigned when a create request omits one (a valid key in src/icons.tsx).
 DEFAULT_CATEGORY_ICON = "tag"
 
