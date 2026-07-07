@@ -161,6 +161,35 @@ resource "aws_lambda_function" "dedupe" {
   }
 }
 
+# Stale-pending age-out sweep (WHIT-79): a daily scheduled reaper that deletes pending
+# rows older than PENDING_AGE_OUT_DAYS that never got a matching posted (reversed
+# pre-auth / unbalanced count). Like reprocess/dedupe it reuses the webhook zip
+# (../lambda already contains age_out.py) and the lambda_exec role (Query / DeleteItem
+# already granted). UNLIKE those two it IS scheduled (see scheduler.tf), and the schedule
+# passes {"dry_run": false} so it runs live; a manual/empty invoke stays dry-run-safe.
+resource "aws_lambda_function" "age_out" {
+  function_name    = "${var.project_name}-lambda-age-out"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "age_out.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 300
+  memory_size      = 128
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.age_out.name
+  }
+}
+
 resource "aws_lambda_function" "lambda_api" {
   function_name    = "${var.project_name}-lambda-api"
   role             = aws_iam_role.lambda_api_exec.arn
@@ -268,6 +297,11 @@ resource "aws_cloudwatch_log_group" "reprocess" {
 
 resource "aws_cloudwatch_log_group" "dedupe" {
   name              = "/aws/lambda/${var.project_name}-lambda-dedupe"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "age_out" {
+  name              = "/aws/lambda/${var.project_name}-lambda-age-out"
   retention_in_days = 30
 }
 

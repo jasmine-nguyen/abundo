@@ -55,6 +55,15 @@ API_AUTH_TOKEN_PATH = "/whittle/api-auth-token"
 # Lookback window, in days, used when requesting a feed's transactions.
 FEED_WINDOW_DAYS = 7
 
+# Settlement window, in days, after which a still-pending transaction is reaped as a
+# ghost that will never settle (WHIT-79). Measured from the bank `date` (the only age
+# signal on a stored row — there is no ingest timestamp). Set safely PAST FEED_WINDOW_DAYS
+# (7): BankSync stops re-sending a transaction after that window, so a pending older than
+# 10 days can no longer receive a settlement push — it is genuinely frozen. Used only by
+# lambda/age_out.py (a webhook-lambda module, not a shared repository_* module), so the
+# WHIT-136 sync guard does not require a lambda_api/constants.py mirror.
+PENDING_AGE_OUT_DAYS = 10
+
 # Maximum number of items requested per DynamoDB query page.
 MAX_PAGE_SIZE = 100
 

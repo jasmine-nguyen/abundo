@@ -51,6 +51,7 @@ lambda/*
 !lambda/merchant.py
 !lambda/reprocess.py
 !lambda/dedupe_cleanup.py
+!lambda/age_out.py
 !lambda/requirements.txt
 
 lambda_api/*
