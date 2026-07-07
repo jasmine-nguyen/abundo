@@ -20,7 +20,12 @@ Target card (optional): $ARGUMENTS
    - Otherwise select the next actionable card: `Type = 'Task'` and
      `Status IN ('To Do','In Progress')`, ordered by `Priority ASC`, first row.
    - Fetch the card's full page (`notion-fetch`) to get any description/body.
-   - Echo back which card you picked and why before continuing.
+   - **Ground the pick before echoing it (don't rush — see the Hard rule).** Open the
+     code the card names and read it. Your echo must quote the concrete `file:line`
+     you read and describe what the code ACTUALLY does — not just restate the card.
+     Present the card's "suggested fix" as a proposal to verify, never as settled; if
+     reading reveals the card is stale, wrong, or a product/modelling call, say so
+     instead of planning a fix. No code citation in the echo = you haven't read it yet.
 
 2. **Plan (subagent).** Spawn the `backlog-planner` agent with the card title +
    description. It returns a file-level plan. Don't plan it yourself — let the
@@ -149,15 +154,24 @@ Target card (optional): $ARGUMENTS
 
 ## Hard rules
 - **Never rush to a conclusion. Read the code first.** Whether you're diagnosing a
-  bug, answering a "why does X happen" question, or planning a change, do NOT
-  theorise from memory, guess, or reason from the symptom alone. Read the actual
-  code paths, trace the data flow, and check the git history (`git blame` / `git
-  show` the commits that touched the area) until you can point to the exact line
-  and the exact reason. Only propose a fix once the evidence — not a hunch —
-  supports it. A confident-sounding guess that turns out wrong wastes the user's
-  trust; "let me read it and get back to you with proof" is always the right move.
-  If you catch yourself hedging ("probably", "most likely", "it might be") without
-  having read the relevant code, STOP and go read it.
+  bug, answering a "why does X happen" question, picking the next card, or planning a
+  change, do NOT theorise from memory, guess, reason from the symptom alone, or relay
+  a card's "suggested fix" as if it were established. Read the actual code paths, trace
+  the data flow, and check the git history (`git blame` / `git show` the commits that
+  touched the area) until you can point to the exact line and the exact reason.
+  - **Make it observable — cite `file:line`.** Every diagnosis or proposed fix you
+    present MUST quote the concrete `file:line` you read. No citation = you haven't
+    read it = you haven't earned the conclusion, so don't state one. This is the
+    tell, for you and the user, that the rule was followed — a card's description or
+    a plausible memory is a lead to VERIFY against the code, never the answer itself.
+  - **Pre-conclusion tripwire.** Before you write any "here's the bug / here's the
+    fix / here's why" sentence — at card-pick, at gate 1, at any escalation — STOP
+    and ask: *have I read and cited the actual code I'm about to make a claim about?*
+    If no, go read it first. If you catch yourself hedging ("probably", "most likely",
+    "it might be", "should be") without having read the relevant code, that's the
+    tripwire firing — stop and read.
+  A confident-sounding guess that turns out wrong wastes the user's trust; "let me
+  read it and get back to you with proof" is always the right move.
 - Two hard stops: never implement before gate-1 approval; never commit, push, or
   write to Notion before gate-2 approval.
 - **Green before PR.** The full automated suite (`npm test`, plus `pytest` for
