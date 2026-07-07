@@ -37,8 +37,8 @@ export function queryMocksFromState(getState: () => ScreenState) {
   return {
     useIsAuthed: () => true,
     useCategories: () => ({ categories: cats(), category, ...status, isLoading: st().categoriesLoading ?? false }),
-    useBudgetsScreenData: () => ({ budgets: st().budgets ?? [], category, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, ...status }),
-    useBudgetDetailScreenData: () => ({ category, budgets: st().budgets ?? [], transactions: st().transactions ?? [], cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, ...status }),
+    useBudgetsScreenData: () => ({ budgets: st().budgets ?? [], category, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
+    useBudgetDetailScreenData: () => ({ category, budgets: st().budgets ?? [], transactions: st().transactions ?? [], cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
     useTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, isFetching: false, ...status }),
     useRulesScreenData: () => ({ rules: st().rules ?? [], ...status }),
     usePayCycle: () => ({ payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleName: st().cycleName ?? (() => 'Fortnightly'), isLoading: false, isError: false }),

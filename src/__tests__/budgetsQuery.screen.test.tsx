@@ -71,12 +71,14 @@ beforeEach(() => {
   mockPush.mockReset();
 });
 
-it('renders budget rows from the queries, windowed on the real cycle length', async () => {
+it('renders budget rows from the queries, fetched in parallel with the pay cycle', async () => {
   renderBudgets();
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  // budgets waited for the pay cycle → fetched with the REAL length (30), not the default (14).
-  expect(mockFetchBudgets).toHaveBeenCalledWith(30);
-  expect(mockFetchBudgets).not.toHaveBeenCalledWith(14);
+  // WHIT-72: budgets fetch in PARALLEL now (flat key, no gate), so they fire with the default
+  // length (14) before the cycle resolves — and never refetch to 30. The server ignores the
+  // length anyway (it derives the window itself), so the rendered rows are still correct.
+  expect(mockFetchBudgets).toHaveBeenCalledWith(14);
+  expect(mockFetchBudgets).toHaveBeenCalledTimes(1);
   expect(mockFetchPayCycle).toHaveBeenCalledTimes(1);
   expect(mockFetchCategories).toHaveBeenCalledTimes(1);
 });

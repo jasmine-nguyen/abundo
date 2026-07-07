@@ -422,7 +422,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         await apiSetPayCycle(next);
         // The window (length and/or payday) changed, so the server rollups move — refetch
-        // the migrated Budgets/Insights reads.
+        // the migrated Budgets/Insights reads. With the flat ['budgets']/['breakdown'] keys
+        // (WHIT-72) this invalidate is the SINGLE refresh: the setQueryData(['payCycle'])
+        // above no longer shifts a windowed key, so there is no second, redundant refetch.
         queryClient.invalidateQueries({ queryKey: ['budgets'] });
         queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       } catch {
@@ -625,12 +627,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (value <= 0) return false;
       // WHIT-192: the toast copy needs the category name + whether a budget already
       // existed — both sourced from the query cache the screens read (the store is gone).
-      // The ['budgets', cycleLen] cache holds the RAW queryFn output, a
-      // Record<categoryId, BudgetRollup> keyed by id — useBudgetsQuery maps it to Budget[]
-      // via `select`, which getQueryData does NOT apply. Budgets are windowed, so scan
-      // every window via getQueriesData and look the id up as a KEY (a target>0 rollup is a
-      // real budget row, matching selectBudgets' own filter). Treating it as an array here
-      // would throw `.some is not a function` on the Record.
+      // The ['budgets'] cache holds the RAW queryFn output, a Record<categoryId, BudgetRollup>
+      // keyed by id — useBudgetsQuery maps it to Budget[] via `select`, which getQueryData
+      // does NOT apply. Read it via getQueriesData (prefix ['budgets']) and look the id up as
+      // a KEY (a target>0 rollup is a real budget row, matching selectBudgets' own filter).
+      // Treating it as an array here would throw `.some is not a function` on the Record.
+      // (WHIT-72 flattened the key to ['budgets']; the prefix match still finds it.)
       const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
       // WHIT-202: a Savings-bucket category can't carry a target — the screens skip it
       // (budgetViews/budgetDetail), so a saved one is an invisible, un-editable phantom.
@@ -646,9 +648,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .some(([, data]) => !!data && (data[categoryId]?.target ?? 0) > 0);
       try {
         const saved = await apiSetBudget(categoryId, value);
-        // The Budgets screen reads ['budgets', cycleLen] and app/budget/edit.tsx
-        // invalidates it after this returns true, so the just-saved target reconciles
-        // from the server rollup — no optimistic cache write needed here.
+        // The Budgets screen reads ['budgets'] and app/budget/edit.tsx invalidates it after
+        // this returns true, so the just-saved target reconciles from the server rollup —
+        // no optimistic cache write needed here.
         if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(saved.target)}.`);
         return true;
       } catch {
@@ -694,11 +696,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // list, budget screens, tab badge, pickers). setQueryData — NOT invalidate —
       // because the server does no cascade, so a refetch would resurrect the just-dropped
       // budget/rule/txn-tag (cosmetic: those txns re-appear with the dangling id and
-      // render as Uncategorized via isUncategorized). Budgets are windowed AND the
-      // ['budgets', *] cache holds the RAW Record<categoryId, BudgetRollup> (not the
-      // select'd Budget[]), so drop the deleted id's KEY from every window's Record —
-      // filtering it as an array would throw `.filter is not a function` and abort the
-      // rest of the cascade. Rules go through patchRules (same ['rules'] cache).
+      // render as Uncategorized via isUncategorized). The ['budgets'] cache holds the RAW
+      // Record<categoryId, BudgetRollup> (not the select'd Budget[]), so drop the deleted
+      // id's KEY from the Record via setQueriesData (prefix ['budgets']) — filtering it as
+      // an array would throw `.filter is not a function` and abort the rest of the cascade.
+      // Rules go through patchRules (same ['rules'] cache).
       queryClient.setQueryData<Category[]>(['categories'], (prev) => prev?.filter((c) => c.id !== id));
       queryClient.setQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] }, (prev) => {
         if (!prev || !(id in prev)) return prev;

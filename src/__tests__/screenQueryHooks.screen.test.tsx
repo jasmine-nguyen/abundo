@@ -91,22 +91,21 @@ it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly onc
   expect(mockFetchCategories).toHaveBeenCalledTimes(2);
 });
 
-// WHIT-204 — DIRECT lock on the shared helper's load-bearing semantic: isLoading ORs the
-// queries' `.isLoading`, NOT `.isPending`. When payCycle FAILS, the budgets query stays
-// disabled (gated on payCycle success); a disabled v5 query reports isPending:true but
-// isLoading:false. So the composite's isLoading must be FALSE — an errored dependency shows
-// the error, not an endless spinner. The screen-level budgetsQueryGaps test can't catch a
-// regression here (its error state masks the spinner via precedence), so lock it directly on
-// the composite: reverting the helper to `.isPending` flips this to true and fails.
-it('useBudgetsScreenData: a payCycle failure does NOT strand isLoading (helper ORs .isLoading, not .isPending)', async () => {
+// WHIT-204 — the shared helper ORs the queries' `.isLoading` (NOT `.isPending`) so an errored
+// dependency shows its error, never an endless spinner. On a payCycle FAILURE the composite's
+// isLoading must be FALSE. NOTE (WHIT-72): budgets no longer wait on payCycle (they fetch in
+// parallel), so this scenario no longer exercises a DISABLED query — the direct `.isLoading`-
+// vs-`.isPending` distinction is better locked by a dedicated useCombineScreenQueries unit
+// test (tracked as a follow-up card). This still guards the payCycle-failure → not-stranded path.
+it('useBudgetsScreenData: a payCycle failure does NOT strand isLoading', async () => {
   mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
   const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(result.current.isLoading).toBe(false);
 });
 
-// Same lock for the budget-detail composite (it also gates budgets on payCycle.isSuccess) —
-// so a dropped payCycle from ITS status array can't ship green either.
+// Same lock for the budget-detail composite: a payCycle failure surfaces as isError, not a
+// stranded spinner. (WHIT-72: budgets fetch in parallel here too; see the note above.)
 it('useBudgetDetailScreenData: a payCycle failure surfaces as isError, not a stranded spinner', async () => {
   mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
   const { result } = renderHook(() => useBudgetDetailScreenData(), { wrapper: wrapper(makeClient()) });

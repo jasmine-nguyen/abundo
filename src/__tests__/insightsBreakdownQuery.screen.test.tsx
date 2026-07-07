@@ -76,11 +76,13 @@ beforeEach(() => {
   mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
 });
 
-it('renders breakdown rows from the query, windowed on the real cycle length', async () => {
+it('renders breakdown rows from the query, fetched in parallel with the pay cycle', async () => {
   renderInsights();
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
-  expect(mockFetchBreakdown).toHaveBeenCalledWith(30); // waited for the real pay cycle
-  expect(mockFetchBreakdown).not.toHaveBeenCalledWith(14);
+  // WHIT-72: breakdown fetches in PARALLEL now (flat key, no gate) → fires with the default
+  // length (14); the server derives the window itself, so the rows are correct regardless.
+  expect(mockFetchBreakdown).toHaveBeenCalledWith(14);
+  expect(mockFetchBreakdown).toHaveBeenCalledTimes(1);
 });
 
 it('does not fetch breakdown before login, then fires when auth flips to authed', async () => {

@@ -5,14 +5,14 @@ import { describe, it, expect } from '@jest/globals';
 import { selectBudgets, selectCategories, budgetsKey, breakdownKey, categoriesKey, payCycleKey } from '../queries';
 
 describe('query keys', () => {
-  it('budgetsKey includes the cycle length so a window change refetches', () => {
-    expect(budgetsKey(14)).toEqual(['budgets', 14]);
-    expect(budgetsKey(30)).toEqual(['budgets', 30]);
-    expect(budgetsKey(14)).not.toEqual(budgetsKey(30)); // different windows → different cache entries
+  it('budgetsKey is a flat, un-windowed key (WHIT-72: server derives the window)', () => {
+    // Flattened so budgets fetches in parallel with the pay cycle (no waterfall) and a
+    // cycle-length change refetches ONCE (the explicit invalidate), not twice (key shift
+    // + invalidate). The server ignores the client length, so no window is lost.
+    expect(budgetsKey).toEqual(['budgets']);
   });
-  it('breakdownKey includes the cycle length so a window change refetches', () => {
-    expect(breakdownKey(14)).toEqual(['breakdown', 14]);
-    expect(breakdownKey(30)).not.toEqual(breakdownKey(14));
+  it('breakdownKey is a flat, un-windowed key (WHIT-72)', () => {
+    expect(breakdownKey).toEqual(['breakdown']);
   });
   it('the static keys are stable', () => {
     expect(categoriesKey).toEqual(['categories']);

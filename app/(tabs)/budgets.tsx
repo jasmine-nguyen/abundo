@@ -13,7 +13,7 @@ export default function Budgets() {
   // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
-  const { budgets, category, cycleLen, daysLeft, isLoading, isError, refetch, refetchStale } = useBudgetsScreenData();
+  const { budgets, category, cycleLen, daysLeft, isLoading, isError, payCycleError, refetch, refetchStale } = useBudgetsScreenData();
 
   // Load-on-focus: refresh when the tab regains focus, but only if the data has gone
   // stale (the window rolls over on payday; a save/categorise elsewhere moves numbers).
@@ -23,9 +23,11 @@ export default function Budgets() {
   const { rows, totBudget, totSpent, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft });
 
   // Cache-first: once we have any rows, keep showing them while a background refetch
-  // runs. Error takes precedence over the spinner — a failed read (e.g. the pay cycle)
-  // must never sit under an endless spinner with no Retry (code-critic/qa #1).
-  const showError = isError && rows.length === 0;
+  // runs. Error takes precedence over the spinner — a failed read must never sit under an
+  // endless spinner with no Retry (code-critic/qa #1). WHIT-72: also error out when the pay
+  // cycle failed to load at all (payCycleError) — budgets now fetch in parallel, so without
+  // this the rows would render against the DEFAULT cycle (a wrong days-left + pace bars).
+  const showError = (isError && rows.length === 0) || payCycleError;
   const showSpinner = !showError && isLoading && rows.length === 0;
 
   // Scroll-to-hide the nav bars (WHIT-184): header floats over the list and slides up on
