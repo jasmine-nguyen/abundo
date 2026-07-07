@@ -36,6 +36,11 @@ export function useNavBarsHeader() {
     onScroll,
     scrollEventThrottle,
     headerStyle,
+    // The floating header's full height (safe-area inset + body). The list is inset by
+    // this at rest; a pull-to-refresh RefreshControl must also offset its spinner by it
+    // (progressViewOffset) so the spinner clears the opaque header instead of drawing
+    // behind it at y≈0 (WHIT-211).
+    headerHeight,
     // Layer under floatingHeaderStyle: the safe-area top padding.
     headerPaddingTop: insets.top + 6,
     // Spread into the ScrollView's contentContainerStyle.

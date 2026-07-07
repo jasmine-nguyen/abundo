@@ -24,6 +24,7 @@ jest.mock('expo-router', () => {
 });
 
 import Transactions from '../../app/(tabs)/transactions';
+import { HEADER_BODY_HEIGHT } from '../motion/useNavBarsHeader';
 
 const refetch = jest.fn();
 const refetchStale = jest.fn();
@@ -68,4 +69,17 @@ it('the spinner is down when nothing is fetching', () => {
   mockTx = txData({ transactions: [ROW], isFetching: false });
   const { UNSAFE_getByType } = render(<Transactions />);
   expect(UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+});
+
+// WHIT-211: the floating header (position:absolute, opaque, zIndex 10 since WHIT-184) sits over
+// the top of the list, so the pull spinner — drawn at y≈0 — was painted behind it and invisible.
+// progressViewOffset pushes the spinner down past the header. In tests insets.top is 0, so the
+// header height is exactly HEADER_BODY_HEIGHT. Fail-on-revert: drop progressViewOffset and the
+// prop is undefined, not the header height.
+it('offsets the pull spinner below the floating header so it is not hidden behind it', () => {
+  mockTx = txData({ transactions: [ROW], isFetching: true });
+  const { UNSAFE_getByType } = render(<Transactions />);
+  const offset = UNSAFE_getByType(RefreshControl).props.progressViewOffset;
+  expect(offset).toBe(HEADER_BODY_HEIGHT); // insets.top (0 in tests) + HEADER_BODY_HEIGHT
+  expect(offset).toBeGreaterThan(0);       // must clear the header, never draw behind it at y≈0
 });

@@ -36,7 +36,7 @@ export default function Transactions() {
   // Scroll-to-hide the nav bars (WHIT-184): the header floats over the list and slides up
   // on scroll-down; the list is inset so nothing sits under the bars at rest. All geometry
   // (header height, top/bottom insets, scroll wiring) comes from the shared hook.
-  const { onScroll, scrollEventThrottle, headerStyle, headerPaddingTop, contentPadding } = useNavBarsHeader();
+  const { onScroll, scrollEventThrottle, headerStyle, headerHeight, headerPaddingTop, contentPadding } = useNavBarsHeader();
 
   return (
     <View style={{ flex: 1 }}>
@@ -58,6 +58,11 @@ export default function Transactions() {
 						refreshing={isFetching && transactions.length > 0}
 						onRefresh={onRefresh}
 						tintColor="#7c8cff"
+						// WHIT-211: the header floats over the list (position:absolute, opaque, zIndex
+						// 10) since WHIT-184, so the spinner — drawn at y≈0 — sat behind it, invisible.
+						// Offset it down by the header height so it clears the header. (iOS honours the
+						// offset directly; Android slides its circle down from this point.)
+						progressViewOffset={headerHeight}
 					/>
 				}>
         {/* segmented control */}

@@ -148,6 +148,16 @@ Target card (optional): $ARGUMENTS
       directs).
 
 ## Hard rules
+- **Never rush to a conclusion. Read the code first.** Whether you're diagnosing a
+  bug, answering a "why does X happen" question, or planning a change, do NOT
+  theorise from memory, guess, or reason from the symptom alone. Read the actual
+  code paths, trace the data flow, and check the git history (`git blame` / `git
+  show` the commits that touched the area) until you can point to the exact line
+  and the exact reason. Only propose a fix once the evidence — not a hunch —
+  supports it. A confident-sounding guess that turns out wrong wastes the user's
+  trust; "let me read it and get back to you with proof" is always the right move.
+  If you catch yourself hedging ("probably", "most likely", "it might be") without
+  having read the relevant code, STOP and go read it.
 - Two hard stops: never implement before gate-1 approval; never commit, push, or
   write to Notion before gate-2 approval.
 - **Green before PR.** The full automated suite (`npm test`, plus `pytest` for
