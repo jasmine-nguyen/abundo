@@ -62,3 +62,22 @@ describe('BudgetEdit — income framing is wired into the screen (WHIT-169)', ()
     expect(screen.queryByText('View earning history')).toBeNull();
   });
 });
+
+describe('BudgetEdit — a Savings category lands on a "can\'t budget" state (WHIT-202)', () => {
+  it('Savings category: shows the explanatory note, none of the amount/history/save UI', () => {
+    // A deep-link to /budget/edit on a Savings category must NOT show an amount field whose
+    // save is doomed to a 400 — it shows a coherent "can't budget" note instead. Fail-on-
+    // revert: removing the early-return falls through to the full spend screen (history +
+    // stats reappear, note gone).
+    const SAVINGS = { id: 'nest_egg', name: 'Nest Egg', icon: 'piggy', color: '#8fd4c0', bucket: 'Savings', recent: 0 };
+    mockParams = { categoryId: 'nest_egg' };
+    mockState = state([SAVINGS]);
+    render(<BudgetEdit />);
+
+    expect(screen.getByText('Nest Egg')).toBeTruthy();                              // category header still shown
+    expect(screen.getByText(/Savings categories can't be budgeted/)).toBeTruthy();  // the note
+    expect(screen.queryByText('View spending history')).toBeNull();                 // no spend UI...
+    expect(screen.queryByText('6-cycle average')).toBeNull();                       // ...no stats/amount field
+    expect(screen.queryByText('View earning history')).toBeNull();
+  });
+});

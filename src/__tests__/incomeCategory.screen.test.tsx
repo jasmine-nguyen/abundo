@@ -33,6 +33,22 @@ it('Categories list renders the Income group + its categories (WHIT-158)', () =>
   expect(screen.getByText('Salary')).toBeTruthy();   // the income category itself
 });
 
+it('does not badge a Savings category as "budgeted", even with a phantom target (WHIT-202)', () => {
+  // A Savings category can't be budgeted, so a "budgeted" badge on one lies (the target
+  // is un-manageable in-app). Seed BOTH a legit spend budget and a Savings phantom row:
+  // exactly one badge must render — proving the badge still works AND that Savings is
+  // suppressed. Fail-on-revert: dropping the `c.bucket !== 'Savings'` guard shows two.
+  const SAVINGS_CAT = { id: 'nest_egg', name: 'Nest Egg', icon: 'piggy', color: '#8fd4c0', bucket: 'Savings', recent: 0 };
+  mockState = {
+    categories: [SPEND_CAT, SAVINGS_CAT],
+    budgets: [{ id: 'groceries' }, { id: 'nest_egg' }], // nest_egg = a pre-guard phantom row
+    categoriesLoading: false,
+  } as unknown as AppContext;
+  render(<CategoryList />);
+  expect(screen.getByText('Nest Egg')).toBeTruthy();          // the category still lists...
+  expect(screen.queryAllByText('budgeted')).toHaveLength(1);  // ...but only groceries is badged
+});
+
 function pickerState(tx: any): AppContext {
   return {
     sheet: { mode: 'picker', txId: tx.transaction_id },

@@ -26,6 +26,7 @@ from constants import (
     REPAYMENT_PATH,
     RULE_FIELDS,
     RULE_OPERATORS,
+    SAVINGS_BUCKET,
     SPEND_BUCKETS,
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
@@ -99,10 +100,10 @@ def lambda_handler(event, context):
             return _json_response(200, list_categories(CategoryRepository()))
 
         if path == CATEGORY_PATH and method == "POST":
-            return create_category(event, CategoryRepository())
+            return create_category(event, CategoryRepository(), BudgetRepository())
 
         if path.startswith(f"{CATEGORY_PATH}/") and method == "PATCH":
-            return update_category(event, CategoryRepository())
+            return update_category(event, CategoryRepository(), BudgetRepository())
 
         if path.startswith(f"{CATEGORY_PATH}/") and method == "DELETE":
             return delete_category(event, CategoryRepository(), BudgetRepository())
@@ -117,7 +118,7 @@ def lambda_handler(event, context):
                     CategoryRepository()))
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
-            return set_budget(event, BudgetRepository())
+            return set_budget(event, BudgetRepository(), CategoryRepository())
 
         if path == BREAKDOWN_PATH and method == "GET":
             # Spend by category for the current cycle (window derived server-side
@@ -338,11 +339,18 @@ def list_categories(repo: CategoryRepository) -> list[dict]:
     return [{**cat, "recent": 0} for cat in repo.list_categories()]
 
 
-def create_category(event: dict, repo: CategoryRepository) -> dict:
+def create_category(
+    event: dict, repo: CategoryRepository, budget_repo: BudgetRepository
+) -> dict:
     """POST /categories — create a category from name/bucket/icon.
 
     The id is a slug of the name (the shared BankSync/category vocabulary), color
     is server-assigned, and icon is optional (defaults when omitted).
+
+    WHIT-202: creating a Savings category ONTO an existing orphan budget target (a
+    back-door PUT /budgets/<slug> before the category exists) is rejected — otherwise
+    it resurrects the same un-renderable phantom the set_budget/update_category guards
+    block. This is the third and final write-path guard for a Savings-bucket target.
     """
     body, error = _parse_json_body(event)
     if error:
@@ -363,6 +371,11 @@ def create_category(event: dict, repo: CategoryRepository) -> dict:
     if not cat_id:
         return _json_response(400, {"error": "name has no slug-safe characters"})
 
+    if bucket == SAVINGS_BUCKET and cat_id in budget_repo.list_budgets():
+        return _json_response(
+            400, {"error": "cannot create a Savings category over an existing budget target"}
+        )
+
     try:
         created = repo.create_category(cat_id, name.strip(), bucket, icon)
     except DuplicateCategoryError:
@@ -371,13 +384,21 @@ def create_category(event: dict, repo: CategoryRepository) -> dict:
     return _json_response(201, {**created, "recent": 0})
 
 
-def update_category(event: dict, repo: CategoryRepository) -> dict:
+def update_category(
+    event: dict, repo: CategoryRepository, budget_repo: BudgetRepository
+) -> dict:
     """PATCH /categories/{id} — update a category's name, bucket, and icon.
 
     The id/slug (e.g. "groceries") is immutable and color is server-owned, so
     neither is editable — renaming "Groceries" to "Supermarket" keeps the id
     "groceries". Validation mirrors create; icon is optional (defaults when
     omitted).
+
+    WHIT-202: moving a still-budgeted category into Savings is rejected — Savings
+    categories can't carry a target, so allowing it would strand the existing budget
+    as an invisible phantom (and it would silently resurrect on a move back). This is
+    the re-bucket counterpart to the set_budget Savings guard; a reject (not a cascade
+    delete) so a reclassify never silently destroys a stored budget.
     """
     cat_id = (event.get("pathParameters") or {}).get("id")
     if not cat_id:
@@ -394,6 +415,11 @@ def update_category(event: dict, repo: CategoryRepository) -> dict:
     bucket = body.get("bucket")
     if bucket not in CATEGORY_BUCKETS:
         return _json_response(400, {"error": "invalid bucket"})
+
+    if bucket == SAVINGS_BUCKET and cat_id in budget_repo.list_budgets():
+        return _json_response(
+            400, {"error": "remove this category's budget before moving it to Savings"}
+        )
 
     icon = body.get("icon")
     icon = icon.strip() if isinstance(icon, str) and icon.strip() else DEFAULT_CATEGORY_ICON
@@ -1047,14 +1073,20 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     return _json_response(200, saved)
 
 
-def set_budget(event: dict, repo: BudgetRepository) -> dict:
+def set_budget(
+    event: dict, repo: BudgetRepository, category_repo: CategoryRepository
+) -> dict:
     """PUT /budgets/{category} — set (upsert) a category's budget target.
 
     Body: {"target": <number >= 0>} — the user-set pay-cycle amount (spent/pending
     are derived elsewhere, not here). The target is stored as a Decimal via
-    Decimal(str(...)) so a JSON float never introduces binary-float drift. An
-    unknown category id is accepted (stored as an orphan the client ignores),
-    rather than coupling this to a category-existence read.
+    Decimal(str(...)) so a JSON float never introduces binary-float drift.
+
+    An UNKNOWN category id is still accepted (stored as an orphan the client ignores).
+    A KNOWN Savings-bucket category is rejected (WHIT-202): the client can't render a
+    target on it, so a stored one is an invisible phantom — this is the server backstop
+    for the deep-link/back-door write the picker already blocks. The bucket read runs
+    only after the cheap numeric checks pass.
     """
     cat_id = (event.get("pathParameters") or {}).get("category")
     if not cat_id:
@@ -1077,6 +1109,12 @@ def set_budget(event: dict, repo: BudgetRepository) -> dict:
     # DynamoDB's number limit and 500ing at write instead of a clean 400.
     if target > 1_000_000_000:
         return _json_response(400, {"error": "target too large"})
+
+    # WHIT-202: reject a Savings-bucket target (an unknown id stays accepted — .get is
+    # None → not Savings). Same bucket-by-id idiom list_budgets uses.
+    bucket_by_id = {c["id"]: c.get("bucket") for c in category_repo.list_categories()}
+    if bucket_by_id.get(cat_id) == SAVINGS_BUCKET:
+        return _json_response(400, {"error": "cannot budget a Savings category"})
 
     saved = repo.set_budget(cat_id, Decimal(str(target)))
     return _json_response(200, saved)

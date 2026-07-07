@@ -58,11 +58,19 @@ class FakeCategoryRepo:
 
 class FakeBudgetRepo:
     """Handler-level stand-in for BudgetRepository — records the cascade delete
-    (WHIT-73) and can be armed to raise, to exercise the best-effort path."""
+    (WHIT-73) and serves a stored-target map so update_category's WHIT-202 Savings
+    re-bucket guard can check whether a category is still budgeted. Can be armed to
+    raise, to exercise the best-effort cascade path."""
 
-    def __init__(self, raises=None):
+    def __init__(self, raises=None, budgets=None):
         self._raises = raises
+        self._budgets = budgets or {}  # {id: {"target": Decimal}}
         self.delete_calls = []
+        self.list_calls = 0
+
+    def list_budgets(self):
+        self.list_calls += 1
+        return {k: dict(v) for k, v in self._budgets.items()}
 
     def delete_budget(self, cat_id):
         self.delete_calls.append(cat_id)
@@ -128,7 +136,7 @@ def test_get_categories_dispatch(handler, monkeypatch):
 def test_create_success(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event(), repo)
+    resp = handler.create_category(_categories_event(), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 201
     body = json.loads(resp["body"])
@@ -140,7 +148,7 @@ def test_create_slugifies_multiword_name(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.create_category(
-        _categories_event('{"name": "Gym Membership!", "bucket": "Living", "icon": "dumbbell"}'), repo)
+        _categories_event('{"name": "Gym Membership!", "bucket": "Living", "icon": "dumbbell"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls[0][0] == "gymmembership"
@@ -149,7 +157,7 @@ def test_create_slugifies_multiword_name(handler):
 def test_create_icon_optional_defaults(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event('{"name": "Gym", "bucket": "Living"}'), repo)
+    resp = handler.create_category(_categories_event('{"name": "Gym", "bucket": "Living"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls[0][3] == "tag"  # DEFAULT_CATEGORY_ICON
@@ -159,7 +167,7 @@ def test_create_invalid_bucket_400(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.create_category(
-        _categories_event('{"name": "Gym", "bucket": "Fun", "icon": "x"}'), repo)
+        _categories_event('{"name": "Gym", "bucket": "Fun", "icon": "x"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
@@ -168,7 +176,7 @@ def test_create_invalid_bucket_400(handler):
 def test_create_missing_name_400(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event('{"bucket": "Living", "icon": "x"}'), repo)
+    resp = handler.create_category(_categories_event('{"bucket": "Living", "icon": "x"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
@@ -179,7 +187,7 @@ def test_create_empty_slug_400(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.create_category(
-        _categories_event('{"name": "!!!", "bucket": "Living", "icon": "x"}'), repo)
+        _categories_event('{"name": "!!!", "bucket": "Living", "icon": "x"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
@@ -188,7 +196,7 @@ def test_create_empty_slug_400(handler):
 def test_create_duplicate_409(handler):
     repo = FakeCategoryRepo(duplicate_exc=handler.DuplicateCategoryError)
 
-    resp = handler.create_category(_categories_event(), repo)
+    resp = handler.create_category(_categories_event(), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 409
 
@@ -196,7 +204,7 @@ def test_create_duplicate_409(handler):
 def test_create_invalid_json_400(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(_categories_event("not json"), repo)
+    resp = handler.create_category(_categories_event("not json"), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
@@ -206,15 +214,57 @@ def test_create_base64_body(handler):
     repo = FakeCategoryRepo()
     encoded = base64.b64encode(b'{"name": "Gym", "bucket": "Living", "icon": "dumbbell"}').decode()
 
-    resp = handler.create_category(_categories_event(body=encoded, is_b64=True), repo)
+    resp = handler.create_category(_categories_event(body=encoded, is_b64=True), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 201
     assert repo.create_calls == [("gym", "Gym", "Living", "dumbbell")]
 
 
+def test_create_savings_over_orphan_budget_rejected_400(handler):
+    # WHIT-202 (qa reverse-order hole): a back-door PUT /budgets/<slug> stores an orphan
+    # target before the category exists; creating a Savings category at that same slug would
+    # resurrect the un-renderable phantom. The third write-path guard rejects it, and the
+    # category is never created. Slug of "Gym" is "gym", so the orphan is keyed there.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"gym": {"target": 58}})
+
+    resp = handler.create_category(
+        _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget)
+
+    assert resp["statusCode"] == 400
+    assert repo.create_calls == []       # the Savings category was NOT created
+
+
+def test_create_savings_without_orphan_budget_allowed(handler):
+    # A Savings category with NO pre-existing budget target is a normal, allowed create —
+    # the guard blocks only the create-onto-an-orphan-target case.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={})
+
+    resp = handler.create_category(
+        _categories_event('{"name": "Gym", "bucket": "Savings", "icon": "dumbbell"}'), repo, budget)
+
+    assert resp["statusCode"] == 201
+    assert repo.create_calls == [("gym", "Gym", "Savings", "dumbbell")]
+
+
+def test_create_non_savings_over_orphan_budget_allowed(handler):
+    # A NON-Savings category can be created over an orphan budget target (the target simply
+    # becomes a live budget) — the guard must not over-reach and block that normal case.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"gym": {"target": 58}})
+
+    resp = handler.create_category(
+        _categories_event('{"name": "Gym", "bucket": "Lifestyle", "icon": "dumbbell"}'), repo, budget)
+
+    assert resp["statusCode"] == 201
+    assert repo.create_calls == [("gym", "Gym", "Lifestyle", "dumbbell")]
+
+
 def test_post_categories_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo()
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
 
     resp = handler.lambda_handler(_categories_event(), None)
 
@@ -231,7 +281,7 @@ def test_post_categories_dispatch(handler, monkeypatch):
 def test_update_success(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.update_category(_category_item_event("PATCH"), repo)
+    resp = handler.update_category(_category_item_event("PATCH"), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
@@ -244,7 +294,7 @@ def test_update_missing_id_returns_404(handler):
     event = _category_item_event("PATCH")
     event["pathParameters"] = {}
 
-    resp = handler.update_category(event, repo)
+    resp = handler.update_category(event, repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 404
     assert repo.update_calls == []
@@ -254,7 +304,7 @@ def test_update_blank_name_returns_400(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "   ", "bucket": "Living"}'), repo)
+        _category_item_event("PATCH", body='{"name": "   ", "bucket": "Living"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.update_calls == []
@@ -264,7 +314,7 @@ def test_update_invalid_bucket_returns_400(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Fun"}'), repo)
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Fun"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.update_calls == []
@@ -273,7 +323,7 @@ def test_update_invalid_bucket_returns_400(handler):
 def test_update_invalid_json_returns_400(handler):
     repo = FakeCategoryRepo()
 
-    resp = handler.update_category(_category_item_event("PATCH", body="not json"), repo)
+    resp = handler.update_category(_category_item_event("PATCH", body="not json"), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.update_calls == []
@@ -283,7 +333,7 @@ def test_update_icon_optional_defaults(handler):
     repo = FakeCategoryRepo()
 
     resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living"}'), repo)
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living"}'), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 200
     assert repo.update_calls[0][3] == "tag"  # DEFAULT_CATEGORY_ICON
@@ -292,7 +342,7 @@ def test_update_icon_optional_defaults(handler):
 def test_update_unknown_id_returns_404(handler):
     repo = FakeCategoryRepo(not_found_exc=handler.CategoryNotFoundError)
 
-    resp = handler.update_category(_category_item_event("PATCH"), repo)
+    resp = handler.update_category(_category_item_event("PATCH"), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 404
 
@@ -300,11 +350,87 @@ def test_update_unknown_id_returns_404(handler):
 def test_update_dispatch(handler, monkeypatch):
     repo = FakeCategoryRepo()
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
 
     resp = handler.lambda_handler(_category_item_event("PATCH"), None)
 
     assert resp["statusCode"] == 200
     assert repo.update_calls == [("coffee", "Coffee & Cake", "Living", "coffee")]
+
+
+def test_update_rebucket_to_savings_while_budgeted_rejected_400(handler):
+    # WHIT-202: moving a still-budgeted category into Savings is rejected — a Savings
+    # category can't carry a target, so allowing it would strand the budget as an
+    # invisible phantom (and resurrect it on a move back). Reject, NOT cascade-delete:
+    # the category update never runs and the stored budget is preserved untouched.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Savings"}'), repo, budget)
+
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []       # the re-bucket did NOT go through
+    assert budget.delete_calls == []     # and the budget was NOT destroyed
+
+
+def test_update_rebucket_to_savings_without_budget_allowed(handler):
+    # A category with NO budget can move into Savings freely — the guard blocks only a
+    # still-budgeted one (icon omitted → defaults to "tag").
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={})  # coffee not budgeted
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Nest Egg", "bucket": "Savings"}'), repo, budget)
+
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("coffee", "Nest Egg", "Savings", "tag")]
+
+
+def test_update_budgeted_category_to_non_savings_bucket_unaffected(handler):
+    # A budgeted category can still be re-bucketed to any NON-Savings bucket — the guard
+    # must not over-reach and block ordinary edits of a budgeted category.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Lifestyle"}'), repo, budget)
+
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("coffee", "Coffee", "Lifestyle", "tag")]
+
+
+def test_update_rebucket_to_savings_with_zero_target_still_rejected(handler):
+    # The guard keys on `cat_id in list_budgets()`; a stored target of 0 is still a KEY
+    # there, so a 0-target category is NOT a hole — re-bucketing it into Savings is blocked,
+    # never stranding even a $0 phantom. (The client treats 0 as "no budget", so the server
+    # is deliberately the stricter side.) Fail-on-revert: drop the guard and this 200s.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"coffee": {"target": 0}})
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Savings"}'), repo, budget)
+
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []
+    assert budget.delete_calls == []
+
+
+def test_update_dispatch_rejects_rebucket_to_savings_when_budgeted(handler, monkeypatch):
+    # The re-bucket backstop END-TO-END: the REAL router must wire BudgetRepository into
+    # update_category so a re-bucket-to-Savings on a still-budgeted category is rejected
+    # through dispatch. Fail-on-revert: reverting the router to a 2-arg update_category call
+    # raises TypeError (missing budget_repo), so this errors rather than returning 400.
+    repo = FakeCategoryRepo()
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
+    monkeypatch.setattr(
+        handler, "BudgetRepository", lambda: FakeBudgetRepo(budgets={"coffee": {"target": 58}}))
+
+    resp = handler.lambda_handler(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Savings"}'), None)
+
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []
 
 
 # --- handler-level: DELETE /categories/{id} ----------------------------------
@@ -568,6 +694,7 @@ def test_create_version_conflict_returns_409(handler, monkeypatch):
             raise handler.VersionConflictError("boom")
 
     monkeypatch.setattr(handler, "CategoryRepository", lambda: ConflictingRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
 
     resp = handler.lambda_handler(_categories_event(), None)
 

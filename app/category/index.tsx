@@ -40,7 +40,9 @@ export default function CategoryList() {
               <Pressable key={c.id} onPress={() => router.push(`/category/edit?categoryId=${c.id}`)} style={styles.row}>
                 <View style={[styles.chip, { backgroundColor: tint(c.color, 0.15) }]}><Icon name={c.icon} size={20} color={c.color} /></View>
                 <Text style={styles.name}>{c.name}</Text>
-                {budgeted.includes(c.id) && <Text style={styles.budgeted}>budgeted</Text>}
+                {/* WHIT-202: a Savings category can't be budgeted, so never badge one as
+                    "budgeted" — even if a phantom target lingers from a pre-guard write. */}
+                {budgeted.includes(c.id) && c.bucket !== 'Savings' && <Text style={styles.budgeted}>budgeted</Text>}
                 <Glyph name="chevron" size={18} color={C.textFaint} />
               </Pressable>
             ))}

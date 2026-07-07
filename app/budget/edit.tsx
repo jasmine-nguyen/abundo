@@ -27,6 +27,23 @@ export default function BudgetEdit() {
   const [submitting, setSubmitting] = useState(false);
 
   if (!info.category) return <View style={{ flex: 1 }}><Header title="Set budget" /></View>;
+  // WHIT-202: a Savings category can't carry a budget target (the Budgets screen skips it),
+  // so a deep-link to /budget/edit on one lands here rather than on an amount field whose
+  // save is doomed to a server 400. Show a coherent "can't budget" state instead.
+  if (info.category.bucket === 'Savings') {
+    return (
+      <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
+        <Header title="Set budget" />
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+          <View style={styles.categoryRow}>
+            <View style={[styles.chip, { backgroundColor: tint(info.category.color, 0.15) }]}><Icon name={info.category.icon} size={30} color={info.category.color} /></View>
+            <View><Text style={styles.categoryName}>{info.category.name}</Text></View>
+          </View>
+          <Text style={styles.savingsNote}>Savings categories can't be budgeted — they track a goal, not a pay-cycle spend limit.</Text>
+        </ScrollView>
+      </View>
+    );
+  }
   const num = parseFloat(input) || 0;
   const canSave = num > 0 && !submitting;
 
@@ -107,6 +124,7 @@ const styles = StyleSheet.create({
   chip: { width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   categoryName: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   categoryRec: { fontFamily: FONT.body, fontSize: 13, color: C.accentSoft, marginTop: 3 },
+  savingsNote: { fontFamily: FONT.body, fontSize: 14, lineHeight: 20, color: C.textMid, marginTop: 22 },
   stat: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 13 },
   statLabel: { fontFamily: FONT.body, fontSize: 12, color: C.textDim },
   statValue: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.text, marginTop: 4 },
