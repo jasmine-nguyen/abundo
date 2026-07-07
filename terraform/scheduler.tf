@@ -99,3 +99,54 @@ resource "aws_scheduler_schedule" "homeloan_balance" {
     role_arn = aws_iam_role.balance_scheduler.arn
   }
 }
+
+# Stale-pending age-out schedule (WHIT-79). A dedicated daily schedule that invokes the
+# age-out lambda LIVE — the target `input` passes {"dry_run": false}, since the lambda is
+# dry-run-by-default (safe for a manual/empty invoke) and only mutates on that explicit
+# input. If this input is ever lost the sweep reverts to dry-run and reaps nothing; the
+# lambda's LIVE summary log line is what makes that silent reversion detectable.
+
+# Role assumed by EventBridge Scheduler to invoke the age-out lambda.
+resource "aws_iam_role" "age_out_scheduler" {
+  name = "${var.project_name}-age-out-scheduler"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "age_out_scheduler_invoke" {
+  name = "${var.project_name}-age-out-scheduler-invoke"
+  role = aws_iam_role.age_out_scheduler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["lambda:InvokeFunction"]
+      Resource = [aws_lambda_function.age_out.arn]
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "pending_age_out" {
+  name = "${var.project_name}-pending-age-out"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  schedule_expression          = var.age_out_schedule_expression
+  schedule_expression_timezone = "Australia/Melbourne"
+
+  target {
+    arn      = aws_lambda_function.age_out.arn
+    role_arn = aws_iam_role.age_out_scheduler.arn
+    # Run LIVE (the lambda is dry-run unless told otherwise).
+    input = jsonencode({ dry_run = false })
+  }
+}

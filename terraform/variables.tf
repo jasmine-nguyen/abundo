@@ -39,6 +39,25 @@ variable "balance_poll_schedule_expression" {
   default     = "rate(1 day)"
 }
 
+# Cadence for the stale-pending age-out sweep (WHIT-79). Daily is plenty — a pending
+# only becomes reapable once it's >10 days old, so nothing is gained by sweeping more
+# often. Accepts any EventBridge Scheduler expression.
+variable "age_out_schedule_expression" {
+  description = "EventBridge Scheduler expression controlling how often stale pending transactions are aged out"
+  type        = string
+  default     = "rate(1 day)"
+}
+
+# Email subscribed to the shared CloudWatch alerts SNS topic (WHIT-79). The topic + alarms
+# are always created; leave this empty to skip the email subscription, or set it (in a
+# gitignored tfvars) to receive alerts. AWS sends a one-time confirmation email that must
+# be accepted before any alert is delivered.
+variable "alert_email" {
+  description = "Email address subscribed to the CloudWatch alerts SNS topic (empty = no email subscription)"
+  type        = string
+  default     = ""
+}
+
 # --- Cognito auth (WHIT-97) --------------------------------------------------
 
 # OAuth redirect URIs for the Cognito app client. `acme` matches the Expo app

@@ -129,10 +129,15 @@ resource "aws_iam_role_policy" "lambda_logs" {
       ]
       Resource = [
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda:*",
-        # The reprocess lambda (WHIT-55) reuses this same lambda_exec role, so its
-        # own log group is granted here. The "-lambda:*" pattern above does NOT
-        # match "-lambda-reprocess" (the '-reprocess' breaks before the required ':').
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-reprocess:*"
+        # reprocess (WHIT-55), dedupe (WHIT-80) and age-out (WHIT-79) all reuse this
+        # same lambda_exec role, so each needs its own log group granted explicitly:
+        # the "-lambda:*" pattern above does NOT match "-lambda-<suffix>" (the '-suffix'
+        # breaks the group name before the required ':'). Without its own entry a lambda
+        # is silently denied PutLogEvents and emits nothing — which for the age-out sweep
+        # (whose entire product is its dry-run/live log output) would hide whether it ran.
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-reprocess:*",
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-dedupe:*",
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-age-out:*"
       ]
     }]
   })
