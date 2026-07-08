@@ -1,5 +1,5 @@
-import React, { useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, AccessibilityInfo } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
@@ -37,6 +37,27 @@ export default function Insights() {
   const ai = s.aiInsights;
   const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
   const ago = agoLabel(ai?.generated_at);
+
+  // WHIT-142: while a re-analyse runs, the labelled refresh button is replaced by a bare
+  // spinner and the result lands silently — a screen-reader user hears nothing after they
+  // tap. Announce the outcome on the loading → done edge. Only generateAiInsights toggles
+  // aiInsightsLoading (it clears aiInsightsError at the start of the run, so the flag reflects
+  // THIS run at the edge), and the on-focus refreshAiInsights never touches it — so this fires
+  // once per real analyse/re-analyse, never on mount or tab focus. Ref starts undefined so a
+  // screen that mounts mid-load doesn't announce a transition it didn't witness.
+  const wasAnalysing = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    if (wasAnalysing.current && !s.aiInsightsLoading) {
+      AccessibilityInfo.announceForAccessibility?.(
+        // Control-agnostic: on first run the retry control reads "Try again"; on a re-run it's
+        // the "Re-analyse my spending" refresh — so name neither, just prompt the retry.
+        s.aiInsightsError
+          ? "Couldn't analyse your spending. Please try again."
+          : 'Spending analysis ready.',
+      );
+    }
+    wasAnalysing.current = s.aiInsightsLoading;
+  }, [s.aiInsightsLoading, s.aiInsightsError]);
 
   // The home-loan goal signal (WHIT-134) — non-null only when there's an honest
   // payoff projection to send. Computed here from live state and passed INTO
@@ -100,7 +121,7 @@ export default function Insights() {
                   ? <Text style={styles.aiStampErr}>Couldn’t refresh</Text>
                   : !!ago && <Text style={styles.aiStamp}>{ago}</Text>}
                 {s.aiInsightsLoading
-                  ? <ActivityIndicator testID="ai-refresh-busy" size="small" color={C.accentSoft} />
+                  ? <ActivityIndicator testID="ai-refresh-busy" size="small" color={C.accentSoft} accessibilityLabel="Re-analysing your spending" />
                   : <Pressable
                       onPress={() => s.generateAiInsights(goal)}
                       hitSlop={10}
@@ -136,7 +157,7 @@ export default function Insights() {
               onPress={() => s.generateAiInsights(goal)}
             >
               {s.aiInsightsLoading
-                ? <ActivityIndicator color={C.heroInk} />
+                ? <ActivityIndicator testID="ai-generate-busy" color={C.heroInk} accessibilityLabel="Analysing your spending" />
                 : <Text style={styles.aiBtnText}>{s.aiInsightsError ? 'Try again' : 'Analyse my spending'}</Text>}
             </Pressable>
           )}
