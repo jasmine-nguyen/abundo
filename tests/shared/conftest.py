@@ -254,6 +254,14 @@ def balance_repo(shared):
 
 
 @pytest.fixture
+def account_balance_repo(shared):
+    """A shared AccountBalanceRepository backed by an in-memory FakeTable."""
+    r = shared.balance.AccountBalanceRepository()
+    r._table = FakeTable()
+    return r
+
+
+@pytest.fixture
 def insight_repo(shared):
     """A shared InsightRepository backed by an in-memory FakeTable."""
     r = shared.insight.InsightRepository()

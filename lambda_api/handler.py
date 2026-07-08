@@ -1,4 +1,5 @@
 from constants import (
+    ACCOUNT_BALANCES_PATH,
     ACCOUNT_ID_MAP,
     BREAKDOWN_PATH,
     BUDGET_PATH,
@@ -36,6 +37,7 @@ from constants import (
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from repository import (
+    AccountBalanceRepository,
     BudgetRepository,
     CategoryNotFoundError,
     CategoryRepository,
@@ -150,6 +152,9 @@ def lambda_handler(event, context):
 
         if path == HOMELOAN_PATH and method == "GET":
             return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
+
+        if path == ACCOUNT_BALANCES_PATH and method == "GET":
+            return _json_response(200, get_account_balances(AccountBalanceRepository()))
 
         if path == REPAYMENT_PATH and method == "GET":
             return _json_response(200, get_repayment(TransactionRepository()))
@@ -1101,6 +1106,19 @@ def get_homeloan(repo: HomeLoanBalanceRepository) -> dict:
         "as_of": stored["as_of"],
         "currency": stored["currency"],
     }
+
+
+def get_account_balances(repo: AccountBalanceRepository) -> list:
+    """GET /accounts/balances — the latest live balance for each linked account (WHIT-212).
+
+    Returns a list of {account_id, amount, available_balance, currency, as_of,
+    account_type} for the app's known accounts (ACCOUNT_ID_MAP's internal ids) that have a
+    stored balance. `amount` is SIGNED (spending positive; loan/credit-card negative) and
+    DecimalEncoder renders it — and `available_balance` — as JSON numbers. Accounts not yet
+    polled are simply absent (the app shows a placeholder), and before ANY poll this is an
+    empty list — a 200, never a 404, so the client needs no special-casing.
+    """
+    return repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values())))
 
 
 _REPAYMENT_NULL = {"amount": None, "date": None, "principal": None, "interest": None}

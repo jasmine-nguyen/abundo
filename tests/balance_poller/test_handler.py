@@ -66,6 +66,35 @@ class _FakeRepo:
         self.calls.append((account_id, balance, as_of, currency))
 
 
+class _FakeAccountRepo:
+    """Recording stand-in for AccountBalanceRepository (signed per-account balances)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def upsert_balance(self, account_id, amount, available_balance, currency, as_of, account_type):
+        self.calls.append((account_id, amount, available_balance, currency, as_of, account_type))
+
+
+# Real getBalance payloads observed per account (2026-07-08).
+_SPENDING_PAYLOAD = {
+    "success": True,
+    "data": {
+        "date": "2026-07-08T09:32:02.405Z", "accountName": "Spending",
+        "accountType": "checking", "accountId": "3zVQJ8Btz_IRmqp78VrQnQ",
+        "amount": 96270.59, "availableBalance": 96270.59, "currency": "AUD",
+    },
+}
+_ANZ_PAYLOAD = {
+    "success": True,
+    "data": {
+        "date": "2026-07-08T09:32:37.337Z", "accountName": "ANZ Rewards Black Visa",
+        "accountType": "unknown", "accountId": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0",
+        "amount": -6492.26, "availableBalance": 8171.88, "currency": "AUD",
+    },
+}
+
+
 def _http_error(code):
     return urllib.error.HTTPError(
         url="https://api.banksync.io/x", code=code, msg="boom", hdrs=None, fp=io.BytesIO(b"")
@@ -145,44 +174,150 @@ def test_fetch_balance_builds_correct_get_request(handler, monkeypatch):
     assert out == _OK_PAYLOAD
 
 
+# --- normalise_account_balance (WHIT-212) ------------------------------------
+
+
+def test_normalise_account_balance_keeps_amount_signed_with_extras(handler):
+    # The signed path keeps the NEGATIVE mortgage amount (no abs) and captures the extras.
+    out = handler.normalise_account_balance(_OK_PAYLOAD)
+    assert out == {
+        "amount": Decimal("-596642.43"),
+        "available_balance": Decimal("0"),
+        "currency": "AUD",
+        "as_of": "2026-07-04T00:24:37.614Z",
+        "account_type": "mortgage",
+    }
+
+
+def test_normalise_account_balance_has_no_mortgage_guard(handler):
+    # Unlike normalise_balance, a non-mortgage account normalises fine (positive spending).
+    out = handler.normalise_account_balance(_SPENDING_PAYLOAD)
+    assert out["amount"] == Decimal("96270.59")
+    assert out["account_type"] == "checking"
+    assert out["available_balance"] == Decimal("96270.59")
+
+
+def test_normalise_account_balance_tolerates_missing_optionals(handler):
+    payload = {"success": True, "data": {"amount": -6492.26, "date": "2026-07-08T00:00:00Z"}}
+    out = handler.normalise_account_balance(payload)
+    assert out["amount"] == Decimal("-6492.26")
+    assert out["available_balance"] is None  # absent -> dropped, not fatal
+    assert out["account_type"] is None
+    assert out["currency"] == "AUD"  # defaulted
+
+
+def test_normalise_account_balance_raises_on_failure_and_missing_fields(handler):
+    for bad in (
+        {"success": False, "error": "nope"},
+        {"success": True},
+        {"success": True, "data": {"date": "d"}},          # missing amount
+        {"success": True, "data": {"amount": -1}},          # missing date
+    ):
+        with pytest.raises(handler.BalanceError):
+            handler.normalise_account_balance(bad)
+
+
 # --- lambda_handler ----------------------------------------------------------
 
 
-def test_lambda_handler_stores_the_balance_on_success(handler, monkeypatch):
-    repo = _FakeRepo()
+def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, monkeypatch):
+    homeloan = _FakeRepo()
+    accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
-    monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_OK_PAYLOAD))
+    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+
+    # Return a per-account payload keyed by the aid in the request URL.
+    payloads = {
+        "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
+        "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
+        "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
+    }
+    monkeypatch.setattr(handler.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResponse(next(p for aid, p in payloads.items() if aid in req.full_url)))
 
     result = handler.lambda_handler({}, None)
 
-    assert result == {"stored": True}
-    assert repo.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
+    assert result == {"homeloan_stored": True, "accounts_stored": 3}
+    # The abs home-loan row (Goal screen) is still written exactly as before.
+    assert homeloan.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
+    # A signed row per account, each under its internal id.
+    stored = {c[0]: c[1] for c in accounts.calls}
+    assert stored == {
+        "up-spending": Decimal("96270.59"),
+        "up-homeloan": Decimal("-596642.43"),
+        "anz-rewards-black-visa": Decimal("-6492.26"),
+    }
 
 
 def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeypatch):
-    repo = _FakeRepo()
+    homeloan = _FakeRepo()
+    accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
+    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
     def boom(req, timeout=None):
         raise _http_error(500)
 
     monkeypatch.setattr(handler.urllib.request, "urlopen", boom)
 
-    # Never raises, never writes — the read API keeps serving the last-good row.
+    # Never raises, never writes — every reader keeps serving its last-good row.
     result = handler.lambda_handler({}, None)
-    assert result == {"stored": False}
-    assert repo.calls == []
+    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert homeloan.calls == []
+    assert accounts.calls == []
 
 
 def test_lambda_handler_swallows_failure_payload_without_writing(handler, monkeypatch):
-    repo = _FakeRepo()
+    homeloan = _FakeRepo()
+    accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
-    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
+    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     fail = {"success": False, "error": "Provider fiskil:au does not support loans"}
     monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(fail))
 
     result = handler.lambda_handler({}, None)
-    assert result == {"stored": False}
-    assert repo.calls == []
+    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert homeloan.calls == []
+    assert accounts.calls == []
+
+
+def test_lambda_handler_swallows_an_api_key_fetch_failure(handler, monkeypatch):
+    # An SSM/get_param failure (throttle, missing param, IAM) must not error the
+    # invocation — it's best-effort like the polls, so nothing is stored, nothing is
+    # zeroed, and every last-good row survives.
+    homeloan = _FakeRepo()
+    accounts = _FakeAccountRepo()
+
+    def boom(path):
+        raise RuntimeError("SSM throttled")
+
+    monkeypatch.setattr(handler, "get_param", boom)
+    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+
+    result = handler.lambda_handler({}, None)
+    assert result == {"homeloan_stored": False, "accounts_stored": 0}
+    assert homeloan.calls == []
+    assert accounts.calls == []
+
+
+def test_poll_account_balances_isolates_a_single_account_failure(handler, monkeypatch):
+    # One account's poll blows up; the others must still store (best-effort per account).
+    accounts = _FakeAccountRepo()
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+
+    def fetch(bid, aid, api_key):
+        if aid == "T6d8ppsYssBDFCwl1qEb0w":
+            raise RuntimeError("mortgage balance timed out")
+        return _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD
+
+    monkeypatch.setattr(handler, "fetch_balance", fetch)
+
+    stored = handler._poll_account_balances("the-key")
+
+    assert stored == 2  # spending + anz stored; the mortgage poll was skipped
+    ids = {c[0] for c in accounts.calls}
+    assert ids == {"up-spending", "anz-rewards-black-visa"}
