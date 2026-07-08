@@ -4,8 +4,9 @@
 // (`useAppContext`), mocked as before. The real `categoryBreakdown` selector runs over
 // the mocked breakdown. Real query behaviour (fetch/self-heal/auth-gate) is covered by
 // insightsBreakdownQuery.screen.test.tsx.
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
+import { AccessibilityInfo } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext, LoanFacts } from '../context';
 import { UNCATEGORIZED_KEY } from '../context';
@@ -245,4 +246,133 @@ it('shows a retryable error when generation failed', () => {
 it('refreshes any cached AI insight when the tab gains focus', () => {
   render(<Insights />);
   expect(refreshAiInsights).toHaveBeenCalled();
+});
+
+// --- WHIT-142: screen-reader a11y for the AI re-analyse busy/result --------------
+const AI = { summary: 'ok', suggestions: ['a'], generated_at: 't', cycle_start: '2026-06-25', cached: false };
+
+describe('AI re-analyse a11y (WHIT-142)', () => {
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  it('gives the re-analyse busy spinner an accessible name (labelled control is unmounted)', () => {
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    render(<Insights />);
+    expect(screen.getByLabelText('Re-analysing your spending')).toBeTruthy();
+    expect(screen.queryByLabelText('Re-analyse my spending')).toBeNull(); // the button is gone while busy
+  });
+
+  it('gives the first-run generate busy spinner an accessible name', () => {
+    mockState = state({ aiInsights: null, aiInsightsLoading: true });
+    render(<Insights />);
+    expect(screen.getByLabelText('Analysing your spending')).toBeTruthy();
+    expect(screen.getByTestId('ai-generate-busy')).toBeTruthy();
+  });
+
+  it('announces success on the loading → done edge', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    const { rerender } = render(<Insights />);
+    expect(announce).not.toHaveBeenCalled(); // still analysing → nothing yet
+
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    rerender(<Insights />);
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenLastCalledWith('Spending analysis ready.');
+  });
+
+  it('announces failure on the loading → done edge when the run errored', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    const { rerender } = render(<Insights />);
+
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: true });
+    rerender(<Insights />);
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenLastCalledWith("Couldn't analyse your spending. Please try again.");
+  });
+
+  // The real regression this card guards: the announce must NOT fire except on a genuine
+  // analyse/re-analyse completion — not on mount, not on a mid-load mount, not on tab focus.
+  it('does NOT announce on a plain mount (never analysing)', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false });
+    render(<Insights />); // useFocusEffect fires refreshAiInsights on mount — must not announce
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it('does NOT announce when it mounts already loading (no transition witnessed)', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    render(<Insights />);
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it('does NOT announce on a focus re-render while loading stays constant', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false });
+    const { rerender } = render(<Insights />);
+    rerender(<Insights />); // a re-render with no loading transition (e.g. focus refetch)
+    expect(announce).not.toHaveBeenCalled();
+  });
+});
+
+// Adversarial gap tests (qa): re-arming across runs, the first-run (no-insight) completion
+// path, and a stronger at-rest negative that a "fire whenever !loading" bug would fail.
+describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  // Re-arm: two full analyse cycles must announce twice. Guards the ref reset — drop it and
+  // the ref never re-arms, so the 2nd completion never announces.
+  it('announces once per completion across a true→false→true→false sequence', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    const { rerender } = render(<Insights />);
+
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    rerender(<Insights />); // 1st completion → announce #1
+    expect(announce).toHaveBeenCalledTimes(1);
+
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    rerender(<Insights />); // re-analyse starts again → no announce, re-arm
+    expect(announce).toHaveBeenCalledTimes(1);
+
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    rerender(<Insights />); // 2nd completion → announce #2
+    expect(announce).toHaveBeenCalledTimes(2);
+    expect(announce).toHaveBeenLastCalledWith('Spending analysis ready.');
+  });
+
+  // First-run path, NOT gated on hasAi: a first-run generate that FAILS leaves aiInsights null
+  // (hasAi stays false), so a hasAi-gated announce would wrongly stay silent. It must still
+  // speak the failure. Pins both the first-run failure announce and the no-hasAi-gate contract
+  // (a first-run SUCCESS can't pin it — success populates aiInsights, making hasAi true anyway).
+  it('announces failure when a FIRST-RUN generate fails (aiInsights stays null → not gated on hasAi)', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: null, aiInsightsLoading: true });
+    const { rerender } = render(<Insights />);
+    expect(screen.getByTestId('ai-generate-busy')).toBeTruthy(); // first-run busy element
+    expect(announce).not.toHaveBeenCalled();
+
+    mockState = state({ aiInsights: null, aiInsightsLoading: false, aiInsightsError: true });
+    rerender(<Insights />);
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenLastCalledWith("Couldn't analyse your spending. Please try again.");
+  });
+
+  // At-rest negative: announce once on a real edge, then a further at-rest re-render (e.g. a
+  // focus refetch) must NOT re-announce. Guards post-completion quiescence — it catches a
+  // "fire on every render while !loading" degradation (the kind that also drops dep-skipping);
+  // an identical-deps re-render is otherwise skipped by React, which is itself the correct outcome.
+  it('does NOT re-announce on an at-rest re-render after a completion', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    const { rerender } = render(<Insights />);
+
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    rerender(<Insights />); // completion → announce once
+    expect(announce).toHaveBeenCalledTimes(1);
+
+    rerender(<Insights />); // same at-rest state → must stay at 1
+    expect(announce).toHaveBeenCalledTimes(1);
+  });
 });
