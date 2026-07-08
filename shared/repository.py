@@ -27,7 +27,7 @@ from repository_category import (
 )
 from repository_budget import BudgetRepository
 from repository_paycycle import PayCycleRepository
-from repository_balance import HomeLoanBalanceRepository
+from repository_balance import AccountBalanceRepository, HomeLoanBalanceRepository
 from repository_loanfacts import LoanFactsRepository
 from repository_device import DeviceRepository
 from repository_insight import InsightRepository
@@ -38,6 +38,7 @@ __all__ = [
     "BudgetRepository",
     "PayCycleRepository",
     "HomeLoanBalanceRepository",
+    "AccountBalanceRepository",
     "LoanFactsRepository",
     "DeviceRepository",
     "InsightRepository",

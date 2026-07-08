@@ -1,11 +1,11 @@
 import React, { useCallback, useState } from 'react';
-import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from 'react-native';
+import { RefreshControl, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { transactionGroups, countUncategorized, accountSummaries } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
-import { useNavBarsHeader, floatingHeaderStyle } from '../../src/motion/useNavBarsHeader';
+import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 
 type Tab = 'all' | 'uncategorized' | 'accounts';
@@ -35,38 +35,25 @@ export default function Transactions() {
   // queries — pull no longer eagerly reloads the whole app off the retired store.
   const onRefresh = useCallback(() => { refetch(); }, [refetch]);
 
-  // Scroll-to-hide the nav bars (WHIT-184): the header floats over the list and slides up
-  // on scroll-down; the list is inset so nothing sits under the bars at rest. All geometry
-  // (header height, top/bottom insets, scroll wiring) comes from the shared hook.
-  const { onScroll, scrollEventThrottle, headerStyle, headerHeight, headerPaddingTop, contentPadding } = useNavBarsHeader();
-
+  // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
+  // wrapper (WHIT-199). The RefreshControl is a render-prop so this screen keeps its own
+  // refreshing/onRefresh state while the wrapper hands back headerHeight for the spinner
+  // offset (WHIT-211 — otherwise the spinner draws behind the opaque floating header).
   return (
-    <View style={{ flex: 1 }}>
-      <Animated.View style={[floatingHeaderStyle, { paddingTop: headerPaddingTop }, headerStyle]}>
-        <View style={{ width: 40 }} />
-        <Text style={styles.headerTitle}>Transactions</Text>
-        <View style={styles.searchBtn}><Glyph name="search" size={20} color={C.textMid} /></View>
-      </Animated.View>
-
-      <ScrollView
-        onScroll={onScroll}
-        scrollEventThrottle={scrollEventThrottle}
-        contentContainerStyle={{ paddingHorizontal: 18, ...contentPadding }}
-        showsVerticalScrollIndicator={false}
-				refreshControl={
-					<RefreshControl
-						// Spin only while refreshing data we ALREADY have — the inline spinner owns
-						// the cold-load state, so the two don't both spin at once (code-critic).
-						refreshing={isFetching && transactions.length > 0}
-						onRefresh={onRefresh}
-						tintColor="#7c8cff"
-						// WHIT-211: the header floats over the list (position:absolute, opaque, zIndex
-						// 10) since WHIT-184, so the spinner — drawn at y≈0 — sat behind it, invisible.
-						// Offset it down by the header height so it clears the header. (iOS honours the
-						// offset directly; Android slides its circle down from this point.)
-						progressViewOffset={headerHeight}
-					/>
-				}>
+    <ScrollChromeHeader
+      title="Transactions"
+      right={<View style={styles.searchBtn}><Glyph name="search" size={20} color={C.textMid} /></View>}
+      refreshControl={(headerHeight) => (
+        <RefreshControl
+          // Spin only while refreshing data we ALREADY have — the inline spinner owns
+          // the cold-load state, so the two don't both spin at once (code-critic).
+          refreshing={isFetching && transactions.length > 0}
+          onRefresh={onRefresh}
+          tintColor="#7c8cff"
+          progressViewOffset={headerHeight}
+        />
+      )}
+    >
         {/* segmented control */}
         <View style={styles.seg}>
           <Seg label="All" active={tab === 'all'} onPress={() => setTab('all')} flex={1} />
@@ -152,8 +139,7 @@ export default function Transactions() {
             })}
           </View>
         )}
-      </ScrollView>
-    </View>
+    </ScrollChromeHeader>
   );
 }
 
@@ -171,7 +157,6 @@ function Seg({ label, active, onPress, flex, badge }: { label: string; active: b
 }
 
 const styles = StyleSheet.create({
-  headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
   searchBtn: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,.06)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   seg: { flexDirection: 'row', gap: 4, padding: 4, backgroundColor: C.card, borderRadius: 14, marginBottom: 8 },

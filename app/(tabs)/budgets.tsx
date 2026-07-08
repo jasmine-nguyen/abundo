@@ -1,11 +1,11 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
-import { useNavBarsHeader, floatingHeaderStyle } from '../../src/motion/useNavBarsHeader';
+import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { WhittleBar } from '../../src/components/ui';
 
 export default function Budgets() {
@@ -30,21 +30,19 @@ export default function Budgets() {
   const showError = (isError && rows.length === 0) || payCycleError;
   const showSpinner = !showError && isLoading && rows.length === 0;
 
-  // Scroll-to-hide the nav bars (WHIT-184): header floats over the list and slides up on
-  // scroll-down; the list is inset so nothing sits under the bars at rest. All geometry
-  // (header height, top/bottom insets, scroll wiring) comes from the shared hook.
-  const { onScroll, scrollEventThrottle, headerStyle, headerPaddingTop, contentPadding } = useNavBarsHeader();
-
+  // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
+  // wrapper (WHIT-199). The spinner/error states render as centered children (flexGrow so
+  // they sit mid-viewport under the floating header); the loaded content scrolls normally.
   return (
-    <View style={{ flex: 1 }}>
-      <Animated.View style={[floatingHeaderStyle, { paddingTop: headerPaddingTop }, headerStyle]}>
-        <View style={{ width: 40 }} />
-        <Text style={styles.headerTitle}>Budgets</Text>
+    <ScrollChromeHeader
+      title="Budgets"
+      right={(
         <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBtn}>
           <Glyph name="plus" size={22} color={C.accentSoft} />
         </Pressable>
-      </Animated.View>
-
+      )}
+      contentContainerStyle={(showSpinner || showError) ? styles.fill : undefined}
+    >
       {showSpinner ? (
         <View testID="budgets-loading" style={styles.centered}>
           <ActivityIndicator color={C.accent} />
@@ -57,11 +55,7 @@ export default function Budgets() {
           </Pressable>
         </View>
       ) : (
-      <ScrollView
-        onScroll={onScroll}
-        scrollEventThrottle={scrollEventThrottle}
-        contentContainerStyle={{ paddingHorizontal: 18, ...contentPadding }}
-        showsVerticalScrollIndicator={false}>
+      <>
         {/* hero */}
         <View style={styles.hero}>
           <View style={styles.heroBlob1} />
@@ -117,14 +111,15 @@ export default function Budgets() {
           <Glyph name="plus" size={18} color={C.accentSoft} />
           <Text style={styles.addBudgetText}>Add a budget</Text>
         </Pressable>
-      </ScrollView>
+      </>
       )}
-    </View>
+    </ScrollChromeHeader>
   );
 }
 
 const styles = StyleSheet.create({
-  headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
+  // Grows the ScrollView content so the spinner/error state centres mid-viewport (WHIT-199).
+  fill: { flexGrow: 1 },
   addBtn: { width: 40, height: 40, backgroundColor: 'rgba(124,140,255,.16)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: '#6f7bf0' },

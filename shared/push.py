@@ -72,6 +72,16 @@ def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=N
     omitted), and returns a summary ``{sent, ok, pruned}``. ``access_token``
     overrides the SSM read (pass "" to send unauthenticated); ``device_repo`` is
     injectable for tests. Tokens are de-duplicated, empties dropped.
+
+    ``ok`` is the count of tokens Expo ACCEPTED (ticket status "ok") — it stays 0
+    for a batch that hit a transport/decode error (swallowed above). So
+    ``ok > 0`` is the "at least one send actually reached Expo" signal a caller
+    gates its debounce marker on (WHIT-154): mark-fired only when ``ok > 0``, so a
+    genuine outage (``ok == 0``, nothing pruned) leaves the alert unmarked for a
+    later re-ingest to retry, while a fully-pruned batch (``ok == 0`` but the only
+    tokens were ``DeviceNotRegistered``) also stays unmarked yet can't loop — the
+    next ingest reads no tokens and short-circuits. ``ok`` counts Expo acceptance,
+    not on-device delivery (that's the separate receipts phase).
     """
     tokens = list(dict.fromkeys(t for t in (tokens or []) if t))
     if not tokens:

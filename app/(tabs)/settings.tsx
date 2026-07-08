@@ -1,14 +1,13 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Image } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext } from '../../src/context';
 import { useSettingsScreenData, useRulesScreenData, usePayCycle } from '../../src/queries';
 import { signOut, getCurrentUser } from '../../src/auth';
 import { SectionLabel } from '../../src/components/ui';
-import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
+import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 
 // WHIT-180: avatar initials from the real signed-in identity (name → first+last
 // initial; else the first two letters of the email's local part). A whitespace-only
@@ -32,7 +31,6 @@ export function initialsFrom(u: { email?: string; name?: string } | null): strin
 export default function Settings() {
   const s = useAppContext(); // alerts toggle + setSheet (client-state)
   const router = useRouter();
-  const insets = useSafeAreaInsets();
 
   // WHIT-191a: the two server-backed rows (categories count + loan-facts status) now come
   // from the cached query layer. "…" while first-loading so the count never flashes "0".
@@ -63,12 +61,7 @@ export default function Settings() {
   };
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
-        <Text style={styles.headerTitle}>Settings</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: TAB_BAR_CLEARANCE }} showsVerticalScrollIndicator={false}>
+    <ScrollChromeHeader title="Settings">
         {/* profile */}
         <View style={styles.profile}>
           {showPhoto ? (
@@ -106,8 +99,7 @@ export default function Settings() {
         </View>
 
         <Text style={styles.version}>Whittle · v1.0 · death-pledge slayer</Text>
-      </ScrollView>
-    </View>
+    </ScrollChromeHeader>
   );
 }
 
@@ -123,9 +115,6 @@ function Row({ icon, label, value, onPress, last }: { icon: string; label: strin
 }
 
 const styles = StyleSheet.create({
-  header: { alignItems: 'center', paddingHorizontal: 20, paddingBottom: 12 },
-  headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
-
   profile: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, marginBottom: 18 },
   avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#7079e3', alignItems: 'center', justifyContent: 'center' },
   avatarImg: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#7079e3' },

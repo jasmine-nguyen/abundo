@@ -1,16 +1,14 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, AccessibilityInfo } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, AccessibilityInfo } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, categoryBreakdown, aiGoalSignal } from '../../src/context';
 import { useInsightsScreenData, useGoalScreenData } from '../../src/queries';
-import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
+import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
-  const insets = useSafeAreaInsets();
   // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
   const { breakdown, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData();
   const { rows, total } = categoryBreakdown({ breakdown, category });
@@ -76,12 +74,7 @@ export default function Insights() {
     : `Sends your ${noteSends} to Anthropic to generate advice. Suggestions, not financial advice.`;
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
-        <Text style={styles.headerTitle}>Insights</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: TAB_BAR_CLEARANCE }} showsVerticalScrollIndicator={false}>
+    <ScrollChromeHeader title="Insights">
         {/* hero: where the money went this cycle */}
         <View style={styles.hero}>
           <View style={styles.heroBlob} />
@@ -211,15 +204,11 @@ export default function Insights() {
             </View>
           );
         })}
-      </ScrollView>
-    </View>
+    </ScrollChromeHeader>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingBottom: 12 },
-  headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
-
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: '#6f7bf0' },
   heroBlob: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.65)', letterSpacing: 0.2 },

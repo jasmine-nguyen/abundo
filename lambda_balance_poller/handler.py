@@ -24,13 +24,15 @@ import urllib.request
 from decimal import Decimal, InvalidOperation
 
 from constants import (
+    ACCOUNT_ID_MAP,
+    BALANCE_SOURCES,
     BANKSYNC_API_KEY_PATH,
     BANKSYNC_BASE_URL,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_BALANCE_SOURCE,
     HOMELOAN_BALANCE_TIMEOUT_SECONDS,
 )
-from repository import HomeLoanBalanceRepository
+from repository import AccountBalanceRepository, HomeLoanBalanceRepository
 from ssm import get_param
 
 logger = logging.getLogger(__name__)
@@ -109,18 +111,60 @@ def normalise_balance(payload: dict) -> dict:
     return {"balance": balance, "as_of": as_of, "currency": currency}
 
 
-def lambda_handler(event, context):
-    """Poll the home-loan balance and upsert it.
+def normalise_account_balance(payload: dict) -> dict:
+    """Turn a getBalance payload into a SIGNED per-account balance row (WHIT-212).
 
-    Every failure mode (transport error, non-200, `success:false`, missing/
-    malformed fields) is logged and swallowed — the poll is best-effort and the
-    read API keeps serving the last-good balance. It never raises, and on failure
-    it never overwrites the stored balance (so a bad tick can't zero it). A
-    genuine 0 reading (a paid-off loan) is a success and IS written.
+    Unlike ``normalise_balance`` (mortgage-only, abs), this keeps BankSync's ``amount``
+    SIGNED as-is — spending positive, a loan or credit-card balance negative — and also
+    captures ``availableBalance``, ``currency`` and ``accountType`` for the Accounts tab.
+    Only ``amount``/``date`` are required; a failure response or a missing required field
+    raises BalanceError so the caller keeps this account's last-good row. There is NO
+    account-type guard here: this path is meant to store every account, not just the
+    mortgage.
     """
+    if payload.get("success") is not True:
+        raise BalanceError(f"getBalance returned failure: {payload.get('error')!r}")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise BalanceError("getBalance payload missing `data`")
+
+    # `is None` (not just missing) so a JSON `null` amount raises a clean BalanceError
+    # rather than an opaque Decimal("None") InvalidOperation.
+    if data.get("amount") is None:
+        raise BalanceError("getBalance `data` missing `amount`")
+    try:
+        amount = Decimal(str(data["amount"]))
+    except InvalidOperation as e:
+        raise BalanceError(f"getBalance `amount` is not a number: {data['amount']!r}") from e
+
+    as_of = data.get("date")
+    if not as_of:
+        raise BalanceError("getBalance `data` missing `date`")
+
+    # availableBalance is a secondary display field (credit-card "available credit"). A
+    # missing or malformed one is non-fatal — drop it rather than lose the whole reading.
+    available_raw = data.get("availableBalance")
+    try:
+        available = None if available_raw is None else Decimal(str(available_raw))
+    except InvalidOperation:
+        available = None
+
+    return {
+        "amount": amount,
+        "available_balance": available,
+        "currency": data.get("currency") or "AUD",
+        "as_of": as_of,
+        "account_type": data.get("accountType"),
+    }
+
+
+def _poll_homeloan(api_key: str) -> bool:
+    """Poll + upsert the mortgage's ABS outstanding-principal balance (WHIT-8, Goal
+    screen). Best-effort: any failure is logged and swallowed, leaving the last-good row
+    (never zeroes it). Returns whether a fresh reading was stored this run."""
     source = HOMELOAN_BALANCE_SOURCE
     try:
-        payload = fetch_balance(source["bid"], source["aid"], get_api_key())
+        payload = fetch_balance(source["bid"], source["aid"], api_key)
         normalised = normalise_balance(payload)
         HomeLoanBalanceRepository().upsert_balance(
             HOMELOAN_ACCOUNT_ID,
@@ -129,10 +173,8 @@ def lambda_handler(event, context):
             normalised["currency"],
         )
     except Exception as e:
-        # Best-effort: any failure (transport, non-200 HTTPError, success:false,
-        # missing fields) leaves the last-good row and never zeroes the balance.
         logger.error("home-loan balance poll failed, keeping last-good: %s", e)
-        return {"stored": False}
+        return False
 
     logger.info(
         "home-loan balance stored: %s %s (as of %s)",
@@ -140,4 +182,67 @@ def lambda_handler(event, context):
         normalised["balance"],
         normalised["as_of"],
     )
-    return {"stored": True}
+    return True
+
+
+def _poll_account_balances(api_key: str) -> int:
+    """Poll + upsert a SIGNED live balance for every account (WHIT-212, Accounts tab).
+
+    Best-effort PER account: one account's failure (transport, `success:false`, missing
+    fields) is logged and skipped — it leaves that account's last-good row and never blocks
+    the others. Each raw BankSync `aid` is mapped to its internal id so the balance lands
+    under the same id the account's transactions carry. Returns how many were stored.
+    """
+    repo = AccountBalanceRepository()
+    stored = 0
+    for source in BALANCE_SOURCES:
+        aid = source["aid"]
+        internal_id = ACCOUNT_ID_MAP.get(aid)
+        if internal_id is None:
+            # Guarded at import by the BALANCE_SOURCES assert; stay defensive anyway.
+            logger.error("balance source aid %s has no internal-id mapping, skipping", aid)
+            continue
+        try:
+            payload = fetch_balance(source["bid"], aid, api_key)
+            n = normalise_account_balance(payload)
+            repo.upsert_balance(
+                internal_id,
+                n["amount"],
+                n["available_balance"],
+                n["currency"],
+                n["as_of"],
+                n["account_type"],
+            )
+        except Exception as e:
+            logger.error("account balance poll failed for %s, keeping last-good: %s", internal_id, e)
+            continue
+        stored += 1
+        logger.info(
+            "account balance stored: %s %s %s (as of %s)",
+            internal_id, n["currency"], n["amount"], n["as_of"],
+        )
+    return stored
+
+
+def lambda_handler(event, context):
+    """Poll the live balances and upsert them.
+
+    Two independent, best-effort concerns share one daily poll:
+      - the mortgage's ABS outstanding principal (the Goal screen's `/homeloan` row), and
+      - a SIGNED balance per account (the Accounts tab's `/accounts/balances` rows).
+    Each is isolated — a failure (transport, non-200, `success:false`, missing/malformed
+    fields) is logged and swallowed, leaves the last-good row untouched (a bad tick can't
+    zero it), and never blocks the other. A genuine 0 reading is a success and IS written.
+    The API key is fetched once and shared by both — and that fetch is itself
+    best-effort: an SSM failure (throttle, missing param, IAM) is logged and swallowed so
+    the invocation never errors out and every last-good row survives, rather than a
+    credential blip taking down the whole poll.
+    """
+    try:
+        api_key = get_api_key()
+    except Exception as e:
+        logger.error("balance poll skipped, could not fetch the BankSync API key: %s", e)
+        return {"homeloan_stored": False, "accounts_stored": 0}
+    homeloan_stored = _poll_homeloan(api_key)
+    accounts_stored = _poll_account_balances(api_key)
+    return {"homeloan_stored": homeloan_stored, "accounts_stored": accounts_stored}

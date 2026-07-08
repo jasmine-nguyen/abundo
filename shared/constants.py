@@ -116,6 +116,26 @@ HOMELOAN_BALANCE_SOURCE = {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"}
 # HTTP timeout, in seconds, for a single balance-poller request to BankSync.
 HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
 
+# Every account the balance poller reads a live balance for — the Accounts tab shows one
+# card per account with its current balance (WHIT-212). Each `aid` MUST be a key in
+# ACCOUNT_ID_MAP so the signed balance is stored under the SAME internal id the account's
+# transactions carry (that's how the app joins a balance to a card); `bid` is its Fiskil
+# bank id. The home loan appears here too — polled for its SIGNED per-account balance —
+# and, separately, via HOMELOAN_BALANCE_SOURCE above for the Goal screen's ABS
+# outstanding-principal row. Poller-only (no shared repository_* imports it), so the
+# WHIT-136 sync guard needs no lambda_api/constants.py mirror.
+BALANCE_SOURCES = [
+    {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                       # up-spending
+    {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"},                       # up-homeloan
+    {"bid": "fiskil_4", "aid": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"},  # anz-rewards-black-visa
+]
+# Drift guard (mirrors the HOMELOAN_ACCOUNT_ID assert): a source whose aid isn't mapped
+# would store a balance under a raw id the app can never join to an account. Fail at import
+# rather than silently polling a balance nothing displays.
+assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
+    "every BALANCE_SOURCES `aid` must be a key in ACCOUNT_ID_MAP"
+)
+
 # API Gateway route path for the read API that the whittle app calls.
 TRANSACTION_PATH = "/transactions"
 # Date-range transactions query route (WHIT-34). Consumed only by lambda_api/handler.py
