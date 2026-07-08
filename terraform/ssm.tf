@@ -31,19 +31,6 @@ resource "aws_ssm_parameter" "anthropic_api_key" {
   }
 }
 
-# Shared-secret token the API Gateway authorizer checks on every app route
-# (WHIT-52; extended to all routes by WHIT-110). Terraform seeds a placeholder; set the real random value
-# out-of-band (console/CLI) and inject the same value into the app config.
-# ignore_changes keeps Terraform from overwriting it on subsequent applies.
-resource "aws_ssm_parameter" "api_auth_token" {
-  name  = "/${var.project_name}/api-auth-token"
-  type  = "SecureString"
-  value = "placeholder"
-  lifecycle {
-    ignore_changes = [value]
-  }
-}
-
 # Expo access token (a PAT) used by the push sender (shared/push.py). The Expo
 # project has "Enhanced Security for Push Notifications" enabled, so every push
 # send must carry Authorization: Bearer <this token>. Terraform seeds a

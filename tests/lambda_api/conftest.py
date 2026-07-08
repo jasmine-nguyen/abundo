@@ -142,9 +142,8 @@ def enrichments():
 
     be._api_key = None  # never leak a cached key across tests
     # Pin the key deterministically instead of leaning on whichever suite's
-    # module-level `ssm` fake won collection order (lambda_api's "test-api-key"
-    # vs lambda_authorizer's "test-token") — otherwise value-sensitive tests are
-    # order-dependent. Tests that care about caching monkeypatch this themselves.
+    # module-level `ssm` fake won collection order — otherwise value-sensitive tests
+    # are order-dependent. Tests that care about caching monkeypatch this themselves.
     be.get_param = lambda path: "test-api-key"
     try:
         yield be

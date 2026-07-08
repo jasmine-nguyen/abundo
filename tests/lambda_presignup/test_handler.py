@@ -12,10 +12,13 @@ import pytest
 ALLOWED = "me.jasminenguyen@gmail.com"
 
 
-def _event(email, trigger_source="PreSignUp_SignUp"):
+def _event(email, trigger_source="PreSignUp_SignUp", email_verified=None):
+    attrs = {"email": email}
+    if email_verified is not None:
+        attrs["email_verified"] = email_verified
     return {
         "triggerSource": trigger_source,
-        "request": {"userAttributes": {"email": email}},
+        "request": {"userAttributes": attrs},
     }
 
 
@@ -44,8 +47,9 @@ def test_non_allowlisted_email_rejected(presignup, monkeypatch):
 
 
 def test_external_provider_allowlisted_passes(presignup, monkeypatch):
+    # Federated sign-ups must be email-verified as well as allowlisted (WHIT-173).
     monkeypatch.setenv("ALLOWED_EMAILS", ALLOWED)
-    event = _event(ALLOWED, "PreSignUp_ExternalProvider")
+    event = _event(ALLOWED, "PreSignUp_ExternalProvider", email_verified="true")
     assert presignup.lambda_handler(event, None) is event
 
 
