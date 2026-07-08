@@ -118,6 +118,10 @@ HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
 
 # API Gateway route path for the read API that the whittle app calls.
 TRANSACTION_PATH = "/transactions"
+# Date-range transactions query route (WHIT-34). Consumed only by lambda_api/handler.py
+# (which imports the shadowing lambda_api/constants.py at runtime); mirrored here for
+# parity with that copy. Distinct from the /transactions feed — see lambda_api/constants.py.
+TRANSACTIONS_RANGE_PATH = "/transactions/range"
 
 # Retention window for FAILED# dead-letter items (WHIT-54). Written as a DynamoDB
 # TTL (epoch-seconds `expires_at`), so a stuck row auto-expires instead of

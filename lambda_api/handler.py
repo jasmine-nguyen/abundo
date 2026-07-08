@@ -30,6 +30,7 @@ from constants import (
     SPEND_BUCKETS,
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
+    TRANSACTIONS_RANGE_PATH,
     UNCATEGORIZED_KEY,
 )
 from datetime import date, datetime, timedelta, timezone
@@ -87,6 +88,13 @@ def lambda_handler(event, context):
         if path == TRANSACTION_PATH and method == "GET":
             repo = TransactionRepository()
             return _json_response(200, get_recent_transactions(repo))
+
+        # WHIT-34: the date-range query. An EXACT path (not a startswith), so it can't be
+        # swallowed by the "/transactions/" item PATCH route below, and "/transactions/range"
+        # != "/transactions" so the feed branch above never matches it. It returns its own
+        # response shape ({transactions, nextCursor}), so it can't share the feed branch.
+        if path == TRANSACTIONS_RANGE_PATH and method == "GET":
+            return get_transactions_by_range(event, TransactionRepository())
 
         # Collection route (batch) BEFORE the item route. "/transactions" does not
         # start with "/transactions/", so the two are disjoint regardless of order.
@@ -212,6 +220,49 @@ def _parse_json_body(event: dict):
     return body, None
 
 
+class _BadCursor(ValueError):
+    """A client-supplied pagination cursor that isn't a valid date-index page token
+    (WHIT-34). The handler maps it to a 400 rather than letting a forged token 500."""
+
+
+# The exact key set a date-index query's LastEvaluatedKey carries: the index key
+# (account_id, date) + the table's primary key (pk, sk). A decoded cursor must match this
+# shape — a well-formed JSON object with any other keys would be rejected by DynamoDB as an
+# ExclusiveStartKey (a ValidationException → 500), so we reject it as a 400 first.
+_CURSOR_KEY_SHAPE = frozenset({"account_id", "date", "pk", "sk"})
+
+
+def _encode_cursor(key: dict | None) -> str | None:
+    """Serialise a DynamoDB LastEvaluatedKey into an opaque, URL-safe cursor string.
+
+    The date-index LastEvaluatedKey is a dict of string key attrs ({account_id, date,
+    pk, sk}) — all strings, so plain json.dumps is safe (no Decimals to encode). Returns
+    None when there is no next page, so the response carries a literal null nextCursor.
+    """
+    if key is None:
+        return None
+    return base64.urlsafe_b64encode(json.dumps(key).encode("utf-8")).decode("ascii")
+
+
+def _decode_cursor(raw: str | None) -> dict | None:
+    """Reverse _encode_cursor. None/empty → None (a first page). Raises _BadCursor on
+    anything that isn't valid base64 of a JSON object with the date-index key shape.
+    b64decode raises binascii.Error and .decode/.encode raise Unicode*Error, all ValueError
+    subclasses, so a garbage token becomes a clean 400; and a well-formed JSON object with
+    the wrong keys is rejected here too, rather than reaching DynamoDB as a bad
+    ExclusiveStartKey (a ValidationException → 500). Either way a forged token is a 400."""
+    if not raw:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(raw.encode("ascii")).decode("utf-8")
+        cursor = json.loads(decoded)
+    except (json.JSONDecodeError, ValueError):
+        raise _BadCursor("malformed cursor")
+    if not isinstance(cursor, dict) or set(cursor) != _CURSOR_KEY_SHAPE:
+        raise _BadCursor("cursor has an unexpected shape")
+    return cursor
+
+
 def register_device(event: dict, repo: DeviceRepository) -> dict:
     """POST /devices — register an Expo push token so this device gets notified.
 
@@ -326,6 +377,101 @@ def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
     )
 
     return sorted_all_recent_transactions
+
+
+def get_transactions_by_range(event: dict, repo: TransactionRepository) -> dict:
+    """GET /transactions/range — a date-range transactions query (WHIT-34).
+
+    Unlike the /transactions feed (a fixed rolling window, merged across accounts,
+    returning a bare array), this reads client-supplied query params and returns a
+    pageable slice of ONE account:
+
+        account_id  (required) — the account to query
+        from        (required) — inclusive start date, ISO YYYY-MM-DD
+        to          (optional) — inclusive end date, ISO YYYY-MM-DD
+        limit       (optional) — page size, clamped to [1, MAX_PAGE_SIZE]
+        cursor      (optional) — an opaque nextCursor from a previous page
+
+    Returns {"transactions": [...], "nextCursor": <opaque string|null>}. A wide window
+    can exceed one page, so — unlike the feed, which drops it — the DynamoDB cursor is
+    serialised out as nextCursor and echoed back to fetch the next page. Bad input → 400.
+    """
+    params = event.get("queryStringParameters") or {}
+
+    account_id = params.get("account_id")
+    if not account_id:
+        return _json_response(400, {"error": "account_id is required"})
+
+    # `from` is required; `to` is optional. The repo supports start-only (gte) and
+    # start+end (between) but NOT end-only — an `end` with no `start` is silently ignored
+    # (whole partition), so reject end-only with a 400 rather than return everything.
+    raw_from = params.get("from")
+    raw_to = params.get("to")
+    if not raw_from:
+        return _json_response(400, {"error": "from is required (ISO YYYY-MM-DD)"})
+
+    # Validate as real ISO dates but pass STRINGS to the repo: the date-index `date`
+    # attribute is a bare YYYY-MM-DD string, and every other caller passes .isoformat().
+    # Re-normalising via .isoformat() also canonicalises basic-format input (e.g.
+    # "20260701" → "2026-07-01") so it lexically matches the stored dates.
+    try:
+        start_date = date.fromisoformat(raw_from).isoformat()
+    except ValueError:
+        return _json_response(400, {"error": "invalid from; expected ISO YYYY-MM-DD"})
+    end_date = None
+    if raw_to:
+        try:
+            end_date = date.fromisoformat(raw_to).isoformat()
+        except ValueError:
+            return _json_response(400, {"error": "invalid to; expected ISO YYYY-MM-DD"})
+
+    # A reversed window (to before from) is nonsensical input, and the repo's
+    # Key("date").between(from, to) would hit DynamoDB with lower > upper — a
+    # ValidationException → an uncaught 500. Reject it at the boundary as a 400 instead.
+    # Canonical ISO strings compare lexically == chronologically, so this is exact.
+    if end_date is not None and end_date < start_date:
+        return _json_response(400, {"error": "to must not be before from"})
+
+    # `limit` is optional. Parse to int (non-numeric → 400) and clamp to [1, MAX_PAGE_SIZE]:
+    # a 0/negative Limit is a DynamoDB ValidationException, and the repo already caps the
+    # upper end, so clamping keeps every request a valid query without a 400 for a bound.
+    raw_limit = params.get("limit")
+    limit = MAX_PAGE_SIZE
+    if raw_limit is not None:
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return _json_response(400, {"error": "invalid limit; expected an integer"})
+        limit = max(1, min(limit, MAX_PAGE_SIZE))
+
+    # `cursor` is an optional opaque page token from a previous response.
+    try:
+        cursor = _decode_cursor(params.get("cursor"))
+    except _BadCursor:
+        return _json_response(400, {"error": "invalid cursor"})
+
+    # A cursor is bound to the account it was minted for: its account_id IS the
+    # ExclusiveStartKey's partition value, and DynamoDB rejects a start key whose partition
+    # contradicts the query's account_id.eq(...) (ValidationException → an uncaught 500).
+    # Reject a cross-account cursor as a 400. No data-leak risk either way — the query stays
+    # pinned to account_id — this just turns an abnormal 500 into a clean 400.
+    if cursor is not None and cursor.get("account_id") != account_id:
+        return _json_response(400, {"error": "cursor does not match account_id"})
+
+    transactions, next_key = repo.get_transactions_by_date_range(
+        account_id, start_date, end_date, limit, cursor
+    )
+
+    # Mirror the feed's row shaping: drop the DynamoDB keys, default sparse fields.
+    for txn in transactions:
+        txn.pop("pk", None)
+        txn.pop("sk", None)
+        txn.setdefault("category", None)
+
+    return _json_response(200, {
+        "transactions": transactions,
+        "nextCursor": _encode_cursor(next_key),
+    })
 
 
 def _slugify(name: str) -> str:
