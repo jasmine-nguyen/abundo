@@ -71,9 +71,11 @@ def notify_repayments(normalised, *, device_repo, notify_repo) -> None:
 
     Deduped per transaction id via `notify_repo`, so a re-ingested repayment fires
     once. Short-circuits before any I/O when the batch has no repayment, and before
-    sending when no device is registered. Send-then-mark: send_push never raises, so
-    the only loss window is a crash between send and mark (a rare duplicate, never a
-    lost push)."""
+    sending when no device is registered. Mark-on-landing (WHIT-154): the id is
+    marked fired ONLY when the send actually reached Expo (`send_push(...)["ok"] > 0`),
+    so an Expo outage leaves the repayment unmarked and a later re-ingest re-sends it
+    — never a silently-lost push. A send that reaches Expo but crashes before the mark
+    still re-sends on re-ingest (a rare duplicate, never a loss)."""
     repayments = [t for t in normalised if is_homeloan_repayment(t)]
     if not repayments:
         return
@@ -88,6 +90,7 @@ def notify_repayments(normalised, *, device_repo, notify_repo) -> None:
         if txn_id is None or txn_id in fired:
             continue
         body = _BODY.format(amount=_format_amount(txn["amount"]))
-        send_push(_TITLE, body, tokens)
-        notify_repo.mark_repayment_fired(txn_id)  # send-then-mark
-        fired.add(txn_id)  # guard a duplicate id within the same batch
+        if send_push(_TITLE, body, tokens)["ok"] > 0:  # mark only when it reached Expo
+            notify_repo.mark_repayment_fired(txn_id)
+            fired.add(txn_id)  # guard a duplicate id within the same batch
+        # send failed / no device accepted it → leave unmarked → re-ingest re-sends

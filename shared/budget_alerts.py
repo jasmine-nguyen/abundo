@@ -23,9 +23,21 @@ best-effort miss (never a lost write); a strongly-consistent `before` is tracked
 as follow-up tech debt.
 
 Spend basis = posted + pending (committed spend). A single write that vaults past
-both thresholds sends only the higher (100%) but marks both fired. Send-then-mark:
-`send_push` never raises, so the only loss window is a crash between send and mark,
-which biases to a rare duplicate rather than a lost alert.
+both thresholds sends only the higher (100%) but marks both fired. Mark-on-landing
+(WHIT-154): a threshold is marked fired ONLY when its send actually reached Expo
+(`send_push(...)["ok"] > 0`) — including the secondary "mark the lower thresholds
+too" step, which exists only to suppress a redundant lower nag GIVEN the higher push
+went out; if the higher push never landed, suppressing the lower one would silence
+the user entirely, so neither is marked.
+
+Unlike the repayment path, this does NOT guarantee a retry. `_simulate_after`
+replaces rows by id (not add), and on a re-ingest `before_rows` reads the GSI which
+by then already holds the first-ingest write — so the crossing only re-detects while
+the GSI still lags (the same brief window the debounce marker guards). For a real
+minutes-long Expo outage the GSI has caught up, `before` already sits past the
+threshold, `newly` is empty, and nothing re-fires. So the guarantee here is only
+"don't falsely record a fired marker", not "retry until delivered"; a persisted
+send-failed retry queue would be a separate, larger change.
 """
 
 import logging
@@ -198,12 +210,18 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
 
     for cat_id, pct_to_send, newly in crossings:
         send_marker = f"{cat_id}#{pct_to_send}"
-        if send_marker not in fired:
+        if send_marker in fired:
+            landed = True  # already delivered in a prior ingest → repair secondary marks
+        else:
             title, body = _COPY[pct_to_send]
-            send_push(title, body.format(name=names.get(cat_id, cat_id)), ctx["tokens"])
-            notify_repo.mark_fired(last_pay_date, length, send_marker)  # send-then-mark
-        # Mark every other newly-crossed threshold too, so a lower one can't alert
-        # later this cycle — without sending a second push.
+            landed = send_push(title, body.format(name=names.get(cat_id, cat_id)), ctx["tokens"])["ok"] > 0
+            if landed:
+                notify_repo.mark_fired(last_pay_date, length, send_marker)  # mark on landing
+        if not landed:
+            continue  # send failed → mark nothing → the crossing can re-fire on re-ingest
+        # The primary push went out (now or earlier): mark every other newly-crossed
+        # threshold too, so a lower one can't alert later this cycle — without sending
+        # a second push.
         for pct in newly:
             marker = f"{cat_id}#{pct}"
             if pct != pct_to_send and marker not in fired:
