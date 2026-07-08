@@ -31,6 +31,7 @@ resource "aws_apigatewayv2_integration" "get_transactions_integration" {
 locals {
   app_route_keys = toset([
     "GET /transactions",
+    "GET /transactions/range",
     "PATCH /transactions/{id}",
     "PATCH /transactions",
     "GET /categories",

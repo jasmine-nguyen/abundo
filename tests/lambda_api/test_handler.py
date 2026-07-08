@@ -341,6 +341,332 @@ def test_unknown_route_returns_404(handler):
     assert resp["statusCode"] == 404
 
 
+# --- GET /transactions/range date-range query (get_transactions_by_range, WHIT-34) ---
+
+
+def _range_event(params):
+    return {
+        "rawPath": "/transactions/range",
+        "requestContext": {"http": {"method": "GET"}},
+        "queryStringParameters": params,
+    }
+
+
+def test_range_happy_path_strips_keys_and_shapes_response(handler):
+    repo = FakeRecentFeedRepo(
+        {"up-spending": [([_row("up-spending", "2026-06-15", "t1", amount=Decimal("-12.50"))], None)]}
+    )
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "to": "2026-06-30"}), repo
+    )
+
+    assert resp["statusCode"] == 200
+    # repo called with the ONE account, normalised STRING dates, default limit, no cursor.
+    assert repo.calls == [("up-spending", "2026-06-01", "2026-06-30", handler.MAX_PAGE_SIZE, None)]
+    body = json.loads(resp["body"])
+    txn = body["transactions"][0]
+    assert "pk" not in txn and "sk" not in txn          # DynamoDB keys stripped
+    assert txn["transaction_id"] == "t1"
+    assert txn["category"] is None                       # sparse field defaulted
+    assert txn["amount"] == -12.5                        # Decimal serialised (no 500)
+    assert body["nextCursor"] is None                    # last page → null cursor
+
+
+def test_range_from_only_passes_none_end_date(handler):
+    # `to` omitted → end_date is None (repo uses gte start), not a 400.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01"}), repo
+    )
+    assert resp["statusCode"] == 200
+    assert repo.calls[0][:3] == ("up-spending", "2026-06-01", None)
+
+
+def test_range_normalises_basic_format_dates(handler):
+    # date.fromisoformat accepts basic format on py3.11+/3.12 runtime; we re-emit .isoformat()
+    # so the value the repo queries lexically matches the stored YYYY-MM-DD dates.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "20260601", "to": "20260630"}), repo
+    )
+    assert repo.calls[0][1:3] == ("2026-06-01", "2026-06-30")
+
+
+def test_range_cursor_round_trips(handler):
+    # Page 1 returns a DynamoDB LastEvaluatedKey → nextCursor is an opaque string. Echoing
+    # it back on page 2 decodes to the ORIGINAL key dict and is passed to the repo as cursor.
+    key = {"account_id": "up-spending", "date": "2026-07-01", "pk": "ACCOUNT#up-spending", "sk": "TXN#t1"}
+    repo = FakeRecentFeedRepo({"up-spending": [
+        ([_row("up-spending", "2026-07-01", "t1")], key),   # page 1 → a cursor
+        ([_row("up-spending", "2026-06-30", "t2")], None),  # page 2 → last
+    ]})
+
+    resp1 = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "to": "2026-07-01"}), repo
+    )
+    body1 = json.loads(resp1["body"])
+    next_cursor = body1["nextCursor"]
+    assert isinstance(next_cursor, str) and next_cursor
+    assert handler._decode_cursor(next_cursor) == key      # opaque token → the raw key
+
+    resp2 = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "to": "2026-07-01", "cursor": next_cursor}), repo
+    )
+    body2 = json.loads(resp2["body"])
+    assert body2["nextCursor"] is None
+    assert repo.calls[1][4] == key                         # decoded key handed to the repo
+
+
+def test_range_limit_above_max_is_clamped(handler):
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "limit": "500"}), repo
+    )
+    assert repo.calls[0][3] == handler.MAX_PAGE_SIZE
+
+
+def test_range_limit_zero_is_clamped_to_one(handler):
+    # A 0/negative Limit is a DynamoDB ValidationException; the handler clamps to >=1.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "limit": "0"}), repo
+    )
+    assert repo.calls[0][3] == 1
+
+
+def test_range_unknown_account_returns_empty_page(handler):
+    # An unknown but non-empty account_id isn't an error — the repo just yields nothing.
+    repo = FakeRecentFeedRepo({"up-spending": [([_row("up-spending", "2026-06-01", "t1")], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "who-dis", "from": "2026-06-01"}), repo
+    )
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body == {"transactions": [], "nextCursor": None}
+
+
+def test_range_missing_query_params_is_400_not_500(handler):
+    # API Gateway sends queryStringParameters: None when the query string is absent.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    event = {"rawPath": "/transactions/range", "requestContext": {"http": {"method": "GET"}}, "queryStringParameters": None}
+    resp = handler.get_transactions_by_range(event, repo)
+    assert resp["statusCode"] == 400          # account_id required
+    assert repo.calls == []
+
+
+@pytest.mark.parametrize("params", [
+    {"from": "2026-06-01"},                                   # missing account_id
+    {"account_id": "up-spending"},                           # missing from
+    {"account_id": "up-spending", "from": ""},               # empty from
+    {"account_id": "up-spending", "from": "not-a-date"},     # non-ISO from
+    {"account_id": "up-spending", "from": "2026-06-01", "to": "nope"},  # non-ISO to
+    {"account_id": "up-spending", "to": "2026-06-30"},       # end-only (no from) — repo can't express it
+    {"account_id": "up-spending", "from": "2026-06-01", "limit": "abc"},  # non-numeric limit
+])
+def test_range_validation_400s_and_never_hits_repo(handler, params):
+    repo = FakeRecentFeedRepo({"up-spending": [([_row("up-spending", "2026-06-01", "t1")], None)]})
+    resp = handler.get_transactions_by_range(_range_event(params), repo)
+    assert resp["statusCode"] == 400
+    assert repo.calls == []          # rejected before the query
+
+
+def test_range_malformed_cursor_is_400(handler):
+    # A valid-base64 token that isn't JSON → _BadCursor → 400 (a forged cursor never 500s).
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    bad_cursor = base64.urlsafe_b64encode(b"not json").decode("ascii")
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "cursor": bad_cursor}), repo
+    )
+    assert resp["statusCode"] == 400
+    assert repo.calls == []
+
+
+def test_range_dispatches_through_lambda_handler(handler, monkeypatch):
+    # Proves lambda_handler routes GET /transactions/range to the range handler (single
+    # account, date-range call), NOT the merged feed, and returns the {transactions,nextCursor} shape.
+    repo = FakeRecentFeedRepo({"up-spending": [([_row("up-spending", "2026-06-01", "t1")], None)]})
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
+    monkeypatch.setattr(handler, "get_recent_transactions",
+                        lambda repo: pytest.fail("range route reached the feed handler"))
+
+    resp = handler.lambda_handler(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01"}), None
+    )
+
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert [t["transaction_id"] for t in body["transactions"]] == ["t1"]
+    assert body["nextCursor"] is None
+    assert repo.calls[0][0] == "up-spending"
+
+
+def test_cursor_encode_decode_none_round_trip(handler):
+    # No next page → encode(None) is None (literal null nextCursor); decode(None)/("") → None.
+    assert handler._encode_cursor(None) is None
+    assert handler._decode_cursor(None) is None
+    assert handler._decode_cursor("") is None
+
+
+# --- GET /transactions/range: adversarial gap tests (WHIT-34, qa + review) ----
+# Gaps the implementer's suite left open: explicit-empty `to`, single-day and REVERSED
+# ranges, a wrong-shape cursor, float/negative/whitespace `limit`, a date with a time
+# component, category setdefault-vs-overwrite, page-order preservation, and the
+# cursor-forwarded-verbatim contract. Each asserts against the real handler, so a revert
+# of the relevant branch flips it red.
+
+
+def test_range_empty_to_is_treated_as_open_ended(handler):
+    # `?...&to=` (present but EMPTY) is falsy, so raw_to is "" → end_date None (open-ended),
+    # NOT date.fromisoformat("") → 400. Guards the `if raw_to:` truthiness check.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "to": ""}), repo
+    )
+    assert resp["statusCode"] == 200
+    assert repo.calls[0][:3] == ("up-spending", "2026-06-01", None)
+
+
+def test_range_single_day_range_forwards_equal_bounds(handler):
+    # from == to is a valid single-day query (between(x, x) is inclusive): 200, both bounds
+    # forwarded equal. The reversed-range guard uses `<`, so equal bounds must NOT 400.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-15", "to": "2026-06-15"}), repo
+    )
+    assert resp["statusCode"] == 200
+    assert repo.calls[0][1:3] == ("2026-06-15", "2026-06-15")
+
+
+def test_range_reversed_range_is_400(handler):
+    # WHIT-34 (code-critic): `from` > `to` is rejected at the boundary as a 400 — the repo's
+    # Key.between(lo>hi) would otherwise hit DynamoDB with lower>upper (ValidationException →
+    # 500). Reject before the query; the repo is never called.
+    repo = FakeRecentFeedRepo({"up-spending": [([_row("up-spending", "2026-06-15", "t1")], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-30", "to": "2026-06-01"}), repo
+    )
+    assert resp["statusCode"] == 400
+    assert repo.calls == []
+
+
+def test_range_wrong_shape_cursor_is_400(handler):
+    # WHIT-34 (code-critic): a well-formed base64 of a JSON OBJECT with the wrong keys
+    # ({"foo":"bar"}) is not a valid date-index page token. Reject it as a 400 rather than
+    # forward it to DynamoDB as a bad ExclusiveStartKey (ValidationException → 500).
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    bad = base64.urlsafe_b64encode(b'{"foo": "bar"}').decode("ascii")
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "cursor": bad}), repo
+    )
+    assert resp["statusCode"] == 400
+    assert repo.calls == []
+
+
+def test_range_float_limit_is_400(handler):
+    # int("1.5") raises ValueError → 400. A DIFFERENT failure class from the covered "abc":
+    # a naive float()-based parse would ACCEPT "1.5" and go 200.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "limit": "1.5"}), repo
+    )
+    assert resp["statusCode"] == 400
+    assert repo.calls == []
+
+
+def test_range_negative_limit_clamped_to_one(handler):
+    # int("-5") = -5 → max(1, min(-5, MAX)) = 1. Companion to the covered limit=0 case:
+    # a 0/negative DynamoDB Limit is a ValidationException, so the lower clamp must hold.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "limit": "-5"}), repo
+    )
+    assert repo.calls[0][3] == 1
+
+
+def test_range_whitespace_limit_is_accepted(handler):
+    # Python int(" 5 ") strips surrounding whitespace → 5 (not a 400). Documents the lenient
+    # parse; every value is clamped to [1, MAX] so a valid query results regardless.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "limit": " 5 "}), repo
+    )
+    assert resp["statusCode"] == 200
+    assert repo.calls[0][3] == 5
+
+
+def test_range_date_with_time_component_is_400(handler):
+    # A date carrying a time part ("2026-06-01T00:00") — date.fromisoformat rejects it (it
+    # parses a date, not a datetime) → 400. Guards that a bare-date-stored `date` is never
+    # queried against a datetime string that wouldn't lexically match.
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01T00:00"}), repo
+    )
+    assert resp["statusCode"] == 400
+    assert repo.calls == []
+
+
+def test_range_preserves_present_category(handler):
+    # setdefault, not assignment: a row that already has a category keeps it, while a sibling
+    # with none defaults to null. Catches a regression from setdefault to `= None`.
+    repo = FakeRecentFeedRepo({"up-spending": [([
+        _row("up-spending", "2026-06-02", "has_cat", category="coffee"),
+        _row("up-spending", "2026-06-01", "no_cat"),
+    ], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "to": "2026-06-30"}), repo
+    )
+    by_id = {t["transaction_id"]: t for t in json.loads(resp["body"])["transactions"]}
+    assert by_id["has_cat"]["category"] == "coffee"
+    assert by_id["no_cat"]["category"] is None
+
+
+def test_range_does_not_resort_page(handler):
+    # Unlike the merged feed, the range endpoint returns the repo's page order as-is (the repo
+    # already sorts newest-first via ScanIndexForward=False). Proves the handler adds NO
+    # re-sort of its own: rows come back in the exact order the repo gave.
+    repo = FakeRecentFeedRepo({"up-spending": [([
+        _row("up-spending", "2026-06-10", "first"),
+        _row("up-spending", "2026-06-20", "second"),   # deliberately NOT date-descending
+        _row("up-spending", "2026-06-05", "third"),
+    ], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "to": "2026-06-30"}), repo
+    )
+    order = [t["transaction_id"] for t in json.loads(resp["body"])["transactions"]]
+    assert order == ["first", "second", "third"]
+
+
+def test_range_cross_account_cursor_is_400(handler):
+    # WHIT-34: a cursor is bound to the account it was minted for. A valid-SHAPE cursor for
+    # account A, resent with account_id=B, contradicts the query's partition — DynamoDB would
+    # reject the ExclusiveStartKey (ValidationException → 500). The handler rejects it as a 400
+    # before the query, so a cross-account cursor never reaches the repo.
+    foreign_key = {"account_id": "account-A", "date": "2026-07-01",
+                   "pk": "ACCOUNT#account-A", "sk": "TXN#t1"}
+    cursor = handler._encode_cursor(foreign_key)
+    repo = FakeRecentFeedRepo({"account-B": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "account-B", "from": "2026-06-01", "cursor": cursor}), repo
+    )
+    assert resp["statusCode"] == 400
+    assert repo.calls == []
+
+
+def test_range_matching_account_cursor_is_forwarded(handler):
+    # The companion to the cross-account 400: a cursor whose account_id MATCHES the query's
+    # account_id passes the guard and is handed to the repo verbatim (normal pagination).
+    key = {"account_id": "up-spending", "date": "2026-07-01",
+           "pk": "ACCOUNT#up-spending", "sk": "TXN#t1"}
+    cursor = handler._encode_cursor(key)
+    repo = FakeRecentFeedRepo({"up-spending": [([], None)]})
+    resp = handler.get_transactions_by_range(
+        _range_event({"account_id": "up-spending", "from": "2026-06-01", "cursor": cursor}), repo
+    )
+    assert resp["statusCode"] == 200
+    assert repo.calls[0][4] == key      # matching-account cursor forwarded
+
+
 # --- GET /transactions recent feed (get_recent_transactions) -----------------
 # The function body was previously monkeypatched away in the dispatch test, so
 # none of this ran. These exercise it directly against a fake repo.

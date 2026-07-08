@@ -14,6 +14,13 @@ MAX_PAGE_SIZE = 100
 # to shared/constants.py (WHIT-54). 30 days.
 DEAD_LETTER_TTL_SECONDS = 30 * 24 * 60 * 60
 TRANSACTION_PATH = "/transactions"
+# API Gateway route path for the date-range transactions query (WHIT-34). A distinct
+# path from the /transactions feed: unlike the feed (a fixed rolling window that returns
+# a bare array and drops the cursor), this takes client from/to + account_id and returns
+# {transactions, nextCursor} so a wide window can be paged. Only lambda_api/handler.py
+# consumes it (no shared repository_* imports it), so the WHIT-136 sync guard doesn't
+# require the shared mirror — kept equal in shared/constants.py for hygiene only.
+TRANSACTIONS_RANGE_PATH = "/transactions/range"
 # Max items accepted by the batch PATCH /transactions endpoint (WHIT-70). The
 # route is open and the handler applies updates in a sequential per-item loop, so
 # this bounds the work one request can queue. Real sweeps are tiny (uncategorised
