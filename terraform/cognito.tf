@@ -3,9 +3,8 @@
 # This adds the identity infrastructure only: a user pool, a public PKCE app
 # client, a Hosted UI domain, and (optionally) Google/Apple federated IdPs. The
 # API Gateway JWT authorizer that consumes this pool lives in apigateway.tf and
-# is DECLARED-BUT-UNATTACHED — no route is switched to JWT here. The existing
-# shared-secret authorizer keeps guarding every route (rollout safety), so a
-# Cognito misconfig can't lock anyone out of the API. Route cutover is WHIT-162.
+# now guards every app route (cutover done in WHIT-162; the legacy shared-secret
+# authorizer was removed in WHIT-173).
 #
 # SINGLE-USER GATE — IMPORTANT: `allow_admin_create_user_only` below only blocks
 # self-service username/password signup. Federated login (Google/Apple) still
@@ -70,8 +69,14 @@ resource "aws_cognito_identity_provider" "google" {
     authorize_scopes = "openid email profile"
   }
 
+  # email_verified is mapped (WHIT-173) so the Pre-Sign-Up trigger can require a
+  # verified email for federated sign-ups. Google asserts it (boolean true) on its
+  # OIDC claims. Without this mapping the attribute is absent at Pre-Sign-Up and the
+  # verified-email gate would reject the real user — so this line and the handler
+  # check must land together.
   attribute_mapping = {
-    email = "email"
+    email          = "email"
+    email_verified = "email_verified"
   }
 
   # The count-gate keys off google_client_id alone; Google also needs the
@@ -99,6 +104,13 @@ resource "aws_cognito_identity_provider" "apple" {
     authorize_scopes = "email name"
   }
 
+  # NOTE (WHIT-173): Apple is NOT configured today (count-gated on apple_services_id,
+  # which is empty), so email_verified is deliberately NOT mapped here — the scope was
+  # Google-only. If Apple sign-in is ever turned on, add `email_verified =
+  # "email_verified"` below, or the Pre-Sign-Up verified-email gate
+  # (lambda_presignup/handler.py) will reject every Apple login (the attribute would be
+  # absent). Verify Apple's value arrives as the string "true" — the handler check is
+  # already tolerant of both "true" and boolean True.
   attribute_mapping = {
     email = "email"
   }

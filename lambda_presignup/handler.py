@@ -11,9 +11,11 @@ Contract (Cognito Pre-Sign-Up):
 - Reject = raise an exception; Cognito denies the sign-up and surfaces the message.
 
 Fires for every trigger source (PreSignUp_SignUp, PreSignUp_AdminCreateUser,
-PreSignUp_ExternalProvider); keying on the email alone handles all three, so no
-per-source branching is needed. The email is populated for federated sign-ups via
-the pool's `attribute_mapping { email = "email" }`.
+PreSignUp_ExternalProvider). The email allowlist gates all three; federated
+(PreSignUp_ExternalProvider) sign-ups ALSO require a verified email (WHIT-173) —
+defense in depth against a future IdP that lets a user self-assert an unverified
+address. The email + email_verified are populated for federated sign-ups via the
+pool's `attribute_mapping` (see terraform/cognito.tf).
 
 Dependency-free: no shared layer, no SSM, no boto3 — just the ALLOWED_EMAILS env
 var (comma-separated). Fail-closed: a missing/empty email or an empty allowlist
@@ -43,4 +45,14 @@ def lambda_handler(event, context):
     if not email or email not in _allowed_emails():
         logger.info("Rejected sign-up for email %r (not on allowlist)", email)
         raise Exception("This app is private. Your account is not permitted to sign in.")
+    # Federated sign-ups (Google/Apple, WHIT-173): the allowlist alone trusts the
+    # IdP-asserted email. ALSO require the IdP to have verified it, so a future IdP
+    # that permits an unverified/self-asserted address can't slip an allowlisted
+    # address past the gate. Cognito passes email_verified as the string "true" for
+    # some IdPs and a bool True for others — accept either. Only ExternalProvider
+    # is gated; admin-create and native SRP sign-up are trusted paths, unchanged.
+    if event.get("triggerSource") == "PreSignUp_ExternalProvider":
+        if str(attributes.get("email_verified")).strip().lower() != "true":
+            logger.info("Rejected federated sign-up for email %r (email not verified)", email)
+            raise Exception("This app is private. Your account is not permitted to sign in.")
     return event

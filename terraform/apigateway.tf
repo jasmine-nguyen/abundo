@@ -70,9 +70,8 @@ resource "aws_apigatewayv2_route" "app" {
 # WHIT-153: collapsed 23 identical routes into aws_apigatewayv2_route.app (for_each).
 # Without these moved{} blocks terraform would DESTROY+RECREATE every route, briefly
 # dropping every API route on live infra. moved{} makes it a pure state rename — the
-# plan shows only moves (0 add / 0 change / 0 destroy). Same pattern as the authorizer
-# moved{} below. These can be garbage-collected in a later card once the rename is
-# applied and confirmed.
+# plan shows only moves (0 add / 0 change / 0 destroy). These can be garbage-collected
+# in a later card once the rename is applied and confirmed.
 moved {
   from = aws_apigatewayv2_route.get_transactions_route
   to   = aws_apigatewayv2_route.app["GET /transactions"]
@@ -172,40 +171,6 @@ resource "aws_lambda_permission" "get_transactions_invoke_permission" {
   function_name = aws_lambda_function.lambda_api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
-}
-
-# Shared-secret authorizer (WHIT-52/WHIT-110). AS OF WHIT-162 it guards NO route —
-# every app route now uses the Cognito JWT authorizer below. It is KEPT here,
-# orphaned-but-present, ONLY as the instant rollback path: a one-block `git revert`
-# of the route `authorizer_id`s + `terraform apply` restores shared-secret auth
-# without recreating this resource. It is torn down in the WHIT-162 follow-up
-# (PR-B) once JWT auth is verified end-to-end on-device.
-resource "aws_apigatewayv2_authorizer" "authorizer" {
-  api_id                            = aws_apigatewayv2_api.api.id
-  authorizer_type                   = "REQUEST"
-  authorizer_uri                    = aws_lambda_function.authorizer.invoke_arn
-  identity_sources                  = ["$request.header.Authorization"]
-  name                              = "${var.project_name}-api-authorizer"
-  authorizer_payload_format_version = "2.0"
-  enable_simple_responses           = true
-}
-
-# Renamed from "enrichments" -> "authorizer" when WHIT-110 extended this authorizer
-# from just /enrichments to every app route. `moved` makes `terraform apply` treat it
-# as a state rename, NOT a destroy+recreate of the live authorizer (which would briefly
-# drop auth on every route). The `name` change ("-enrichments-authorizer" ->
-# "-api-authorizer") is an in-place UpdateAuthorizer, not a replacement.
-moved {
-  from = aws_apigatewayv2_authorizer.enrichments
-  to   = aws_apigatewayv2_authorizer.authorizer
-}
-
-resource "aws_lambda_permission" "authorizer_invoke_permission" {
-  statement_id  = "AllowAPIGatewayInvokeAuthorizer"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.authorizer.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/authorizers/${aws_apigatewayv2_authorizer.authorizer.id}"
 }
 
 # Native Cognito JWT authorizer (WHIT-97; attached to every app route by WHIT-162).

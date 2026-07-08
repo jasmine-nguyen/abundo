@@ -103,7 +103,7 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
     return <View style={{ flex: 1, backgroundColor: C.bg }} />;
   }
 
-  const target = gateRedirect({ enabled: true, navReady, status, onIndex });
+  const target = gateRedirect({ navReady, status, onIndex });
   if (target) return <Redirect href={target} />;
 
   return <>{children}</>;

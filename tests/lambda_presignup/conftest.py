@@ -15,7 +15,7 @@ import pytest
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PRESIGNUP_DIR = str(_REPO_ROOT / "lambda_presignup")
 
-# Collides with the sibling lambda_authorizer / lambda_api / sync_trigger suites.
+# Collides with the sibling lambda_api / sync_trigger suites.
 _COLLIDING = ("handler",)
 
 

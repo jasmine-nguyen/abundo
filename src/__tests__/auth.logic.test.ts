@@ -314,25 +314,22 @@ describe('refresh-failure clears the query cache (WHIT-205 choke point)', () => 
 
 describe('gateRedirect (pure)', () => {
   const auth = loadAuth();
-  it('does nothing when the gate is disabled', () => {
-    expect(auth.gateRedirect({ enabled: false, navReady: true, status: 'anon', onIndex: false })).toBeNull();
-  });
   it('does nothing before the navigator is mounted', () => {
-    expect(auth.gateRedirect({ enabled: true, navReady: false, status: 'anon', onIndex: false })).toBeNull();
+    expect(auth.gateRedirect({ navReady: false, status: 'anon', onIndex: false })).toBeNull();
   });
   it('does nothing while loading', () => {
-    expect(auth.gateRedirect({ enabled: true, navReady: true, status: 'loading', onIndex: false })).toBeNull();
+    expect(auth.gateRedirect({ navReady: true, status: 'loading', onIndex: false })).toBeNull();
   });
   it('kicks an anon user off a protected route to the login screen', () => {
-    expect(auth.gateRedirect({ enabled: true, navReady: true, status: 'anon', onIndex: false })).toBe('/');
+    expect(auth.gateRedirect({ navReady: true, status: 'anon', onIndex: false })).toBe('/');
   });
   it('leaves an anon user on the login screen (no loop)', () => {
-    expect(auth.gateRedirect({ enabled: true, navReady: true, status: 'anon', onIndex: true })).toBeNull();
+    expect(auth.gateRedirect({ navReady: true, status: 'anon', onIndex: true })).toBeNull();
   });
   it('forwards an authed user off the login screen into the app', () => {
-    expect(auth.gateRedirect({ enabled: true, navReady: true, status: 'authed', onIndex: true })).toBe('/(tabs)/budgets');
+    expect(auth.gateRedirect({ navReady: true, status: 'authed', onIndex: true })).toBe('/(tabs)/budgets');
   });
   it('leaves an authed user inside the app alone', () => {
-    expect(auth.gateRedirect({ enabled: true, navReady: true, status: 'authed', onIndex: false })).toBeNull();
+    expect(auth.gateRedirect({ navReady: true, status: 'authed', onIndex: false })).toBeNull();
   });
 });

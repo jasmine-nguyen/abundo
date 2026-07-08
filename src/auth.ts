@@ -903,17 +903,16 @@ async function clearStoredSession(): Promise<void> {
  * Decide where the auth gate should send the user, or `null` to render normally.
  * Pure so it can be unit-tested exhaustively in the node `logic` project.
  *
- * - Gate off, still loading, or the navigator not yet mounted → null (no redirect).
+ * - Still loading, or the navigator not yet mounted → null (no redirect).
  * - `anon` trying to reach a protected (tabs) route → back to the login screen.
  * - `authed` sitting on the login screen → forward to the app.
  */
 export function gateRedirect(opts: {
-  enabled: boolean;
   navReady: boolean;
   status: AuthStatus;
   onIndex: boolean;
 }): "/" | "/(tabs)/budgets" | null {
-  if (!opts.enabled || !opts.navReady || opts.status === "loading") return null;
+  if (!opts.navReady || opts.status === "loading") return null;
   if (opts.status === "anon" && !opts.onIndex) return "/";
   if (opts.status === "authed" && opts.onIndex) return "/(tabs)/budgets";
   return null;
