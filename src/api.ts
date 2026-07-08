@@ -249,6 +249,36 @@ export async function fetchHomeLoan(): Promise<HomeLoan> {
 }
 
 /**
+ * One account's live balance (WHIT-212), as served by GET /accounts/balances. `amount`
+ * is SIGNED — a spending account is positive, a loan or credit-card balance negative —
+ * matching what the bank reports. `available_balance`/`account_type` are null when the
+ * bank didn't report them; `as_of` is the ISO timestamp BankSync read the balance.
+ */
+export interface AccountBalance {
+  account_id: string;
+  amount: number;
+  available_balance: number | null;
+  currency: string;
+  as_of: string;
+  account_type: string | null;
+}
+
+/**
+ * Fetch the latest live balance for each linked account. Poller-fed, like the home-loan
+ * balance: an account not yet polled is simply absent, and before ANY poll this is an
+ * empty array — a normal success, not an error — so the caller shows a "—" placeholder
+ * per card rather than an error state.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchAccountBalances(): Promise<AccountBalance[]> {
+  const response = await fetch(`${API_BASE}/accounts/balances`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * The most recent home-loan repayment (WHIT-115), derived server-side from the
  * up-homeloan transaction history. `amount`/`date` are null when there is no
  * repayment on record; `principal`/`interest` are null when the interest leg

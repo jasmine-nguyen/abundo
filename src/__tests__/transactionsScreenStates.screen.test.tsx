@@ -11,6 +11,14 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
+import { C } from '../theme';
+
+const bal = (over: Record<string, unknown> = {}) => ({
+  account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
+  as_of: '2026-07-08T09:32:02.405Z', account_type: 'checking', ...over,
+});
+const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
 
 let mockTx: ReturnType<typeof txData>;
 jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
@@ -50,10 +58,11 @@ const ROW = {
 
 function txData(over: Partial<{
   transactions: unknown[]; isLoading: boolean; isError: boolean; isFetching: boolean;
+  balances: Map<string, unknown>;
 }> = {}) {
   return {
     transactions: [], category: (id: string | null) => (id === 'groceries' ? CAT : undefined),
-    isLoading: false, isError: false, isFetching: false, refetch, refetchStale, ...over,
+    balances: new Map(), isLoading: false, isError: false, isFetching: false, refetch, refetchStale, ...over,
   };
 }
 
@@ -139,6 +148,38 @@ it('Accounts tab settled with no transactions shows the empty state', () => {
   render(<Transactions />);
   fireEvent.press(screen.getByText('Accounts'));
   expect(screen.getByText('No accounts yet')).toBeTruthy();
+});
+
+it('an account card shows its live balance — green when in credit (amount >= 0)', () => {
+  mockTx = txData({
+    transactions: [{ ...ROW, account_id: 'a1', account_name: 'Up Spending' }],
+    balances: new Map([['a1', bal({ amount: 96270.59 })]]),
+  });
+  render(<Transactions />);
+  fireEvent.press(screen.getByText('Accounts'));
+  const label = screen.getByText('$96,270.59'); // bare, no + sign
+  expect(colorOf(label)).toBe(C.good);
+});
+
+it('an account card shows a negative balance in red (money owed)', () => {
+  mockTx = txData({
+    transactions: [{ ...ROW, account_id: 'a1', account_name: 'Up Homeloan' }],
+    balances: new Map([['a1', bal({ amount: -596642.43 })]]),
+  });
+  render(<Transactions />);
+  fireEvent.press(screen.getByText('Accounts'));
+  const label = screen.getByText('-$596,642.43');
+  expect(colorOf(label)).toBe(C.bad);
+});
+
+it('an account with no balance yet shows a dim "—" placeholder', () => {
+  mockTx = txData({
+    transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }],
+    balances: new Map(), // not polled yet
+  });
+  render(<Transactions />);
+  fireEvent.press(screen.getByText('Accounts'));
+  expect(screen.getByText('—')).toBeTruthy();
 });
 
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', () => {

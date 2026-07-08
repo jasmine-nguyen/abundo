@@ -3,7 +3,7 @@
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel, cycleName } from '../context';
-import { fmt, fmt2, tint, agoLabel } from '../theme';
+import { fmt, fmt2, fmtBalance, tint, agoLabel } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -34,6 +34,14 @@ describe('fmt2', () => {
   it('shows sign and two decimals', () => {
     expect(fmt2(-12.5)).toBe('-$12.50');
     expect(fmt2(2500)).toBe('+$2,500.00');
+  });
+});
+
+describe('fmtBalance', () => {
+  it('signs only negatives (colour carries the positive case) with two decimals', () => {
+    expect(fmtBalance(96270.59)).toBe('$96,270.59');   // in credit — bare, no + sign
+    expect(fmtBalance(-596642.43)).toBe('-$596,642.43'); // owing
+    expect(fmtBalance(0)).toBe('$0.00');
   });
 });
 

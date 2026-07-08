@@ -5,8 +5,8 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
-import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, listEnrichments } from './api';
-import type { BudgetRollup, CategorySpend, EnrichmentRule, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
+import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, listEnrichments } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
 import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
@@ -48,6 +48,9 @@ export const loanFactsKey = ['loanFacts'] as const;
 // repayment is server-derived), so no in-context literal to keep in sync.
 export const homeLoanKey = ['homeLoan'] as const;
 export const repaymentKey = ['repayment'] as const;
+// The live per-account balances (the Accounts tab + account-detail header) — WHIT-212.
+// Un-windowed flat key, poller-fed like the home-loan balance, so no write path touches it.
+export const accountBalancesKey = ['accountBalances'] as const;
 // The categorisation rules (the Rules screen). Un-windowed flat key, kept in sync with
 // the literal ['rules'] the rule writes double-write in context.tsx (context imports
 // queryClient directly, not this key, to avoid a circular import) — WHIT-195.
@@ -165,6 +168,15 @@ export function useHomeLoanQuery(enabled: boolean) {
 // none is on record — a graceful empty state, not an error.
 export function useRepaymentQuery(enabled: boolean) {
   return useQuery({ queryKey: repaymentKey, queryFn: fetchRepayment, enabled });
+}
+
+// WHIT-212: live balance per account. Poller-fed (no write path invalidates it); an empty
+// [] before the first poll is a normal success, not an error — the app shows a "—"
+// placeholder per card. Kept SECONDARY to the transaction list: it is deliberately NOT
+// folded into the Transactions composite's loading/error status, so a balances hiccup can
+// never blank the transaction list or the account cards (which derive from transactions).
+export function useAccountBalancesQuery(enabled: boolean) {
+  return useQuery({ queryKey: accountBalancesKey, queryFn: fetchAccountBalances, enabled });
 }
 
 // WHIT-195: the categorisation rules. Mapped in the queryFn (not `select`) so the cache
@@ -408,6 +420,7 @@ export function useInsightsScreenData(): InsightsScreenData {
 export interface TransactionsScreenData {
   transactions: Transaction[];
   category: (id: string | null) => Category | undefined;
+  balances: Map<string, AccountBalance>; // account_id → live balance (WHIT-212); empty until polled
   isLoading: boolean; // first load, nothing cached yet → spinner
   isError: boolean; // a read failed after retries → inline retry
   isFetching: boolean; // any fetch in flight (incl. a background refetch) → pull-to-refresh spinner
@@ -415,15 +428,24 @@ export interface TransactionsScreenData {
   refetchStale: () => void; // focus refresh — only refetches stale queries
 }
 
-/** Transactions + the category taxonomy for the row selectors. No pay-cycle window. */
+/** Transactions + the category taxonomy for the row selectors, plus the live per-account
+ *  balances (WHIT-212). No pay-cycle window. */
 export function useTransactionsScreenData(): TransactionsScreenData {
   const authed = useIsAuthed();
   const transactionsQuery = useTransactionsQuery(authed);
   const categoriesQuery = useCategoriesQuery(authed);
+  const balancesQuery = useAccountBalancesQuery(authed);
 
   const categories = categoriesQuery.data ?? [];
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
+
+  // account_id → balance. Secondary data: a balances failure/empty just means the cards
+  // show "—", so it is NOT passed to useCombineScreenQueries (it must not blank the list).
+  const balances = useMemo(
+    () => new Map((balancesQuery.data ?? []).map((b) => [b.account_id, b])),
+    [balancesQuery.data],
+  );
 
   const status = useCombineScreenQueries([transactionsQuery, categoriesQuery]);
   // isFetching (not isLoading) drives pull-to-refresh: isLoading is false once data is
@@ -434,6 +456,7 @@ export function useTransactionsScreenData(): TransactionsScreenData {
   return {
     transactions: transactionsQuery.data ?? [],
     category,
+    balances,
     isFetching,
     ...status,
   };
