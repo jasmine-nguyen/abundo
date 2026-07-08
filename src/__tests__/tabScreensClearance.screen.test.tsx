@@ -1,11 +1,12 @@
-// WHIT-200 GAP — the three UNWIRED tab screens (Goals / Insights / Settings) had their
-// hard-coded `paddingBottom: 120` replaced by the shared TAB_BAR_CLEARANCE constant. The
-// implementer's motion tests only assert this for Transactions/Budgets (the wired screens).
-// This is the fail-on-revert guard for the DRY on the other three.
+// WHIT-200/199 GAP — the three tab screens (Goals / Insights / Settings) get their list
+// bottom inset from the shared geometry, not a hard-coded 120. Since WHIT-199 they route
+// through the shared ScrollChromeHeader wrapper, whose contentPadding carries the clearance,
+// so this guards that they use the wrapper's shared inset rather than a re-hardcoded literal.
 //
-// Fail-on-revert is REAL here: TAB_BAR_CLEARANCE is mocked to a SENTINEL (999), not its
-// production value (120). So a screen that reverts to a literal `paddingBottom: 120` reads
-// 120 !== 999 and this flips — a guard that would silently pass if we asserted === 120.
+// Fail-on-revert is REAL: the wrapper's contentPadding.paddingBottom is mocked to a SENTINEL
+// (999), not its production value (120). A screen that bypassed the wrapper with a literal
+// `paddingBottom: 120` would read 120 !== 999 and flip — a guard that would silently pass if
+// we asserted === 120.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { ScrollView } from 'react-native';
@@ -14,7 +15,22 @@ import type { AppContext } from '../context';
 import { makeState } from './factory';
 
 const SENTINEL = 999;
-jest.mock('../motion/useNavBarsHeader', () => ({ TAB_BAR_CLEARANCE: 999 }));
+// The wrapper (via useNavBarsHeader) owns the header geometry + list insets. Mock the whole
+// module so ScrollChromeHeader renders with a SENTINEL bottom clearance; floatingHeaderStyle
+// is a plain object the wrapper spreads into its Animated.View header.
+jest.mock('../motion/useNavBarsHeader', () => ({
+  HEADER_BODY_HEIGHT: 58,
+  TAB_BAR_CLEARANCE: 999,
+  floatingHeaderStyle: {},
+  useNavBarsHeader: () => ({
+    onScroll: jest.fn(),
+    scrollEventThrottle: 16,
+    headerStyle: {},
+    headerHeight: 58,
+    headerPaddingTop: 6,
+    contentPadding: { paddingTop: 58, paddingBottom: 999 },
+  }),
+}));
 
 // Real selectors (goalView/categoryBreakdown/aiGoalSignal/…), controlled state.
 let mockState: AppContext;

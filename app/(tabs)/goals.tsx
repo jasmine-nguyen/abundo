@@ -1,17 +1,15 @@
 import React, { useCallback } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../../src/context';
 import { useGoalScreenData } from '../../src/queries';
 import { Bar, RetryButton } from '../../src/components/ui';
-import { TAB_BAR_CLEARANCE } from '../../src/motion/useNavBarsHeader';
+import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 
 export default function Goals() {
   const s = useAppContext(); // kept only for s.fireRepayment (the demo alert button — not server data)
-  const insets = useSafeAreaInsets();
   const router = useRouter();
 
   // WHIT-197: the live balance, last repayment, and loan facts now come from the cached
@@ -25,12 +23,7 @@ export default function Goals() {
   const p = paydownView({ loanFacts, homeLoan });
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
-        <Text style={styles.headerTitle}>Goal</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: TAB_BAR_CLEARANCE }} showsVerticalScrollIndicator={false}>
+    <ScrollChromeHeader title="Goal">
         {/* hero — real payoff progress once loan facts are set, else a set-up prompt
             that still shows the one thing we genuinely know: the live balance. */}
         <View style={styles.hero}>
@@ -236,14 +229,11 @@ export default function Goals() {
             </>
           )}
         </View>
-      </ScrollView>
-    </View>
+    </ScrollChromeHeader>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { alignItems: 'center', paddingHorizontal: 20, paddingBottom: 12 },
-  headerTitle: { fontFamily: FONT.display, fontWeight: '700', fontSize: 19, color: '#fff', letterSpacing: -0.2 },
 
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 14, backgroundColor: '#6470de' },
   heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,.1)' },

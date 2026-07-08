@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Platform, Animated } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel } from '../context';
 import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle } from '../queries';
+import { useReduceMotion } from '../motion/useReduceMotion';
+import { springSheetIn, SHEET_ENTER_OFFSET } from '../motion/sheetMotion';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -78,16 +80,44 @@ function NotifBanner() {
 function SheetHost() {
   const s = useAppContext();
   const open = !!s.sheet;
+  const reduceMotion = useReduceMotion();
+  // WHIT-199: a native-feeling spring on open. The sheet rises from SHEET_ENTER_OFFSET and
+  // springs to rest; reduce-motion jumps instantly (springSheetIn). The CLOSE is the Modal's
+  // fade (animationType) rather than the old vertical slide — a softer dissolve of the scrim +
+  // card. (The inner sheets are gated on s.sheet?.mode, so their content unmounts the moment
+  // s.sheet is null — as it always has; the fade dissolves the empty shell, it doesn't slide a
+  // populated card down.) reduce-motion drops the fade too ('none') so nothing animates.
+  // Read reduce-motion from a ref so the open effect always sees the fresh value WITHOUT it
+  // being a trigger: the spring runs only when the sheet OPENS, never when the OS reduce-motion
+  // setting is toggled while a sheet is already at rest (which would otherwise re-seed + re-spring
+  // an open sheet under the user — WHIT-199 qa edge #2).
+  const reduceMotionRef = useRef(reduceMotion);
+  reduceMotionRef.current = reduceMotion;
+  const translateY = useRef(new Animated.Value(SHEET_ENTER_OFFSET)).current;
+  useEffect(() => {
+    if (!open) return;
+    const rm = reduceMotionRef.current;
+    translateY.setValue(rm ? 0 : SHEET_ENTER_OFFSET); // seed below, then rise
+    springSheetIn(translateY, rm);
+  }, [open, translateY]);
+
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={() => s.setSheet(null)}>
+    <Modal
+      visible={open}
+      transparent
+      animationType={reduceMotion ? 'none' : 'fade'}
+      onRequestClose={() => s.setSheet(null)}
+    >
       <Pressable style={styles.scrim} onPress={() => s.setSheet(null)}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.grabber} />
-          {s.sheet?.mode === 'picker' && <PickerSheet />}
-          {s.sheet?.mode === 'confirm' && <ConfirmSheet />}
-          {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
-          {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
-        </Pressable>
+        <Animated.View style={[styles.sheetLift, { transform: [{ translateY }] }]}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.grabber} />
+            {s.sheet?.mode === 'picker' && <PickerSheet />}
+            {s.sheet?.mode === 'confirm' && <ConfirmSheet />}
+            {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
+            {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
+          </Pressable>
+        </Animated.View>
       </Pressable>
     </Modal>
   );
@@ -322,6 +352,9 @@ const styles = StyleSheet.create({
   notifBody: { fontFamily: FONT.body, fontSize: 13.5, color: '#e6e6ea', lineHeight: 19 },
   // sheet
   scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,.55)', justifyContent: 'flex-end', alignItems: 'center' },
+  // Wraps the sheet so the spring transform (translateY) doesn't disturb its bottom-anchored,
+  // horizontally-centred layout (WHIT-199).
+  sheetLift: { width: '100%', alignItems: 'center' },
   sheet: { width: '100%', maxWidth: 440, backgroundColor: '#161620', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: 34, borderTopWidth: 1, borderColor: 'rgba(255,255,255,.08)' },
   grabber: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,.18)', marginBottom: 14 },
   sheetTitle: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: '#f4f4f6', letterSpacing: -0.3 },
