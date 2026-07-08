@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { RefreshControl, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { C, FONT, tint } from '../../src/theme';
+import { C, FONT, tint, fmtBalance } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { transactionGroups, countUncategorized, accountSummaries } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
@@ -18,7 +18,7 @@ export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
   const router = useRouter();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer.
-  const { transactions, category, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
+  const { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   const view = { transactions, category };
@@ -121,6 +121,9 @@ export default function Transactions() {
           <View style={{ marginTop: 14 }}>
             {accounts.map((a, i) => {
               const color = ACCT_COLORS[i % ACCT_COLORS.length];
+              // WHIT-212: signed live balance from the poller-fed query — green when in
+              // credit, red when owing. Absent until the account's first poll → a dim "—".
+              const bal = balances.get(a.id);
               return (
                 <Pressable
                   key={a.id}
@@ -132,8 +135,11 @@ export default function Transactions() {
                     <Text style={styles.acctName}>{a.name}</Text>
                     <Text style={styles.acctSub}>{a.count} {a.count === 1 ? 'transaction' : 'transactions'}</Text>
                   </View>
-                  {/* Balance goes here once the balance endpoint is wired (WHIT-215 follow-up). */}
-                  <Glyph name="chevron" size={20} color={C.textFaint} />
+                  {bal ? (
+                    <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]}>{fmtBalance(bal.amount)}</Text>
+                  ) : (
+                    <Text style={styles.acctBalPending}>—</Text>
+                  )}
                 </Pressable>
               );
             })}
@@ -187,6 +193,8 @@ const styles = StyleSheet.create({
   acctChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
+  acctBal: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
+  acctBalPending: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', color: C.textFaint },
 
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
   stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },

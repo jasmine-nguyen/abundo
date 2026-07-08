@@ -59,6 +59,14 @@ export function fmt2(n: number): string {
     Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// An account balance label (WHIT-212): "-$596,642.43" / "$96,270.59". The sign shows only
+// for a negative balance (money owed) — a positive balance is bare, with colour (green vs
+// red) carrying "in credit vs owing". Distinct from fmt2, which always prefixes +/−.
+export function fmtBalance(n: number): string {
+  return (n < 0 ? '-' : '') + '$' +
+    Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // A short "when did this happen" label from an ISO timestamp (e.g. "just now",
 // "5m ago", "3h ago", "2d ago"). `now` is injectable so it can be unit-tested
 // deterministically. Returns '' for a null/blank/unparseable input so callers can
