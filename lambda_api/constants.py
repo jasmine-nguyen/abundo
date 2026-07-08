@@ -140,6 +140,13 @@ HOMELOAN_PATH = "/homeloan"
 # constants at /var/task); keep the two equal.
 HOMELOAN_ACCOUNT_ID = "up-homeloan"
 
+# --- Account balances (live per-account balance, WHIT-212) -----------------
+# API Gateway route path for the per-account balances endpoint (GET only). The
+# balance-poller writes one signed-balance row per account; this read API serves them
+# to the Accounts tab. Only lambda_api/handler.py consumes it (no shared repository_*
+# imports it), so the WHIT-136 sync guard doesn't require a shared mirror.
+ACCOUNT_BALANCES_PATH = "/accounts/balances"
+
 # --- Last repayment (WHIT-115) ---------------------------------------------
 # API Gateway route path for the latest home-loan repayment (GET only). Reads
 # the full up-homeloan history (not the 7-day feed) since repayments are ~monthly.

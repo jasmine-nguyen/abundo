@@ -42,6 +42,7 @@ locals {
     "PUT /budgets/{category}",
     "GET /breakdown",
     "GET /homeloan",
+    "GET /accounts/balances",
     "GET /repayment",
     "GET /loanfacts",
     "PUT /loanfacts",
