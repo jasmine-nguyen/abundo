@@ -43,7 +43,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
     useRulesScreenData: () => ({ rules: st().rules ?? [], ...status }),
     usePayCycle: () => ({ payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleName: st().cycleName ?? (() => 'Fortnightly'), isLoading: false, isError: false }),
     useSettingsScreenData: () => ({ categoriesCount: cats().length, loanReady: false, ...status }),
-    useGoalScreenData: () => ({ loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, repayment: st().repayment ?? {}, homeLoanError: false, ...status }),
+    useGoalScreenData: () => ({ loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, repayment: st().repayment ?? {}, homeLoanError: false, repaymentError: false, ...status }),
     useLoanFactsQuery: () => ({ data: st().loanFacts }),
   };
 }

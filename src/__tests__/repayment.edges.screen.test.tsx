@@ -64,4 +64,39 @@ it('shows the empty card (not nothing) when facts are unset and no repayment exi
   mockGoal = makeGoalData({ loanFacts: EMPTY_LOAN_FACTS, repayment: NO_REPAYMENT });
   render(<Goals />);
   expect(screen.getByText(/No repayment on record yet/)).toBeTruthy();
+  // WHIT-121 precedence guard: no error flag → the empty state, NOT the error copy.
+  expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
+});
+
+// WHIT-121 — the failed-fetch error state. A repayment read that fails leaves repayment at
+// NO_REPAYMENT; without the error branch the card would show "No repayment on record yet"
+// and falsely tell a user with a repayment they have none. The error+Retry replaces it.
+it('shows an error + Retry (not the empty state) when the repayment fetch failed', () => {
+  const refetch = jest.fn();
+  mockGoal = makeGoalData({ repayment: NO_REPAYMENT, repaymentError: true, refetch });
+  render(<Goals />);
+  // The error copy shows; the "no repayment" empty copy must NOT (it would be a lie).
+  expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
+  expect(screen.queryByText(/No repayment on record yet/)).toBeNull();
+  // Retry fires the refetch, and the shared preview button still renders.
+  fireEvent.press(screen.getByText('Retry'));
+  expect(refetch).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('Preview a repayment alert')).toBeTruthy();
+});
+
+// Cache-first: a cached repayment must survive a background-refetch failure. Even with
+// repaymentError set, a present repayment renders the REAL card (data-first precedence),
+// never the error state — the honest thing is to show the last-good value.
+it('keeps showing the real repayment card when a refetch fails over cached data', () => {
+  // EMPTY_LOAN_FACTS so the contribution card (which would also print "$1,440" for the
+  // default facts) doesn't collide with the repayment amount assertion below.
+  mockGoal = makeGoalData({
+    loanFacts: EMPTY_LOAN_FACTS,
+    repayment: { amount: 1440, date: '2026-07-01', principal: 1208, interest: 232 },
+    repaymentError: true,
+  });
+  render(<Goals />);
+  expect(screen.getByText('$1,440')).toBeTruthy();
+  expect(screen.getByText('$1,208 principal · $232 interest')).toBeTruthy();
+  expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
 });
