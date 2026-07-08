@@ -1059,6 +1059,61 @@ export function countUncategorized(s: TransactionListInput) {
   return s.transactions.filter((t) => t.counts_to_budget && isUncategorized(s, t)).length;
 }
 
+// --- Accounts (WHIT-215): the Accounts tab + the per-account detail screen -----
+// Both derive ENTIRELY from the transaction list — every transaction already carries an
+// `account_id` + `account_name` from BankSync — so there is no separate accounts feed.
+// We group by `account_id` and pick ONE canonical name per account, so the card, its
+// detail-screen header, and every row underneath always show the same label even if the
+// raw feed spells an account's name slightly differently across transactions.
+export interface AccountSummary {
+  id: string;
+  name: string;
+  count: number; // how many transactions belong to this account
+}
+
+// The single display name for an account: the `account_name` seen on the most of its
+// transactions. Blank names are ignored; ties resolve to the first spelling encountered
+// (the list is newest-first, so the most recent name wins). Falls back to the id when an
+// account has only blank names, so it still renders rather than showing an empty label.
+function canonicalAccountName(transactions: Transaction[], fallbackId: string): string {
+  const counts = new Map<string, number>();
+  for (const t of transactions) {
+    const nm = t.account_name?.trim();
+    if (nm) counts.set(nm, (counts.get(nm) ?? 0) + 1);
+  }
+  let name = fallbackId, best = 0;
+  for (const [nm, n] of counts) if (n > best) { best = n; name = nm; }
+  return name;
+}
+
+// One row per distinct account_id, busiest first (a stable name tie-break keeps the order
+// deterministic across renders). Feeds the Accounts tab.
+export function accountSummaries(s: Pick<TransactionListInput, 'transactions'>): AccountSummary[] {
+  const byId = new Map<string, Transaction[]>();
+  for (const t of s.transactions) {
+    if (!byId.has(t.account_id)) byId.set(t.account_id, []);
+    byId.get(t.account_id)!.push(t);
+  }
+  const out = [...byId].map(([id, txns]) => ({ id, name: canonicalAccountName(txns, id), count: txns.length }));
+  out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return out;
+}
+
+// The per-account detail: this account's canonical name + its transactions grouped by
+// date (the same day-sectioning the All tab uses). Returns null when no transaction
+// carries the id — a stale deep-link or an unknown account renders an empty state, not a
+// crash.
+export function accountDetail(s: TransactionListInput, accountId: string) {
+  const txns = s.transactions.filter((t) => t.account_id === accountId);
+  if (txns.length === 0) return null;
+  return {
+    id: accountId,
+    name: canonicalAccountName(txns, accountId),
+    groups: transactionGroups({ transactions: txns, category: s.category }, 'all'),
+    count: txns.length,
+  };
+}
+
 // The narrow read-input for the budget-detail + budget-edit selectors (WHIT-203) — they
 // read only the taxonomy lookup + budgets (+ transactions/cycle for detail), never the
 // whole store. Narrowing lets the migrated budget screens feed cached query data straight

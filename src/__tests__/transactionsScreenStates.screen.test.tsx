@@ -1,11 +1,13 @@
 // WHIT-190a — Transactions screen STATE GATING (gaps): the showSpinner/showError
-// length===0 guards (cache-first: keep rows through a background refetch / an error),
-// the `tab !== 'accounts'` independence, and the empty states. The composite
-// (../queries) is mocked so each gating branch is driven deterministically; ../context
-// is partially mocked (real selectors, stubbed useAppContext for TransactionRow).
-// Fail-on-revert: dropping `transactions.length === 0` from showError makes the
-// "error with cached rows" case surface the error; removing a `tab !== 'accounts'`
-// guard makes the accounts case show a spinner/error.
+// length===0 guards (cache-first: keep rows through a background refetch / an error)
+// and the empty states. The composite (../queries) is mocked so each gating branch is
+// driven deterministically; ../context is partially mocked (real selectors, stubbed
+// useAppContext for TransactionRow).
+// WHIT-215 — the Accounts tab now DERIVES from the transactions query (one card per
+// account_id), so the cold-load spinner + error apply to it too, and an account name
+// rendered from the fixture proves the derivation. Fail-on-revert: dropping
+// `transactions.length === 0` from showError makes the "error with cached rows" case
+// surface the error.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -26,9 +28,13 @@ jest.mock('../context', () => {
   };
 });
 
+const mockPush = jest.fn();
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]) };
+  return {
+    useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]),
+    useRouter: () => ({ push: mockPush }),
+  };
 });
 
 import Transactions from '../../app/(tabs)/transactions';
@@ -54,6 +60,7 @@ function txData(over: Partial<{
 beforeEach(() => {
   refetch.mockClear();
   refetchStale.mockClear();
+  mockPush.mockClear();
   mockTx = txData();
 });
 
@@ -85,23 +92,53 @@ it('empty + loading shows the spinner', () => {
   expect(screen.getByTestId('transactions-loading')).toBeTruthy();
 });
 
-it('Accounts tab renders account rows regardless of transactions loading AND error', () => {
-  mockTx = txData({ transactions: [], isLoading: true, isError: true });
+it('Accounts tab derives one card per account_id from the transactions (consistent name)', () => {
+  const anz = { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' };
+  const up = { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Homeloan' };
+  const up2 = { ...ROW, transaction_id: 't3', account_id: 'a2', account_name: 'Up Homeloan' };
+  mockTx = txData({ transactions: [anz, up, up2] });
   render(<Transactions />);
   fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.getByText('Spending')).toBeTruthy(); // static account list
-  expect(screen.queryByTestId('transactions-loading')).toBeNull();
-  expect(screen.queryByTestId('transactions-error')).toBeNull();
+  // One card per account; the Up account (2 txns) collapses to a single consistent name.
+  expect(screen.getByText('ANZ')).toBeTruthy();
+  expect(screen.getAllByText('Up Homeloan')).toHaveLength(1);
 });
 
-it('Accounts tab shows the static list during a cold load — the spinner never leaks in', () => {
-  // Independently locks the spinner-branch `tab !== 'accounts'` guard: isError:false so
-  // showSpinner is genuinely true, yet the accounts tab must not render it.
+it('tapping an account card navigates to that account\'s detail route', () => {
+  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }] });
+  render(<Transactions />);
+  fireEvent.press(screen.getByText('Accounts'));
+  fireEvent.press(screen.getByText('ANZ'));
+  expect(mockPush).toHaveBeenCalledWith('/account/a1');
+});
+
+it('Accounts tab shows the cold-load spinner (empty + loading) — it derives from the query now', () => {
   mockTx = txData({ transactions: [], isLoading: true, isError: false });
   render(<Transactions />);
   fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.getByText('Spending')).toBeTruthy();
-  expect(screen.queryByTestId('transactions-loading')).toBeNull();
+  expect(screen.getByTestId('transactions-loading')).toBeTruthy();
+});
+
+it('Accounts tab shows the inline retry on a cold error (empty + error)', () => {
+  mockTx = txData({ transactions: [], isError: true });
+  render(<Transactions />);
+  fireEvent.press(screen.getByText('Accounts'));
+  expect(screen.getByTestId('transactions-error')).toBeTruthy();
+});
+
+it('Accounts tab keeps its cards through a background error when txns are cached (cache-first)', () => {
+  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }], isError: true });
+  render(<Transactions />);
+  fireEvent.press(screen.getByText('Accounts'));
+  expect(screen.getByText('ANZ')).toBeTruthy();
+  expect(screen.queryByTestId('transactions-error')).toBeNull();
+});
+
+it('Accounts tab settled with no transactions shows the empty state', () => {
+  mockTx = txData({ transactions: [] });
+  render(<Transactions />);
+  fireEvent.press(screen.getByText('Accounts'));
+  expect(screen.getByText('No accounts yet')).toBeTruthy();
 });
 
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', () => {
