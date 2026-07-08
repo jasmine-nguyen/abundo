@@ -58,10 +58,17 @@ class FakeNotifyRepo:
         self.order.append(txn_id)
 
 
-def _run(lam, monkeypatch, normalised, *, tokens=("ExpoPushToken[a]",), notify=None):
+def _run(lam, monkeypatch, normalised, *, tokens=("ExpoPushToken[a]",), notify=None, send_ok=1):
     ra = lam.repayment_alerts
     sent = []
-    monkeypatch.setattr(ra, "send_push", lambda title, body, toks: sent.append((title, body, list(toks))))
+
+    def fake_send(title, body, toks):
+        sent.append((title, body, list(toks)))
+        # send_ok models how many tokens Expo accepted: >0 = it reached Expo
+        # (the WHIT-154 mark-on-landing signal), 0 = a swallowed transport failure.
+        return {"sent": len(list(toks)), "ok": send_ok, "pruned": []}
+
+    monkeypatch.setattr(ra, "send_push", fake_send)
     notify = notify if notify is not None else FakeNotifyRepo()
     ra.notify_repayments(normalised, device_repo=FakeDeviceRepo(tokens), notify_repo=notify)
     return sent, notify
@@ -169,6 +176,104 @@ def test_different_repayment_id_fires(lam, monkeypatch):
     assert len(sent) == 1
 
 
+# --- WHIT-154 mark-on-landing: a failed send must NOT mark fired ------------
+
+
+def test_send_failure_leaves_repayment_unmarked(lam, monkeypatch):
+    # Expo is down at the moment the repayment posts: send_push returns ok == 0
+    # (a swallowed transport failure). The attempt is made but the id must NOT be
+    # marked fired — else a re-ingest would skip it and the push is lost forever.
+    # Fail-on-revert: an unconditional mark_repayment_fired leaves fired == {"r1"}.
+    txn = _norm(lam, txn_id="r1", amount=Decimal("3667"))
+    sent, notify = _run(lam, monkeypatch, [txn], send_ok=0)
+    assert len(sent) == 1            # the send was attempted
+    assert notify.fired == set()     # but nothing was marked
+
+
+def test_send_failure_then_reingest_resends_and_marks(lam, monkeypatch):
+    # The whole point of the card: a failed send leaves the repayment unmarked, so
+    # the SAME id re-ingested (Expo now up, ok > 0) fires again and finally marks.
+    txn = _norm(lam, txn_id="r1", amount=Decimal("3667"))
+    notify = FakeNotifyRepo()
+    sent_down, _ = _run(lam, monkeypatch, [txn], notify=notify, send_ok=0)
+    assert len(sent_down) == 1 and notify.fired == set()   # outage: attempted, unmarked
+    sent_up, _ = _run(lam, monkeypatch, [txn], notify=notify, send_ok=1)
+    assert len(sent_up) == 1                                # re-ingest re-sends
+    assert notify.fired == {"r1"}                           # and now marks
+
+
+def test_partial_success_marks_fired(lam, monkeypatch):
+    # "At least one device accepted it" (ok >= 1) is the bar, NOT "every token landed":
+    # two devices, one accepted and one pruned (DeviceNotRegistered) → ok == 1 → the
+    # repayment is still marked, so a genuine partial success doesn't force a redundant
+    # re-send. Guards against a stricter `ok == sent` gate (which would leave it unmarked).
+    ra = lam.repayment_alerts
+    sent = []
+
+    def fake_send(title, body, toks):
+        toks = list(toks)
+        sent.append((title, body, toks))
+        return {"sent": len(toks), "ok": 1, "pruned": ["ExpoPushToken[b]"]}  # 1 of 2 landed
+
+    monkeypatch.setattr(ra, "send_push", fake_send)
+    notify = FakeNotifyRepo()
+    txn = _norm(lam, txn_id="r1", amount=Decimal("3667"))
+    ra.notify_repayments([txn], device_repo=FakeDeviceRepo(("ExpoPushToken[a]", "ExpoPushToken[b]")),
+                         notify_repo=notify)
+    assert len(sent) == 1
+    assert notify.fired == {"r1"}
+
+
+# --- WHIT-154 gaps (qa): mixed-batch partial failure + in-batch retry ---------
+# The implementer locked single-id ok==0/ok>0 and the end-to-end retry; these lock
+# the MULTI-id interactions. Each fails on a revert of the `["ok"] > 0` gate.
+
+
+def test_mixed_batch_marks_only_the_landed_repayment(lam, monkeypatch):
+    # Two DISTINCT repayment ids in one batch: r1's send reaches Expo, r2's fails
+    # (ok == 0). Only r1 may be marked; r2 stays unmarked so a re-ingest retries it.
+    # Fail-on-revert: an unconditional mark leaves fired == {"r1", "r2"} and loses r2.
+    ra = lam.repayment_alerts
+    sent = []
+
+    def fake_send(title, body, toks):
+        sent.append((title, body, list(toks)))
+        # r2 is the $500 repayment; its send fails. r1 ($3,667) lands.
+        ok = 0 if "$500 toward" in body else 1
+        return {"sent": len(list(toks)), "ok": ok, "pruned": []}
+
+    monkeypatch.setattr(ra, "send_push", fake_send)
+    notify = FakeNotifyRepo()
+    batch = [_norm(lam, txn_id="r1", amount=Decimal("3667")),
+             _norm(lam, txn_id="r2", amount=Decimal("500"))]
+    ra.notify_repayments(batch, device_repo=FakeDeviceRepo(), notify_repo=notify)
+    assert len(sent) == 2               # both attempted
+    assert notify.fired == {"r1"}       # only the landed id marked; r2 left for retry
+
+
+def test_duplicate_id_first_send_fails_second_retries_in_batch(lam, monkeypatch):
+    # INTENDED best-effort: the same id appears twice; the first send fails so the id
+    # is NOT added to the in-batch `fired` guard, so the second copy re-sends (and, on
+    # success, marks once). Contrast test_duplicate_id_within_one_batch_sends_one_push,
+    # where both would-succeed and the guard suppresses the second. Fail-on-revert: an
+    # unconditional mark sets the guard on copy 1, so copy 2 is skipped -> len(sent)==1.
+    ra = lam.repayment_alerts
+    sent = []
+    outcomes = iter([0, 1])  # copy 1 fails, copy 2 lands
+
+    def fake_send(title, body, toks):
+        sent.append((title, body, list(toks)))
+        return {"sent": len(list(toks)), "ok": next(outcomes), "pruned": []}
+
+    monkeypatch.setattr(ra, "send_push", fake_send)
+    notify = FakeNotifyRepo()
+    txn = _norm(lam, txn_id="r1", amount=Decimal("3667"))
+    ra.notify_repayments([txn, txn], device_repo=FakeDeviceRepo(), notify_repo=notify)
+    assert len(sent) == 2               # first failed -> second copy retried
+    assert notify.order == ["r1"]       # marked exactly once (on the successful retry)
+    assert notify.fired == {"r1"}
+
+
 # --- batches -----------------------------------------------------------------
 
 
@@ -210,7 +315,7 @@ def test_empty_batch_sends_nothing_without_reading_tokens(lam, monkeypatch):
 def test_send_precedes_mark(lam, monkeypatch):
     ra = lam.repayment_alerts
     order = []
-    monkeypatch.setattr(ra, "send_push", lambda *a: order.append("send"))
+    monkeypatch.setattr(ra, "send_push", lambda *a: (order.append("send"), {"sent": 1, "ok": 1, "pruned": []})[1])
     notify = FakeNotifyRepo()
     orig = notify.mark_repayment_fired
     notify.mark_repayment_fired = lambda tid: (order.append("mark"), orig(tid))[1]
@@ -304,8 +409,12 @@ def _drive(lam, monkeypatch, data, *, tokens=("ExpoPushToken[a]",), notify=None,
     captured off repayment_alerts.
     """
     sent = []
-    monkeypatch.setattr(lam.repayment_alerts, "send_push",
-                        lambda title, body, toks: sent.append((title, body, list(toks))))
+
+    def fake_send(title, body, toks):
+        sent.append((title, body, list(toks)))
+        return {"sent": len(list(toks)), "ok": len(list(toks)), "pruned": []}
+
+    monkeypatch.setattr(lam.repayment_alerts, "send_push", fake_send)
     monkeypatch.setattr(lam.budget_alerts, "capture_pre_write",
                         capture if capture is not None else (lambda *a, **k: None))
     if fire is not None:

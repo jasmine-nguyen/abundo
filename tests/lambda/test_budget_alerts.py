@@ -110,10 +110,17 @@ class NoTwinRepo:
 
 
 def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushToken[a]",),
-         cats=None, webhook_repo=None, notify=None, paycycle=("2026-07-01", 14)):
+         cats=None, webhook_repo=None, notify=None, paycycle=("2026-07-01", 14), send_ok=1):
     ba = alerts.budget_alerts
     sent = []
-    monkeypatch.setattr(ba, "send_push", lambda title, body, toks: sent.append((title, body, list(toks))))
+
+    def fake_send(title, body, toks):
+        sent.append((title, body, list(toks)))
+        # send_ok models Expo acceptance: >0 = it reached Expo (the WHIT-154
+        # mark-on-landing signal), 0 = a swallowed transport failure.
+        return {"sent": len(list(toks)), "ok": send_ok, "pruned": []}
+
+    monkeypatch.setattr(ba, "send_push", fake_send)
     notify = notify or FakeNotifyRepo()
     webhook_repo = webhook_repo or NoTwinRepo()
     ctx = ba.capture_pre_write(
@@ -333,10 +340,159 @@ def test_double_crossing_sends_only_100_but_marks_both(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80", "groceries#100"}
 
 
+# --- WHIT-154 mark-on-landing: a failed send must NOT mark fired ------------
+
+
+def test_send_failure_marks_no_marker(alerts, monkeypatch):
+    # A single 80% crossing whose send fails (ok == 0): the attempt is made but no
+    # marker is written, so the crossing stays eligible. Fail-on-revert: an
+    # unconditional mark_fired leaves {"groceries#80"}.
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[new], send_ok=0)
+    assert len(sent) == 1                                          # send attempted
+    assert notify.fired_markers("2026-07-01", 14) == set()        # nothing marked
+
+
+def test_double_crossing_send_failure_marks_neither_threshold(alerts, monkeypatch):
+    # The secondary-loop guard: $0 → -$100 crosses 80% AND 100% at once, but the
+    # (100%) send fails. Neither marker may be written — marking 80% while the 100%
+    # push never landed would silence the user entirely. Fail-on-revert: the old
+    # unconditional code marks both, leaving {"groceries#80", "groceries#100"}.
+    new = _txn("new1", "groceries", -100, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=[], normalised=[new], send_ok=0)
+    assert len(sent) == 1                                          # the 100% send attempted
+    assert notify.fired_markers("2026-07-01", 14) == set()        # neither marker written
+
+
+def test_primary_already_fired_repairs_secondary_without_a_new_send(alerts, monkeypatch):
+    # A prior ingest already delivered + marked the 100% push, but the 80% marker is
+    # missing (e.g. it crossed both at once but only 100% was marked before a crash).
+    # A re-ingest that re-detects the double crossing must repair the 80% marker
+    # WITHOUT sending again — the `send_marker in fired` branch treats it as landed.
+    notify = FakeNotifyRepo()
+    notify.mark_fired("2026-07-01", 14, "groceries#100")  # delivered earlier
+    new = _txn("new1", "groceries", -100, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=[], normalised=[new], notify=notify)
+    assert sent == []                                             # no second push
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80", "groceries#100"}
+
+
+def test_budget_send_failure_does_not_falsely_retry_once_gsi_caught_up(alerts, monkeypatch):
+    # HONEST NON-GUARANTEE (WHIT-154): unlike the repayment path, a failed budget
+    # send does NOT reliably retry. It only re-fires while the date-index GSI still
+    # lags; once the GSI reflects the first-ingest write, `before` already sits past
+    # the threshold, `newly` is empty, and nothing re-fires. This locks that
+    # documented limit so no one banks on a budget retry that won't happen.
+    budgets = {"groceries": {"target": Decimal("100")}}
+    new = _txn("new1", "groceries", -15, "posted")
+
+    # Ingest 1: Expo down. before $70 → after $85 crosses 80% → attempted, unmarked.
+    notify = FakeNotifyRepo()
+    before_lagging = [_txn("old", "groceries", -70, "posted")]
+    sent1, notify, _ = _run(alerts, monkeypatch, budgets=budgets,
+                            before=before_lagging, normalised=[new], notify=notify, send_ok=0)
+    assert len(sent1) == 1 and notify.fired_markers("2026-07-01", 14) == set()
+
+    # Ingest 2: GSI has caught up — `before` now already includes the persisted $15
+    # ($85). _simulate_after replaces new1 by id (not add) → after $85 too → no new
+    # crossing → no send. The alert is silently not retried (accepted best-effort).
+    before_caught_up = [_txn("old", "groceries", -70, "posted"), _txn("new1", "groceries", -15, "posted")]
+    sent2, notify, _ = _run(alerts, monkeypatch, budgets=budgets,
+                            before=before_caught_up, normalised=[new], notify=notify, send_ok=1)
+    assert sent2 == []                                            # no re-fire
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+# --- WHIT-154 gaps (qa): multi-category partial failure + marker interactions ----
+
+
+def test_two_categories_one_send_lands_one_fails(alerts, monkeypatch):
+    # Two budgeted categories both cross 80% in ONE write: groceries' push lands,
+    # dining's fails (ok == 0). Only the landed category may be marked; the failed one
+    # stays eligible. Fail-on-revert: an unconditional mark writes BOTH markers.
+    ba = alerts.budget_alerts
+    sent = []
+
+    def fake_send(title, body, toks):
+        sent.append((title, body, list(toks)))
+        ok = 0 if "Dining" in body else 1   # dining's send fails; groceries lands
+        return {"sent": len(list(toks)), "ok": ok, "pruned": []}
+
+    monkeypatch.setattr(ba, "send_push", fake_send)
+    notify = FakeNotifyRepo()
+    webhook_repo = NoTwinRepo()
+    budgets = {"groceries": {"target": Decimal("100")}, "dining": {"target": Decimal("100")}}
+    normalised = [_txn("g1", "groceries", -85, "posted"), _txn("d1", "dining", -85, "posted")]
+    ctx = ba.capture_pre_write(
+        normalised, device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo(budgets),
+        paycycle_repo=FakePaycycleRepo("2026-07-01", 14),
+        window_repo=FakeWindowRepo([]), webhook_repo=webhook_repo,
+    )
+    ba.fire_if_crossed(
+        ctx, normalised, webhook_repo=webhook_repo,
+        category_repo=FakeCategoryRepo([
+            {"id": "groceries", "name": "Groceries", "bucket": "Living"},
+            {"id": "dining", "name": "Dining", "bucket": "Living"},
+        ]),
+        notify_repo=notify,
+    )
+    assert len(sent) == 2                                               # both attempted
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}   # only the landed one
+
+
+def test_budget_fully_pruned_ok_zero_leaves_unmarked(alerts, monkeypatch):
+    # ok == 0 because every token was DeviceNotRegistered (pruned), NOT a transport
+    # error. The gate keys ONLY on ok > 0, so the pruned reason is invisible: still no
+    # marker, exactly like an outage. Fail-on-revert: an unconditional mark writes
+    # groceries#80.
+    ba = alerts.budget_alerts
+    sent = []
+
+    def fake_send(title, body, toks):
+        toks = list(toks)
+        sent.append((title, body, toks))
+        return {"sent": len(toks), "ok": 0, "pruned": toks}  # all dead tokens
+
+    monkeypatch.setattr(ba, "send_push", fake_send)
+    notify = FakeNotifyRepo()
+    webhook_repo = NoTwinRepo()
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")            # -> $85, crosses 80%
+    ctx = ba.capture_pre_write(
+        [new], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
+        paycycle_repo=FakePaycycleRepo("2026-07-01", 14),
+        window_repo=FakeWindowRepo(before), webhook_repo=webhook_repo,
+    )
+    ba.fire_if_crossed(ctx, [new], webhook_repo=webhook_repo,
+                       category_repo=FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+                       notify_repo=notify)
+    assert len(sent) == 1                                     # attempted
+    assert notify.fired_markers("2026-07-01", 14) == set()    # pruned ok==0 => still unmarked
+
+
+def test_higher_send_fails_leaves_100_eligible_with_lower_fired(alerts, monkeypatch):
+    # Marker interaction: 80% already fired earlier this cycle; a new write vaults to
+    # 100% but that send fails (ok == 0). The `continue` must run BEFORE the secondary
+    # loop, so NO groceries#100 marker is written — 100% stays eligible to retry within
+    # GSI lag, and the stale 80% marker is untouched. Fail-on-revert writes groceries#100.
+    notify = FakeNotifyRepo()
+    notify.mark_fired("2026-07-01", 14, "groceries#80")       # 80% delivered earlier
+    before = [_txn("old", "groceries", -85, "posted")]        # already past 80%
+    new = _txn("new1", "groceries", -20, "posted")            # -> $105, crosses 100%
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[new], notify=notify, send_ok=0)
+    assert len(sent) == 1                                             # 100% send attempted
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}  # no #100 written
+
+
 def test_send_precedes_mark(alerts, monkeypatch):
     ba = alerts.budget_alerts
     order = []
-    monkeypatch.setattr(ba, "send_push", lambda *a: order.append("send"))
+    monkeypatch.setattr(ba, "send_push", lambda *a: (order.append("send"), {"sent": 1, "ok": 1, "pruned": []})[1])
     notify = FakeNotifyRepo()
     orig_mark = notify.mark_fired
     notify.mark_fired = lambda *a: (order.append("mark"), orig_mark(*a))[1]
@@ -697,7 +853,8 @@ class _CursorWindowRepo:
 def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     ba = alerts.budget_alerts
     sent = []
-    monkeypatch.setattr(ba, "send_push", lambda t, b, toks: sent.append((t, b)))
+    monkeypatch.setattr(ba, "send_push",
+                        lambda t, b, toks: (sent.append((t, b)), {"sent": len(list(toks)), "ok": len(list(toks)), "pruned": []})[1])
     # Two pre-write rows ($35 + $35 = $70) split across two pages; the new $15 pushes
     # the total to $85 -> crosses 80. If page 2 were dropped, before=$35 -> after=$50 ->
     # no crossing. So a passing send proves both pages were read.
