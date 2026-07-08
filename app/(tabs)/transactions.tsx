@@ -1,23 +1,22 @@
 import React, { useCallback, useState } from 'react';
 import { RefreshControl, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Animated } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { transactionGroups, countUncategorized } from '../../src/context';
+import { transactionGroups, countUncategorized, accountSummaries } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { useNavBarsHeader, floatingHeaderStyle } from '../../src/motion/useNavBarsHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 
 type Tab = 'all' | 'uncategorized' | 'accounts';
 
-const ACCOUNTS = [
-  { name: 'Spending', sub: 'Everyday account', balance: '$1,284.50', balColor: '#f1f1f4', icon: 'cart', color: '#7FD49B' },
-  { name: 'Savings', sub: 'Goal: House deposit', balance: '$96,416', balColor: '#cfd2ff', icon: 'home', color: '#8AB4F8' },
-  { name: 'Home loan', sub: 'Up Home Loan', balance: '−$412,900', balColor: '#ff6b6b', icon: 'home', color: '#F08C8C' },
-];
+// Accounts carry no server-side icon/colour, so give each card a stable cosmetic accent by
+// index — purely visual, no meaning attached to the colour (WHIT-215).
+const ACCT_COLORS = ['#7FD49B', '#8AB4F8', '#F0B67F', '#C9B3F5', '#F08C8C'];
 
 export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
+  const router = useRouter();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer.
   const { transactions, category, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
@@ -25,6 +24,9 @@ export default function Transactions() {
   const view = { transactions, category };
   const uncategorizedCount = countUncategorized(view);
   const groups = transactionGroups(view, tab === 'uncategorized' ? 'uncategorized' : 'all');
+  // WHIT-215: the Accounts tab is derived from the transactions themselves (one card per
+  // account_id), not a hardcoded list — so names always match what's in the data.
+  const accounts = accountSummaries(view);
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
@@ -89,12 +91,14 @@ export default function Transactions() {
           </View>
         )}
 
-        {tab !== 'accounts' && showSpinner && (
+        {/* WHIT-215: the Accounts tab now derives from the transactions query too, so the
+            cold-load spinner + error apply to every tab (they no longer skip 'accounts'). */}
+        {showSpinner && (
           <View testID="transactions-loading" style={styles.rowsState}>
             <ActivityIndicator color={C.accent} />
           </View>
         )}
-        {tab !== 'accounts' && showError && (
+        {showError && (
           <View testID="transactions-error" style={styles.rowsState}>
             <Text style={styles.stateText}>Couldn't load your transactions.</Text>
             <Pressable testID="transactions-retry" onPress={refetch} style={styles.retryBtn}>
@@ -118,18 +122,34 @@ export default function Transactions() {
           </View>
         )}
 
-        {tab === 'accounts' && (
+        {tab === 'accounts' && !showSpinner && !showError && accounts.length === 0 && (
+          <View style={styles.empty}>
+            <View style={styles.emptyIcon}><Glyph name="wallet" size={32} color={C.accentSoft} /></View>
+            <Text style={styles.emptyTitle}>No accounts yet</Text>
+            <Text style={styles.emptySub}>Your linked accounts show up here once transactions sync.</Text>
+          </View>
+        )}
+
+        {tab === 'accounts' && !showSpinner && !showError && accounts.length > 0 && (
           <View style={{ marginTop: 14 }}>
-            {ACCOUNTS.map((a) => (
-              <View key={a.name} style={styles.acct}>
-                <View style={[styles.acctChip, { backgroundColor: tint(a.color, 0.15) }]}><Icon name={a.icon} size={22} color={a.color} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.acctName}>{a.name}</Text>
-                  <Text style={styles.acctSub}>{a.sub}</Text>
-                </View>
-                <Text style={[styles.acctBal, { color: a.balColor }]}>{a.balance}</Text>
-              </View>
-            ))}
+            {accounts.map((a, i) => {
+              const color = ACCT_COLORS[i % ACCT_COLORS.length];
+              return (
+                <Pressable
+                  key={a.id}
+                  onPress={() => router.push(`/account/${a.id}`)}
+                  style={({ pressed }) => [styles.acct, pressed && styles.acctPressed]}
+                >
+                  <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.acctName}>{a.name}</Text>
+                    <Text style={styles.acctSub}>{a.count} {a.count === 1 ? 'transaction' : 'transactions'}</Text>
+                  </View>
+                  {/* Balance goes here once the balance endpoint is wired (WHIT-215 follow-up). */}
+                  <Glyph name="chevron" size={20} color={C.textFaint} />
+                </Pressable>
+              );
+            })}
           </View>
         )}
       </ScrollView>
@@ -177,10 +197,11 @@ const styles = StyleSheet.create({
   emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
 
   acct: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginBottom: 10 },
+  // WHIT-215 taste: the account card is tappable now, so it dims on press like a row.
+  acctPressed: { opacity: 0.6 },
   acctChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
-  acctBal: { fontFamily: FONT.display, fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
 
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
   stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
