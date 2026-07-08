@@ -1,18 +1,27 @@
 ---
-description: Take one backlog card from plan to reviewed, tested code. Two gates — you approve the plan, then approve the finished change before it's pushed. Never commits or pushes without your go.
+description: Take one backlog card from plan to reviewed, tested code. Two sign-offs — you approve the plan (Plan Sign-off), then approve the finished change (Implementation Sign-off) before it's pushed. Never commits or pushes without your go.
 ---
 
-Run the full backlog pipeline for ONE card. You are the orchestrator: subagents
-plan and review; you implement and hold all authority (edits, commits, pushes,
-Notion writes). There are TWO human gates — the plan, and the finished change —
-and you stop at both.
+Run the full backlog pipeline for ONE card. You are the orchestrator AND the
+implementer: the subagents only plan and review (all read-only) — YOU write the
+code, run the tests, and hold every write authority (edits, commits, pushes, Notion).
+There is deliberately no separate "coder" agent: implementation has to hold that
+authority and stop to ask you at decision points, which a fire-and-return subagent
+can't do.
+
+Two words, kept distinct:
+- **Sign-off** — a human stop where YOU say go. There are exactly two: the **Plan
+  Sign-off** (before any code) and the **Implementation Sign-off** (before anything
+  ships). You stop at both.
+- **gate** — an automated / agent quality bar that passes or fails on its own (green
+  suite, coverage floor, code-critic / qa verdicts). No human click.
 
 Board data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
 Target card (optional): $ARGUMENTS
 
 ---
 
-## Phase 1 — Plan (gate 1)
+## Phase 1 — Plan (Plan Sign-off)
 
 1. **Select the card.**
    - If `$ARGUMENTS` names a card (a title fragment or a priority number), use
@@ -22,21 +31,32 @@ Target card (optional): $ARGUMENTS
    - Fetch the card's full page (`notion-fetch`) to get any description/body.
    - Echo back which card you picked and why before continuing.
 
-2. **Plan (subagent).** Spawn the `backlog-planner` agent with the card title +
+2. **Plan (subagent).** Spawn the `solution-designer` agent with the card title +
    description. It returns a file-level plan. Don't plan it yourself — let the
    agent do it so the context stays isolated.
 
-3. **Critique (subagent).** Spawn the `plan-critic` agent with the card AND the
-   plan. It returns an adversarial review. If it says NEEDS REWORK, send the
-   problems back to a fresh `backlog-planner` run and repeat once.
+   - **Move the card to In Progress — you own this, not the planner.** As soon as
+     the planner's `## Card validity` verdict comes back **VALID**, set the card's
+     `Status` To Do → In Progress via `notion-update-page` (idempotent — skip if it's
+     already In Progress). If the verdict is anything else (ALREADY DONE / DEAD CODE /
+     WRONG PREMISE / ALREADY COVERED), do NOT move it — leave it in To Do and follow
+     the verdict (close / retarget). Echo the board change (or why you skipped it).
 
-4. **Present + PAUSE (gate 1).** Show the user, concisely: the card and its
-   "done" definition, the final approach, the exact files that would change, any
-   escalation / open questions needing a human call, and the test plan. Then ask:
+3. **Critique (subagent).** Spawn the `solution-critic` agent with the card AND the
+   plan. It returns an adversarial review. If it says NEEDS REWORK, send the
+   problems back to a fresh `solution-designer` run and repeat once.
+
+4. **Present + PAUSE (Plan Sign-off).** First run a **plain-language pass** (AGENTS.md
+   "How to communicate" + the jargon glossary): lead with an **"In plain words:"**
+   summary — 2–3 sentences a non-coder gets — then swap or gloss every technical term
+   in the detail. No unexplained jargon reaches Jasmine. Then show, concisely: the
+   card and its "done" definition, the final approach, the exact files that would
+   change, any escalation / open question needing a human call, and the test plan.
+   Then ask:
    **"Approve this plan? Say go and I'll implement it."** Do not proceed until the
    user approves. Fold any changes they ask for into the plan first.
 
-## Phase 2 — Implement (only after gate 1 approval)
+## Phase 2 — Implement (only after the Plan Sign-off)
 
 5. **Branch.** Put the work on its own branch for this card (create it from the
    current base if not already on a card branch), so the change is reviewable in
@@ -56,7 +76,7 @@ Target card (optional): $ARGUMENTS
      hard-to-reverse decision the plan didn't settle (new table/schema, sync vs
      async, a new dependency, a public API/auth choice), STOP and ask the user
      — a short multiple-choice question (AGENTS.md "Presenting a decision" format)
-     — then continue. Never resolve such a fork silently mid-implementation.
+     — then continue. Never resolve such a decision silently mid-implementation.
 
 7. **Write the first tests + self-check.** As the implementer, write tests as you
    build — the happy path + the acceptance criteria + the obvious edges. That's your
@@ -97,7 +117,8 @@ Target card (optional): $ARGUMENTS
      still isn't clean after two, STOP and hand the user the remaining findings
      rather than looping forever.
    - **Deferred craft / acceptable-for-scope** → collect the proposed tech-debt
-     CARD blocks and qa's deferred risks; you'll offer to file them at gate 2. Do
+     CARD blocks and qa's deferred risks; you'll offer to file them at the
+     Implementation Sign-off. Do
      NOT file them yet.
    - **Commit qa's automated tests into the suite** — write the test files qa
      authored into `src/__tests__/` (client) or `tests/` (server), doing any
@@ -111,9 +132,9 @@ Target card (optional): $ARGUMENTS
      the fail-on-revert check (a test that still passes with the fix reverted is worthless).
      Never let an agent be the sole reviewer of its own tests.
    - **Hold onto qa's test-case checklist** — it's part of what you present and
-     write to Notion at gate 2.
+     write to Notion at the Implementation Sign-off.
 
-## Phase 4 — Finish (gate 2)
+## Phase 4 — Finish (Implementation Sign-off)
 
 10. **Green gate — the suite (with coverage floor) must pass before you present.**
     Run the suites the way CI does, so the coverage floor is enforced: client
@@ -121,10 +142,13 @@ Target card (optional): $ARGUMENTS
     --cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
     backstop, not a quality signal — the real quality gate is fail-on-revert, which
     code-critic checks). ALL tests green, coverage floor met, typecheck clean is the
-    precondition for gate 2. If anything is red, you are not done — fix it (or take it
+    precondition for the Implementation Sign-off. If anything is red, you are not done — fix it (or take it
     back through Phase 3). Never raise a PR on a red suite.
 
-11. **Present + PAUSE (gate 2).** Show the user: what you built, the final diff
+11. **Present + PAUSE (Implementation Sign-off).** First run a **plain-language pass**
+    (AGENTS.md "How to communicate" + the jargon glossary): lead with an **"In plain
+    words:"** summary a non-coder gets, then gloss every technical term below. No
+    unexplained jargon reaches Jasmine. Then show: what you built, the final diff
     summary, the `code-critic` verdict (should be SHIP), the `qa` edge-case
     findings, its test-case checklist, the new automated tests + their green run,
     typecheck results, and the list of proposed tech-debt cards. Then ask:
@@ -158,8 +182,10 @@ Target card (optional): $ARGUMENTS
   trust; "let me read it and get back to you with proof" is always the right move.
   If you catch yourself hedging ("probably", "most likely", "it might be") without
   having read the relevant code, STOP and go read it.
-- Two hard stops: never implement before gate-1 approval; never commit, push, or
-  write to Notion before gate-2 approval.
+- Two hard stops: never implement before the Plan Sign-off; never commit, push, or
+  write to Notion before the Implementation Sign-off. **One carve-out:** advancing the
+  card's `Status` To Do → In Progress on a VALID plan (Phase 1, step 2) is the sole
+  allowed pre-sign-off board write — it reflects work starting, nothing else.
 - **Green before PR.** The full automated suite (`npm test`, plus `pytest` for
   Lambda work) and typecheck must pass before a PR is raised. No red suite ships.
 - Every feature ships with the automated tests for its automatable scenarios.
@@ -175,3 +201,7 @@ Target card (optional): $ARGUMENTS
   gate too: fix them (or get an explicit user waiver) before pushing.
 - Escalate architectural / hard-to-reverse decisions instead of guessing, at
   whatever phase they surface.
+- **Plain language is a hard rule, not a nicety.** Every Sign-off presentation and
+  every escalation leads with an "In plain words:" summary and carries no unexplained
+  jargon — gloss or rename per the AGENTS.md glossary. If you catch a bare technical
+  term as you draft, fix it before sending.
