@@ -22,7 +22,7 @@ jest.mock('../context', () => {
 
 jest.mock('expo-router', () => {
   const React2 = require('react');
-  return { useFocusEffect: (cb: () => void) => React2.useEffect(() => cb(), [cb]) };
+  return { useFocusEffect: (cb: () => void) => React2.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
 // Spy the shared setter; give it a real Animated.Value (so the header style builds) and

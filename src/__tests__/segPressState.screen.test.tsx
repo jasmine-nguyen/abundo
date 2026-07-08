@@ -21,7 +21,10 @@ jest.mock('../context', () => {
 
 jest.mock('expo-router', () => {
   const React2 = require('react');
-  return { useFocusEffect: (cb: () => void) => React2.useEffect(() => cb(), [cb]) };
+  return {
+    useFocusEffect: (cb: () => void) => React2.useEffect(() => cb(), [cb]),
+    useRouter: () => ({ push: jest.fn() }),
+  };
 });
 
 import Transactions from '../../app/(tabs)/transactions';
