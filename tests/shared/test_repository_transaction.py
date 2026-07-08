@@ -232,36 +232,19 @@ def test_get_by_date_range_maps_database_error(repo, client_error, database_erro
 
 
 # --------------------------------------------------------------------------- #
-# get_pending_transactions_for_account                                        #
+# WHIT-123 — shared get_pending_transactions_for_account is DELETED, stays gone #
 # --------------------------------------------------------------------------- #
 
-def test_get_pending_returns_only_pending_rows(repo, shared):
-    pending_status = shared.repository.PENDING_STATUS
-    repo._table.store = {
-        ("ACCOUNT#acct", "TXN#a"): {"pk": "ACCOUNT#acct", "sk": "TXN#a",
-                                    "status": pending_status},
-        ("ACCOUNT#acct", "TXN#b"): {"pk": "ACCOUNT#acct", "sk": "TXN#b",
-                                    "status": "posted"},
-    }
-    items = repo.get_pending_transactions_for_account("acct")
-    assert [it["sk"] for it in items] == ["TXN#a"]
-
-
-def test_get_pending_empty_when_none_pending(repo):
-    repo._table.store = {
-        ("ACCOUNT#acct", "TXN#b"): {"pk": "ACCOUNT#acct", "sk": "TXN#b",
-                                    "status": "posted"},
-    }
-    assert repo.get_pending_transactions_for_account("acct") == []
-
-
-def test_get_pending_maps_database_error(repo, client_error, database_error, monkeypatch):
-    def boom(**kwargs):
-        raise client_error("InternalServerError")
-
-    monkeypatch.setattr(repo._table, "query", boom)
-    with pytest.raises(database_error):
-        repo.get_pending_transactions_for_account("acct")
+def test_shared_repo_has_no_get_pending_transactions_for_account(shared):
+    # WHIT-123 — [A1] regression guard. The shared TransactionRepository must NOT
+    # expose get_pending_transactions_for_account: the only correct (paginated)
+    # copy lives in lambda/repository.py. The shared method read only DynamoDB's
+    # first page, so re-adding it here would silently reintroduce the WHIT-82
+    # first-page-only miss for any future caller that binds to the shared repo.
+    assert not hasattr(
+        shared.repository.TransactionRepository,
+        "get_pending_transactions_for_account",
+    )
 
 
 # --------------------------------------------------------------------------- #
