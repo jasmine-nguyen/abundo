@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import boto3
-from boto3.dynamodb.conditions import Attr, Key
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from constants import DEAD_LETTER_TTL_SECONDS, MAX_PAGE_SIZE, PENDING_STATUS
+from constants import DEAD_LETTER_TTL_SECONDS, MAX_PAGE_SIZE
 from models import Transaction
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
@@ -119,18 +119,6 @@ class TransactionRepository:
         try:
             response = self._get_table().query(**query_kwargs)
             return response.get("Items", []), response.get("LastEvaluatedKey")
-        except ClientError as e:
-            handle_database_error(e, "read")
-
-    def get_pending_transactions_for_account(self, account_id: str) -> list[dict[str, Any]]:
-        """Retrieves all pending transaction of an account using the account_id"""
-        try:
-            response = self._get_table().query(
-                KeyConditionExpression=Key("pk").eq(_build_pk(account_id)),
-                FilterExpression=Attr("status").eq(PENDING_STATUS),
-            )
-
-            return response.get("Items", [])
         except ClientError as e:
             handle_database_error(e, "read")
 
