@@ -197,11 +197,15 @@ export interface CategorySpend {
  *
  * @param days - The client's pay-cycle length. The server derives the window from
  *   the stored pay cycle and ignores this; kept for symmetry with fetchBudgets.
+ * @param cycle - Which pay cycle to read (WHIT-68): 0 = the current cycle (default),
+ *   n >= 1 = the nth prior cycle for the historical look-back. Only sent when > 0, so
+ *   the default request is byte-identical to before.
  * @returns A map of category id to its { posted, pending }.
  * @throws If the response status is not OK.
  */
-export async function fetchBreakdown(days: number): Promise<Record<string, CategorySpend>> {
-  const response = await apiFetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
+export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<string, CategorySpend>> {
+  const cycleParam = cycle > 0 ? `&cycle=${encodeURIComponent(cycle)}` : '';
+  const response = await apiFetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}${cycleParam}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
