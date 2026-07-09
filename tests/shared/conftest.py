@@ -119,12 +119,14 @@ def shared():
     import repository_device
     import push
     import repository_notify
+    import spend
 
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
         balance=repository_balance, loanfacts=repository_loanfacts,
         budget=repository_budget, insight=repository_insight,
         device=repository_device, push=push, notify=repository_notify,
+        spend=spend,
     )
     try:
         yield ns

@@ -70,6 +70,30 @@ def current_cycle_window(last_pay_date: str, length: int, today: date | None = N
     return cycle_start.isoformat(), end.isoformat()
 
 
+def nth_prior_cycle_window(cycle_start: str, length: int, n: int) -> tuple[str, str]:
+    """Return (start, end) ISO dates for the Nth full pay cycle BEFORE the one that
+    begins at `cycle_start` (n >= 1).
+
+    Each prior window is a full `length`-day span that abuts the next with no overlap
+    or gap: the 1st prior is [cycle_start - length, cycle_start - 1], the 2nd steps back
+    another `length`, and so on — the same stepping the AI-insight trend already walks
+    (WHIT-104), extracted here so /breakdown and the insight share one implementation
+    (WHIT-68). Both bounds are inclusive, matching the DynamoDB `between` date query.
+
+    `cycle_start` is the CURRENT cycle's start, already derived from the pay cycle (e.g.
+    by `current_cycle_window`). It's passed in — not recomputed from last_pay_date — so
+    the caller's single clock read is authoritative and this stays a pure date function
+    (deterministic in tests). The current window comes from `current_cycle_window`, not
+    here, so n < 1 is a caller bug and raises rather than returning an inverted window.
+    """
+    if n < 1:
+        raise ValueError(f"nth_prior_cycle_window needs n >= 1, got {n}")
+    start = date.fromisoformat(cycle_start)
+    prior_start = start - timedelta(days=n * length)
+    prior_end = start - timedelta(days=(n - 1) * length + 1)
+    return prior_start.isoformat(), prior_end.isoformat()
+
+
 def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal] | None:
     """The (bucket, amount) a transaction adds to a budget summary, or None if it
     doesn't count. Shared by summarise_transactions, summarise_uncategorized and

@@ -323,3 +323,97 @@ def test_breakdown_fractional_amounts_survive_decimal_encoder(handler, monkeypat
     body = json.loads(resp["body"])
     assert body == {"coffee": {"posted": 12.75, "pending": 0.5}}
     assert isinstance(body["coffee"]["posted"], float)  # number, not "12.75"
+
+
+# --- historical look-back (?cycle=, WHIT-68) --------------------------------
+#
+# today 2024-01-16, fortnightly, last pay 2024-01-03 → current cycle_start = 2024-01-03,
+# so the prior cycle is [2023-12-20, 2024-01-02]. These pin that cycle=1 reads the prior
+# window (not the current one) and that cycle=0/omitted is unchanged.
+
+
+def _dated(cat, amount, d, status="posted"):
+    return {**_transaction(cat, amount, status), "date": d}
+
+
+def test_breakdown_cycle_1_reads_the_prior_window(handler, monkeypatch):
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = _DateFilteringTransactionRepo([
+        _dated("coffee", -10, "2023-12-25"),  # prior window   -> IN for cycle=1
+        _dated("coffee", -99, "2024-01-10"),  # current window -> OUT for cycle=1
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1)
+
+    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}}
+    assert txns.calls[0][1] == "2023-12-20"  # queried start = prior window start
+    assert txns.calls[0][2] == "2024-01-02"  # queried end   = day before current start
+
+
+def test_breakdown_cycle_0_is_byte_identical_to_the_default(handler, monkeypatch):
+    # cycle=0 (and an omitted param) must be the unchanged current-cycle behaviour —
+    # the backward-compat / fail-on-revert guard for the window selection.
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    pool = [_dated("coffee", -20, "2024-01-10")]  # current window
+    cats = lambda: FakeCategoryRepo([_category("coffee", "Lifestyle")])
+
+    default = handler.list_category_breakdown(cats(), _DateFilteringTransactionRepo(list(pool)), FakePayCycleRepo())
+    zero = handler.list_category_breakdown(cats(), _DateFilteringTransactionRepo(list(pool)), FakePayCycleRepo(), cycle=0)
+
+    assert zero == default == {"coffee": {"posted": Decimal("20"), "pending": Decimal("0")}}
+
+
+def test_breakdown_past_window_predating_history_is_empty(handler, monkeypatch):
+    # A prior cycle with no transactions (e.g. before first sync) → empty {}, which the
+    # client renders as its "No spending in that pay cycle" empty state.
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = _DateFilteringTransactionRepo([_dated("coffee", -20, "2024-01-10")])  # all current-cycle
+
+    assert handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1) == {}
+
+
+def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = _DateFilteringTransactionRepo([
+        _dated("coffee", -10, "2023-12-25"),  # prior window
+        _dated("coffee", -99, "2024-01-10"),  # current window
+    ])
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
+    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
+
+    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}},
+             "queryStringParameters": {"cycle": "1"}}
+    resp = handler.lambda_handler(event, None)
+
+    assert resp["statusCode"] == 200
+    import json
+    assert json.loads(resp["body"]) == {"coffee": {"posted": 10, "pending": 0}}
+
+
+@pytest.mark.parametrize("bad", ["-1", "abc", "1.5", "13", "999"])
+def test_breakdown_bad_cycle_returns_400(handler, bad):
+    # Non-int, negative, and above-cap (BREAKDOWN_MAX_LOOKBACK=12) all reject before any
+    # repo is touched. Fail-loud, not a silent fallback to the current cycle.
+    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}},
+             "queryStringParameters": {"cycle": bad}}
+    resp = handler.lambda_handler(event, None)
+    assert resp["statusCode"] == 400
+
+
+def test_parse_breakdown_cycle_defaults_and_validates(handler):
+    # Absent / empty / None params → 0 (current cycle); a valid int passes; out-of-range
+    # carries a 400 response.
+    assert handler._parse_breakdown_cycle({}) == (0, None)
+    assert handler._parse_breakdown_cycle({"queryStringParameters": None}) == (0, None)
+    assert handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": ""}}) == (0, None)
+    assert handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": "2"}}) == (2, None)
+    cycle, err = handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": "-1"}})
+    assert cycle == 0 and err["statusCode"] == 400
