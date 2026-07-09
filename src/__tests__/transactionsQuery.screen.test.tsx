@@ -92,8 +92,15 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
   renderTransactions(makeClient(false));
   expect(await screen.findByTestId('transactions-error')).toBeTruthy();
 
+  // WHIT-198 GAP (authored by qa) — the retry now routes through the shared RetryButton, so it
+  // must carry the button role + a screen-reader label a bare Pressable lacked. Locks this
+  // migrated screen the way budgetsQuery locks Budgets, so a revert to `<Pressable>` is caught.
+  const retry = screen.getByTestId('transactions-retry');
+  expect(retry.props.accessibilityRole).toBe('button');
+  expect(retry.props.accessibilityLabel).toBe('Retry loading your transactions');
+
   mockFetchTransactions.mockReset().mockResolvedValue(TXNS);
-  fireEvent.press(screen.getByTestId('transactions-retry'));
+  fireEvent.press(retry);
   expect(await screen.findByText('-$42.00')).toBeTruthy();
 });
 

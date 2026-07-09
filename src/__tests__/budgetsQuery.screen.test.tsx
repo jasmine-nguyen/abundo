@@ -105,8 +105,14 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
   renderBudgets(makeClient(false)); // no retry → straight to the error state
   expect(await screen.findByTestId('budgets-error')).toBeTruthy();
 
+  // WHIT-198: the Retry now routes through the shared RetryButton, so it carries the
+  // button role + a screen-reader label (which the old bare Pressable lacked).
+  const retry = screen.getByTestId('budgets-retry');
+  expect(retry.props.accessibilityRole).toBe('button');
+  expect(retry.props.accessibilityLabel).toBe('Retry loading your budgets');
+
   mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
-  fireEvent.press(screen.getByTestId('budgets-retry'));
+  fireEvent.press(retry);
   expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
 });
 

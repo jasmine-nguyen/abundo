@@ -29,6 +29,7 @@ const mockFetchLoanFacts = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchCategories: () => mockFetchCategories(),
   fetchLoanFacts: () => mockFetchLoanFacts(),
+  listEnrichments: () => Promise.resolve([]), // rules read — kept deterministic for the "…" count
 }));
 
 jest.mock('../context', () => {
@@ -85,11 +86,24 @@ it('shows "…" (not "0") while first-loading, then the real count', async () =>
   let resolveCats: (v: unknown) => void = () => {};
   mockFetchCategories.mockReset().mockReturnValue(new Promise((r) => { resolveCats = r; }));
   renderSettings();
-  // Both server-backed rows (categories count + loan status) show "…" while first-
-  // loading — the count never flashes a misleading "0".
-  expect(screen.getAllByText('…').length).toBe(2);
+  // All three query-backed rows — categories count, loan status, AND the Automation-rules
+  // count (WHIT-198) — show "…" while first-loading; none flashes a misleading "0".
+  expect(screen.getAllByText('…').length).toBe(3);
+  expect(screen.queryByText('0')).toBeNull(); // fail-on-revert for the rules-row "0" flash
   await act(async () => { resolveCats(CATS); });
   expect(await screen.findByText('3')).toBeTruthy();
+});
+
+// WHIT-198 GAP (authored by qa) — the "…" gate must NOT swallow a LEGITIMATE empty state. The
+// flash guard above proves "0" is hidden WHILE loading; this proves that once the rules read has
+// SETTLED with genuinely zero rules, the row shows a real "0" (not a stuck "…"). listEnrichments
+// resolves to [] here, so after load the Automation-rules row is the only "0" on screen.
+// Fail-on-revert: change settings.tsx to always-"…" or `rulesLoading || rules.length === 0 ? '…'`
+// (a wrong "fix" that also hides the real empty state) → "0" never appears → this fails.
+it('shows a genuine "0" once the rules read settles empty (the gate does not hide a real 0)', async () => {
+  renderSettings();
+  await screen.findByText('3'); // categories settled → load is past first paint
+  expect(await screen.findByText('0')).toBeTruthy(); // Automation rules: real empty state, not a stuck "…"
 });
 
 it('does not fetch before login, then fires on auth flip to authed', async () => {

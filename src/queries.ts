@@ -466,8 +466,12 @@ export function useTransactionsScreenData(): TransactionsScreenData {
 export interface SettingsScreenData {
   categoriesCount: number;
   loanReady: boolean; // whether loan facts are fully filled in ("Edit" vs "Set up")
+  // WHIT-198: per-row first-load failures. `firstLoadError` (not the aggregate isError) so a
+  // background-refetch failure over a cached count/facts keeps the last-good value — only a
+  // NEVER-loaded read surfaces "—" + retry, instead of a misleading "0" / "Set up".
+  categoriesError: boolean;
+  loanReadyError: boolean;
   isLoading: boolean; // first load, nothing cached → show "…" instead of a misleading "0"
-  isError: boolean;
   refetch: () => void;
   refetchStale: () => void;
 }
@@ -489,6 +493,8 @@ export function useSettingsScreenData(): SettingsScreenData {
   return {
     categoriesCount: categoriesQuery.data?.length ?? 0,
     loanReady: loanFactsQuery.data ? loanFactsReady(loanFactsQuery.data) : false,
+    categoriesError: firstLoadError(categoriesQuery),
+    loanReadyError: firstLoadError(loanFactsQuery),
     ...status,
   };
 }
@@ -498,6 +504,9 @@ export interface RulesScreenData {
   rules: Rule[];
   isLoading: boolean; // first load, nothing cached yet → spinner
   isError: boolean; // the read failed after retries → inline retry
+  // WHIT-198: first-load failure (nothing cached) — lets the Settings rules row show "—" rather
+  // than a misleading "0", cache-first like categoriesError/loanReadyError.
+  rulesError: boolean;
   refetch: () => void; // force a refresh (the inline Retry button)
   refetchStale: () => void; // focus refresh — only refetches when stale
 }
@@ -515,6 +524,7 @@ export function useRulesScreenData(): RulesScreenData {
 
   return {
     rules: rulesQuery.data ?? [],
+    rulesError: firstLoadError(rulesQuery),
     ...status,
   };
 }

@@ -6,7 +6,7 @@ import { Icon, Glyph } from '../../src/icons';
 import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { WhittleBar } from '../../src/components/ui';
+import { WhittleBar, RetryButton } from '../../src/components/ui';
 
 export default function Budgets() {
   const router = useRouter();
@@ -50,9 +50,7 @@ export default function Budgets() {
       ) : showError ? (
         <View testID="budgets-error" style={styles.centered}>
           <Text style={styles.errorText}>Couldn't load your budgets.</Text>
-          <Pressable testID="budgets-retry" onPress={refetch} style={styles.retryBtn}>
-            <Text style={styles.retryText}>Retry</Text>
-          </Pressable>
+          <RetryButton onPress={refetch} label="Retry loading your budgets" testID="budgets-retry" style={styles.retryBtn} textStyle={styles.retryText} />
         </View>
       ) : (
       <>
