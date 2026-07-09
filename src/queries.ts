@@ -118,11 +118,14 @@ export function useBudgetsQuery(cycleLen: number, enabled: boolean) {
 }
 
 // Breakdown is already the Record<category id, {posted, pending}> the selector wants,
-// so no `select`. WHIT-189. Flat key + parallel fetch like budgets (WHIT-72).
-export function useBreakdownQuery(cycleLen: number, enabled: boolean) {
+// so no `select`. WHIT-189. Flat key + parallel fetch like budgets (WHIT-72). WHIT-68:
+// the key is suffixed with `cycle` so each pay cycle's breakdown caches independently;
+// `breakdownKey` stays the flat prefix, so the store's `['breakdown']` invalidations
+// still prefix-match and refresh every cached cycle.
+export function useBreakdownQuery(cycleLen: number, cycle: number, enabled: boolean) {
   return useQuery({
-    queryKey: breakdownKey,
-    queryFn: () => fetchBreakdown(cycleLen),
+    queryKey: [...breakdownKey, cycle],
+    queryFn: () => fetchBreakdown(cycleLen, cycle),
     enabled,
   });
 }
@@ -395,13 +398,14 @@ export interface InsightsScreenData {
  * cycle (kills the cold-open waterfall). The AI-insights feature on that screen stays on
  * the old context store — it is NOT here.
  */
-export function useInsightsScreenData(): InsightsScreenData {
+export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen } = cycleClock(payCycle);
 
-  const breakdownQuery = useBreakdownQuery(cycleLen, authed); // parallel fetch, flat key (WHIT-72)
+  // WHIT-68: `cycle` (0 = current, n = nth prior) selects the historical breakdown window.
+  const breakdownQuery = useBreakdownQuery(cycleLen, cycle, authed); // parallel fetch, cycle-keyed
   const categoriesQuery = useCategoriesQuery(authed);
 
   const categories = categoriesQuery.data ?? [];

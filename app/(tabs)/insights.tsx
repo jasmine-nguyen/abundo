@@ -1,21 +1,22 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, AccessibilityInfo } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { C, FONT, fmt, tint, agoLabel } from '../../src/theme';
-import { Icon, Glyph } from '../../src/icons';
-import { useAppContext, categoryBreakdown, aiGoalSignal } from '../../src/context';
-import { useInsightsScreenData, useGoalScreenData } from '../../src/queries';
+import { C, FONT, fmt, tint } from '../../src/theme';
+import { Icon } from '../../src/icons';
+import { useAppContext, categoryBreakdown } from '../../src/context';
+import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton } from '../../src/components/ui';
+import { AiCoachCard } from '../../src/components/AiCoachCard';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
+  // WHIT-68: which pay cycle the hero + category rows show — 0 = this (current, partial)
+  // cycle, 1 = last (full) cycle. Only the breakdown reads move; the AI coach stays current.
+  const [cycle, setCycle] = useState(0);
   // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
-  const { breakdown, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData();
+  const { breakdown, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
   const { rows, total } = categoryBreakdown({ breakdown, category });
-  // WHIT-203: the goal signal's inputs (loan facts + live balance) come off the query
-  // layer now, so it survives the WHIT-192 store teardown.
-  const { loanFacts, homeLoan } = useGoalScreenData();
 
   // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via the
   // store. Spend depends on the current cycle (rolls over on payday; categorising
@@ -33,53 +34,34 @@ export default function Insights() {
   // the Insights-only hole Budgets doesn't have (every Budgets row needs a category).
   const showError = (isError && rows.length === 0) || categoriesError;
   const showSpinner = !showError && isLoading && rows.length === 0;
-  const ai = s.aiInsights;
-  const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
-  const ago = agoLabel(ai?.generated_at);
-
-  // WHIT-142: while a re-analyse runs, the labelled refresh button is replaced by a bare
-  // spinner and the result lands silently — a screen-reader user hears nothing after they
-  // tap. Announce the outcome on the loading → done edge. Only generateAiInsights toggles
-  // aiInsightsLoading (it clears aiInsightsError at the start of the run, so the flag reflects
-  // THIS run at the edge), and the on-focus refreshAiInsights never touches it — so this fires
-  // once per real analyse/re-analyse, never on mount or tab focus. Ref starts undefined so a
-  // screen that mounts mid-load doesn't announce a transition it didn't witness.
-  const wasAnalysing = useRef<boolean | undefined>(undefined);
-  useEffect(() => {
-    if (wasAnalysing.current && !s.aiInsightsLoading) {
-      AccessibilityInfo.announceForAccessibility?.(
-        // Control-agnostic: on first run the retry control reads "Try again"; on a re-run it's
-        // the "Re-analyse my spending" refresh — so name neither, just prompt the retry.
-        s.aiInsightsError
-          ? "Couldn't analyse your spending. Please try again."
-          : 'Spending analysis ready.',
-      );
-    }
-    wasAnalysing.current = s.aiInsightsLoading;
-  }, [s.aiInsightsLoading, s.aiInsightsError]);
-
-  // The home-loan goal signal (WHIT-134) — non-null only when there's an honest
-  // payoff projection to send. Computed here from live state and passed INTO
-  // generateAiInsights at tap time (never stale). Also drives the privacy note: we
-  // only claim loan figures are sent when a goal is actually attached.
-  const goal = aiGoalSignal({ loanFacts, homeLoan });
-  const noteSends = goal
-    ? 'category spend totals and home-loan figures (balance, rate, repayments)'
-    : 'category spend totals';
-  // Forward-looking in BOTH states (what the next generate/re-analyse sends), keyed
-  // to the CURRENT loan readiness. Deliberately not past-tense: the shown insight may
-  // have been generated before loan facts were saved, so a "figures were sent" claim
-  // could be false — "re-analysing sends…" is always true.
-  const noteText = hasAi
-    ? `Re-analysing sends your ${noteSends} to Anthropic. Suggestions, not financial advice.`
-    : `Sends your ${noteSends} to Anthropic to generate advice. Suggestions, not financial advice.`;
 
   return (
     <ScrollChromeHeader title="Insights">
-        {/* hero: where the money went this cycle */}
+        {/* WHIT-68: look back one pay cycle. "This cycle" is spend so far; "Last cycle"
+            is the full prior cycle. Switching only moves the hero + rows (the AI coach
+            below stays about the current cycle). */}
+        <View style={styles.cycleTabs}>
+          {[{ v: 0, label: 'This cycle' }, { v: 1, label: 'Last cycle' }].map(({ v, label }) => {
+            const active = cycle === v;
+            return (
+              <Pressable
+                key={v}
+                testID={v === 0 ? 'insights-cycle-current' : 'insights-cycle-prev'}
+                onPress={() => setCycle(v)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[styles.cycleTab, active && styles.cycleTabActive]}
+              >
+                <Text style={[styles.cycleTabText, active && styles.cycleTabTextActive]}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* hero: where the money went in the selected cycle */}
         <View style={styles.hero}>
           <View style={styles.heroBlob} />
-          <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
+          <Text style={styles.heroEyebrow}>{cycle === 0 ? 'THIS PAY CYCLE' : 'LAST PAY CYCLE'}</Text>
           {/* Never show a confident "$0" over a load/error — the total reads breakdown,
               which isn't ready yet. A legit zero-spend cycle (loaded, no rows) still
               shows $0. WHIT-189. */}
@@ -96,71 +78,10 @@ export default function Insights() {
           )}
         </View>
 
-        {/* AI: a "coach" card — analyse this cycle's spend and suggest what to trim
-            (WHIT-104). Accent-tinted so it reads as advice, distinct from the plain
-            category rows below but calmer than the hero above. */}
-        <View style={styles.aiCard}>
-          <View style={styles.aiHeadRow}>
-            <View style={styles.aiHeadLeft}>
-              <Text style={styles.aiEmoji}>👀</Text>
-              <Text style={styles.aiTitle}>Worth a look</Text>
-            </View>
-            {/* Once an insight exists the re-run is a quiet stamp + refresh, not a big
-                button — the card stays about the advice. Refresh spins while working. */}
-            {hasAi && (
-              <View style={styles.aiHeadRight}>
-                {/* A failed re-run keeps the old advice below, but must SAY it failed
-                    (not just silently stop) — the refresh stays tappable to retry. */}
-                {s.aiInsightsError
-                  ? <Text style={styles.aiStampErr}>Couldn’t refresh</Text>
-                  : !!ago && <Text style={styles.aiStamp}>{ago}</Text>}
-                {s.aiInsightsLoading
-                  ? <ActivityIndicator testID="ai-refresh-busy" size="small" color={C.accentSoft} accessibilityLabel="Re-analysing your spending" />
-                  : <Pressable
-                      onPress={() => s.generateAiInsights(goal)}
-                      hitSlop={10}
-                      accessibilityRole="button"
-                      accessibilityLabel="Re-analyse my spending"
-                    >
-                      <Glyph name="refresh" size={17} color={C.accentSoft} />
-                    </Pressable>}
-              </View>
-            )}
-          </View>
-
-          {hasAi && !!ai?.summary && <Text style={styles.aiSummary}>{ai.summary}</Text>}
-          {hasAi && ai!.suggestions.map((tip, i) => (
-            <View key={i} style={styles.aiTipRow}>
-              <View style={styles.aiDiamond} />
-              <Text style={styles.aiTip}>{tip}</Text>
-            </View>
-          ))}
-
-          {!hasAi && !s.aiInsightsLoading && !s.aiInsightsError && (
-            <Text style={styles.aiIdle}>Get a few AI suggestions on where to cut back this cycle.</Text>
-          )}
-          {!hasAi && s.aiInsightsError && (
-            <Text style={styles.aiError}>Couldn’t generate insights. Please try again.</Text>
-          )}
-
-          {/* Big button only on first run / empty; re-runs use the header refresh. */}
-          {!hasAi && (
-            <Pressable
-              style={[styles.aiBtn, s.aiInsightsLoading && styles.aiBtnBusy]}
-              disabled={s.aiInsightsLoading}
-              onPress={() => s.generateAiInsights(goal)}
-            >
-              {s.aiInsightsLoading
-                ? <ActivityIndicator testID="ai-generate-busy" color={C.heroInk} accessibilityLabel="Analysing your spending" />
-                : <Text style={styles.aiBtnText}>{s.aiInsightsError ? 'Try again' : 'Analyse my spending'}</Text>}
-            </Pressable>
-          )}
-
-          {/* Full disclosure before the first send (conscious choice); a compact
-              reminder once populated. Anthropic is named in both, and the loan
-              figures are named only when a goal is actually attached (WHIT-134). */}
-          <Text style={styles.aiNote}>{noteText}</Text>
-        </View>
+        {/* AI "coach" card (WHIT-104). WHIT-68: it's a CURRENT-cycle tool, so it's hidden
+            while viewing a past cycle rather than showing advice that contradicts the
+            "LAST PAY CYCLE" hero. Self-contained (reads the AI slice + goal itself). */}
+        {cycle === 0 && <AiCoachCard />}
 
         {showSpinner && (
           <View testID="insights-loading" style={styles.rowsState}>
@@ -174,7 +95,9 @@ export default function Insights() {
           </View>
         )}
         {!showSpinner && !showError && rows.length === 0 && (
-          <Text style={styles.empty}>No spending yet this pay cycle.</Text>
+          <Text style={styles.empty}>
+            {cycle === 0 ? 'No spending yet this pay cycle.' : 'No spending in that pay cycle.'}
+          </Text>
         )}
 
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
@@ -208,6 +131,14 @@ export default function Insights() {
 }
 
 const styles = StyleSheet.create({
+  // WHIT-68: the "This cycle / Last cycle" segmented control above the hero. Reuses the
+  // app's accent chip tokens so the active segment matches the retry/accent styling.
+  cycleTabs: { flexDirection: 'row', gap: 3, padding: 3, marginBottom: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14 },
+  cycleTab: { flex: 1, paddingVertical: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  cycleTabActive: { backgroundColor: 'rgba(124,140,255,.16)' },
+  cycleTabText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
+  cycleTabTextActive: { color: C.accentSoft, fontWeight: '700' },
+
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: '#6f7bf0' },
   heroBlob: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.65)', letterSpacing: 0.2 },
@@ -225,25 +156,4 @@ const styles = StyleSheet.create({
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 14 },
   retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
-
-  // Coach card: a soft accent wash + accent hairline so it reads as "advice",
-  // sitting between the loud hero and the plain category rows.
-  aiCard: { backgroundColor: tint(C.accent, 0.07), borderWidth: 1, borderColor: tint(C.accent, 0.22), borderRadius: 20, padding: 16, marginBottom: 22 },
-  aiHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  aiHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  aiEmoji: { fontSize: 15 },
-  aiHeadRight: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 20 },
-  aiTitle: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
-  aiStamp: { fontFamily: FONT.body, fontSize: 12, color: C.textFaint },
-  aiStampErr: { fontFamily: FONT.body, fontSize: 12, color: C.bad },
-  aiSummary: { fontFamily: FONT.body, fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 12 },
-  aiTipRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
-  aiDiamond: { width: 6, height: 6, backgroundColor: C.accent, transform: [{ rotate: '45deg' }], marginTop: 7 },
-  aiTip: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textMid, lineHeight: 20 },
-  aiIdle: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, lineHeight: 20, marginBottom: 12 },
-  aiError: { fontFamily: FONT.body, fontSize: 14, color: C.bad, lineHeight: 20, marginBottom: 12 },
-  aiBtn: { backgroundColor: C.accent, borderRadius: 14, paddingVertical: 13, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-  aiBtnBusy: { opacity: 0.7 },
-  aiBtnText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.heroInk },
-  aiNote: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, lineHeight: 16, marginTop: 10 },
 });

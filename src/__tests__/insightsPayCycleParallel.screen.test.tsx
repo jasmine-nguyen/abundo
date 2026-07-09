@@ -14,11 +14,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
 
-const mockFetchBreakdown = jest.fn<(days: number) => Promise<unknown>>();
+const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number])),
+  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
   fetchCategories: () => mockFetchCategories(),
   fetchPayCycle: () => mockFetchPayCycle(),
 }));
@@ -66,7 +66,7 @@ it('renders the breakdown hero while the pay cycle is STILL pending (cycle-indep
 
   expect(await screen.findByText('spent across 1 category')).toBeTruthy(); // hero painted from breakdown
   expect(screen.queryByText('Loading…')).toBeNull();
-  expect(mockFetchBreakdown).toHaveBeenCalledWith(14); // parallel, default length; server derives the window
+  expect(mockFetchBreakdown).toHaveBeenCalledWith(14, 0); // parallel, default length, current cycle (WHIT-68); server derives the window
 
   await act(async () => { resolvePayCycle({ length: 30, last_pay_date: '2026-07-01' }); }); // settle to avoid act() leak
 });

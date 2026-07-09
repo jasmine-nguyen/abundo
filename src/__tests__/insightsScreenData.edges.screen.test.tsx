@@ -13,11 +13,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
 
-const mockFetchBreakdown = jest.fn<(days: number) => Promise<unknown>>();
+const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
-  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number])),
+  fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
   fetchCategories: () => mockFetchCategories(),
   fetchPayCycle: () => mockFetchPayCycle(),
 }));
@@ -49,7 +49,7 @@ it('a payCycle failure surfaces as isError and does NOT strand isLoading (payCyc
   // WHIT-72: breakdown no longer waits behind payCycleQuery.isSuccess — it fetches in parallel
   // with the default length (the server derives the window itself), so it DID fetch. The
   // composite still surfaces isError via the payCycle failure in the OR.
-  await waitFor(() => expect(mockFetchBreakdown).toHaveBeenCalledWith(14));
+  await waitFor(() => expect(mockFetchBreakdown).toHaveBeenCalledWith(14, 0)); // WHIT-68: current cycle = 0
 });
 
 // WHIT-194: the categoriesError signal that lets Insights distinguish a first-load categories

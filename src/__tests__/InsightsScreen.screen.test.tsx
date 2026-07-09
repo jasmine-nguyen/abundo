@@ -280,6 +280,21 @@ describe('AI re-analyse a11y (WHIT-142)', () => {
     expect(announce).toHaveBeenLastCalledWith('Spending analysis ready.');
   });
 
+  // WHIT-68: if the user switches to a PAST cycle mid-analysis, the coach card unmounts, so
+  // the loading→done announce must NOT fire — otherwise a screen reader claims content is
+  // "ready" for a card that's no longer on screen.
+  it('does NOT announce when analysis finishes while viewing a past cycle (coach hidden)', () => {
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    mockState = state({ aiInsights: AI, aiInsightsLoading: true });
+    const { rerender } = render(<Insights />);
+
+    fireEvent.press(screen.getByTestId('insights-cycle-prev')); // move to Last cycle → coach hidden
+    mockState = state({ aiInsights: AI, aiInsightsLoading: false, aiInsightsError: false });
+    rerender(<Insights />);
+
+    expect(announce).not.toHaveBeenCalled(); // withheld while the coach is off-screen
+  });
+
   it('announces failure on the loading → done edge when the run errored', () => {
     const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
     mockState = state({ aiInsights: AI, aiInsightsLoading: true });
