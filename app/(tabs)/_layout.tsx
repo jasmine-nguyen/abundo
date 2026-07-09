@@ -84,6 +84,20 @@ export default function TabsLayout() {
           or a detail push/pop). Must sit inside the provider AND the navigator. */}
       <NavBarsRouteReset />
       <Tabs
+        // Blank-tab fix: with the cross-fade animation below, react-navigation's default
+        // detach-inactive-screens behaviour races the fade — it natively detaches then
+        // re-attaches each screen around the tab switch, and the incoming screen can settle
+        // ATTACHED but with its faded-in opacity stuck at 0, so the whole scene (header +
+        // list) shows blank while the tab bar stays fine. It's intermittent and clears once
+        // you switch tabs a few more times — exactly the reported "Budgets → Transactions
+        // goes blank, keep switching and it comes back". Keeping every tab attached
+        // (detachInactiveScreens={false}) removes that native detach/attach cycle, so the
+        // fade's opacity settles correctly. The cross-fade itself still runs — it comes from
+        // the per-scene opacity style, not the detach. See react-navigation issue #12755.
+        // Cost: all 5 lightweight tab scenes stay mounted (they already are, via the
+        // always-mounted tab bar's own query) — negligible here, and tab switches keep their
+        // scroll position as a bonus.
+        detachInactiveScreens={false}
         screenOptions={{
           headerShown: false,
           sceneStyle: { backgroundColor: C.bg },
