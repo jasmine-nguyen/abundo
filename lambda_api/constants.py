@@ -66,6 +66,15 @@ ANTHROPIC_TIMEOUT_SECONDS = 30
 # How many PRIOR pay cycles of category spend to include for trend context.
 INSIGHTS_PRIOR_CYCLES = 1
 
+# WHIT-68: the furthest-back cycle /breakdown will answer for (0 = current, up to N
+# cycles prior). A safety bound on how far into the past a single request may reach —
+# each request scans exactly ONE length-day window regardless of `cycle`, so the read
+# cost is flat; the cap just rejects an absurd/out-of-range ?cycle= with a 400 rather
+# than serving it. Kept in the lambda_api layer only (the shared spend helper stays
+# constant-free and pure); deliberately NOT reusing INSIGHTS_PRIOR_CYCLES so widening the
+# AI trend can't silently change the breakdown lookback.
+BREAKDOWN_MAX_LOOKBACK = 12
+
 # Tier-1 rule vocabulary we let the app author. Kept to what we've VERIFIED
 # against BankSync (description contains / category equals, 2026-07-02); the
 # create handler rejects anything outside these so an unverified operator never

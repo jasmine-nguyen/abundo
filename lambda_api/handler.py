@@ -1,6 +1,7 @@
 from constants import (
     ACCOUNT_BALANCES_PATH,
     ACCOUNT_ID_MAP,
+    BREAKDOWN_MAX_LOOKBACK,
     BREAKDOWN_PATH,
     BUDGET_PATH,
     CATEGORY_BUCKETS,
@@ -64,6 +65,7 @@ from spend import (
     _melbourne_today,
     _spend_contribution,
     current_cycle_window,
+    nth_prior_cycle_window,
     summarise_income,
     summarise_transactions,
     summarise_uncategorized,
@@ -131,12 +133,17 @@ def lambda_handler(event, context):
             return set_budget(event, BudgetRepository(), CategoryRepository())
 
         if path == BREAKDOWN_PATH and method == "GET":
-            # Spend by category for the current cycle (window derived server-side
-            # from the stored pay cycle, like /budgets).
+            # Spend by category (window derived server-side from the stored pay cycle,
+            # like /budgets). Optional ?cycle= looks back: 0 = current (default), n =
+            # the nth prior cycle (WHIT-68), bounded by BREAKDOWN_MAX_LOOKBACK.
+            cycle, cycle_error = _parse_breakdown_cycle(event)
+            if cycle_error is not None:
+                return cycle_error
             return _json_response(
                 200,
                 list_category_breakdown(
-                    CategoryRepository(), TransactionRepository(), PayCycleRepository()))
+                    CategoryRepository(), TransactionRepository(), PayCycleRepository(),
+                    cycle=cycle))
 
         # AI spending insights (WHIT-104). GET reads the per-cycle cache (never
         # pays); POST generates (the paid Anthropic call). Both are authorizer-gated
@@ -818,14 +825,43 @@ def list_budgets(
     return result
 
 
+def _parse_breakdown_cycle(event: dict) -> tuple[int, dict | None]:
+    """Parse & validate the optional ?cycle= look-back on /breakdown (WHIT-68).
+
+    Returns (cycle, None) on success, or (0, <400 response>) when the value isn't a
+    non-negative integer within [0, BREAKDOWN_MAX_LOOKBACK]. Absent/empty -> 0 (the
+    current cycle), so a client that sends nothing gets the pre-WHIT-68 behaviour.
+    """
+    params = event.get("queryStringParameters") or {}
+    raw = params.get("cycle")
+    if raw is None or raw == "":
+        return 0, None
+    try:
+        cycle = int(raw)
+    except (TypeError, ValueError):
+        return 0, _json_response(400, {"error": f"cycle must be an integer, got {raw!r}"})
+    if cycle < 0 or cycle > BREAKDOWN_MAX_LOOKBACK:
+        return 0, _json_response(
+            400, {"error": f"cycle must be in [0, {BREAKDOWN_MAX_LOOKBACK}], got {cycle}"})
+    return cycle, None
+
+
 def list_category_breakdown(
     category_repo: CategoryRepository,
     transaction_repo: TransactionRepository,
     paycycle_repo: PayCycleRepository,
+    cycle: int = 0,
 ) -> dict:
-    """GET /breakdown — spend (posted + pending) per category for the current pay
-    cycle, plus an "Uncategorized" bucket. The visual companion to /budgets: where
-    the money actually went, not just budgeted categories.
+    """GET /breakdown — spend (posted + pending) per category for a pay cycle, plus an
+    "Uncategorized" bucket. The visual companion to /budgets: where the money actually
+    went, not just budgeted categories.
+
+    `cycle` selects the window (WHIT-68): 0 = the current cycle (default — byte-identical
+    to the pre-WHIT-68 behaviour), n >= 1 = the nth FULL cycle before this one, for the
+    historical look-back. The current window is [cycle_start, today]; a prior window is a
+    full length-day span from `nth_prior_cycle_window`. The window is the only thing
+    `cycle` changes — same summariser, same response shape — so the client renderer and
+    the `categoryBreakdown` selector need no per-cycle branching.
 
     Same window + summariser as list_budgets, but over ALL spend-bucket categories
     rather than only budgeted ones. Income/Savings categories are excluded
@@ -836,11 +872,16 @@ def list_category_breakdown(
     added only when it has spend, so a fully-categorised cycle shows no phantom row.
 
     Response: {"<category_id>": {"posted": Decimal, "pending": Decimal}, ...,
-    optionally "__uncategorized__": {...}}. Empty {} when nothing had spend.
+    optionally "__uncategorized__": {...}}. Empty {} when nothing had spend (e.g. a past
+    window that predates first sync).
     """
     categories = category_repo.list_categories()
-    cycle = paycycle_repo.get_paycycle()
-    start, end = current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    pay_cycle = paycycle_repo.get_paycycle()
+    cycle_start, cycle_end = current_cycle_window(pay_cycle["last_pay_date"], pay_cycle["length"])
+    if cycle >= 1:
+        start, end = nth_prior_cycle_window(cycle_start, pay_cycle["length"], cycle)
+    else:
+        start, end = cycle_start, cycle_end
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
 
     all_ids = {c["id"] for c in categories}
@@ -1010,20 +1051,18 @@ def assemble_insight_input(
     if uncategorized["posted"] > 0 or uncategorized["pending"] > 0:
         unc = {"posted": float(uncategorized["posted"]), "pending": float(uncategorized["pending"])}
 
-    # Prior full cycle(s): the window(s) immediately before cycle_start.
+    # Prior full cycle(s): the window(s) immediately before cycle_start — the same
+    # stepping /breakdown uses, via the shared nth_prior_cycle_window helper (WHIT-68),
+    # so the trend and the historical breakdown can never disagree on cycle boundaries.
     prior = []
-    cursor_start = date.fromisoformat(start)
-    for _ in range(INSIGHTS_PRIOR_CYCLES):
-        prev_end = cursor_start - timedelta(days=1)
-        prev_start = cursor_start - timedelta(days=length)
-        prev_txns = _fetch_windowed_transactions(
-            transaction_repo, prev_start.isoformat(), prev_end.isoformat())
+    for n in range(1, INSIGHTS_PRIOR_CYCLES + 1):
+        prev_start, prev_end = nth_prior_cycle_window(start, length, n)
+        prev_txns = _fetch_windowed_transactions(transaction_repo, prev_start, prev_end)
         prior.append({
-            "start": prev_start.isoformat(),
-            "end": prev_end.isoformat(),
+            "start": prev_start,
+            "end": prev_end,
             "categories": _window_category_spend(prev_txns, categories),
         })
-        cursor_start = prev_start
 
     model_input = {
         "cycle": {"length": length, "start": start, "end": end},
