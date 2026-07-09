@@ -4,8 +4,27 @@
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName } from '../context';
 import type { Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
-import type { CategorySpend, LoanFacts, Repayment } from '../api';
+import type { AiGoalSignal, CategorySpend, LoanFacts, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
+
+// Narrow an AiGoalSignal to the payoff arm (partial/flat/ahead), so payoff-arm tests
+// can read mortgage_free_date / months_sooner_per_100_extra without a cast. Throws on
+// null or the 'shortfall' arm — a shortfall reaching a payoff assertion is a real bug.
+export function asPayoffGoal(g: AiGoalSignal | null): Extract<AiGoalSignal, { mortgage_free_date: string }> {
+  if (!g || g.payoff_mode === 'shortfall') {
+    throw new Error(`expected a payoff goal, got ${g ? g.payoff_mode : 'null'}`);
+  }
+  return g;
+}
+
+// Narrow to the shortfall arm (WHIT-126), so shortfall tests read goal_date /
+// required_repayment / required_extra without a cast. Throws on null or a payoff arm.
+export function asShortfallGoal(g: AiGoalSignal | null): Extract<AiGoalSignal, { payoff_mode: 'shortfall' }> {
+  if (!g || g.payoff_mode !== 'shortfall') {
+    throw new Error(`expected a shortfall goal, got ${g ? g.payoff_mode : 'null'}`);
+  }
+  return g;
+}
 
 export function cat(over: Partial<Category> = {}): Category {
   return { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52, ...over };
@@ -37,8 +56,8 @@ const GOAL: Goal = {
 // A fully-set loan-facts fixture (the default). property value 770000 + LVR 0.8
 // keep milestoneView's equity numbers matching the milestone-plan reference; pass
 // EMPTY_LOAN_FACTS explicitly to exercise the "not set yet" empty state.
-export const LOAN_FACTS: LoanFacts = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 };
-export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+export const LOAN_FACTS: LoanFacts = { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null };
+export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null, payoffGoalDate: null };
 
 // Repayment fixtures (WHIT-115): a real repayment with a paired split, and the
 // "none on record" empty shape (the makeState default).

@@ -8,26 +8,10 @@ import { useAppContext, merchantLabel } from '../context';
 import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET } from '../motion/sheetMotion';
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// The last_pay_date is stored as an ISO "YYYY-MM-DD" string. Parse/format it via the
-// device's LOCAL date components (not UTC) so the calendar and the label always
-// show the day the user actually picked — no midnight-timezone drift.
-function parseLastPayDate(iso: string): Date {
-  return new Date(`${iso}T00:00:00`); // local midnight of that date
-}
-
-function toISODate(d: Date): string {
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${month}-${day}`;
-}
-
-function formatLastPayDate(iso: string): string {
-  const d = parseLastPayDate(iso);
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
+// The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
+// date components (not UTC) so the calendar and label show the day the user picked —
+// no midnight-timezone drift. Shared with the loan form's goal-date picker (WHIT-126).
+import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
 
 export function Overlays() {
   return (
@@ -298,7 +282,7 @@ function PayCycleSheet() {
         <View style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}>
           <Text style={[styles.cycleText, { color: C.textMid }]}>Set date</Text>
           <DateTimePicker
-            value={parseLastPayDate(payCycle.last_pay_date)}
+            value={parseISODate(payCycle.last_pay_date)}
             mode="date"
             display="compact"          // small native date pill, not the big inline grid
             maximumDate={today}
@@ -312,13 +296,13 @@ function PayCycleSheet() {
           onPress={() => setShowAndroidPicker(true)}
           style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
         >
-          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatLastPayDate(payCycle.last_pay_date)}</Text>
+          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(payCycle.last_pay_date)}</Text>
           <Glyph name="calendar" size={18} color={C.textDim} />
         </Pressable>
       )}
       {!isIOS && showAndroidPicker && (
         <DateTimePicker
-          value={parseLastPayDate(payCycle.last_pay_date)}
+          value={parseISODate(payCycle.last_pay_date)}
           mode="date"
           display="default"
           maximumDate={today}

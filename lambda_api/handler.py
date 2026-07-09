@@ -906,11 +906,32 @@ def _sanitise_goal(raw) -> dict | None:
     The goal is client-COMPUTED (unlike the server-assembled spend), so anything
     off-shape is dropped rather than trusted: a bad goal degrades to spend-only —
     never a 400, and never a junk figure the "use ONLY these numbers" prompt would
-    parrot. Only the payoff cases carry a real date; 'none'/'unready' never reach here.
+    parrot. The payoff cases carry a projected date; the 'shortfall' case (WHIT-126)
+    carries a target date + the required repayment instead; 'unready' never reaches here.
     """
     if not isinstance(raw, dict):
         return None
     mode = raw.get("payoff_mode")
+    # Shortfall (WHIT-126) has its own shape (a target date + required-repayment
+    # numbers, no projected payoff date), so validate it before the payoff-mode gate.
+    if mode == "shortfall":
+        when = raw.get("goal_date")
+        if not isinstance(when, str) or not _GOAL_DATE_RE.match(when):
+            return None
+        required_repayment = raw.get("required_repayment")
+        required_extra = raw.get("required_extra")
+        extra = raw.get("current_extra_monthly")
+        if not (_finite_number(required_repayment, high=1_000_000)
+                and _finite_number(required_extra, high=1_000_000)
+                and _finite_number(extra, high=1_000_000)):
+            return None
+        return {
+            "payoff_mode": "shortfall",
+            "goal_date": when,
+            "required_repayment": float(required_repayment),
+            "required_extra": float(required_extra),
+            "current_extra_monthly": float(extra),
+        }
     if mode not in _GOAL_PAYOFF_MODES:
         return None
     when = raw.get("mortgage_free_date")
@@ -1208,6 +1229,11 @@ def get_repayment(repo: TransactionRepository) -> dict:
 # The user-entered loan-facts fields, in the order the form + response use them.
 _LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
 
+# The optional target payoff date (WHIT-126), stored as an ISO "YYYY-MM-DD" string.
+# Kept here (not in shared/constants.py) so it can't drift from the lambda_api
+# constants shadow. Shape-checked here; the real-calendar-date check is date.fromisoformat.
+_GOAL_DATE_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 
 def get_loanfacts(repo: LoanFactsRepository) -> dict:
     """GET /loanfacts — the user's saved home-loan facts (Loan facts card).
@@ -1219,19 +1245,21 @@ def get_loanfacts(repo: LoanFactsRepository) -> dict:
     """
     stored = repo.get_loanfacts()
     if stored is None:
-        return {field: None for field in _LOANFACTS_FIELDS}
+        return {**{field: None for field in _LOANFACTS_FIELDS}, "payoffGoalDate": None}
     return stored
 
 
 def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     """PUT /loanfacts — save (replace) the user's home-loan facts.
 
-    Body: all six of {original, homeValue, lvr, ratePct, baseRepay, extra}. The
-    whole object is required and replaced together (like /paycycle) — there is no
-    partial save, so the app is never left with a half-set object. Each field is
-    validated like a budget target (reject bool, require a finite number); amounts
-    must be > 0 (extra >= 0, an optional top-up), lvr is a fraction in (0, 1], and
-    ratePct a percent in (0, 100]. Stored via Decimal(str(...)) to avoid float drift.
+    Body: all six of {original, homeValue, lvr, ratePct, baseRepay, extra}, plus an
+    optional payoffGoalDate (WHIT-126). The six-field object is required and replaced
+    together (like /paycycle) — there is no partial save, so the app is never left
+    with a half-set object. Each field is validated like a budget target (reject bool,
+    require a finite number); amounts must be > 0 (extra >= 0, an optional top-up), lvr
+    is a fraction in (0, 1], and ratePct a percent in (0, 100]. payoffGoalDate, when
+    present, must be a real ISO YYYY-MM-DD date. Stored via Decimal(str(...)) to avoid
+    float drift.
     """
     body, error = _parse_json_body(event)
     if error:
@@ -1262,7 +1290,19 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     if not (0 < values["ratePct"] <= 100):
         return _json_response(400, {"error": "ratePct must be between 0 and 100"})
 
-    saved = repo.set_loanfacts(**{k: Decimal(str(v)) for k, v in values.items()})
+    # Optional target payoff date (WHIT-126): absent/None is fine (unset or cleared);
+    # when present it must be a real ISO YYYY-MM-DD calendar date.
+    goal_date = body.get("payoffGoalDate")
+    if goal_date is not None:
+        if not isinstance(goal_date, str) or not _GOAL_DATE_ISO_RE.match(goal_date):
+            return _json_response(400, {"error": "payoffGoalDate must be an ISO YYYY-MM-DD date"})
+        try:
+            date.fromisoformat(goal_date)
+        except ValueError:
+            return _json_response(400, {"error": "payoffGoalDate must be a real calendar date"})
+
+    saved = repo.set_loanfacts(
+        **{k: Decimal(str(v)) for k, v in values.items()}, payoffGoalDate=goal_date)
     return _json_response(200, saved)
 
 

@@ -14,7 +14,7 @@ import { queryClient } from './queryClient';
 // module const so every "unset" origin (initial state, a failed fetch) agrees.
 // Exported (WHIT-197) so the Goal/milestone query composite has the same all-null
 // default before the loan-facts read resolves.
-export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
+export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null, payoffGoalDate: null };
 
 // Loan facts are "ready" only when the user has saved all six fields — until then
 // the app shows a set-up prompt instead of any fabricated number. Narrows to
@@ -209,6 +209,14 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 // is always 12 periods/year; the loan-facts repayment fields are per month.
 const MONTHS_PER_YEAR = 12;
 
+// The most we'll present as a required shortfall repayment (WHIT-126). MIRRORS the
+// server's _sanitise_goal cap (`_finite_number(..., high=1_000_000)` in
+// lambda_api/handler.py): above it the server drops the shortfall goal, so the AI
+// can't discuss it — showing a figure the AI silently ignores would be a dead-end.
+// A required repayment over this cap means the goal date is unrealistically close
+// for the balance, so we fall back to the plain "won't pay off" copy instead.
+const MAX_SHORTFALL_REPAYMENT = 1_000_000;
+
 // A loan-amortization result: the (fractional) number of equal repayments to
 // clear the balance, and the total interest paid over that schedule.
 export interface Amort { periods: number; totalInterest: number; }
@@ -229,6 +237,19 @@ export function amortize(balance: number, i: number, pmt: number): Amort | null 
   return { periods, totalInterest: pmt * periods - balance };
 }
 
+// The monthly repayment needed to clear `balance` in exactly `periods` months at
+// monthly rate `i` — the algebraic inverse of amortize (WHIT-126). Rearranging the
+// same annuity identity B = pmt·(1 − (1+i)^(−n))/i gives pmt = B·i/(1 − (1+i)^(−n)).
+// The i≤0 straight-line case is pmt = B/n (the general form is 0/0 there). Returns
+// null when the inputs can't define a payment (non-positive balance or periods, or
+// non-finite). For any finite periods>0 the result strictly exceeds the interest-only
+// floor B·i, so amortize(balance, i, requiredRepayment(...)) always converges back.
+export function requiredRepayment(balance: number, i: number, periods: number): number | null {
+  if (!(balance > 0) || !(periods > 0) || !Number.isFinite(i)) return null;
+  if (i <= 0) return balance / periods;
+  return (balance * i) / (1 - Math.pow(1 + i, -periods));
+}
+
 // `from` advanced by `months` whole calendar months. The day is pinned to the 1st
 // first — only the month-year is rendered, and otherwise a 31st + n months would
 // roll "Feb 31" into March (off by a month).
@@ -243,6 +264,16 @@ function addMonths(from: Date, months: number): Date {
 // granularity the hero shows (nobody expects day-precision 20 years out).
 function monthYear(d: Date): string {
   return `${MON[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// Whole calendar months from `from` to an ISO "YYYY-MM-DD" target, at month
+// granularity to match monthYear (WHIT-126). Returns null on an unparseable date,
+// and can be ≤ 0 for a past/current month — callers treat that as "no valid goal".
+function monthsUntil(from: Date, isoDate: string): number | null {
+  const parts = isoDate.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
+  const [year, month] = parts;
+  return (year - from.getFullYear()) * MONTHS_PER_YEAR + (month - (from.getMonth() + 1));
 }
 
 function dateLabel(isoDate: string): string {
@@ -1299,12 +1330,21 @@ export interface PaydownView {
   aheadLabel: string | null;            // "6y 6m"; set only in 'ahead'
   interestDodged: number | null;        // set only in 'ahead'
   interestDodgedLabel: string | null;   // fmt(interestDodged); set only in 'ahead'
+  // WHIT-126 shortfall solver: set only in 'none' AND when the user has a valid
+  // future payoff goal date; null otherwise (every other mode, or 'none' with no date).
+  requiredRepay: number | null;         // $/month needed to clear the loan by the goal date
+  requiredExtra: number | null;         // requiredRepay − (baseRepay + extra); always > 0 in 'none'
+  requiredRepayLabel: string | null;    // fmt(requiredRepay)
+  requiredExtraLabel: string | null;    // fmt(requiredExtra)
+  goalDateLabel: string | null;         // "Nov 2030" — the goal date as a month-year label
 }
 
 export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
   const base: PaydownView = {
     mode: 'unready', freedomLabel: '',
     aheadLabel: null, interestDodged: null, interestDodgedLabel: null,
+    requiredRepay: null, requiredExtra: null, requiredRepayLabel: null,
+    requiredExtraLabel: null, goalDateLabel: null,
   };
   const facts = s.loanFacts;
   const balance = s.homeLoan.balance;
@@ -1315,7 +1355,31 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
   const i = facts.ratePct / 100 / MONTHS_PER_YEAR;
 
   const withExtra = amortize(balance, i, facts.baseRepay + facts.extra);
-  if (!withExtra) return { ...base, mode: 'none' };          // won't pay off at all
+  if (!withExtra) {
+    // Won't pay off at the current repayment. If the user set a valid FUTURE payoff
+    // goal date, solve for the repayment needed to hit it (WHIT-126); otherwise leave
+    // the shortfall fields null so the screen shows the static "won't pay off" copy.
+    // A past/current-month or unparseable goal date (months ≤ 0 / null) falls back too
+    // — never emit an absurd figure from a bad horizon.
+    const goalDate = facts.payoffGoalDate;
+    const months = goalDate ? monthsUntil(today ?? new Date(), goalDate) : null;
+    if (goalDate && months !== null && months > 0) {
+      const requiredRepay = requiredRepayment(balance, i, months);
+      // Only present a figure the server (and so the AI) will accept — above the cap
+      // the goal is unrealistically close, so fall back to the static copy.
+      if (requiredRepay !== null && requiredRepay <= MAX_SHORTFALL_REPAYMENT) {
+        const requiredExtra = requiredRepay - (facts.baseRepay + facts.extra);
+        const [goalYear, goalMonth] = goalDate.split('-').map(Number);
+        return {
+          ...base, mode: 'none',
+          requiredRepay, requiredExtra,
+          requiredRepayLabel: fmt(requiredRepay), requiredExtraLabel: fmt(requiredExtra),
+          goalDateLabel: monthYear(new Date(goalYear, goalMonth - 1, 1)),
+        };
+      }
+    }
+    return { ...base, mode: 'none' };                         // won't pay off at all
+  }
 
   const freedomLabel = monthYear(addMonths(today ?? new Date(), Math.ceil(withExtra.periods)));
 
@@ -1335,7 +1399,7 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
   // Only claim "ahead" when both a whole-month saving AND at least a dollar of
   // interest survive rounding — otherwise the extra is effectively no different.
   if ((y > 0 || m > 0) && Math.round(dodged) > 0) {
-    return { mode: 'ahead', freedomLabel, aheadLabel: `${y}y ${m}m`, interestDodged: dodged, interestDodgedLabel: fmt(dodged) };
+    return { ...base, mode: 'ahead', freedomLabel, aheadLabel: `${y}y ${m}m`, interestDodged: dodged, interestDodgedLabel: fmt(dodged) };
   }
   return { ...base, mode: 'flat', freedomLabel };
 }
@@ -1345,14 +1409,33 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
 // SAME payoff projection as paydownView (the single source of truth — we never
 // rebuild the amortization) + `today` (injected for tests).
 //
-// Returns null when there is no honest payoff signal to send — 'unready' (facts or
-// balance not loaded) or 'none' (the loan never pays off, so there's no date). In
-// the payoff cases (partial/flat/ahead) it carries the projected month, the current
-// extra, and an EXACT sensitivity: how many whole months the payoff moves in per
-// additional $100/month. Payoff time is convex in the payment, so this holds for
-// $100 only — callers/the model must not extrapolate it to larger amounts.
+// Returns null when there is no honest signal to send — 'unready' (facts or balance
+// not loaded) or 'none' WITHOUT a valid payoff goal date. In the payoff cases
+// (partial/flat/ahead) it carries the projected month, the current extra, and an
+// EXACT sensitivity: how many whole months the payoff moves in per additional
+// $100/month. Payoff time is convex in the payment, so this holds for $100 only —
+// callers/the model must not extrapolate it to larger amounts. In the 'none' case
+// WITH a goal date (WHIT-126) it instead carries the shortfall: the required
+// repayment to hit that date and how much more than now that is, per month.
 export function aiGoalSignal(s: GoalViewInput, today?: Date): AiGoalSignal | null {
   const pv = paydownView(s, today);
+
+  // Shortfall (WHIT-126): the loan won't clear, but the user set a payoff goal date
+  // and paydownView solved the required repayment. Send those numbers so the model
+  // can tie spend cuts to closing the monthly gap. goal_date is the month-year LABEL
+  // ("Nov 2030") so it matches the server's goal-date format; never the ISO string.
+  if (pv.mode === 'none' && pv.requiredRepay !== null && pv.requiredExtra !== null && pv.goalDateLabel !== null) {
+    const facts = s.loanFacts;
+    if (!loanFactsReady(facts)) return null;                  // TS narrow; 'none' already implies ready
+    return {
+      payoff_mode: 'shortfall',
+      goal_date: pv.goalDateLabel,
+      required_repayment: pv.requiredRepay,
+      required_extra: pv.requiredExtra,
+      current_extra_monthly: facts.extra,
+    };
+  }
+
   if (pv.mode !== 'partial' && pv.mode !== 'flat' && pv.mode !== 'ahead') return null;
 
   const facts = s.loanFacts;

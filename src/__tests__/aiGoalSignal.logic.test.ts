@@ -4,7 +4,7 @@
 // the projection would move these expectations too.
 import { describe, it, expect } from '@jest/globals';
 import { aiGoalSignal } from '../context';
-import { makeState, EMPTY_LOAN_FACTS } from './factory';
+import { makeState, EMPTY_LOAN_FACTS, asPayoffGoal } from './factory';
 
 const TODAY = new Date(2026, 6, 4); // 2026-07-04, fixed so the projected month is stable.
 const M = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
@@ -21,7 +21,7 @@ describe('aiGoalSignal (WHIT-134)', () => {
   });
 
   it('carries the projected date, current extra, and an exact per-$100 sensitivity (ahead)', () => {
-    const g = aiGoalSignal(makeState({ loanFacts: M, homeLoan: { balance: 528000, asOf: null } }), TODAY)!;
+    const g = asPayoffGoal(aiGoalSignal(makeState({ loanFacts: M, homeLoan: { balance: 528000, asOf: null } }), TODAY));
     expect(g.payoff_mode).toBe('ahead');
     expect(g.mortgage_free_date).toBe('Nov 2042');   // matches paydownView; fail-on-revert vs old seed
     expect(g.current_extra_monthly).toBe(500);
@@ -31,14 +31,14 @@ describe('aiGoalSignal (WHIT-134)', () => {
   });
 
   it('still sends the date for a partial payoff (the extra is what clears it)', () => {
-    const g = aiGoalSignal(makeState({ loanFacts: M, homeLoan: { balance: 815000, asOf: null } }), TODAY)!;
+    const g = asPayoffGoal(aiGoalSignal(makeState({ loanFacts: M, homeLoan: { balance: 815000, asOf: null } }), TODAY));
     expect(g.payoff_mode).toBe('partial');
     expect(g.mortgage_free_date).toBe('Jun 2074');
     expect(g.months_sooner_per_100_extra).toBe(61);
   });
 
   it('reports extra 0 for a flat payoff but still offers the $100 lever', () => {
-    const g = aiGoalSignal(makeState({ loanFacts: { ...M, extra: 0 }, homeLoan: { balance: 528000, asOf: null } }), TODAY)!;
+    const g = asPayoffGoal(aiGoalSignal(makeState({ loanFacts: { ...M, extra: 0 }, homeLoan: { balance: 528000, asOf: null } }), TODAY));
     expect(g.payoff_mode).toBe('flat');
     expect(g.current_extra_monthly).toBe(0);
     expect(g.months_sooner_per_100_extra).toBe(12);

@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C, FONT } from '../src/theme';
 import { useAppContext, EMPTY_LOAN_FACTS } from '../src/context';
 import { useLoanFactsQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
+import { parseISODate, toISODate, formatDayMonthYear } from '../src/dateutil';
 import type { LoanFactsInput } from '../src/api';
 
 // number | null -> the text the input starts with ('' when unset). LVR is stored
@@ -27,6 +29,7 @@ export default function Loan() {
   const [ratePct, setRatePct] = useState(numText(f.ratePct));
   const [baseRepay, setBaseRepay] = useState(numText(f.baseRepay));
   const [extra, setExtra] = useState(numText(f.extra));
+  const [payoffGoalDate, setPayoffGoalDate] = useState<string | null>(f.payoffGoalDate ?? null);
   const [saving, setSaving] = useState(false);
 
   const onSave = async () => {
@@ -44,6 +47,9 @@ export default function Loan() {
       ratePct: num(ratePct),
       baseRepay: num(baseRepay),
       extra: num(extra),
+      // Optional (WHIT-126): null when unset/cleared. The picker only yields valid
+      // future ISO dates, so it needs no extra guard and never blocks the save.
+      payoffGoalDate,
     };
     // Client-side guard mirroring the server so we fail fast with a clear message
     // instead of a 400 round-trip. extra may be 0 (an optional top-up).
@@ -77,10 +83,66 @@ export default function Loan() {
         <Field label="Scheduled repayment" hint="Your minimum, per month" placeholder="e.g. 3667" prefix="$" value={baseRepay} onChangeText={setBaseRepay} />
         <Field label="Extra repayment" hint="Optional top-up per month" placeholder="e.g. 500" prefix="$" value={extra} onChangeText={setExtra} />
 
+        <GoalDateField value={payoffGoalDate} onChange={setPayoffGoalDate} />
+
         <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
           <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>
         </Pressable>
       </ScrollView>
+    </View>
+  );
+}
+
+// Optional target-payoff-date input (WHIT-126). A future-constrained native date
+// picker (mirroring the payday picker), plus a Clear affordance once a date is set.
+// Leaving it unset is fine — it only powers the "won't pay off" required-repayment
+// prompt. iOS shows the compact pill inline; Android opens the dialog on tap.
+function GoalDateField({ value, onChange }: { value: string | null; onChange: (iso: string | null) => void }) {
+  const [showPicker, setShowPicker] = useState(false);
+  const isIOS = Platform.OS === 'ios';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const pickerValue = value ? parseISODate(value) : today;
+
+  // Android fires onChange for both a pick and a dismiss; close the dialog either
+  // way and only commit when a Date came through (the second arg).
+  const commit = (_event: unknown, date?: Date) => {
+    setShowPicker(false);
+    if (date) onChange(toISODate(date));
+  };
+
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>Target payoff date</Text>
+      <View style={styles.inputRow}>
+        <Text style={[styles.input, !value && { color: C.placeholder }]}>
+          {value ? formatDayMonthYear(value) : 'Not set'}
+        </Text>
+        {value ? (
+          <Pressable onPress={() => onChange(null)} accessibilityRole="button">
+            <Text style={styles.clearGoal}>Clear</Text>
+          </Pressable>
+        ) : null}
+        {isIOS ? (
+          <DateTimePicker
+            value={pickerValue}
+            mode="date"
+            display="compact"
+            minimumDate={today}
+            themeVariant="dark"
+            accentColor={C.accent}
+            onChange={commit}
+          />
+        ) : (
+          <Pressable onPress={() => setShowPicker(true)} accessibilityRole="button">
+            <Text style={styles.clearGoal}>{value ? 'Change' : 'Set date'}</Text>
+          </Pressable>
+        )}
+      </View>
+      {!isIOS && showPicker && (
+        <DateTimePicker value={pickerValue} mode="date" display="default" minimumDate={today} onChange={commit} />
+      )}
+      <Text style={styles.hint}>Optional — how we work out the repayment needed if the loan won't clear at your current rate.</Text>
     </View>
   );
 }
@@ -118,7 +180,8 @@ const styles = StyleSheet.create({
   label: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.textBright, marginBottom: 7 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
   affix: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textDim },
-  input: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%' },
+  input: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%', textAlignVertical: 'center' },
+  clearGoal: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.accent, paddingHorizontal: 4 },
   hint: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, marginTop: 5 },
   save: { marginTop: 8, paddingVertical: 15, borderRadius: 14, backgroundColor: C.accent, alignItems: 'center' },
   saveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },

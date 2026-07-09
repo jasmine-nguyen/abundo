@@ -49,9 +49,29 @@ it('saves the facts (LVR as a fraction) and navigates back', async () => {
   fillValid();
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
 
-  // 80% entered → stored as the fraction 0.8.
-  expect(saveLoanFacts).toHaveBeenCalledWith({ original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200 });
+  // 80% entered → stored as the fraction 0.8; no goal date set → payoffGoalDate null.
+  expect(saveLoanFacts).toHaveBeenCalledWith({ original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null });
   expect(mockBack).toHaveBeenCalled();
+});
+
+it('sends the picked target payoff date, and clears it back to null (WHIT-126)', async () => {
+  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+  render(<Loan />);
+  fillValid();
+
+  // The mock date picker fires a fixed date (2026-06-20) on press.
+  await act(async () => { fireEvent.press(screen.getByTestId('mock-datepicker')); });
+  expect(screen.getByText('20 Jun 2026')).toBeTruthy();     // label reflects the pick
+  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: '2026-06-20' }));
+
+  // Clearing it removes the date; the next save carries null again.
+  saveLoanFacts.mockClear();
+  await act(async () => { fireEvent.press(screen.getByText('Clear')); });
+  expect(screen.getByText('Not set')).toBeTruthy();
+  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: null }));
 });
 
 it('blocks an incomplete save with a toast and no API call', async () => {

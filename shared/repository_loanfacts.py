@@ -39,11 +39,14 @@ class LoanFactsRepository:
         return self._table
 
     def get_loanfacts(self) -> Optional[dict]:
-        """Return {field: float, ...} for the six fields, or None if unset.
+        """Return {field: float, ..., "payoffGoalDate": str|None} or None if unset.
 
-        Only the six known fields are surfaced (pk/sk/version stay internal), so
-        the client never sees storage keys. Values are normalised to float (they
-        are stored as Decimal) so the handler serialises them as JSON numbers.
+        Only the known fields are surfaced (pk/sk/version stay internal), so the
+        client never sees storage keys. The six numeric fields are normalised to
+        float (they are stored as Decimal) so the handler serialises them as JSON
+        numbers. payoffGoalDate (WHIT-126) is an optional ISO string, or None —
+        rows saved before it existed simply lack the attribute, so `.get` yields
+        None (back-compat, no migration).
         """
         try:
             item = self._get_table().get_item(Key=_LOANFACTS_KEY).get("Item")
@@ -51,7 +54,9 @@ class LoanFactsRepository:
             handle_database_error(e, "read loan facts")
         if item is None:
             return None
-        return {field: float(item[field]) for field in LOANFACTS_FIELDS}
+        result = {field: float(item[field]) for field in LOANFACTS_FIELDS}
+        result["payoffGoalDate"] = item.get("payoffGoalDate")
+        return result
 
     def set_loanfacts(
         self,
@@ -61,20 +66,27 @@ class LoanFactsRepository:
         ratePct: Decimal,
         baseRepay: Decimal,
         extra: Decimal,
+        payoffGoalDate: Optional[str] = None,
     ) -> dict:
-        """Overwrite the whole loan-facts object and return it (as floats)."""
+        """Overwrite the whole loan-facts object and return it.
+
+        The whole item is replaced on every save, so writing payoffGoalDate only
+        when set means clearing it (None) drops the attribute cleanly — no stale
+        date survives a clear (WHIT-126).
+        """
+        item = {
+            **_LOANFACTS_KEY,
+            "original": original,
+            "homeValue": homeValue,
+            "lvr": lvr,
+            "ratePct": ratePct,
+            "baseRepay": baseRepay,
+            "extra": extra,
+        }
+        if payoffGoalDate is not None:
+            item["payoffGoalDate"] = payoffGoalDate
         try:
-            self._get_table().put_item(
-                Item={
-                    **_LOANFACTS_KEY,
-                    "original": original,
-                    "homeValue": homeValue,
-                    "lvr": lvr,
-                    "ratePct": ratePct,
-                    "baseRepay": baseRepay,
-                    "extra": extra,
-                }
-            )
+            self._get_table().put_item(Item=item)
         except ClientError as e:
             handle_database_error(e, "set loan facts")
         return {
@@ -84,4 +96,5 @@ class LoanFactsRepository:
             "ratePct": float(ratePct),
             "baseRepay": float(baseRepay),
             "extra": float(extra),
+            "payoffGoalDate": payoffGoalDate,
         }

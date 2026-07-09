@@ -316,11 +316,19 @@ export interface LoanFacts {
   ratePct: number | null;    // interest rate, a percent
   baseRepay: number | null;  // scheduled repayment per cycle
   extra: number | null;      // extra repayment per cycle
+  // WHIT-126: target payoff date, ISO "YYYY-MM-DD". Independently OPTIONAL — unlike
+  // the six all-or-nothing facts above, it's null/absent until the user sets one, and
+  // drives the required-repayment solver on the "won't pay off" state.
+  payoffGoalDate?: string | null;
 }
 
-/** The saved shape — all six fields present (what the form PUTs). */
+/**
+ * The saved shape the form PUTs. The six numeric facts are always present; the
+ * optional payoff goal date rides alongside them (null/absent when unset/cleared).
+ */
 export interface LoanFactsInput {
   original: number; homeValue: number; lvr: number; ratePct: number; baseRepay: number; extra: number;
+  payoffGoalDate?: string | null;
 }
 
 /**
@@ -513,18 +521,35 @@ export interface AiInsights {
  * payoff projection (the single source of truth — the server does NOT recompute the
  * amortization). Only sent when there's an honest payoff signal; null otherwise.
  *
- * - payoff_mode: which payoff case we're in ('partial' | 'flat' | 'ahead').
+ * Two shapes, discriminated on payoff_mode:
+ *
+ * On-track ('partial' | 'flat' | 'ahead') — the loan DOES clear:
  * - mortgage_free_date: the projected month-year, e.g. "Nov 2042".
  * - current_extra_monthly: extra $/month currently paid on top of the scheduled repayment.
  * - months_sooner_per_100_extra: months the payoff moves in for each additional
  *   $100/month (exact, from the same amortization). null when it rounds to < 1 month.
+ *
+ * Shortfall ('shortfall') — the loan will NOT clear at the current repayment, but
+ * the user has set a target payoff date (WHIT-126):
+ * - goal_date: the target month-year label, e.g. "Nov 2030" (matches mortgage_free_date's format).
+ * - required_repayment: the $/month needed to clear the loan by goal_date.
+ * - required_extra: how much more than the current total repayment that is, per month.
+ * - current_extra_monthly: extra $/month currently paid on top of the scheduled repayment.
  */
-export interface AiGoalSignal {
-  payoff_mode: 'partial' | 'flat' | 'ahead';
-  mortgage_free_date: string;
-  current_extra_monthly: number;
-  months_sooner_per_100_extra: number | null;
-}
+export type AiGoalSignal =
+  | {
+      payoff_mode: 'partial' | 'flat' | 'ahead';
+      mortgage_free_date: string;
+      current_extra_monthly: number;
+      months_sooner_per_100_extra: number | null;
+    }
+  | {
+      payoff_mode: 'shortfall';
+      goal_date: string;
+      required_repayment: number;
+      required_extra: number;
+      current_extra_monthly: number;
+    };
 
 /**
  * Read the cached AI insights for the current pay cycle WITHOUT generating (no
