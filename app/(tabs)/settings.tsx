@@ -6,7 +6,7 @@ import { Glyph } from '../../src/icons';
 import { useAppContext } from '../../src/context';
 import { useSettingsScreenData, useRulesScreenData, usePayCycle } from '../../src/queries';
 import { signOut, getCurrentUser } from '../../src/auth';
-import { SectionLabel } from '../../src/components/ui';
+import { SectionLabel, RetryButton } from '../../src/components/ui';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 
 // WHIT-180: avatar initials from the real signed-in identity (name → first+last
@@ -34,11 +34,21 @@ export default function Settings() {
 
   // WHIT-191a: the two server-backed rows (categories count + loan-facts status) now come
   // from the cached query layer. "…" while first-loading so the count never flashes "0".
-  const { categoriesCount, loanReady, isLoading, refetchStale } = useSettingsScreenData();
+  const { categoriesCount, loanReady, categoriesError, loanReadyError, isLoading, refetch, refetchStale } = useSettingsScreenData();
   // WHIT-203: the rules count + pay-cycle name also come off the query layer now.
-  const { rules } = useRulesScreenData();
+  // WHIT-198: gate the count on the rules read's own loading so a cold open shows "…" rather than
+  // flashing a misleading "0", and show "—" (not "0") when the read has hard-failed — the same
+  // honest-unknown treatment the categories/loan rows get.
+  const { rules, isLoading: rulesLoading, rulesError, refetch: refetchRules } = useRulesScreenData();
   const { cycleName } = usePayCycle();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
+
+  // The three query-backed SETUP rows (categories, rules, loan) share one "Couldn't load these"
+  // affordance: it appears once none of them is still loading and at least one first-load-failed,
+  // and its Retry re-reads all three (the two composites' refetches).
+  const setupLoading = isLoading || rulesLoading;
+  const setupHasError = categoriesError || loanReadyError || rulesError;
+  const retrySetup = useCallback(() => { refetch(); refetchRules(); }, [refetch, refetchRules]);
 
   // WHIT-180: real identity from the Cognito ID token, not the "Jordan Diaz" mock.
   const user = getCurrentUser();
@@ -77,11 +87,21 @@ export default function Settings() {
 
         <SectionLabel>SETUP</SectionLabel>
         <View style={styles.group}>
-          <Row icon="tag" label="Categories" value={isLoading ? '…' : String(categoriesCount)} onPress={() => router.push('/category')} />
-          <Row icon="sliders" label="Automation rules" value={String(rules.length)} onPress={() => router.push('/rules')} />
+          <Row icon="tag" label="Categories" value={isLoading ? '…' : categoriesError ? '—' : String(categoriesCount)} onPress={() => router.push('/category')} />
+          <Row icon="sliders" label="Automation rules" value={rulesLoading ? '…' : rulesError ? '—' : String(rules.length)} onPress={() => router.push('/rules')} />
           <Row icon="calendar" label="Pay cycle" value={cycleName()} onPress={() => s.setSheet({ mode: 'paycycle' })} />
-          <Row icon="building" label="Loan details" value={isLoading ? '…' : loanReady ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
+          <Row icon="building" label="Loan details" value={isLoading ? '…' : loanReadyError ? '—' : loanReady ? 'Edit' : 'Set up'} onPress={() => router.push('/loan')} last />
         </View>
+        {/* WHIT-198: a sustained categories/rules/loan read failure shows "—" on the rows above (not
+            a misleading "0"/"Set up"); this inline retry carries the error meaning + re-reads all
+            three. Gated on !setupLoading (like the rows) so a still-loading screen never shows "…"
+            rows and a "couldn't load" card at the same time. */}
+        {!setupLoading && setupHasError ? (
+          <View testID="settings-setup-error" style={styles.setupError}>
+            <Text style={styles.setupErrorText}>Couldn't load these.</Text>
+            <RetryButton onPress={retrySetup} label="Retry loading your setup" testID="settings-setup-retry" style={styles.retryBtn} textStyle={styles.retryText} />
+          </View>
+        ) : null}
 
         <SectionLabel>PREFERENCES</SectionLabel>
         <View style={styles.group}>
@@ -131,4 +151,11 @@ const styles = StyleSheet.create({
   knob: { position: 'absolute', top: 3, width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
 
   version: { textAlign: 'center', fontFamily: FONT.body, fontSize: 12, color: C.textFaintest, marginBottom: 6 },
+
+  // WHIT-198: inline "couldn't load these" affordance under the SETUP group. Reuses the
+  // Budgets retry tokens (retryBtn/retryText) so the retry looks identical app-wide.
+  setupError: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: -10, marginBottom: 18 },
+  setupErrorText: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, textAlign: 'center' },
+  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

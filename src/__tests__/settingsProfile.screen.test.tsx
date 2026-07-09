@@ -10,8 +10,8 @@ jest.mock('../../src/auth', () => ({ signOut: jest.fn(), getCurrentUser: () => m
 jest.mock('expo-router', () => ({ useRouter: () => ({ replace: jest.fn(), push: jest.fn() }), useFocusEffect: () => {} }));
 // WHIT-191a: the categories count + loan-facts status now come from a query composite.
 jest.mock('../../src/queries', () => ({
-  useSettingsScreenData: () => ({ categoriesCount: 0, loanReady: false, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
-  useRulesScreenData: () => ({ rules: [], isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
+  useSettingsScreenData: () => ({ categoriesCount: 0, loanReady: false, categoriesError: false, loanReadyError: false, isLoading: false, refetch: jest.fn(), refetchStale: jest.fn() }),
+  useRulesScreenData: () => ({ rules: [], isLoading: false, isError: false, rulesError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
   usePayCycle: () => ({ payCycle: { length: 14, last_pay_date: '2024-01-03' }, cycleLen: 14, daysLeft: 7, cycleName: () => 'Fortnightly', isLoading: false, isError: false }),
 }));
 jest.mock('../../src/context', () => ({

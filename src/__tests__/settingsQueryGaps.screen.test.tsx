@@ -1,7 +1,7 @@
 // WHIT-191a GAPS (authored by qa) — the adversarial half of useSettingsScreenData /
 // Settings that the implementer's happy-path suite skips:
-//   (1) sustained hard failure: hook surfaces isError + falls back to count 0, and the
-//       screen renders the misleading "0" the "…" logic was meant to prevent (critique #1);
+//   (1) sustained hard failure (WHIT-198): hook surfaces categoriesError and the screen
+//       renders an honest "—" + inline Retry — NOT the misleading "0" it rendered before;
 //   (2) partial-load flash: loan cached-ready but categories pending → isLoading true;
 //   (3) read-your-write: a save's invalidate refetches the active Settings observer and
 //       the loan row stays "Edit";
@@ -10,7 +10,7 @@
 // ../api + ../auth + ../context + expo-router mocked; real QueryClientProvider.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, renderHook, act, waitFor } from '@testing-library/react-native';
+import { render, screen, renderHook, act, waitFor, fireEvent } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 jest.mock('../auth', () => ({
@@ -22,12 +22,15 @@ jest.mock('../auth', () => ({
 
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchLoanFacts = jest.fn<() => Promise<unknown>>();
+const mockListEnrichments = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchCategories: () => mockFetchCategories(),
   fetchLoanFacts: () => mockFetchLoanFacts(),
-  listEnrichments: () => Promise.resolve([{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }]),
+  listEnrichments: () => mockListEnrichments(),
   fetchPayCycle: () => Promise.resolve({ length: 14, last_pay_date: '2024-01-03' }),
 }));
+
+const ONE_RULE = [{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }];
 
 // Real selectors (loanFactsReady) + composite deps; stub only the store-backed rows.
 // rules length 1 so the categories "0" under failure is unambiguous on screen.
@@ -62,26 +65,69 @@ const hookWrapper = (client: QueryClient) =>
 beforeEach(() => {
   mockFetchCategories.mockReset().mockResolvedValue(CATS);
   mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+  mockListEnrichments.mockReset().mockResolvedValue(ONE_RULE);
 });
 
 describe('sustained hard failure (no self-heal)', () => {
-  it('hook surfaces isError, drops isLoading, and falls back to count 0', async () => {
+  it('hook surfaces categoriesError (not a fake 0) and drops isLoading', async () => {
     mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
     const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
 
-    await waitFor(() => expect(result.current.isError).toBe(true));
+    await waitFor(() => expect(result.current.categoriesError).toBe(true));
     expect(result.current.isLoading).toBe(false); // errored query is not "loading" → no endless "…"
-    expect(result.current.categoriesCount).toBe(0);
+    expect(result.current.loanReadyError).toBe(false); // loan facts still resolved → that row is fine
   });
 
-  it('Settings renders "0" (not "…") for Categories once the read has hard-failed', async () => {
+  // WHIT-198 fail-on-revert: before the fix the categories row collapsed to a misleading "0".
+  // Reverting settings.tsx to `String(categoriesCount)` brings the "0" back and fails this.
+  it('Settings renders "—" + a Retry (not the misleading "0") once the read has hard-failed', async () => {
     mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
     render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
     // loan facts still resolve → "Edit" lets us wait past first paint deterministically.
     expect(await screen.findByText('Edit')).toBeTruthy();
     expect(screen.queryByText('…')).toBeNull(); // "…" cleared on error
-    expect(screen.getByText('0')).toBeTruthy(); // categories fell back to a misleading 0 (critique #1)
+    expect(screen.queryByText('0')).toBeNull(); // WHIT-198: no longer a misleading 0
+    expect(screen.getByText('—')).toBeTruthy(); // honest "unknown" on the categories row
+    expect(screen.getByTestId('settings-setup-error')).toBeTruthy();
+    expect(screen.getByTestId('settings-setup-retry')).toBeTruthy(); // and a working retry affordance
+  });
+});
+
+describe('the inline Retry re-reads both server rows (WHIT-198)', () => {
+  it('press Retry → categories + loan facts refetch and the rows recover', async () => {
+    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    mockFetchLoanFacts.mockReset().mockRejectedValue(new Error('API error: 500'));
+    render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+
+    const retry = await screen.findByTestId('settings-setup-retry');
+    await waitFor(() => expect(screen.getAllByText('—').length).toBe(2)); // both rows honestly unknown
+
+    // re-arm both reads to succeed, then retry
+    mockFetchCategories.mockReset().mockResolvedValue(CATS);
+    mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+    fireEvent.press(retry);
+
+    await waitFor(() => expect(screen.queryByText('—')).toBeNull()); // rows recovered
+    expect(screen.getByText('2')).toBeTruthy(); // real categories count
+    expect(screen.getByText('Edit')).toBeTruthy(); // loan facts ready again
+    expect(screen.queryByTestId('settings-setup-error')).toBeNull(); // retry affordance gone
+  });
+});
+
+describe('cache-first: a background-refetch failure keeps the last-good value (WHIT-198)', () => {
+  it('does NOT surface categoriesError once a real count has been cached', async () => {
+    const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false, 0)) });
+    await waitFor(() => expect(result.current.categoriesCount).toBe(2)); // first load succeeded
+
+    // the NEXT read fails — but we already hold a cached count
+    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 503'));
+    await act(async () => { result.current.refetchStale(); });
+    await waitFor(() => expect(mockFetchCategories.mock.calls.length).toBe(1)); // the refetch fired + failed
+
+    // firstLoadError guard: data is retained on a background-refetch failure → no "—", real count stays
+    expect(result.current.categoriesError).toBe(false);
+    expect(result.current.categoriesCount).toBe(2);
   });
 });
 
@@ -139,5 +185,56 @@ describe('refetchStale focus gate', () => {
 
     await waitFor(() => expect(mockFetchCategories.mock.calls.length).toBe(cats + 1));
     expect(mockFetchLoanFacts.mock.calls.length).toBe(loan + 1);
+  });
+});
+
+// WHIT-198 follow-up — the Automation-rules row got the same honest-"—" + retry treatment as
+// categories/loan (previously it only got the loading gate, so a sustained rules failure still
+// showed a misleading "0").
+describe('rules-row hard failure', () => {
+  it('rules read fails → Automation rules shows "—" + the setup retry, others keep their values', async () => {
+    mockListEnrichments.mockReset().mockRejectedValue(new Error('API error: 500'));
+    render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+
+    expect(await screen.findByText('2')).toBeTruthy(); // categories loaded (2), unaffected
+    expect(screen.getByText('Edit')).toBeTruthy(); // loan loaded, unaffected
+    expect(screen.getByText('—')).toBeTruthy(); // rules row honestly unknown
+    expect(screen.queryByText('0')).toBeNull(); // WHIT-198: not a misleading 0
+    expect(screen.getByTestId('settings-setup-error')).toBeTruthy();
+  });
+
+  it('the setup Retry re-reads the failed rules query too (fan-out includes rules)', async () => {
+    mockListEnrichments.mockReset().mockRejectedValue(new Error('API error: 500'));
+    render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
+
+    const retry = await screen.findByTestId('settings-setup-retry');
+    await screen.findByText('—'); // rules failed → "—"
+
+    mockListEnrichments.mockReset().mockResolvedValue(ONE_RULE); // re-arm the rules read
+    fireEvent.press(retry);
+
+    expect(await screen.findByText('1')).toBeTruthy(); // rules recovered to its real count
+    expect(screen.queryByText('—')).toBeNull();
+    expect(screen.queryByTestId('settings-setup-error')).toBeNull();
+  });
+});
+
+// WHIT-198 follow-up — investigation: does simply returning to the Settings tab re-arm a row that
+// hard-failed its first load, or is the Retry button the only path? Answer, locked here: a query
+// that errored with NOTHING cached is STALE, so the focus `refetchStale()` DOES retry it. (A
+// background-refetch failure over cached data is a different case — that keeps the cached value.)
+describe('focus refetch re-arms a first-load failure', () => {
+  it('a first-load-failed categories read is stale, so refetchStale() on focus retries + recovers it', async () => {
+    mockFetchCategories.mockReset().mockRejectedValueOnce(new Error('API error: 500')).mockResolvedValue(CATS);
+    const { result } = renderHook(() => useSettingsScreenData(), { wrapper: hookWrapper(makeClient(false)) });
+
+    await waitFor(() => expect(result.current.categoriesError).toBe(true)); // first load failed, nothing cached
+    const callsAfterFail = mockFetchCategories.mock.calls.length;
+
+    await act(async () => { result.current.refetchStale(); }); // returning to the tab
+
+    await waitFor(() => expect(result.current.categoriesError).toBe(false)); // recovered without pressing Retry
+    expect(result.current.categoriesCount).toBe(2);
+    expect(mockFetchCategories.mock.calls.length).toBe(callsAfterFail + 1); // focus DID re-issue the failed read
   });
 });

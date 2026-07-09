@@ -6,6 +6,7 @@ import { Icon, Glyph } from '../../src/icons';
 import { useAppContext, categoryBreakdown, aiGoalSignal } from '../../src/context';
 import { useInsightsScreenData, useGoalScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
+import { RetryButton } from '../../src/components/ui';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
@@ -169,9 +170,7 @@ export default function Insights() {
         {showError && (
           <View testID="insights-error" style={styles.rowsState}>
             <Text style={styles.empty}>Couldn't load your spending.</Text>
-            <Pressable testID="insights-retry" onPress={refetch} style={styles.retryBtn}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
+            <RetryButton onPress={refetch} label="Retry loading your insights" testID="insights-retry" style={styles.retryBtn} textStyle={styles.retryText} />
           </View>
         )}
         {!showSpinner && !showError && rows.length === 0 && (

@@ -7,6 +7,7 @@ import { accountDetail } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
+import { RetryButton } from '../../src/components/ui';
 
 // WHIT-215: the per-account transaction list. Reached from the Accounts tab; the id in the
 // route is the account_id. Transactions come from the SAME cached query the list uses (no
@@ -44,9 +45,7 @@ export default function AccountDetail() {
         {showError && (
           <View testID="account-error" style={styles.state}>
             <Text style={styles.stateText}>Couldn't load your transactions.</Text>
-            <Pressable testID="account-retry" onPress={refetch} style={styles.retryBtn}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
+            <RetryButton onPress={refetch} label="Retry loading this account" testID="account-retry" style={styles.retryBtn} textStyle={styles.retryText} />
           </View>
         )}
 

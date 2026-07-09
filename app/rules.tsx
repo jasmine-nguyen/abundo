@@ -7,6 +7,7 @@ import { Icon, Glyph } from '../src/icons';
 import { useAppContext } from '../src/context';
 import { useRulesScreenData, useCategories } from '../src/queries';
 import { Header } from '../src/components/Header';
+import { RetryButton } from '../src/components/ui';
 
 export default function Rules() {
   const s = useAppContext(); // setSheet + deleteRule (writers)
@@ -39,9 +40,7 @@ export default function Rules() {
         {isError ? (
           <View style={styles.stateCard}>
             <Text style={styles.stateText}>Could not load your rules.</Text>
-            <Pressable onPress={() => refetch()} style={styles.retryBtn}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
+            <RetryButton onPress={() => refetch()} label="Retry loading your rules" testID="rules-retry" style={styles.retryBtn} textStyle={styles.retryText} />
           </View>
         ) : isLoading && rules.length === 0 ? (
           <View style={styles.stateCard}>

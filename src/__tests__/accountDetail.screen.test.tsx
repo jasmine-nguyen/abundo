@@ -6,7 +6,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { StyleSheet } from 'react-native';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 import { C } from '../theme';
 
 let mockTx: ReturnType<typeof txData>;
@@ -36,7 +36,7 @@ const bal = (over: Record<string, unknown> = {}) => ({
   as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
 });
 
-function txData(over: Partial<{ transactions: unknown[]; balances: Map<string, unknown> }> = {}) {
+function txData(over: Partial<{ transactions: unknown[]; balances: Map<string, unknown>; isError: boolean; refetch: () => void }> = {}) {
   return {
     transactions: [ROW], category: (_id: string | null) => undefined, balances: new Map(),
     isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
@@ -73,4 +73,27 @@ it('renders no balance hero when the account has not been polled yet', () => {
   mockTx = txData({ balances: new Map() });
   render(<AccountDetail />);
   expect(screen.queryByTestId('account-balance')).toBeNull();
+});
+
+// WHIT-198 follow-up — the account-detail error state had no coverage. A hard read failure with
+// NOTHING cached shows the inline error + an accessible Retry (routed through the shared
+// RetryButton), and Retry re-issues the read. A failure OVER cached rows stays cache-first.
+it('a hard read failure with nothing cached shows the inline error + an accessible Retry', () => {
+  const refetch = jest.fn();
+  mockTx = txData({ transactions: [], isError: true, refetch });
+  render(<AccountDetail />);
+
+  expect(screen.getByTestId('account-error')).toBeTruthy();
+  const retry = screen.getByTestId('account-retry');
+  expect(retry.props.accessibilityRole).toBe('button'); // shared RetryButton a11y contract
+  expect(retry.props.accessibilityLabel).toBe('Retry loading this account');
+
+  fireEvent.press(retry);
+  expect(refetch).toHaveBeenCalledTimes(1);
+});
+
+it('does NOT show the error when a background refetch fails over cached rows (cache-first)', () => {
+  mockTx = txData({ transactions: [ROW], isError: true }); // errored, but rows are cached
+  render(<AccountDetail />);
+  expect(screen.queryByTestId('account-error')).toBeNull(); // keep rendering the cached list
 });

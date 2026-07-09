@@ -41,6 +41,7 @@ function rulesData(over: Partial<RulesScreenData> = {}): RulesScreenData {
     rules: [],
     isLoading: false,
     isError: false,
+    rulesError: false,
     refetch: fns.refetch,
     refetchStale: fns.refetchStale,
     ...over,
@@ -76,7 +77,13 @@ it('shows an error with a retry that refetches', () => {
   mockRules = rulesData({ isError: true });
   render(<Rules />);
   expect(screen.getByText('Could not load your rules.')).toBeTruthy();
-  fireEvent.press(screen.getByText('Retry'));
+  // WHIT-198 GAP (authored by qa) — Rules' retry migrated to the shared RetryButton. Pressing by
+  // visible text alone would pass for a bare Pressable too, so lock the a11y contract (role +
+  // label) a revert would drop. Second migrated screen locked (with Budgets + Transactions).
+  const retry = screen.getByTestId('rules-retry');
+  expect(retry.props.accessibilityRole).toBe('button');
+  expect(retry.props.accessibilityLabel).toBe('Retry loading your rules');
+  fireEvent.press(retry);
   expect(fns.refetch).toHaveBeenCalled();
 });
 

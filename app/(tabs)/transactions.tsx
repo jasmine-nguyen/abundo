@@ -7,6 +7,7 @@ import { transactionGroups, countUncategorized, accountSummaries } from '../../s
 import { useTransactionsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
+import { RetryButton } from '../../src/components/ui';
 
 type Tab = 'all' | 'uncategorized' | 'accounts';
 
@@ -88,9 +89,7 @@ export default function Transactions() {
         {showError && (
           <View testID="transactions-error" style={styles.rowsState}>
             <Text style={styles.stateText}>Couldn't load your transactions.</Text>
-            <Pressable testID="transactions-retry" onPress={refetch} style={styles.retryBtn}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
+            <RetryButton onPress={refetch} label="Retry loading your transactions" testID="transactions-retry" style={styles.retryBtn} textStyle={styles.retryText} />
           </View>
         )}
 

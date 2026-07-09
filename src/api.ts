@@ -29,6 +29,41 @@ async function buildHeaders(extra?: Record<string, string>): Promise<Record<stri
   return { ...(extra ?? {}), ...(await authHeaders()) };
 }
 
+/**
+ * How long a single API request may run before it's aborted and treated as a failed
+ * read. Without this a dead socket leaves `fetch` pending forever — the screen's query
+ * never settles, so `isLoading` stays true and the "—" + Retry affordance never appears
+ * (WHIT-198). 15s is comfortable for a slow mobile connection while still eventually
+ * surfacing the error state instead of hanging.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * The paid AI generation ("Analyse my spending") legitimately runs longer than a REST read —
+ * a summary + suggestions commonly takes 10–25s — so it gets a roomier budget. The default 15s
+ * would abort a mostly-successful paid call and surface a false failure (WHIT-198 review). The
+ * server caches the generation, so even a rare timeout here self-heals on the next read.
+ */
+const AI_GENERATE_TIMEOUT_MS = 60_000;
+
+/**
+ * The single fetch choke point: every API call runs through here so it inherits a request
+ * timeout. An AbortController fires after `timeoutMs` (a cleared timer rather than
+ * `AbortSignal.timeout`, which isn't guaranteed on the RN runtime), turning a hung request
+ * into a rejected read the query layer surfaces as an error. Per-call `init`
+ * (method/body/headers) is preserved; only the abort signal is injected. `timeoutMs` defaults
+ * to the fast-read budget — slow endpoints (the AI generation) pass a larger one.
+ */
+async function apiFetch(input: string, init?: RequestInit, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** A BankSync-backed categorisation rule, as returned by the /enrichments API. */
 export interface EnrichmentRule {
   id: string;
@@ -45,7 +80,7 @@ export interface EnrichmentRule {
  * @throws If the response status is not OK.
  */
 export async function fetchTransactions(): Promise<Transaction[]> {
-  const response = await fetch(`${API_BASE}/transactions`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/transactions`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -58,7 +93,7 @@ export async function fetchTransactions(): Promise<Transaction[]> {
  * @throws If the response status is not OK.
  */
 export async function fetchCategories(): Promise<Category[]> {
-  const response = await fetch(`${API_BASE}/categories`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/categories`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -75,7 +110,7 @@ export async function fetchCategories(): Promise<Category[]> {
 export async function createCategory(
   input: { name: string; bucket: Bucket; icon: string }
 ): Promise<Category> {
-  const response = await fetch(`${API_BASE}/categories`, {
+  const response = await apiFetch(`${API_BASE}/categories`, {
     method: "POST",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
@@ -98,7 +133,7 @@ export async function updateCategory(
   id: string,
   input: { name: string; bucket: Bucket; icon: string }
 ): Promise<Category> {
-  const response = await fetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
@@ -117,7 +152,7 @@ export async function updateCategory(
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
 export async function deleteCategory(id: string): Promise<{ id: string }> {
-  const response = await fetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: await buildHeaders(),
   });
@@ -143,7 +178,7 @@ export interface BudgetRollup {
  * @throws If the response status is not OK.
  */
 export async function fetchBudgets(days: number): Promise<Record<string, BudgetRollup>> {
-  const response = await fetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -166,7 +201,7 @@ export interface CategorySpend {
  * @throws If the response status is not OK.
  */
 export async function fetchBreakdown(days: number): Promise<Record<string, CategorySpend>> {
-  const response = await fetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -184,7 +219,7 @@ export async function setTransactionCategory(
   id: string,
   category: string
 ): Promise<{ transaction_id: string; category: string }> {
-  const response = await fetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ category }),
@@ -212,7 +247,7 @@ export interface BatchCategoryResult {
 export async function setTransactionCategories(
   updates: { id: string; category: string }[]
 ): Promise<{ results: BatchCategoryResult[] }> {
-  const response = await fetch(`${API_BASE}/transactions`, {
+  const response = await apiFetch(`${API_BASE}/transactions`, {
     method: "PATCH",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ updates }),
@@ -242,7 +277,7 @@ export interface HomeLoan {
  * @throws If the response status is not OK.
  */
 export async function fetchHomeLoan(): Promise<HomeLoan> {
-  const response = await fetch(`${API_BASE}/homeloan`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/homeloan`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -272,7 +307,7 @@ export interface AccountBalance {
  * @throws If the response status is not OK.
  */
 export async function fetchAccountBalances(): Promise<AccountBalance[]> {
-  const response = await fetch(`${API_BASE}/accounts/balances`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/accounts/balances`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -298,7 +333,7 @@ export interface Repayment {
  * @throws If the response status is not OK.
  */
 export async function fetchRepayment(): Promise<Repayment> {
-  const response = await fetch(`${API_BASE}/repayment`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/repayment`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -330,7 +365,7 @@ export interface LoanFactsInput {
  * @throws If the response status is not OK.
  */
 export async function fetchLoanFacts(): Promise<LoanFacts> {
-  const response = await fetch(`${API_BASE}/loanfacts`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/loanfacts`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -344,7 +379,7 @@ export async function fetchLoanFacts(): Promise<LoanFacts> {
  * @throws If the response status is not OK (e.g. 400 on an invalid field).
  */
 export async function setLoanFacts(facts: LoanFactsInput): Promise<LoanFactsInput> {
-  const response = await fetch(`${API_BASE}/loanfacts`, {
+  const response = await apiFetch(`${API_BASE}/loanfacts`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(facts),
@@ -368,7 +403,7 @@ export interface PayCycle {
  * @throws If the response status is not OK.
  */
 export async function fetchPayCycle(): Promise<PayCycle> {
-  const response = await fetch(`${API_BASE}/paycycle`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/paycycle`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -384,7 +419,7 @@ export async function fetchPayCycle(): Promise<PayCycle> {
  *   future/malformed last_pay_date).
  */
 export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
-  const response = await fetch(`${API_BASE}/paycycle`, {
+  const response = await apiFetch(`${API_BASE}/paycycle`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(cycle),
@@ -407,7 +442,7 @@ export async function setBudget(
   categoryId: string,
   target: number
 ): Promise<{ id: string; target: number }> {
-  const response = await fetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ target }),
@@ -424,7 +459,7 @@ export async function setBudget(
  * @throws If the response status is not OK (401 when the token is wrong/missing).
  */
 export async function listEnrichments(): Promise<EnrichmentRule[]> {
-  const response = await fetch(`${API_BASE}/enrichments`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/enrichments`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -442,7 +477,7 @@ export async function listEnrichments(): Promise<EnrichmentRule[]> {
 export async function createEnrichment(
   input: { value: string; categoryId: string; field?: string; operator?: string }
 ): Promise<EnrichmentRule> {
-  const response = await fetch(`${API_BASE}/enrichments`, {
+  const response = await apiFetch(`${API_BASE}/enrichments`, {
     method: "POST",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
@@ -465,7 +500,7 @@ export async function updateEnrichment(
   id: string,
   input: { value: string; categoryId: string; field?: string; operator?: string }
 ): Promise<EnrichmentRule> {
-  const response = await fetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
@@ -484,7 +519,7 @@ export async function updateEnrichment(
  * @throws If the response status is not OK (401 on auth).
  */
 export async function deleteEnrichment(id: string): Promise<{ id: string }> {
-  const response = await fetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: await buildHeaders(),
   });
@@ -535,7 +570,7 @@ export interface AiGoalSignal {
  * @throws If the response status is not OK (401 on auth).
  */
 export async function fetchAiInsights(): Promise<AiInsights> {
-  const response = await fetch(`${API_BASE}/insights/ai`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/insights/ai`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -554,11 +589,11 @@ export async function fetchAiInsights(): Promise<AiInsights> {
  * @throws If the response status is not OK (401 auth, 502 when the AI is unavailable).
  */
 export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<AiInsights> {
-  const response = await fetch(`${API_BASE}/insights/ai`, {
+  const response = await apiFetch(`${API_BASE}/insights/ai`, {
     method: "POST",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ goal: goal ?? null }),
-  });
+  }, AI_GENERATE_TIMEOUT_MS); // the paid generation runs long — don't cap it at the 15s read budget
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();
@@ -575,7 +610,7 @@ export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<Ai
  * @throws If the response status is not OK (400 invalid token, 401 auth).
  */
 export async function registerDevice(token: string): Promise<{ token: string }> {
-  const response = await fetch(`${API_BASE}/devices`, {
+  const response = await apiFetch(`${API_BASE}/devices`, {
     method: "POST",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ token }),
