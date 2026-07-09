@@ -282,6 +282,26 @@ describe('unlockOrRestore routing', () => {
     expect(auth.getStatus()).toBe('authed');
   });
 
+  it('cold launch pops EXACTLY ONE Face ID prompt — one guarded read, never a second', async () => {
+    // Belt-and-suspenders against a launch prompt-loop (the reason biometrics were
+    // switched off). A cold launch runs unlockOrRestore once (the gate's mount effect,
+    // locked by authGateRestore.screen), and that path must read the biometric-guarded
+    // token — which IS the Face ID prompt — EXACTLY ONCE. Not zero (no prompt / a broken
+    // unlock) and not twice (a double-prompt on a single launch). Fail-on-revert: a
+    // performUnlock that reads the guarded key more than once, or an unlockOrRestore that
+    // invokes unlock more than once, flips this count off 1.
+    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+    mockCanUseBiometric.mockReturnValue(true);
+    mockGetItem.mockImplementation(async (k) => (k === SENTINEL_KEY ? '1' : k === REFRESH_KEY ? 'R' : null));
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await auth.unlockOrRestore();
+
+    expect(refreshReads()).toHaveLength(1); // one launch → exactly one prompt
+    expect(auth.getStatus()).toBe('authed');
+  });
+
   it('takes the normal RESTORE path (unguarded read) when biometrics are off', async () => {
     mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
     mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
