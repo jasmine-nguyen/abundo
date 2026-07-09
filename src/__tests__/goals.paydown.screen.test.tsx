@@ -80,6 +80,18 @@ it("'none': the honest 'won't pay off' nudge, no fabricated date", () => {
   expect(screen.queryByText('Mortgage-free')).toBeNull();
 });
 
+it("'none' with a payoff goal date: shows the required repayment, not the static nudge (WHIT-126)", () => {
+  mockGoal = goalData({
+    homeLoan: { balance: 900000, asOf: null },
+    loanFacts: { ...SET_FACTS, payoffGoalDate: '2035-06-01' },
+  });
+  render(<Goals />);
+  expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
+  // The real required-repayment prompt replaces the static "increase your repayment" copy.
+  expect(screen.getByText(/To clear it by Jun 2035 you'd need .* more than now\./)).toBeTruthy();
+  expect(screen.queryByText(/Increase your repayment/)).toBeNull();
+});
+
 it("'unready' (balance not loaded): renders NO payoff card at all", () => {
   mockGoal = goalData({ homeLoan: { balance: null, asOf: null } });
   render(<Goals />);

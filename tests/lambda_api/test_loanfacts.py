@@ -26,9 +26,9 @@ class FakeLoanFactsRepo:
         self.get_calls += 1
         return dict(self._facts) if self._facts is not None else None
 
-    def set_loanfacts(self, **kwargs):
-        self.set_calls.append(kwargs)
-        return {k: float(v) for k, v in kwargs.items()}
+    def set_loanfacts(self, payoffGoalDate=None, **kwargs):
+        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate})
+        return {**{k: float(v) for k, v in kwargs.items()}, "payoffGoalDate": payoffGoalDate}
 
 
 def _put_event(body):
@@ -45,7 +45,8 @@ def _put_event(body):
 
 def test_get_loanfacts_null_sentinel_when_unset(handler):
     out = handler.get_loanfacts(FakeLoanFactsRepo(None))
-    assert out == {f: None for f in _FIELDS}
+    # The sentinel carries the optional payoffGoalDate key too (WHIT-126).
+    assert out == {**{f: None for f in _FIELDS}, "payoffGoalDate": None}
 
 
 def test_get_loanfacts_returns_saved_facts(handler):
@@ -68,9 +69,44 @@ def test_set_loanfacts_success_persists_all_six(handler):
     repo = FakeLoanFactsRepo()
     resp = handler.set_loanfacts(_put_event(VALID), repo)
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {k: float(v) for k, v in VALID.items()}
-    # All six forwarded to the repo.
-    assert set(repo.set_calls[0]) == set(_FIELDS)
+    # No goal date in the body → payoffGoalDate forwarded + returned as None.
+    assert json.loads(resp["body"]) == {**{k: float(v) for k, v in VALID.items()}, "payoffGoalDate": None}
+    assert set(repo.set_calls[0]) == set(_FIELDS) | {"payoffGoalDate"}
+    assert repo.set_calls[0]["payoffGoalDate"] is None
+
+
+# --- set_loanfacts: payoff goal date (WHIT-126) ------------------------------
+
+
+def test_set_loanfacts_accepts_and_forwards_a_valid_goal_date(handler):
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": "2035-06-01"}), repo)
+    assert resp["statusCode"] == 200
+    assert repo.set_calls[0]["payoffGoalDate"] == "2035-06-01"
+    assert json.loads(resp["body"])["payoffGoalDate"] == "2035-06-01"
+
+
+def test_set_loanfacts_accepts_explicit_null_goal_date(handler):
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": None}), repo)
+    assert resp["statusCode"] == 200
+    assert repo.set_calls[0]["payoffGoalDate"] is None
+
+
+@pytest.mark.parametrize("bad_date", ["June 2035", "2035/06/01", "2035-6-1", "not-a-date", 20350601])
+def test_set_loanfacts_rejects_a_malformed_goal_date(handler, bad_date):
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": bad_date}), repo)
+    assert resp["statusCode"] == 400
+    assert "payoffGoalDate" in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []   # nothing persisted on a rejected write
+
+
+def test_set_loanfacts_rejects_an_impossible_calendar_date(handler):
+    # Passes the shape regex but isn't a real date — date.fromisoformat rejects it.
+    resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": "2035-13-45"}), FakeLoanFactsRepo())
+    assert resp["statusCode"] == 400
+    assert "real calendar date" in json.loads(resp["body"])["error"]
 
 
 def test_set_loanfacts_extra_zero_is_allowed(handler):

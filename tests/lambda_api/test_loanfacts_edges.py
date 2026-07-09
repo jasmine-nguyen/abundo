@@ -22,9 +22,9 @@ class FakeLoanFactsRepo:
     def get_loanfacts(self):
         return dict(self._facts) if self._facts is not None else None
 
-    def set_loanfacts(self, **kwargs):
-        self.set_calls.append(kwargs)
-        return {k: float(v) for k, v in kwargs.items()}
+    def set_loanfacts(self, payoffGoalDate=None, **kwargs):
+        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate})
+        return {**{k: float(v) for k, v in kwargs.items()}, "payoffGoalDate": payoffGoalDate}
 
 
 def _put_event(body):

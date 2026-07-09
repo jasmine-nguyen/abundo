@@ -106,7 +106,13 @@ export default function Goals() {
           <View style={[styles.miniCard, { marginBottom: 12 }]}>
             <View style={styles.miniHead}><Glyph name="clock" size={15} color={C.warn} /><Text style={styles.miniLabel}>Payoff</Text></View>
             <Text style={[styles.miniValue, { fontSize: 15 }]}>Won't pay off at this rate</Text>
-            <Text style={styles.miniSub}>Increase your repayment to clear the loan.</Text>
+            {p.requiredRepay != null ? (
+              <Text style={styles.miniSub}>
+                To clear it by {p.goalDateLabel} you'd need {p.requiredRepayLabel}/month — {p.requiredExtraLabel} more than now.
+              </Text>
+            ) : (
+              <Text style={styles.miniSub}>Increase your repayment to clear the loan.</Text>
+            )}
           </View>
         )}
 
