@@ -94,7 +94,10 @@ def _parse_reply(text: str) -> dict:
         return {"summary": None, "suggestions": []}
     summary = parsed.get("summary")
     suggestions = parsed.get("suggestions")
-    if not isinstance(summary, str):
+    # Null a blank/whitespace-only summary so it counts as "no advice" — mirrors the
+    # suggestions strip below. Without this a "   " summary is truthy and slips past
+    # the empty-result soft-fail guard, caching a blank insight card (WHIT-138).
+    if not isinstance(summary, str) or not summary.strip():
         summary = None
     if not isinstance(suggestions, list):
         suggestions = []

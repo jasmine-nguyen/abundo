@@ -1016,6 +1016,18 @@ def assemble_insight_input(
     return model_input, start
 
 
+def _insight_has_content(summary, suggestions) -> bool:
+    """True if an insight carries real advice: a non-blank summary OR ≥1 suggestion.
+
+    Single source of the "not empty" rule for both sides of generate_ai_insights — the
+    cache-read short-circuit and the post-generate soft-fail guard (WHIT-138). A
+    whitespace-only summary counts as blank: the parse layer nulls these for fresh
+    results, and applying the same strip here means a legacy row stored with a blank
+    summary before that fix also self-heals on the next tap instead of being served.
+    """
+    return bool((isinstance(summary, str) and summary.strip()) or suggestions)
+
+
 def get_ai_insights(insight_repo: InsightRepository, paycycle_repo: PayCycleRepository) -> dict:
     """GET /insights/ai — return the cached suggestions for the current cycle, or a
     null sentinel if none has been generated yet. Never calls Anthropic, never
@@ -1053,6 +1065,12 @@ def generate_ai_insights(
     joins model_input, so a changed goal is a changed hash → regenerate. On an
     Anthropic failure returns a 502 with an error body (no key leaked) so the client
     shows a retry, not a silent success.
+
+    A fully-empty result (no summary AND no suggestions) is treated as a soft failure
+    (WHIT-138): it is NOT cached and returns the same 502 error body, so the user sees
+    the "try again" state and a re-tap actually regenerates instead of hitting a cached
+    empty row. An empty row already stored (from before this fix) is likewise treated
+    as a cache miss below, so it self-heals on the next tap.
     """
     goal = _extract_goal(event)
     model_input, cycle_start = assemble_insight_input(
@@ -1061,7 +1079,9 @@ def generate_ai_insights(
         json.dumps(model_input, sort_keys=True, default=str).encode()).hexdigest()
 
     cached = insight_repo.get_insight(cycle_start)
-    if cached is not None and cached.get("input_hash") == input_hash:
+    if (cached is not None
+            and cached.get("input_hash") == input_hash
+            and _insight_has_content(cached.get("summary"), cached.get("suggestions"))):
         return _json_response(200, {
             "summary": cached["summary"],
             "suggestions": cached["suggestions"],
@@ -1074,6 +1094,10 @@ def generate_ai_insights(
         result = generate_suggestions(model_input)
     except AnthropicError as e:
         logger.warning("AI insight generation failed: upstream=%s", e.upstream_status)
+        return _json_response(502, {"error": "insights unavailable, please try again"})
+
+    if not _insight_has_content(result.get("summary"), result.get("suggestions")):
+        logger.warning("AI insight generation returned an empty result; not caching")
         return _json_response(502, {"error": "insights unavailable, please try again"})
 
     generated_at = datetime.now(timezone.utc).isoformat()

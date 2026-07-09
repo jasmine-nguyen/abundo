@@ -98,6 +98,19 @@ def test_generate_suggestions_drops_non_string_suggestions(insights_ai, monkeypa
     assert result == {"summary": None, "suggestions": ["keep", "also"]}
 
 
+def test_generate_suggestions_blank_summary_becomes_none(insights_ai, monkeypatch):
+    # A whitespace-only summary is not real advice: it is nulled at the parse layer
+    # (mirroring the suggestions strip) so the handler's empty-result guard treats
+    # it as empty rather than caching a blank insight card (WHIT-138).
+    monkeypatch.setattr(
+        insights_ai.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse(_messages_payload(
+            '{"summary": "   ", "suggestions": []}')))
+
+    result = insights_ai.generate_suggestions({})
+    assert result == {"summary": None, "suggestions": []}
+
+
 def test_generate_suggestions_http_error_raises_with_status(insights_ai, monkeypatch):
     def boom(req, timeout=None):
         raise urllib.error.HTTPError("u", 429, "rate", None, io.BytesIO(b""))
@@ -161,6 +174,15 @@ class _FakeInsightRepo:
             "cycle_start": cycle_start, "summary": summary, "suggestions": suggestions,
             "generated_at": generated_at, "input_hash": input_hash,
         })
+        # Model a real store: a later get_insight returns what was just written, so a
+        # second generate call actually sees the cached row. This lets the empty-result
+        # retap test prove a re-tap is a genuine cache miss (nothing stored) rather than
+        # a no-op — on the un-fixed code an empty row WOULD be stored and the second tap
+        # would hit it, so the retap test's call counter fails-on-revert.
+        self._existing = {
+            "summary": summary, "suggestions": suggestions,
+            "generated_at": generated_at, "input_hash": input_hash,
+        }
 
 
 class _FakePayCycleRepo:
@@ -243,6 +265,97 @@ def test_generate_anthropic_error_returns_502(handler, monkeypatch):
 
     assert resp["statusCode"] == 502
     assert repo.put_calls == []  # nothing cached on failure
+
+
+def test_generate_empty_result_not_cached_and_soft_fails(handler, monkeypatch):
+    # A graceful-empty model reply (no summary AND no suggestions) is a soft failure:
+    # it must NOT be cached, and it must return the same 502 error body as a hard
+    # failure so the client shows the "try again" state (WHIT-138).
+    model_input = {"cycle": {"start": "2026-06-25"}, "categories": []}
+    monkeypatch.setattr(handler, "assemble_insight_input",
+                        lambda *a: (model_input, "2026-06-25"))
+    monkeypatch.setattr(handler, "generate_suggestions",
+                        lambda _input: {"summary": None, "suggestions": []})
+    repo = _FakeInsightRepo(existing=None)
+
+    resp = handler.generate_ai_insights(None, None, None, None, repo)
+
+    assert resp["statusCode"] == 502
+    assert json.loads(resp["body"])["error"]  # an error message is surfaced
+    assert repo.put_calls == []  # the empty result is never stored
+
+
+def test_generate_empty_result_retap_regenerates(handler, monkeypatch):
+    # Because the empty result is never cached, a re-tap is a cache miss that runs
+    # the paid call again instead of hitting a no-op cached-empty row (WHIT-138).
+    model_input = {"cycle": {"start": "2026-06-25"}, "categories": []}
+    monkeypatch.setattr(handler, "assemble_insight_input",
+                        lambda *a: (model_input, "2026-06-25"))
+    calls = {"n": 0}
+
+    def empty_reply(_input):
+        calls["n"] += 1
+        return {"summary": None, "suggestions": []}
+
+    monkeypatch.setattr(handler, "generate_suggestions", empty_reply)
+    repo = _FakeInsightRepo(existing=None)
+
+    first = handler.generate_ai_insights(None, None, None, None, repo)
+    second = handler.generate_ai_insights(None, None, None, None, repo)
+
+    assert first["statusCode"] == 502 and second["statusCode"] == 502
+    # The fake models a real store, so if the empty result were cached (as it was
+    # before the fix) the second tap would hit that row and generate_suggestions would
+    # run only once. n == 2 proves nothing was cached and the re-tap truly regenerated.
+    assert calls["n"] == 2
+    assert repo.put_calls == []
+
+
+@pytest.mark.parametrize("stale_summary", [
+    None,      # the None-summary empty row
+    "   ",     # a legacy whitespace-only summary — the cache-read guard must strip it
+    "\n\t",    # other blank whitespace
+])
+def test_generate_empty_cached_row_is_treated_as_miss(handler, monkeypatch, stale_summary):
+    # A stored empty row from before the fix (matching input_hash) must self-heal:
+    # the cache-read short-circuit treats it as a miss and regenerates (WHIT-138).
+    # A whitespace-only summary counts as blank via the shared _insight_has_content
+    # rule, so a legacy blank-string row heals too, not just a None one.
+    model_input = {"cycle": {"start": "2026-06-25"}, "categories": []}
+    monkeypatch.setattr(handler, "assemble_insight_input",
+                        lambda *a: (model_input, "2026-06-25"))
+    monkeypatch.setattr(handler, "generate_suggestions",
+                        lambda _input: {"summary": "fresh", "suggestions": ["cut coffee"]})
+    repo = _FakeInsightRepo(existing={
+        "summary": stale_summary, "suggestions": [], "generated_at": "t",
+        "input_hash": _hash(model_input)})
+
+    resp = handler.generate_ai_insights(None, None, None, None, repo)
+
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["cached"] is False and body["summary"] == "fresh"
+    assert len(repo.put_calls) == 1
+
+
+@pytest.mark.parametrize("result", [
+    {"summary": "watch your coffee spend", "suggestions": []},   # summary only
+    {"summary": None, "suggestions": ["cut coffee"]},            # suggestions only
+])
+def test_generate_partial_result_still_caches(handler, monkeypatch, result):
+    # "Empty" means BOTH fields falsy. A summary-only or suggestions-only result is
+    # real advice — it must still cache and return 200 (guard must NOT trip).
+    model_input = {"cycle": {"start": "2026-06-25"}, "categories": []}
+    monkeypatch.setattr(handler, "assemble_insight_input",
+                        lambda *a: (model_input, "2026-06-25"))
+    monkeypatch.setattr(handler, "generate_suggestions", lambda _input: result)
+    repo = _FakeInsightRepo(existing=None)
+
+    resp = handler.generate_ai_insights(None, None, None, None, repo)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["cached"] is False
+    assert len(repo.put_calls) == 1
 
 
 def test_get_ai_insights_returns_cached(handler):
@@ -595,3 +708,78 @@ def test_generate_without_a_goal_body_stays_spend_only(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     assert "goal" not in captured["mi"]
+
+
+# --- WHIT-138 adversarial gaps (QA) -----------------------------------------
+# The implementer locks the explicit {"summary": None, "suggestions": []} shape.
+# These probe the shapes their tests DON'T touch: a result dict missing the keys
+# entirely (the guard uses .get, not subscript), partial *cached* rows counting as
+# content on the read path, and the heal-then-still-empty combination.
+
+
+def test_generate_empty_dict_result_soft_fails(handler, monkeypatch):
+    # WHIT-138 — the empty guard must key off .get(), not truthy subscript: a reply
+    # dict missing BOTH keys ({}) is still "empty" -> 502, never cached. If the guard
+    # regressed to result["summary"], this would KeyError (500) instead of soft-fail.
+    model_input = {"cycle": {"start": "2026-06-25"}, "categories": []}
+    monkeypatch.setattr(handler, "assemble_insight_input",
+                        lambda *a: (model_input, "2026-06-25"))
+    monkeypatch.setattr(handler, "generate_suggestions", lambda _input: {})
+    repo = _FakeInsightRepo(existing=None)
+
+    resp = handler.generate_ai_insights(None, None, None, None, repo)
+
+    assert resp["statusCode"] == 502
+    assert json.loads(resp["body"])["error"]
+    assert repo.put_calls == []
+
+
+@pytest.mark.parametrize("cached_row", [
+    {"summary": "watch coffee", "suggestions": []},   # summary-only cached row
+    {"summary": None, "suggestions": ["cut coffee"]},  # suggestions-only cached row
+])
+def test_generate_partial_cached_row_is_a_hit(handler, monkeypatch, cached_row):
+    # WHIT-138 — the heal condition is `summary OR suggestions`, NOT `summary` alone.
+    # A cached row with EITHER field non-empty (hash match) is real content: it must be
+    # served as a free cache HIT, never regenerated. If the read condition narrowed to
+    # only-summary, the suggestions-only row would wrongly re-run the paid call.
+    model_input = {"cycle": {"start": "2026-06-25"}, "categories": []}
+    monkeypatch.setattr(handler, "assemble_insight_input",
+                        lambda *a: (model_input, "2026-06-25"))
+
+    def must_not_call(_input):
+        raise AssertionError("a partial cached row must be a HIT, not a regenerate")
+
+    monkeypatch.setattr(handler, "generate_suggestions", must_not_call)
+    repo = _FakeInsightRepo(existing={
+        **cached_row, "generated_at": "t", "input_hash": _hash(model_input)})
+
+    resp = handler.generate_ai_insights(None, None, None, None, repo)
+
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["cached"] is True
+    assert body["summary"] == cached_row["summary"]
+    assert body["suggestions"] == cached_row["suggestions"]
+    assert repo.put_calls == []  # a hit re-stores nothing
+
+
+def test_generate_empty_cached_row_then_empty_regen_stays_soft_failed(handler, monkeypatch):
+    # WHIT-138 — the two halves of the fix compose: an existing empty row (hash match)
+    # is treated as a miss (heal), and when the fresh paid call ALSO comes back empty
+    # the empty guard trips -> 502 and STILL nothing is cached. Reverting EITHER the
+    # cache-read condition OR the post-generate guard flips this to a cached 200.
+    model_input = {"cycle": {"start": "2026-06-25"}, "categories": []}
+    monkeypatch.setattr(handler, "assemble_insight_input",
+                        lambda *a: (model_input, "2026-06-25"))
+    monkeypatch.setattr(handler, "generate_suggestions",
+                        lambda _input: {"summary": None, "suggestions": []})
+    repo = _FakeInsightRepo(existing={
+        "summary": None, "suggestions": [], "generated_at": "t",
+        "input_hash": _hash(model_input)})
+
+    resp = handler.generate_ai_insights(None, None, None, None, repo)
+
+    assert resp["statusCode"] == 502
+    assert json.loads(resp["body"])["error"]
+    assert repo.put_calls == []
