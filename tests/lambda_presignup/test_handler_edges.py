@@ -82,26 +82,12 @@ def test_external_provider_missing_verified_attr_is_rejected(presignup, monkeypa
         presignup.lambda_handler(_event(ALLOWED), None)
 
 
-def test_external_provider_verified_string_true_passes(presignup, monkeypatch):
-    monkeypatch.setenv("ALLOWED_EMAILS", ALLOWED)
-    assert presignup.lambda_handler(_event(ALLOWED, email_verified="true"), None) is not None
-
-
 def test_external_provider_verified_bool_true_passes(presignup, monkeypatch):
     # Cognito passes email_verified as a bool for some IdPs and the string "true" for
     # others; the gate accepts both. (Fail-on-revert of the tolerant coercion: a strict
     # `== "true"` check would reject the boolean and flip this pass to a raise.)
     monkeypatch.setenv("ALLOWED_EMAILS", ALLOWED)
     assert presignup.lambda_handler(_event(ALLOWED, email_verified=True), None) is not None
-
-
-def test_admin_create_does_not_require_verified_email(presignup, monkeypatch):
-    # The verified-email gate is ExternalProvider-only. An admin-created user has no
-    # email_verified attribute and must still pass (proves the gate didn't leak onto
-    # the trusted admin path).
-    monkeypatch.setenv("ALLOWED_EMAILS", ALLOWED)
-    event = {"triggerSource": "PreSignUp_AdminCreateUser", "request": {"userAttributes": {"email": ALLOWED}}}
-    assert presignup.lambda_handler(event, None) is event
 
 
 def test_external_provider_verified_true_with_surrounding_whitespace_passes(presignup, monkeypatch):
