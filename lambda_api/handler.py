@@ -65,7 +65,9 @@ from banksync_enrichments import (
 from spend import (
     _melbourne_today,
     _spend_contribution,
+    build_category_children,
     current_cycle_window,
+    descendant_leaves,
     nth_prior_cycle_window,
     summarise_income,
     summarise_transactions,
@@ -831,6 +833,13 @@ def list_budgets(
     Direction is inferred from the category's bucket, so the stored shape is unchanged
     and the client flips only the good/bad visuals. An orphan target whose category is
     unknown (or a non-Income bucket) is summed as spend — the existing ceiling default.
+
+    Sub-categories (WHIT-220): a budgeted PARENT holds no transactions of its own —
+    those land on its leaves — so its posted/pending is the sum over its DESCENDANT
+    LEAVES for the window, including leaves that carry no target themselves. The
+    wire shape is unchanged: every budgeted id (parent or leaf) still returns
+    {target, posted, pending}. A leaf target with no children rolls up only itself,
+    byte-identical to the pre-rollup behaviour.
     """
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     if not targets:
@@ -839,20 +848,33 @@ def list_budgets(
     start, end = current_cycle_window(cycle["last_pay_date"], cycle["length"])
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
 
-    bucket_by_id = {c["id"]: c.get("bucket") for c in category_repo.list_categories()}
-    income_ids = {cat_id for cat_id in targets if bucket_by_id.get(cat_id) == INCOME_BUCKET}
-    spend_ids = set(targets) - income_ids
+    categories = category_repo.list_categories()
+    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
+    children = build_category_children(categories)
 
-    rollups = summarise_transactions(transactions, spend_ids)
-    rollups.update(summarise_income(transactions, income_ids))
+    # Each target maps to its descendant leaves; a leaf/orphan target maps to itself.
+    leaves_by_target = {cat_id: descendant_leaves(cat_id, children) for cat_id in targets}
+    needed_leaves = set().union(*leaves_by_target.values()) if leaves_by_target else set()
+
+    # Split by each LEAF's own bucket (the same-bucket rule keeps a subtree single-
+    # bucket, so a parent's leaves all land on one side). Sum every needed leaf once,
+    # then fold per target.
+    income_leaves = {leaf for leaf in needed_leaves if bucket_by_id.get(leaf) == INCOME_BUCKET}
+    spend_leaves = needed_leaves - income_leaves
+
+    per_leaf = summarise_transactions(transactions, spend_leaves)
+    per_leaf.update(summarise_income(transactions, income_leaves))
+
     result = {}
     for cat_id, entry in targets.items():
-        rollup = rollups.get(cat_id)
-        result[cat_id] = {
-            "target": entry["target"],
-            "posted": rollup["posted"] if rollup else Decimal(0),
-            "pending": rollup["pending"] if rollup else Decimal(0),
-        }
+        posted = Decimal(0)
+        pending = Decimal(0)
+        for leaf in leaves_by_target[cat_id]:
+            leaf_rollup = per_leaf.get(leaf)
+            if leaf_rollup:
+                posted += leaf_rollup["posted"]
+                pending += leaf_rollup["pending"]
+        result[cat_id] = {"target": entry["target"], "posted": posted, "pending": pending}
     return result
 
 

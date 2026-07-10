@@ -222,3 +222,45 @@ def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str
         key=lambda category: category,
         sign=1,
     )
+
+
+def build_category_children(categories: list[dict]) -> dict[str, list[str]]:
+    """A parent-id -> [child ids] map from the taxonomy (each category carries a
+    `parent`, None for top-level). The inverse of the stored `parent` link, built
+    once so a rollup can walk down the tree without rescanning the list per node.
+    Categories with no children simply never appear as a key.
+    """
+    children: dict[str, list[str]] = {}
+    for category in categories:
+        parent = category.get("parent")
+        if parent is not None:
+            children.setdefault(parent, []).append(category["id"])
+    return children
+
+
+def descendant_leaves(root_id: str, children: dict[str, list[str]]) -> set[str]:
+    """The set of LEAF ids at or below `root_id`, given a prebuilt `children` map
+    (from build_category_children). A node with no children is a leaf; so is an id
+    absent from the taxonomy (an orphan budget target), which is therefore its own
+    single leaf — preserving the existing "orphan target summed as its own spend"
+    behaviour. A budgeted parent's actual spend/earnings is the sum over these
+    leaves, because transactions only ever land on leaves.
+
+    Cycle-safe via a `visited` set: single-parent data can't form a legitimate
+    diamond, so `visited` only guards against a corrupt stored cycle (which yields
+    no leaves rather than an infinite walk).
+    """
+    leaves: set[str] = set()
+    visited: set[str] = set()
+    stack = [root_id]
+    while stack:
+        node = stack.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        kids = children.get(node)
+        if kids:
+            stack.extend(kids)
+        else:
+            leaves.add(node)
+    return leaves
