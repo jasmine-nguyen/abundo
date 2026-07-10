@@ -49,6 +49,10 @@ it('renders the live balance, the sprint plan, and usable equity', () => {
   expect(screen.getByText('Investment property #2')).toBeTruthy();
   // Sprint 0 is the next milestone at this balance, so its callout shows.
   expect(screen.getByText('under $544,000')).toBeTruthy();
+  // WHIT-216 fail-on-revert: the sync pill's "Mon YYYY" label comes from milestone.tsx's
+  // monthYear over the shared MONTHS array (asOf 2026-07-04 → Jul). A broken array swap
+  // would change the month name here — previously this file had zero month-string coverage.
+  expect(screen.getByText('Live · Up Home Loan · Jul 2026')).toBeTruthy();
 });
 
 it('shows a waiting state before the live balance has loaded', () => {
