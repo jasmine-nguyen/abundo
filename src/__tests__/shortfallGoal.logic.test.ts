@@ -60,3 +60,54 @@ describe('aiGoalSignal shortfall variant (WHIT-126)', () => {
     expect(aiGoalSignal(SHORTFALL_STATE(null), TODAY)).toBeNull();
   });
 });
+
+// WHIT-215 — the "goal too aggressive" flag on paydownView. Fires in TWO shortfall states:
+// (1) the required repayment is over the $1M cap → figure suppressed; (2) it's under the cap
+// but an absurd multiple (>10×) of the current repayment → figure shown. Drives the Goal
+// screen's "try a later date" hint. False for a realistic goal, no date, or a past date.
+describe('paydownView goalTooAggressive flag (WHIT-215)', () => {
+  const AGGRESSIVE_MULTIPLE = 10; // mirrors AGGRESSIVE_REPAY_MULTIPLE in context.tsx
+  const CURRENT = M.baseRepay + M.extra; // 4167 — the user's current monthly repayment
+  const OVER_CAP_STATE = (payoffGoalDate: string) =>
+    makeState({ loanFacts: { ...M, payoffGoalDate }, homeLoan: { balance: 1_200_000, asOf: null } });
+
+  it('flags true when the required repayment exceeds the $1M cap (figure suppressed)', () => {
+    const pv = paydownView(OVER_CAP_STATE('2026-08-01'), TODAY); // next month on 1.2M → ~$1.2M/mo
+    expect(pv.mode).toBe('none');
+    expect(pv.requiredRepay).toBeNull();      // figure stays hidden (unchanged behaviour)
+    expect(pv.goalTooAggressive).toBe(true);  // ...but the hint now fires
+  });
+
+  it('flags true for an absurd-but-under-$1M figure (> 10× current repayment)', () => {
+    const pv = paydownView(SHORTFALL_STATE('2027-01-01'), TODAY); // 6 months on 900k → ~$150k/mo
+    expect(pv.requiredRepay).not.toBeNull();                      // an honest figure IS shown
+    expect(pv.requiredRepay!).toBeGreaterThan(AGGRESSIVE_MULTIPLE * CURRENT);
+    expect(pv.goalTooAggressive).toBe(true);                     // hint accompanies the figure
+  });
+
+  it('does NOT flag a realistic future goal (figure shown, reasonable multiple)', () => {
+    const pv = paydownView(SHORTFALL_STATE('2035-06-01'), TODAY); // ~$10.8k/mo, well under 10×
+    expect(pv.requiredRepay).not.toBeNull();
+    expect(pv.requiredRepay!).toBeLessThanOrEqual(AGGRESSIVE_MULTIPLE * CURRENT);
+    expect(pv.goalTooAggressive).toBe(false);
+  });
+
+  it('does NOT flag with no goal date, or a past / current-month date', () => {
+    expect(paydownView(SHORTFALL_STATE(null), TODAY).goalTooAggressive).toBe(false);
+    expect(paydownView(SHORTFALL_STATE('2020-01-01'), TODAY).goalTooAggressive).toBe(false); // past
+    expect(paydownView(SHORTFALL_STATE('2026-07-15'), TODAY).goalTooAggressive).toBe(false); // n=0
+  });
+
+  it('does NOT flag on a $0 current repayment (the multiple guard prevents a false positive)', () => {
+    // With base+extra === 0, "> 10× current" would trip on ANY positive figure — the
+    // currentRepay > 0 guard keeps the multiple-based hint off (the real problem there is
+    // a $0 repayment, not the date).
+    const zeroRepay = makeState({
+      loanFacts: { ...M, baseRepay: 0, extra: 0, payoffGoalDate: '2035-06-01' },
+      homeLoan: { balance: 900000, asOf: null },
+    });
+    const pv = paydownView(zeroRepay, TODAY);
+    expect(pv.requiredRepay).not.toBeNull();     // a figure still solves
+    expect(pv.goalTooAggressive).toBe(false);    // ...but not flagged via the multiple
+  });
+});

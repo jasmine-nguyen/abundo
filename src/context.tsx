@@ -217,6 +217,13 @@ const MONTHS_PER_YEAR = 12;
 // for the balance, so we fall back to the plain "won't pay off" copy instead.
 const MAX_SHORTFALL_REPAYMENT = 1_000_000;
 
+// WHIT-215: a required shortfall repayment more than this multiple of the user's CURRENT
+// repayment (base + extra) means the chosen goal date is implausibly soon even below the
+// $1M cap — so the screen shows a gentle "try a later date" hint alongside the (honest)
+// figure. A multiple, not an absolute, so it scales with the user's own repayment: a
+// $85k/month "need" against a $4k repayment is obviously unreachable.
+const AGGRESSIVE_REPAY_MULTIPLE = 10;
+
 // A loan-amortization result: the (fractional) number of equal repayments to
 // clear the balance, and the total interest paid over that schedule.
 export interface Amort { periods: number; totalInterest: number; }
@@ -1337,6 +1344,10 @@ export interface PaydownView {
   requiredRepayLabel: string | null;    // fmt(requiredRepay)
   requiredExtraLabel: string | null;    // fmt(requiredExtra)
   goalDateLabel: string | null;         // "Nov 2030" — the goal date as a month-year label
+  // WHIT-215: the goal date is implausibly soon — the required repayment is over the $1M cap
+  // (figure suppressed) OR an absurd multiple of the current repayment (figure shown). Drives
+  // the "that target may be too soon — try a later date" hint. false in every other state.
+  goalTooAggressive: boolean;
 }
 
 export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
@@ -1344,7 +1355,7 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
     mode: 'unready', freedomLabel: '',
     aheadLabel: null, interestDodged: null, interestDodgedLabel: null,
     requiredRepay: null, requiredExtra: null, requiredRepayLabel: null,
-    requiredExtraLabel: null, goalDateLabel: null,
+    requiredExtraLabel: null, goalDateLabel: null, goalTooAggressive: false,
   };
   const facts = s.loanFacts;
   const balance = s.homeLoan.balance;
@@ -1365,20 +1376,29 @@ export function paydownView(s: GoalViewInput, today?: Date): PaydownView {
     const months = goalDate ? monthsUntil(today ?? new Date(), goalDate) : null;
     if (goalDate && months !== null && months > 0) {
       const requiredRepay = requiredRepayment(balance, i, months);
+      const currentRepay = facts.baseRepay + facts.extra;
       // Only present a figure the server (and so the AI) will accept — above the cap
-      // the goal is unrealistically close, so fall back to the static copy.
+      // the goal is unrealistically close, so fall back to the hint/static copy.
       if (requiredRepay !== null && requiredRepay <= MAX_SHORTFALL_REPAYMENT) {
-        const requiredExtra = requiredRepay - (facts.baseRepay + facts.extra);
+        const requiredExtra = requiredRepay - currentRepay;
         const [goalYear, goalMonth] = goalDate.split('-').map(Number);
+        // WHIT-215: below the cap the figure is honest but can still be absurd (e.g. 20× the
+        // current repayment). Flag it so the screen nudges a later date ALONGSIDE the figure.
+        // Guard currentRepay > 0 so a $0 repayment can't make every figure "too aggressive".
         return {
           ...base, mode: 'none',
           requiredRepay, requiredExtra,
           requiredRepayLabel: fmt(requiredRepay), requiredExtraLabel: fmt(requiredExtra),
           goalDateLabel: monthYear(new Date(goalYear, goalMonth - 1, 1)),
+          goalTooAggressive: currentRepay > 0 && requiredRepay > AGGRESSIVE_REPAY_MULTIPLE * currentRepay,
         };
       }
+      // WHIT-215: a valid future date but the required repayment is over the $1M cap (figure
+      // suppressed) — the date itself is too aggressive. Flag the hint; the screen shows it
+      // in place of the generic "increase your repayment" copy.
+      return { ...base, mode: 'none', goalTooAggressive: true };
     }
-    return { ...base, mode: 'none' };                         // won't pay off at all
+    return { ...base, mode: 'none' };                         // no goal date / past date → plain "won't pay off"
   }
 
   const freedomLabel = monthYear(addMonths(today ?? new Date(), Math.ceil(withExtra.periods)));

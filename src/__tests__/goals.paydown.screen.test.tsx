@@ -90,6 +90,36 @@ it("'none' with a payoff goal date: shows the required repayment, not the static
   // The real required-repayment prompt replaces the static "increase your repayment" copy.
   expect(screen.getByText(/To clear it by Jun 2035 you'd need .* more than now\./)).toBeTruthy();
   expect(screen.queryByText(/Increase your repayment/)).toBeNull();
+  // WHIT-215: a realistic goal shows NO "too soon" hint.
+  expect(screen.queryByTestId('goal-too-aggressive-hint')).toBeNull();
+});
+
+it("'none' with a too-soon goal date UNDER $1M: shows the figure AND the 'too soon' hint (WHIT-215)", () => {
+  // 6 months out on a 900k 'none' loan → an honest but absurd (~$150k/mo, >10× current) figure.
+  mockGoal = goalData({
+    homeLoan: { balance: 900000, asOf: null },
+    loanFacts: { ...SET_FACTS, payoffGoalDate: '2027-01-01' },
+  });
+  render(<Goals />);
+  // The honest figure still renders...
+  expect(screen.getByText(/To clear it by Jan 2027 you'd need .* more than now\./)).toBeTruthy();
+  // ...with the nudge appended beneath it.
+  expect(screen.getByTestId('goal-too-aggressive-hint')).toBeTruthy();
+  expect(screen.getByText('That target may be too soon — try a later date.')).toBeTruthy();
+});
+
+it("'none' with a too-soon goal date OVER $1M: shows the hint in place of the static nudge (WHIT-215)", () => {
+  // Next month on a 1.2M loan → required repayment over the $1M cap → figure suppressed.
+  mockGoal = goalData({
+    homeLoan: { balance: 1_200_000, asOf: null },
+    loanFacts: { ...SET_FACTS, payoffGoalDate: '2026-08-01' },
+  });
+  render(<Goals />);
+  expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
+  // The hint replaces BOTH the (suppressed) figure and the generic static copy.
+  expect(screen.getByTestId('goal-too-aggressive-hint')).toBeTruthy();
+  expect(screen.queryByText(/To clear it by/)).toBeNull();
+  expect(screen.queryByText(/Increase your repayment/)).toBeNull();
 });
 
 it("'unready' (balance not loaded): renders NO payoff card at all", () => {
