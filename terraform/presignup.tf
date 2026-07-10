@@ -9,7 +9,7 @@ data "archive_file" "presignup_zip" {
 }
 
 resource "aws_lambda_function" "presignup" {
-  function_name    = "${var.project_name}-presignup"
+  function_name    = "${var.project_name}-auth-presignup"
   role             = aws_iam_role.presignup_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
