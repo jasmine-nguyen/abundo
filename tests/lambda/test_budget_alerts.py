@@ -1249,6 +1249,22 @@ def test_mid_level_direct_spend_crosses_parent_and_fires(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
 
 
+def test_cross_bucket_child_never_crosses_parent_threshold(alerts, monkeypatch):
+    # WHIT-229: a Lifestyle child corruptly parented under a Living budgeted parent must NOT
+    # push it across a threshold — the same-bucket guard drops it from Car's subtree, so Car
+    # sees none of its spend. The write alone would be 100% of Car if folded. Fail-on-revert
+    # (drop bucket_by_id): the unguarded walk folds it in and fires a false push.
+    cats = [
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "misfiled", "name": "Misfiled", "bucket": "Lifestyle", "parent": "car"},
+    ]
+    new = _txn("new1", "misfiled", -100, "posted")                # would be 100% of Car if folded
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=[], normalised=[new], cats=cats)
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
 def test_parent_direct_pending_settles_to_posted_and_crosses(alerts, repo, monkeypatch):
     # WHIT-228 x reconcile (the parent-direct settlement path, uncovered): a PENDING
     # tagged straight onto the budgeted PARENT `car` (car=70 < 80) settles to a tip-
@@ -1277,6 +1293,28 @@ def test_pure_parent_direct_spend_alone_crosses_zero_leaf_spend(alerts, monkeypa
     new = _txn("new1", "car", -15, "posted")
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
                            before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_same_bucket_child_fires_while_cross_bucket_sibling_neither_adds_nor_suppresses(alerts, monkeypatch):
+    # WHIT-229 GAP: a Living parent (target 100) has BOTH a same-bucket Living child that
+    # legitimately crosses 80% (petrol -85) AND a Lifestyle child (odd -30). The same-bucket
+    # spend must still fire at 80% and ONLY 80% — the cross-bucket sibling is dropped from the
+    # parent's subtree, so it can neither push the parent over 100% nor suppress the real 80%.
+    # Fail-on-revert (drop bucket_by_id): odd folds in -> 115 -> crosses 80 AND 100 -> a false
+    # extra push and a spurious car#100 marker.
+    cats = [
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
+        {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
+    ]
+    petrol = _txn("p", "petrol", -85, "posted")   # same-bucket: 85% of Car -> crosses 80
+    odd = _txn("o", "odd", -30, "posted")          # cross-bucket: would push Car to 115 if folded
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=[], normalised=[petrol, odd], cats=cats)
+
     assert len(sent) == 1
     assert sent[0][1] == "Car is at 80% of its budget this cycle."
     assert notify.fired_markers("2026-07-01", 14) == {"car#80"}

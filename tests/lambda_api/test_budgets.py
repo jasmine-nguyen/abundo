@@ -1359,12 +1359,12 @@ def test_midlevel_and_ancestor_both_budgeted_double_count(handler):
     assert result["car"]["posted"] == Decimal("85")     # petrol + parking
 
 
-def test_corrupt_cross_bucket_subtree_mixes_income_into_spend(handler):
-    # [A27] CHARACTERIZATION: an income leaf mis-parented under a spend parent has its
-    # positive earnings summed into the spend parent's posted. The same-bucket rule is
-    # enforced on WRITE (Step 1), so this state is unreachable via the API; this test
-    # documents the fold's raw behaviour on corrupt data so a future guard flips it
-    # deliberately (see WHIT-220 QA finding R1).
+def test_corrupt_cross_bucket_income_child_excluded_from_spend_parent(handler):
+    # WHIT-229 (the headline case, was [A27] characterization): an Income leaf corruptly
+    # parented under a spend parent must NOT have its positive earnings summed into the
+    # parent's posted — the same-bucket guard drops it from the subtree before it can reach
+    # income_ids/summarise_income. So Car = its Living leaf only (30), never 30 + 500.
+    # Fail-on-revert (drop bucket_by_id): the income bonus folds back in -> 530.
     budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -30, "posted"),
@@ -1378,7 +1378,7 @@ def test_corrupt_cross_bucket_subtree_mixes_income_into_spend(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["car"]["posted"] == Decimal("530")  # 30 spend + 500 income, mixed
+    assert result["car"]["posted"] == Decimal("30")  # only the same-bucket leaf; income excluded
 
 
 # ===========================================================================
@@ -1429,14 +1429,11 @@ def test_list_budgets_parent_direct_mixed_posted_and_pending_no_leaf_spend(handl
     assert result == {"car": {"target": Decimal("300"), "posted": Decimal("40"), "pending": Decimal("25")}}
 
 
-def test_list_budgets_cross_bucket_child_folds_into_parent_no_server_guard(handler):
-    # DOCUMENTS A LATENT GAP (WHIT-228 defers the same-bucket guard to the client): a
-    # child in a DIFFERENT spend bucket (Lifestyle) under a Living parent has its spend
-    # folded into the Living parent, because subtree_ids has no same-bucket filter and
-    # the bucket split is per-id (a Lifestyle id is still "spend" -> spend_ids -> the
-    # parent's fold). The /breakdown client hides this with a same-bucket guard; the
-    # server does not. Characterization, NOT a fail-on-revert of the fix -> flagged in
-    # the critique as an acceptable-for-scope (corrupt-data-only) risk.
+def test_list_budgets_cross_bucket_child_excluded_by_server_guard(handler):
+    # WHIT-229: a child in a DIFFERENT spend bucket (Lifestyle) under a Living parent must
+    # NOT fold into the Living parent — the same-bucket guard drops it from the subtree, so
+    # Car has no same-bucket spend and reads 0 (matching the /breakdown client's guard).
+    # Fail-on-revert (drop bucket_by_id): the Lifestyle child folds back in -> 50.
     budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("misfiled", -50, "posted"),   # Lifestyle child under a Living parent
@@ -1448,5 +1445,73 @@ def test_list_budgets_cross_bucket_child_folds_into_parent_no_server_guard(handl
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    # The cross-bucket child's spend IS summed into the Living parent (current behaviour).
-    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("50"), "pending": Decimal("0")}}
+    # The cross-bucket child's spend is excluded from the Living parent (WHIT-229 guard).
+    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_same_bucket_grandchild_under_cross_bucket_child_still_folds(handler):
+    # WHIT-229 multi-level (the critic's parity case): Car(Living) -> oddball(Lifestyle) ->
+    # fuel(Living). The guard filters MEMBERSHIP, not descent, so the same-bucket grandchild
+    # `fuel` still folds into Car even though it sits UNDER a cross-bucket intermediate —
+    # matching the client, which reattaches fuel to its nearest same-bucket ancestor (Car).
+    # The Lifestyle `oddball` is excluded. Fail-on-revert (prune-the-walk instead of filter-
+    # the-result): descent would stop at oddball and fuel is silently dropped -> Car reads 0.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("oddball", -20, "posted"),   # Lifestyle intermediate — excluded
+        _transaction("fuel", -70, "posted"),       # Living grandchild — folds into Car
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "oddball", "bucket": "Lifestyle", "parent": "car"},
+        {"id": "fuel", "bucket": "Living", "parent": "oddball"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("70"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_cross_bucket_child_that_is_itself_budgeted_still_correct(handler):
+    # WHIT-229 [A1] GAP: a Lifestyle child budgeted in its OWN right, mis-parented under a
+    # Living parent that is ALSO budgeted. Two facts must both hold: (a) the Living parent
+    # EXCLUDES the cross-bucket child from its bar (Car = 0), and (b) the child's own budget
+    # row is still summed correctly on itself (root = itself, its own same-bucket subtree ->
+    # 40). Fail-on-revert (drop bucket_by_id): the child folds into Car -> Car reads 40.
+    budget_repo = FakeBudgetRepo(budgets={
+        "car": {"target": Decimal("300")},
+        "oddball": {"target": Decimal("100")},
+    })
+    txn_repo = FakeTransactionRepo(transactions=[_transaction("oddball", -40, "posted")])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "oddball", "bucket": "Lifestyle", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}
+    assert result["oddball"] == {"target": Decimal("100"), "posted": Decimal("40"), "pending": Decimal("0")}
+
+
+def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
+    # WHIT-229 [A3] GAP (the REVERSE of the headline case): a SPEND child (Living, negative
+    # amount) corruptly parented under a budgeted INCOME parent must NOT be fed to
+    # summarise_income — the same-bucket guard keeps the income parent's subtree income-only,
+    # so its earnings floor reads its Income leaf alone (4000), never 4000 + a spend id's 200.
+    # Fail-on-revert (drop bucket_by_id): groceries lands in the income parent's subtree, its
+    # -200 spend is summed (via summarise_transactions -> spend_ids) into the parent -> 4200.
+    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("salary", 4000, "posted"),      # Income leaf -> earnings
+        _transaction("groceries", -200, "posted"),   # spend child mis-parented under income
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "income", "bucket": "Income", "parent": None},
+        {"id": "salary", "bucket": "Income", "parent": "income"},
+        {"id": "groceries", "bucket": "Living", "parent": "income"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("0")}}

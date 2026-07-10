@@ -857,7 +857,7 @@ def list_budgets(
     # at any depth — so a transaction tagged directly onto a parent counts toward its
     # budget too (WHIT-228). A leaf/orphan target maps to just itself, byte-identical
     # to the pre-rollup behaviour.
-    ids_by_target = {cat_id: subtree_ids(cat_id, children) for cat_id in targets}
+    ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in targets}
     needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
 
     # Split by each id's own bucket (the same-bucket rule keeps a subtree single-
@@ -1150,7 +1150,7 @@ def assemble_insight_input(
     names = {c["id"]: c["name"] for c in categories}
     budgeted_parents = [cid for cid in targets
                         if cid in children and bucket_by_id.get(cid) in SPEND_BUCKETS]
-    ids_by_parent = {cid: subtree_ids(cid, children) for cid in budgeted_parents}
+    ids_by_parent = {cid: subtree_ids(cid, children, bucket_by_id) for cid in budgeted_parents}
     parent_block_ids = set(budgeted_parents)
 
     # Flat per-category rows. A budgeted parent is represented ONCE — as its rolled-up
