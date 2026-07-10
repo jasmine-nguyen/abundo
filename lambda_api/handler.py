@@ -47,6 +47,7 @@ from repository import (
     DuplicateCategoryError,
     HomeLoanBalanceRepository,
     InsightRepository,
+    InvalidCategoryParentError,
     LoanFactsRepository,
     PayCycleRepository,
     TransactionRepository,
@@ -492,6 +493,19 @@ def _slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", name.strip().lower())
 
 
+def _parse_parent(raw):
+    """Normalise a request body's `parent` value. Returns (parent, error): None
+    parent for a null/absent value (top-level), the trimmed id for a non-empty
+    string, or a 400 response for any other shape. The parent id's existence,
+    bucket, and cycle-safety are validated in the repository against the live tree.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, str) or not raw.strip():
+        return None, _json_response(400, {"error": "invalid parent"})
+    return raw.strip(), None
+
+
 def list_categories(repo: CategoryRepository) -> list[dict]:
     # `recent` is client-derived (not stored); default it so the client Cat shape holds.
     return [{**cat, "recent": 0} for cat in repo.list_categories()]
@@ -534,10 +548,16 @@ def create_category(
             400, {"error": "cannot create a Savings category over an existing budget target"}
         )
 
+    parent, parent_error = _parse_parent(body.get("parent"))
+    if parent_error:
+        return parent_error
+
     try:
-        created = repo.create_category(cat_id, name.strip(), bucket, icon)
+        created = repo.create_category(cat_id, name.strip(), bucket, icon, parent=parent)
     except DuplicateCategoryError:
         return _json_response(409, {"error": "category already exists"})
+    except InvalidCategoryParentError as e:
+        return _json_response(400, {"error": str(e)})
 
     return _json_response(201, {**created, "recent": 0})
 
@@ -582,10 +602,21 @@ def update_category(
     icon = body.get("icon")
     icon = icon.strip() if isinstance(icon, str) and icon.strip() else DEFAULT_CATEGORY_ICON
 
+    # `parent` is optional in the body: omit it to leave the stored link untouched
+    # (so a plain rename never wipes it), or send it (an id, or null to detach).
+    update_parent = {}
+    if "parent" in body:
+        parent, parent_error = _parse_parent(body["parent"])
+        if parent_error:
+            return parent_error
+        update_parent["parent"] = parent
+
     try:
-        updated = repo.update_category(cat_id, name.strip(), bucket, icon)
+        updated = repo.update_category(cat_id, name.strip(), bucket, icon, **update_parent)
     except CategoryNotFoundError:
         return _json_response(404, {"error": "category not found"})
+    except InvalidCategoryParentError as e:
+        return _json_response(400, {"error": str(e)})
 
     return _json_response(200, {**updated, "recent": 0})
 

@@ -45,10 +45,18 @@ describe('selectCategories', () => {
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
       { id: 'x', name: 'X', bucket: 'Living' }, // missing icon/color/recent
     ]);
-    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 });
+    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52, parent: null });
     expect(out[1].icon).toBe('coffee'); // guaranteed-present fallback glyph
     expect(out[1].recent).toBe(0); // default so budget math never sees undefined
     expect(typeof out[1].color).toBe('string'); // palette default
+    expect(out[1].parent).toBeNull(); // absent parent normalised to null (top-level)
+  });
+
+  it('carries a category parent link through unchanged', () => {
+    const out = selectCategories([
+      { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8AB4F8', recent: 0, parent: 'transport' },
+    ]);
+    expect(out[0].parent).toBe('transport');
   });
 
   it('throws (fails loud) on a malformed non-array payload — not a silent empty list', () => {

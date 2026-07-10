@@ -29,3 +29,7 @@ class Category(TypedDict):
     icon: str
     color: str
     bucket: str
+    # Id of the parent this category rolls up into, or None for a top-level
+    # category. Absent on rows written before sub-categories existed; the
+    # repository defaults it to None on read.
+    parent: Optional[str]
