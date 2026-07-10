@@ -2,11 +2,12 @@
 // date" hint flag). The implementer's shortfallGoal.logic.test.ts already locks: true
 // >$1M / true >10× (far) / false realistic / false no-date+past / false $0-repay. These
 // add the parts they DIDN'T pin: the EXACT 10× threshold flip, the $1M-cap interaction,
-// that a paid-off loan with a goal date never flags, and that aiGoalSignal's AI payload
-// is untouched by the new field. Pure over makeState + an injected `today`.
+// that a paid-off loan with a goal date never flags, and (WHIT-218) that aiGoalSignal now
+// SUPPRESSES the shortfall signal when the goal is flagged too aggressive. Pure over
+// makeState + an injected `today`.
 import { describe, it, expect } from '@jest/globals';
 import { paydownView, requiredRepayment, aiGoalSignal } from '../context';
-import { makeState, asShortfallGoal } from './factory';
+import { makeState } from './factory';
 
 const TODAY = new Date(2026, 6, 4);        // 2026-07-04 (Melbourne-pinned runner)
 const I = 5.74 / 100 / 12;                 // the fixture monthly rate
@@ -89,20 +90,30 @@ describe('WHIT-215 goalTooAggressive — paid-off modes never flag (NEW)', () =>
   });
 });
 
-// (e) Regression: the new PaydownView field must not leak into — or alter — the AI goal
-// signal. Under the cap the shortfall signal still carries the (absurd) required figure;
-// over the cap aiGoalSignal is still null.
-describe('WHIT-215 goalTooAggressive — aiGoalSignal payload unchanged (NEW)', () => {
-  it('under-cap "too aggressive" still emits the SAME shortfall payload (no new field)', () => {
+// (e) WHIT-218: the AI shortfall signal must AGREE with the "too soon" screen hint. When a
+// payoff goal date is flagged goalTooAggressive, aiGoalSignal now SUPPRESSES the shortfall
+// signal (emits null) instead of handing the model an absurd required figure — the screen
+// already shows the "try a later date" hint (WHIT-215), so one place owns that message.
+// Under the cap the figure IS solved (requiredRepay != null) yet the signal is null BECAUSE
+// it's suppressed (not merely absent); over the cap it was already null.
+describe('WHIT-218 goalTooAggressive — aiGoalSignal suppressed when too aggressive (NEW)', () => {
+  it('under-cap "too aggressive" now SUPPRESSES the signal (real figure, but emit null)', () => {
     const s = stateWith({ payoffGoalDate: '2027-01-01' }, 900000); // 6 months → ~150k, flagged
     const pv = paydownView(s, TODAY);
     expect(pv.goalTooAggressive).toBe(true);
-    const g = asShortfallGoal(aiGoalSignal(s, TODAY));
-    expect(g.payoff_mode).toBe('shortfall');
-    expect(g.required_repayment).toBe(pv.requiredRepay);
-    expect(g.required_extra).toBe(pv.requiredExtra);
-    expect(Object.keys(g)).not.toContain('goalTooAggressive'); // the flag is UI-only
-    expect(Object.keys(g)).not.toContain('goal_too_aggressive');
+    expect(pv.requiredRepay).not.toBeNull();     // the figure IS solved (under the $1M cap)…
+    expect(aiGoalSignal(s, TODAY)).toBeNull();   // …but NOT sent to the AI (WHIT-218 suppression)
+  });
+
+  // Fail-on-revert on a DISTINCT flagged state (different date + balance) so reverting the
+  // `&& !pv.goalTooAggressive` gate reddens here too — and this isn't a dupe of the case above.
+  it('a different under-cap flagged date is also suppressed (fail-on-revert)', () => {
+    const s = stateWith({ payoffGoalDate: '2027-07-01' }, 950000); // 12 months → huge multiple, flagged
+    const pv = paydownView(s, TODAY);
+    expect(pv.mode).toBe('none');
+    expect(pv.goalTooAggressive).toBe(true);
+    expect(pv.requiredRepay).not.toBeNull();     // under the $1M cap, so the figure exists…
+    expect(aiGoalSignal(s, TODAY)).toBeNull();   // …and is still suppressed
   });
 
   it('over-cap "too aggressive" still emits NO signal (figure null → null signal)', () => {
