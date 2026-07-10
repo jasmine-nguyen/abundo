@@ -25,6 +25,7 @@ from repository_category import (
     CATEGORY_PALETTE,
     SEED_CATEGORIES,
     CategoryRepository,
+    validate_category_depth,
     validate_category_parent,
 )
 from repository_budget import BudgetRepository
@@ -52,6 +53,7 @@ __all__ = [
     "SEED_CATEGORIES",
     "CATEGORY_PALETTE",
     "validate_category_parent",
+    "validate_category_depth",
     "sanitise_transaction",
     "handle_database_error",
 ]

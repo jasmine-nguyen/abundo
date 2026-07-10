@@ -1131,6 +1131,144 @@ def test_validate_parent_deep_chain_valid_and_deep_cycle_rejected(handler):
         repository.validate_category_parent(items, "a", "c", "Living")  # deep cycle
 
 
+# --- WHIT-223: maximum nesting depth (5 levels, top-level = level 1) ----------
+
+
+def test_validate_depth_allows_a_fifth_level_and_rejects_a_sixth(handler):
+    # Chain a(1) <- b(2) <- c(3) <- d(4). A new leaf under d lands at level 5 -> allowed;
+    # once that leaf e(5) exists, a node under it would be level 6 -> rejected with the
+    # plain user-facing message. Fail-on-revert: without the depth check the second call
+    # doesn't raise.
+    import repository
+    items = {
+        "a": {"id": "a", "bucket": "Living", "parent": None},
+        "b": {"id": "b", "bucket": "Living", "parent": "a"},
+        "c": {"id": "c", "bucket": "Living", "parent": "b"},
+        "d": {"id": "d", "bucket": "Living", "parent": "c"},
+    }
+    repository.validate_category_depth(items, "e", "d")   # 4 + 1 = 5, allowed
+    items["e"] = {"id": "e", "bucket": "Living", "parent": "d"}
+    with pytest.raises(repository.InvalidCategoryParentError, match="5 levels"):
+        repository.validate_category_depth(items, "f", "e")   # 5 + 1 = 6, rejected
+
+
+def test_validate_depth_reparent_uses_subtree_height_not_node_count(handler):
+    # THE height-vs-count case (fail-on-revert of a count-based helper): x has TWO leaf
+    # children, so its subtree is 3 NODES but only 2 LEVELS tall. Moving x under a level-3
+    # node lands its deepest leaf at 3 + 2 = 5 -> allowed. A descendant-COUNT rollup would
+    # read 3 + 3 = 6 and wrongly reject a perfectly shallow tree.
+    import repository
+    items = {
+        "top": {"id": "top", "bucket": "Living", "parent": None},
+        "mid": {"id": "mid", "bucket": "Living", "parent": "top"},
+        "q": {"id": "q", "bucket": "Living", "parent": "mid"},        # q is level 3
+        "x": {"id": "x", "bucket": "Living", "parent": None},
+        "c1": {"id": "c1", "bucket": "Living", "parent": "x"},
+        "c2": {"id": "c2", "bucket": "Living", "parent": "x"},        # x is 2 levels tall
+    }
+    repository.validate_category_depth(items, "x", "q")   # 3 + 2 = 5, allowed (must not raise)
+
+
+def test_validate_depth_reparent_measures_whole_moved_subtree(handler):
+    # x <- y <- z: x is 3 levels tall. Under a level-2 node: 2 + 3 = 5 allowed; under a
+    # level-3 node: 3 + 3 = 6 rejected -> proves the deepest DESCENDANT is what's bounded,
+    # not just the moved node itself.
+    import repository
+    items = {
+        "p": {"id": "p", "bucket": "Living", "parent": None},
+        "q": {"id": "q", "bucket": "Living", "parent": "p"},          # level 2
+        "r": {"id": "r", "bucket": "Living", "parent": "q"},          # level 3
+        "x": {"id": "x", "bucket": "Living", "parent": None},
+        "y": {"id": "y", "bucket": "Living", "parent": "x"},
+        "z": {"id": "z", "bucket": "Living", "parent": "y"},          # x is 3 levels tall
+    }
+    repository.validate_category_depth(items, "x", "q")   # 2 + 3 = 5, allowed
+    with pytest.raises(repository.InvalidCategoryParentError, match="5 levels"):
+        repository.validate_category_depth(items, "x", "r")   # 3 + 3 = 6, rejected
+
+
+def test_validate_depth_is_cycle_safe(handler):
+    # Corrupt stored cycles must terminate both walks (fail-on-revert: dropping the
+    # `visited` guard hangs). An up-cycle among the parent's ancestors and a down-cycle
+    # in the moved subtree both return without looping.
+    import repository
+    up_cycle = {
+        "a": {"id": "a", "bucket": "Living", "parent": "b"},
+        "b": {"id": "b", "bucket": "Living", "parent": "a"},   # a<->b
+    }
+    repository.validate_category_depth(up_cycle, "new", "a")    # bounded depth, no hang
+    down_cycle = {
+        "top": {"id": "top", "bucket": "Living", "parent": None},
+        "x": {"id": "x", "bucket": "Living", "parent": "y"},
+        "y": {"id": "y", "bucket": "Living", "parent": "x"},   # x<->y
+    }
+    repository.validate_category_depth(down_cycle, "x", "top")  # bounded height, no hang
+
+
+def test_repo_create_at_max_depth_allowed_and_beyond_rejected(handler):
+    # End-to-end via create_category: build a chain to level 5 under the top-level
+    # "transport" seed (level 1), then a 6th level is refused with nothing stored.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed; transport is a top-level Living category (level 1)
+    repo.create_category("l2", "L2", "Living", "car", parent="transport")  # level 2
+    repo.create_category("l3", "L3", "Living", "car", parent="l2")          # level 3
+    repo.create_category("l4", "L4", "Living", "car", parent="l3")          # level 4
+    repo.create_category("l5", "L5", "Living", "car", parent="l4")          # level 5 — allowed
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["l5"]["parent"] == "l4"
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="5 levels"):
+        repo.create_category("l6", "L6", "Living", "car", parent="l5")      # level 6 — rejected
+    assert "l6" not in repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+
+
+def test_repo_reparent_beyond_max_depth_rejected_link_unchanged(handler):
+    # Re-parent an existing subtree so its deepest node would exceed level 5 -> rejected,
+    # and the stored parent link is untouched.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo.create_category("l2", "L2", "Living", "car", parent="transport")   # transport(1)<-l2(2)
+    repo.create_category("l3", "L3", "Living", "car", parent="l2")          # <-l3(3)
+    repo.create_category("l4", "L4", "Living", "car", parent="l3")          # <-l4(4)
+    repo.create_category("gsub", "GSub", "Living", "cart", parent="groceries")  # groceries 2 tall
+
+    # Re-parent groceries (2 tall) under l4 (level 4): 4 + 2 = 6 -> rejected.
+    with pytest.raises(repository.InvalidCategoryParentError, match="5 levels"):
+        repo.update_category("groceries", "Groceries", "Living", "cart", parent="l4")
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["groceries"].get("parent") is None
+
+
+def test_repo_reparent_to_top_level_always_allowed(handler):
+    # Detaching (parent=None) skips depth validation entirely, so a node can always be
+    # lifted to the top regardless of where it sat.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    repo.create_category("l2", "L2", "Living", "car", parent="transport")
+    repo.create_category("l3", "L3", "Living", "car", parent="l2")
+
+    detached = repo.update_category("l3", "L3", "Living", "car", parent=None)
+    assert detached["parent"] is None
+
+
+def test_repo_grandfathered_over_deep_chain_stays_editable(handler):
+    # Decision 2: the cap is enforced only on writes that ADD depth (create-with-parent,
+    # re-parent). A chain already deeper than the cap (written before the cap existed) must
+    # stay editable — an ordinary name/icon edit that doesn't touch the parent is never
+    # blocked by the depth rule.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    items = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+    prev = "transport"
+    for i in range(2, 7):   # hand-build levels 2..6, bypassing the cap (as legacy data would)
+        cid = f"d{i}"
+        items[cid] = {"id": cid, "name": cid, "icon": "car", "color": "#fff",
+                      "bucket": "Living", "parent": prev}
+        prev = cid
+
+    updated = repo.update_category("d6", "Renamed", "Living", "car")   # plain rename, no parent
+    assert updated["name"] == "Renamed"
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["d6"]["parent"] == "d5"
+
+
 def test_repo_reparent_survives_version_race_retry(handler):
     # A concurrent writer bumps the version between our read and write, so the first
     # re-parent write hits CCFE and retries. The parent write must survive the retry
@@ -1213,3 +1351,150 @@ def test_create_parent_is_trimmed_before_storage(handler):
         repo, FakeBudgetRepo())
     assert resp["statusCode"] == 201
     assert repo.create_parents == ["transport"]  # trimmed, not "  transport  "
+
+
+# --- WHIT-223 QA gap tests (adversarial edges beyond the implementer's set) ---
+# Author: QA. Cover the depth cap's edges the diff's own tests leave open:
+#   [gap1] the depth message riding the existing 400 mapping (end-to-end, real repo);
+#   [gap2/3] a within-cap re-parent under a parent that ALREADY has a deep sibling;
+#   [gap5] detach-then-reattach within the cap;
+#   [gap7] the same-parent no-op re-parent (no double-count on legal chains; and the
+#          adversarial contrast on a grandfathered over-deep chain);
+#   [gap8] a LONG corrupt down-cycle still terminating with a decision.
+# Reuses _repo_with_fake_table / FakeCategoryRepo / FakeBudgetRepo / event builders.
+
+
+def test_handler_create_depth_breach_surfaces_plain_message_400(handler):
+    # [WHIT-223 gap1] A real depth breach through the CREATE handler returns 400 with the
+    # plain user-facing message in the body. The suite's existing handler tests only prove
+    # a generic InvalidCategoryParentError -> 400 (message "bad parent"); this drives the
+    # REAL repo so the specific "5 levels" message is what rides `str(e)`.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed; transport is a top-level Living category (level 1)
+    repo.create_category("l2", "L2", "Living", "car", parent="transport")
+    repo.create_category("l3", "L3", "Living", "car", parent="l2")
+    repo.create_category("l4", "L4", "Living", "car", parent="l3")
+    repo.create_category("l5", "L5", "Living", "car", parent="l4")  # level 5
+
+    resp = handler.create_category(
+        _categories_event('{"name": "L6", "bucket": "Living", "icon": "car", "parent": "l5"}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 400
+    assert "5 levels" in json.loads(resp["body"])["error"]
+    assert "l6" not in repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+
+
+def test_handler_update_depth_breach_surfaces_plain_message_400(handler):
+    # [WHIT-223 gap1] Same, through the UPDATE (re-parent) handler: a re-parent that would
+    # exceed the cap comes back 400 with the plain message, and the stored link is untouched.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    repo.create_category("l2", "L2", "Living", "car", parent="transport")
+    repo.create_category("l3", "L3", "Living", "car", parent="l2")
+    repo.create_category("l4", "L4", "Living", "car", parent="l3")  # level 4
+    repo.create_category("gsub", "GSub", "Living", "cart", parent="groceries")  # groceries 2 tall
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", cat_id="groceries",
+            body='{"name": "Groceries", "bucket": "Living", "icon": "cart", "parent": "l4"}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 400  # 4 + 2 = 6 rejected
+    assert "5 levels" in json.loads(resp["body"])["error"]
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["groceries"].get("parent") is None
+
+
+def test_repo_reparent_within_cap_ignores_deep_sibling_and_stores_parent(handler):
+    # [WHIT-223 gap2/gap3] The cap is measured PER moved subtree. A parent that already has
+    # a deep child must not push a DIFFERENT, shallow node over the cap. mid (level 2) already
+    # carries a chain down to level 5; moving a separate shallow leaf under mid lands it at
+    # level 3 and is stored. Fail-on-revert of any "sum the parent's whole subtree" mistake:
+    # such a check would read mid's 4-tall subtree and wrongly reject (2 + 4 = 6).
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # transport level 1
+    repo.create_category("mid", "Mid", "Living", "car", parent="transport")  # level 2
+    repo.create_category("s3", "S3", "Living", "car", parent="mid")
+    repo.create_category("s4", "S4", "Living", "car", parent="s3")
+    repo.create_category("s5", "S5", "Living", "car", parent="s4")  # existing deepest, level 5
+    repo.create_category("leaf", "Leaf", "Living", "car")           # separate top-level, 1 tall
+
+    updated = repo.update_category("leaf", "Leaf", "Living", "car", parent="mid")  # 2 + 1 = 3
+
+    assert updated["parent"] == "mid"
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["leaf"]["parent"] == "mid"
+
+
+def test_repo_detach_then_reattach_within_cap(handler):
+    # [WHIT-223 gap5] Detach a deep node to top-level (always allowed, skips the depth check),
+    # then re-attach it within the cap -> succeeds and stores the new parent.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    repo.create_category("l2", "L2", "Living", "car", parent="transport")
+    repo.create_category("l3", "L3", "Living", "car", parent="l2")  # level 3
+
+    repo.update_category("l3", "L3", "Living", "car", parent=None)  # detach
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["l3"]["parent"] is None
+
+    reattached = repo.update_category("l3", "L3", "Living", "cart", parent="groceries")  # level 2
+    assert reattached["parent"] == "groceries"
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["l3"]["parent"] == "groceries"
+
+
+def test_repo_noop_reparent_legal_chain_not_double_counted(handler):
+    # [WHIT-223 gap7] Re-parenting a node to the parent it ALREADY has must not double-count.
+    # validate_category_depth runs on the pre-write items, where cat_id is still a child of
+    # parent_id — but ancestor_depth walks UP from the parent and subtree_height walks DOWN
+    # from cat_id, so they never overlap. A legal boundary chain's same-parent re-parent is
+    # therefore allowed (4 + 1 = 5), not spuriously rejected.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    repo.create_category("l2", "L2", "Living", "car", parent="transport")
+    repo.create_category("l3", "L3", "Living", "car", parent="l2")
+    repo.create_category("l4", "L4", "Living", "car", parent="l3")
+    repo.create_category("l5", "L5", "Living", "car", parent="l4")  # legal level-5 leaf
+
+    updated = repo.update_category("l5", "L5", "Living", "car", parent="l4")  # same parent, no-op
+
+    assert updated["parent"] == "l4"
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["l5"]["parent"] == "l4"
+
+
+def test_repo_noop_reparent_grandfathered_overdeep_is_allowed(handler):
+    # A legacy chain deeper than the cap must stay editable even when the client RESUBMITS
+    # the same, unchanged parent (not just when `parent` is omitted). A no-op re-parent adds
+    # no depth, so validate_category_depth short-circuits it — upholding the grandfather
+    # guarantee (Decision 2). Fail-on-revert: dropping the no-op guard reddens this with
+    # "categories can be nested at most 5 levels deep".
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    items = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+    prev = "transport"
+    for i in range(2, 7):  # hand-build legacy levels 2..6, past the cap
+        cid = f"g{i}"
+        items[cid] = {"id": cid, "name": cid, "icon": "car", "color": "#fff",
+                      "bucket": "Living", "parent": prev}
+        prev = cid
+
+    # g6 (level 6, legacy) re-submitted under its EXISTING parent g5 -> allowed (no-op, adds
+    # no depth), and the link is preserved.
+    updated = repo.update_category("g6", "G6 Renamed", "Living", "car", parent="g5")
+    assert updated["parent"] == "g5"
+    assert updated["name"] == "G6 Renamed"
+
+
+def test_validate_depth_terminates_on_a_long_corrupt_cycle(handler):
+    # [WHIT-223 gap8] A LONG corrupt down-cycle in the moved subtree must terminate (no hang,
+    # no runaway) and still return a decision. validate_category_parent walks only UP from the
+    # parent, so it never sees this down-cycle -> _subtree_height's `visited` guard is the only
+    # thing that saves it. Fail-on-revert: dropping that guard hangs this test.
+    import repository
+    ring = {"top": {"id": "top", "bucket": "Living", "parent": None}}
+    n = 300
+    for i in range(n):
+        cid = f"c{i}"
+        ring[cid] = {"id": cid, "bucket": "Living", "parent": f"c{(i - 1) % n}"}  # c0<-c1<-...<-c0
+
+    # Moving c0 (its "subtree" is the whole 300-node ring) under top must return a decision.
+    with pytest.raises(repository.InvalidCategoryParentError):  # 1 + 300 > 5
+        repository.validate_category_depth(ring, "c0", "top")
