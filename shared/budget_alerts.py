@@ -207,7 +207,7 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     # exactly as before. The same-bucket rule keeps a spend parent's subtree all spend, so
     # the spend summariser is correct for every needed id.
     children = build_category_children(categories)
-    ids_by_target = {cat_id: subtree_ids(cat_id, children) for cat_id in target_ids}
+    ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in target_ids}
     needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
     before = summarise_transactions(ctx["before_rows"], needed_ids)
     after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), needed_ids)

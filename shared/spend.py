@@ -238,7 +238,8 @@ def build_category_children(categories: list[dict]) -> dict[str, list[str]]:
     return children
 
 
-def subtree_ids(root_id: str, children: dict[str, list[str]]) -> set[str]:
+def subtree_ids(root_id: str, children: dict[str, list[str]],
+                bucket_by_id: dict[str, str] | None = None) -> set[str]:
     """Every category id whose spend rolls into a budget on `root_id`: the root
     itself PLUS every descendant at any depth — intermediate sub-categories and
     leaves alike — given a prebuilt `children` map (from build_category_children).
@@ -249,6 +250,21 @@ def subtree_ids(root_id: str, children: dict[str, list[str]]) -> set[str]:
     subtree — not just the leaves — is what keeps /budgets, the over-budget alerts
     and the AI roll-up in agreement with the /breakdown screen (WHIT-228): each of
     them sums a parent's spend over this set.
+
+    When `bucket_by_id` is given, the result is restricted to ids in the SAME bucket
+    as `root_id` (the root is always kept). This matches the client's roll-up, which
+    only folds a category into a budget when their buckets agree (WHIT-229): a sub
+    corruptly filed under a parent of a different bucket must not count toward it —
+    and, in particular, an Income sub can never inflate a spend parent. The walk still
+    descends through a cross-bucket node so a SAME-bucket descendant beneath it is
+    kept (the filter is on membership, not on descent) — matching the client, which
+    still rolls such a descendant up under a same-bucket ancestor rather than dropping
+    it. This is a per-target set: as with every roll-up here, each budgeted target sums
+    its OWN same-bucket subtree independently, so if two same-bucket ancestors are both
+    budgeted a shared descendant counts toward each bar (the hero de-dup across
+    overlapping budgets is a client concern, WHIT-221). On clean data (every descendant
+    shares the root's bucket) nothing is dropped, so the set — and every downstream
+    /budgets, alert and AI total — is byte-identical.
 
     A leaf, or an orphan id absent from the taxonomy, rolls up as just `{root_id}`
     — byte-identical to summing that id on its own, so a flat leaf budget (and a
@@ -267,4 +283,11 @@ def subtree_ids(root_id: str, children: dict[str, list[str]]) -> set[str]:
         kids = children.get(node)
         if kids:
             stack.extend(kids)
-    return visited
+    if bucket_by_id is None:
+        return visited
+    # Filter the full subtree to the root's bucket (root always kept). Filtering the
+    # RESULT, not the descent, keeps a same-bucket descendant that sits UNDER a
+    # cross-bucket intermediate — matching the client's nearest-same-bucket-ancestor rule.
+    root_bucket = bucket_by_id.get(root_id)
+    return {node for node in visited
+            if node == root_id or bucket_by_id.get(node) == root_bucket}

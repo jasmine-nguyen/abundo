@@ -1121,6 +1121,25 @@ def test_budgeted_parent_mid_node_direct_spend_in_rollup(handler):
     assert bp["Car"] == {"name": "Car", "posted": 85.0, "pending": 0.0, "budget": 300.0}
 
 
+def test_budgeted_parent_excludes_cross_bucket_child_from_block(handler):
+    # WHIT-229: a Lifestyle child corruptly parented under a Living budgeted parent must not
+    # inflate the parent's budgeted_parents rollup total — the same-bucket guard drops it from
+    # Car's subtree. Car's block = its Living leaf only (60), never 60 + 25. Fail-on-revert
+    # (drop bucket_by_id): the cross-bucket child folds in -> 85.
+    start, end = _cur_window(handler)
+    cats = _ListCategoryRepo([
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "fuel", "name": "Fuel", "bucket": "Living", "parent": "car"},
+        {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
+    ])
+    txn_repo = _FakeTxnRepo({(start, end): [_txn("fuel", -60), _txn("odd", -25)]})
+    model_input, _ = handler.assemble_insight_input(
+        cats, _DictBudgetRepo({"car": {"target": Decimal("300")}}), txn_repo, _FakePayCycleRepo())
+
+    bp = {row["name"]: row for row in model_input["budgeted_parents"]}
+    assert bp["Car"]["posted"] == 60.0  # only the same-bucket leaf; the Lifestyle child excluded
+
+
 def test_budgeted_parent_direct_income_stays_out_of_block(handler):
     # An Income parent is a floor, not a spend ceiling: even with earnings tagged directly
     # onto it, it must NOT enter the SPEND-only budgeted_parents block (the gate is
