@@ -1551,7 +1551,12 @@ export function aiGoalSignal(s: GoalViewInput, today?: Date): AiGoalSignal | nul
   // and paydownView solved the required repayment. Send those numbers so the model
   // can tie spend cuts to closing the monthly gap. goal_date is the month-year LABEL
   // ("Nov 2030") so it matches the server's goal-date format; never the ISO string.
-  if (pv.mode === 'none' && pv.requiredRepay !== null && pv.requiredExtra !== null && pv.goalDateLabel !== null) {
+  // WHIT-218: but when the goal date is implausibly soon (goalTooAggressive), the
+  // required figure is an absurd multiple of the current repayment — sending it would
+  // have the model tie spend cuts to closing e.g. a $150k/month gap (nonsense advice).
+  // Suppress the signal instead; the screen already shows the "that target may be too
+  // soon — try a later date" hint (WHIT-215), so one place owns that message, not two.
+  if (pv.mode === 'none' && pv.requiredRepay !== null && pv.requiredExtra !== null && pv.goalDateLabel !== null && !pv.goalTooAggressive) {
     const facts = s.loanFacts;
     if (!loanFactsReady(facts)) return null;                  // TS narrow; 'none' already implies ready
     return {
