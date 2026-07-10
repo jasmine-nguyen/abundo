@@ -21,6 +21,9 @@ export default function Goals() {
   const m = milestoneView({ loanFacts, homeLoan });
   const lr = lastRepaymentView({ repayment });
   const p = paydownView({ loanFacts, homeLoan });
+  // WHIT-215: one hint element, used in both mutually-exclusive 'none' arms (figure shown
+  // vs suppressed) so the copy + testID can't drift between them.
+  const tooSoonHint = <Text style={styles.miniHint} testID="goal-too-aggressive-hint">That target may be too soon — try a later date.</Text>;
 
   return (
     <ScrollChromeHeader title="Goal">
@@ -107,9 +110,17 @@ export default function Goals() {
             <View style={styles.miniHead}><Glyph name="clock" size={15} color={C.warn} /><Text style={styles.miniLabel}>Payoff</Text></View>
             <Text style={[styles.miniValue, { fontSize: 15 }]}>Won't pay off at this rate</Text>
             {p.requiredRepay != null ? (
-              <Text style={styles.miniSub}>
-                To clear it by {p.goalDateLabel} you'd need {p.requiredRepayLabel}/month — {p.requiredExtraLabel} more than now.
-              </Text>
+              <>
+                <Text style={styles.miniSub}>
+                  To clear it by {p.goalDateLabel} you'd need {p.requiredRepayLabel}/month — {p.requiredExtraLabel} more than now.
+                </Text>
+                {/* WHIT-215: an honest but absurd figure (below $1M) — nudge a later date under it. */}
+                {p.goalTooAggressive && tooSoonHint}
+              </>
+            ) : p.goalTooAggressive ? (
+              // WHIT-215: figure suppressed (over the $1M cap) — the hint explains WHY the
+              // date is unrealistic, in place of the generic "increase your repayment" line.
+              tooSoonHint
             ) : (
               <Text style={styles.miniSub}>Increase your repayment to clear the loan.</Text>
             )}
@@ -260,6 +271,9 @@ const styles = StyleSheet.create({
   miniLabel: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.accentSoft },
   miniValue: { fontFamily: FONT.display, fontSize: 20, fontWeight: '800', color: C.text, marginTop: 5, letterSpacing: -0.4 },
   miniSub: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim, fontWeight: '600', marginTop: 2 },
+  // WHIT-215: the "too soon — try a later date" nudge. Warn-tinted so it reads as guidance,
+  // distinct from the plain gray sub-copy.
+  miniHint: { fontFamily: FONT.body, fontSize: 11.5, color: C.warn, fontWeight: '600', marginTop: 4 },
 
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
