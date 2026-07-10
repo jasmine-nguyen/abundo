@@ -108,7 +108,7 @@ export async function fetchCategories(): Promise<Category[]> {
  * @throws If the response status is not OK (e.g. 409 when the slug already exists).
  */
 export async function createCategory(
-  input: { name: string; bucket: Bucket; icon: string }
+  input: { name: string; bucket: Bucket; icon: string; parent?: string | null }
 ): Promise<Category> {
   const response = await apiFetch(`${API_BASE}/categories`, {
     method: "POST",
@@ -131,7 +131,7 @@ export async function createCategory(
  */
 export async function updateCategory(
   id: string,
-  input: { name: string; bucket: Bucket; icon: string }
+  input: { name: string; bucket: Bucket; icon: string; parent?: string | null }
 ): Promise<Category> {
   const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
     method: "PATCH",

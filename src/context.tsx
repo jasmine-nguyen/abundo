@@ -37,6 +37,10 @@ export interface Category {
   color: string;
   bucket: Bucket;
   recent: number;
+  // Id of the parent this category rolls up into; null (or absent) means
+  // top-level. Optional so existing category literals stay valid; toCategory
+  // always normalises it to a value.
+  parent?: string | null;
 }
 export interface Budget { id: string; budget: number; posted: number; pending: number; }
 export interface Transaction {
@@ -359,6 +363,7 @@ export function toCategory(raw: any): Category {
     icon: raw.icon ?? 'coffee',
     color: raw.color ?? PALETTE[0],
     recent: typeof raw.recent === 'number' ? raw.recent : 0,
+    parent: raw.parent ?? null,
   };
 }
 

@@ -21,33 +21,55 @@ from botocore.exceptions import ClientError
 # --- handler-level fake ------------------------------------------------------
 
 
-class FakeCategoryRepo:
-    """Handler-level stand-in for CategoryRepository (records calls)."""
+# Sentinel mirroring the repository's "parent omitted -> leave as-is" default, so
+# a handler test can assert the update was called WITHOUT a parent (a plain edit).
+_UNSET_FAKE = object()
 
-    def __init__(self, categories=None, duplicate_exc=None, not_found_exc=None):
+
+class FakeCategoryRepo:
+    """Handler-level stand-in for CategoryRepository (records calls).
+
+    `create_calls`/`update_calls` stay 4-tuples (id, name, bucket, icon) so the
+    pre-parent assertions still hold; the parent argument is recorded separately in
+    `create_parents`/`update_parents`.
+    """
+
+    def __init__(self, categories=None, duplicate_exc=None, not_found_exc=None,
+                 invalid_parent_exc=None):
         self._categories = categories or []
         self._duplicate_exc = duplicate_exc
         self._not_found_exc = not_found_exc
+        self._invalid_parent_exc = invalid_parent_exc
         self.create_calls = []
         self.update_calls = []
         self.delete_calls = []
+        self.create_parents = []
+        self.update_parents = []
         self.list_calls = 0
 
     def list_categories(self):
         self.list_calls += 1
         return [dict(c) for c in self._categories]
 
-    def create_category(self, cat_id, name, bucket, icon):
+    def create_category(self, cat_id, name, bucket, icon, parent=None):
         self.create_calls.append((cat_id, name, bucket, icon))
+        self.create_parents.append(parent)
         if self._duplicate_exc is not None:
             raise self._duplicate_exc(cat_id)
-        return {"id": cat_id, "name": name, "icon": icon, "color": "#123456", "bucket": bucket}
+        if self._invalid_parent_exc is not None:
+            raise self._invalid_parent_exc("bad parent")
+        return {"id": cat_id, "name": name, "icon": icon, "color": "#123456",
+                "bucket": bucket, "parent": parent}
 
-    def update_category(self, cat_id, name, bucket, icon):
+    def update_category(self, cat_id, name, bucket, icon, parent=_UNSET_FAKE):
         self.update_calls.append((cat_id, name, bucket, icon))
+        self.update_parents.append(parent)
         if self._not_found_exc is not None:
             raise self._not_found_exc(cat_id)
-        return {"id": cat_id, "name": name, "icon": icon, "color": "#123456", "bucket": bucket}
+        if self._invalid_parent_exc is not None:
+            raise self._invalid_parent_exc("bad parent")
+        return {"id": cat_id, "name": name, "icon": icon, "color": "#123456",
+                "bucket": bucket, "parent": None if parent is _UNSET_FAKE else parent}
 
     def delete_category(self, cat_id):
         self.delete_calls.append(cat_id)
@@ -564,6 +586,10 @@ class FakeTable:
             if cat_id not in item["items"]:
                 raise _ccfe()
             del item["items"][cat_id]
+            # Promote any children to top-level (parent -> None) — aliased #childN.
+            for alias, real in ExpressionAttributeNames.items():
+                if alias.startswith("#child"):
+                    item["items"][real]["parent"] = values[":null"]
         elif "#items.#id.#name" in UpdateExpression:
             # update: guard attribute_exists(items.<id>); sets name, bucket, icon
             if cat_id not in item["items"]:
@@ -571,6 +597,8 @@ class FakeTable:
             item["items"][cat_id]["name"] = values[":name"]
             item["items"][cat_id]["bucket"] = values[":bucket"]
             item["items"][cat_id]["icon"] = values[":icon"]
+            if "#items.#id.#parent" in UpdateExpression:
+                item["items"][cat_id]["parent"] = values[":parent"]
         else:
             # create: guard attribute_not_exists(items.<id>)
             if cat_id in item["items"]:
@@ -690,7 +718,7 @@ def test_create_version_conflict_returns_409(handler, monkeypatch):
     # A repo that exhausts its retry budget raises VersionConflictError; the shared
     # dispatch wrapper maps it to 409 (same path budgets use).
     class ConflictingRepo:
-        def create_category(self, *args):
+        def create_category(self, *args, **kwargs):
             raise handler.VersionConflictError("boom")
 
     monkeypatch.setattr(handler, "CategoryRepository", lambda: ConflictingRepo())
@@ -717,7 +745,7 @@ def test_repo_update_changes_editable_fields(handler):
     assert stored["id"] == "coffee" and stored["color"] == "#E8A87C"
     assert len(config["items"]) == 13 and config["version"] == 2
     assert updated == {"id": "coffee", "name": "Coffee & Cake", "icon": "cart",
-                       "color": "#E8A87C", "bucket": "Living"}
+                       "color": "#E8A87C", "bucket": "Living", "parent": None}
 
 
 def test_repo_update_unknown_id_raises(handler):
@@ -798,3 +826,390 @@ def test_repo_delete_concurrently_deleted_raises(handler):
         assert False, "expected CategoryNotFoundError"
     except repository.CategoryNotFoundError:
         pass
+
+
+# --- sub-categories: parent link (WHIT-217 slice 1) --------------------------
+#
+# `parent` is optional on a category: None/absent = top-level, else the id of the
+# parent it rolls up into. Slice 1 stores + validates the link end-to-end; no
+# rollup or tree UI yet. Same-bucket, existence, cycle, and self rules are enforced.
+
+
+def test_repo_list_defaults_parent_to_none_for_legacy_rows(handler):
+    # Seed rows are stored WITHOUT a parent key (written before the field existed);
+    # every category leaving the repo must still carry parent, defaulted to None.
+    repository, repo = _repo_with_fake_table(handler)
+
+    cats = repo.list_categories()
+
+    assert cats and all("parent" in c for c in cats)
+    assert all(c["parent"] is None for c in cats)
+
+
+def test_repo_create_with_valid_parent_stores_it(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed; "transport" is a Living seed
+
+    created = repo.create_category("parking", "Parking", "Living", "car", parent="transport")
+
+    assert created["parent"] == "transport"
+    stored = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["parking"]
+    assert stored["parent"] == "transport"
+    # and it round-trips through list_categories
+    parking = next(c for c in repo.list_categories() if c["id"] == "parking")
+    assert parking["parent"] == "transport"
+
+
+def test_repo_create_unknown_parent_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+
+    try:
+        repo.create_category("parking", "Parking", "Living", "car", parent="nope")
+        assert False, "expected InvalidCategoryParentError"
+    except repository.InvalidCategoryParentError:
+        pass
+    # nothing stored
+    assert "parking" not in repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+
+
+def test_repo_create_cross_bucket_parent_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed; "transport" is Living, child asks for Lifestyle
+
+    try:
+        repo.create_category("parking", "Parking", "Lifestyle", "car", parent="transport")
+        assert False, "expected InvalidCategoryParentError (bucket mismatch)"
+    except repository.InvalidCategoryParentError:
+        pass
+
+
+def test_repo_create_self_parent_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+
+    try:
+        repo.create_category("parking", "Parking", "Living", "car", parent="parking")
+        assert False, "expected InvalidCategoryParentError (self-parent)"
+    except repository.InvalidCategoryParentError:
+        pass
+
+
+def test_repo_update_reparents_and_detaches(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed; groceries + transport are both Living
+
+    updated = repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+    assert updated["parent"] == "transport"
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["groceries"]["parent"] == "transport"
+
+    # Passing None detaches back to top-level.
+    detached = repo.update_category("groceries", "Groceries", "Living", "cart", parent=None)
+    assert detached["parent"] is None
+    assert repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["groceries"]["parent"] is None
+
+
+def test_repo_update_omitting_parent_preserves_the_link(handler):
+    # THE clobber-guard (fail-on-revert target): once a category has a parent, an
+    # ordinary name/icon edit that omits `parent` must NOT wipe the link. Reverting
+    # update_category to always SET parent reddens this.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+
+    # A plain rename, no parent argument.
+    repo.update_category("groceries", "Food Shop", "Living", "cart")
+
+    stored = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["groceries"]
+    assert stored["name"] == "Food Shop"
+    assert stored["parent"] == "transport"  # link survived the edit
+
+
+def test_repo_update_parent_cycle_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+
+    # transport -> groceries would close the loop groceries -> transport -> groceries.
+    try:
+        repo.update_category("transport", "Transport", "Living", "car", parent="groceries")
+        assert False, "expected InvalidCategoryParentError (cycle)"
+    except repository.InvalidCategoryParentError:
+        pass
+
+
+def test_repo_update_bucket_change_with_children_raises(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+
+    # transport now has a child; moving transport to another bucket would break the
+    # same-bucket rule for groceries -> refused.
+    try:
+        repo.update_category("transport", "Transport", "Lifestyle", "car")
+        assert False, "expected InvalidCategoryParentError (bucket change with children)"
+    except repository.InvalidCategoryParentError:
+        pass
+
+
+def test_repo_update_sub_cannot_rebucket_away_from_parent(handler):
+    # A sub-category must stay in its parent's bucket. A plain edit (no parent in the
+    # body) that flips the child's OWN bucket must be refused, or the sub would drift
+    # out of its parent's bucket. Fail-on-revert: dropping the stored-parent re-check
+    # in update_category lets this through.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed; groceries + transport both Living
+    repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+
+    try:
+        repo.update_category("groceries", "Groceries", "Lifestyle", "cart")
+        assert False, "expected InvalidCategoryParentError (sub re-bucketed away from parent)"
+    except repository.InvalidCategoryParentError:
+        pass
+    # unchanged: still Living, still under transport
+    stored = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]["groceries"]
+    assert stored["bucket"] == "Living" and stored["parent"] == "transport"
+
+
+def test_repo_delete_promotes_children_to_top_level(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+    repo.update_category("health", "Health", "Living", "health", parent="transport")
+
+    repo.delete_category("transport")
+
+    items = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+    assert "transport" not in items
+    assert items["groceries"]["parent"] is None  # promoted to top-level
+    assert items["health"]["parent"] is None
+    assert "groceries" in items and "health" in items  # children NOT deleted
+
+
+def test_validate_category_parent_pure_rules(handler):
+    # Direct unit tests of the pure helper, independent of DynamoDB.
+    import repository
+    items = {
+        "a": {"id": "a", "bucket": "Living", "parent": None},
+        "b": {"id": "b", "bucket": "Living", "parent": "a"},
+        "inc": {"id": "inc", "bucket": "Income", "parent": None},
+    }
+    # Valid: same bucket, no cycle.
+    repository.validate_category_parent(items, "c", "a", "Living")
+    # Cycle: making a's parent b, where b already descends from a.
+    with pytest.raises(repository.InvalidCategoryParentError):
+        repository.validate_category_parent(items, "a", "b", "Living")
+    # Cross-bucket.
+    with pytest.raises(repository.InvalidCategoryParentError):
+        repository.validate_category_parent(items, "c", "inc", "Living")
+    # Unknown parent.
+    with pytest.raises(repository.InvalidCategoryParentError):
+        repository.validate_category_parent(items, "c", "ghost", "Living")
+
+
+# --- handler-level: parent pass-through & validation -------------------------
+
+
+def test_create_passes_parent_through(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.create_category(
+        _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "transport"}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 201
+    assert repo.create_parents == ["transport"]
+    assert json.loads(resp["body"])["parent"] == "transport"
+
+
+def test_create_without_parent_defaults_to_none(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.create_category(_categories_event(), repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 201
+    assert repo.create_parents == [None]
+
+
+def test_create_invalid_parent_type_400(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.create_category(
+        _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": 5}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 400
+    assert repo.create_calls == []  # never reached the repo
+
+
+def test_create_parent_rejected_by_repo_400(handler):
+    repo = FakeCategoryRepo(invalid_parent_exc=handler.InvalidCategoryParentError)
+
+    resp = handler.create_category(
+        _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "transport"}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 400
+
+
+def test_update_omitting_parent_leaves_link_untouched(handler):
+    # No "parent" key in the body -> the repo is called WITHOUT parent (leave-as-is),
+    # not with parent=None. Fail-on-revert: passing None here would let a rename wipe
+    # a stored link.
+    repo = FakeCategoryRepo()
+
+    resp = handler.update_category(_category_item_event("PATCH"), repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 200
+    assert repo.update_parents == [_UNSET_FAKE]
+
+
+def test_update_passes_parent_when_present(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": "transport"}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 200
+    assert repo.update_parents == ["transport"]
+
+
+def test_update_explicit_null_parent_detaches(handler):
+    repo = FakeCategoryRepo()
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": null}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 200
+    assert repo.update_parents == [None]
+
+
+def test_update_parent_rejected_by_repo_400(handler):
+    repo = FakeCategoryRepo(invalid_parent_exc=handler.InvalidCategoryParentError)
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": "transport"}'),
+        repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 400
+
+
+# --- QA gap tests (WHIT-217 slice 1): adversarial edges beyond the above ------
+# The corruption fall-through in the ancestor walk, re-parent surviving an
+# optimistic-lock retry, deep (3-level) chains, delete-promote of a MIDDLE node,
+# delete-promote crossed with the WHIT-73 budget cascade, and whitespace/trim
+# parsing of the parent string. Reuses the existing suite fixtures/helpers.
+
+
+def test_validate_parent_stored_cycle_not_touching_cat_hits_walk_guard(handler):
+    # The `_MAX_PARENT_WALK` fall-through raise. The other cycle tests all close a
+    # loop THROUGH cat_id (the `ancestor == cat_id` early raise). This exercises the
+    # bound raise: a pre-existing corrupt cycle among ancestors that never reaches
+    # cat_id, so only the loop bound stops an infinite walk.
+    import repository
+    items = {
+        "x": {"id": "x", "bucket": "Living", "parent": "y"},
+        "y": {"id": "y", "bucket": "Living", "parent": "x"},  # x<->y already a cycle
+    }
+    with pytest.raises(repository.InvalidCategoryParentError):
+        repository.validate_category_parent(items, "new", "x", "Living")
+
+
+def test_validate_parent_deep_chain_valid_and_deep_cycle_rejected(handler):
+    # 3+ levels. A valid deep parent must walk to the root and pass; a cycle that only
+    # closes three hops up must still be caught (not just the 2-level case).
+    import repository
+    items = {
+        "a": {"id": "a", "bucket": "Living", "parent": None},
+        "b": {"id": "b", "bucket": "Living", "parent": "a"},
+        "c": {"id": "c", "bucket": "Living", "parent": "b"},  # a <- b <- c
+    }
+    repository.validate_category_parent(items, "d", "c", "Living")  # valid deep leaf
+    with pytest.raises(repository.InvalidCategoryParentError):
+        repository.validate_category_parent(items, "a", "c", "Living")  # deep cycle
+
+
+def test_repo_reparent_survives_version_race_retry(handler):
+    # A concurrent writer bumps the version between our read and write, so the first
+    # re-parent write hits CCFE and retries. The parent write must survive the retry
+    # (the SET clause is rebuilt each attempt), not silently drop.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed -> version 1; groceries + transport both Living
+    repo._table.before_update.append(_bump_version)
+
+    updated = repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+
+    stored = repo._table.store[("CATEGORIES", "CATEGORIES")]
+    assert updated["parent"] == "transport"
+    assert stored["items"]["groceries"]["parent"] == "transport"  # not dropped on retry
+    assert stored["version"] == 3  # concurrent bump (1->2) + our write (2->3)
+
+
+def test_repo_delete_middle_node_promotes_only_direct_children(handler):
+    # Deleting a middle node promotes its DIRECT children to top-level (parent -> None),
+    # NOT to the grandparent, and leaves grandchildren untouched.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+    repo.update_category("health", "Health", "Living", "health", parent="groceries")  # transport<-groceries<-health
+
+    repo.delete_category("transport")
+
+    items = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+    assert "transport" not in items
+    assert items["groceries"]["parent"] is None       # direct child promoted
+    assert items["health"]["parent"] == "groceries"   # grandchild untouched
+
+
+def test_delete_parent_promotes_children_and_cascades_only_parent_budget(handler):
+    # Real repo (fake table) delete + real handler cascade. Deleting a parent must
+    # (a) promote its children to top-level and (b) cascade-delete ONLY the deleted
+    # parent's budget target — a promoted child keeps its own budget.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()  # seed
+    repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
+    budget = FakeBudgetRepo(budgets={"transport": {"target": 100}, "groceries": {"target": 50}})
+
+    resp = handler.delete_category(
+        _category_item_event("DELETE", cat_id="transport", body=None), repo, budget)
+
+    assert resp["statusCode"] == 200
+    items = repo._table.store[("CATEGORIES", "CATEGORIES")]["items"]
+    assert "transport" not in items
+    assert items["groceries"]["parent"] is None   # child promoted, not deleted
+    assert budget.delete_calls == ["transport"]   # only the parent's budget cascaded
+
+
+def test_create_whitespace_only_parent_400_repo_untouched(handler):
+    # `_parse_parent` treats a blank/whitespace string as invalid, like a non-string.
+    # "   " must 400 and never reach the repo (else the repo would validate a garbage id).
+    repo = FakeCategoryRepo()
+    resp = handler.create_category(
+        _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "   "}'),
+        repo, FakeBudgetRepo())
+    assert resp["statusCode"] == 400
+    assert repo.create_calls == []
+
+
+def test_update_whitespace_only_parent_400_repo_untouched(handler):
+    # Same guard on update — a whitespace parent is rejected before the repo, so it
+    # can neither re-parent to nor clobber a link with a blank id.
+    repo = FakeCategoryRepo()
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Living", "parent": "\\t"}'),
+        repo, FakeBudgetRepo())
+    assert resp["statusCode"] == 400
+    assert repo.update_parents == []  # never reached the repo
+
+
+def test_create_parent_is_trimmed_before_storage(handler):
+    # A padded parent id is trimmed to its bare slug before it reaches the repo, so a
+    # copy-paste with stray spaces still matches the real parent id.
+    repo = FakeCategoryRepo()
+    resp = handler.create_category(
+        _categories_event('{"name": "Parking", "bucket": "Living", "icon": "car", "parent": "  transport  "}'),
+        repo, FakeBudgetRepo())
+    assert resp["statusCode"] == 201
+    assert repo.create_parents == ["transport"]  # trimmed, not "  transport  "

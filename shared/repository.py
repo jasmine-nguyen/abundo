@@ -17,6 +17,7 @@ from repository_errors import (
     CategoryNotFoundError,
     DatabaseError,
     DuplicateCategoryError,
+    InvalidCategoryParentError,
     VersionConflictError,
 )
 from repository_transaction import TransactionRepository, sanitise_transaction
@@ -24,6 +25,7 @@ from repository_category import (
     CATEGORY_PALETTE,
     SEED_CATEGORIES,
     CategoryRepository,
+    validate_category_parent,
 )
 from repository_budget import BudgetRepository
 from repository_paycycle import PayCycleRepository
@@ -44,10 +46,12 @@ __all__ = [
     "InsightRepository",
     "DuplicateCategoryError",
     "CategoryNotFoundError",
+    "InvalidCategoryParentError",
     "VersionConflictError",
     "DatabaseError",
     "SEED_CATEGORIES",
     "CATEGORY_PALETTE",
+    "validate_category_parent",
     "sanitise_transaction",
     "handle_database_error",
 ]

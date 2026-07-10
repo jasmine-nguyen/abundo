@@ -11,6 +11,7 @@ from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
 from repository_errors import (
     CategoryNotFoundError,
     DuplicateCategoryError,
+    InvalidCategoryParentError,
     VersionConflictError,
 )
 
@@ -45,6 +46,53 @@ SEED_CATEGORIES = {
 
 
 _CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
+
+# Sub-category (parent link) support. `parent` is optional on a category: None
+# (or absent, on rows written before this field existed) means a top-level
+# category; a value is the id of the parent it rolls up into. Nesting has no
+# product depth limit (Jasmine: "any depth") — this bound only stops the ancestor
+# walk from looping forever on a corrupt cycle it somehow finds in stored data.
+_MAX_PARENT_WALK = 100
+
+# Sentinel for update_category's `parent`: distinguishes "caller omitted parent,
+# leave the stored link untouched" from "caller passed parent=None, detach to
+# top-level". A plain None default cannot tell those apart, which would silently
+# wipe a category's parent on every ordinary name/icon edit.
+_PARENT_UNSET = object()
+
+
+def validate_category_parent(items: dict, cat_id: str, parent_id: str, bucket: str) -> None:
+    """Raise InvalidCategoryParentError if making `parent_id` the parent of
+    `cat_id` (a category in `bucket`) would be invalid. Pure — reads only the
+    given `items` map (id -> category), so it is reused by create and update and
+    is unit-testable without DynamoDB.
+
+    Rejects: a category parenting itself; a parent id that does not exist; a
+    parent in a different bucket (a sub must roll up into the same bucket as its
+    parent); and a link that would close a cycle (the parent is already a
+    descendant of this category).
+    """
+    if parent_id == cat_id:
+        raise InvalidCategoryParentError("a category cannot be its own parent")
+    parent = items.get(parent_id)
+    if parent is None:
+        raise InvalidCategoryParentError(f"parent category '{parent_id}' does not exist")
+    if parent.get("bucket") != bucket:
+        raise InvalidCategoryParentError(
+            "a sub-category must be in the same bucket as its parent")
+    # Walk up from the proposed parent; reaching cat_id means cat_id is already an
+    # ancestor of parent_id, so this link would form a loop.
+    ancestor = parent_id
+    for _ in range(_MAX_PARENT_WALK):
+        if ancestor == cat_id:
+            raise InvalidCategoryParentError("this parent would create a cycle")
+        node = items.get(ancestor)
+        if node is None:
+            return
+        ancestor = node.get("parent")
+        if ancestor is None:
+            return
+    raise InvalidCategoryParentError("category hierarchy is too deep or contains a cycle")
 
 
 class CategoryRepository:
@@ -94,12 +142,18 @@ class CategoryRepository:
         if item is None:
             self._ensure_seeded()
             item = self._get_config()  # re-read so a concurrent create is reflected
-        return list(item["items"].values())
+        # Default `parent` to None so every category leaving the repo carries the
+        # field, even seed rows and rows written before sub-categories existed.
+        return [{"parent": None, **cat} for cat in item["items"].values()]
 
-    def create_category(self, cat_id: str, name: str, bucket: str, icon: str) -> dict:
+    def create_category(
+        self, cat_id: str, name: str, bucket: str, icon: str, parent: Optional[str] = None
+    ) -> dict:
         """Add one category. Seeds first so the 13 defaults are never lost, then
         adds a single map key under an optimistic-lock guard. Raises
-        DuplicateCategoryError if the id already exists.
+        DuplicateCategoryError if the id already exists, or
+        InvalidCategoryParentError if `parent` is set but invalid (unknown id,
+        different bucket, self, or a cycle).
         """
         self._ensure_seeded()
         for _attempt in range(2):
@@ -108,10 +162,13 @@ class CategoryRepository:
             version = item["version"]
             if cat_id in items:
                 raise DuplicateCategoryError(cat_id)
+            if parent is not None:
+                validate_category_parent(items, cat_id, parent, bucket)
 
             # Count taken AFTER seeding, so a new category never reuses a seed's index.
             color = CATEGORY_PALETTE[len(items) % len(CATEGORY_PALETTE)]
-            new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color, "bucket": bucket}
+            new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
+                       "bucket": bucket, "parent": parent}
             try:
                 self._get_table().update_item(
                     Key=_CATEGORIES_KEY,
@@ -139,13 +196,22 @@ class CategoryRepository:
                 # id still free — the version moved under us; loop retries once.
         raise VersionConflictError("create_category: exhausted retries under write contention")
 
-    def update_category(self, cat_id: str, name: str, bucket: str, icon: str) -> dict:
+    def update_category(
+        self, cat_id: str, name: str, bucket: str, icon: str, parent: Any = _PARENT_UNSET
+    ) -> dict:
         """Update a category's editable fields (name, bucket, icon). The id/slug is
         immutable (it's the BankSync vocabulary), and color is server-owned, so
         neither changes here. Raises CategoryNotFoundError if the id is absent.
         `#name` is aliased because `name` is a DynamoDB reserved word; the others
         are aliased for consistency.
+
+        `parent` follows leave-as-is semantics: omit it to leave the stored link
+        untouched (so an ordinary name/icon edit never wipes it), pass an id to
+        re-parent, or pass None to detach to top-level. A re-parent is validated
+        against the current tree. A bucket change is refused while the category
+        has children, since that would break the same-bucket rule for its subs.
         """
+        changing_parent = parent is not _PARENT_UNSET
         self._ensure_seeded()
         for _attempt in range(2):
             item = self._get_config()
@@ -153,31 +219,56 @@ class CategoryRepository:
             version = item["version"]
             if cat_id not in items:
                 raise CategoryNotFoundError(cat_id)
+            bucket_changing = bucket != items[cat_id].get("bucket")
+            if changing_parent and parent is not None:
+                validate_category_parent(items, cat_id, parent, bucket)
+            elif not changing_parent and bucket_changing:
+                # A plain edit can flip the bucket without touching the parent link;
+                # if this row IS a sub, it must stay in its parent's bucket.
+                stored_parent = items[cat_id].get("parent")
+                if stored_parent is not None:
+                    validate_category_parent(items, cat_id, stored_parent, bucket)
+            if bucket_changing and any(
+                child.get("parent") == cat_id for child in items.values()
+            ):
+                raise InvalidCategoryParentError(
+                    f"cannot change the bucket of '{cat_id}' while it has sub-categories")
+
+            names = {
+                "#items": "items", "#id": cat_id, "#name": "name",
+                "#bucket": "bucket", "#icon": "icon", "#v": "version",
+            }
+            values = {
+                ":name": name,
+                ":bucket": bucket,
+                ":icon": icon,
+                ":expected": version,
+                ":next": version + Decimal(1),
+            }
+            set_clause = (
+                "#items.#id.#name = :name, #items.#id.#bucket = :bucket, "
+                "#items.#id.#icon = :icon, #v = :next"
+            )
+            if changing_parent:
+                names["#parent"] = "parent"
+                values[":parent"] = parent
+                set_clause += ", #items.#id.#parent = :parent"
             try:
                 self._get_table().update_item(
                     Key=_CATEGORIES_KEY,
-                    UpdateExpression=(
-                        "SET #items.#id.#name = :name, #items.#id.#bucket = :bucket, "
-                        "#items.#id.#icon = :icon, #v = :next"
-                    ),
+                    UpdateExpression="SET " + set_clause,
                     ConditionExpression=(
                         "attribute_exists(pk) AND #v = :expected "
                         "AND attribute_exists(#items.#id)"
                     ),
-                    ExpressionAttributeNames={
-                        "#items": "items", "#id": cat_id, "#name": "name",
-                        "#bucket": "bucket", "#icon": "icon", "#v": "version",
-                    },
-                    ExpressionAttributeValues={
-                        ":name": name,
-                        ":bucket": bucket,
-                        ":icon": icon,
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
+                    ExpressionAttributeNames=names,
+                    ExpressionAttributeValues=values,
                 )
-                # Build the response from the pre-read item so id/color survive.
-                return {**items[cat_id], "name": name, "bucket": bucket, "icon": icon}
+                # Build the response from the pre-read item so id/color survive;
+                # reflect the resolved parent (new one if changed, else stored).
+                resolved_parent = parent if changing_parent else items[cat_id].get("parent")
+                return {**items[cat_id], "name": name, "bucket": bucket,
+                        "icon": icon, "parent": resolved_parent}
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     handle_database_error(e, "update category")
@@ -189,9 +280,12 @@ class CategoryRepository:
         raise VersionConflictError("update_category: exhausted retries under write contention")
 
     def delete_category(self, cat_id: str) -> str:
-        """Hard-delete a category (REMOVE its map key). No server-side cascade —
-        transactions still referencing the id render as Uncategorized client-side.
-        Raises CategoryNotFoundError if the id is absent.
+        """Hard-delete a category (REMOVE its map key). No server-side cascade for
+        transactions — those still referencing the id render as Uncategorized
+        client-side. Any sub-categories are promoted to top-level (their `parent`
+        is cleared) in the SAME atomic write, so deleting a parent never strands
+        its children pointing at a gone id. Raises CategoryNotFoundError if the id
+        is absent.
         """
         self._ensure_seeded()
         for _attempt in range(2):
@@ -200,20 +294,31 @@ class CategoryRepository:
             version = item["version"]
             if cat_id not in items:
                 raise CategoryNotFoundError(cat_id)
+
+            child_ids = [cid for cid, child in items.items() if child.get("parent") == cat_id]
+            names = {"#items": "items", "#id": cat_id, "#v": "version"}
+            values = {":expected": version, ":next": version + Decimal(1)}
+            set_clause = "#v = :next"
+            if child_ids:
+                # Detach each child to top-level (parent -> None) alongside the delete.
+                names["#parent"] = "parent"
+                values[":null"] = None
+                for index, child_id in enumerate(child_ids):
+                    alias = f"#child{index}"
+                    names[alias] = child_id
+                    set_clause += f", #items.{alias}.#parent = :null"
             try:
                 self._get_table().update_item(
                     Key=_CATEGORIES_KEY,
-                    # REMOVE drops one map key; SET bumps the version. The config item stays.
-                    UpdateExpression="REMOVE #items.#id SET #v = :next",
+                    # REMOVE drops the deleted key; SET bumps the version (and clears
+                    # any children's parent). The config item itself stays.
+                    UpdateExpression=f"REMOVE #items.#id SET {set_clause}",
                     ConditionExpression=(
                         "attribute_exists(pk) AND #v = :expected "
                         "AND attribute_exists(#items.#id)"
                     ),
-                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
-                    ExpressionAttributeValues={
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
+                    ExpressionAttributeNames=names,
+                    ExpressionAttributeValues=values,
                 )
                 return cat_id
             except ClientError as e:
