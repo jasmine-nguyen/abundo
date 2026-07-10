@@ -49,9 +49,17 @@ _CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
 
 # Sub-category (parent link) support. `parent` is optional on a category: None
 # (or absent, on rows written before this field existed) means a top-level
-# category; a value is the id of the parent it rolls up into. Nesting has no
-# product depth limit (Jasmine: "any depth") — this bound only stops the ancestor
-# walk from looping forever on a corrupt cycle it somehow finds in stored data.
+# category; a value is the id of the parent it rolls up into.
+#
+# Nesting is capped at _MAX_CATEGORY_DEPTH levels (a top-level category is level 1,
+# so the deepest allowed leaf is level 5 — four sub-levels below the top, WHIT-223).
+# The cap is enforced only on the writes that ADD depth (create-with-parent and
+# re-parent), never on reads or unrelated name/icon/bucket edits, so a chain written
+# before the cap existed stays readable and editable — only a new write that would push
+# something deeper is refused.
+_MAX_CATEGORY_DEPTH = 5
+# A SEPARATE, larger cycle bound: it only stops the ancestor walk from looping forever
+# on a corrupt cycle in stored data, and never fires before the depth cap on legit data.
 _MAX_PARENT_WALK = 100
 
 # Sentinel for update_category's `parent`: distinguishes "caller omitted parent,
@@ -93,6 +101,75 @@ def validate_category_parent(items: dict, cat_id: str, parent_id: str, bucket: s
         if ancestor is None:
             return
     raise InvalidCategoryParentError("category hierarchy is too deep or contains a cycle")
+
+
+def _ancestor_depth(items: dict, node_id: str) -> int:
+    """The level of `node_id`: the number of nodes from it up to and including its
+    top-level root, following `parent` links (a top-level category is level 1).
+    Cycle-safe — a corrupt stored cycle terminates via `visited`, returning the count
+    walked so far rather than looping. Callers pass a `node_id` known to exist."""
+    depth = 0
+    visited: set[str] = set()
+    current: Optional[str] = node_id
+    while current is not None and current not in visited:
+        visited.add(current)
+        depth += 1
+        node = items.get(current)
+        if node is None:
+            break
+        current = node.get("parent")
+    return depth
+
+
+def _subtree_height(items: dict, root_id: str) -> int:
+    """The tallest downward chain from `root_id` through its descendants, counted in
+    LEVELS: 1 for a leaf (or an id with no children yet, e.g. a not-yet-created
+    category), otherwise 1 + the tallest child subtree. Uses max over children (NOT a
+    descendant count), so a wide-but-shallow subtree stays shallow. Cycle-safe via
+    `visited`; a child is any category whose `parent` is that node."""
+    children: dict[str, list[str]] = {}
+    for cat in items.values():
+        parent = cat.get("parent")
+        if parent is not None:
+            children.setdefault(parent, []).append(cat["id"])
+
+    def height(node_id: str, visited: set[str]) -> int:
+        if node_id in visited:
+            return 0  # corrupt cycle: stop counting this branch so the walk terminates
+        visited.add(node_id)
+        kids = children.get(node_id)
+        if not kids:
+            return 1
+        return 1 + max(height(kid, visited) for kid in kids)
+
+    return height(root_id, set())
+
+
+def validate_category_depth(items: dict, cat_id: str, parent_id: str) -> None:
+    """Raise InvalidCategoryParentError if nesting `cat_id` (together with any subtree
+    it already has) under `parent_id` would exceed _MAX_CATEGORY_DEPTH levels. Pure —
+    reads only `items` — so it is unit-testable and shared by the create and re-parent
+    paths (the only two writes that ADD depth).
+
+    Call AFTER validate_category_parent, which guarantees `parent_id` exists and the
+    link forms no cycle — so the upward level walk (from the parent) and the downward
+    subtree walk (from cat_id) never overlap. The deepest descendant would land at
+    depth(parent) + height(cat_id's subtree): the parent's own level plus the tallest
+    chain below cat_id (cat_id itself is one level). On create, cat_id has no subtree
+    yet, so its height is 1 and the rule reduces to depth(parent) + 1 <= max."""
+    # A no-op re-parent (cat_id already sits under parent_id) adds no depth — the tree is
+    # unchanged — so it can never breach the cap. Skip the check, so re-saving a category
+    # whose parent is unchanged is never rejected. This matters for a grandfathered chain
+    # deeper than the cap: a client that resubmits the (unchanged) stored parent must not be
+    # blocked, matching the name/icon-edit grandfather guarantee (WHIT-223 Decision 2). On
+    # create, cat_id is absent from items, so this never short-circuits a real new link.
+    existing = items.get(cat_id)
+    if existing is not None and existing.get("parent") == parent_id:
+        return
+    resulting_depth = _ancestor_depth(items, parent_id) + _subtree_height(items, cat_id)
+    if resulting_depth > _MAX_CATEGORY_DEPTH:
+        raise InvalidCategoryParentError(
+            f"categories can be nested at most {_MAX_CATEGORY_DEPTH} levels deep")
 
 
 class CategoryRepository:
@@ -164,6 +241,7 @@ class CategoryRepository:
                 raise DuplicateCategoryError(cat_id)
             if parent is not None:
                 validate_category_parent(items, cat_id, parent, bucket)
+                validate_category_depth(items, cat_id, parent)
 
             # Count taken AFTER seeding, so a new category never reuses a seed's index.
             color = CATEGORY_PALETTE[len(items) % len(CATEGORY_PALETTE)]
@@ -222,6 +300,7 @@ class CategoryRepository:
             bucket_changing = bucket != items[cat_id].get("bucket")
             if changing_parent and parent is not None:
                 validate_category_parent(items, cat_id, parent, bucket)
+                validate_category_depth(items, cat_id, parent)
             elif not changing_parent and bucket_changing:
                 # A plain edit can flip the bucket without touching the parent link;
                 # if this row IS a sub, it must stay in its parent's bucket.
