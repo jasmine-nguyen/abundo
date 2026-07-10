@@ -36,6 +36,16 @@ class _RecordingRepo:
         self.removed.append(token)
 
 
+class _RecordingReceiptRepo:
+    """Records the (receipt_id, token) pairs send_push stashed (WHIT-139)."""
+
+    def __init__(self):
+        self.put_calls = []
+
+    def put(self, receipt_id, token):
+        self.put_calls.append((receipt_id, token))
+
+
 def _tickets(*statuses):
     """Build an Expo response body from a list of "ok" / "dnr" ticket statuses."""
     data = []
@@ -107,6 +117,90 @@ def test_prunes_device_not_registered_tokens(shared, monkeypatch):
     assert out["ok"] == 1
     assert out["pruned"] == ["ExpoPushToken[dead]"]
     assert repo.removed == ["ExpoPushToken[dead]"]
+
+
+def test_stashes_receipt_ids_for_accepted_pushes(shared, monkeypatch):
+    # WHIT-139: each accepted push returns a receipt id; stash it with the token it
+    # went to so a later sweep can poll Expo for the true delivery outcome.
+    push = shared.push
+    receipt_repo = _RecordingReceiptRepo()
+    body = {"data": [{"status": "ok", "id": "rcpt-a"}, {"status": "ok", "id": "rcpt-b"}]}
+    monkeypatch.setattr(push.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResponse(body))
+    out = push.send_push("T", "B", ["ExpoPushToken[a]", "ExpoPushToken[b]"],
+                         access_token="k", device_repo=_RecordingRepo(),
+                         receipt_repo=receipt_repo)
+    assert out["ok"] == 2
+    assert receipt_repo.put_calls == [("rcpt-a", "ExpoPushToken[a]"),
+                                      ("rcpt-b", "ExpoPushToken[b]")]
+
+
+def test_does_not_stash_receipts_for_dead_or_id_less_tickets(shared, monkeypatch):
+    # Only ACCEPTED tickets carrying a receipt id are stashed — a pruned (dead) token
+    # and an ok ticket with no id both contribute nothing.
+    push = shared.push
+    receipt_repo = _RecordingReceiptRepo()
+    body = {"data": [
+        {"status": "ok", "id": "rcpt-live"},                              # stored
+        {"status": "error", "details": {"error": "DeviceNotRegistered"}},  # pruned, not stored
+        {"status": "ok"},                                                 # ok but no id → not stored
+    ]}
+    monkeypatch.setattr(push.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResponse(body))
+    out = push.send_push(
+        "T", "B", ["ExpoPushToken[live]", "ExpoPushToken[dead]", "ExpoPushToken[noid]"],
+        access_token="k", device_repo=_RecordingRepo(), receipt_repo=receipt_repo)
+    assert out["pruned"] == ["ExpoPushToken[dead]"]
+    assert receipt_repo.put_calls == [("rcpt-live", "ExpoPushToken[live]")]
+
+
+def test_receipt_store_failure_is_swallowed(shared, monkeypatch):
+    # A failing receipt store must never break the send (best-effort, never raises).
+    push = shared.push
+
+    class _BoomReceiptRepo:
+        def put(self, receipt_id, token):
+            raise RuntimeError("dynamo down")
+
+    monkeypatch.setattr(
+        push.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse({"data": [{"status": "ok", "id": "r"}]}))
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k",
+                         device_repo=_RecordingRepo(), receipt_repo=_BoomReceiptRepo())
+    assert out == {"sent": 1, "ok": 1, "pruned": []}
+
+
+def test_uses_the_default_receipt_repo_when_none_injected(shared, monkeypatch):
+    # Production callers (budget/repayment alerts) call send_push WITHOUT a receipt_repo,
+    # so the default PushReceiptRepository is the real capture path — lock that it's used.
+    push = shared.push
+    default = _RecordingReceiptRepo()
+    monkeypatch.setattr(push, "_default_receipt_repo", lambda: default)
+    monkeypatch.setattr(
+        push.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse({"data": [{"status": "ok", "id": "r1"}]}))
+    push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k", device_repo=_RecordingRepo())
+    assert default.put_calls == [("r1", "ExpoPushToken[a]")]
+
+
+def test_default_receipt_repo_is_the_push_receipt_store(shared):
+    push = shared.push
+    assert isinstance(push._default_receipt_repo(), shared.push_receipt.PushReceiptRepository)
+
+
+def test_receipt_store_open_failure_is_swallowed(shared, monkeypatch):
+    # Even if opening the store fails, the send must still complete cleanly.
+    push = shared.push
+
+    def boom():
+        raise RuntimeError("no store")
+
+    monkeypatch.setattr(push, "_default_receipt_repo", boom)
+    monkeypatch.setattr(
+        push.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse({"data": [{"status": "ok", "id": "r"}]}))
+    out = push.send_push("T", "B", ["ExpoPushToken[a]"], access_token="k", device_repo=_RecordingRepo())
+    assert out == {"sent": 1, "ok": 1, "pruned": []}
 
 
 def test_transport_error_is_swallowed(shared, monkeypatch):
