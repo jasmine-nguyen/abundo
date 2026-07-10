@@ -975,6 +975,33 @@ def _window_category_spend(transactions: list[dict], categories: list[dict],
     return [row for _name, _cid, row in rows]
 
 
+def _budgeted_parent_rollup(transactions: list[dict], parents: list[str],
+                            leaves_by_parent: dict, names: dict,
+                            targets: dict | None = None) -> list[dict]:
+    """Rolled-up spend rows for budgeted PARENT categories (WHIT-225): each parent's
+    posted/pending summed over its descendant leaves, as float rows the model reads:
+    [{"name", "posted", "pending", "budget"?}, ...].
+
+    Kept SEPARATE from the flat per-leaf `categories` list so a leaf's spend is never
+    listed twice (the parent's total is here; the leaves' detail stays in `categories`).
+    Every budgeted parent is emitted even at zero spend — the point is to show its
+    budget vs its rolled-up spend. `targets` is joined by id for the current cycle;
+    prior cycles omit `budget` (it's constant across cycles), matching the per-leaf
+    convention. Sorted by (name, id) so the input hash is deterministic."""
+    needed_leaves = set().union(*leaves_by_parent.values()) if leaves_by_parent else set()
+    rollup = summarise_transactions(transactions, needed_leaves)
+    rows = []
+    for cid in parents:
+        posted = sum((rollup[leaf]["posted"] for leaf in leaves_by_parent[cid] if leaf in rollup), Decimal(0))
+        pending = sum((rollup[leaf]["pending"] for leaf in leaves_by_parent[cid] if leaf in rollup), Decimal(0))
+        row = {"name": names.get(cid, cid), "posted": float(posted), "pending": float(pending)}
+        if targets and cid in targets:
+            row["budget"] = float(targets[cid]["target"])
+        rows.append((row["name"], cid, row))
+    rows.sort(key=lambda t: (t[0], t[1]))
+    return [row for _name, _cid, row in rows]
+
+
 _GOAL_PAYOFF_MODES = {"partial", "flat", "ahead"}
 # The projected payoff label the client sends, e.g. "Nov 2042" — the one free-form
 # string in an otherwise numbers-only goal, and the one value the prompt echoes. Pin
@@ -1099,6 +1126,21 @@ def assemble_insight_input(
     # Budgets join BY ID inside the helper (names aren't unique).
     category_rows = _window_category_spend(current, categories, targets)
 
+    # Rolled-up spend for budgeted PARENT categories (internal spend-bucket nodes). The
+    # model otherwise sees a budgeted parent as $0 spent, since transactions land on its
+    # leaves, not the parent (WHIT-225). A flat leaf/orphan target stays in `categories`
+    # as today; only true parents (ids that HAVE children) get the extra rolled-up block.
+    # SPEND_BUCKETS excludes income earn-target parents; the same-bucket rule then keeps a
+    # spend parent's subtree all spend. When there are no budgeted parents the block is
+    # OMITTED entirely, so a user without them has a byte-identical model_input (same hash,
+    # no needless paid re-run).
+    children = build_category_children(categories)
+    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
+    names = {c["id"]: c["name"] for c in categories}
+    budgeted_parents = [cid for cid in targets
+                        if cid in children and bucket_by_id.get(cid) in SPEND_BUCKETS]
+    leaves_by_parent = {cid: descendant_leaves(cid, children) for cid in budgeted_parents}
+
     uncategorized = summarise_uncategorized(current, all_ids)
     unc = None
     if uncategorized["posted"] > 0 or uncategorized["pending"] > 0:
@@ -1111,11 +1153,17 @@ def assemble_insight_input(
     for n in range(1, INSIGHTS_PRIOR_CYCLES + 1):
         prev_start, prev_end = nth_prior_cycle_window(start, length, n)
         prev_txns = _fetch_windowed_transactions(transaction_repo, prev_start, prev_end)
-        prior.append({
+        prev_entry = {
             "start": prev_start,
             "end": prev_end,
             "categories": _window_category_spend(prev_txns, categories),
-        })
+        }
+        # Mirror the parent rollup onto prior cycles (no budget — it's constant) so the
+        # model can compare a parent's current vs prior spend at the same aggregation.
+        if budgeted_parents:
+            prev_entry["budgeted_parents"] = _budgeted_parent_rollup(
+                prev_txns, budgeted_parents, leaves_by_parent, names)
+        prior.append(prev_entry)
 
     model_input = {
         "cycle": {"length": length, "start": start, "end": end},
@@ -1124,6 +1172,9 @@ def assemble_insight_input(
         "uncategorized": unc,
         "prior_cycles": prior,
     }
+    if budgeted_parents:
+        model_input["budgeted_parents"] = _budgeted_parent_rollup(
+            current, budgeted_parents, leaves_by_parent, names, targets)
     if goal is not None:
         model_input["goal"] = goal
     return model_input, start
