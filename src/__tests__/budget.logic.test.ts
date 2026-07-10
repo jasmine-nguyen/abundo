@@ -222,3 +222,88 @@ describe('budgetDetail', () => {
     expect(noTx.relEmpty).toBe(true);
   });
 });
+
+describe('budgetViews sub-category tree + hero de-dup (WHIT-221)', () => {
+  const car = () => cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null });
+  const parking = () => cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' });
+
+  it('de-dups the hero total: a parent and its budgeted sub count the parent ONCE', () => {
+    // Car (parent) rolled-up spend £75 (server-folded Parking+Other); Parking budgeted £50/£30.
+    // Fail-on-revert: dropping the `depth === 0` guard makes this read 105 / 250.
+    const s = makeState({
+      categories: [car(), parking()],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 }),
+                budget({ id: 'parking', budget: 50, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
+    expect(totSpent).toBe(75);   // only Car — Parking is already inside Car's roll-up
+    expect(totBudget).toBe(200); // only Car's cap
+    expect(totRemain).toBe(125);
+    // both rows present, ordered parent-then-child, with depth/parentId set
+    expect(rows.map((r) => r.id)).toEqual(['car', 'parking']);
+    expect(rows[0]).toMatchObject({ id: 'car', depth: 0, parentId: null });
+    expect(rows[1]).toMatchObject({ id: 'parking', depth: 1, parentId: 'car' });
+  });
+
+  it('counts only the top of a 3-level chain; depth increases per level', () => {
+    const s = makeState({
+      categories: [car(),
+                   cat({ id: 'daily', bucket: 'Living', parent: 'car' }),
+                   cat({ id: 'petrol', bucket: 'Living', parent: 'daily' })],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 }),
+                budget({ id: 'daily', budget: 100, posted: 60, pending: 0 }),
+                budget({ id: 'petrol', budget: 40, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    expect(totSpent).toBe(75);   // only the top-most (car)
+    expect(totBudget).toBe(200);
+    expect(rows.map((r) => [r.id, r.depth])).toEqual([['car', 0], ['daily', 1], ['petrol', 2]]);
+  });
+
+  it('walks through an UN-budgeted middle node to find the budgeted ancestor', () => {
+    // car budgeted, daily NOT budgeted, petrol budgeted under daily. petrol's nearest
+    // budgeted ancestor is car → it nests under car at depth 1 and is skipped from the hero.
+    const s = makeState({
+      categories: [car(),
+                   cat({ id: 'daily', bucket: 'Living', parent: 'car' }),
+                   cat({ id: 'petrol', bucket: 'Living', parent: 'daily' })],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 }),
+                budget({ id: 'petrol', budget: 40, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent } = budgetViews(s);
+    expect(totSpent).toBe(75); // petrol skipped (has a budgeted ancestor)
+    expect(rows.map((r) => r.id)).toEqual(['car', 'petrol']);
+    expect(rows[1]).toMatchObject({ id: 'petrol', depth: 1, parentId: 'car' });
+  });
+
+  it('counts a budgeted sub whose parent is NOT budgeted, at top level', () => {
+    // car has no budget row (target 0 → absent from budgets[]); parking budgeted under it.
+    const s = makeState({
+      categories: [car(), parking()],
+      budgets: [budget({ id: 'parking', budget: 50, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    expect(totSpent).toBe(30);   // no budgeted ancestor → counts
+    expect(totBudget).toBe(50);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'parking', depth: 0, parentId: null });
+  });
+
+  it('keeps Income parent/sub out of the spend hero but still nests them', () => {
+    const s = makeState({
+      categories: [cat({ id: 'income', bucket: 'Income', parent: null }),
+                   cat({ id: 'salary', bucket: 'Income', parent: 'income' })],
+      budgets: [budget({ id: 'income', budget: 6000, posted: 4000, pending: 0 }),
+                budget({ id: 'salary', budget: 5000, posted: 4000, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    expect(totSpent).toBe(0);    // income never enters the spend hero
+    expect(totBudget).toBe(0);
+    expect(rows.map((r) => [r.id, r.depth])).toEqual([['income', 0], ['salary', 1]]);
+  });
+});
