@@ -8,9 +8,9 @@ data "archive_file" "presignup_zip" {
   output_path = "${path.module}/artifacts/presignup.zip"
 }
 
-resource "aws_lambda_function" "presignup" {
+resource "aws_lambda_function" "auth_presignup" {
   function_name    = "${var.project_name}-auth-presignup"
-  role             = aws_iam_role.presignup_exec.arn
+  role             = aws_iam_role.auth_presignup_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 10
@@ -26,18 +26,25 @@ resource "aws_lambda_function" "presignup" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.presignup.name
+    log_group  = aws_cloudwatch_log_group.auth_presignup.name
   }
 }
 
-resource "aws_cloudwatch_log_group" "presignup" {
-  name              = "/aws/lambda/${var.project_name}-presignup"
+# WHIT-224: label rename only (deployed function_name is unchanged from WHIT-219),
+# so this is a pure state move — no destroy/recreate. Garbage-collect once applied.
+moved {
+  from = aws_lambda_function.presignup
+  to   = aws_lambda_function.auth_presignup
+}
+
+resource "aws_cloudwatch_log_group" "auth_presignup" {
+  name              = "/aws/lambda/${var.project_name}-auth-presignup"
   retention_in_days = 30
 }
 
 # Minimal exec role: only writes its own logs. No SSM, no DynamoDB, no shared layer.
-resource "aws_iam_role" "presignup_exec" {
-  name = "${var.project_name}-presignup-exec"
+resource "aws_iam_role" "auth_presignup_exec" {
+  name = "${var.project_name}-auth-presignup-exec"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -48,9 +55,9 @@ resource "aws_iam_role" "presignup_exec" {
   })
 }
 
-resource "aws_iam_role_policy" "presignup_logs" {
-  name = "${var.project_name}-presignup-logs"
-  role = aws_iam_role.presignup_exec.id
+resource "aws_iam_role_policy" "auth_presignup_logs" {
+  name = "${var.project_name}-auth-presignup-logs"
+  role = aws_iam_role.auth_presignup_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -62,17 +69,23 @@ resource "aws_iam_role_policy" "presignup_logs" {
         "logs:PutLogEvents"
       ]
       Resource = [
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-presignup:*"
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-auth-presignup:*"
       ]
     }]
   })
 }
 
 # Let Cognito invoke the trigger.
-resource "aws_lambda_permission" "presignup_cognito_invoke" {
+resource "aws_lambda_permission" "auth_presignup_cognito_invoke" {
   statement_id  = "AllowCognitoInvokePreSignUp"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.presignup.function_name
+  function_name = aws_lambda_function.auth_presignup.function_name
   principal     = "cognito-idp.amazonaws.com"
   source_arn    = aws_cognito_user_pool.pool.arn
+}
+
+# WHIT-224: label rename only (statement_id + attributes unchanged) — pure state move.
+moved {
+  from = aws_lambda_permission.presignup_cognito_invoke
+  to   = aws_lambda_permission.auth_presignup_cognito_invoke
 }

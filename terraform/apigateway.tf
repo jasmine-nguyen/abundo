@@ -13,7 +13,7 @@ resource "aws_apigatewayv2_stage" "default" {
 resource "aws_apigatewayv2_integration" "get_transactions_integration" {
   api_id                 = aws_apigatewayv2_api.api.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.lambda_api.invoke_arn
+  integration_uri        = aws_lambda_function.app_api.invoke_arn
   payload_format_version = "2.0"
 }
 
@@ -21,7 +21,7 @@ resource "aws_apigatewayv2_integration" "get_transactions_integration" {
 # (get_transactions_integration) + the Cognito JWT authorizer, differing only by
 # route_key. Collapsed from 23 near-identical resources into a single for_each
 # (WHIT-153). No new aws_lambda_permission is needed for any of these —
-# get_transactions_invoke_permission grants apigateway invoke over
+# app_api_apigw_invoke grants apigateway invoke over
 # ${execution_arn}/*/* (any method + route), so adding a route_key here needs no new
 # permission or integration.
 #
@@ -165,10 +165,10 @@ moved {
   to   = aws_apigatewayv2_route.app["POST /insights/ai"]
 }
 
-resource "aws_lambda_permission" "get_transactions_invoke_permission" {
+resource "aws_lambda_permission" "app_api_apigw_invoke" {
   statement_id  = "AllowAPIGatewayInvokeGetTransactions"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.lambda_api.function_name
+  function_name = aws_lambda_function.app_api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }
@@ -197,7 +197,7 @@ resource "aws_apigatewayv2_authorizer" "jwt" {
 resource "aws_apigatewayv2_integration" "banksync_webhook_integration" {
   api_id                 = aws_apigatewayv2_api.api.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.lambda.invoke_arn
+  integration_uri        = aws_lambda_function.transaction_ingest.invoke_arn
   payload_format_version = "2.0"
 }
 
@@ -207,10 +207,22 @@ resource "aws_apigatewayv2_route" "banksync_webhook_route" {
   target    = "integrations/${aws_apigatewayv2_integration.banksync_webhook_integration.id}"
 }
 
-resource "aws_lambda_permission" "api_invoke_lambda" {
+resource "aws_lambda_permission" "transaction_ingest_apigw_invoke" {
   statement_id  = "AllowAPIGatewayInvokeBankSync"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.lambda.function_name
+  function_name = aws_lambda_function.transaction_ingest.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
+}
+
+# WHIT-224: aws_lambda_permission label renames to match their target function.
+# statement_id (the deployed identifier) + all attributes are unchanged, so these
+# are pure state moves — no destroy/recreate, no invoke-permission gap. GC once applied.
+moved {
+  from = aws_lambda_permission.get_transactions_invoke_permission
+  to   = aws_lambda_permission.app_api_apigw_invoke
+}
+moved {
+  from = aws_lambda_permission.api_invoke_lambda
+  to   = aws_lambda_permission.transaction_ingest_apigw_invoke
 }

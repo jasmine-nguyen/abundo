@@ -2,8 +2,8 @@ data "aws_caller_identity" "current" {
 
 }
 
-resource "aws_iam_role" "lambda_exec" {
-  name = "${var.project_name}-lambda-exec"
+resource "aws_iam_role" "transaction_exec" {
+  name = "${var.project_name}-transaction-exec"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -14,8 +14,8 @@ resource "aws_iam_role" "lambda_exec" {
   })
 }
 
-resource "aws_iam_role" "lambda_api_exec" {
-  name = "${var.project_name}-lambda-api-exec"
+resource "aws_iam_role" "app_api_exec" {
+  name = "${var.project_name}-app-api-exec"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -26,10 +26,10 @@ resource "aws_iam_role" "lambda_api_exec" {
   })
 }
 
-# Execution role for the sync-trigger lambda. Kept minimal on purpose: it only
-# reads the BankSync API key from SSM and writes its own logs — no DynamoDB.
-resource "aws_iam_role" "sync_trigger_exec" {
-  name = "${var.project_name}-sync-trigger-exec"
+# Execution role for the transaction-trigger lambda. Kept minimal on purpose: it
+# only reads the BankSync API key from SSM and writes its own logs — no DynamoDB.
+resource "aws_iam_role" "transaction_trigger_exec" {
+  name = "${var.project_name}-transaction-trigger-exec"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -40,11 +40,11 @@ resource "aws_iam_role" "sync_trigger_exec" {
   })
 }
 
-# Execution role for the balance-poller lambda. Reads the BankSync API key from
+# Execution role for the homeloan-request lambda. Reads the BankSync API key from
 # SSM, writes the single home-loan balance row to DynamoDB (PutItem only — it
 # never reads or mutates transactions), and writes its own logs.
-resource "aws_iam_role" "balance_poller_exec" {
-  name = "${var.project_name}-balance-poller-exec"
+resource "aws_iam_role" "homeloan_request_exec" {
+  name = "${var.project_name}-homeloan-request-exec"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -55,9 +55,9 @@ resource "aws_iam_role" "balance_poller_exec" {
   })
 }
 
-resource "aws_iam_role_policy" "lambda_dynamodb" {
-  name = "${var.project_name}-lambda-dynamodb"
-  role = aws_iam_role.lambda_exec.id
+resource "aws_iam_role_policy" "transaction_dynamodb" {
+  name = "${var.project_name}-transaction-dynamodb"
+  role = aws_iam_role.transaction_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -78,9 +78,9 @@ resource "aws_iam_role_policy" "lambda_dynamodb" {
   })
 }
 
-resource "aws_iam_role_policy" "lambda_api_dynamodb" {
-  name = "${var.project_name}-lambda-api-dynamodb"
-  role = aws_iam_role.lambda_api_exec.id
+resource "aws_iam_role_policy" "app_api_dynamodb" {
+  name = "${var.project_name}-app-api-dynamodb"
+  role = aws_iam_role.app_api_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -99,9 +99,9 @@ resource "aws_iam_role_policy" "lambda_api_dynamodb" {
   })
 }
 
-resource "aws_iam_role_policy" "lambda_logs" {
-  name = "${var.project_name}-lambda-logs"
-  role = aws_iam_role.lambda_exec.id
+resource "aws_iam_role_policy" "transaction_logs" {
+  name = "${var.project_name}-transaction-logs"
+  role = aws_iam_role.transaction_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -113,24 +113,26 @@ resource "aws_iam_role_policy" "lambda_logs" {
         "logs:PutLogEvents"
       ]
       Resource = [
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda:*",
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-ingest:*",
         # reprocess (WHIT-55), dedupe (WHIT-80) and age-out (WHIT-79) all reuse this
-        # same lambda_exec role, so each needs its own log group granted explicitly:
-        # the "-lambda:*" pattern above does NOT match "-lambda-<suffix>" (the '-suffix'
-        # breaks the group name before the required ':'). Without its own entry a lambda
-        # is silently denied PutLogEvents and emits nothing — which for the age-out sweep
-        # (whose entire product is its dry-run/live log output) would hide whether it ran.
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-reprocess:*",
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-dedupe:*",
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-age-out:*"
+        # same transaction_exec role, so each needs its own log group granted
+        # explicitly — an IAM log-group ARN is a literal, not a prefix match. Do NOT
+        # collapse these to a wildcard "-transaction-*:*": that would also match the
+        # transaction-trigger group (served by a different role), an over-grant.
+        # Without its own entry a lambda is silently denied PutLogEvents and emits
+        # nothing — which for the age-out sweep (whose entire product is its
+        # dry-run/live log output) would hide whether it ran.
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-reprocess:*",
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-dedupe:*",
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-age-out:*"
       ]
     }]
   })
 }
 
-resource "aws_iam_role_policy" "lambda_api_logs" {
-  name = "${var.project_name}-lambda-api-logs"
-  role = aws_iam_role.lambda_api_exec.id
+resource "aws_iam_role_policy" "app_api_logs" {
+  name = "${var.project_name}-app-api-logs"
+  role = aws_iam_role.app_api_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -142,17 +144,17 @@ resource "aws_iam_role_policy" "lambda_api_logs" {
         "logs:PutLogEvents"
       ]
       Resource = [
-      "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-lambda-api:*"]
+      "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-app-api:*"]
     }]
   })
 }
 
-# lambda_api: read the BankSync API key to call the Enrichments API (WHIT-52).
+# app_api: read the BankSync API key to call the Enrichments API (WHIT-52).
 # ssm:GetParameter alone decrypts the SecureString via the AWS-managed key (same
-# pattern as sync_trigger_ssm).
-resource "aws_iam_role_policy" "lambda_api_ssm" {
-  name = "${var.project_name}-lambda-api-ssm"
-  role = aws_iam_role.lambda_api_exec.id
+# pattern as transaction_trigger_ssm).
+resource "aws_iam_role_policy" "app_api_ssm" {
+  name = "${var.project_name}-app-api-ssm"
+  role = aws_iam_role.app_api_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -169,13 +171,13 @@ resource "aws_iam_role_policy" "lambda_api_ssm" {
     }]
   })
 }
-# Webhook lambda SSM reads: its own BankSync webhook secret, plus the Expo access
-# token that the shared push sender (shared/push.py) uses. The webhook is the
-# push sender's runtime — it fires budget/milestone alerts (the notification
-# cards that build on this foundation).
-resource "aws_iam_role_policy" "lambda_ssm" {
-  name = "${var.project_name}-lambda-ssm"
-  role = aws_iam_role.lambda_exec.id
+# Webhook (transaction-ingest) lambda SSM reads: its own BankSync webhook secret,
+# plus the Expo access token that the shared push sender (shared/push.py) uses. The
+# webhook is the push sender's runtime — it fires budget/milestone alerts (the
+# notification cards that build on this foundation).
+resource "aws_iam_role_policy" "transaction_ssm" {
+  name = "${var.project_name}-transaction-ssm"
+  role = aws_iam_role.transaction_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -192,12 +194,12 @@ resource "aws_iam_role_policy" "lambda_ssm" {
   })
 }
 
-# Sync-trigger lambda: read the BankSync API key. ssm:GetParameter alone is enough
-# to decrypt the SecureString because it uses the AWS-managed aws/ssm key, which
-# grants decrypt via IAM (same pattern as lambda_ssm above).
-resource "aws_iam_role_policy" "sync_trigger_ssm" {
-  name = "${var.project_name}-sync-trigger-ssm"
-  role = aws_iam_role.sync_trigger_exec.id
+# Transaction-trigger lambda: read the BankSync API key. ssm:GetParameter alone is
+# enough to decrypt the SecureString because it uses the AWS-managed aws/ssm key,
+# which grants decrypt via IAM (same pattern as transaction_ssm above).
+resource "aws_iam_role_policy" "transaction_trigger_ssm" {
+  name = "${var.project_name}-transaction-trigger-ssm"
+  role = aws_iam_role.transaction_trigger_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -213,10 +215,10 @@ resource "aws_iam_role_policy" "sync_trigger_ssm" {
   })
 }
 
-# Sync-trigger lambda: write to its own CloudWatch log group.
-resource "aws_iam_role_policy" "sync_trigger_logs" {
-  name = "${var.project_name}-sync-trigger-logs"
-  role = aws_iam_role.sync_trigger_exec.id
+# Transaction-trigger lambda: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "transaction_trigger_logs" {
+  name = "${var.project_name}-transaction-trigger-logs"
+  role = aws_iam_role.transaction_trigger_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -228,18 +230,18 @@ resource "aws_iam_role_policy" "sync_trigger_logs" {
         "logs:PutLogEvents"
       ]
       Resource = [
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-sync-trigger:*"
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-trigger:*"
       ]
     }]
   })
 }
 
-# Balance-poller lambda: write ONLY the home-loan balance row. Scoped to PutItem
+# Homeloan-request lambda: write ONLY the home-loan balance row. Scoped to PutItem
 # on the base table (the balance item is a single pk/sk row, never a GSI query),
 # deliberately narrower than the webhook lambda's full CRUD.
-resource "aws_iam_role_policy" "balance_poller_dynamodb" {
-  name = "${var.project_name}-balance-poller-dynamodb"
-  role = aws_iam_role.balance_poller_exec.id
+resource "aws_iam_role_policy" "homeloan_request_dynamodb" {
+  name = "${var.project_name}-homeloan-request-dynamodb"
+  role = aws_iam_role.homeloan_request_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -255,12 +257,12 @@ resource "aws_iam_role_policy" "balance_poller_dynamodb" {
   })
 }
 
-# Balance-poller lambda: read the BankSync API key. ssm:GetParameter alone
+# Homeloan-request lambda: read the BankSync API key. ssm:GetParameter alone
 # decrypts the SecureString via the AWS-managed key (same pattern as
-# sync_trigger_ssm).
-resource "aws_iam_role_policy" "balance_poller_ssm" {
-  name = "${var.project_name}-balance-poller-ssm"
-  role = aws_iam_role.balance_poller_exec.id
+# transaction_trigger_ssm).
+resource "aws_iam_role_policy" "homeloan_request_ssm" {
+  name = "${var.project_name}-homeloan-request-ssm"
+  role = aws_iam_role.homeloan_request_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -276,10 +278,10 @@ resource "aws_iam_role_policy" "balance_poller_ssm" {
   })
 }
 
-# Balance-poller lambda: write to its own CloudWatch log group.
-resource "aws_iam_role_policy" "balance_poller_logs" {
-  name = "${var.project_name}-balance-poller-logs"
-  role = aws_iam_role.balance_poller_exec.id
+# Homeloan-request lambda: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "homeloan_request_logs" {
+  name = "${var.project_name}-homeloan-request-logs"
+  role = aws_iam_role.homeloan_request_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -291,7 +293,7 @@ resource "aws_iam_role_policy" "balance_poller_logs" {
         "logs:PutLogEvents"
       ]
       Resource = [
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-balance-poller:*"
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-homeloan-request:*"
       ]
     }]
   })

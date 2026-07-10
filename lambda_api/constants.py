@@ -38,8 +38,8 @@ BANKSYNC_BASE_URL = "https://api.banksync.io"
 BANKSYNC_API_KEY_PATH = "/whittle/banksync-api-key"
 # BankSync sits behind Cloudflare, which 403s the default "Python-urllib"
 # User-Agent (error 1010). Send our own on every request (matches the
-# sync-trigger lambda, which uses its own "whittle-sync-trigger").
-BANKSYNC_USER_AGENT = "whittle-lambda-api"
+# transaction-trigger lambda, which uses its own "whittle-transaction-trigger").
+BANKSYNC_USER_AGENT = "whittle-app-api"
 # HTTP timeout, in seconds, for a single enrichments request to BankSync.
 BANKSYNC_TIMEOUT_SECONDS = 30
 
@@ -61,7 +61,7 @@ ANTHROPIC_MODEL = "claude-haiku-4-5"
 ANTHROPIC_MAX_TOKENS = 700
 # api.anthropic.com sits behind Cloudflare, which 403s the default urllib
 # User-Agent — the UA is load-bearing (same lesson as the BankSync client).
-ANTHROPIC_USER_AGENT = "whittle-lambda-api"
+ANTHROPIC_USER_AGENT = "whittle-app-api"
 ANTHROPIC_TIMEOUT_SECONDS = 30
 # How many PRIOR pay cycles of category spend to include for trend context.
 INSIGHTS_PRIOR_CYCLES = 1

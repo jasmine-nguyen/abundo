@@ -62,7 +62,7 @@ def test_generate_suggestions_builds_request_and_parses(insights_ai, monkeypatch
     # urllib title-cases header keys.
     assert captured["headers"]["X-api-key"] == "test-anthropic-key"
     assert captured["headers"]["Anthropic-version"]
-    assert captured["headers"]["User-agent"]
+    assert captured["headers"]["User-agent"] == "whittle-app-api"
     # The real numbers AND the "don't invent" instruction reach the model.
     assert "52.0" in captured["body"]["messages"][0]["content"]
     assert "only" in captured["body"]["system"].lower()
