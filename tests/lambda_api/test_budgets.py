@@ -458,6 +458,137 @@ def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
     assert result["ghost"] == {"target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}
 
 
+# --- handler-level: GET /budgets sub-category roll-up (WHIT-220) --------------
+#
+# A budgeted PARENT holds no transactions of its own (they land on its leaves), so
+# its posted/pending is the sum over its DESCENDANT LEAVES for the window. The wire
+# shape is unchanged: every budgeted id still returns {target, posted, pending}.
+
+
+def test_list_budgets_parent_rolls_up_leaf_children(handler):
+    # Car (parent) + its two leaf children all budgeted. Car's posted/pending = the
+    # sum over parking + other; each child also keeps its own correct row.
+    budget_repo = FakeBudgetRepo(budgets={
+        "car": {"target": Decimal("200")},
+        "parking": {"target": Decimal("50")},
+        "other": {"target": Decimal("80")},
+    })
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -30, "posted"),
+        _transaction("parking", -10, "pending"),
+        _transaction("other", -45, "posted"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "other", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {
+        "car": {"target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("10")},
+        "parking": {"target": Decimal("50"), "posted": Decimal("30"), "pending": Decimal("10")},
+        "other": {"target": Decimal("80"), "posted": Decimal("45"), "pending": Decimal("0")},
+    }
+
+
+def test_list_budgets_untargeted_leaf_still_rolls_into_parent(handler):
+    # Only the parent carries a target; its child leaf has none. The child's spend
+    # must still fold into the parent, and NO phantom row appears for the child.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -30, "posted"),
+        _transaction("other", -45, "posted"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "other", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_multilevel_grandchild_rolls_up(handler):
+    # car -> daily -> {petrol, tolls}; only car is budgeted. The grandchild leaves'
+    # spend must reach car through the two-level walk.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -15, "pending"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "bucket": "Living", "parent": "daily"},
+        {"id": "tolls", "bucket": "Living", "parent": "daily"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("15")}}
+
+
+def test_list_budgets_income_parent_rolls_up_income_leaves(handler):
+    # An Income parent whose leaves are Income rolls up POSITIVE earnings (floor,
+    # over-is-good) via summarise_income, same as a flat income target.
+    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("salary", 4000, "posted"),
+        _transaction("refund", 250, "pending"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "income", "bucket": "Income", "parent": None},
+        {"id": "salary", "bucket": "Income", "parent": "income"},
+        {"id": "refund", "bucket": "Income", "parent": "income"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("250")}}
+
+
+def test_list_budgets_parent_and_child_both_budgeted_are_independent(handler):
+    # With a parent AND its own leaf both budgeted, the same underlying transaction
+    # correctly appears in BOTH rows (parent = sum of leaves; leaf = itself). Each row
+    # is individually correct; the hero-total de-dup is a client concern (WHIT-221).
+    budget_repo = FakeBudgetRepo(budgets={
+        "car": {"target": Decimal("200")},
+        "parking": {"target": Decimal("50")},
+    })
+    txn_repo = FakeTransactionRepo(transactions=[_transaction("parking", -30, "posted")])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["car"]["posted"] == Decimal("30")      # parent rolls up the leaf
+    assert result["parking"]["posted"] == Decimal("30")  # leaf keeps its own row
+
+
+def test_list_budgets_flat_leaf_rolls_up_only_itself(handler):
+    # Regression anchor: a budgeted top-level category with NO children maps to the
+    # singleton {itself}, so its rollup is byte-identical to the pre-WHIT-220 path.
+    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("coffee", -50, "posted"),
+        _transaction("groceries", -30, "posted"),  # a different category, must NOT leak in
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "coffee", "bucket": "Lifestyle", "parent": None},
+        {"id": "groceries", "bucket": "Living", "parent": None},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")}}
+
+
 # --- handler-level: dispatch -------------------------------------------------
 
 
@@ -1000,3 +1131,187 @@ def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypa
         raise ZoneInfoNotFoundError(name)
     monkeypatch.setattr(spend, "ZoneInfo", _boom)
     assert spend._melbourne_today() == datetime.now(timezone.utc).date()
+
+
+# --- WHIT-220 Step 2: adversarial gap tests for sub-category roll-up ----------
+# Independent of the implementer's happy-path set above (QA-authored). Exercises the
+# full handler.list_budgets + shared/spend roll-up. IDs map to the QA checklist.
+
+
+def test_noncounting_leaf_txn_excluded_from_parent(handler):
+    # [A20] a counts_to_budget=False txn on a leaf must NOT roll up into the parent.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -30, "posted", counts=True),
+        _transaction("parking", -999, "posted", counts=False),  # excluded
+        _transaction("other", -45, "posted", counts=True),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "other", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
+
+
+def test_pending_posted_mix_folds_across_leaves(handler):
+    # [A21] pending vs posted fold into separate parent totals across DIFFERENT leaves.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -30, "posted"),
+        _transaction("parking", -5, "pending"),
+        _transaction("other", -45, "posted"),
+        _transaction("other", -20, "pending"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "other", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("75"), "pending": Decimal("25")}}
+
+
+def test_income_clawback_on_one_leaf_clamps_at_zero(handler):
+    # [A22] a clawback netting ONE income leaf negative clamps that leaf at 0 without
+    # dragging down a sibling leaf's positive earnings; parent stays >= 0.
+    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("salary", 4000, "posted"),
+        _transaction("side", 250, "posted"),
+        _transaction("side", -1000, "posted"),  # net -750 on `side` -> clamp 0
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "income", "bucket": "Income", "parent": None},
+        {"id": "salary", "bucket": "Income", "parent": "income"},
+        {"id": "side", "bucket": "Income", "parent": "income"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    # salary 4000 + side clamped to 0 = 4000 (never 3250, never negative).
+    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("0")}}
+
+
+def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
+    # [A23] a parent's subtree and an unrelated top-level sibling category don't leak.
+    budget_repo = FakeBudgetRepo(budgets={
+        "car": {"target": Decimal("200")},
+        "coffee": {"target": Decimal("60")},
+    })
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -30, "posted"),
+        _transaction("coffee", -50, "posted"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "coffee", "bucket": "Lifestyle", "parent": None},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {
+        "car": {"target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")},
+        "coffee": {"target": Decimal("60"), "posted": Decimal("50"), "pending": Decimal("0")},
+    }
+
+
+def test_two_disjoint_parents_do_not_cross_contaminate(handler):
+    # [A24] two budgeted parents with disjoint leaf sets roll up independently.
+    budget_repo = FakeBudgetRepo(budgets={
+        "car": {"target": Decimal("200")},
+        "food": {"target": Decimal("400")},
+    })
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -30, "posted"),
+        _transaction("petrol", -20, "pending"),
+        _transaction("groceries", -100, "posted"),
+        _transaction("dining", -40, "pending"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "bucket": "Living", "parent": "car"},
+        {"id": "food", "bucket": "Living", "parent": None},
+        {"id": "groceries", "bucket": "Living", "parent": "food"},
+        {"id": "dining", "bucket": "Living", "parent": "food"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {
+        "car": {"target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("20")},
+        "food": {"target": Decimal("400"), "posted": Decimal("100"), "pending": Decimal("40")},
+    }
+
+
+def test_five_level_chain_rolls_to_top(handler):
+    # [A25] a 5-level chain rolls the bottom leaf all the way to the top target.
+    budget_repo = FakeBudgetRepo(budgets={"l1": {"target": Decimal("500")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("l5", -60, "posted"),
+        _transaction("l5", -10, "pending"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "l1", "bucket": "Living", "parent": None},
+        {"id": "l2", "bucket": "Living", "parent": "l1"},
+        {"id": "l3", "bucket": "Living", "parent": "l2"},
+        {"id": "l4", "bucket": "Living", "parent": "l3"},
+        {"id": "l5", "bucket": "Living", "parent": "l4"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"l1": {"target": Decimal("500"), "posted": Decimal("60"), "pending": Decimal("10")}}
+
+
+def test_midlevel_and_ancestor_both_budgeted_double_count(handler):
+    # [A26] a mid node budgeted AND under another budgeted parent: the shared bottom
+    # leaf counts in BOTH rows, each independently correct.
+    budget_repo = FakeBudgetRepo(budgets={
+        "car": {"target": Decimal("300")},
+        "daily": {"target": Decimal("150")},
+    })
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("petrol", -60, "posted"),   # under daily -> under car
+        _transaction("parking", -25, "posted"),  # under car only
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "bucket": "Living", "parent": "daily"},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["daily"]["posted"] == Decimal("60")   # petrol only
+    assert result["car"]["posted"] == Decimal("85")     # petrol + parking
+
+
+def test_corrupt_cross_bucket_subtree_mixes_income_into_spend(handler):
+    # [A27] CHARACTERIZATION: an income leaf mis-parented under a spend parent has its
+    # positive earnings summed into the spend parent's posted. The same-bucket rule is
+    # enforced on WRITE (Step 1), so this state is unreachable via the API; this test
+    # documents the fold's raw behaviour on corrupt data so a future guard flips it
+    # deliberately (see WHIT-220 QA finding R1).
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -30, "posted"),
+        _transaction("bonus", 500, "posted"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "bonus", "bucket": "Income", "parent": "car"},  # corrupt (write-guard blocks this)
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["car"]["posted"] == Decimal("530")  # 30 spend + 500 income, mixed
