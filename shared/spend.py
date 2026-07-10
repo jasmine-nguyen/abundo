@@ -238,19 +238,25 @@ def build_category_children(categories: list[dict]) -> dict[str, list[str]]:
     return children
 
 
-def descendant_leaves(root_id: str, children: dict[str, list[str]]) -> set[str]:
-    """The set of LEAF ids at or below `root_id`, given a prebuilt `children` map
-    (from build_category_children). A node with no children is a leaf; so is an id
-    absent from the taxonomy (an orphan budget target), which is therefore its own
-    single leaf — preserving the existing "orphan target summed as its own spend"
-    behaviour. A budgeted parent's actual spend/earnings is the sum over these
-    leaves, because transactions only ever land on leaves.
+def subtree_ids(root_id: str, children: dict[str, list[str]]) -> set[str]:
+    """Every category id whose spend rolls into a budget on `root_id`: the root
+    itself PLUS every descendant at any depth — intermediate sub-categories and
+    leaves alike — given a prebuilt `children` map (from build_category_children).
 
-    Cycle-safe via a `visited` set: single-parent data can't form a legitimate
-    diamond, so `visited` only guards against a corrupt stored cycle (which yields
-    no leaves rather than an infinite walk).
+    A budgeted parent's spend is the sum over this whole set, because a
+    transaction can be tagged onto ANY node: a leaf, an intermediate sub, or the
+    parent itself (the categorize picker offers all of them). Counting the entire
+    subtree — not just the leaves — is what keeps /budgets, the over-budget alerts
+    and the AI roll-up in agreement with the /breakdown screen (WHIT-228): each of
+    them sums a parent's spend over this set.
+
+    A leaf, or an orphan id absent from the taxonomy, rolls up as just `{root_id}`
+    — byte-identical to summing that id on its own, so a flat leaf budget (and a
+    budgeted parent with no direct spend) is unchanged. Cycle-safe via `visited`:
+    single-parent data can't form a legitimate diamond, so `visited` only guards a
+    corrupt stored cycle, which yields the nodes on the cycle once each rather than
+    an infinite walk.
     """
-    leaves: set[str] = set()
     visited: set[str] = set()
     stack = [root_id]
     while stack:
@@ -261,6 +267,4 @@ def descendant_leaves(root_id: str, children: dict[str, list[str]]) -> set[str]:
         kids = children.get(node)
         if kids:
             stack.extend(kids)
-        else:
-            leaves.add(node)
-    return leaves
+    return visited

@@ -47,7 +47,7 @@ from decimal import Decimal
 
 from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
 from push import send_push
-from spend import build_category_children, current_cycle_window, descendant_leaves, summarise_transactions
+from spend import build_category_children, current_cycle_window, subtree_ids, summarise_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -159,12 +159,12 @@ def _combined(spend: dict, cat_id: str) -> Decimal:
     return entry["posted"] + entry["pending"] if entry else Decimal(0)
 
 
-def _combined_target(spend: dict, leaves: set[str]) -> Decimal:
-    """A budgeted target's combined spend: the sum over its descendant leaves. A leaf
-    or orphan target maps to just itself, so this reduces to `_combined` for a leaf-only
-    budget — byte-identical to the pre-rollup behaviour. Seed Decimal(0) so an empty
-    leaf set (a corrupt cycle) yields Decimal, not int."""
-    return sum((_combined(spend, leaf) for leaf in leaves), Decimal(0))
+def _combined_target(spend: dict, ids: set[str]) -> Decimal:
+    """A budgeted target's combined spend: the sum over its whole subtree (the target
+    itself plus every descendant). A leaf or orphan target maps to just itself, so this
+    reduces to `_combined` for a leaf-only budget — byte-identical to the pre-rollup
+    behaviour. Seed Decimal(0) so an empty set (a corrupt cycle) yields Decimal, not int."""
+    return sum((_combined(spend, cid) for cid in ids), Decimal(0))
 
 
 def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
@@ -198,18 +198,19 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     # client hides Savings budget rows (WHIT-201).
     target_ids = {cat_id for cat_id in targets
                   if cat_id in bucket_by_id and bucket_by_id[cat_id] not in ("Income", "Savings")}
-    # Sub-categories (WHIT-222): a budgeted PARENT holds no transactions of its own —
-    # they land on its leaves — so its spend is the sum over its descendant leaves. This
-    # mirrors the /budgets read rollup (lambda_api/handler.py, same helpers) so a parent
-    # alert and the Budgets screen never disagree. A leaf/orphan target maps to just
-    # itself, so an unbudgeted leaf still feeds its budgeted parent and a leaf-only
-    # budget is summed exactly as before. The same-bucket rule keeps a spend parent's
-    # subtree all spend, so the spend summariser is correct for every needed leaf.
+    # Sub-categories (WHIT-222, WHIT-228): a budgeted PARENT's spend is the sum over its
+    # whole subtree — the parent itself plus every descendant at any depth. Summing the
+    # parent id too counts a transaction tagged directly onto the parent (the picker
+    # allows it), so a parent alert and the Budgets screen never disagree — both use these
+    # same helpers (lambda_api/handler.py). A leaf/orphan target maps to just itself, so an
+    # unbudgeted leaf still feeds its budgeted parent and a leaf-only budget is summed
+    # exactly as before. The same-bucket rule keeps a spend parent's subtree all spend, so
+    # the spend summariser is correct for every needed id.
     children = build_category_children(categories)
-    leaves_by_target = {cat_id: descendant_leaves(cat_id, children) for cat_id in target_ids}
-    needed_leaves = set().union(*leaves_by_target.values()) if leaves_by_target else set()
-    before = summarise_transactions(ctx["before_rows"], needed_leaves)
-    after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), needed_leaves)
+    ids_by_target = {cat_id: subtree_ids(cat_id, children) for cat_id in target_ids}
+    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
+    before = summarise_transactions(ctx["before_rows"], needed_ids)
+    after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), needed_ids)
 
     # (cat_id, pct_to_send, [all newly-crossed pcts]) — pct_to_send is the highest.
     crossings = []
@@ -217,8 +218,8 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
         target = Decimal(str(targets[cat_id]["target"]))
         if target <= 0:
             continue
-        leaves = leaves_by_target[cat_id]
-        b, a = _combined_target(before, leaves), _combined_target(after, leaves)
+        ids = ids_by_target[cat_id]
+        b, a = _combined_target(before, ids), _combined_target(after, ids)
         newly = [pct for frac, pct in _THRESHOLDS if b < frac * target <= a]
         if newly:
             crossings.append((cat_id, newly[0], newly))  # _THRESHOLDS is high→low
