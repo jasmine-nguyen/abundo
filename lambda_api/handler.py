@@ -67,8 +67,8 @@ from spend import (
     _spend_contribution,
     build_category_children,
     current_cycle_window,
-    descendant_leaves,
     nth_prior_cycle_window,
+    subtree_ids,
     summarise_income,
     summarise_transactions,
     summarise_uncategorized,
@@ -834,12 +834,13 @@ def list_budgets(
     and the client flips only the good/bad visuals. An orphan target whose category is
     unknown (or a non-Income bucket) is summed as spend — the existing ceiling default.
 
-    Sub-categories (WHIT-220): a budgeted PARENT holds no transactions of its own —
-    those land on its leaves — so its posted/pending is the sum over its DESCENDANT
-    LEAVES for the window, including leaves that carry no target themselves. The
-    wire shape is unchanged: every budgeted id (parent or leaf) still returns
-    {target, posted, pending}. A leaf target with no children rolls up only itself,
-    byte-identical to the pre-rollup behaviour.
+    Sub-categories (WHIT-220, WHIT-228): a budgeted PARENT's posted/pending is the sum
+    over its WHOLE SUBTREE for the window — the parent itself plus every descendant at
+    any depth, including subs that carry no target of their own. Summing the parent id
+    too counts a transaction tagged directly onto the parent (the picker allows it),
+    so the bar agrees with the /breakdown screen. The wire shape is unchanged: every
+    budgeted id (parent or leaf) still returns {target, posted, pending}. A leaf target
+    with no children rolls up only itself, byte-identical to the pre-rollup behaviour.
     """
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     if not targets:
@@ -852,28 +853,31 @@ def list_budgets(
     bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
     children = build_category_children(categories)
 
-    # Each target maps to its descendant leaves; a leaf/orphan target maps to itself.
-    leaves_by_target = {cat_id: descendant_leaves(cat_id, children) for cat_id in targets}
-    needed_leaves = set().union(*leaves_by_target.values()) if leaves_by_target else set()
+    # Each target maps to its whole subtree — the target itself plus every descendant
+    # at any depth — so a transaction tagged directly onto a parent counts toward its
+    # budget too (WHIT-228). A leaf/orphan target maps to just itself, byte-identical
+    # to the pre-rollup behaviour.
+    ids_by_target = {cat_id: subtree_ids(cat_id, children) for cat_id in targets}
+    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
 
-    # Split by each LEAF's own bucket (the same-bucket rule keeps a subtree single-
-    # bucket, so a parent's leaves all land on one side). Sum every needed leaf once,
-    # then fold per target.
-    income_leaves = {leaf for leaf in needed_leaves if bucket_by_id.get(leaf) == INCOME_BUCKET}
-    spend_leaves = needed_leaves - income_leaves
+    # Split by each id's own bucket (the same-bucket rule keeps a subtree single-
+    # bucket, so a parent and its descendants all land on one side). Sum every needed
+    # id once, then fold per target.
+    income_ids = {cid for cid in needed_ids if bucket_by_id.get(cid) == INCOME_BUCKET}
+    spend_ids = needed_ids - income_ids
 
-    per_leaf = summarise_transactions(transactions, spend_leaves)
-    per_leaf.update(summarise_income(transactions, income_leaves))
+    per_id = summarise_transactions(transactions, spend_ids)
+    per_id.update(summarise_income(transactions, income_ids))
 
     result = {}
     for cat_id, entry in targets.items():
         posted = Decimal(0)
         pending = Decimal(0)
-        for leaf in leaves_by_target[cat_id]:
-            leaf_rollup = per_leaf.get(leaf)
-            if leaf_rollup:
-                posted += leaf_rollup["posted"]
-                pending += leaf_rollup["pending"]
+        for cid in ids_by_target[cat_id]:
+            id_rollup = per_id.get(cid)
+            if id_rollup:
+                posted += id_rollup["posted"]
+                pending += id_rollup["pending"]
         result[cat_id] = {"target": entry["target"], "posted": posted, "pending": pending}
     return result
 
@@ -949,14 +953,22 @@ def list_category_breakdown(
 
 
 def _window_category_spend(transactions: list[dict], categories: list[dict],
-                           targets: dict | None = None) -> list[dict]:
+                           targets: dict | None = None,
+                           exclude_ids: set[str] | None = None) -> list[dict]:
     """Spend-bucket categories with spend in `transactions`, as float rows the model
     can read: [{"name", "posted", "pending"}, ...]. Reuses summarise_transactions,
     so the contribution rule (counts_to_budget, real category, NEGATIVE amount) is
     identical to /breakdown. `targets` ({id: {"target": Decimal}}) is joined BY ID
     here (while the id is in hand) so the correct budget lands on each row — category
-    display NAMES are not unique, so a name join would mis-attribute a budget."""
+    display NAMES are not unique, so a name join would mis-attribute a budget.
+
+    `exclude_ids` drops those category ids from the flat list — used to keep a budgeted
+    PARENT out of it (it's represented once, as its rolled-up block row), so a parent
+    with its own direct spend isn't listed twice (WHIT-228). Empty/None is a no-op, so
+    a user with no budgeted parents gets a byte-identical list."""
     spend_ids = {c["id"] for c in categories if c.get("bucket") in SPEND_BUCKETS}
+    if exclude_ids:
+        spend_ids -= exclude_ids
     names = {c["id"]: c["name"] for c in categories}
     rollup = summarise_transactions(transactions, spend_ids)
     rows = []
@@ -976,24 +988,25 @@ def _window_category_spend(transactions: list[dict], categories: list[dict],
 
 
 def _budgeted_parent_rollup(transactions: list[dict], parents: list[str],
-                            leaves_by_parent: dict, names: dict,
+                            ids_by_parent: dict, names: dict,
                             targets: dict | None = None) -> list[dict]:
     """Rolled-up spend rows for budgeted PARENT categories (WHIT-225): each parent's
-    posted/pending summed over its descendant leaves, as float rows the model reads:
+    posted/pending summed over its whole subtree, as float rows the model reads:
     [{"name", "posted", "pending", "budget"?}, ...].
 
     Kept SEPARATE from the flat per-leaf `categories` list so a leaf's spend is never
     listed twice (the parent's total is here; the leaves' detail stays in `categories`).
-    Every budgeted parent is emitted even at zero spend — the point is to show its
-    budget vs its rolled-up spend. `targets` is joined by id for the current cycle;
-    prior cycles omit `budget` (it's constant across cycles), matching the per-leaf
-    convention. Sorted by (name, id) so the input hash is deterministic."""
-    needed_leaves = set().union(*leaves_by_parent.values()) if leaves_by_parent else set()
-    rollup = summarise_transactions(transactions, needed_leaves)
+    The subtree includes the parent itself, so a transaction tagged directly onto the
+    parent counts too (WHIT-228). Every budgeted parent is emitted even at zero spend —
+    the point is to show its budget vs its rolled-up spend. `targets` is joined by id
+    for the current cycle; prior cycles omit `budget` (it's constant across cycles),
+    matching the per-leaf convention. Sorted by (name, id) so the hash is deterministic."""
+    needed_ids = set().union(*ids_by_parent.values()) if ids_by_parent else set()
+    rollup = summarise_transactions(transactions, needed_ids)
     rows = []
     for cid in parents:
-        posted = sum((rollup[leaf]["posted"] for leaf in leaves_by_parent[cid] if leaf in rollup), Decimal(0))
-        pending = sum((rollup[leaf]["pending"] for leaf in leaves_by_parent[cid] if leaf in rollup), Decimal(0))
+        posted = sum((rollup[sid]["posted"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0))
+        pending = sum((rollup[sid]["pending"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0))
         row = {"name": names.get(cid, cid), "posted": float(posted), "pending": float(pending)}
         if targets and cid in targets:
             row["budget"] = float(targets[cid]["target"])
@@ -1123,23 +1136,29 @@ def assemble_insight_input(
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     all_ids = {c["id"] for c in categories}
 
-    # Budgets join BY ID inside the helper (names aren't unique).
-    category_rows = _window_category_spend(current, categories, targets)
-
     # Rolled-up spend for budgeted PARENT categories (internal spend-bucket nodes). The
-    # model otherwise sees a budgeted parent as $0 spent, since transactions land on its
-    # leaves, not the parent (WHIT-225). A flat leaf/orphan target stays in `categories`
-    # as today; only true parents (ids that HAVE children) get the extra rolled-up block.
-    # SPEND_BUCKETS excludes income earn-target parents; the same-bucket rule then keeps a
-    # spend parent's subtree all spend. When there are no budgeted parents the block is
-    # OMITTED entirely, so a user without them has a byte-identical model_input (same hash,
-    # no needless paid re-run).
+    # model otherwise sees a budgeted parent as $0 spent, since its spend is spread across
+    # its subtree, not stored on the parent row (WHIT-225). The rollup sums the parent's
+    # WHOLE subtree — every descendant PLUS the parent itself — so spend tagged directly
+    # onto the parent counts too (WHIT-228). Only true parents (ids that HAVE children)
+    # get the block; SPEND_BUCKETS excludes income earn-target parents, and the same-bucket
+    # rule keeps a spend parent's subtree all spend. When there are no budgeted parents the
+    # block is OMITTED entirely, so a user without them has a byte-identical model_input
+    # (same hash, no needless paid re-run).
     children = build_category_children(categories)
     bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
     names = {c["id"]: c["name"] for c in categories}
     budgeted_parents = [cid for cid in targets
                         if cid in children and bucket_by_id.get(cid) in SPEND_BUCKETS]
-    leaves_by_parent = {cid: descendant_leaves(cid, children) for cid in budgeted_parents}
+    ids_by_parent = {cid: subtree_ids(cid, children) for cid in budgeted_parents}
+    parent_block_ids = set(budgeted_parents)
+
+    # Flat per-category rows. A budgeted parent is represented ONCE — as its rolled-up
+    # block row above — so it's excluded here even when it carries its own direct spend;
+    # otherwise the model would see the same parent twice (its direct portion as a flat
+    # row AND its subtree total in the block, both with the same budget). WHIT-228. A flat
+    # leaf/orphan target stays in the list as today. Budgets join BY ID (names aren't unique).
+    category_rows = _window_category_spend(current, categories, targets, exclude_ids=parent_block_ids)
 
     uncategorized = summarise_uncategorized(current, all_ids)
     unc = None
@@ -1156,13 +1175,13 @@ def assemble_insight_input(
         prev_entry = {
             "start": prev_start,
             "end": prev_end,
-            "categories": _window_category_spend(prev_txns, categories),
+            "categories": _window_category_spend(prev_txns, categories, exclude_ids=parent_block_ids),
         }
         # Mirror the parent rollup onto prior cycles (no budget — it's constant) so the
         # model can compare a parent's current vs prior spend at the same aggregation.
         if budgeted_parents:
             prev_entry["budgeted_parents"] = _budgeted_parent_rollup(
-                prev_txns, budgeted_parents, leaves_by_parent, names)
+                prev_txns, budgeted_parents, ids_by_parent, names)
         prior.append(prev_entry)
 
     model_input = {
@@ -1174,7 +1193,7 @@ def assemble_insight_input(
     }
     if budgeted_parents:
         model_input["budgeted_parents"] = _budgeted_parent_rollup(
-            current, budgeted_parents, leaves_by_parent, names, targets)
+            current, budgeted_parents, ids_by_parent, names, targets)
     if goal is not None:
         model_input["goal"] = goal
     return model_input, start

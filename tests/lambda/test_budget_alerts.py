@@ -1210,3 +1210,73 @@ def test_mid_node_and_parent_both_fire_off_one_shared_grandchild(alerts, monkeyp
         "Daily is at 80% of its budget this cycle.",
     }
     assert notify.fired_markers("2026-07-01", 14) == {"car#80", "daily#80"}
+
+
+# --- parent-DIRECT spend crosses a threshold (WHIT-228) ----------------------
+# A write tagged straight onto a budgeted PARENT must count toward its rollup, so it
+# can trip the parent's alert — matching the /budgets bar and the /breakdown screen.
+
+
+def test_parent_direct_spend_crosses_and_fires(alerts, monkeypatch):
+    # Car budgeted at 100; 70 already on the leaf `parking`. A NEW write tagged straight
+    # onto `car` itself (15) pushes the rollup to 85 -> crosses 80% -> fires. Fail-on-
+    # revert: drop the parent id from the subtree and car-direct 15 vanishes, leaving 70
+    # -> no crossing -> silent.
+    before = [_txn("old", "parking", -70, "posted")]
+    new = _txn("new1", "car", -15, "posted")                      # tagged directly onto the parent
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_mid_level_direct_spend_crosses_parent_and_fires(alerts, monkeypatch):
+    # car -> daily -> petrol; only car budgeted. A write tagged straight onto the
+    # INTERMEDIATE `daily` (not the root, not a leaf) must roll into car. Fail-on-revert:
+    # a leaves-only walk drops mid-node spend, so car reads 70 -> silent.
+    cats = [
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "daily", "name": "Daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "daily"},
+    ]
+    before = [_txn("old", "petrol", -70, "posted")]
+    new = _txn("new1", "daily", -15, "posted")                    # tagged directly onto the mid node
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=cats)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_parent_direct_pending_settles_to_posted_and_crosses(alerts, repo, monkeypatch):
+    # WHIT-228 x reconcile (the parent-direct settlement path, uncovered): a PENDING
+    # tagged straight onto the budgeted PARENT `car` (car=70 < 80) settles to a tip-
+    # adjusted posted (-85, within 70*1.25) whose raw category is "GROCERIES" but which
+    # CARRIES the pending twin's "car". Correct Δ: twin removed (70) + posted-as-car (85)
+    # -> car 85 -> crosses 80 -> the 80 push. Fail-on-revert to leaves-only: subtree(car)
+    # drops `car` itself, so the car-carried posted is never summed -> car 0 -> silent.
+    # A naive before+posted would be 155 (the 100 copy); a broken carry -> 0.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="car")
+    before = list(repo._table.store.values())
+    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="GROCERIES")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[posted], webhook_repo=repo, cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][0] == "Heads up \U0001f440"           # the 80 copy, NOT the 100 copy
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_pure_parent_direct_spend_alone_crosses_zero_leaf_spend(alerts, monkeypatch):
+    # A pure parent-direct budget: `car` has children in the tree but ALL spend is tagged
+    # straight onto `car` itself, zero leaf spend. before car -70 (direct) -> 70; new car
+    # -15 (direct) -> 85 -> crosses 80. Fail-on-revert to leaves-only: `car` is not a leaf,
+    # so neither write is summed -> car 0 -> silent.
+    before = [_txn("old", "car", -70, "posted")]
+    new = _txn("new1", "car", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}

@@ -980,7 +980,7 @@ _GRANDCHILD_TREE = [
 def test_budgeted_parent_rolls_up_grandchildren(handler):
     # WHIT-225 — [A6] multi-level: Car -> Transport -> {Petrol, Tolls}. Only Car is
     # budgeted; spend lands two levels down. The rollup must walk the WHOLE subtree
-    # (descendant_leaves), not just immediate children -> Car totals the grandchildren.
+    # (subtree_ids), not just immediate children -> Car totals the grandchildren.
     # Fail-on-revert: an immediate-children-only rollup would see Transport (no direct
     # spend) and report Car = $0.
     start, end = _cur_window(handler)
@@ -1087,3 +1087,74 @@ def test_no_parent_user_model_input_is_byte_identical_no_block(handler):
 
     serialized = json.dumps(model_input, sort_keys=True, default=str)  # exact bytes prod hashes
     assert "budgeted_parents" not in serialized
+
+
+# --- WHIT-228: parent-DIRECT spend enters the rolled-up block ----------------
+# A transaction tagged straight onto a budgeted PARENT (the picker allows it) must be
+# in that parent's rolled-up total, so the AI's group view matches /budgets & /breakdown.
+
+
+def test_budgeted_parent_direct_spend_in_rollup(handler):
+    # Car (budgeted) with spend tagged directly onto `car` (40) plus leaf spend on petrol
+    # (60): the block total is 100. Fail-on-revert: a leaves-only walk drops the 40.
+    start, end = _cur_window(handler)
+    txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
+    model_input, _ = handler.assemble_insight_input(
+        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, _FakePayCycleRepo())
+
+    bp = {row["name"]: row for row in model_input["budgeted_parents"]}
+    assert bp["Car"] == {"name": "Car", "posted": 100.0, "pending": 0.0, "budget": 300.0}
+
+
+def test_budgeted_parent_mid_node_direct_spend_in_rollup(handler):
+    # Car -> Transport -> {Petrol, Tolls}; only Car budgeted. Spend tagged directly onto
+    # the INTERMEDIATE `transport` (25) must roll into Car alongside the leaf petrol (60).
+    # Fail-on-revert: a leaves-only walk drops the mid-node 25 -> Car reads 60.
+    start, end = _cur_window(handler)
+    txn_repo = _FakeTxnRepo({(start, end): [_txn("transport", -25), _txn("petrol", -60)]})
+    model_input, _ = handler.assemble_insight_input(
+        _ListCategoryRepo(_GRANDCHILD_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, _FakePayCycleRepo())
+
+    bp = {row["name"]: row for row in model_input["budgeted_parents"]}
+    assert bp["Car"] == {"name": "Car", "posted": 85.0, "pending": 0.0, "budget": 300.0}
+
+
+def test_budgeted_parent_direct_income_stays_out_of_block(handler):
+    # An Income parent is a floor, not a spend ceiling: even with earnings tagged directly
+    # onto it, it must NOT enter the SPEND-only budgeted_parents block (the gate is
+    # SPEND_BUCKETS). Fail-on-revert here guards the bucket gate, not the rollup helper.
+    start, end = _cur_window(handler)
+    cats = _ListCategoryRepo([
+        {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
+        {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
+    ])
+    txn_repo = _FakeTxnRepo({(start, end): [_txn("income", 500), _txn("salary", 4000)]})
+    model_input, _ = handler.assemble_insight_input(
+        cats, _DictBudgetRepo({"income": {"target": Decimal("6000")}}), txn_repo, _FakePayCycleRepo())
+
+    assert "budgeted_parents" not in model_input
+
+
+def test_budgeted_parent_direct_spend_not_duplicated_as_flat_row(handler):
+    # WHIT-228: a budgeted parent with its OWN direct spend must be represented ONCE — as
+    # its rolled-up block row — never ALSO as a flat "Car" row. `_window_category_spend`
+    # would otherwise list the parent (its direct 40) alongside the block total (subtree
+    # 100), two rows named "Car" with the same budget. The exclude keeps the parent out of
+    # the flat list; its direct spend is still counted in the block total. Fail-on-revert
+    # (drop the exclude): a flat "Car" row reappears and this reddens.
+    start, end = _cur_window(handler)
+    txn_repo = _FakeTxnRepo({(start, end): [_txn("car", -40), _txn("petrol", -60)]})
+    model_input, _ = handler.assemble_insight_input(
+        _ListCategoryRepo(_CAR_TREE), _DictBudgetRepo({"car": {"target": Decimal("300")}}),
+        txn_repo, _FakePayCycleRepo())
+
+    flat = {row["name"]: row for row in model_input["categories"]}
+    # The parent is NOT a flat row; only its leaf is. It lives once, in the block.
+    assert "Car" not in flat
+    assert flat["Petrol"]["posted"] == 60.0
+    bp = {row["name"]: row for row in model_input["budgeted_parents"]}
+    # The block total still includes the parent's own direct 40 (40 + leaf 60 = 100).
+    assert bp["Car"]["posted"] == 100.0
+    assert bp["Car"]["budget"] == 300.0

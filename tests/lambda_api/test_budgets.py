@@ -589,6 +589,70 @@ def test_list_budgets_flat_leaf_rolls_up_only_itself(handler):
     assert result == {"coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")}}
 
 
+# --- handler-level: GET /budgets parent-DIRECT spend (WHIT-228) ---------------
+#
+# The categorize picker lets a transaction be tagged straight onto a PARENT (not only
+# a leaf). Its spend must count toward the parent's budget bar too, so /budgets agrees
+# with the /breakdown screen ("Directly in <parent>"). The roll-up now sums the whole
+# subtree — the parent id itself PLUS every descendant.
+
+
+def test_list_budgets_parent_direct_spend_counts_with_children(handler):
+    # A txn filed straight onto "car" (the budgeted parent) plus a child leaf txn: the
+    # parent bar sums BOTH (40 direct + 60 on parking). Pre-WHIT-228 the 40 was dropped.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("car", -40, "posted"),       # tagged directly onto the parent
+        _transaction("parking", -60, "posted"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("100"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_mid_level_direct_spend_counts(handler):
+    # car -> daily -> petrol; a txn tagged directly onto the INTERMEDIATE `daily` must
+    # roll into car alongside the leaf petrol spend. This is the depth >= 3 case a
+    # leaves-only walk dropped (a mid node is neither the root nor a leaf).
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("daily", -25, "posted"),     # tagged directly onto the mid-level parent
+        _transaction("petrol", -60, "pending"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "bucket": "Living", "parent": "daily"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("25"), "pending": Decimal("60")}}
+
+
+def test_list_budgets_income_parent_direct_earnings_count(handler):
+    # An Income parent with earnings tagged directly onto it rolls up POSITIVE via
+    # summarise_income (bucketed by the parent's OWN Income bucket), same as its leaves.
+    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("income", 500, "posted"),    # tagged directly onto the parent
+        _transaction("salary", 4000, "posted"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "income", "bucket": "Income", "parent": None},
+        {"id": "salary", "bucket": "Income", "parent": "income"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4500"), "pending": Decimal("0")}}
+
+
 # --- handler-level: dispatch -------------------------------------------------
 
 
@@ -1315,3 +1379,74 @@ def test_corrupt_cross_bucket_subtree_mixes_income_into_spend(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     assert result["car"]["posted"] == Decimal("530")  # 30 spend + 500 income, mixed
+
+
+# ===========================================================================
+# QA GAP tests (WHIT-228) — parent-DIRECT edges the implementer's tests don't
+# lock: the per-id >=0 clamp now applies to the PARENT's OWN id (never summed
+# pre-228), a refund straight onto the parent, mixed posted+pending straight
+# onto the parent, and the (deferred) cross-bucket child rollup.
+# ===========================================================================
+
+
+def test_list_budgets_parent_direct_refund_clamps_at_parent_id_not_sibling(handler):
+    # A refund (POSITIVE amount) tagged DIRECTLY onto the parent `car` must clamp at
+    # car's OWN id (>=0) and must NOT bleed a negative into a sibling leaf's spend.
+    # parking -60 (leaf) + car +100 refund (direct). Correct: car-id clamps to 0 -> fold
+    # = 60. WHIT-228 is the first time the parent id itself is summarised, so its per-id
+    # clamp is newly load-bearing. Fail-on-revert of the clamp in _summarise -> car -40.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -60, "posted"),
+        _transaction("car", 100, "posted"),      # refund straight onto the parent
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("60"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_parent_direct_mixed_posted_and_pending_no_leaf_spend(handler):
+    # Both a posted AND a pending write tagged straight onto the parent, with ZERO leaf
+    # spend: each bucket routes through the parent id. Pre-228 (leaves-only) `car` is not
+    # a leaf -> both dropped -> {0,0}. Fail-on-revert (leaves-only): posted 0 / pending 0.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("car", -40, "posted"),
+        _transaction("car", -25, "pending"),
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},   # a child exists but is unspent
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("40"), "pending": Decimal("25")}}
+
+
+def test_list_budgets_cross_bucket_child_folds_into_parent_no_server_guard(handler):
+    # DOCUMENTS A LATENT GAP (WHIT-228 defers the same-bucket guard to the client): a
+    # child in a DIFFERENT spend bucket (Lifestyle) under a Living parent has its spend
+    # folded into the Living parent, because subtree_ids has no same-bucket filter and
+    # the bucket split is per-id (a Lifestyle id is still "spend" -> spend_ids -> the
+    # parent's fold). The /breakdown client hides this with a same-bucket guard; the
+    # server does not. Characterization, NOT a fail-on-revert of the fix -> flagged in
+    # the critique as an acceptable-for-scope (corrupt-data-only) risk.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("misfiled", -50, "posted"),   # Lifestyle child under a Living parent
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "misfiled", "bucket": "Lifestyle", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    # The cross-bucket child's spend IS summed into the Living parent (current behaviour).
+    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("50"), "pending": Decimal("0")}}
