@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
+import { MONTHS } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 
@@ -202,8 +203,6 @@ export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' 
   return length === 7 ? 'Weekly' : length === 14 ? 'Fortnightly' : 'Monthly';
 }
 
-const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 // A home loan is repaid on its own MONTHLY schedule — a fixed direct debit —
 // independent of how often the user is paid. So the payoff projection (WHIT-114)
 // is always 12 periods/year; the loan-facts repayment fields are per month.
@@ -263,7 +262,7 @@ function addMonths(from: Date, months: number): Date {
 // A month-year label ("Aug 2045") for the payoff projection — matches the
 // granularity the hero shows (nobody expects day-precision 20 years out).
 function monthYear(d: Date): string {
-  return `${MON[d.getMonth()]} ${d.getFullYear()}`;
+  return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 // Whole calendar months from `from` to an ISO "YYYY-MM-DD" target, at month
@@ -285,7 +284,7 @@ function dateLabel(isoDate: string): string {
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  return `${DAY[date.getDay()]} ${d} ${MON[m - 1]}`;
+  return `${DAY[date.getDay()]} ${d} ${MONTHS[m - 1]}`;
 }
 
 const REPAY_LINES = [

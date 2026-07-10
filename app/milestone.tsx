@@ -8,14 +8,13 @@ import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton } from '../src/components/ui';
 import { Header } from '../src/components/Header';
-
-const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+import { MONTHS } from '../src/dateutil';
 
 // "2027-03-18" -> "Mar 2027". Parsed by hand (no Date) so the label can't shift
 // across a timezone boundary.
 function monthYear(iso: string): string {
   const [y, m] = iso.split('-').map(Number);
-  return `${MON[m - 1]} ${y}`;
+  return `${MONTHS[m - 1]} ${y}`;
 }
 
 export default function Milestone() {
