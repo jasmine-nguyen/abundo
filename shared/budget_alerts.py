@@ -20,7 +20,9 @@ marker) rather than a miss. One residual edge remains: right after a settlement
 webhook, GSI delete-lag can briefly show BOTH the stale pending and its posted
 twin, overstating `before` and rarely SUPPRESSING a true crossing. Accepted as a
 best-effort miss (never a lost write); a strongly-consistent `before` is tracked
-as follow-up tech debt.
+as follow-up tech debt. For a rolled-up PARENT budget (WHIT-222) this residual
+sums across its descendant leaves, so a parent that aggregates several active subs
+is marginally more exposed to the miss — still a miss, never a wrong alert.
 
 Spend basis = posted + pending (committed spend). A single write that vaults past
 both thresholds sends only the higher (100%) but marks both fired. Mark-on-landing
@@ -45,7 +47,7 @@ from decimal import Decimal
 
 from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
 from push import send_push
-from spend import current_cycle_window, summarise_transactions
+from spend import build_category_children, current_cycle_window, descendant_leaves, summarise_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +159,14 @@ def _combined(spend: dict, cat_id: str) -> Decimal:
     return entry["posted"] + entry["pending"] if entry else Decimal(0)
 
 
+def _combined_target(spend: dict, leaves: set[str]) -> Decimal:
+    """A budgeted target's combined spend: the sum over its descendant leaves. A leaf
+    or orphan target maps to just itself, so this reduces to `_combined` for a leaf-only
+    budget — byte-identical to the pre-rollup behaviour. Seed Decimal(0) so an empty
+    leaf set (a corrupt cycle) yields Decimal, not int."""
+    return sum((_combined(spend, leaf) for leaf in leaves), Decimal(0))
+
+
 def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
     """Given the pre-write context and the just-written batch, send a push for each
     budgeted category whose combined spend newly crossed a threshold this cycle."""
@@ -188,8 +198,18 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     # client hides Savings budget rows (WHIT-201).
     target_ids = {cat_id for cat_id in targets
                   if cat_id in bucket_by_id and bucket_by_id[cat_id] not in ("Income", "Savings")}
-    before = summarise_transactions(ctx["before_rows"], target_ids)
-    after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), target_ids)
+    # Sub-categories (WHIT-222): a budgeted PARENT holds no transactions of its own —
+    # they land on its leaves — so its spend is the sum over its descendant leaves. This
+    # mirrors the /budgets read rollup (lambda_api/handler.py, same helpers) so a parent
+    # alert and the Budgets screen never disagree. A leaf/orphan target maps to just
+    # itself, so an unbudgeted leaf still feeds its budgeted parent and a leaf-only
+    # budget is summed exactly as before. The same-bucket rule keeps a spend parent's
+    # subtree all spend, so the spend summariser is correct for every needed leaf.
+    children = build_category_children(categories)
+    leaves_by_target = {cat_id: descendant_leaves(cat_id, children) for cat_id in target_ids}
+    needed_leaves = set().union(*leaves_by_target.values()) if leaves_by_target else set()
+    before = summarise_transactions(ctx["before_rows"], needed_leaves)
+    after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), needed_leaves)
 
     # (cat_id, pct_to_send, [all newly-crossed pcts]) — pct_to_send is the highest.
     crossings = []
@@ -197,7 +217,8 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
         target = Decimal(str(targets[cat_id]["target"]))
         if target <= 0:
             continue
-        b, a = _combined(before, cat_id), _combined(after, cat_id)
+        leaves = leaves_by_target[cat_id]
+        b, a = _combined_target(before, leaves), _combined_target(after, leaves)
         newly = [pct for frac, pct in _THRESHOLDS if b < frac * target <= a]
         if newly:
             crossings.append((cat_id, newly[0], newly))  # _THRESHOLDS is high→low

@@ -910,3 +910,303 @@ def test_summarise_transactions_clamps_refund_and_splits_buckets(alerts):
     out = spend.summarise_transactions(txns, {"groceries"})
     assert out["groceries"]["pending"] == Decimal("10")
     assert out["groceries"]["posted"] == Decimal("0")  # -40 net +100 refund => -60, clamped to 0
+
+
+# --- sub-categories: parent rollup alerts (WHIT-222) -------------------------
+# A budgeted PARENT holds no transactions of its own — they land on its leaves — so
+# its alert fires on the sum over its descendant leaves, mirroring the /budgets read
+# rollup. A leaf/orphan target maps to itself, so leaf-only budgets are unchanged.
+
+# Reusable trees: same-bucket (Living) per the WHIT-217 rule.
+_CAR_TREE = [
+    {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+    {"id": "fuel", "name": "Fuel", "bucket": "Living", "parent": "car"},
+    {"id": "parking", "name": "Parking", "bucket": "Living", "parent": "car"},
+]
+
+
+def test_parent_rollup_unbudgeted_leaf_fires(alerts, monkeypatch):
+    # THE core fix + fail-on-revert: only the PARENT is budgeted; the spend lands on an
+    # unbudgeted leaf (fuel). Rolled up, Car crosses 80% and fires. Reverting to the
+    # per-leaf sum makes Car $0 → silent.
+    before = [_txn("old", "fuel", -70, "posted")]                 # 70% of Car's 100
+    new = _txn("new1", "fuel", -15, "posted")                     # -> 85% rolled up
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][0] == "Heads up \U0001f440"
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_parent_rollup_multilevel_grandchild_fires(alerts, monkeypatch):
+    # car -> daily -> {petrol, tolls}; only car budgeted. A grandchild leaf's spend
+    # must reach car through the two-level walk.
+    cats = [
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "daily", "name": "Daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "daily"},
+        {"id": "tolls", "name": "Tolls", "bucket": "Living", "parent": "daily"},
+    ]
+    before = [_txn("old", "petrol", -70, "posted")]
+    new = _txn("new1", "tolls", -15, "posted")                    # 85 rolled to car
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=cats)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_sub_crosses_but_parent_not_only_sub_fires(alerts, monkeypatch):
+    # Jasmine's rule: if the SUB creeps past its own limit but the parent's TOTAL hasn't,
+    # alert only the sub. Fuel budget 50, Car budget 200. Fuel $45 crosses 80% of 50;
+    # Car $45 is only 22.5% of 200 → Car stays silent.
+    before = [_txn("old", "fuel", -35, "posted")]
+    new = _txn("new1", "fuel", -10, "posted")                     # fuel 45 = 90% of 50
+    sent, notify, _ = _run(alerts, monkeypatch,
+                           budgets={"car": {"target": Decimal("200")}, "fuel": {"target": Decimal("50")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][1] == "Fuel is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"fuel#80"}   # Car NOT fired
+
+
+def test_parent_and_leaf_both_cross_fire_both(alerts, monkeypatch):
+    # When BOTH the parent's total and the sub genuinely cross on one write, both fire —
+    # they're separate budgets, each a real fact. Car 50 + Fuel 50; fuel 45 crosses both.
+    before = [_txn("old", "fuel", -35, "posted")]
+    new = _txn("new1", "fuel", -10, "posted")                     # fuel & car both 45
+    sent, notify, _ = _run(alerts, monkeypatch,
+                           budgets={"car": {"target": Decimal("50")}, "fuel": {"target": Decimal("50")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    bodies = {body for _, body, _ in sent}
+    assert bodies == {
+        "Car is at 80% of its budget this cycle.",
+        "Fuel is at 80% of its budget this cycle.",
+    }
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80", "fuel#80"}
+
+
+def test_parent_vault_past_both_thresholds_marks_both(alerts, monkeypatch):
+    # A parent rollup jumping 0 -> 100% in one write sends only the 100% push but marks
+    # both car#80 and car#100 (the vault behaviour, now for a parent).
+    before = []
+    new = _txn("new1", "fuel", -100, "posted")                    # car 100 = 100% of 100
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][0] == "Budget hit \U0001fa93"
+    assert sent[0][1] == "You've spent your whole Car budget for this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80", "car#100"}
+
+
+def test_income_parent_never_fires(alerts, monkeypatch):
+    # An Income-bucket PARENT is a floor (over-is-good), never a spend ceiling — no
+    # 80/100% push, same as an Income leaf (WHIT-69).
+    cats = [
+        {"id": "income", "name": "Income", "bucket": "Income", "parent": None},
+        {"id": "salary", "name": "Salary", "bucket": "Income", "parent": "income"},
+    ]
+    before = [_txn("old", "salary", 4000, "posted")]
+    new = _txn("new1", "salary", 3000, "posted")                  # positive earnings
+    sent, _, _ = _run(alerts, monkeypatch, budgets={"income": {"target": Decimal("5000")}},
+                      before=before, normalised=[new], cats=cats)
+    assert sent == []
+
+
+def test_savings_parent_never_fires(alerts, monkeypatch):
+    # A Savings-bucket PARENT never fires either — a mis-filed spend on a Savings sub
+    # must not read as spend against the target (WHIT-201).
+    cats = [
+        {"id": "nest", "name": "Nest Egg", "bucket": "Savings", "parent": None},
+        {"id": "holiday", "name": "Holiday", "bucket": "Savings", "parent": "nest"},
+    ]
+    before = [_txn("old", "holiday", -800, "posted")]
+    new = _txn("new1", "holiday", -300, "posted")
+    sent, _, _ = _run(alerts, monkeypatch, budgets={"nest": {"target": Decimal("1000")}},
+                      before=before, normalised=[new], cats=cats)
+    assert sent == []
+
+
+def test_leaf_only_budget_unchanged_with_sibling_tree_present(alerts, monkeypatch):
+    # Regression: a leaf-only budget (groceries, no children) fires byte-identically even
+    # when an unrelated budgeted parent tree exists in the taxonomy — the union of needed
+    # leaves must not leak another family's spend into this target.
+    cats = [
+        {"id": "groceries", "name": "Groceries", "bucket": "Living", "parent": None},
+    ] + _CAR_TREE
+    before = [_txn("old", "groceries", -70, "posted"), _txn("f", "fuel", -999, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")                # groceries 85%
+    sent, notify, _ = _run(alerts, monkeypatch,
+                           budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=cats)
+    assert len(sent) == 1
+    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
+
+
+# ===========================================================================
+# QA GAP tests (WHIT-222) — adversarial edges the implementer's parent-rollup
+# tests don't cover: reconcile (settlement) Δ folded into a parent, refund /
+# per-leaf >=0 clamp interacting with the parent fold, leaves across MULTIPLE
+# accounts, the parent's fired-marker keyed on the PARENT id (cross-leaf
+# debounce), and a mid-node + its parent both crossing off one shared leaf.
+# Every parent-fold assertion falls silent on a revert to the per-leaf sum.
+# ===========================================================================
+
+
+def _txn_on(txn_id, category, amount, status, account, date="2026-07-10"):
+    """A leaf transaction on a SPECIFIC account (parent leaves can span cards)."""
+    t = _txn(txn_id, category, amount, status, date)
+    t["account_id"] = account
+    return t
+
+
+# --- settlement (reconcile Δ) folded into a budgeted parent ------------------
+
+
+def test_parent_settlement_twin_crosses_parent_and_carries_category(alerts, repo, monkeypatch):
+    # WHIT-222 x reconcile: a pending->posted settlement on a LEAF must cross the
+    # PARENT via the twin-reconcile Δ, not a naive add. Pending fuel -70 (car=70<80).
+    # Posted -85 (tip, within 70*1.25) with raw "GROCERIES" carries the pending's
+    # "fuel". Correct Δ: twin removed (70) + posted-as-fuel (85) => fuel 85 => car 85,
+    # crosses 80. Falsifies 3 ways: no rollup -> car=0 -> silent; naive add -> 155 ->
+    # the 100 copy; broken tip match -> twin survives -> 155 too.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="fuel")
+    before = list(repo._table.store.values())
+    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="GROCERIES")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[posted], webhook_repo=repo, cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][0] == "Heads up \U0001f440"           # the 80 copy, NOT the 100 copy
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_parent_exact_settlement_no_double_count_stays_silent(alerts, repo, monkeypatch):
+    # The false-positive guard: an EXACT settlement of a leaf under a budgeted parent
+    # must not double-count through the fold. Pending fuel -70, posted -70 exact
+    # (carries "fuel"). Correct Δ: twin removed + posted => fuel 70 => car 70 < 80 ->
+    # SILENT. A naive before+posted folds to 140 -> a false car#80 AND car#100.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="fuel")
+    before = list(repo._table.store.values())
+    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-70"), pending=False, category="GROCERIES")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[posted], webhook_repo=repo, cats=_CAR_TREE)
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+# --- refund / per-leaf >=0 clamp interacting with the parent fold ------------
+
+
+def test_parent_refund_on_sibling_leaf_cancels_crossing_no_fire(alerts, monkeypatch):
+    # A refund on leaf A in the SAME batch nets down the parent rollup and suppresses
+    # a crossing that leaf B's spend would otherwise cause. before fuel -70 (car 70).
+    # Batch: parking -20 (would push car to 90) + fuel +25 refund -> car = 45(fuel) +
+    # 20(parking) = 65 < 80 -> SILENT. Control (no refund) genuinely crosses -> fires,
+    # so this fails if the refund is ignored (main fires) OR if the rollup is reverted
+    # (control falls silent, car parent == 0).
+    before = [_txn("old", "fuel", -70, "posted")]
+    batch = [_txn("p", "parking", -20, "posted"), _txn("r", "fuel", 25, "posted")]  # +25 = refund
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=batch, cats=_CAR_TREE)
+    assert sent == []                                    # refund cancelled the crossing
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                         before=before, normalised=[_txn("p", "parking", -20, "posted")], cats=_CAR_TREE)
+    assert len(control) == 1                             # same setup DOES cross absent the refund
+    assert control[0][1] == "Car is at 80% of its budget this cycle."
+
+
+def test_parent_fold_uses_per_leaf_clamp_not_a_parent_level_clamp(alerts, monkeypatch):
+    # The per-leaf >=0 clamp must apply BEFORE the parent fold: a refund OVERSHOOT on
+    # one leaf clamps that leaf to 0 and cannot bleed a negative into a sibling leaf's
+    # spend. fuel: -50 then +100 refund -> net -50 -> clamped to 0. parking: -75 -> 75.
+    # car before = 0 + 75 = 75 (<80). new parking -10 -> parking 85 -> car 85 -> FIRES.
+    # If the clamp were applied to the parent TOTAL instead (raw fuel -50 + parking 75
+    # = 25 -> 35 after), the parent would sit at 35 and never cross -> this goes silent.
+    before = [
+        _txn("f1", "fuel", -50, "posted"),
+        _txn("f2", "fuel", 100, "posted"),     # refund overshoot on fuel -> net negative
+        _txn("p1", "parking", -75, "posted"),
+    ]
+    new = _txn("p2", "parking", -10, "posted")             # parking 85 -> car 85
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+# --- parent leaves spanning MULTIPLE accounts -------------------------------
+
+
+def test_parent_rollup_leaves_span_multiple_accounts(alerts, monkeypatch):
+    # A parent's leaves can live on different cards. fuel spend on up-spending +
+    # parking spend on the ANZ card both fold into Car. before fuel -70 (up-spending,
+    # car 70). new parking -15 on the ANZ account -> car 85 -> crosses 80. Proves the
+    # window read gathers every account AND the fold is account-agnostic.
+    before = [_txn_on("old", "fuel", -70, "posted", "up-spending")]
+    new = _txn_on("new1", "parking", -15, "posted", "anz-rewards-black-visa")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=_CAR_TREE)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+# --- fired marker is keyed on the PARENT id (cross-leaf debounce) ------------
+
+
+def test_parent_marker_is_parent_keyed_across_different_leaves(alerts, monkeypatch):
+    # The debounce marker for a parent crossing is "car#80" (the parent id), so a
+    # second webhook that pushes ANOTHER leaf over must NOT re-alert; but an unrelated
+    # LEAF marker (fuel#80) must NOT suppress the parent.
+    #   run A: car#80 already fired; before fuel -70, new parking -15 (car 85) -> a
+    #          DIFFERENT leaf crosses the parent again -> suppressed (no second push).
+    #   run B: only fuel#80 present (a leaf marker); the parent crossing on fuel spend
+    #          still fires car#80 -> proves the marker is parent-keyed, not leaf-keyed.
+    notify_a = FakeNotifyRepo()
+    notify_a.mark_fired("2026-07-01", 14, "car#80")               # parent already alerted
+    sent_a, notify_a, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                               before=[_txn("old", "fuel", -70, "posted")],
+                               normalised=[_txn("new1", "parking", -15, "posted")],
+                               cats=_CAR_TREE, notify=notify_a)
+    assert sent_a == []                                          # parent marker debounces
+
+    notify_b = FakeNotifyRepo()
+    notify_b.mark_fired("2026-07-01", 14, "fuel#80")             # a LEAF marker, not the parent
+    sent_b, notify_b, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                               before=[_txn("old", "fuel", -70, "posted")],
+                               normalised=[_txn("new1", "fuel", -15, "posted")],
+                               cats=_CAR_TREE, notify=notify_b)
+    assert len(sent_b) == 1
+    assert sent_b[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify_b.fired_markers("2026-07-01", 14) == {"fuel#80", "car#80"}
+
+
+# --- a budgeted mid-node AND its budgeted parent, one shared grandchild ------
+
+
+def test_mid_node_and_parent_both_fire_off_one_shared_grandchild(alerts, monkeypatch):
+    # car -> daily -> petrol (leaf); BOTH car and daily are budgeted at 100. A single
+    # petrol write crosses 80% of both rollups -> two pushes, two markers (each a real
+    # fact). Reverting the rollup makes both non-leaf parents read $0 -> zero pushes.
+    cats = [
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "daily", "name": "Daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "daily"},
+    ]
+    before = [_txn("old", "petrol", -70, "posted")]
+    new = _txn("new1", "petrol", -15, "posted")                  # petrol 85 -> both 85
+    sent, notify, _ = _run(alerts, monkeypatch,
+                           budgets={"car": {"target": Decimal("100")}, "daily": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=cats)
+    bodies = {body for _, body, _ in sent}
+    assert bodies == {
+        "Car is at 80% of its budget this cycle.",
+        "Daily is at 80% of its budget this cycle.",
+    }
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80", "daily#80"}
