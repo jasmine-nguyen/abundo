@@ -41,7 +41,7 @@ MIN_REPAYMENT_NOTIFY = 10
 # Confirmed against real Up data (2026-07-03).
 NON_BUDGET_CATEGORIES = {"TRANSFER_IN", "TRANSFER_OUT", "LOAN_PAYMENTS"}
 
-# SSM SecureString path holding the BankSync REST API key (read by whittle-sync-trigger).
+# SSM SecureString path holding the BankSync REST API key (read by whittle-transaction-trigger).
 BANKSYNC_API_KEY_PATH = "/whittle/banksync-api-key"
 
 # Base URL for the BankSync REST API.

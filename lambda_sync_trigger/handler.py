@@ -60,7 +60,7 @@ def trigger_sync(feed_id: str, api_key: str) -> None:
             "X-API-Key": api_key,
             # BankSync sits behind Cloudflare, which blocks the default
             # "Python-urllib" User-Agent with a 403 (error 1010). Send our own.
-            "User-Agent": "whittle-sync-trigger",
+            "User-Agent": "whittle-transaction-trigger",
         },
         method="POST",
     )

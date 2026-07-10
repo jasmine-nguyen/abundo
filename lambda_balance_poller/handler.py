@@ -65,7 +65,7 @@ def fetch_balance(bid: str, aid: str, api_key: str) -> dict:
             "X-API-Key": api_key,
             # BankSync sits behind Cloudflare, which blocks the default
             # "Python-urllib" User-Agent with a 403 (error 1010). Send our own.
-            "User-Agent": "whittle-balance-poller",
+            "User-Agent": "whittle-homeloan-request",
         },
         method="GET",
     )
