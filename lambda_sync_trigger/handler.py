@@ -8,7 +8,7 @@ Flow:
         -> this lambda
         -> POST https://api.banksync.io/v1/feeds/{id}/sync   (per feed)
         -> BankSync fetches new transactions and pushes them to our webhook
-           receiver (whittle-lambda), which writes them to DynamoDB.
+           receiver (whittle-transaction-ingest), which writes them to DynamoDB.
 
 BankSync's UI scheduler is capped at daily on our tier; calling the REST sync
 endpoint ourselves lets us pick our own cadence.
