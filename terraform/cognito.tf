@@ -47,7 +47,7 @@ resource "aws_cognito_user_pool" "pool" {
   # in var.allowed_login_emails, so federated (Google/Apple) sign-up can't
   # provision arbitrary users — the gate that admin-create-only can't provide.
   lambda_config {
-    pre_sign_up = aws_lambda_function.presignup.arn
+    pre_sign_up = aws_lambda_function.auth_presignup.arn
   }
 }
 

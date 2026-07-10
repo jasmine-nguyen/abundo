@@ -27,7 +27,7 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 # schedule that silently reverted to dry-run reads as 0 live runs (not merely no-data).
 resource "aws_cloudwatch_log_metric_filter" "age_out_live_runs" {
   name           = "${var.project_name}-age-out-live-runs"
-  log_group_name = aws_cloudwatch_log_group.age_out.name
+  log_group_name = aws_cloudwatch_log_group.transaction_age_out.name
   pattern        = "LIVE summary"
 
   metric_transformation {
@@ -61,7 +61,7 @@ resource "aws_cloudwatch_metric_alarm" "age_out_not_running" {
 # carries on best-effort). Sustained failures mean ghosts aren't being reaped.
 resource "aws_cloudwatch_log_metric_filter" "age_out_delete_failures" {
   name           = "${var.project_name}-age-out-delete-failures"
-  log_group_name = aws_cloudwatch_log_group.age_out.name
+  log_group_name = aws_cloudwatch_log_group.transaction_age_out.name
   pattern        = "delete FAILED"
 
   metric_transformation {

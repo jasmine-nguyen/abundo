@@ -55,15 +55,15 @@ data "archive_file" "lambda_api_zip" {
   output_path = "${path.module}/artifacts/lambda_api.zip"
 }
 
-# Sync-trigger lambda source. Contains only handler.py; constants.py and ssm.py
-# come from the shared layer.
+# Transaction-trigger lambda source. Contains only handler.py; constants.py and
+# ssm.py come from the shared layer.
 data "archive_file" "sync_trigger_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda_sync_trigger"
   output_path = "${path.module}/artifacts/sync_trigger.zip"
 }
 
-# Balance-poller lambda source. Contains only handler.py; constants.py, ssm.py,
+# Homeloan-request lambda source. Contains only handler.py; constants.py, ssm.py,
 # and repository.py come from the shared layer.
 data "archive_file" "balance_poller_zip" {
   type        = "zip"
@@ -71,9 +71,9 @@ data "archive_file" "balance_poller_zip" {
   output_path = "${path.module}/artifacts/balance_poller.zip"
 }
 
-resource "aws_lambda_function" "lambda" {
+resource "aws_lambda_function" "transaction_ingest" {
   function_name    = "${var.project_name}-transaction-ingest"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.transaction_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 60
@@ -90,20 +90,20 @@ resource "aws_lambda_function" "lambda" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.lambda.name
+    log_group  = aws_cloudwatch_log_group.transaction_ingest.name
   }
 }
 
 # Manual recovery lambda (WHIT-55): re-drives dead-lettered FAILED# rows through
 # normalise + insert. Reuses the webhook zip (source_dir ../lambda already contains
-# reprocess.py) and the lambda_exec role — which already has Query / DeleteItem /
+# reprocess.py) and the transaction_exec role — which already has Query / DeleteItem /
 # BatchWriteItem / GetItem, so NO DynamoDB IAM change is needed. Invoked manually
 # (AWS console Test button / `aws lambda invoke`); it has no event source, schedule,
 # or API integration, so nothing triggers it unintentionally. Longer timeout than
 # the webhook since a backlog is processed one row at a time.
-resource "aws_lambda_function" "reprocess" {
+resource "aws_lambda_function" "transaction_reprocess" {
   function_name    = "${var.project_name}-transaction-reprocess"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.transaction_exec.arn
   handler          = "reprocess.lambda_handler"
   runtime          = "python3.12"
   timeout          = 300
@@ -120,19 +120,19 @@ resource "aws_lambda_function" "reprocess" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.reprocess.name
+    log_group  = aws_cloudwatch_log_group.transaction_reprocess.name
   }
 }
 
 # One-time dedupe cleanup lambda (WHIT-80): reconciles pre-reconciliation
 # pending/posted twins that settled before WHIT-77 deployed. Like reprocess, it
 # reuses the webhook zip (../lambda already contains dedupe_cleanup.py) and the
-# lambda_exec role (Query / DeleteItem / BatchWriteItem / GetItem already granted),
+# transaction_exec role (Query / DeleteItem / BatchWriteItem / GetItem already granted),
 # so NO IAM change. Invoked manually; dry-run unless the event says
 # {"dry_run": false}. No event source/schedule/API, so nothing triggers it.
-resource "aws_lambda_function" "dedupe" {
+resource "aws_lambda_function" "transaction_dedupe" {
   function_name    = "${var.project_name}-transaction-dedupe"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.transaction_exec.arn
   handler          = "dedupe_cleanup.lambda_handler"
   runtime          = "python3.12"
   timeout          = 300
@@ -149,19 +149,19 @@ resource "aws_lambda_function" "dedupe" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.dedupe.name
+    log_group  = aws_cloudwatch_log_group.transaction_dedupe.name
   }
 }
 
 # Stale-pending age-out sweep (WHIT-79): a daily scheduled reaper that deletes pending
 # rows older than PENDING_AGE_OUT_DAYS that never got a matching posted (reversed
 # pre-auth / unbalanced count). Like reprocess/dedupe it reuses the webhook zip
-# (../lambda already contains age_out.py) and the lambda_exec role (Query / DeleteItem
+# (../lambda already contains age_out.py) and the transaction_exec role (Query / DeleteItem
 # already granted). UNLIKE those two it IS scheduled (see scheduler.tf), and the schedule
 # passes {"dry_run": false} so it runs live; a manual/empty invoke stays dry-run-safe.
-resource "aws_lambda_function" "age_out" {
+resource "aws_lambda_function" "transaction_age_out" {
   function_name    = "${var.project_name}-transaction-age-out"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.transaction_exec.arn
   handler          = "age_out.lambda_handler"
   runtime          = "python3.12"
   timeout          = 300
@@ -178,7 +178,7 @@ resource "aws_lambda_function" "age_out" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.age_out.name
+    log_group  = aws_cloudwatch_log_group.transaction_age_out.name
   }
 }
 
@@ -187,9 +187,9 @@ resource "aws_lambda_function" "age_out" {
 # transient 503 on the heaviest read. 512 MB ~= 4x the CPU for a few cents/month at single-user
 # volume, cutting cold-start + on-read compute (the /breakdown and /budgets windowed-transaction
 # rollups). No provisioned concurrency — overkill for one user; revisit only if 503s persist.
-resource "aws_lambda_function" "lambda_api" {
+resource "aws_lambda_function" "app_api" {
   function_name    = "${var.project_name}-app-api"
-  role             = aws_iam_role.lambda_api_exec.arn
+  role             = aws_iam_role.app_api_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 60
@@ -206,16 +206,16 @@ resource "aws_lambda_function" "lambda_api" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.lambda_api.name
+    log_group  = aws_cloudwatch_log_group.app_api.name
   }
 }
 
 # Triggered on a schedule by EventBridge Scheduler (see scheduler.tf) to kick off
 # BankSync incremental syncs. Only needs the shared layer for constants.py/ssm.py;
 # no DynamoDB access (BankSync pushes results to the webhook lambda instead).
-resource "aws_lambda_function" "sync_trigger" {
+resource "aws_lambda_function" "transaction_trigger" {
   function_name    = "${var.project_name}-transaction-trigger"
-  role             = aws_iam_role.sync_trigger_exec.arn
+  role             = aws_iam_role.transaction_trigger_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 60
@@ -226,17 +226,17 @@ resource "aws_lambda_function" "sync_trigger" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.sync_trigger.name
+    log_group  = aws_cloudwatch_log_group.transaction_trigger.name
   }
 }
 
 # Triggered daily by EventBridge Scheduler (see scheduler.tf) to poll the live Up
 # home-loan balance from BankSync (getBalance) and store it (WHIT-8). Needs the
 # shared layer (constants.py/ssm.py/repository.py) AND DynamoDB PutItem +
-# TABLE_NAME (unlike the sync trigger, which writes nothing itself).
-resource "aws_lambda_function" "balance_poller" {
+# TABLE_NAME (unlike the transaction trigger, which writes nothing itself).
+resource "aws_lambda_function" "homeloan_request" {
   function_name    = "${var.project_name}-homeloan-request"
-  role             = aws_iam_role.balance_poller_exec.arn
+  role             = aws_iam_role.homeloan_request_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 60
@@ -253,41 +253,73 @@ resource "aws_lambda_function" "balance_poller" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.balance_poller.name
+    log_group  = aws_cloudwatch_log_group.homeloan_request.name
   }
 }
 
-resource "aws_cloudwatch_log_group" "lambda" {
-  name              = "/aws/lambda/${var.project_name}-lambda"
+# WHIT-224: label renames only (deployed function_name values are unchanged from
+# WHIT-219), so these are pure state moves — no destroy/recreate. Same pattern as
+# the WHIT-153 route moves in apigateway.tf; garbage-collect once applied.
+moved {
+  from = aws_lambda_function.lambda
+  to   = aws_lambda_function.transaction_ingest
+}
+moved {
+  from = aws_lambda_function.reprocess
+  to   = aws_lambda_function.transaction_reprocess
+}
+moved {
+  from = aws_lambda_function.dedupe
+  to   = aws_lambda_function.transaction_dedupe
+}
+moved {
+  from = aws_lambda_function.age_out
+  to   = aws_lambda_function.transaction_age_out
+}
+moved {
+  from = aws_lambda_function.lambda_api
+  to   = aws_lambda_function.app_api
+}
+moved {
+  from = aws_lambda_function.sync_trigger
+  to   = aws_lambda_function.transaction_trigger
+}
+moved {
+  from = aws_lambda_function.balance_poller
+  to   = aws_lambda_function.homeloan_request
+}
+
+resource "aws_cloudwatch_log_group" "transaction_ingest" {
+  name              = "/aws/lambda/${var.project_name}-transaction-ingest"
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "lambda_api" {
-  name              = "/aws/lambda/${var.project_name}-lambda-api"
+resource "aws_cloudwatch_log_group" "app_api" {
+  name              = "/aws/lambda/${var.project_name}-app-api"
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "reprocess" {
-  name              = "/aws/lambda/${var.project_name}-lambda-reprocess"
+resource "aws_cloudwatch_log_group" "transaction_reprocess" {
+  name              = "/aws/lambda/${var.project_name}-transaction-reprocess"
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "dedupe" {
-  name              = "/aws/lambda/${var.project_name}-lambda-dedupe"
+resource "aws_cloudwatch_log_group" "transaction_dedupe" {
+  name              = "/aws/lambda/${var.project_name}-transaction-dedupe"
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "age_out" {
-  name              = "/aws/lambda/${var.project_name}-lambda-age-out"
+resource "aws_cloudwatch_log_group" "transaction_age_out" {
+  name              = "/aws/lambda/${var.project_name}-transaction-age-out"
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "sync_trigger" {
-  name              = "/aws/lambda/${var.project_name}-sync-trigger"
+resource "aws_cloudwatch_log_group" "transaction_trigger" {
+  name              = "/aws/lambda/${var.project_name}-transaction-trigger"
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "balance_poller" {
-  name              = "/aws/lambda/${var.project_name}-balance-poller"
+resource "aws_cloudwatch_log_group" "homeloan_request" {
+  name              = "/aws/lambda/${var.project_name}-homeloan-request"
   retention_in_days = 30
 }
