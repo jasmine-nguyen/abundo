@@ -14,7 +14,7 @@ import { C } from '../src/theme';
 import { queryClient } from '../src/queryClient';
 import { AppProvider } from '../src/context';
 import { Overlays } from '../src/components/Overlays';
-import { registerForPushNotificationsAsync } from '../src/push';
+import { registerForPushNotificationsAsync, registerPushTokenRotation } from '../src/push';
 import { AuthGate } from '../src/AuthGate';
 import { useReduceMotion } from '../src/motion/useReduceMotion';
 
@@ -59,9 +59,14 @@ export default function RootLayout() {
   }, [ready]);
 
   // Once per launch: ask notification permission + register this device's push
-  // token. Best-effort (never throws); a no-op on web/simulator/denial.
+  // token. Best-effort (never throws); a no-op on web/simulator/denial. Also install
+  // a rotation listener (WHIT-145) so a token that rotates mid-session re-registers
+  // without waiting for the next launch; remove it on unmount (the listener is
+  // additive, so it must not stack).
   useEffect(() => {
     registerForPushNotificationsAsync();
+    const rotationSub = registerPushTokenRotation();
+    return () => rotationSub?.remove();
   }, []);
 
   if (!ready) return <View style={{ flex: 1, backgroundColor: C.bg }} />;

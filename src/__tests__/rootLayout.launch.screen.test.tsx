@@ -13,7 +13,14 @@ import React from 'react';
 import { render } from '@testing-library/react-native';
 
 const mockRegister = jest.fn();
-jest.mock('../push', () => ({ registerForPushNotificationsAsync: (...a: unknown[]) => mockRegister(...a) }));
+const mockRemove = jest.fn();
+const mockRotation = jest.fn((..._a: unknown[]) => ({ remove: mockRemove }));
+jest.mock('../push', () => ({
+  registerForPushNotificationsAsync: (...a: unknown[]) => mockRegister(...a),
+  // WHIT-145: the launch effect also installs the rotation listener and removes it on
+  // cleanup; stub it so the effect doesn't hit undefined and cleanup stays safe.
+  registerPushTokenRotation: (...a: unknown[]) => mockRotation(...a),
+}));
 
 // Control font readiness: useAppFonts (native path) reads `[loaded] = useFonts(...)`.
 let mockFontsLoaded = false;
@@ -76,4 +83,13 @@ it('does not re-fire on a re-render with no state change', () => {
   const { rerender } = render(<RootLayout />);
   rerender(<RootLayout />);
   expect(mockRegister).toHaveBeenCalledTimes(1);
+});
+
+it('installs the push-token rotation listener once at launch and removes it on unmount (WHIT-145)', () => {
+  mockFontsLoaded = true;
+  const { unmount } = render(<RootLayout />);
+  expect(mockRotation).toHaveBeenCalledTimes(1);
+  expect(mockRemove).not.toHaveBeenCalled();
+  unmount();
+  expect(mockRemove).toHaveBeenCalledTimes(1); // cleanup removes the additive listener
 });
