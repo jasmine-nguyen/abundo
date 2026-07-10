@@ -76,10 +76,16 @@ resource "aws_iam_role_policy" "auth_presignup_logs" {
 }
 
 # Let Cognito invoke the trigger.
-resource "aws_lambda_permission" "presignup_cognito_invoke" {
+resource "aws_lambda_permission" "auth_presignup_cognito_invoke" {
   statement_id  = "AllowCognitoInvokePreSignUp"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.auth_presignup.function_name
   principal     = "cognito-idp.amazonaws.com"
   source_arn    = aws_cognito_user_pool.pool.arn
+}
+
+# WHIT-224: label rename only (statement_id + attributes unchanged) — pure state move.
+moved {
+  from = aws_lambda_permission.presignup_cognito_invoke
+  to   = aws_lambda_permission.auth_presignup_cognito_invoke
 }
