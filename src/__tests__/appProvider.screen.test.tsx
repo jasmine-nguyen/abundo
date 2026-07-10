@@ -374,6 +374,22 @@ it('saveCategory edits an existing category in place', async () => {
   expect(cats().find((c) => c.id === 'groceries')?.name).toBe('Supermarket');
 });
 
+it('saveCategory threads a chosen parent through (create + edit); omitting it leaves the link alone', async () => {
+  // WHIT-221: the category-edit screen manages the parent link. When it passes `parent`
+  // (an id, or null to detach) it must reach the API; when a caller omits it, the field
+  // must NOT be sent (server leave-as-is) — that's what the two tests above assert.
+  mockApi.createCategory.mockResolvedValue({ id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#f00', recent: 0, parent: 'car' });
+  mockApi.updateCategory.mockResolvedValue({ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0, parent: null });
+  seed();
+  const result = mount();
+
+  await act(async () => { await result.current.saveCategory(null, { name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' }); });
+  expect(mockApi.createCategory).toHaveBeenCalledWith({ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'car' });
+
+  await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null }); });
+  expect(mockApi.updateCategory).toHaveBeenCalledWith('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart', parent: null });
+});
+
 it('saveCategory returns false + toasts on failure', async () => {
   mockApi.createCategory.mockRejectedValue(new Error('x'));
   seed();

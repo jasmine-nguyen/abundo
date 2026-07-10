@@ -4,7 +4,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
-import { useAppContext, BUCKETS, BUCKET_COLOR, Bucket } from '../../src/context';
+import { useAppContext, BUCKETS, BUCKET_COLOR, Bucket, eligibleParents } from '../../src/context';
 import { useCategories } from '../../src/queries';
 import { ICON_KEYS } from '../../src/icons';
 import { Header } from '../../src/components/Header';
@@ -15,18 +15,31 @@ export default function CategoryEdit() {
   const insets = useSafeAreaInsets();
   const { categoryId } = useLocalSearchParams<{ categoryId?: string }>();
   // WHIT-203: the prefill lookup reads the cached taxonomy.
-  const { category } = useCategories();
+  const { categories, category } = useCategories();
   const existing = categoryId ? category(categoryId) : undefined;
 
   const [name, setName] = useState(existing?.name ?? '');
   const [bucket, setBucket] = useState<Bucket>(existing?.bucket ?? 'Lifestyle');
   const [icon, setIcon] = useState(existing?.icon ?? 'coffee');
+  // WHIT-221: the category this one rolls up into (null = top-level).
+  const [parent, setParent] = useState<string | null>(existing?.parent ?? null);
   // WHIT-203: the useState seeds run once, but on the query layer `existing` may resolve a
   // beat AFTER mount (cold cache / deep-link). Re-seed when it arrives so an edit never
   // shows — or SAVES — a blank "create" form over a real category.
   useEffect(() => {
-    if (existing) { setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon); }
+    if (existing) { setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon); setParent(existing.parent ?? null); }
   }, [existing]);
+
+  // A sub must share its parent's bucket (server rule), never be its own ancestor, and
+  // never nest under itself — the shared helper enforces all three. Recomputed from the
+  // in-form bucket so switching bucket re-filters the options live.
+  const parentOptions = eligibleParents(categories, categoryId ?? null, bucket);
+  // Keep the held parent valid: if it ever becomes ineligible (the bucket changed, or a
+  // legacy/cross-bucket link loaded), drop it to top-level. Without this a stale parent
+  // could be invisible in the picker yet silently re-saved. Runs after the re-seed above.
+  useEffect(() => {
+    setParent((cur) => (cur !== null && !eligibleParents(categories, categoryId ?? null, bucket).some((c) => c.id === cur) ? null : cur));
+  }, [bucket, categories, categoryId]);
 
   const color = existing?.color ?? C.accent;
   const [submitting, setSubmitting] = useState(false);
@@ -38,7 +51,7 @@ export default function CategoryEdit() {
   const save = async () => {
     if (!canSave) return;
     setSubmitting(true);
-    const ok = await s.saveCategory(categoryId ?? null, { name, bucket, icon });
+    const ok = await s.saveCategory(categoryId ?? null, { name, bucket, icon, parent });
     if (ok) router.back();
     else setSubmitting(false); // stay on the screen so the user can retry
   };
@@ -73,6 +86,25 @@ export default function CategoryEdit() {
             );
           })}
         </View>
+
+        {parentOptions.length > 0 && (
+          <>
+            <Text style={styles.fieldLabel}>PARENT (OPTIONAL)</Text>
+            <View style={styles.bucketRow}>
+              <Pressable onPress={() => setParent(null)} style={[styles.bucketBtn, { borderColor: parent === null ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: parent === null ? 'rgba(124,140,255,.14)' : C.card }]}>
+                <Text style={[styles.bucketText, { color: parent === null ? C.accentSofter : C.textMid }]}>None (top-level)</Text>
+              </Pressable>
+              {parentOptions.map((p) => {
+                const sel = parent === p.id;
+                return (
+                  <Pressable key={p.id} onPress={() => setParent(p.id)} style={[styles.bucketBtn, { borderColor: sel ? p.color : 'rgba(255,255,255,.07)', backgroundColor: sel ? tint(p.color, 0.14) : C.card }]}>
+                    <Text style={[styles.bucketText, { color: sel ? p.color : C.textMid }]} numberOfLines={1}>{p.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        )}
 
         <Text style={styles.fieldLabel}>ICON</Text>
         <View style={styles.iconGrid}>

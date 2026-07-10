@@ -83,7 +83,7 @@ export default function Budgets() {
         </View>
 
         {rows.map((b) => (
-          <Pressable key={b.id} onPress={() => router.push(`/budget/${b.id}`)} style={styles.row}>
+          <Pressable key={b.id} onPress={() => router.push(`/budget/${b.id}`)} style={[styles.row, b.depth > 0 && { marginLeft: b.depth * 18, borderLeftWidth: 2, borderLeftColor: b.color }]}>
             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
               <View style={[styles.chip, { backgroundColor: b.chipBg }]}><Icon name={b.icon} size={23} color={b.color} /></View>
               <View style={{ flex: 1, minWidth: 0 }}>

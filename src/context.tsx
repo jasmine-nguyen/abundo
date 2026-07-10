@@ -328,7 +328,7 @@ export interface AppContext {
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
-  saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string }) => Promise<boolean>;
+  saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }) => Promise<boolean>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
   saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
@@ -704,16 +704,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const saveCategory = useCallback(
-    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string }): Promise<boolean> => {
+    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<boolean> => {
       const name = form.name.trim();
       if (!name) return false;
+      // Only send `parent` when the caller manages it (the category-edit screen), so a
+      // caller that omits it leaves the stored link untouched (matches the server's
+      // leave-as-is rule). An explicit null detaches to top-level.
+      const input = 'parent' in form
+        ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
+        : { name, bucket: form.bucket, icon: form.icon };
       try {
         if (editId) {
-          const updated = await updateCategory(editId, { name, bucket: form.bucket, icon: form.icon });
+          const updated = await updateCategory(editId, input);
           queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
           showToast('Category updated.');
         } else {
-          const created = await createCategory({ name, bucket: form.bucket, icon: form.icon });
+          const created = await createCategory(input);
           queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, toCategory(created)] : prev));
           showToast('Category created.');
         }
@@ -895,6 +901,11 @@ export interface BudgetView {
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
+  // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
+  // row's ancestors that are ALSO budgeted rows (0 = top-level or a sub whose parent
+  // isn't budgeted). `parentId` is the nearest budgeted ancestor's id (the row it
+  // nests under), or null at the top level.
+  depth: number; parentId: string | null;
 }
 
 // The exact slice budgetViews reads. A narrow input (not the whole AppContext) so a
@@ -912,7 +923,52 @@ export interface BudgetViewsInput {
 export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
   const elapsed = elapsedFrac(s);
   let totBudget = 0, totSpent = 0, totRemain = 0;
-  const rows: BudgetView[] = [];
+
+  // Pass 1: which budgeted categories produce a row (everything but Savings, which is
+  // skipped entirely). Needed up front so the tree walk below can tell whether a row's
+  // ancestor is itself budgeted BEFORE we start emitting — a single pass would miss a
+  // parent that sorts after its child and under-de-dup the hero total (WHIT-221).
+  const budgetedRowIds = new Set<string>();
+  for (const b of s.budgets) {
+    const c = s.category(b.id);
+    if (c && c.bucket !== 'Savings') budgetedRowIds.add(b.id);
+  }
+
+  // The nearest ancestor that is itself a budgeted row (the row this one nests under),
+  // and how many budgeted ancestors it has (its indent depth). Both walk the category
+  // `parent` chain and are guarded against a missing parent and a corrupt cycle.
+  const walkBudgetedAncestors = (c: Category): { nearest: string | null; depth: number } => {
+    let nearest: string | null = null, depth = 0;
+    const seen = new Set<string>();
+    let pid = c.parent ?? null;
+    while (pid && !seen.has(pid)) {
+      seen.add(pid);
+      const parent = s.category(pid);
+      // Only a SAME-BUCKET budgeted ancestor nests/de-dups this row. The server's
+      // same-bucket rule keeps a family single-bucket, so this is a no-op for clean
+      // data — but it hardens the hero math against a corrupt cross-bucket link (e.g.
+      // a legacy re-bucket) that would otherwise silently drop a spend sub from the
+      // total instead of counting it once on its own.
+      if (budgetedRowIds.has(pid) && parent && parent.bucket === c.bucket) {
+        if (nearest === null) nearest = pid;
+        depth++;
+      }
+      pid = parent ? (parent.parent ?? null) : null;
+    }
+    return { nearest, depth };
+  };
+
+  // Pass 2: build each row's view keyed by id, group by nearest budgeted ancestor, and
+  // accumulate the hero totals — spend rows ONLY, and ONLY the top-most budgeted row in
+  // each family (depth 0). The server already rolled a parent's spend over its descendant
+  // leaves, so counting only the top row counts every transaction exactly once.
+  const viewById = new Map<string, BudgetView>();
+  const childrenByParent = new Map<string | null, string[]>();
+  const group = (parentId: string | null, id: string) => {
+    const siblings = childrenByParent.get(parentId);
+    if (siblings) siblings.push(id); else childrenByParent.set(parentId, [id]);
+  };
+
   for (const b of s.budgets) {
     const c = s.category(b.id);
     if (!c) continue;
@@ -922,6 +978,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // account-balance goal exists (WHIT-201). New Savings budgets are already blocked
     // in app/budget/pick.tsx; this also hides one set before that or via re-bucketing.
     if (c.bucket === 'Savings') continue;
+    const { nearest: parentId, depth } = walkBudgetedAncestors(c);
     // posted/pending come from the server rollup (computed over the window). For an
     // Income category the rollup is positive EARNINGS, not spend.
     const pending = b.pending, posted = b.posted, actual = posted + pending;
@@ -944,7 +1001,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       const spentLabel = pending > 0
         ? `${fmt(actual)} earned (${fmt(pending)} pending) of ${fmt(b.budget)}`
         : `${fmt(actual)} earned of ${fmt(b.budget)}`;
-      rows.push({
+      viewById.set(b.id, {
         id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
         spentLabel,
         remainAmount: fmt(met ? actual - b.budget : b.budget - actual),
@@ -952,13 +1009,19 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainColor: met ? '#35d9a0' : '#cfd2ff',
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
         pendingTint: tint(c.color, 0.45), paceLabel, paceColor, over: false,
+        depth, parentId,
       });
+      group(parentId, b.id);
       continue;
     }
 
     // Spend budget (ceiling): under-is-good, over is red.
     const spent = actual, remain = b.budget - spent;
-    totBudget += b.budget; totSpent += spent; totRemain += remain;
+    // De-dup the hero totals: count only the TOP-MOST budgeted spend row per family
+    // (depth 0). A budgeted sub is already inside its parent's rolled-up spend, so
+    // adding it again would double-count (WHIT-221). Same-bucket means a spend row's
+    // budgeted ancestors are all spend, so depth 0 == no budgeted spend ancestor.
+    if (depth === 0) { totBudget += b.budget; totSpent += spent; totRemain += remain; }
     const over = spent > b.budget;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
     let paceLabel: string, paceColor: string;
@@ -969,14 +1032,54 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const spentLabel = pending > 0
       ? `${fmt(spent)} spent (${fmt(pending)} pending) of ${fmt(b.budget)}`
       : `${fmt(spent)} spent of ${fmt(b.budget)}`;
-    rows.push({
+    viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmt(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? '#ff6b6b' : '#cfd2ff',
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? '#ff6b6b' : c.color,
       pendingTint: tint(over ? '#ff6b6b' : c.color, 0.45), paceLabel, paceColor, over,
+      depth, parentId,
     });
+    group(parentId, b.id);
   }
+
+  // Pass 3: emit depth-first — each row immediately followed by its budgeted
+  // descendants — preserving the incoming sibling order within each group. `emitted`
+  // guards against a corrupt parent cycle re-emitting a row; the trailing sweep emits
+  // any row left unreachable from the top level so no budget is ever dropped.
+  const rows: BudgetView[] = [];
+  const emitted = new Set<string>();
+  const emit = (id: string) => {
+    if (emitted.has(id)) return;
+    emitted.add(id);
+    const view = viewById.get(id);
+    if (view) rows.push(view);
+    for (const childId of childrenByParent.get(id) ?? []) emit(childId);
+  };
+  for (const id of childrenByParent.get(null) ?? []) emit(id);
+  for (const id of viewById.keys()) emit(id);
+
   return { rows, totBudget, totSpent, totRemain };
+}
+
+// Which categories may be chosen as the parent of the category being edited (WHIT-221):
+// same bucket (the server enforces same-bucket parent/child), never itself, and never
+// one of its own descendants (that would make a cycle). For a NEW category (editId null)
+// there are no descendants, so every same-bucket category is eligible. Pure + exported
+// so the category-edit picker and its tests share one rule.
+export function eligibleParents(categories: Category[], editId: string | null, bucket: Bucket): Category[] {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const isDescendantOfEdit = (c: Category): boolean => {
+    if (!editId) return false;
+    const seen = new Set<string>();
+    let pid = c.parent ?? null;
+    while (pid && !seen.has(pid)) {
+      if (pid === editId) return true;
+      seen.add(pid);
+      pid = byId.get(pid)?.parent ?? null;
+    }
+    return false;
+  };
+  return categories.filter((c) => c.bucket === bucket && c.id !== editId && !isDescendantOfEdit(c));
 }
 
 // The sentinel category id the /breakdown endpoint uses for spend that counts to
