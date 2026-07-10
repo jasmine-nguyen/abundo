@@ -31,6 +31,26 @@ if (Platform.OS !== 'web') {
 }
 
 /**
+ * Fetch this device's EXPO push token and register it with the server. Shared by the
+ * one-shot launch registration and the rotation listener so the two can't drift.
+ *
+ * When `devicePushToken` is supplied (the rotation path), it's passed straight into
+ * getExpoPushTokenAsync so Expo does NOT internally call getDevicePushTokenAsync —
+ * which would re-emit the rotation event and infinite-loop (see registerPushTokenRotation).
+ * The one-shot path omits it, keeping the original `{ projectId }`-only call shape.
+ */
+async function fetchAndRegisterExpoToken(
+  projectId: string,
+  devicePushToken?: Notifications.DevicePushToken,
+): Promise<void> {
+  const { data: token } = await Notifications.getExpoPushTokenAsync(
+    devicePushToken ? { projectId, devicePushToken } : { projectId },
+  );
+  if (!token) return; // never POST an empty/undefined token — the server would 400
+  await registerDevice(token);
+}
+
+/**
  * Ask for notification permission (once — never re-nagging a hard denial), get
  * this device's Expo push token, and register it with the server so pushes can be
  * delivered.
@@ -60,10 +80,46 @@ export async function registerForPushNotificationsAsync(): Promise<void> {
     const projectId = Constants.expoConfig?.extra?.eas?.projectId;
     if (!projectId) return;
 
-    const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
-    if (!token) return; // never POST an empty/undefined token — the server would 400
-    await registerDevice(token);
+    await fetchAndRegisterExpoToken(projectId);   // no device token → the one-shot path
   } catch {
     // Simulator / denied / offline / no token — stay silent, never crash launch.
+  }
+}
+
+/**
+ * Re-register the device's Expo push token whenever the push service rotates it
+ * mid-session (WHIT-145). Registration otherwise runs once per launch, so a rotation
+ * would leave the server holding a stale token until the next launch.
+ *
+ * The listener receives the RAW DEVICE token ({ type, data } — an FCM/APNs value),
+ * NOT the Expo token the server wants; we hand that object straight to
+ * getExpoPushTokenAsync as `devicePushToken` so it re-maps to the fresh Expo token
+ * AND skips its internal getDevicePushTokenAsync — which would re-emit this same event
+ * and infinite-loop (Expo's own docs warn about exactly this). We never forward the
+ * device token to registerDevice.
+ *
+ * BEST-EFFORT: web is a no-op (returns undefined, no listener); installing the listener
+ * and each rotation re-register are wrapped so nothing throws into launch. Returns the
+ * EventSubscription so the caller can .remove() it on unmount — the listener is additive,
+ * so it must never be installed twice.
+ */
+export function registerPushTokenRotation(): Notifications.EventSubscription | undefined {
+  if (Platform.OS === 'web') return undefined;
+  try {
+    return Notifications.addPushTokenListener((token) => {
+      // The listener signature is sync (void), so fire-and-forget; the inner try/catch
+      // keeps a failed re-register silent (the next launch re-registers anyway).
+      void (async () => {
+        try {
+          const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+          if (!projectId) return;
+          await fetchAndRegisterExpoToken(projectId, token);
+        } catch {
+          // Offline / no token / permission gone — best-effort, never surface.
+        }
+      })();
+    });
+  } catch {
+    return undefined; // installing the listener must never crash launch
   }
 }
