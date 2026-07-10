@@ -12,6 +12,9 @@ jest.mock('expo-notifications', () => ({
   getPermissionsAsync: (...a: unknown[]) => mockGetPermissions(...a),
   requestPermissionsAsync: (...a: unknown[]) => mockRequestPermissions(...a),
   getExpoPushTokenAsync: (...a: unknown[]) => mockGetToken(...a),
+  // Called once at module scope (the WHIT-144 foreground handler); stub it so the
+  // import doesn't hit undefined. Asserted in push.handler.screen.test.tsx.
+  setNotificationHandler: jest.fn(),
 }));
 
 let mockProjectId: string | undefined = 'test-project';

@@ -3,6 +3,33 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { registerDevice } from './api';
 
+// Present a foreground push — one arriving while the app is open — as a quiet-but-
+// visible banner (WHIT-144): show the banner AND keep it in the notification centre,
+// but no sound and no app-icon badge (the app's calm ethos). Without this, Expo
+// discards a foregrounded notification by default. Registered ONCE at module scope
+// because the handler must be set before any notification arrives; importing this
+// module at launch (app/_layout.tsx) runs it. Skipped on web, where the native
+// handler has no meaning — mirrors registerForPushNotificationsAsync's web bail.
+//
+// NB the four booleans are the current expo-notifications@56 NotificationBehavior
+// shape (shouldShowBanner/shouldShowList replaced the deprecated shouldShowAlert).
+if (Platform.OS !== 'web') {
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      }),
+    });
+  } catch {
+    // Best-effort, like registerForPushNotificationsAsync below: installing the
+    // handler must NEVER throw into app launch. It's a synchronous setter today, but
+    // this keeps the module honest to the file's "never crash launch" contract.
+  }
+}
+
 /**
  * Ask for notification permission (once — never re-nagging a hard denial), get
  * this device's Expo push token, and register it with the server so pushes can be
