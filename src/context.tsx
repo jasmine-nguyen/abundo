@@ -1091,6 +1091,11 @@ export interface CategoryBreakdownRow {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spent: number; posted: number; pending: number;
   spentLabel: string; pct: number; uncategorized: boolean;
+  // Sub-category drill-down (WHIT-226): `depth` is the indent level (0 = top-level);
+  // `parentId` is the row this nests under (null at top level); `hasChildren` flags an
+  // expandable parent. A parent row's spent/posted/pending are the COMBINED subtree
+  // totals. `spent` still drives the bar, so the flat-taxonomy path is unchanged.
+  depth: number; parentId: string | null; hasChildren: boolean;
 }
 
 // The exact slice categoryBreakdown reads. A narrow input (not the whole AppContext) so
@@ -1102,35 +1107,138 @@ export interface CategoryBreakdownInput {
   category: (id: string) => Category | undefined;
 }
 
-// Spend by category for the current cycle (the Insights tab), sorted highest-first.
-// Pure over { breakdown, category }: joins the server's per-category posted/pending
-// (s.breakdown) with the taxonomy for name/icon/colour, and renders the "__uncategorized__"
-// bucket with the app's Uncategorized styling (matches transactionView). Zero-spend
-// rows are dropped; a real category id the server didn't fold but that's missing
-// locally is skipped defensively. `pct` is each row's share of the cycle total (bar width).
+// Spend by category for the current cycle (the Insights tab), as a parent→sub TREE
+// (WHIT-226): a parent shows the COMBINED spend of everything under it and is expandable
+// into its subs; the cycle total counts each transaction ONCE (a parent OR its subs,
+// never both), mirroring the Budgets tree/hero de-dup. Pure over { breakdown, category }.
+// A flat taxonomy (no parents) is byte-identical to the old per-leaf list: every row is
+// depth 0 with no children, sorted highest-first.
 export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBreakdownRow[]; total: number } {
-  const rows: CategoryBreakdownRow[] = [];
-  let total = 0;
+  // Direct (own) spend per resolved id, from the server's per-category breakdown.
+  const direct = new Map<string, { posted: number; pending: number }>();
+  let uncategorized: { posted: number; pending: number } | null = null;
   for (const [id, spend] of Object.entries(s.breakdown)) {
-    const posted = spend.posted, pending = spend.pending, spent = posted + pending;
-    if (spent <= 0) continue;
-    let name: string, color: string, icon: string, chipBg: string;
-    if (id === UNCATEGORIZED_KEY) {
-      name = 'Uncategorized'; color = '#c9b3f5'; icon = 'q'; chipBg = 'rgba(160,130,240,.16)';
-    } else {
-      const c = s.category(id);
-      if (!c) continue;
-      name = c.name; color = c.color; icon = c.icon; chipBg = tint(c.color, 0.15);
-    }
-    total += spent;
-    rows.push({
-      id, name, color, icon, chipBg, spent, posted, pending,
-      spentLabel: pending > 0 ? `${fmt(spent)} · ${fmt(pending)} pending` : fmt(spent),
-      pct: 0, uncategorized: id === UNCATEGORIZED_KEY,
-    });
+    if (spend.posted + spend.pending <= 0) continue;
+    if (id === UNCATEGORIZED_KEY) { uncategorized = { posted: spend.posted, pending: spend.pending }; continue; }
+    if (!s.category(id)) continue;  // a real id the taxonomy doesn't know — skip defensively
+    direct.set(id, { posted: spend.posted, pending: spend.pending });
   }
-  rows.sort((a, b) => b.spent - a.spent);
-  for (const r of rows) r.pct = total > 0 ? (r.spent / total) * 100 : 0;
+
+  // Row set: every id with direct spend PLUS every taxonomy ancestor of those ids, so a
+  // parent with no direct spend but a spending child still gets a row. Cycle-guarded.
+  const inRow = new Set<string>(direct.keys());
+  for (const id of direct.keys()) {
+    const seen = new Set<string>();
+    let pid = s.category(id)?.parent ?? null;
+    while (pid && !seen.has(pid) && s.category(pid)) {
+      seen.add(pid); inRow.add(pid);
+      pid = s.category(pid)?.parent ?? null;
+    }
+  }
+
+  // Nearest ancestor that is itself a row (what this nests under) + indent depth. Same
+  // same-bucket + cycle guards as budgetViews, so a corrupt cross-bucket link counts the
+  // row once on its own rather than mis-nesting it.
+  const parentOf = new Map<string, string | null>();
+  const depthOf = new Map<string, number>();
+  const childIds = new Map<string, string[]>();
+  for (const id of inRow) {
+    const c = s.category(id)!;
+    let nearest: string | null = null, depth = 0;
+    const seen = new Set<string>();
+    let pid = c.parent ?? null;
+    while (pid && !seen.has(pid)) {
+      seen.add(pid);
+      const p = s.category(pid);
+      if (inRow.has(pid) && p && p.bucket === c.bucket) { if (nearest === null) nearest = pid; depth++; }
+      pid = p ? (p.parent ?? null) : null;
+    }
+    parentOf.set(id, nearest); depthOf.set(id, depth);
+    if (nearest !== null) { const k = childIds.get(nearest); if (k) k.push(id); else childIds.set(nearest, [id]); }
+  }
+
+  // Combined (own + all descendants) posted/pending, memoised over the tree.
+  const combined = new Map<string, { posted: number; pending: number }>();
+  const computeCombined = (id: string): { posted: number; pending: number } => {
+    const memo = combined.get(id);
+    if (memo) return memo;
+    const own = direct.get(id) ?? { posted: 0, pending: 0 };
+    let posted = own.posted, pending = own.pending;
+    combined.set(id, { posted, pending });  // seed first: guards a corrupt cycle from recursing forever
+    for (const child of childIds.get(id) ?? []) {
+      const cc = computeCombined(child);
+      posted += cc.posted; pending += cc.pending;
+    }
+    const res = { posted, pending };
+    combined.set(id, res);
+    return res;
+  };
+
+  const mk = (id: string, name: string, color: string, icon: string, chipBg: string,
+              posted: number, pending: number, depth: number, parentId: string | null,
+              hasChildren: boolean, uncat: boolean): CategoryBreakdownRow => {
+    const spent = posted + pending;
+    return { id, name, color, icon, chipBg, spent, posted, pending,
+      spentLabel: pending > 0 ? `${fmt(spent)} · ${fmt(pending)} pending` : fmt(spent),
+      pct: 0, uncategorized: uncat, depth, parentId, hasChildren };
+  };
+
+  // Build every row (parents carry combined totals), plus a synthetic "Directly in <name>"
+  // leaf under any parent that ALSO holds its own directly-tagged spend, so an expanded
+  // subtree always reconciles to the parent bar (a txn can be filed onto a parent).
+  const rowById = new Map<string, CategoryBreakdownRow>();
+  const emitChildren = new Map<string | null, string[]>();
+  const pushEmit = (p: string | null, id: string) => {
+    const k = emitChildren.get(p); if (k) k.push(id); else emitChildren.set(p, [id]);
+  };
+  for (const id of inRow) {
+    const c = s.category(id)!;
+    const parentId = parentOf.get(id) ?? null;
+    const depth = depthOf.get(id)!;
+    const comb = computeCombined(id);
+    // Drop a zero-combined row: an ancestor pulled in only to be skipped by the same-bucket
+    // guard (a corrupt cross-bucket link) would otherwise render as a phantom $0 parent.
+    if (comb.posted + comb.pending <= 0) continue;
+    const kids = childIds.get(id) ?? [];
+    const own = direct.get(id) ?? { posted: 0, pending: 0 };
+    rowById.set(id, mk(id, c.name, c.color, c.icon, tint(c.color, 0.15),
+      comb.posted, comb.pending, depth, parentId, kids.length > 0, false));
+    pushEmit(parentId, id);
+    if (kids.length > 0 && own.posted + own.pending > 0) {
+      const dId = `${id}__direct`;
+      rowById.set(dId, mk(dId, `Directly in ${c.name}`, c.color, c.icon, tint(c.color, 0.15),
+        own.posted, own.pending, depth + 1, id, false, false));
+      pushEmit(id, dId);
+    }
+  }
+  if (uncategorized) {
+    rowById.set(UNCATEGORIZED_KEY, mk(UNCATEGORIZED_KEY, 'Uncategorized', '#c9b3f5', 'q',
+      'rgba(160,130,240,.16)', uncategorized.posted, uncategorized.pending, 0, null, false, true));
+    pushEmit(null, UNCATEGORIZED_KEY);
+  }
+
+  // Total de-dup: sum the DIRECT (per-leaf) spend + uncategorized — each transaction lands
+  // on exactly one id, so this counts every one once, whatever the tree shape (immune to a
+  // corrupt cycle that would leave no root). pct is each row's share of that grand total.
+  let total = 0;
+  for (const v of direct.values()) total += v.posted + v.pending;
+  if (uncategorized) total += uncategorized.posted + uncategorized.pending;
+  for (const row of rowById.values()) row.pct = total > 0 ? (row.spent / total) * 100 : 0;
+
+  // Emit depth-first, siblings sorted by spent desc; an emitted-guard + trailing sweep
+  // keep a corrupt cycle from dropping or duplicating a row.
+  const rows: CategoryBreakdownRow[] = [];
+  const emitted = new Set<string>();
+  const bySpentDesc = (a: string, b: string) => rowById.get(b)!.spent - rowById.get(a)!.spent;
+  const emit = (id: string) => {
+    if (emitted.has(id)) return;
+    emitted.add(id);
+    const row = rowById.get(id);
+    if (row) rows.push(row);
+    for (const child of (emitChildren.get(id) ?? []).slice().sort(bySpentDesc)) emit(child);
+  };
+  for (const id of (emitChildren.get(null) ?? []).slice().sort(bySpentDesc)) emit(id);
+  for (const id of rowById.keys()) emit(id);
   return { rows, total };
 }
 

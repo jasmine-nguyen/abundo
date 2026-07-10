@@ -18,6 +18,22 @@ export default function Insights() {
   const { breakdown, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
   const { rows, total } = categoryBreakdown({ breakdown, category });
 
+  // WHIT-226: parent categories are collapsed by default; tap to reveal their subs. A row
+  // shows only when its whole parent chain is expanded (rows come depth-first, so a parent
+  // is seen before its children). Replace the Set on toggle so the screen redraws.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = useCallback((id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
+  const shown = new Set<string>();
+  for (const r of rows) {
+    if (r.parentId === null || (shown.has(r.parentId) && expanded.has(r.parentId))) shown.add(r.id);
+  }
+  const visibleRows = rows.filter((r) => shown.has(r.id));
+  const topLevelCount = rows.filter((r) => r.depth === 0).length;  // hero "N categories"
+
   // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via the
   // store. Spend depends on the current cycle (rolls over on payday; categorising
   // elsewhere moves the numbers); AI is any insight already cached for this cycle.
@@ -73,7 +89,7 @@ export default function Insights() {
           ) : (
             <>
               <Text style={styles.heroTotal}>{fmt(total)}</Text>
-              <Text style={styles.heroSub}>spent across {rows.length} {rows.length === 1 ? 'category' : 'categories'}</Text>
+              <Text style={styles.heroSub}>spent across {topLevelCount} {topLevelCount === 1 ? 'category' : 'categories'}</Text>
             </>
           )}
         </View>
@@ -102,21 +118,31 @@ export default function Insights() {
 
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
             taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
-        {!showError && rows.map((r) => {
+        {!showError && visibleRows.map((r) => {
           // Bar width is the row's share of the cycle total; within it, split posted
           // vs pending so the pending portion reads distinctly.
-          const postedW = r.spent > 0 ? r.pct * (r.posted / r.spent) : 0;
-          const pendingW = Math.max(0, r.pct - postedW);
+          // Clamp the bar at 100% so it can never overflow its track (a corrupt parent
+          // cycle can inflate pct past 100 — unreachable via the app, but cheap to guard).
+          const barPct = Math.min(100, r.pct);
+          const postedW = r.spent > 0 ? barPct * (r.posted / r.spent) : 0;
+          const pendingW = Math.max(0, barPct - postedW);
+          const open = expanded.has(r.id);
           return (
-            <View key={r.id} style={styles.row}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
+            <View key={r.id} style={[styles.row, r.depth > 0 && { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
+              <Pressable
+                onPress={r.hasChildren ? () => toggle(r.id) : undefined}
+                accessibilityRole={r.hasChildren ? 'button' : undefined}
+                accessibilityState={r.hasChildren ? { expanded: open } : undefined}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}
+              >
                 <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.rowName} numberOfLines={1}>{r.name}</Text>
                   <Text style={styles.rowSub}>{r.spentLabel}</Text>
                 </View>
+                {r.hasChildren && <Icon name={open ? 'chevronDown' : 'chevron'} size={18} color={C.textDim} />}
                 <Text style={styles.rowAmount}>{fmt(r.spent)}</Text>
-              </View>
+              </Pressable>
               <View style={styles.track}>
                 <View style={{ width: `${postedW}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
                 {pendingW > 0 && (

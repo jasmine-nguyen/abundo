@@ -144,4 +144,112 @@ describe('categoryBreakdown', () => {
       UNCATEGORIZED_KEY, 'groceries', 'coffee',
     ]);
   });
+
+  it('leaf-only rows carry depth 0 / no parent / no children (flat regression)', () => {
+    const s = makeState({
+      categories: cats,
+      breakdown: { coffee: spend({ posted: 20, pending: 0 }), groceries: spend({ posted: 80, pending: 0 }) },
+    });
+    for (const r of categoryBreakdown(s).rows) {
+      expect(r).toMatchObject({ depth: 0, parentId: null, hasChildren: false });
+    }
+  });
+});
+
+// --- sub-category drill-down tree (WHIT-226) --------------------------------
+
+describe('categoryBreakdown — parent rollup + drill-down', () => {
+  const tree = [
+    cat({ id: 'food', name: 'Food', bucket: 'Living', parent: null }),
+    cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: 'food' }),
+    cat({ id: 'restaurants', name: 'Restaurants', bucket: 'Living', parent: 'food' }),
+  ];
+
+  it('rolls a parent up over its children and de-dups the total', () => {
+    const s = makeState({
+      categories: tree,
+      breakdown: {
+        groceries: spend({ posted: 80, pending: 0 }),   // 80
+        restaurants: spend({ posted: 40, pending: 20 }), // 60
+      },
+    });
+    const { rows, total } = categoryBreakdown(s);
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    // Food has no direct spend but rolls up its children.
+    expect(byId['food']).toMatchObject({ spent: 140, depth: 0, parentId: null, hasChildren: true });
+    expect(byId['groceries']).toMatchObject({ spent: 80, depth: 1, parentId: 'food', hasChildren: false });
+    expect(byId['restaurants']).toMatchObject({ spent: 60, depth: 1, parentId: 'food' });
+    // The total counts each transaction ONCE — the parent, not parent + children.
+    expect(total).toBe(140);
+    // Depth-first: parent, then children by spend desc.
+    expect(rows.map((r) => r.id)).toEqual(['food', 'groceries', 'restaurants']);
+    // pct is a share of the grand total.
+    expect(byId['groceries'].pct).toBeCloseTo((80 / 140) * 100, 5);
+  });
+
+  it('adds a "Directly in <parent>" row when a parent holds its own tagged spend', () => {
+    // A txn filed straight onto the parent (Car) must not vanish when Car is expanded:
+    // it shows as a synthetic child so the subtree reconciles to the parent bar.
+    const s = makeState({
+      categories: [
+        cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+        cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' }),
+      ],
+      breakdown: {
+        car: spend({ posted: 40, pending: 0 }),      // tagged directly to the parent
+        parking: spend({ posted: 60, pending: 0 }),
+      },
+    });
+    const { rows, total } = categoryBreakdown(s);
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(byId['car']).toMatchObject({ spent: 100, hasChildren: true, depth: 0 });
+    expect(byId['car__direct']).toMatchObject({ name: 'Directly in Car', spent: 40, parentId: 'car', depth: 1, hasChildren: false });
+    // The two children (Parking 60 + Directly-in 40) reconcile to the parent's 100.
+    expect(byId['parking'].spent + byId['car__direct'].spent).toBe(byId['car'].spent);
+    expect(total).toBe(100);
+  });
+
+  it('rolls up a 3-level chain with correct depths, depth-first', () => {
+    const s = makeState({
+      categories: [
+        cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+        cat({ id: 'daily', name: 'Daily', bucket: 'Living', parent: 'car' }),
+        cat({ id: 'petrol', name: 'Petrol', bucket: 'Living', parent: 'daily' }),
+      ],
+      breakdown: { petrol: spend({ posted: 90, pending: 0 }) },
+    });
+    const { rows, total } = categoryBreakdown(s);
+    expect(rows.map((r) => [r.id, r.depth])).toEqual([['car', 0], ['daily', 1], ['petrol', 2]]);
+    expect(rows[0].spent).toBe(90);  // Car rolls up the grandchild
+    expect(total).toBe(90);
+  });
+
+  it('counts a cross-bucket child on its own and emits no phantom parent', () => {
+    // A corrupt cross-bucket link (Odd is Lifestyle under a Living Car) must not nest;
+    // Odd counts once at top level, and Car (no same-bucket spend) is NOT emitted.
+    const s = makeState({
+      categories: [
+        cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+        cat({ id: 'odd', name: 'Odd', bucket: 'Lifestyle', parent: 'car' }),
+      ],
+      breakdown: { odd: spend({ posted: 30, pending: 0 }) },
+    });
+    const { rows, total } = categoryBreakdown(s);
+    expect(rows.map((r) => r.id)).toEqual(['odd']);       // no phantom Car row
+    expect(rows[0]).toMatchObject({ depth: 0, parentId: null });
+    expect(total).toBe(30);
+  });
+
+  it('terminates on a corrupt parent cycle and still emits the spending row', () => {
+    const s = makeState({
+      categories: [
+        cat({ id: 'a', name: 'A', bucket: 'Living', parent: 'b' }),
+        cat({ id: 'b', name: 'B', bucket: 'Living', parent: 'a' }),
+      ],
+      breakdown: { a: spend({ posted: 25, pending: 0 }) },
+    });
+    const { rows, total } = categoryBreakdown(s);  // must not hang
+    expect(rows.some((r) => r.id === 'a')).toBe(true);
+    expect(total).toBeGreaterThan(0);
+  });
 });
