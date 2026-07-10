@@ -72,7 +72,7 @@ data "archive_file" "balance_poller_zip" {
 }
 
 resource "aws_lambda_function" "lambda" {
-  function_name    = "${var.project_name}-lambda"
+  function_name    = "${var.project_name}-transaction-ingest"
   role             = aws_iam_role.lambda_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
@@ -102,7 +102,7 @@ resource "aws_lambda_function" "lambda" {
 # or API integration, so nothing triggers it unintentionally. Longer timeout than
 # the webhook since a backlog is processed one row at a time.
 resource "aws_lambda_function" "reprocess" {
-  function_name    = "${var.project_name}-lambda-reprocess"
+  function_name    = "${var.project_name}-transaction-reprocess"
   role             = aws_iam_role.lambda_exec.arn
   handler          = "reprocess.lambda_handler"
   runtime          = "python3.12"
@@ -131,7 +131,7 @@ resource "aws_lambda_function" "reprocess" {
 # so NO IAM change. Invoked manually; dry-run unless the event says
 # {"dry_run": false}. No event source/schedule/API, so nothing triggers it.
 resource "aws_lambda_function" "dedupe" {
-  function_name    = "${var.project_name}-lambda-dedupe"
+  function_name    = "${var.project_name}-transaction-dedupe"
   role             = aws_iam_role.lambda_exec.arn
   handler          = "dedupe_cleanup.lambda_handler"
   runtime          = "python3.12"
@@ -160,7 +160,7 @@ resource "aws_lambda_function" "dedupe" {
 # already granted). UNLIKE those two it IS scheduled (see scheduler.tf), and the schedule
 # passes {"dry_run": false} so it runs live; a manual/empty invoke stays dry-run-safe.
 resource "aws_lambda_function" "age_out" {
-  function_name    = "${var.project_name}-lambda-age-out"
+  function_name    = "${var.project_name}-transaction-age-out"
   role             = aws_iam_role.lambda_exec.arn
   handler          = "age_out.lambda_handler"
   runtime          = "python3.12"
@@ -188,7 +188,7 @@ resource "aws_lambda_function" "age_out" {
 # volume, cutting cold-start + on-read compute (the /breakdown and /budgets windowed-transaction
 # rollups). No provisioned concurrency — overkill for one user; revisit only if 503s persist.
 resource "aws_lambda_function" "lambda_api" {
-  function_name    = "${var.project_name}-lambda-api"
+  function_name    = "${var.project_name}-app-api"
   role             = aws_iam_role.lambda_api_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
@@ -214,7 +214,7 @@ resource "aws_lambda_function" "lambda_api" {
 # BankSync incremental syncs. Only needs the shared layer for constants.py/ssm.py;
 # no DynamoDB access (BankSync pushes results to the webhook lambda instead).
 resource "aws_lambda_function" "sync_trigger" {
-  function_name    = "${var.project_name}-sync-trigger"
+  function_name    = "${var.project_name}-transaction-trigger"
   role             = aws_iam_role.sync_trigger_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
@@ -235,7 +235,7 @@ resource "aws_lambda_function" "sync_trigger" {
 # shared layer (constants.py/ssm.py/repository.py) AND DynamoDB PutItem +
 # TABLE_NAME (unlike the sync trigger, which writes nothing itself).
 resource "aws_lambda_function" "balance_poller" {
-  function_name    = "${var.project_name}-balance-poller"
+  function_name    = "${var.project_name}-homeloan-request"
   role             = aws_iam_role.balance_poller_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
