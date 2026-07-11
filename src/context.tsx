@@ -4,6 +4,7 @@ import { MONTHS } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
+import { reinsertBefore } from './reinsert';
 
 export type { LoanFacts, LoanFactsInput } from './api';
 // WHIT-190a: the categorise write double-writes the query cache (for the migrated
@@ -798,26 +799,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [showToast, patchRules]);
 
-  // Optimistically remove the rule, then delete it in BankSync; on failure put it
-  // back where it was and tell the user. A temp-id rule (mid-create) deletes fine
-  // too — the server DELETE is idempotent (unknown id -> 200), and a refresh
-  // reconciles any brief create/delete race.
+  // Optimistically remove the rule, then delete it in BankSync; on failure put it back in
+  // front of the row that followed it (WHIT-254 — a saved index would misplace it when two
+  // deletes fail at once) and tell the user. A temp-id rule (mid-create) deletes fine too —
+  // the server DELETE is idempotent (unknown id -> 200), and a refresh reconciles any brief
+  // create/delete race.
   const deleteRule = useCallback(async (id: string) => {
-    // WHIT-192: source the rules snapshot (for the index/removed rollback) from the
-    // ['rules'] query cache the screen reads, not a store useState.
+    // WHIT-192: source the rules snapshot (for the rollback) from the ['rules'] query cache
+    // the screen reads, not a store useState.
     const current = queryClient.getQueryData<Rule[]>(['rules']) ?? [];
     const index = current.findIndex((r) => r.id === id);
     if (index === -1) return;
     const removed = current[index];
+    const successorIds = current.slice(index + 1).map((r) => r.id);
     patchRules((prev) => prev.filter((r) => r.id !== id));
     try {
       await deleteEnrichment(id);
     } catch {
-      patchRules((prev) => {
-        const next = [...prev];
-        next.splice(Math.min(index, next.length), 0, removed);
-        return next;
-      });
+      patchRules((prev) => reinsertBefore(prev, removed, successorIds));
       showToast('Could not delete rule. Please try again.');
     }
   }, [showToast, patchRules]);
@@ -906,23 +905,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [showToast]);
 
   // Delete a goal. Optimistically remove it from the ['goals'] cache, then DELETE server-side;
-  // on failure put it back where it was and warn. The server DELETE is idempotent (unknown id
-  // → 200), so a rollback that races a refresh can't wedge — mirrors deleteRule exactly.
+  // on failure put it back in front of the row that followed it (WHIT-254 — a saved index
+  // would misplace it when two deletes fail at once) and warn. The server DELETE is idempotent
+  // (unknown id → 200), so a rollback that races a refresh can't wedge. Unlike deleteRule
+  // (whose patchRules no-ops on an evicted cache), this resurrects the row via `prev ?? []`.
   const deleteGoal = useCallback(async (id: string): Promise<boolean> => {
     const current = queryClient.getQueryData<GoalRecord[]>(['goals']) ?? [];
     const index = current.findIndex((g) => g.id === id);
     if (index === -1) return false;
     const removed = current[index];
+    const successorIds = current.slice(index + 1).map((g) => g.id);
     queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => (prev ?? []).filter((g) => g.id !== id));
     try {
       await apiDeleteGoal(id);
       return true;
     } catch {
-      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
-        const next = [...(prev ?? [])];
-        next.splice(Math.min(index, next.length), 0, removed);
-        return next;
-      });
+      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => reinsertBefore(prev ?? [], removed, successorIds));
       showToast('Could not delete goal. Please try again.');
       return false;
     }
