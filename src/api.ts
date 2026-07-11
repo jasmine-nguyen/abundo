@@ -318,6 +318,101 @@ export async function fetchAccountBalances(): Promise<AccountBalance[]> {
 }
 
 /**
+ * A saved goal record as served by the /goals API (WHIT-231/233). A "grow" goal is a
+ * savings target (balance should RISE to target_amount); a "paydown" goal is a debt
+ * target (balance should FALL to target_amount, usually 0). EXACTLY ONE balance source:
+ * a synced `account_id` (the account's live balance IS the current balance) OR a manual
+ * pair (`manual_balance` + `manual_as_of`, the user's own snapshot). `baseline` is an
+ * optional "count from £X" start. Every field is client-authored except `id`, which the
+ * client mints and the server just echoes back.
+ */
+export interface GoalRecord {
+  id: string;
+  name: string;
+  icon: string;
+  direction: "grow" | "paydown";
+  target_amount: number;
+  target_date: string;            // ISO "YYYY-MM-DD"
+  baseline?: number | null;       // optional "count from £X" start
+  account_id?: string | null;     // present => synced source (the live account balance)
+  manual_balance?: number | null; // present => manual source (this value IS the balance)
+  manual_as_of?: string | null;   // ISO date the manual balance was true
+}
+
+/** The always-present half of a goal write body — everything except the balance source. */
+interface GoalWriteCommon {
+  name: string;
+  icon: string;
+  direction: "grow" | "paydown";
+  target_amount: number;
+  target_date: string;
+  baseline?: number | null;
+}
+
+/**
+ * The body a goal write (PUT /goals/{id}) carries: every GoalRecord field EXCEPT the id
+ * (which lives in the path only). The server enforces EXACTLY ONE balance source, so this
+ * is a union — the synced arm carries `account_id` alone, the manual arm carries
+ * `manual_balance` + `manual_as_of` together. The `?: never` on the other arm's fields
+ * makes "both sources" a compile error here, mirroring the server's 400 (WHIT-231).
+ */
+export type GoalWriteBody =
+  | (GoalWriteCommon & { account_id: string; manual_balance?: never; manual_as_of?: never })
+  | (GoalWriteCommon & { manual_balance: number; manual_as_of: string; account_id?: never });
+
+/**
+ * Fetch every saved goal. Before the user creates one this is an empty array — a normal
+ * success, not an error — so the caller shows the "no goals yet" empty state.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchGoals(): Promise<GoalRecord[]> {
+  const response = await apiFetch(`${API_BASE}/goals`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Save (create or replace) a goal — an idempotent upsert at PUT /goals/{id}. A create and
+ * an edit are the same call; the client mints the id, so the two are indistinguishable to
+ * the server. The body carries exactly one balance source (see GoalWriteBody).
+ *
+ * @param id - The client-minted goal id (path only; never in the body).
+ * @param body - The goal's fields for this id.
+ * @returns The saved goal, with its id echoed by the server.
+ * @throws If the response status is not OK (e.g. 400 on an invalid field or two sources).
+ */
+export async function saveGoal(id: string, body: GoalWriteBody): Promise<GoalRecord> {
+  const response = await apiFetch(`${API_BASE}/goals/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
+ * Delete a goal. Idempotent server-side — deleting an unknown/already-gone id still
+ * returns 200 — so a rollback that races a refresh can't wedge.
+ *
+ * @param id - The goal id to delete.
+ * @returns The id of the deleted goal.
+ * @throws If the response status is not OK.
+ */
+export async function deleteGoal(id: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/goals/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * The most recent home-loan repayment (WHIT-115), derived server-side from the
  * up-homeloan transaction history. `amount`/`date` are null when there is no
  * repayment on record; `principal`/`interest` are null when the interest leg

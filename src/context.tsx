@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
 import { MONTHS } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
+import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 
 export type { LoanFacts, LoanFactsInput } from './api';
@@ -334,6 +335,8 @@ export interface AppContext {
   deleteRule: (id: string) => Promise<void>;
   saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
   updateRule: (id: string, pattern: string, categoryId: string) => Promise<void>;
+  saveGoal: (editId: string | null, body: GoalWriteBody) => Promise<boolean>;
+  deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
   fireRepayment: () => void;
 
@@ -863,6 +866,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [showToast, patchRules]);
 
+  // Save a goal — one method for create AND edit (an upsert, mirroring the server). A
+  // create mints a client id (Crypto.randomUUID) and APPENDS; an edit (editId set) REPLACES
+  // that id in place. Optimistic-then-rollback like the rule writers: the ['goals'] cache the
+  // hub reads updates instantly, then the server row swaps in on success — or the change is
+  // undone and a toast shown on failure. `body` carries exactly one balance source (the
+  // GoalWriteBody union), so a synced/manual mix can't be built.
+  const saveGoal = useCallback(async (editId: string | null, body: GoalWriteBody): Promise<boolean> => {
+    const id = editId ?? Crypto.randomUUID();
+    // Snapshot the pre-edit record (for the rollback) from the ['goals'] query cache the hub
+    // reads, not a store useState — same source-of-truth choice as the rule writers (WHIT-192).
+    const before = queryClient.getQueryData<GoalRecord[]>(['goals'])?.find((g) => g.id === id) ?? null;
+    const optimistic: GoalRecord = { id, ...body };
+    // Upsert into the cache: replace the id in place if present, else append.
+    queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
+      const list = prev ?? [];
+      const at = list.findIndex((g) => g.id === id);
+      if (at >= 0) { const next = [...list]; next[at] = optimistic; return next; }
+      return [...list, optimistic];
+    });
+    try {
+      const saved = await apiSaveGoal(id, body);
+      // Swap the optimistic row for the server's authoritative one (same id).
+      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) =>
+        (prev ?? []).map((g) => (g.id === id ? saved : g)));
+      return true;
+    } catch {
+      // Roll back: restore the prior record for an edit, or drop the appended one for a create.
+      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
+        const list = prev ?? [];
+        return before ? list.map((g) => (g.id === id ? before : g)) : list.filter((g) => g.id !== id);
+      });
+      showToast('Could not save goal. Please try again.');
+      return false;
+    }
+  }, [showToast]);
+
+  // Delete a goal. Optimistically remove it from the ['goals'] cache, then DELETE server-side;
+  // on failure put it back where it was and warn. The server DELETE is idempotent (unknown id
+  // → 200), so a rollback that races a refresh can't wedge — mirrors deleteRule exactly.
+  const deleteGoal = useCallback(async (id: string): Promise<boolean> => {
+    const current = queryClient.getQueryData<GoalRecord[]>(['goals']) ?? [];
+    const index = current.findIndex((g) => g.id === id);
+    if (index === -1) return false;
+    const removed = current[index];
+    queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => (prev ?? []).filter((g) => g.id !== id));
+    try {
+      await apiDeleteGoal(id);
+      return true;
+    } catch {
+      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
+        const next = [...(prev ?? [])];
+        next.splice(Math.min(index, next.length), 0, removed);
+        return next;
+      });
+      showToast('Could not delete goal. Please try again.');
+      return false;
+    }
+  }, [showToast]);
+
   const fireRepayment = useCallback(() => {
     const principal = 1208;
     const body = REPAY_LINES[(repayIdx.current = (repayIdx.current + 1) % REPAY_LINES.length)];
@@ -878,9 +940,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment,
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
