@@ -79,6 +79,14 @@ data "archive_file" "push_receipts_zip" {
   output_path = "${path.module}/artifacts/push_receipts.zip"
 }
 
+# Goal-nudge sweep lambda source (WHIT-236). Contains only handler.py; goal_nudge.py,
+# goal_pace.py, push.py, repository.py, repository_notify.py, spend.py come from the shared layer.
+data "archive_file" "goal_nudge_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../lambda_goal_nudge"
+  output_path = "${path.module}/artifacts/goal_nudge.zip"
+}
+
 resource "aws_lambda_function" "transaction_ingest" {
   function_name    = "${var.project_name}-transaction-ingest"
   role             = aws_iam_role.transaction_exec.arn
@@ -293,6 +301,32 @@ resource "aws_lambda_function" "push_receipts" {
   }
 }
 
+# Goal-nudge sweep lambda (WHIT-236). Scheduled daily; sends the behind-pace push. Its own
+# tightly-scoped role (goal_nudge_exec) — reads goals/paycycle/device/balances, writes notify
+# markers + push-receipt rows — mirroring push_receipts / homeloan_request.
+resource "aws_lambda_function" "goal_nudge" {
+  function_name    = "${var.project_name}-goal-nudge"
+  role             = aws_iam_role.goal_nudge_exec.arn
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 60
+  memory_size      = 128
+  filename         = data.archive_file.goal_nudge_zip.output_path
+  source_code_hash = data.archive_file.goal_nudge_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.goal_nudge.name
+  }
+}
+
 # WHIT-224: label renames only (deployed function_name values are unchanged from
 # WHIT-219), so these are pure state moves — no destroy/recreate. Same pattern as
 # the WHIT-153 route moves in apigateway.tf; garbage-collect once applied.
@@ -362,5 +396,10 @@ resource "aws_cloudwatch_log_group" "homeloan_request" {
 
 resource "aws_cloudwatch_log_group" "push_receipts" {
   name              = "/aws/lambda/${var.project_name}-push-receipts"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "goal_nudge" {
+  name              = "/aws/lambda/${var.project_name}-goal-nudge"
   retention_in_days = 30
 }
