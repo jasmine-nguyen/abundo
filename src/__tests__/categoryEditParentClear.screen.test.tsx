@@ -7,10 +7,10 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { Category } from '../context';
 
-const mockSaveCategory = jest.fn(async (_id: string | null, _form: { name: string; bucket: string; icon: string; parent?: string | null }) => true);
+const mockSaveCategory = jest.fn(async (_id: string | null, _form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => true);
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn(), showToast: jest.fn() }) };
 });
 
 let mockCategories: Category[] = [];
@@ -40,7 +40,7 @@ it('drops a stale cross-bucket parent to top-level before saving', () => {
   act(() => { fireEvent.press(screen.getByText('Save category')); });
 
   // Saved with parent cleared to null — the invisible cross-bucket link is not re-persisted.
-  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: null }));
+  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: null }), { silent: true });
 });
 
 it('keeps a valid same-bucket parent through a save', () => {
@@ -52,5 +52,5 @@ it('keeps a valid same-bucket parent through a save', () => {
 
   act(() => { fireEvent.press(screen.getByText('Save category')); });
 
-  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: 'treats' }));
+  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: 'treats' }), { silent: true });
 });

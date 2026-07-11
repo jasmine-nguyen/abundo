@@ -328,8 +328,8 @@ export interface AppContext {
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
-  saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }) => Promise<boolean>;
-  createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }) => Promise<Category | null>;
+  saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
+  createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
   saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
@@ -710,7 +710,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // the ['categories'] cache the pickers/screens read (so it's pickable instantly), then
   // invalidates to reconcile. Returns null (and toasts) on a bad/empty name or an API error.
   const createCategoryInline = useCallback(
-    async (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<Category | null> => {
+    // WHIT-240: `opts.silent` lets an orchestrated bulk save (category/edit) suppress this
+    // writer's own toast so the screen can show ONE summary toast instead of one per write.
+    async (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }): Promise<Category | null> => {
       const name = form.name.trim();
       if (!name) return null;
       // Send `parent` only when supplied (server leave-as-is otherwise); explicit null = top-level.
@@ -721,10 +723,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const created = toCategory(await createCategory(input));
         queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, created] : prev));
         queryClient.invalidateQueries({ queryKey: ['categories'] });
-        showToast('Category created.');
+        if (!opts?.silent) showToast('Category created.');
         return created;
       } catch {
-        showToast('Could not save category. Please try again.');
+        if (!opts?.silent) showToast('Could not save category. Please try again.');
         return null;
       }
     },
@@ -732,13 +734,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const saveCategory = useCallback(
-    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<boolean> => {
+    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }): Promise<boolean> => {
       const name = form.name.trim();
       if (!name) return false;
       // Create routes through createCategoryInline (the single source of the cache-mirror);
       // update stays here. `parent` is forwarded as-is so an omitted parent leaves the stored
       // link untouched (the server's leave-as-is rule); an explicit null detaches to top-level.
-      if (!editId) return (await createCategoryInline(form)) !== null;
+      // WHIT-240: forward `opts` so a silent bulk save stays silent through the create path too.
+      if (!editId) return (await createCategoryInline(form, opts)) !== null;
       const input = 'parent' in form
         ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
         : { name, bucket: form.bucket, icon: form.icon };
@@ -748,10 +751,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
         // pickers; the invalidate then reconciles with the server.
         queryClient.invalidateQueries({ queryKey: ['categories'] });
-        showToast('Category updated.');
+        if (!opts?.silent) showToast('Category updated.');
         return true;
       } catch {
-        showToast('Could not save category. Please try again.');
+        if (!opts?.silent) showToast('Could not save category. Please try again.');
         return false;
       }
     },

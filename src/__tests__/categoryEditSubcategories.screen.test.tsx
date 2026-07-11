@@ -6,8 +6,8 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../context';
 
-const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown) => true);
-const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; icon: string; parent?: string | null }) => ({
+const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown, _opts?: { silent?: boolean }) => true);
+const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => ({
   id: form.name.toLowerCase(), name: form.name, bucket: form.bucket, icon: form.icon, color: '#fff', recent: 0, parent: form.parent ?? null,
 }) as unknown as Category | null);
 const mockShowToast = jest.fn();
@@ -52,13 +52,29 @@ it('creates the parent first, then attaches the picked child and creates the new
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });
 
   // Parent persisted first (top-level), yielding id 'transport'.
-  expect(mockCreateInline).toHaveBeenCalledWith(expect.objectContaining({ name: 'Transport', bucket: 'Living', parent: null }));
+  expect(mockCreateInline).toHaveBeenCalledWith(expect.objectContaining({ name: 'Transport', bucket: 'Living', parent: null }), { silent: true });
   await waitFor(() => {
     // Existing child re-parented under the new parent (resends its own name/bucket/icon).
-    expect(mockSaveCategory).toHaveBeenCalledWith('parking', expect.objectContaining({ parent: 'transport', bucket: 'Living' }));
+    expect(mockSaveCategory).toHaveBeenCalledWith('parking', expect.objectContaining({ parent: 'transport', bucket: 'Living' }), { silent: true });
     // New inline child created under the new parent.
-    expect(mockCreateInline).toHaveBeenCalledWith(expect.objectContaining({ name: 'Tolls', bucket: 'Living', parent: 'transport' }));
+    expect(mockCreateInline).toHaveBeenCalledWith(expect.objectContaining({ name: 'Tolls', bucket: 'Living', parent: 'transport' }), { silent: true });
   });
+  // WHIT-240: the parent + both children ran silent, so this screen fires exactly ONE summary
+  // toast for the whole save — not the 3 per-op toasts that used to flicker. Fail-on-revert:
+  // drop the success summary in edit.tsx and this is called 0 times.
+  await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Category created, with 2 sub-categories.'));
+  expect(mockShowToast).toHaveBeenCalledTimes(1);
+});
+
+it('shows one plain toast when a new category is saved with no sub-categories', async () => {
+  // WHIT-240: the no-children path still owns exactly one toast, matching the writer's old copy.
+  mockCategories = [];
+  render(<CategoryEdit />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'Groceries');
+  await act(async () => { fireEvent.press(screen.getByText('Save category')); });
+  await waitFor(() => expect(mockCreateInline).toHaveBeenCalledWith(expect.objectContaining({ name: 'Groceries' }), { silent: true }));
+  expect(mockShowToast).toHaveBeenCalledTimes(1);
+  expect(mockShowToast).toHaveBeenCalledWith('Category created.');
 });
 
 it('a cross-bucket category is not offered as an attachable child', () => {
