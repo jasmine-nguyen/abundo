@@ -92,6 +92,17 @@ def _grow(**over):
     return goal
 
 
+def _manual(**over):
+    """A MANUAL goal (no linked account) — its balance is whatever the user last typed, as of
+    manual_as_of. Far target_date + a 71-day-old balance by default, so it's stale but NOT
+    behind, keeping the two triggers separable in tests."""
+    goal = {"name": "Car savings", "direction": "grow", "target_amount": Decimal(10000),
+            "target_date": "2026-12-01", "account_id": None,
+            "manual_balance": Decimal(4000), "manual_as_of": "2026-05-01"}
+    goal.update(over)
+    return goal
+
+
 def _run(shared, monkeypatch, goals, *, balances=None, tokens=("tok-1",), notify=None,
          send_ok=1, today=TODAY, cycle=CYCLE):
     """Wire the fakes into notify_behind_goals and return
