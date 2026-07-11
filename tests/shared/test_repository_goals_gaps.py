@@ -4,7 +4,9 @@ The implementer's race test bumps the version but keeps a STATIC map, so it neve
 proves the retry re-reads and MERGES a sibling goal a concurrent writer committed
 during the race window (the whole point of the nested SET). These fill that gap plus
 the lost seed-race re-read and the literal-attribute-name (dotted id) behaviour.
-Models the single pk=sk="GOALS" config item like the implementer's `_GoalsTable`.
+Keeps its own bespoke racing fakes below, modelling the same pk=sk="GOALS" config
+item as the shared `ConfigItemTable` in conftest (a different race mechanism, so not
+folded into it).
 """
 
 import copy
