@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
-import { useAppContext, BUCKETS, BUCKET_COLOR, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, MAX_CATEGORY_DEPTH } from '../../src/context';
+import { useAppContext, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, MAX_CATEGORY_DEPTH } from '../../src/context';
 import { useCategories } from '../../src/queries';
-import { ICON_KEYS } from '../../src/icons';
 import { Header } from '../../src/components/Header';
+import { CategoryFields } from '../../src/components/CategoryFields';
 import { QuickCreateCategory } from '../../src/components/QuickCreateCategory';
 
 export default function CategoryEdit() {
@@ -31,10 +31,9 @@ export default function CategoryEdit() {
     if (existing) { setName(existing.name); setBucket(existing.bucket); setIcon(existing.icon); setParent(existing.parent ?? null); }
   }, [existing]);
 
-  // A sub must share its parent's bucket (server rule), never be its own ancestor, and
-  // never nest under itself — the shared helper enforces all three. Recomputed from the
-  // in-form bucket so switching bucket re-filters the options live.
-  const parentOptions = eligibleParents(categories, categoryId ?? null, bucket);
+  // A sub must share its parent's bucket (server rule), never be its own ancestor, and never
+  // nest under itself — the shared helper enforces all three. The picker itself lives in
+  // CategoryFields, which recomputes the same eligible set from the in-form bucket (WHIT-239).
   // Keep the held parent valid: if it ever becomes ineligible (the bucket changed, or a
   // legacy/cross-bucket link loaded), drop it to top-level. Without this a stale parent
   // could be invisible in the picker yet silently re-saved. Runs after the re-seed above.
@@ -129,52 +128,22 @@ export default function CategoryEdit() {
           <View style={[styles.previewChip, { backgroundColor: tint(color, 0.15) }]}><Icon name={icon} size={34} color={color} /></View>
         </View>
 
-        <Text style={styles.fieldLabel}>CATEGORY NAME</Text>
-        <TextInput value={name} onChangeText={setName} placeholder="e.g. Coffee runs" placeholderTextColor={C.placeholder} style={styles.input} />
-
-        <Text style={styles.fieldLabel}>BUCKET</Text>
-        <View style={styles.bucketRow}>
-          {BUCKETS.map((bk) => {
-            const sel = bucket === bk;
-            const col = BUCKET_COLOR[bk];
-            return (
-              <Pressable key={bk} onPress={() => setBucket(bk)} style={[styles.bucketBtn, { borderColor: sel ? col : 'rgba(255,255,255,.07)', backgroundColor: sel ? tint(col, 0.14) : C.card }]}>
-                <Text style={[styles.bucketText, { color: sel ? col : C.textMid }]}>{bk}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {parentOptions.length > 0 && (
-          <>
-            <Text style={styles.fieldLabel}>PARENT (OPTIONAL)</Text>
-            <View style={styles.bucketRow}>
-              <Pressable onPress={() => setParent(null)} style={[styles.bucketBtn, { borderColor: parent === null ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: parent === null ? 'rgba(124,140,255,.14)' : C.card }]}>
-                <Text style={[styles.bucketText, { color: parent === null ? C.accentSofter : C.textMid }]}>None (top-level)</Text>
-              </Pressable>
-              {parentOptions.map((p) => {
-                const sel = parent === p.id;
-                return (
-                  <Pressable key={p.id} onPress={() => setParent(p.id)} style={[styles.bucketBtn, { borderColor: sel ? p.color : 'rgba(255,255,255,.07)', backgroundColor: sel ? tint(p.color, 0.14) : C.card }]}>
-                    <Text style={[styles.bucketText, { color: sel ? p.color : C.textMid }]} numberOfLines={1}>{p.name}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </>
-        )}
-
-        <Text style={styles.fieldLabel}>ICON</Text>
-        <View style={styles.iconGrid}>
-          {ICON_KEYS.map((k) => {
-            const sel = icon === k;
-            return (
-              <Pressable key={k} onPress={() => setIcon(k)} style={[styles.iconBtn, { borderColor: sel ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: sel ? 'rgba(124,140,255,.14)' : C.card }]}>
-                <Icon name={k} size={22} color={sel ? C.accentSofter : C.textMid} />
-              </Pressable>
-            );
-          })}
-        </View>
+        <CategoryFields
+          variant="screen"
+          name={name}
+          onNameChange={setName}
+          namePlaceholder="e.g. Coffee runs"
+          bucket={bucket}
+          onBucketChange={setBucket}
+          icon={icon}
+          onIconChange={setIcon}
+          parent={parent}
+          onParentChange={setParent}
+          parentPicker
+          categories={categories}
+          editId={categoryId ?? null}
+          noneLabel="None (top-level)"
+        />
 
         {/* WHIT-237: nest existing categories under this one, and/or create new subs inline. */}
         {(attachCandidates.length > 0 || canAddNewChild || currentChildren.length > 0 || newChildren.length > 0) && (
@@ -250,15 +219,12 @@ const styles = StyleSheet.create({
   preview: { alignItems: 'center', paddingVertical: 14 },
   previewChip: { width: 72, height: 72, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   fieldLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 2 },
-  input: { backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', borderRadius: 14, paddingVertical: 15, paddingHorizontal: 16, color: '#fff', fontFamily: FONT.body, fontSize: 15 },
   bucketRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   bucketBtn: { flexGrow: 1, minWidth: '47%', alignItems: 'center', paddingVertical: 13, borderRadius: 13, borderWidth: 1 },
   bucketText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600' },
   subHint: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginBottom: 8, marginHorizontal: 2 },
   addChildBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 13, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', alignItems: 'center' },
   addChildText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSofter },
-  iconGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  iconBtn: { width: 52, height: 52, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
   deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
   saveBtn: { marginTop: 12, paddingVertical: 16, borderRadius: 15, alignItems: 'center' },
