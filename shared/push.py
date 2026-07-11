@@ -23,10 +23,15 @@ from ssm import get_param
 
 # Expo Push send endpoint. send_push POSTs a batch of messages here.
 EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+# Expo Push receipts endpoint. get_receipts POSTs {ids:[...]} here to learn each
+# accepted push's true delivery outcome (WHIT-139 sweep).
+EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts"
 # HTTP timeout, in seconds, for a single Expo Push request.
 EXPO_PUSH_TIMEOUT_SECONDS = 15
 # Expo accepts at most 100 messages per push request.
 EXPO_PUSH_BATCH_MAX = 100
+# Expo accepts at most 1000 receipt ids per getReceipts request.
+EXPO_RECEIPTS_MAX = 1000
 # SSM SecureString path holding the Expo access token (a PAT). Required because
 # the Expo project has "Enhanced Security for Push Notifications" enabled, so every
 # send must carry Authorization: Bearer <token>. Seeded as a placeholder by
@@ -62,6 +67,54 @@ def _send_batch(messages: list, token) -> list:
         raw = resp.read()
     payload = json.loads(raw) if raw else {}
     return payload.get("data") or []
+
+
+def _get_receipts_batch(ids: list, token) -> dict:
+    """POST one batch of ids to Expo's getReceipts and return its ``{id -> receipt}`` map.
+
+    Unlike send (whose ``data`` is a LIST of tickets in send order), getReceipts'
+    ``data`` is a DICT keyed by receipt id — and only ids Expo has RESOLVED appear, so an
+    in-flight id is simply absent. A top-level ``errors`` array signals a request-level
+    rejection (rate-limit, malformed) with ``data`` absent; we surface it so it isn't
+    silently indistinguishable from an empty result.
+    """
+    data = json.dumps({"ids": ids}).encode()
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(EXPO_RECEIPTS_URL, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=EXPO_PUSH_TIMEOUT_SECONDS) as resp:
+        raw = resp.read()
+    payload = json.loads(raw) if raw else {}
+    errors = payload.get("errors")
+    if errors:
+        logger.warning("Expo getReceipts returned request-level errors: %s", errors)
+    return payload.get("data") or {}
+
+
+def get_receipts(ids, *, access_token=None) -> dict:
+    """Poll Expo for the delivery outcome of each receipt id. Best-effort: never raises.
+
+    Returns a merged ``{receipt_id -> receipt}`` dict across ``EXPO_RECEIPTS_MAX``-id
+    chunks. An id Expo hasn't resolved yet is simply absent from the result (the sweep
+    leaves that row for a later poll). A per-chunk transport/decode error is logged and
+    skipped, so one bad chunk can't lose the ids in the others. ``access_token`` overrides
+    the SSM read (pass "" to poll unauthenticated); it mirrors ``send_push``'s auth.
+    """
+    ids = [i for i in (ids or []) if i]
+    if not ids:
+        return {}
+
+    token = access_token if access_token is not None else _safe_access_token()
+
+    receipts: dict = {}
+    for chunk in _chunk(ids, EXPO_RECEIPTS_MAX):
+        try:
+            receipts.update(_get_receipts_batch(chunk, token))
+        except Exception:  # transport / decode / anything — best-effort, keep going
+            logger.exception("Expo getReceipts batch failed for %d id(s)", len(chunk))
+            continue
+    return receipts
 
 
 def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=None,

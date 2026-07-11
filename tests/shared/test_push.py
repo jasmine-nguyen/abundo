@@ -334,3 +334,100 @@ def test_duplicate_and_empty_tokens_are_dropped(shared, monkeypatch):
                          access_token="k", device_repo=_RecordingRepo())
     assert [m["to"] for m in captured["body"]] == ["ExpoPushToken[a]"]
     assert out["sent"] == 1
+
+
+# --- get_receipts: the sweep's Expo poll (WHIT-139) --------------------------
+
+
+def test_get_receipts_posts_ids_and_returns_the_data_dict(shared, monkeypatch):
+    # getReceipts POSTs {"ids":[...]} and its `data` is a DICT keyed by receipt id
+    # (unlike send, whose data is a list) — get_receipts returns that dict as-is.
+    push = shared.push
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["method"] = req.method
+        captured["auth"] = req.get_header("Authorization")
+        captured["timeout"] = timeout
+        captured["body"] = json.loads(req.data)
+        return _FakeResponse({"data": {"rcpt-a": {"status": "ok"},
+                                       "rcpt-b": {"status": "error",
+                                                  "details": {"error": "DeviceNotRegistered"}}}})
+
+    monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
+    out = push.get_receipts(["rcpt-a", "rcpt-b"], access_token="secret")
+    assert captured["url"] == push.EXPO_RECEIPTS_URL
+    assert captured["method"] == "POST"
+    assert captured["auth"] == "Bearer secret"
+    assert captured["timeout"] == push.EXPO_PUSH_TIMEOUT_SECONDS
+    assert captured["body"] == {"ids": ["rcpt-a", "rcpt-b"]}
+    assert out == {"rcpt-a": {"status": "ok"},
+                   "rcpt-b": {"status": "error", "details": {"error": "DeviceNotRegistered"}}}
+
+
+def test_get_receipts_empty_ids_makes_no_request(shared, monkeypatch):
+    push = shared.push
+    calls = []
+    monkeypatch.setattr(push.urllib.request, "urlopen", lambda *a, **k: calls.append(1))
+    assert push.get_receipts([], access_token="k") == {}
+    assert push.get_receipts(None, access_token="k") == {}
+    assert calls == []
+
+
+def test_get_receipts_chunks_over_the_max_and_merges(shared, monkeypatch):
+    # >EXPO_RECEIPTS_MAX ids → multiple POSTs, whose data dicts are merged into one.
+    push = shared.push
+    monkeypatch.setattr(push, "EXPO_RECEIPTS_MAX", 2)
+    seen = []
+
+    def fake_urlopen(req, timeout=None):
+        ids = json.loads(req.data)["ids"]
+        seen.append(list(ids))
+        return _FakeResponse({"data": {i: {"status": "ok"} for i in ids}})
+
+    monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
+    out = push.get_receipts(["a", "b", "c"], access_token="k")
+    assert seen == [["a", "b"], ["c"]]                 # chunked at 2
+    assert out == {"a": {"status": "ok"}, "b": {"status": "ok"}, "c": {"status": "ok"}}
+
+
+def test_get_receipts_one_bad_chunk_does_not_lose_the_others(shared, monkeypatch):
+    # A per-chunk transport error is swallowed; the surviving chunks' ids still return.
+    push = shared.push
+    monkeypatch.setattr(push, "EXPO_RECEIPTS_MAX", 1)
+
+    def fake_urlopen(req, timeout=None):
+        ids = json.loads(req.data)["ids"]
+        if ids == ["b"]:
+            raise urllib.error.URLError("down")
+        return _FakeResponse({"data": {ids[0]: {"status": "ok"}}})
+
+    monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
+    out = push.get_receipts(["a", "b", "c"], access_token="k")
+    assert out == {"a": {"status": "ok"}, "c": {"status": "ok"}}   # b's chunk dropped, rest kept
+
+
+def test_get_receipts_absent_data_and_top_level_errors_yield_empty(shared, monkeypatch):
+    # A request-level rejection returns {"errors":[...]} with no `data`; get_receipts
+    # surfaces {} for that chunk rather than raising on a missing key.
+    push = shared.push
+    monkeypatch.setattr(
+        push.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse({"errors": [{"code": "RATE_LIMIT"}]}))
+    assert push.get_receipts(["a"], access_token="k") == {}
+
+
+def test_get_receipts_reads_token_from_ssm_when_not_passed(shared, monkeypatch):
+    push = shared.push
+    monkeypatch.setattr(push, "_access_token", None, raising=False)
+    monkeypatch.setattr(push, "get_param", lambda path: "ssm-token")
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["auth"] = req.get_header("Authorization")
+        return _FakeResponse({"data": {"a": {"status": "ok"}}})
+
+    monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
+    push.get_receipts(["a"])
+    assert captured["auth"] == "Bearer ssm-token"

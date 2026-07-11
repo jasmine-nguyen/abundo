@@ -100,6 +100,52 @@ resource "aws_scheduler_schedule" "homeloan_poll" {
   }
 }
 
+# Push-receipts sweep schedule (WHIT-139). A dedicated schedule that invokes the
+# push-receipts lambda every 30 min to resolve accepted pushes against Expo's receipts
+# endpoint. Its own role + per-lambda invoke policy (EventBridge Scheduler authorizes
+# via this role, so no aws_lambda_permission is needed).
+resource "aws_iam_role" "push_receipts_scheduler" {
+  name = "${var.project_name}-push-receipts-scheduler"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "push_receipts_scheduler_invoke" {
+  name = "${var.project_name}-push-receipts-scheduler-invoke"
+  role = aws_iam_role.push_receipts_scheduler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["lambda:InvokeFunction"]
+      Resource = [aws_lambda_function.push_receipts.arn]
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "push_receipts_sweep" {
+  name = "${var.project_name}-push-receipts-sweep"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  schedule_expression          = var.push_receipts_schedule_expression
+  schedule_expression_timezone = "Australia/Melbourne"
+
+  target {
+    arn      = aws_lambda_function.push_receipts.arn
+    role_arn = aws_iam_role.push_receipts_scheduler.arn
+  }
+}
+
 # Stale-pending age-out schedule (WHIT-79). A dedicated daily schedule that invokes the
 # age-out lambda LIVE — the target `input` passes {"dry_run": false}, since the lambda is
 # dry-run-by-default (safe for a manual/empty invoke) and only mutates on that explicit

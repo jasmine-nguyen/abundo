@@ -18,13 +18,17 @@ module doesn't trip the constants-shadow guard (lambda_api/constants.py) — mir
 how shared/push.py keeps its Expo constants local.
 """
 
+import logging
 import time
 from typing import Any
 
 import boto3
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+
+logger = logging.getLogger(__name__)
 
 # All pending receipt ids share one partition so the sweep Queries them in a single
 # call; a per-id partition would force a full-table Scan.
@@ -62,3 +66,41 @@ class PushReceiptRepository:
             )
         except ClientError as e:
             handle_database_error(e, "stash push receipt id")
+
+    def list_pending(self) -> list[tuple[str, str]]:
+        """Return every pending ``(receipt_id, token)`` under the shared partition.
+
+        One Query on ``pk=PUSHRECEIPT#PENDING`` reads them all (the whole point of the
+        single-partition layout) — the sweep never Scans. Pages via ``LastEvaluatedKey``
+        so a burst larger than one 1 MB page is still read whole; single-user volume
+        realistically fits one page, but the loop is cheap and matches the sibling repos.
+        """
+        pending: list[tuple[str, str]] = []
+        query_kwargs: dict[str, Any] = {"KeyConditionExpression": Key("pk").eq(_PENDING_PK)}
+        try:
+            while True:
+                response = self._get_table().query(**query_kwargs)
+                for item in response.get("Items", []):
+                    receipt_id, token = item.get("sk"), item.get("token")
+                    if not receipt_id or not token:
+                        # put() always writes both, so a row missing either is a corrupt/
+                        # foreign write. Skip it (don't KeyError) — one bad row must not
+                        # blind the whole sweep, which would leave EVERY receipt unresolved.
+                        logger.warning("skipping malformed pending receipt row: %r", item)
+                        continue
+                    pending.append((receipt_id, token))
+                cursor = response.get("LastEvaluatedKey")
+                if not cursor:
+                    break
+                query_kwargs["ExclusiveStartKey"] = cursor
+        except ClientError as e:
+            handle_database_error(e, "list pending push receipts")
+        return pending
+
+    def delete(self, receipt_id: str) -> None:
+        """Drop one pending row once the sweep has resolved it (delivered, pruned, or
+        failed). A no-op if it's already gone — the sweep only deletes resolved ids."""
+        try:
+            self._get_table().delete_item(Key={"pk": _PENDING_PK, "sk": receipt_id})
+        except ClientError as e:
+            handle_database_error(e, "delete push receipt id")
