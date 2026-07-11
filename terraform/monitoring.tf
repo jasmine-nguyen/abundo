@@ -124,3 +124,43 @@ resource "aws_cloudwatch_metric_alarm" "push_delivery_failures" {
   alarm_description   = "One or more Expo pushes were accepted but failed to deliver in the last hour (a budget/milestone alert may have silently not arrived)."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
+
+# --- Goal-nudge sweep-failure alarm (WHIT-258) ------------------------------
+
+# One datapoint each time the behind-pace nudge sweep logs a swallowed failure (the handler
+# catches every exception, logs "goal-nudge sweep failed ...", and returns {"nudged": 0}).
+# Because it swallows, AWS's built-in Lambda Errors metric never fires — this log-line metric
+# is the only signal that a broken sweep isn't merely "nothing was behind". default_value 0
+# so a healthy run publishes 0 rather than no-data.
+resource "aws_cloudwatch_log_metric_filter" "goal_nudge_sweep_failures" {
+  name           = "${var.project_name}-goal-nudge-sweep-failures"
+  log_group_name = aws_cloudwatch_log_group.goal_nudge.name
+  # Quoted → exact-substring match. The "goal-nudge" hyphen is a special char in the unquoted
+  # filter grammar (leading "-" negates); quoting sidesteps any tokenization ambiguity so this
+  # monitor for a silent failure can't itself silently never match. AWS-recommended for terms
+  # with non-alphanumerics.
+  pattern = "\"goal-nudge sweep failed\""
+
+  metric_transformation {
+    name          = "GoalNudgeSweepFailures"
+    namespace     = "${var.project_name}/GoalNudge"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+# Breaches when the sweep swallowed one or more failures in a day (a repo/IAM/paycycle error).
+# The invocation still returns 200, so this log-line metric is the signal it didn't run cleanly.
+resource "aws_cloudwatch_metric_alarm" "goal_nudge_sweep_failures" {
+  alarm_name          = "${var.project_name}-goal-nudge-sweep-failures"
+  namespace           = "${var.project_name}/GoalNudge"
+  metric_name         = "GoalNudgeSweepFailures"
+  statistic           = "Sum"
+  period              = 86400
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "The daily behind-pace goal-nudge sweep swallowed one or more failures in the last day (a broken sweep, invisible via the built-in Errors metric)."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
