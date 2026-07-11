@@ -119,6 +119,12 @@ DEFAULT_CATEGORY_ICON = "tag"
 # API Gateway route path for the budget-target endpoints (GET all, PUT one).
 BUDGET_PATH = "/budgets"
 
+# --- Goals (savings/paydown balance targets, WHIT-231) ---------------------
+# API Gateway route path for the goal CRUD endpoints (GET list, PUT one, DELETE one).
+# Read ONLY by lambda_api/handler.py (no shared repository_* module imports it), so the
+# WHIT-136 constants-sync guard needs no shared/constants.py mirror.
+GOALS_PATH = "/goals"
+
 # --- Category breakdown (spend by category for the current cycle, WHIT-23) --
 # API Gateway route path for the breakdown endpoint (GET only).
 BREAKDOWN_PATH = "/breakdown"
