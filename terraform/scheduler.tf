@@ -196,3 +196,49 @@ resource "aws_scheduler_schedule" "pending_age_out" {
     input = jsonencode({ dry_run = false })
   }
 }
+
+# Behind-pace goal-nudge schedule (WHIT-236). A dedicated daily schedule — the per-(goal,
+# cycle) dedupe makes a daily run fire at most once per goal per cycle, so daily is the right
+# cadence to catch a goal as its deadline arrives. Its own role + per-lambda invoke policy
+# (EventBridge Scheduler authorizes via this role, so no aws_lambda_permission is needed).
+resource "aws_iam_role" "goal_nudge_scheduler" {
+  name = "${var.project_name}-goal-nudge-scheduler"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "goal_nudge_scheduler_invoke" {
+  name = "${var.project_name}-goal-nudge-scheduler-invoke"
+  role = aws_iam_role.goal_nudge_scheduler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["lambda:InvokeFunction"]
+      Resource = [aws_lambda_function.goal_nudge.arn]
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "goal_nudge" {
+  name = "${var.project_name}-goal-nudge"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  schedule_expression          = var.goal_nudge_schedule_expression
+  schedule_expression_timezone = "Australia/Melbourne"
+
+  target {
+    arn      = aws_lambda_function.goal_nudge.arn
+    role_arn = aws_iam_role.goal_nudge_scheduler.arn
+  }
+}

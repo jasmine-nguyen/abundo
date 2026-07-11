@@ -380,3 +380,81 @@ resource "aws_iam_role_policy" "push_receipts_logs" {
     }]
   })
 }
+
+# Goal-nudge sweep lambda execution role (WHIT-236).
+resource "aws_iam_role" "goal_nudge_exec" {
+  name = "${var.project_name}-goal-nudge-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Goal-nudge lambda: read goals/paycycle/device/account-balance rows (GetItem), write the
+# per-(goal, cycle) notify marker + prune a dead device token (UpdateItem), and stash push
+# receipts (PutItem — PushReceiptRepository.put). All base-table items, no GSI, no Scan —
+# scoped to the base table ARN only, matching push_receipts_dynamodb's tight scoping.
+resource "aws_iam_role_policy" "goal_nudge_dynamodb" {
+  name = "${var.project_name}-goal-nudge-dynamodb"
+  role = aws_iam_role.goal_nudge_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem"
+      ]
+      Resource = [
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+      ]
+    }]
+  })
+}
+
+# Goal-nudge lambda: read the Expo access token (send_push carries Authorization: Bearer).
+# ssm:GetParameter alone decrypts the SecureString via the AWS-managed key.
+resource "aws_iam_role_policy" "goal_nudge_ssm" {
+  name = "${var.project_name}-goal-nudge-ssm"
+  role = aws_iam_role.goal_nudge_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameter"
+      ]
+      Resource = [
+        aws_ssm_parameter.expo_access_token.arn,
+      ]
+    }]
+  })
+}
+
+# Goal-nudge lambda: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "goal_nudge_logs" {
+  name = "${var.project_name}-goal-nudge-logs"
+  role = aws_iam_role.goal_nudge_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = [
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-goal-nudge:*"
+      ]
+    }]
+  })
+}

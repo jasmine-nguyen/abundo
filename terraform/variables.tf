@@ -58,6 +58,12 @@ variable "age_out_schedule_expression" {
   default     = "rate(1 day)"
 }
 
+variable "goal_nudge_schedule_expression" {
+  description = "EventBridge Scheduler expression controlling how often the behind-pace goal nudge sweep runs (WHIT-236)"
+  type        = string
+  default     = "rate(1 day)"
+}
+
 # Email subscribed to the shared CloudWatch alerts SNS topic (WHIT-79). The topic + alarms
 # are always created; leave this empty to skip the email subscription, or set it (in a
 # gitignored tfvars) to receive alerts. AWS sends a one-time confirmation email that must
