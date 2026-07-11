@@ -48,14 +48,21 @@ class FakeGoalsRepo:
     def __init__(self):
         self.upsert_calls = []
 
-    def upsert_goal(self, goal_id, goal):
+    def upsert_goal(self, goal_id, goal, start_candidate=None):
         self.upsert_calls.append((goal_id, goal))
-        return {"id": goal_id, **goal}
+        return {"id": goal_id, **goal, **(start_candidate or {})}
+
+
+class FakeBalanceRepo:
+    """Stand-in for AccountBalanceRepository (WHIT-252); no polled balances by default."""
+
+    def list_balances(self, account_ids):
+        return []
 
 
 def _put(handler, body, goal_id="g1"):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(goal_id=goal_id, body=body), repo)
+    resp = handler.upsert_goal(_put_event(goal_id=goal_id, body=body), repo, FakeBalanceRepo())
     return resp, repo
 
 
@@ -165,7 +172,7 @@ def test_direction_wrong_type_number_is_rejected(handler):
 def test_put_empty_string_id_is_404(handler):
     # [G13] "" is falsy -> 404 before the repo (an empty map key would 500 at DynamoDB).
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(goal_id="", body=_grow_body()), repo)
+    resp = handler.upsert_goal(_put_event(goal_id="", body=_grow_body()), repo, FakeBalanceRepo())
     assert resp["statusCode"] == 404
     assert repo.upsert_calls == []
 
@@ -195,9 +202,10 @@ class PersistingGoalsRepo:
     def list_goals(self):
         return {k: dict(v) for k, v in self.store.items()}
 
-    def upsert_goal(self, goal_id, goal):
-        self.store[goal_id] = dict(goal)
-        return {"id": goal_id, **goal}
+    def upsert_goal(self, goal_id, goal, start_candidate=None):
+        merged = {**goal, **(start_candidate or {})}
+        self.store[goal_id] = dict(merged)
+        return {"id": goal_id, **merged}
 
     def delete_goal(self, goal_id):
         self.store.pop(goal_id, None)
@@ -209,6 +217,7 @@ def test_get_after_put_round_trips_numbers_and_echoes_id(handler, monkeypatch):
     # echoed from the map key, and no unknown field survives.
     repo = PersistingGoalsRepo()
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo)
 
     body = _manual_paydown_body(manual_balance=8400.25, baseline=100, sneaky="x")
     put = handler.lambda_handler(_put_event(goal_id="car1", body=body), None)
@@ -226,3 +235,44 @@ def test_get_after_put_round_trips_numbers_and_echoes_id(handler, monkeypatch):
     assert saved["manual_balance"] == 8400.25
     assert saved["baseline"] == 100
     assert "sneaky" not in saved                          # extra field never stored
+
+
+# --- WHIT-252 QA GAP: the API response carries the start pair as JSON ----------
+
+
+class PolledBalanceRepo:
+    """AccountBalanceRepository stand-in that reports a live SIGNED balance for an account."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def list_balances(self, account_ids):
+        return [r for r in self._rows if r["account_id"] in account_ids]
+
+
+def test_get_after_put_carries_start_pair_as_json(handler, monkeypatch):
+    # [A9] End-to-end API shape: a SYNCED create with a live polled balance stamps a start;
+    # a later GET must carry start_date as a JSON STRING and start_balance as a JSON NUMBER
+    # (signed) -- i.e. the Decimal start_balance serialises to a number, not a string, and
+    # the pair survives the store -> list -> encoder round trip through lambda_handler.
+    from datetime import date
+
+    repo = PersistingGoalsRepo()
+    balances = PolledBalanceRepo([{"account_id": "up-spending", "amount": Decimal("-3200")}])
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: balances)
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2026, 7, 11))
+
+    put = handler.lambda_handler(_put_event(goal_id="hol1", body=_grow_body()), None)
+    assert put["statusCode"] == 200
+
+    got = handler.lambda_handler(
+        {"rawPath": "/goals", "requestContext": {"http": {"method": "GET"}}}, None)
+    assert got["statusCode"] == 200
+    saved = {g["id"]: g for g in json.loads(got["body"])}["hol1"]
+
+    assert saved["start_date"] == "2026-07-11"
+    assert isinstance(saved["start_date"], str)
+    # bool is a subclass of int -- exclude it so a stray True can't masquerade as a number.
+    assert isinstance(saved["start_balance"], (int, float)) and not isinstance(saved["start_balance"], bool)
+    assert saved["start_balance"] == -3200                 # live SIGNED balance, as a number

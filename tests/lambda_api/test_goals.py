@@ -11,6 +11,7 @@ The `handler` fixture (conftest.py) makes lambda_api importable in isolation wit
 
 import base64
 import json
+from datetime import date
 from decimal import Decimal
 
 
@@ -24,6 +25,7 @@ class FakeGoalsRepo:
         self._goals = goals or {}          # {id: goal object}
         self._conflict_exc = conflict_exc
         self.upsert_calls = []
+        self.start_candidates = []         # WHIT-252: the start passed per upsert
         self.delete_calls = []
         self.list_calls = 0
 
@@ -31,16 +33,31 @@ class FakeGoalsRepo:
         self.list_calls += 1
         return {k: dict(v) for k, v in self._goals.items()}
 
-    def upsert_goal(self, goal_id, goal):
+    def upsert_goal(self, goal_id, goal, start_candidate=None):
         self.upsert_calls.append((goal_id, goal))
+        self.start_candidates.append(start_candidate)
         if self._conflict_exc is not None:
             raise self._conflict_exc("boom")
-        return {"id": goal_id, **goal}
+        # Mimic a CREATE: the real repo carries an existing start forward, but a fresh Fake
+        # has none, so it stamps the candidate — enough for handler tests to see the start
+        # in the response. (Preserve-on-replace is covered in test_repository_goals.)
+        return {"id": goal_id, **goal, **(start_candidate or {})}
 
     def delete_goal(self, goal_id):
         self.delete_calls.append(goal_id)
         if self._conflict_exc is not None:
             raise self._conflict_exc("boom")
+
+
+class FakeBalanceRepo:
+    """Handler-level stand-in for AccountBalanceRepository (WHIT-252). `rows` is the list
+    of stored balances; list_balances filters to the requested ids (empty = not polled)."""
+
+    def __init__(self, rows=None):
+        self._rows = rows or []            # [{"account_id": ..., "amount": Decimal}]
+
+    def list_balances(self, account_ids):
+        return [r for r in self._rows if r["account_id"] in account_ids]
 
 
 def _grow_body(**over):
@@ -80,7 +97,7 @@ def _put_event(goal_id="g1", body=None, raw=None, is_b64=False):
 
 def test_upsert_grow_with_account_success(handler):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(), repo)
+    resp = handler.upsert_goal(_put_event(), repo, FakeBalanceRepo())
 
     assert resp["statusCode"] == 200
     saved = json.loads(resp["body"])
@@ -97,7 +114,7 @@ def test_upsert_grow_with_account_success(handler):
 
 def test_upsert_paydown_manual_success(handler):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(body=_manual_paydown_body()), repo)
+    resp = handler.upsert_goal(_put_event(body=_manual_paydown_body()), repo, FakeBalanceRepo())
 
     assert resp["statusCode"] == 200
     saved = json.loads(resp["body"])
@@ -114,7 +131,7 @@ def test_upsert_defaults_missing_icon(handler):
     repo = FakeGoalsRepo()
     body = _grow_body()
     del body["icon"]
-    resp = handler.upsert_goal(_put_event(body=body), repo)
+    resp = handler.upsert_goal(_put_event(body=body), repo, FakeBalanceRepo())
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])["icon"] == "tag"   # DEFAULT_CATEGORY_ICON
@@ -122,7 +139,7 @@ def test_upsert_defaults_missing_icon(handler):
 
 def test_upsert_optional_baseline_stored_as_number(handler):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(body=_grow_body(baseline=1000)), repo)
+    resp = handler.upsert_goal(_put_event(body=_grow_body(baseline=1000)), repo, FakeBalanceRepo())
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])["baseline"] == 1000
@@ -133,10 +150,69 @@ def test_upsert_optional_baseline_stored_as_number(handler):
 def test_upsert_base64_body_decodes(handler):
     repo = FakeGoalsRepo()
     raw = base64.b64encode(json.dumps(_grow_body()).encode()).decode()
-    resp = handler.upsert_goal(_put_event(raw=raw, is_b64=True), repo)
+    resp = handler.upsert_goal(_put_event(raw=raw, is_b64=True), repo, FakeBalanceRepo())
 
     assert resp["statusCode"] == 200
     assert repo.upsert_calls[0][0] == "g1"
+
+
+# --- WHIT-252: immutable goal start stamped on create ------------------------
+
+
+def _pin_today(handler, monkeypatch, iso="2026-07-11"):
+    y, m, d = map(int, iso.split("-"))
+    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(y, m, d))
+
+
+def test_manual_create_stamps_start_from_entered_balance(handler, monkeypatch):
+    _pin_today(handler, monkeypatch, "2026-07-11")
+    repo = FakeGoalsRepo()
+    resp = handler.upsert_goal(_put_event(body=_manual_paydown_body()), repo, FakeBalanceRepo())
+
+    saved = json.loads(resp["body"])
+    assert saved["start_date"] == "2026-07-11"
+    assert saved["start_balance"] == 8400            # == the entered manual_balance
+    # The candidate handed to the repo carries the pair as Decimals.
+    candidate = repo.start_candidates[0]
+    assert candidate == {"start_date": "2026-07-11", "start_balance": Decimal("8400")}
+
+
+def test_synced_create_stamps_start_from_live_signed_balance(handler, monkeypatch):
+    _pin_today(handler, monkeypatch, "2026-07-11")
+    repo = FakeGoalsRepo()
+    # _grow_body is synced to "up-spending"; a debt card would be negative, so store SIGNED.
+    balances = FakeBalanceRepo([{"account_id": "up-spending", "amount": Decimal("-3200")}])
+    resp = handler.upsert_goal(_put_event(), repo, balances)
+
+    saved = json.loads(resp["body"])
+    assert saved["start_date"] == "2026-07-11"
+    assert saved["start_balance"] == -3200           # the live SIGNED amount
+    assert repo.start_candidates[0]["start_balance"] == Decimal("-3200")
+
+
+def test_synced_create_before_first_poll_stamps_no_start(handler, monkeypatch):
+    _pin_today(handler, monkeypatch, "2026-07-11")
+    repo = FakeGoalsRepo()
+    resp = handler.upsert_goal(_put_event(), repo, FakeBalanceRepo())  # no balance polled yet
+
+    saved = json.loads(resp["body"])
+    assert "start_date" not in saved
+    assert "start_balance" not in saved
+    assert repo.start_candidates[0] == {}            # nothing to stamp; a later poll fills it
+
+
+def test_client_sent_start_fields_are_ignored(handler, monkeypatch):
+    _pin_today(handler, monkeypatch, "2026-07-11")
+    repo = FakeGoalsRepo()
+    body = _manual_paydown_body(start_date="1999-01-01", start_balance=999999)
+    resp = handler.upsert_goal(_put_event(body=body), repo, FakeBalanceRepo())
+
+    saved = json.loads(resp["body"])
+    assert saved["start_date"] == "2026-07-11"        # server clock wins, not the client's
+    assert saved["start_balance"] == 8400             # from manual_balance, not 999999
+    # The validated goal dict never carried the client's start — immutability at the source.
+    _, goal = repo.upsert_calls[0]
+    assert "start_date" not in goal and "start_balance" not in goal
 
 
 # --- PUT validation 400s -----------------------------------------------------
@@ -144,7 +220,7 @@ def test_upsert_base64_body_decodes(handler):
 
 def _assert_400(handler, body):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(body=body), repo)
+    resp = handler.upsert_goal(_put_event(body=body), repo, FakeBalanceRepo())
     assert resp["statusCode"] == 400, json.loads(resp["body"])
     assert repo.upsert_calls == []                   # never reached the repo
     return json.loads(resp["body"])
@@ -225,7 +301,7 @@ def test_400_baseline_not_a_number(handler):
 
 def test_400_invalid_json_body(handler):
     repo = FakeGoalsRepo()
-    resp = handler.upsert_goal(_put_event(raw="not json"), repo)
+    resp = handler.upsert_goal(_put_event(raw="not json"), repo, FakeBalanceRepo())
     assert resp["statusCode"] == 400
     assert repo.upsert_calls == []
 
@@ -234,7 +310,7 @@ def test_upsert_missing_id_404(handler):
     repo = FakeGoalsRepo()
     event = _put_event()
     event["pathParameters"] = {}                     # no id
-    resp = handler.upsert_goal(event, repo)
+    resp = handler.upsert_goal(event, repo, FakeBalanceRepo())
     assert resp["statusCode"] == 404
     assert repo.upsert_calls == []
 
@@ -302,6 +378,7 @@ def test_get_goals_dispatch(handler, monkeypatch):
 def test_put_goal_dispatch(handler, monkeypatch):
     repo = FakeGoalsRepo()
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: FakeBalanceRepo())
 
     resp = handler.lambda_handler(_put_event(), None)
 
@@ -326,6 +403,7 @@ def test_put_goal_conflict_returns_409(handler, monkeypatch):
     # dispatch wrapper maps it to 409 — proves the goals arms sit inside that try.
     repo = FakeGoalsRepo(conflict_exc=handler.VersionConflictError)
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: FakeBalanceRepo())
 
     resp = handler.lambda_handler(_put_event(), None)
     assert resp["statusCode"] == 409

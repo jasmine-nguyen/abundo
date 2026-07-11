@@ -337,6 +337,11 @@ export interface GoalRecord {
   account_id?: string | null;     // present => synced source (the live account balance)
   manual_balance?: number | null; // present => manual source (this value IS the balance)
   manual_as_of?: string | null;   // ISO date the manual balance was true
+  // Server-stamped, immutable (WHIT-252): the goal's fixed START — the date + balance when
+  // it began, captured as a pair. Feeds the (deferred) ahead/behind status. The client NEVER
+  // sends these; a synced goal created before its first poll carries neither until then.
+  start_date?: string | null;     // ISO date the start was stamped (create/first-poll day)
+  start_balance?: number | null;  // balance at start (SIGNED for synced; as-entered, may be negative, for manual)
 }
 
 /** The always-present half of a goal write body — everything except the balance source. */

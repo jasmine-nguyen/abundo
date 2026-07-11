@@ -64,18 +64,37 @@ class GoalsRepository:
             item = self._get_config()  # re-read so a concurrent create is reflected
         return dict(item["items"])
 
-    def upsert_goal(self, goal_id: str, goal: dict) -> dict:
+    def upsert_goal(self, goal_id: str, goal: dict, start_candidate: Optional[dict] = None) -> dict:
         """Set (upsert) a goal under an optimistic-lock guard.
 
-        Idempotent: succeeds whether or not the id already existed — a create and an
-        edit are the same nested SET of one map key, so the whole goal object is
-        replaced. `goal` is the already-validated object (Decimals + strings). Raises
-        VersionConflictError if it can't converge within the retry budget.
+        Idempotent: succeeds whether or not the id already existed — a create and an edit
+        are the same nested SET of one map key. `goal` is the already-validated object
+        (Decimals + strings). Raises VersionConflictError if it can't converge within the
+        retry budget.
+
+        The immutable goal START (start_date + start_balance, WHIT-252) is carried forward:
+        if the stored goal already has a start it wins (a later edit or balance update can
+        never move it); otherwise `start_candidate` (the create-time pair, possibly empty
+        for a synced goal not yet polled) is stamped. The pair moves together, so both
+        fields always describe the same moment. The merge is redone inside the retry loop
+        against a fresh read, so a version race can't lose or duplicate the start.
         """
+        start_candidate = start_candidate or {}
         self._ensure_seeded()
         for _attempt in range(2):
             item = self._get_config()
             version = item["version"]
+            existing = item["items"].get(goal_id)
+            # Take the start as one atomic PAIR so both fields always describe the same
+            # moment: keep the stored start only when BOTH keys are present (an already-frozen
+            # start), else take the whole candidate (a create-time pair, or {} when a synced
+            # goal isn't polled yet). A stray half-pair — only possible via external
+            # corruption, never a code path here — is discarded, never split further.
+            if existing and "start_date" in existing and "start_balance" in existing:
+                start = {"start_date": existing["start_date"], "start_balance": existing["start_balance"]}
+            else:
+                start = dict(start_candidate)
+            goal_to_write = {**goal, **start}
             try:
                 self._get_table().update_item(
                     Key=_GOALS_KEY,
@@ -85,16 +104,16 @@ class GoalsRepository:
                     ConditionExpression="attribute_exists(pk) AND #v = :expected",
                     ExpressionAttributeNames={"#items": "items", "#id": goal_id, "#v": "version"},
                     ExpressionAttributeValues={
-                        ":val": goal,
+                        ":val": goal_to_write,
                         ":expected": version,
                         ":next": version + Decimal(1),
                     },
                 )
-                return {"id": goal_id, **goal}
+                return {"id": goal_id, **goal_to_write}
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     handle_database_error(e, "save goal")
-                # The version moved under us; loop retries once.
+                # The version moved under us; loop re-reads and re-merges, then retries once.
         raise VersionConflictError("upsert_goal: exhausted retries under write contention")
 
     def delete_goal(self, goal_id: str) -> None:
