@@ -42,6 +42,11 @@ app-example
 
 # Coverage (jest + python)
 coverage/
+# Sharded-coverage output: the local `npm run coverage:local` merge dir and the
+# per-shard/CI coverage dirs (WHIT-243).
+coverage-artifacts/
+coverage-logic/
+coverage-screen/
 __pycache__/
 *.py[cod]
 .coverage

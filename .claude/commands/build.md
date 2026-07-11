@@ -139,9 +139,12 @@ Target card (optional): $ARGUMENTS
 
 10. **Green gate — the suite (with coverage floor) must pass before you present.**
     Run the suites the way CI does, so the coverage floor is enforced: client
-    `npm run test:all -- --coverage` + `npx tsc --noEmit` (plain `npm test` runs only
-    the fast `logic` project — `test:all` runs BOTH projects, which the coverage floor
-    needs); server `python -m pytest --cov …
+    `npm run coverage:local` + `npx tsc --noEmit` (`coverage:local` shards the tests,
+    merges the per-shard coverage, and enforces the floor — the same mechanism CI runs;
+    do NOT use `npm run test:all -- --coverage`, the un-sharded coverage run OOMs/hangs
+    on the heavy `screen` suites, which is why WHIT-243 moved the floor to the merge
+    step). Plain `npm test` runs only the fast `logic` project and does NOT gate
+    coverage. Server `python -m pytest --cov …
     --cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
     backstop, not a quality signal — the real quality gate is fail-on-revert, which
     code-critic checks). ALL tests green, coverage floor met, typecheck clean is the

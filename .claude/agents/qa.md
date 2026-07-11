@@ -173,8 +173,9 @@ Every test you write MUST:
    test depends on (edit prod, or comment the line) → re-run → confirm the test
    **FAILS** → revert the prod change. Report "reverting X made `[A3]` fail as
    expected." A test you haven't seen fail is unverified.
-3. Note the coverage gate — the run enforces a floor (jest
-   `coverageThreshold`; pytest ~72%). If your tests drop it below, say so.
+3. Note the coverage gate — the run enforces a floor (client: the sharded
+   `npm run coverage:local` merge step, `scripts/coverage-merge-check.js`; pytest ~72%).
+   If your tests drop it below, say so.
 
 You never leave prod code modified — every red-green break is reverted before you
 finish.

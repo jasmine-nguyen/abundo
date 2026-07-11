@@ -7,6 +7,8 @@ name: Client tests
 #     change; a server-only PR skips it entirely (the Python workflow still runs).
 # Caveat: if branch protection ever marks this a REQUIRED check, a path-skipped run
 # leaves the PR's check "pending" and can block merge — revisit paths if that's turned on.
+# The jobs below are `logic`, `screen` (a shard matrix) and `coverage`; if a required
+# check was ever pinned to the old single `jest` job name, update it to `coverage`.
 on:
   push:
     branches: [main]
@@ -19,6 +21,8 @@ on:
       - "jest.config.js"
       - "jest.setup.js"
       - "tsconfig.json"
+      - "scripts/coverage-merge-check.js"
+      - "scripts/coverage-run-local.sh"
       - ".github/workflows/client-tests.yml"
 
 # Cancel an in-progress run when a newer commit lands on the same branch/PR, so a
@@ -27,8 +31,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Coverage is restored as a merge gate via SHARDING (WHIT-243). Measuring the 100+
+# React-Native `screen` suites under coverage in one process OOM-crashes a worker
+# (istanbul) or hangs ~9 min (v8 source remap). Instead the `screen` project is split
+# across the `screen` shard matrix and the `logic` project runs on its own — each job
+# measures coverage for its slice and uploads a `coverage-final.json` — then the
+# `coverage` job merges them and enforces the floor. Reproduce locally with
+# `npm run coverage:local`.
 jobs:
-  jest:
+  logic:
+    name: logic
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,21 +54,95 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Type-resolved: with node_modules installed, tsc sees native module types
-      # the offline sandbox is blind to. This is the regression gate on merge.
+      # Type-resolved: with node_modules installed, tsc sees native module types the
+      # offline sandbox is blind to. Runs once here (not per shard). Regression gate.
       - name: Typecheck
         run: npm run typecheck
 
-      # The FULL suite (both projects), no coverage. `npm test` alone now runs only the
-      # fast `logic` project (the dev inner loop), so CI uses test:all to keep the heavy
-      # `screen` project in the gate. Tests are the pass/fail gate here.
-      #
-      # Coverage is temporarily OFF in CI (WHIT-243). The 100+ screen suites boot the whole
-      # React Native module graph; the old istanbul coverage provider pushed a worker past
-      # Node's ~2GB heap ceiling (OOM crash), and switching to V8 coverage traded the crash
-      # for a ~9-min hang while it remaps source. Rather than block merges, we run the tests
-      # without coverage and restore the floor separately via sharding (WHIT-243).
-      # --workerIdleMemoryLimit (in test:all) recycles a bloated worker between files and
-      # --maxWorkers=2 bounds concurrency, both as memory backstops.
-      - name: Run tests
-        run: npm run test:all -- --maxWorkers=2
+      # The fast `logic` project (node env), whole, with coverage. Its selector/mapper
+      # coverage MUST be in the merged total or those files read 0% and drag the floor.
+      - name: Run logic tests with coverage
+        run: >-
+          TZ=Australia/Melbourne npx jest --selectProjects logic --coverage
+          --coverageReporters=json --coverageDirectory=coverage-logic
+
+      - name: Upload logic coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: cov-logic
+          path: coverage-logic/coverage-final.json
+          if-no-files-found: error
+
+  screen:
+    name: screen (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      # Keep going if one shard fails, so the others still produce artifacts to diagnose
+      # from (and the coverage job can report on the slices that did run).
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # One quarter of the screen suites → a quarter of the RN module graph in memory
+      # (no OOM) and a quarter of the v8 remap (no ~9-min hang). --workerIdleMemoryLimit
+      # recycles a bloated worker; --maxWorkers=2 bounds concurrency. TZ matches the
+      # scripts so date-dependent suites behave.
+      - name: Run screen shard with coverage
+        run: >-
+          TZ=Australia/Melbourne npx jest --selectProjects screen
+          --shard=${{ matrix.shard }}/4 --coverage --coverageReporters=json
+          --coverageDirectory=coverage-screen --workerIdleMemoryLimit=512MB --maxWorkers=2
+
+      - name: Upload screen shard coverage
+        uses: actions/upload-artifact@v4
+        with:
+          # Unique per shard — upload-artifact@v4 errors on a duplicate name.
+          name: cov-screen-${{ matrix.shard }}
+          path: coverage-screen/coverage-final.json
+          if-no-files-found: error
+
+  coverage:
+    name: coverage
+    needs: [logic, screen]
+    # Run even if a shard failed (only skip on a cancelled workflow). With plain `needs`
+    # a failed shard would SKIP this job, and a skipped required check reads as passing in
+    # branch protection — letting a red shard bypass the gate. Running anyway + the
+    # expected-report-count check below turns a lost shard into a red gate instead.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Each artifact lands in its own subdir (merge-multiple stays false), so the merge
+      # script finds one coverage-final.json per shard under coverage-artifacts/.
+      - name: Download shard coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cov-*
+          path: coverage-artifacts
+
+      # Merge every shard's report into one total and enforce the floor. Exits non-zero
+      # (failing this job, and the check run) if a metric is below floor, if a shard is
+      # missing, or if nothing was instrumented; writes the merged table to the run
+      # summary page either way. The `5` is the expected report count — 1 logic + 4 screen
+      # shards; keep it in sync with the screen matrix above.
+      - name: Merge coverage and enforce the floor
+        run: npm run coverage:check -- coverage-artifacts 5
