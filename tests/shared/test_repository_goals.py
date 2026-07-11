@@ -119,8 +119,8 @@ def test_upsert_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_rep
 _START = {"start_date": "2026-07-11", "start_balance": Decimal(3200)}
 
 
-def test_upsert_stamps_start_candidate_on_create(shared, goals_repo):
-    table = _GoalsTable(items={})
+def test_upsert_stamps_start_candidate_on_create(shared, goals_repo, config_item_table):
+    table = config_item_table("GOALS", items={})
     _with_table(goals_repo, table)
 
     result = goals_repo.upsert_goal("g1", _goal(), start_candidate=dict(_START))
@@ -131,9 +131,9 @@ def test_upsert_stamps_start_candidate_on_create(shared, goals_repo):
     assert result["start_date"] == "2026-07-11"
 
 
-def test_upsert_preserves_start_on_edit(shared, goals_repo):
+def test_upsert_preserves_start_on_edit(shared, goals_repo, config_item_table):
     # g1 already has a start; an edit (new name) with a DIFFERENT candidate must not move it.
-    table = _GoalsTable(items={"g1": _goal(**_START)}, version=2)
+    table = config_item_table("GOALS", items={"g1": _goal(**_START)}, version=2)
     _with_table(goals_repo, table)
 
     goals_repo.upsert_goal(
@@ -146,9 +146,9 @@ def test_upsert_preserves_start_on_edit(shared, goals_repo):
     assert stored["start_balance"] == Decimal(3200)
 
 
-def test_upsert_preserves_start_on_balance_update(shared, goals_repo):
+def test_upsert_preserves_start_on_balance_update(shared, goals_repo, config_item_table):
     # A WHIT-235 balance update sends a changed manual_balance/manual_as_of; start stays put.
-    table = _GoalsTable(items={"g1": _goal(**_START)}, version=2)
+    table = config_item_table("GOALS", items={"g1": _goal(**_START)}, version=2)
     _with_table(goals_repo, table)
 
     goals_repo.upsert_goal(
@@ -161,11 +161,11 @@ def test_upsert_preserves_start_on_balance_update(shared, goals_repo):
     assert stored["start_balance"] == Decimal(3200)
 
 
-def test_upsert_fills_absent_start_once_then_freezes(shared, goals_repo):
+def test_upsert_fills_absent_start_once_then_freezes(shared, goals_repo, config_item_table):
     # Option A: a synced goal created pre-poll has no start; the first upsert with a real
     # candidate fills it, and a later upsert can no longer move it.
     no_start = {k: v for k, v in _goal().items() if not k.startswith("start_")}
-    table = _GoalsTable(items={"g1": no_start})
+    table = config_item_table("GOALS", items={"g1": no_start})
     _with_table(goals_repo, table)
 
     goals_repo.upsert_goal("g1", _goal(), start_candidate=dict(_START))
@@ -178,9 +178,9 @@ def test_upsert_fills_absent_start_once_then_freezes(shared, goals_repo):
     assert table.item["items"]["g1"]["start_balance"] == Decimal(3200)
 
 
-def test_upsert_stamps_no_start_when_candidate_empty(shared, goals_repo):
+def test_upsert_stamps_no_start_when_candidate_empty(shared, goals_repo, config_item_table):
     # Synced goal still not polled: empty candidate, no existing start -> nothing stamped.
-    table = _GoalsTable(items={})
+    table = config_item_table("GOALS", items={})
     _with_table(goals_repo, table)
 
     goals_repo.upsert_goal("g1", _goal(), start_candidate={})
@@ -255,11 +255,11 @@ def test_delete_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_rep
 
 
 # --- WHIT-252 QA GAPS: race-retry preserve, partial-start merge, source switch ---
-# (Independent of the implementer's WHIT-252 tests above. Reuse _GoalsTable / _goal /
-# _with_table / _client_error / _START. Every start value is a pinned literal.)
+# (Independent of the implementer's WHIT-252 tests above. Reuse the shared config_item_table
+# fake + client_error factory, _goal / _with_table / _START. Every start value is a pinned literal.)
 
 
-def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_repo):
+def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_repo, config_item_table, client_error):
     # [A15] The version-race retry must re-READ and re-MERGE the start INSIDE the loop.
     # Setup: a synced goal exists with NO start (created pre-poll); our upsert carries an
     # EMPTY candidate (still unpolled on our side). Mid-write, a concurrent poll-fill stamps
@@ -267,7 +267,7 @@ def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_
     # carry that freshly-stamped start forward -- never clobber it back to "no start".
     # This is the test that pins the merge inside the retry loop (fail-on-revert target).
     no_start = {k: v for k, v in _goal().items() if not k.startswith("start_")}
-    table = _GoalsTable(items={"g1": no_start})
+    table = config_item_table("GOALS", items={"g1": no_start})
     original = table.update_item
     attempts = {"n": 0}
 
@@ -278,7 +278,7 @@ def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_
             table.item["items"]["g1"] = {
                 **no_start, "start_date": "2026-07-11", "start_balance": Decimal(3200)}
             table.item["version"] = table.item["version"] + Decimal(1)
-            raise _client_error("ConditionalCheckFailedException")
+            raise client_error("ConditionalCheckFailedException")
         return original(*a, **k)
 
     table.update_item = _concurrent_fill_then_race
@@ -293,14 +293,14 @@ def test_upsert_race_retry_preserves_a_concurrently_stamped_start(shared, goals_
     assert stored["start_balance"] == Decimal(3200)       # ...not clobbered back to absent
 
 
-def test_upsert_with_only_one_stored_start_key_is_discarded_as_a_pair(shared, goals_repo):
+def test_upsert_with_only_one_stored_start_key_is_discarded_as_a_pair(shared, goals_repo, config_item_table):
     # [A16] DEFENSIVE: a corrupted/hand-crafted goal holding ONLY start_date (no
     # start_balance) must not crash AND must not produce a MIXED pair. The merge is
     # pair-atomic: a half-pair isn't a valid frozen start, so it's discarded and the whole
     # coherent candidate is stamped instead (both fields describe the same moment).
     half = {k: v for k, v in _goal().items() if not k.startswith("start_")}
     half["start_date"] = "2026-07-11"
-    table = _GoalsTable(items={"g1": half})
+    table = config_item_table("GOALS", items={"g1": half})
     _with_table(goals_repo, table)
 
     goals_repo.upsert_goal(
@@ -313,10 +313,10 @@ def test_upsert_with_only_one_stored_start_key_is_discarded_as_a_pair(shared, go
     assert stored["start_balance"] == Decimal(77)
 
 
-def test_upsert_switching_source_preserves_start_and_drops_stale_manual(shared, goals_repo):
+def test_upsert_switching_source_preserves_start_and_drops_stale_manual(shared, goals_repo, config_item_table):
     # [A17] An edit that changes the balance SOURCE (manual -> synced account) still freezes
     # the original start, and the whole-object replace drops the now-stale manual_balance.
-    table = _GoalsTable(items={"g1": _goal(**_START)}, version=2)   # manual goal + a start
+    table = config_item_table("GOALS", items={"g1": _goal(**_START)}, version=2)   # manual goal + a start
     _with_table(goals_repo, table)
 
     synced = {
