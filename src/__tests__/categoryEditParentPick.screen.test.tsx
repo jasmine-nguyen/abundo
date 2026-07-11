@@ -9,10 +9,10 @@ import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { Category } from '../context';
 
-const mockSaveCategory = jest.fn(async (_id: string | null, _form: { name: string; bucket: string; icon: string; parent?: string | null }) => true);
+const mockSaveCategory = jest.fn(async (_id: string | null, _form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => true);
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn(), showToast: jest.fn() }) };
 });
 
 let mockCategories: Category[] = [];
@@ -44,5 +44,5 @@ it('picking a parent in the shared picker stamps it onto the saved category', ()
   fireEvent.press(treatsChips[0]);
   act(() => { fireEvent.press(screen.getByText('Save category')); });
 
-  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: 'treats' }));
+  expect(mockSaveCategory).toHaveBeenCalledWith('coffee', expect.objectContaining({ parent: 'treats' }), { silent: true });
 });

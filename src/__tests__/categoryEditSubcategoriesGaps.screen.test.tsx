@@ -1,15 +1,16 @@
 // WHIT-237 — adversarial gaps the implementer's categoryEditSubcategories suite leaves open.
 // That suite only drives a NEW parent (createCategoryInline path). Here:
 //   [A1] editing an EXISTING parent takes the saveCategory(self) branch, THEN attaches;
-//   [A2] a child re-parent that fails keeps the parent + fires the warning toast LAST;
 //   [A3] a category already parented here shows as "Already nested" and is NOT in the attach list.
+// (Partial-failure summary copy — parent kept, single warning toast — is covered by the
+//  verb×count×failure matrix in categoryEditSummaryToast [B3]/[B4], WHIT-240.)
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../context';
 
-const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown) => true as boolean);
-const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; icon: string; parent?: string | null }) => ({
+const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown, _opts?: { silent?: boolean }) => true as boolean);
+const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => ({
   id: form.name.toLowerCase(), name: form.name, bucket: form.bucket, icon: form.icon, color: '#fff', recent: 0, parent: form.parent ?? null,
 }) as unknown as Category | null);
 const mockShowToast = jest.fn();
@@ -52,38 +53,12 @@ it('editing an existing parent updates it then attaches the picked child', async
 
   await waitFor(() => {
     // Self persisted via UPDATE (its own id), not created.
-    expect(mockSaveCategory).toHaveBeenCalledWith('transport', expect.objectContaining({ name: 'Transport', bucket: 'Living' }));
+    expect(mockSaveCategory).toHaveBeenCalledWith('transport', expect.objectContaining({ name: 'Transport', bucket: 'Living' }), { silent: true });
     // Child re-parented under it, resending the child's OWN name/bucket/icon.
-    expect(mockSaveCategory).toHaveBeenCalledWith('parking', expect.objectContaining({ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }));
+    expect(mockSaveCategory).toHaveBeenCalledWith('parking', expect.objectContaining({ name: 'Parking', bucket: 'Living', icon: 'car', parent: 'transport' }), { silent: true });
   });
   expect(mockCreateInline).not.toHaveBeenCalled(); // existing parent is never "created"
   expect(mockBack).toHaveBeenCalled();
-});
-
-// [A2] A child re-parent that returns false → parent kept, warning toast fires, singular copy,
-// and it is the LAST toast (overriding the per-op error the failing writer showed).
-it('a failed child attach keeps the parent and fires the warning toast last', async () => {
-  mockCategories = [
-    { id: 'transport', name: 'Transport', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-    { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent: null },
-  ];
-  // Self saves fine; the child re-parent fails AND toasts its own generic error (like the real writer).
-  mockSaveCategory.mockImplementation(async (id: string | null) => {
-    if (id === 'parking') { mockShowToast('Could not save category. Please try again.'); return false; }
-    return true;
-  });
-  render(<CategoryEdit />);
-  fireEvent.press(screen.getByTestId('attachChild-parking'));
-  await act(async () => { fireEvent.press(screen.getByText('Save category')); });
-
-  await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith(expect.stringContaining("1 sub-category couldn't be attached")));
-  // Singular copy for exactly one failure ("sub-category", not "sub-categories").
-  const warning = mockShowToast.mock.calls.map((c) => c[0] as string).find((m) => m.includes("couldn't be attached"))!;
-  expect(warning).toContain('sub-category ');
-  expect(warning).not.toContain('sub-categories');
-  // Fired LAST, so it overrides the per-op error the failing child showed.
-  expect(mockShowToast.mock.calls[mockShowToast.mock.calls.length - 1][0]).toBe(warning);
-  expect(mockBack).toHaveBeenCalled(); // parent kept; user is returned to its page
 });
 
 // [A3] A category already parented under this one is listed as "Already nested" and is NOT

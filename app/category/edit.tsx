@@ -86,12 +86,15 @@ export default function CategoryEdit() {
     // 1) Save the category itself. A NEW parent must persist first so its children can point
     // at its server-assigned id (WHIT-237).
     let parentId = categoryId ?? null;
+    // WHIT-240: the parent + every child write run SILENT so the per-op toasts don't stack;
+    // this screen fires one summary toast at the end. On a parent failure the writer no longer
+    // toasts, so own that message here before bailing.
     if (categoryId) {
-      const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent });
-      if (!ok) { setSubmitting(false); return; } // saveCategory already toasted; let the user retry
+      const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
+      if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
     } else {
-      const created = await s.createCategoryInline({ name, bucket, icon, parent });
-      if (!created) { setSubmitting(false); return; }
+      const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
+      if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
       parentId = created.id;
     }
     // 2) Attach the picked existing children + create the new inline ones under this parent.
@@ -101,18 +104,24 @@ export default function CategoryEdit() {
     const ops: Promise<boolean | Category | null>[] = [];
     for (const id of attachIds) {
       const child = byId.get(id);
-      if (child) ops.push(s.saveCategory(id, { name: child.name, bucket: child.bucket, icon: child.icon, parent: parentId }));
+      if (child) ops.push(s.saveCategory(id, { name: child.name, bucket: child.bucket, icon: child.icon, parent: parentId }, { silent: true }));
     }
     for (const nc of newChildren) {
-      ops.push(s.createCategoryInline({ name: nc.name, bucket, icon: nc.icon, parent: parentId }));
+      ops.push(s.createCategoryInline({ name: nc.name, bucket, icon: nc.icon, parent: parentId }, { silent: true }));
     }
     const results = ops.length ? await Promise.allSettled(ops) : [];
     const failed = results.filter((r) => r.status === 'rejected' || r.value === false || r.value === null).length;
-    // Option A (agreed): keep the parent — it's valid on its own — and warn about any stragglers
-    // so they can be retried from its page; never roll back a good parent over a flaky child.
-    // Fire this toast LAST so it overrides the generic per-op error the failing child showed.
+    // WHIT-240: exactly ONE summary toast. Lead with created/updated (matching the writers' own
+    // copy) so the message reads consistently, then report the sub-category outcome. Option A
+    // (agreed WHIT-237): a flaky child never rolls back a good parent — it's reported, not undone.
+    const verb = categoryId ? 'updated' : 'created';
+    const subCount = (n: number) => `${n} sub-categor${n === 1 ? 'y' : 'ies'}`;
     if (failed > 0) {
-      s.showToast(`Saved '${name.trim()}', but ${failed} sub-categor${failed === 1 ? 'y' : 'ies'} couldn't be attached — add them from its page.`);
+      s.showToast(`Category ${verb}, but ${subCount(failed)} couldn't be attached — add ${failed === 1 ? 'it' : 'them'} from its page.`);
+    } else if (ops.length > 0) {
+      s.showToast(`Category ${verb}, with ${subCount(ops.length)}.`);
+    } else {
+      s.showToast(`Category ${verb}.`);
     }
     router.back();
   });

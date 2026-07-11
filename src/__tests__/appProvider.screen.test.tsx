@@ -417,6 +417,44 @@ it('createCategoryInline returns the created category and mirrors it into the ca
   expect(cats().some((c) => c.id === 'gym')).toBe(true);
 });
 
+// WHIT-240: the writers toast by default, but an orchestrated bulk save (category/edit) opts
+// into { silent: true } so the screen can show ONE summary toast instead of one per write.
+it('createCategoryInline toasts by default, and stays silent with { silent: true }', async () => {
+  mockApi.createCategory.mockResolvedValue({ id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0, parent: null });
+  seed();
+  const result = mount();
+  // Silent FIRST, from the null baseline: no toast. Fail-on-revert: drop the `if (!opts?.silent)`
+  // gate and toast is set here → this null assertion fails.
+  await act(async () => { await result.current.createCategoryInline({ name: 'Bus', bucket: 'Living', icon: 'car', parent: null }, { silent: true }); });
+  expect(result.current.toast).toBeNull();
+  // Default: the writer fires its own toast (proves the silent case above isn't vacuous).
+  await act(async () => { await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', parent: null }); });
+  expect(result.current.toast).toBe('Category created.');
+});
+
+it('saveCategory (update) toasts by default, and stays silent with { silent: true }', async () => {
+  mockApi.updateCategory.mockResolvedValue({ id: 'groceries', name: 'Supermarket', bucket: 'Living', icon: 'cart', color: '#0f0', recent: 0 });
+  seed();
+  const result = mount();
+  await act(async () => { await result.current.saveCategory('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' }, { silent: true }); });
+  expect(result.current.toast).toBeNull();
+  await act(async () => { await result.current.saveCategory('groceries', { name: 'Supermarket', bucket: 'Living', icon: 'cart' }); });
+  expect(result.current.toast).toBe('Category updated.');
+});
+
+// WHIT-240: silent must also suppress the FAILURE toast — a bulk save owns the whole outcome
+// (its summary reports the failure count), so a silent write must stay silent even when it fails.
+// Fail-on-revert: ungate the catch-branch showToast and this null assertion goes red.
+it('createCategoryInline stays silent on failure with { silent: true }', async () => {
+  mockApi.createCategory.mockRejectedValue(new Error('x'));
+  seed();
+  const result = mount();
+  let created: unknown;
+  await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }, { silent: true }); });
+  expect(created).toBeNull();               // still reports failure via the return value
+  expect(result.current.toast).toBeNull();  // ...but fires no toast of its own
+});
+
 it('createCategoryInline returns null + toasts on failure', async () => {
   mockApi.createCategory.mockRejectedValue(new Error('x'));
   seed();
