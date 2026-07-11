@@ -56,16 +56,26 @@ def _chunk(items: list, size: int):
         yield items[i:i + size]
 
 
-def _send_batch(messages: list, token) -> list:
-    """POST one batch to Expo and return its list of ticket dicts (in send order)."""
-    data = json.dumps(messages).encode()
+def _post_expo(url, body_obj, token) -> dict:
+    """POST ``body_obj`` as JSON to an Expo endpoint and return the parsed response dict.
+
+    The shared plumbing behind send and getReceipts: encode → JSON headers (+ a Bearer
+    auth header when a token is set) → POST with ``EXPO_PUSH_TIMEOUT_SECONDS`` → decode
+    (``{}`` on an empty body). Each caller owns how it reads the parsed payload.
+    """
+    data = json.dumps(body_obj).encode()
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(EXPO_PUSH_URL, data=data, headers=headers, method="POST")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=EXPO_PUSH_TIMEOUT_SECONDS) as resp:
         raw = resp.read()
-    payload = json.loads(raw) if raw else {}
+    return json.loads(raw) if raw else {}
+
+
+def _send_batch(messages: list, token) -> list:
+    """POST one batch to Expo and return its list of ticket dicts (in send order)."""
+    payload = _post_expo(EXPO_PUSH_URL, messages, token)
     return payload.get("data") or []
 
 
@@ -78,14 +88,7 @@ def _get_receipts_batch(ids: list, token) -> dict:
     rejection (rate-limit, malformed) with ``data`` absent; we surface it so it isn't
     silently indistinguishable from an empty result.
     """
-    data = json.dumps({"ids": ids}).encode()
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(EXPO_RECEIPTS_URL, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=EXPO_PUSH_TIMEOUT_SECONDS) as resp:
-        raw = resp.read()
-    payload = json.loads(raw) if raw else {}
+    payload = _post_expo(EXPO_RECEIPTS_URL, {"ids": ids}, token)
     errors = payload.get("errors")
     if errors:
         logger.warning("Expo getReceipts returned request-level errors: %s", errors)
