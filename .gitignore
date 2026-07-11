@@ -29,8 +29,11 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local env files — ignore EVERY .env variant so a real secret can't be committed
+# by accident (esp. while the repo is public); keep only the blank .env.example template.
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo

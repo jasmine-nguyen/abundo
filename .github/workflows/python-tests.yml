@@ -1,9 +1,29 @@
 name: Python tests
 
+# Trigger economy (keeps Actions minutes down):
+#   - push only on `main` → feature branches are covered by their PR, so a branch
+#     push no longer runs CI a SECOND time alongside the pull_request event.
+#   - pull_request with `paths` → this server suite runs only when server files
+#     change; a client-only PR skips it entirely (the Client workflow still runs).
+# Caveat: if branch protection ever marks this a REQUIRED check, a path-skipped run
+# leaves the PR's check "pending" and can block merge — revisit paths if that's turned on.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+    paths:
+      - "shared/**"
+      - "lambda*/**"
+      - "tests/**"
+      - "pytest.ini"
+      - "**/requirements*.txt"
+      - ".github/workflows/python-tests.yml"
+
+# Cancel an in-progress run when a newer commit lands on the same branch/PR, so a
+# quick succession of pushes doesn't stack up runs (each burning minutes to finish).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
