@@ -1,4 +1,4 @@
-// WHIT-114 — GAP screen tests for the Goal-tab payoff mini-cards. There is no
+// WHIT-114 — GAP screen tests for the mortgage-screen payoff mini-cards. There is no
 // existing screen test for paydownView's rendering; this locks that each `mode`
 // draws the RIGHT card (and that the retired seed values are gone). The real
 // paydownView selector runs over injected state (jest.mock keeps the actual
@@ -29,7 +29,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: () => {},
 }));
 
-import Goals from '../../app/(tabs)/goals';
+import Mortgage from '../../app/mortgage';
 
 // The payoff-mode math needs a specific facts fixture (higher original + baseRepay than
 // the shared LOAN_FACTS default), so this suite overrides makeGoalData's loanFacts default.
@@ -44,7 +44,7 @@ afterEach(() => { jest.useRealTimers(); });
 
 it("'ahead': shows the real date + '4y 1m early' + '$83,331' dodged, NOT the old seed", () => {
   mockGoal = goalData({ homeLoan: { balance: 528000, asOf: null } });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText('Nov 2042')).toBeTruthy();
   expect(screen.getByText('4y 1m early 🏁')).toBeTruthy();
   expect(screen.getByText("Interest you'll dodge")).toBeTruthy();
@@ -57,7 +57,7 @@ it("'ahead': shows the real date + '4y 1m early' + '$83,331' dodged, NOT the old
 
 it("'partial': one card with the date + 'your extra gets you there', no dodged figure", () => {
   mockGoal = goalData({ homeLoan: { balance: 815000, asOf: null } });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText('Jun 2074')).toBeTruthy();
   expect(screen.getByText('Your extra repayment is what gets you there 🏁')).toBeTruthy();
   // No "interest dodged" card in this state.
@@ -66,7 +66,7 @@ it("'partial': one card with the date + 'your extra gets you there', no dodged f
 
 it("'flat': the date on 'current repayments', no 'early' claim", () => {
   mockGoal = goalData({ homeLoan: { balance: 528000, asOf: null }, loanFacts: { ...SET_FACTS, extra: 0 } });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText('Dec 2046')).toBeTruthy();
   expect(screen.getByText('On your current repayments')).toBeTruthy();
   expect(screen.queryByText(/early 🏁/)).toBeNull();
@@ -74,7 +74,7 @@ it("'flat': the date on 'current repayments', no 'early' claim", () => {
 
 it("'none': the honest 'won't pay off' nudge, no fabricated date", () => {
   mockGoal = goalData({ homeLoan: { balance: 900000, asOf: null } }); // payment < interest
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
   expect(screen.getByText(/Increase your repayment/)).toBeTruthy();
   expect(screen.queryByText('Mortgage-free')).toBeNull();
@@ -85,7 +85,7 @@ it("'none' with a payoff goal date: shows the required repayment, not the static
     homeLoan: { balance: 900000, asOf: null },
     loanFacts: { ...SET_FACTS, payoffGoalDate: '2035-06-01' },
   });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
   // The real required-repayment prompt replaces the static "increase your repayment" copy.
   expect(screen.getByText(/To clear it by Jun 2035 you'd need .* more than now\./)).toBeTruthy();
@@ -100,7 +100,7 @@ it("'none' with a too-soon goal date UNDER $1M: shows the figure AND the 'too so
     homeLoan: { balance: 900000, asOf: null },
     loanFacts: { ...SET_FACTS, payoffGoalDate: '2027-01-01' },
   });
-  render(<Goals />);
+  render(<Mortgage />);
   // The honest figure still renders...
   expect(screen.getByText(/To clear it by Jan 2027 you'd need .* more than now\./)).toBeTruthy();
   // ...with the nudge appended beneath it.
@@ -114,7 +114,7 @@ it("'none' with a too-soon goal date OVER $1M: shows the hint in place of the st
     homeLoan: { balance: 1_200_000, asOf: null },
     loanFacts: { ...SET_FACTS, payoffGoalDate: '2026-08-01' },
   });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText("Won't pay off at this rate")).toBeTruthy();
   // The hint replaces BOTH the (suppressed) figure and the generic static copy.
   expect(screen.getByTestId('goal-too-aggressive-hint')).toBeTruthy();
@@ -124,7 +124,7 @@ it("'none' with a too-soon goal date OVER $1M: shows the hint in place of the st
 
 it("'unready' (balance not loaded): renders NO payoff card at all", () => {
   mockGoal = goalData({ homeLoan: { balance: null, asOf: null } });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.queryByText('Mortgage-free')).toBeNull();
   expect(screen.queryByText("Won't pay off at this rate")).toBeNull();
   expect(screen.queryByText("Interest you'll dodge")).toBeNull();

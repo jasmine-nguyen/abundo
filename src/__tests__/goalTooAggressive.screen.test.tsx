@@ -20,7 +20,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: () => {},
 }));
 
-import Goals from '../../app/(tabs)/goals';
+import Mortgage from '../../app/mortgage';
 
 const SET_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
 const goalData = (over: Partial<GoalScreenData> = {}) => makeGoalData({ loanFacts: SET_FACTS, ...over });
@@ -34,7 +34,7 @@ it('editing the goal date from too-soon to realistic CLEARS the hint on re-rende
     homeLoan: { balance: 900000, asOf: null },
     loanFacts: { ...SET_FACTS, payoffGoalDate: '2027-01-01' },
   });
-  const { rerender } = render(<Goals />);
+  const { rerender } = render(<Mortgage />);
   expect(screen.getByTestId('goal-too-aggressive-hint')).toBeTruthy();
 
   // User pushes the goal date out to a realistic one; the very next render must drop the hint.
@@ -42,7 +42,7 @@ it('editing the goal date from too-soon to realistic CLEARS the hint on re-rende
     homeLoan: { balance: 900000, asOf: null },
     loanFacts: { ...SET_FACTS, payoffGoalDate: '2035-06-01' },
   });
-  rerender(<Goals />);
+  rerender(<Mortgage />);
   expect(screen.queryByTestId('goal-too-aggressive-hint')).toBeNull();
   // The honest figure still renders — the loan is still 'none', just no longer too soon.
   expect(screen.getByText(/To clear it by Jun 2035 you'd need .* more than now\./)).toBeTruthy();

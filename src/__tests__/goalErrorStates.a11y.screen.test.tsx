@@ -1,5 +1,5 @@
 // WHIT-121 (expansion) — GAP tests the implementer's suite misses:
-//   1. a11y on BOTH new Goal-tab error affordances (#4): accessibilityRole/Label/testID on
+//   1. a11y on BOTH new mortgage-screen error affordances (#4): accessibilityRole/Label/testID on
 //      the two Retry buttons + accessibilityLiveRegion on the two error copies. Nothing
 //      else asserts these props, so a revert that drops them is currently invisible.
 //   2. hero branch PRECEDENCE (#2): facts UNSET + homeLoanError must show the "set up loan"
@@ -28,7 +28,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: () => {},
 }));
 
-import Goals from '../../app/(tabs)/goals';
+import Mortgage from '../../app/mortgage';
 
 beforeEach(() => {
   mockPush.mockClear();
@@ -40,7 +40,7 @@ beforeEach(() => {
 // are stripped. facts SET + balance null + homeLoanError so we land on the error hero.
 it('WHIT-121 #4: the hero balance-error Retry + copy carry the a11y props', () => {
   mockGoal = makeGoalData({ homeLoan: { balance: null, asOf: null }, homeLoanError: true, isError: true });
-  render(<Goals />);
+  render(<Mortgage />);
 
   const retry = screen.getByTestId('hero-balance-retry');
   expect(retry.props.accessibilityRole).toBe('button');
@@ -53,7 +53,7 @@ it('WHIT-121 #4: the hero balance-error Retry + copy carry the a11y props', () =
 // on the repayment error branch (not the real card, not the empty state).
 it('WHIT-121 #4: the repayment-error Retry + copy carry the a11y props', () => {
   mockGoal = makeGoalData({ repayment: NO_REPAYMENT, repaymentError: true });
-  render(<Goals />);
+  render(<Mortgage />);
 
   const retry = screen.getByTestId('repayment-retry');
   expect(retry.props.accessibilityRole).toBe('button');
@@ -74,7 +74,7 @@ it('WHIT-121 #2: with facts UNSET, a balance error yields the set-up prompt, not
     homeLoanError: true,
     isError: true,
   });
-  render(<Goals />);
+  render(<Mortgage />);
 
   expect(screen.getByText('Set up loan details →')).toBeTruthy();
   expect(screen.queryByText("Couldn't load your balance.")).toBeNull();

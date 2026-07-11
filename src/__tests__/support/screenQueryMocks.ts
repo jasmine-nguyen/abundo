@@ -25,6 +25,8 @@ export type ScreenState = Record<string, unknown> & {
   loanFacts?: unknown;
   homeLoan?: unknown;
   repayment?: unknown;
+  goals?: unknown[];
+  balances?: Record<string, number>; // account_id -> live signed balance, for the Goals hub
 };
 
 const noop = () => {};
@@ -44,6 +46,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
     usePayCycle: () => ({ payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleName: st().cycleName ?? (() => 'Fortnightly'), isLoading: false, isError: false }),
     useSettingsScreenData: () => ({ categoriesCount: cats().length, loanReady: false, categoriesError: st().categoriesError ?? false, loanReadyError: st().loanReadyError ?? false, ...status }),
     useGoalScreenData: () => ({ loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, repayment: st().repayment ?? {}, homeLoanError: false, repaymentError: false, ...status }),
+    useGoalsScreenData: () => ({ goals: st().goals ?? [], payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, balanceFor: (id: string | null | undefined) => (id == null ? null : (st().balances ?? {})[id] ?? null), loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, mortgageError: false, ...status }),
     useLoanFactsQuery: () => ({ data: st().loanFacts }),
   };
 }

@@ -14,7 +14,7 @@ const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
   { name: 'transactions', label: 'Transactions', icon: 'navTx' },
   { name: 'insights', label: 'Insights', icon: 'navInsights' },
-  { name: 'goals', label: 'Goal', icon: 'navGoals' },
+  { name: 'goals', label: 'Goals', icon: 'navGoals' },
   { name: 'settings', label: 'Settings', icon: 'navSettings' },
 ] as const;
 

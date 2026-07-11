@@ -2,7 +2,7 @@
 // WHIT-197: the live balance / loan facts / repayment now come from the cached query
 // layer via useGoalScreenData(), so that hook is mocked (the real milestoneView /
 // goalView selectors still run over the mocked composite data). ../context stays
-// partially mocked for the real selectors + the minimal useAppContext the Goal tab
+// partially mocked for the real selectors + the minimal useAppContext the mortgage screen
 // keeps for s.fireRepayment. expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
@@ -17,7 +17,7 @@ import type { GoalScreenData } from '../queries';
 let mockGoal: GoalScreenData;
 jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 
-// useAppContext is now only read by the Goal tab, for s.fireRepayment.
+// useAppContext is now only read by the mortgage screen, for s.fireRepayment.
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ fireRepayment: jest.fn() }) };
@@ -30,7 +30,7 @@ jest.mock('expo-router', () => ({
 }));
 
 import Milestone from '../../app/milestone';
-import Goals from '../../app/(tabs)/goals';
+import Mortgage from '../../app/mortgage';
 
 // Loan facts are saved by default (property value + LVR set) so equity renders; pass
 // EMPTY_LOAN_FACTS to exercise the "set this up" empty state.
@@ -91,36 +91,36 @@ it('does NOT show a balance error when only repayment/loanFacts failed (balance 
   expect(screen.queryByText("Couldn't load your balance.")).toBeNull();
 });
 
-// --- the Goal-tab entry point ------------------------------------------------
+// --- the mortgage-screen entry point ------------------------------------------------
 
-it('navigates to /milestone from the Goal-tab Sprint summary', () => {
-  render(<Goals />);
+it('navigates to /milestone from the mortgage screen Sprint summary', () => {
+  render(<Mortgage />);
   fireEvent.press(screen.getByTestId('milestone-link'));
   expect(mockPush).toHaveBeenCalledWith('/milestone');
 });
 
-it('Goal-tab Sprint summary shows real progress when the balance has loaded', () => {
+it('Mortgage-screen Sprint summary shows real progress when the balance has loaded', () => {
   mockGoal = makeGoalData({ homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  render(<Goals />);
+  render(<Mortgage />);
   // Real Sprint model (from the live balance), not the old $50k chunks.
   expect(screen.getByText('0 of 5 sprints reached')).toBeTruthy();
   expect(screen.getByText('Next: under $544,000')).toBeTruthy();
   expect(screen.queryByText(/chunks cleared/)).toBeNull();
 });
 
-it('Goal-tab Sprint summary invites a tap before the balance loads', () => {
-  render(<Goals />);
+it('Mortgage-screen Sprint summary invites a tap before the balance loads', () => {
+  render(<Mortgage />);
   expect(screen.getByText('The 36-month plan')).toBeTruthy();
   expect(screen.getByText('Tap to see your live progress')).toBeTruthy();
 });
 
-it('Goal tab shows a balance error + Retry when the balance read fails (WHIT-121 #2)', () => {
+it('The mortgage screen shows a balance error + Retry when the balance read fails (WHIT-121 #2)', () => {
   // WHIT-121 (#2): with loan facts SET, a homeLoan failure now surfaces an error + Retry on
   // the Goal hero instead of silently degrading to "—" — the Goal tab previously swallowed a
   // balance failure. Mirrors milestone.tsx. The projection stays hidden (no fake numbers).
   const refetch = jest.fn();
   mockGoal = makeGoalData({ homeLoan: { balance: null, asOf: null }, homeLoanError: true, isError: true, refetch });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
   expect(screen.queryByText('Mortgage-free')).toBeNull();
   fireEvent.press(screen.getByTestId('hero-balance-retry'));
@@ -129,9 +129,9 @@ it('Goal tab shows a balance error + Retry when the balance read fails (WHIT-121
 
 // --- empty state (loan facts not set) ----------------------------------------
 
-it('Goal tab shows a set-up prompt (not fake numbers) when loan facts are unset', () => {
+it('The mortgage screen shows a set-up prompt (not fake numbers) when loan facts are unset', () => {
   mockGoal = makeGoalData({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
-  render(<Goals />);
+  render(<Mortgage />);
   // The real live balance still shows; the fake "$67,100 whittled" seed does not.
   expect(screen.getByText('$596,642')).toBeTruthy();
   expect(screen.getByText('Set up loan details →')).toBeTruthy();
@@ -151,15 +151,15 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   expect(mockPush).toHaveBeenCalledWith('/loan');
 });
 
-// --- Goal-tab last-repayment card (WHIT-115) ---------------------------------
+// --- mortgage-screen last-repayment card (WHIT-115) ---------------------------------
 
-it('Goal tab shows the real last repayment (amount + date + split), no fake timestamp', () => {
+it('The mortgage screen shows the real last repayment (amount + date + split), no fake timestamp', () => {
   mockGoal = makeGoalData({
     // A distinct amount (not 1440) so it doesn't collide with the contribution
     // card's "$1,440" (baseRepay 1240 + extra 200) now the leading "−" is gone.
     repayment: { amount: 1500, date: '2026-07-01', principal: 1268, interest: 232 },
   });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText(/Last repayment ·/)).toBeTruthy();
   expect(screen.getByText('$1,268 principal · $232 interest')).toBeTruthy();
   expect(screen.getByText('$1,500')).toBeTruthy();   // plain positive — a repayment toward the goal, not a debit
@@ -167,8 +167,8 @@ it('Goal tab shows the real last repayment (amount + date + split), no fake time
   expect(screen.queryByText(/9:02am/)).toBeNull();
 });
 
-it('Goal tab shows a graceful empty state when there is no repayment on record', () => {
+it('The mortgage screen shows a graceful empty state when there is no repayment on record', () => {
   mockGoal = makeGoalData({ repayment: { amount: null, date: null, principal: null, interest: null } });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText(/No repayment on record yet/)).toBeTruthy();
 });

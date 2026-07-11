@@ -1,4 +1,4 @@
-// WHIT-115 — adversarial GAP screen tests for the Goal-tab last-repayment card.
+// WHIT-115 — adversarial GAP screen tests for the mortgage-screen last-repayment card.
 // milestone.screen.test.tsx already locks the real card (amount+date+split, no
 // "9:02am") and the empty-state copy. This file guards the two structural changes
 // the implementer's tests don't touch:
@@ -29,7 +29,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: () => {},
 }));
 
-import Goals from '../../app/(tabs)/goals';
+import Mortgage from '../../app/mortgage';
 
 beforeEach(() => {
   mockPush.mockClear();
@@ -40,7 +40,7 @@ it('empty state still renders the preview button and pressing it fires fireRepay
   const fireRepayment = jest.fn();
   mockFireRepayment = fireRepayment;
   mockGoal = makeGoalData({ repayment: NO_REPAYMENT });
-  render(<Goals />);
+  render(<Mortgage />);
   // The empty copy AND the shared preview button both show.
   expect(screen.getByText(/No repayment on record yet/)).toBeTruthy();
   fireEvent.press(screen.getByText('Preview a repayment alert'));
@@ -52,7 +52,7 @@ it('renders the last-repayment card even when loan facts are UNSET (un-gated fro
     loanFacts: EMPTY_LOAN_FACTS,
     repayment: { amount: 1440, date: '2026-07-01', principal: 1208, interest: 232 },
   });
-  render(<Goals />);
+  render(<Mortgage />);
   // Hero is in its "set up your loan" state...
   expect(screen.getByText('Set up loan details →')).toBeTruthy();
   // ...and the real repayment card is STILL shown alongside it.
@@ -62,7 +62,7 @@ it('renders the last-repayment card even when loan facts are UNSET (un-gated fro
 
 it('shows the empty card (not nothing) when facts are unset and no repayment exists', () => {
   mockGoal = makeGoalData({ loanFacts: EMPTY_LOAN_FACTS, repayment: NO_REPAYMENT });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText(/No repayment on record yet/)).toBeTruthy();
   // WHIT-121 precedence guard: no error flag → the empty state, NOT the error copy.
   expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
@@ -74,7 +74,7 @@ it('shows the empty card (not nothing) when facts are unset and no repayment exi
 it('shows an error + Retry (not the empty state) when the repayment fetch failed', () => {
   const refetch = jest.fn();
   mockGoal = makeGoalData({ repayment: NO_REPAYMENT, repaymentError: true, refetch });
-  render(<Goals />);
+  render(<Mortgage />);
   // The error copy shows; the "no repayment" empty copy must NOT (it would be a lie).
   expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
   expect(screen.queryByText(/No repayment on record yet/)).toBeNull();
@@ -95,7 +95,7 @@ it('keeps showing the real repayment card when a refetch fails over cached data'
     repayment: { amount: 1440, date: '2026-07-01', principal: 1208, interest: 232 },
     repaymentError: true,
   });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText('$1,440')).toBeTruthy();
   expect(screen.getByText('$1,208 principal · $232 interest')).toBeTruthy();
   expect(screen.queryByText("Couldn't load your last repayment.")).toBeNull();
