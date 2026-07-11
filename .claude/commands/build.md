@@ -80,6 +80,11 @@ Target card (optional): $ARGUMENTS
      — then continue. Never resolve such a decision silently mid-implementation.
 7. **Coding standards**
    - Simpler is better. Do not overcomplicate code.
+   - Keep READMEs short.
+   - Keep comments short and concise, use plain language. Only comment when necessary.
+   - Follow a standard/convention for naming functions, variables. For example, if a variable is
+     called transaction at one place, do not call it txn at another place.
+   - Keep code flat and readable, do not nest multiple if/else or try/catch together. Use early exits to avoid nesting.
    - Readability is important, unless the logic is very simple, avoid ternary, as
      it is very hard for people without context to understand the code.
    - Avoid overly defensive programming.
@@ -152,7 +157,7 @@ Target card (optional): $ARGUMENTS
     on the heavy `screen` suites, which is why WHIT-243 moved the floor to the merge
     step). Plain `npm test` runs only the fast `logic` project and does NOT gate
     coverage. Server `python -m pytest --cov …
-    --cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
+--cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
     backstop, not a quality signal — the real quality gate is fail-on-revert, which
     code-critic checks). ALL tests green, coverage floor met, typecheck clean is the
     precondition for the Implementation Sign-off. If anything is red, you are not done — fix it (or take it
