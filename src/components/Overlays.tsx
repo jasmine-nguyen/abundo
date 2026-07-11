@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel } from '../context';
-import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle } from '../queries';
+import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET } from '../motion/sheetMotion';
 // The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
@@ -101,6 +101,7 @@ function SheetHost() {
             {s.sheet?.mode === 'confirm' && <ConfirmSheet />}
             {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
             {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
+            {s.sheet?.mode === 'goalbalance' && <GoalBalanceSheet key={s.sheet.goalId} />}
           </Pressable>
         </Animated.View>
       </Pressable>
@@ -357,6 +358,108 @@ function PayCycleSheet() {
 
       <Pressable onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }]}>
         <Text style={styles.btnPrimaryText}>Done</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// WHIT-235: update a MANUAL goal's balance in place — a quick amount + as-of edit opened from
+// the goal card. Saving resends the WHOLE manual goal record via saveGoal (a whole-record PUT
+// upsert), so every other field rides along unchanged. Synced goals never open this.
+function GoalBalanceSheet() {
+  const s = useAppContext(); // sheet + saveGoal + showToast
+  const sh = s.sheet;
+  const goalId = sh?.mode === 'goalbalance' ? sh.goalId : null;
+  // Read the live record from the ['goals'] cache the hub already warms (mirrors the edit
+  // form). Keyed on goalId in SheetHost, so these initialisers re-run per goal.
+  const goal = useGoalsQuery(useIsAuthed()).data?.find((g) => g.id === goalId);
+  const today = new Date();
+  const isIOS = Platform.OS === 'ios';
+  const [balance, setBalance] = useState(goal?.manual_balance != null ? String(goal.manual_balance) : '');
+  // Default the as-of to TODAY: an update means "here's the balance now". The user can
+  // back-date it (max today) if they're entering a figure from an earlier statement.
+  const [asOf, setAsOf] = useState(toISODate(today));
+  const [showAndroidPicker, setShowAndroidPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // The goal can be gone (deleted elsewhere) or not yet cached — close cleanly rather than
+  // crash, like PickerSheet/ConfirmSheet do for a missing transaction.
+  if (!goal) return null;
+
+  const commitDate = (a?: unknown, b?: unknown) => {
+    const picked = a instanceof Date ? a : b instanceof Date ? b : undefined;
+    if (picked) setAsOf(toISODate(picked));
+  };
+
+  const onSave = async () => {
+    // Strict decimal only — the regex has no sign, so blanks / trailing garbage / negatives
+    // are all rejected, and any value that passes is >= 0.
+    if (!/^\d*\.?\d+$/.test(balance.trim())) return s.showToast('Enter a balance of $0 or more.');
+    const amount = parseFloat(balance.trim());
+    setSaving(true);
+    const ok = await s.saveGoal(goal.id, {
+      name: goal.name, icon: goal.icon, direction: goal.direction,
+      target_amount: goal.target_amount, target_date: goal.target_date,
+      baseline: goal.baseline ?? null,
+      manual_balance: amount, manual_as_of: asOf,
+    });
+    setSaving(false);
+    if (ok) s.setSheet(null);
+  };
+
+  return (
+    <View>
+      <Text style={styles.sheetTitle}>Update balance</Text>
+      <Text style={styles.confirmSub}>{goal.name} — set the current balance and the date it was true.</Text>
+
+      <Text style={[styles.fieldLabel, { marginTop: 14 }]}>CURRENT BALANCE ($)</Text>
+      <TextInput
+        testID="goal-balance-input"
+        value={balance}
+        onChangeText={setBalance}
+        placeholder="e.g. 2500"
+        placeholderTextColor={C.placeholder}
+        keyboardType="decimal-pad"
+        inputMode="decimal"
+        style={styles.input}
+      />
+
+      <Text style={[styles.fieldLabel, { marginTop: 14 }]}>AS OF</Text>
+      {isIOS ? (
+        <View style={[styles.cycleRow, { marginTop: 6, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}>
+          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(asOf)}</Text>
+          <DateTimePicker
+            value={parseISODate(asOf)}
+            mode="date"
+            display="compact"
+            maximumDate={today}
+            themeVariant="dark"
+            accentColor={C.accent}
+            onChange={commitDate}
+          />
+        </View>
+      ) : (
+        <Pressable
+          testID="goal-asof-open"
+          onPress={() => setShowAndroidPicker(true)}
+          style={[styles.cycleRow, { marginTop: 6, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
+        >
+          <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(asOf)}</Text>
+          <Glyph name="calendar" size={18} color={C.textDim} />
+        </Pressable>
+      )}
+      {!isIOS && showAndroidPicker && (
+        <DateTimePicker
+          value={parseISODate(asOf)}
+          mode="date"
+          display="default"
+          maximumDate={today}
+          onChange={(event, date) => { setShowAndroidPicker(false); commitDate(event, date); }}
+        />
+      )}
+
+      <Pressable testID="goal-balance-save" onPress={onSave} disabled={saving} style={[styles.btn, styles.btnPrimary, { marginTop: 16 }, saving && { opacity: 0.6 }]}>
+        <Text style={styles.btnPrimaryText}>{saving ? 'Saving…' : 'Save balance'}</Text>
       </Pressable>
     </View>
   );

@@ -24,6 +24,14 @@ jest.mock('../motion/ScrollChromeHeader', () => {
 let mockData: ReturnType<typeof baseData>;
 jest.mock('../queries', () => ({ useGoalsScreenData: () => mockData }));
 
+// WHIT-235: the hub now calls useAppContext for openGoalBalance. Keep the real balanceGoalView
+// (the % / pace assertions run the real engine); only the writer boundary is stubbed.
+const mockOpenGoalBalance = jest.fn();
+jest.mock('../context', () => {
+  const actual = jest.requireActual('../context') as typeof import('../context');
+  return { ...actual, useAppContext: () => ({ openGoalBalance: mockOpenGoalBalance }) };
+});
+
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush }),
@@ -54,6 +62,7 @@ function baseData(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   mockPush.mockClear();
+  mockOpenGoalBalance.mockClear();
   jest.useFakeTimers({ now: new Date(2026, 6, 11) }); // Sat 11 Jul 2026
   mockData = baseData();
 });
@@ -157,5 +166,42 @@ describe('navigation', () => {
     render(<Goals />);
     fireEvent.press(screen.getByTestId('mortgage-link'));
     expect(mockPush).toHaveBeenCalledWith('/mortgage');
+  });
+});
+
+describe('manual goal balance (WHIT-235)', () => {
+  beforeEach(() => { mockData = baseData({ goals: [GROW, PAYDOWN] }); });
+
+  it('a MANUAL goal shows its "as of" date + an Update balance affordance', () => {
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g2'));
+    expect(card.getByText('Balance as of 1 Jul 2026')).toBeTruthy();
+    expect(card.getByTestId('goal-balance-g2')).toBeTruthy();
+  });
+
+  it('a SYNCED goal shows neither the "as of" line nor the affordance', () => {
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.queryByTestId('goal-balance-g1')).toBeNull();
+    expect(card.queryByText(/Balance as of/)).toBeNull();
+  });
+
+  it('tapping Update balance opens the balance sheet for that goal', () => {
+    render(<Goals />);
+    fireEvent.press(screen.getByTestId('goal-balance-g2'));
+    expect(mockOpenGoalBalance).toHaveBeenCalledWith('g2');
+    // (The card-body-still-navigates complement is goalsHubBalanceGaps [A17]; RNTL never bubbles
+    // an inner press to the parent, so asserting "no push" here would pass tautologically.)
+  });
+
+  it('flags a balance not updated in over 30 days as stale', () => {
+    mockData = baseData({ goals: [{ ...PAYDOWN, id: 'g3', manual_as_of: '2026-05-01' }] }); // 71 days before
+    render(<Goals />);
+    expect(within(screen.getByTestId('goal-card-g3')).getByText('Haven’t updated in a while')).toBeTruthy();
+  });
+
+  it('does NOT flag a recently-updated balance', () => {
+    render(<Goals />); // PAYDOWN as-of 2026-07-01, 10 days before the pinned clock
+    expect(within(screen.getByTestId('goal-card-g2')).queryByText('Haven’t updated in a while')).toBeNull();
   });
 });
