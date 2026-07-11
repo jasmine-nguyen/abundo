@@ -12,6 +12,7 @@ import { springSheetIn, SHEET_ENTER_OFFSET } from '../motion/sheetMotion';
 // date components (not UTC) so the calendar and label show the day the user picked —
 // no midnight-timezone drift. Shared with the loan form's goal-date picker (WHIT-126).
 import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
+import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
 
 export function Overlays() {
   return (
@@ -108,17 +109,52 @@ function SheetHost() {
 }
 
 function PickerSheet() {
-  const s = useAppContext(); // sheet + chooseCategory (client-state)
+  const s = useAppContext(); // sheet + chooseCategory + createCategoryInline (client-state)
   // WHIT-203: the transaction + category list come from the cached query layer (warm
   // from the always-mounted tab bar), not the old store.
   const { transactions } = useTransactionsScreenData();
   const { categories: cats } = useCategories();
+  // WHIT-238: create a category inline instead of leaving for Settings. `creating` swaps the
+  // list for the mini-form; `submitting` guards a double-tap while the create is in flight.
+  const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const sh = s.sheet;
   if (sh?.mode !== 'picker') return null;
   const tx = transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
   // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
   const categories = [...cats].sort((a, b) => a.name.localeCompare(b.name));
+
+  // Create the category, then file THIS transaction into it. `chooseCategory` advances the
+  // sheet (still mode 'picker') to the confirm step, which reads the new category from the
+  // ['categories'] cache the inline create just mirrored into. A null result already toasted.
+  const createAndFile = async (draft: CategoryDraft) => {
+    setSubmitting(true);
+    const created = await s.createCategoryInline(draft);
+    if (created) s.chooseCategory(created.id);
+    else setSubmitting(false);
+  };
+
+  if (creating) {
+    return (
+      <View>
+        <Text style={styles.sheetTitle}>New category</Text>
+        <Text style={styles.sheetMerchant}>File '{merchantLabel(tx)}' into a new category</Text>
+        <View style={{ marginTop: 14 }}>
+          <QuickCreateCategory
+            initialBucket="Lifestyle"
+            parentPicker
+            categories={cats}
+            submitLabel="Create & file"
+            busy={submitting}
+            onSubmit={createAndFile}
+            onCancel={() => setCreating(false)}
+          />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
@@ -127,6 +163,13 @@ function PickerSheet() {
           misread it as spend once income categories are pickable (WHIT-158). */}
       <Text style={styles.sheetAmount}>{fmt2(tx.amount)}</Text>
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
+        {/* WHIT-238: make a category on the spot rather than round-tripping to Settings. */}
+        <Pressable testID="pickerNewCategory" onPress={() => setCreating(true)} style={styles.pickRow}>
+          <View style={[styles.pickChip, { backgroundColor: 'rgba(124,140,255,.14)' }]}>
+            <Glyph name="plus" size={18} color={C.accent} />
+          </View>
+          <Text style={[styles.pickName, { color: C.accentSofter }]}>New category</Text>
+        </Pressable>
         {categories.map((c) => (
           <Pressable key={c.id} onPress={() => s.chooseCategory(c.id)} style={styles.pickRow}>
             <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
