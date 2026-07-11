@@ -83,7 +83,8 @@ Target card (optional): $ARGUMENTS
    "prove it works" half; the `qa` agent writes the independent adversarial half in
    Phase 3. Then run the suites + typecheck for anything the change touches — the
    Python suite (`python -m pytest`) for Lambda work, and the JS suite + typecheck
-   (`npm test`, `npx tsc --noEmit`) for client work. Fix what you broke. Report the
+   (`npm test` for fast logic while iterating, `npm run test:all` for the full run,
+   `npx tsc --noEmit`) for client work. Fix what you broke. Report the
    results. Do not proceed to review with a red test suite unless the user says to.
    - **Fail-on-revert your own new tests** — revert the fix (edit it back / git
      stash), confirm the new test goes RED, restore. A test that still passes with
@@ -138,7 +139,9 @@ Target card (optional): $ARGUMENTS
 
 10. **Green gate — the suite (with coverage floor) must pass before you present.**
     Run the suites the way CI does, so the coverage floor is enforced: client
-    `npm test -- --coverage` + `npx tsc --noEmit`; server `python -m pytest --cov …
+    `npm run test:all -- --coverage` + `npx tsc --noEmit` (plain `npm test` runs only
+    the fast `logic` project — `test:all` runs BOTH projects, which the coverage floor
+    needs); server `python -m pytest --cov …
     --cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
     backstop, not a quality signal — the real quality gate is fail-on-revert, which
     code-critic checks). ALL tests green, coverage floor met, typecheck clean is the
@@ -186,7 +189,7 @@ Target card (optional): $ARGUMENTS
   write to Notion before the Implementation Sign-off. **One carve-out:** advancing the
   card's `Status` To Do → In Progress on a VALID plan (Phase 1, step 2) is the sole
   allowed pre-sign-off board write — it reflects work starting, nothing else.
-- **Green before PR.** The full automated suite (`npm test`, plus `pytest` for
+- **Green before PR.** The full automated suite (`npm run test:all`, plus `pytest` for
   Lambda work) and typecheck must pass before a PR is raised. No red suite ships.
 - Every feature ships with the automated tests for its automatable scenarios.
   **Testing model: two authors, one independent critic.** The implementer writes the

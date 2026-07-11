@@ -8,7 +8,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "TZ=Australia/Melbourne jest",
+    "test": "TZ=Australia/Melbourne jest --selectProjects logic",
+    "test:screen": "TZ=Australia/Melbourne jest --selectProjects screen --workerIdleMemoryLimit=512MB",
+    "test:all": "TZ=Australia/Melbourne jest --workerIdleMemoryLimit=512MB",
     "typecheck": "tsc --noEmit",
     "deploy": "npx expo export -p web && npx eas-cli@latest deploy"
   },

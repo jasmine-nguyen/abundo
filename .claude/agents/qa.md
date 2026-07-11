@@ -43,10 +43,15 @@ Don't wait to be handed context. You have Bash:
 
 ## The automated suites (where you write tests)
 
-### Jest — client / UI (`npm test`, runs `TZ=Australia/Melbourne jest`)
+### Jest — client / UI (`TZ=Australia/Melbourne jest`)
 
-Two jest "projects" (`jest.config.js`); `npm test` runs both, filter with
-`jest --selectProjects logic` (or `screen`):
+Two jest "projects" (`jest.config.js`). `npm test` runs only the fast `logic`
+project; `npm run test:all` runs BOTH (and `npm run test:screen` just the heavy
+`screen` project). Filter any of them with `jest --selectProjects logic` (or
+`screen`) or a test-name/path argument. NOTE: the FULL suite can OOM-crash a worker
+in a memory-tight box — run heavy work as targeted single suites
+(`npx jest <path> --runInBand`), and let CI / `test:all` (which recycle workers via
+`--workerIdleMemoryLimit`) carry the whole set:
 
 - **`logic`** — pure functions over app state (pay-cycle math, budget/categorize
   selectors, formatters, mappers). Node env, no React Native. Files:
