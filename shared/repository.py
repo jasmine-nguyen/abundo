@@ -29,6 +29,7 @@ from repository_category import (
     validate_category_parent,
 )
 from repository_budget import BudgetRepository
+from repository_goals import GoalsRepository
 from repository_paycycle import PayCycleRepository
 from repository_balance import AccountBalanceRepository, HomeLoanBalanceRepository
 from repository_loanfacts import LoanFactsRepository
@@ -39,6 +40,7 @@ __all__ = [
     "TransactionRepository",
     "CategoryRepository",
     "BudgetRepository",
+    "GoalsRepository",
     "PayCycleRepository",
     "HomeLoanBalanceRepository",
     "AccountBalanceRepository",

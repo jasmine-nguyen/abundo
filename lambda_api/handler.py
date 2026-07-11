@@ -13,6 +13,7 @@ from constants import (
     ENRICHMENTS_PATH,
     EXPO_TOKEN_MAX_LEN,
     FEED_WINDOW_DAYS,
+    GOALS_PATH,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_PATH,
     INCOME_BUCKET,
@@ -45,6 +46,7 @@ from repository import (
     DatabaseError,
     DeviceRepository,
     DuplicateCategoryError,
+    GoalsRepository,
     HomeLoanBalanceRepository,
     InsightRepository,
     InvalidCategoryParentError,
@@ -180,6 +182,19 @@ def lambda_handler(event, context):
 
         if path == PAYCYCLE_PATH and method == "PUT":
             return set_paycycle(event, PayCycleRepository())
+
+        # Goals (savings/paydown balance targets, WHIT-231). CRUD over the goals
+        # config item; collection route first, then the item routes ("/goals" does
+        # not startswith "/goals/", so the two are disjoint). Inside this try, so a
+        # repo VersionConflictError becomes the shared 409 below.
+        if path == GOALS_PATH and method == "GET":
+            return _json_response(200, list_goals(GoalsRepository()))
+
+        if path.startswith(f"{GOALS_PATH}/") and method == "PUT":
+            return upsert_goal(event, GoalsRepository())
+
+        if path.startswith(f"{GOALS_PATH}/") and method == "DELETE":
+            return delete_goal(event, GoalsRepository())
 
         # Enrichments (BankSync categorisation rules). These sit behind the API
         # Gateway authorizer (unlike the routes above), because they mutate
@@ -1513,6 +1528,140 @@ def set_budget(
 
     saved = repo.set_budget(cat_id, Decimal(str(target)))
     return _json_response(200, saved)
+
+
+# --- Goals (WHIT-231) ------------------------------------------------------
+# NOTE: distinct from the WHIT-134 home-loan insight-signal helpers above
+# (_GOAL_PAYOFF_MODES / _sanitise_goal / _extract_goal) — those narrow an AI-prompt
+# signal and are unrelated to the goals store. Kept apart on purpose.
+_GOAL_DIRECTIONS = {"grow", "paydown"}
+# Absurd for a personal goal; also keeps a giant value from blowing past DynamoDB's
+# number limit and 500ing at write instead of a clean 400 (matches set_budget).
+_GOAL_AMOUNT_MAX = 1_000_000_000
+# A goal's balance source, when synced, must name one of the real synced accounts —
+# the client picker only offers these three, so a phantom id is a bug caught here.
+_SYNCED_ACCOUNT_IDS = frozenset(ACCOUNT_ID_MAP.values())
+
+
+def _valid_iso_date(value) -> bool:
+    """True when `value` is a real ISO YYYY-MM-DD calendar date string. The regex
+    checks shape (it would pass 2026-02-30); date.fromisoformat checks the calendar."""
+    if not isinstance(value, str) or not _GOAL_DATE_ISO_RE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_goal_body(event: dict):
+    """Validate a PUT /goals/{id} body into a stored goal dict.
+
+    Returns (goal, None) on success or (None, error_response) with a 400. A goal has:
+    name, icon (defaults like a category), direction (grow|paydown), target_amount
+    (> 0 to save toward; a paydown may target 0 = pay it off), target_date (real ISO
+    date), and EXACTLY ONE balance source — a synced account_id OR a manual pair
+    (manual_balance + manual_as_of) — plus an optional baseline ("count from £X").
+    Every numeric is stored as Decimal(str(...)) so no float reaches boto3.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return None, error
+
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None, _json_response(400, {"error": "name is required"})
+
+    direction = body.get("direction")
+    if direction not in _GOAL_DIRECTIONS:
+        return None, _json_response(400, {"error": "direction must be 'grow' or 'paydown'"})
+
+    icon = body.get("icon")
+    icon = icon.strip() if isinstance(icon, str) and icon.strip() else DEFAULT_CATEGORY_ICON
+
+    target_amount = body.get("target_amount")
+    if not _finite_number(target_amount, high=_GOAL_AMOUNT_MAX):
+        return None, _json_response(
+            400, {"error": "target_amount must be a number between 0 and 1000000000"})
+    # A savings target of 0 is meaningless; a debt target of 0 ("pay it off") is the point.
+    if direction == "grow" and target_amount <= 0:
+        return None, _json_response(400, {"error": "target_amount must be > 0 for a savings goal"})
+
+    target_date = body.get("target_date")
+    if not _valid_iso_date(target_date):
+        return None, _json_response(400, {"error": "target_date must be a real ISO YYYY-MM-DD date"})
+
+    goal = {
+        "name": name.strip(),
+        "icon": icon,
+        "direction": direction,
+        "target_amount": Decimal(str(target_amount)),
+        "target_date": target_date,
+    }
+
+    # Exactly one balance source: a synced account_id XOR a manual (balance + as_of) pair.
+    # `has_manual` is true if EITHER manual field was sent, so a partial manual can't slip
+    # past as "no manual source" — it enters the manual branch and fails the field checks.
+    account_id = body.get("account_id")
+    manual_balance = body.get("manual_balance")
+    manual_as_of = body.get("manual_as_of")
+    has_account = isinstance(account_id, str) and bool(account_id.strip())
+    has_manual = manual_balance is not None or manual_as_of is not None
+    if has_account == has_manual:
+        return None, _json_response(
+            400,
+            {"error": "provide exactly one balance source: account_id, or manual_balance + manual_as_of"})
+
+    if has_account:
+        if account_id not in _SYNCED_ACCOUNT_IDS:
+            return None, _json_response(400, {"error": "account_id is not a known synced account"})
+        goal["account_id"] = account_id
+    else:
+        # Manual needs BOTH fields valid. manual_balance may be negative (a debt snapshot),
+        # so it's bounded by magnitude, not sign.
+        if not _finite_number(manual_balance, low=-_GOAL_AMOUNT_MAX, high=_GOAL_AMOUNT_MAX):
+            return None, _json_response(400, {"error": "manual_balance must be a finite number"})
+        if not _valid_iso_date(manual_as_of):
+            return None, _json_response(400, {"error": "manual_as_of must be a real ISO YYYY-MM-DD date"})
+        goal["manual_balance"] = Decimal(str(manual_balance))
+        goal["manual_as_of"] = manual_as_of
+
+    baseline = body.get("baseline")
+    if baseline is not None:
+        if not _finite_number(baseline, high=_GOAL_AMOUNT_MAX):
+            return None, _json_response(400, {"error": "baseline must be a number >= 0"})
+        goal["baseline"] = Decimal(str(baseline))
+
+    return goal, None
+
+
+def list_goals(repo: GoalsRepository) -> list:
+    """GET /goals — the user's goals as a list of objects, each carrying its `id`
+    (the stored map is flattened; the client keys by id)."""
+    return [{"id": goal_id, **goal} for goal_id, goal in repo.list_goals().items()]
+
+
+def upsert_goal(event: dict, repo: GoalsRepository) -> dict:
+    """PUT /goals/{id} — create or replace a goal (idempotent upsert). 404 on a
+    missing/blank id (an empty map key would 500 at DynamoDB), 400 on a bad body."""
+    goal_id = (event.get("pathParameters") or {}).get("id")
+    if not goal_id:
+        return _json_response(404, {"error": "goal not found"})
+    goal, error = _validate_goal_body(event)
+    if error:
+        return error
+    return _json_response(200, repo.upsert_goal(goal_id, goal))
+
+
+def delete_goal(event: dict, repo: GoalsRepository) -> dict:
+    """DELETE /goals/{id} — remove a goal. Idempotent: an unknown/already-gone id
+    still returns 200 (mirrors delete_enrichment / delete_budget)."""
+    goal_id = (event.get("pathParameters") or {}).get("id")
+    if not goal_id:
+        return _json_response(404, {"error": "goal not found"})
+    repo.delete_goal(goal_id)
+    return _json_response(200, {"id": goal_id})
 
 
 def set_paycycle(event: dict, repo: PayCycleRepository) -> dict:

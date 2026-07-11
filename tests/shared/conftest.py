@@ -89,7 +89,7 @@ _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 # shared/ modules whose bare names collide with the sibling suites.
 _REIMPORT = (
     "constants", "models", "encoders", "repository_base", "repository_transaction",
-    "repository_balance", "repository_loanfacts", "repository_budget",
+    "repository_balance", "repository_loanfacts", "repository_budget", "repository_goals",
     "repository_errors", "repository_insight", "repository_device", "push",
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
 )
@@ -115,6 +115,7 @@ def shared():
     import repository_balance
     import repository_loanfacts
     import repository_budget
+    import repository_goals
     import repository_insight
     import repository_device
     import push
@@ -125,7 +126,7 @@ def shared():
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
         balance=repository_balance, loanfacts=repository_loanfacts,
-        budget=repository_budget, insight=repository_insight,
+        budget=repository_budget, goals=repository_goals, insight=repository_insight,
         device=repository_device, push=push, push_receipt=repository_push_receipt,
         notify=repository_notify, spend=spend,
     )
