@@ -40,21 +40,15 @@ function renderFields(over: Partial<React.ComponentProps<typeof CategoryFields>>
   );
 }
 
-type Node = { props: { onPress?: unknown } };
-
-// [G1] Every icon in the grid must be wired to onIconChange(thatKey). The icon buttons carry no
-// text/testID, so we isolate them structurally: with the bucket + parent pickers off, the ONLY
-// Pressables left are the icon cells, in ICON_KEYS order. Pressing the 'car' cell (index 3) must
-// report onIconChange('car'). Fail-on-revert: mis-wire the grid (e.g. onIconChange(icon) instead
-// of onIconChange(k), or drop the handler) and the reported key is wrong / absent → red.
+// [G1] Every icon in the grid is wired to onIconChange(thatKey), and every ICON_KEYS icon
+// renders. WHIT-247: each cell carries an `icon-<key>` testID, so we tap it directly instead of
+// walking the render tree — no structural coupling to "the icon grid is the only Pressable here".
+// The all-render check stays (keyed on the testID prefix, not the tree shape). Fail-on-revert:
+// mis-wire the grid (onIconChange(icon) instead of onIconChange(k), or drop the handler) → red.
 it('the icon grid reports the tapped icon key via onIconChange', () => {
-  const { UNSAFE_root } = renderFields({ variant: 'compact', lockBucket: true, parentPicker: false });
-  const iconCells = (UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] })
-    .findAll((n) => typeof n.props?.onPress === 'function');
-  // With buckets locked and no parent picker, the grid is the whole tappable surface.
-  expect(iconCells.length).toBe(ICON_KEYS.length);
-  const carIdx = ICON_KEYS.indexOf('car');
-  fireEvent.press(iconCells[carIdx] as unknown as Parameters<typeof fireEvent.press>[0]);
+  renderFields({ variant: 'compact', lockBucket: true, parentPicker: false });
+  expect(screen.getAllByTestId(/^icon-/)).toHaveLength(ICON_KEYS.length);   // every icon renders
+  fireEvent.press(screen.getByTestId('icon-car'));
   expect(handlers.onIconChange).toHaveBeenCalledWith('car');
   expect(handlers.onIconChange).toHaveBeenCalledTimes(1);
 });
