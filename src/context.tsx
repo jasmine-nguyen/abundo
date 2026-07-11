@@ -329,6 +329,7 @@ export interface AppContext {
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }) => Promise<boolean>;
+  createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
   saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
@@ -703,38 +704,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [showToast],
   );
 
-  const saveCategory = useCallback(
-    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<boolean> => {
+  // Create a category and RETURN it (not just a boolean), so a caller can act on the new
+  // id straight away — the categorise sheet files the transaction into it (WHIT-238), the
+  // category-edit screen re-parents children under it (WHIT-237). Mirrors the new row into
+  // the ['categories'] cache the pickers/screens read (so it's pickable instantly), then
+  // invalidates to reconcile. Returns null (and toasts) on a bad/empty name or an API error.
+  const createCategoryInline = useCallback(
+    async (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<Category | null> => {
       const name = form.name.trim();
-      if (!name) return false;
-      // Only send `parent` when the caller manages it (the category-edit screen), so a
-      // caller that omits it leaves the stored link untouched (matches the server's
-      // leave-as-is rule). An explicit null detaches to top-level.
+      if (!name) return null;
+      // Send `parent` only when supplied (server leave-as-is otherwise); explicit null = top-level.
       const input = 'parent' in form
         ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
         : { name, bucket: form.bucket, icon: form.icon };
       try {
-        if (editId) {
-          const updated = await updateCategory(editId, input);
-          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
-          showToast('Category updated.');
-        } else {
-          const created = await createCategory(input);
-          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, toCategory(created)] : prev));
-          showToast('Category created.');
-        }
-        // WHIT-203: the setQueryData above shows the change instantly on the migrated
-        // category screens / pickers (parity with deleteCategory); the invalidate then
-        // reconciles with the server. Safe to invalidate — the category genuinely exists
-        // server-side, so a refetch can't resurrect a stale one.
+        const created = toCategory(await createCategory(input));
+        queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, created] : prev));
         queryClient.invalidateQueries({ queryKey: ['categories'] });
+        showToast('Category created.');
+        return created;
+      } catch {
+        showToast('Could not save category. Please try again.');
+        return null;
+      }
+    },
+    [showToast],
+  );
+
+  const saveCategory = useCallback(
+    async (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<boolean> => {
+      const name = form.name.trim();
+      if (!name) return false;
+      // Create routes through createCategoryInline (the single source of the cache-mirror);
+      // update stays here. `parent` is forwarded as-is so an omitted parent leaves the stored
+      // link untouched (the server's leave-as-is rule); an explicit null detaches to top-level.
+      if (!editId) return (await createCategoryInline(form)) !== null;
+      const input = 'parent' in form
+        ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
+        : { name, bucket: form.bucket, icon: form.icon };
+      try {
+        const updated = await updateCategory(editId, input);
+        queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
+        // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
+        // pickers; the invalidate then reconciles with the server.
+        queryClient.invalidateQueries({ queryKey: ['categories'] });
+        showToast('Category updated.');
         return true;
       } catch {
         showToast('Could not save category. Please try again.');
         return false;
       }
     },
-    [showToast],
+    [showToast, createCategoryInline],
   );
 
   const deleteCategory = useCallback(async (id: string): Promise<boolean> => {
@@ -854,9 +875,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment,
+    openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -1080,6 +1101,75 @@ export function eligibleParents(categories: Category[], editId: string | null, b
     return false;
   };
   return categories.filter((c) => c.bucket === bucket && c.id !== editId && !isDescendantOfEdit(c));
+}
+
+// Client mirror of the server's category nesting cap (shared/repository_category.py
+// _MAX_CATEGORY_DEPTH, WHIT-223). Advisory only — the server re-validates on write, so if the
+// two ever drift the server wins (a too-deep attach is rejected with a toast).
+export const MAX_CATEGORY_DEPTH = 5;
+
+// The level of `id` in the tree: nodes from it up to and including its root (root = 1), or 0
+// for null. Cycle-safe. Mirrors the server's _ancestor_depth.
+function ancestorDepth(byId: Map<string, Category>, id: string | null): number {
+  let depth = 0;
+  const seen = new Set<string>();
+  let cur = id;
+  while (cur && !seen.has(cur)) { seen.add(cur); depth++; cur = byId.get(cur)?.parent ?? null; }
+  return depth;
+}
+
+// The level a category sits at given the id of its parent (a top-level node, parent null, is
+// level 1). One source for "how deep am I" so the edit screen's depth gate and eligibleChildren
+// can't drift from each other — or from the server's _ancestor_depth. Cycle-safe.
+export function categoryDepth(categories: Category[], parentId: string | null): number {
+  if (parentId === null) return 1;
+  return ancestorDepth(new Map(categories.map((c) => [c.id, c])), parentId) + 1;
+}
+
+// The tallest downward chain from `id` in LEVELS (1 for a leaf), cycle-safe. Mirrors the
+// server's _subtree_height. `childrenOf` maps a parent id to its child ids.
+function subtreeHeight(childrenOf: Map<string, string[]>, id: string): number {
+  const walk = (node: string, seen: Set<string>): number => {
+    if (seen.has(node)) return 0;
+    seen.add(node);
+    const kids = childrenOf.get(node);
+    if (!kids || kids.length === 0) return 1;
+    return 1 + Math.max(...kids.map((k) => walk(k, seen)));
+  };
+  return walk(id, new Set());
+}
+
+// Which existing categories may be attached AS CHILDREN of the category being edited
+// (WHIT-237), mirroring the three server rules: same bucket; never the category itself; never
+// one of its ancestors (that would make a cycle); and the attach must not push the family past
+// MAX_CATEGORY_DEPTH — depth(self) + height(candidate) <= 5. `selfId` is null for a not-yet-
+// created parent; `selfParentId` is the parent this category itself rolls up into (so a nested
+// parent counts its own depth). A candidate already parented to self is still returned so the
+// picker can show it pre-selected. Pure + exported so the screen and its tests share one rule.
+export function eligibleChildren(
+  categories: Category[], selfId: string | null, selfParentId: string | null, bucket: Bucket,
+): Category[] {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const childrenOf = new Map<string, string[]>();
+  for (const c of categories) {
+    const p = c.parent ?? null;
+    if (p) { const list = childrenOf.get(p); if (list) list.push(c.id); else childrenOf.set(p, [c.id]); }
+  }
+  // Where `self` sits (top-level = 1). A nested parent is deeper, so fewer descendants fit
+  // under it before hitting the cap.
+  const selfDepth = categoryDepth(categories, selfParentId);
+  const isAncestorOfSelf = (candidateId: string): boolean => {
+    const seen = new Set<string>();
+    let cur = selfParentId;
+    while (cur && !seen.has(cur)) { if (cur === candidateId) return true; seen.add(cur); cur = byId.get(cur)?.parent ?? null; }
+    return false;
+  };
+  return categories.filter((c) =>
+    c.bucket === bucket &&
+    c.id !== selfId &&
+    !isAncestorOfSelf(c.id) &&
+    selfDepth + subtreeHeight(childrenOf, c.id) <= MAX_CATEGORY_DEPTH,
+  );
 }
 
 // The sentinel category id the /breakdown endpoint uses for spend that counts to

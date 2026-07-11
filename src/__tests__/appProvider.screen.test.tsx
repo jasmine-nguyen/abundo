@@ -400,6 +400,33 @@ it('saveCategory returns false + toasts on failure', async () => {
   expect(result.current.toast).toBe('Could not save category. Please try again.');
 });
 
+// --- createCategoryInline (WHIT-237/238) -------------------------------------
+
+it('createCategoryInline returns the created category and mirrors it into the cache', async () => {
+  mockApi.createCategory.mockResolvedValue({ id: 'gym', name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', color: '#f00', recent: 0, parent: null });
+  seed();
+  const result = mount();
+
+  let created: unknown;
+  await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', parent: null }); });
+
+  // Returns the CATEGORY (not a boolean) so a caller can file/re-parent against its id...
+  expect((created as { id: string } | null)?.id).toBe('gym');
+  expect(mockApi.createCategory).toHaveBeenCalledWith({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell', parent: null });
+  // ...and it's mirrored into the cache so it's pickable immediately.
+  expect(cats().some((c) => c.id === 'gym')).toBe(true);
+});
+
+it('createCategoryInline returns null + toasts on failure', async () => {
+  mockApi.createCategory.mockRejectedValue(new Error('x'));
+  seed();
+  const result = mount();
+  let created: unknown = 'unset';
+  await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
+  expect(created).toBeNull();
+  expect(result.current.toast).toBe('Could not save category. Please try again.');
+});
+
 // --- deleteCategory ----------------------------------------------------------
 
 it('deleteCategory removes it (cache cascade) and returns true', async () => {
