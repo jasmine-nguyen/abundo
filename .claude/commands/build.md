@@ -47,6 +47,16 @@ Target card (optional): $ARGUMENTS
    plan. It returns an adversarial review. If it says NEEDS REWORK, send the
    problems back to a fresh `solution-designer` run and repeat once.
 
+   **Scope check — one card, one PR.** Before presenting, gauge the plan's size: if
+   shipping it cleanly would take **more than one PR** (e.g. a data layer AND a screen
+   rewrite AND a file relocation + its test migration — what made WHIT-233 drag), the
+   card is too big. STOP and propose splitting it into smaller tickets — one shippable
+   unit each — then build those in order. One card → one PR → one review → one sign-off;
+   a multi-PR card doubles every review and sign-off cycle. The only exception is a
+   change that genuinely can't land in pieces without breaking `main` (a truly atomic
+   swap) — call that out explicitly and say why. Slicing is not a reason to weaken the
+   review agents: code-critic and qa stay full-strength on every slice.
+
 4. **Present + PAUSE (Plan Sign-off).** First run a **plain-language pass** (AGENTS.md
    "How to communicate" + the jargon glossary): lead with an **"In plain words:"**
    summary — 2–3 sentences a non-coder gets — then swap or gloss every technical term
@@ -205,6 +215,12 @@ show` the commits that touched the area) until you can point to the exact line
   write to Notion before the Implementation Sign-off. **One carve-out:** advancing the
   card's `Status` To Do → In Progress on a VALID plan (Phase 1, step 2) is the sole
   allowed pre-sign-off board write — it reflects work starting, nothing else.
+- **One card, one PR.** If a plan needs more than one PR to ship safely, split the
+  card into smaller tickets BEFORE building — don't run a multi-PR card through the
+  pipeline (it doubles every review + sign-off cycle, which is what made WHIT-233 drag).
+  The only exception is a change that genuinely can't land in pieces without breaking
+  `main`; call that out explicitly. This is a scoping fix, never a reason to weaken the
+  review agents.
 - **Green before PR.** The full automated suite (`npm run test:all`, plus `pytest` for
   Lambda work) and typecheck must pass before a PR is raised. No red suite ships.
 - Every feature ships with the automated tests for its automatable scenarios.
