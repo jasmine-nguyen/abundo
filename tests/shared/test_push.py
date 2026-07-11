@@ -228,6 +228,55 @@ def test_malformed_response_is_swallowed(shared, monkeypatch):
     assert out["ok"] == 0 and out["pruned"] == []
 
 
+def test_post_expo_empty_body_decodes_to_empty_dict(shared, monkeypatch):
+    # The shared POST helper's `json.loads(raw) if raw else {}` else-branch: an empty HTTP
+    # body must decode to {}, NOT call json.loads(b"") (which raises). Tested directly on
+    # _post_expo because both public callers swallow a decode error, so the branch is
+    # unobservable — and untestable to the fail-on-revert bar — through them.
+    push = shared.push
+
+    class _EmptyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b""
+
+    monkeypatch.setattr(push.urllib.request, "urlopen",
+                        lambda req, timeout=None: _EmptyResponse())
+
+    assert push._post_expo(push.EXPO_PUSH_URL, [], "k") == {}
+
+
+def test_post_expo_builds_the_shared_request_shape(shared, monkeypatch):
+    # Lock the plumbing the two callers now share: URL passthrough, POST, Bearer header,
+    # timeout, and the JSON-encoded body — so a regression in the extracted helper is
+    # caught here, not only transitively through send/getReceipts.
+    push = shared.push
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["method"] = req.method
+        captured["auth"] = req.get_header("Authorization")
+        captured["timeout"] = timeout
+        captured["body"] = json.loads(req.data)
+        return _FakeResponse({"data": {"ok": True}})
+
+    monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
+    out = push._post_expo(push.EXPO_RECEIPTS_URL, {"ids": ["r1"]}, "secret")
+
+    assert captured["url"] == push.EXPO_RECEIPTS_URL
+    assert captured["method"] == "POST"
+    assert captured["auth"] == "Bearer secret"
+    assert captured["timeout"] == push.EXPO_PUSH_TIMEOUT_SECONDS
+    assert captured["body"] == {"ids": ["r1"]}
+    assert out == {"data": {"ok": True}}
+
+
 def test_batches_over_100_and_prunes_in_the_second_batch(shared, monkeypatch):
     push = shared.push
     sizes = []
@@ -431,3 +480,22 @@ def test_get_receipts_reads_token_from_ssm_when_not_passed(shared, monkeypatch):
     monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
     push.get_receipts(["a"])
     assert captured["auth"] == "Bearer ssm-token"
+
+
+def test_get_receipts_surfaces_request_level_errors_as_a_warning(shared, monkeypatch, caplog):
+    # WHIT-246 — [A-warn] The refactor left getReceipts' request-level `errors` handling
+    # OUTSIDE _post_expo, in _get_receipts_batch. Expo can 200 with a top-level {"errors":[...]}
+    # (rate-limit / malformed) and NO `data`; the module logs a WARNING so that rejection
+    # isn't silently indistinguishable from an empty result. The existing
+    # test_get_receipts_absent_data_and_top_level_errors_yield_empty EXECUTES this branch
+    # but only asserts the {} return — the warning itself is unasserted. Lock it here.
+    import logging
+    push = shared.push
+    monkeypatch.setattr(
+        push.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse({"errors": [{"code": "RATE_LIMIT"}]}))
+    with caplog.at_level(logging.WARNING, logger=push.logger.name):
+        out = push.get_receipts(["a"], access_token="k")
+    assert out == {}
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("request-level errors" in m and "RATE_LIMIT" in m for m in warnings), warnings
