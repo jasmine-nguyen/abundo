@@ -920,6 +920,127 @@ export function cycleClock(
 
 export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
 
+// --- Goals: balance-target progress + pace (WHIT-232) ----------------------
+// The pure math behind a goal card: how full the thermometer is (progress) and how much
+// to move each payday to hit the target date (pace), for BOTH directions — grow (savings,
+// balance should RISE to target) and paydown (debt, balance should FALL to target, usually
+// 0). No formatting, no fetch, no render: the fetch layer (WHIT-233) resolves the balance
+// and feeds this; the screen (WHIT-234) formats the numbers.
+export type BalanceGoalDirection = 'grow' | 'paydown';
+export type BalanceGoalStatus = 'ahead' | 'on_track' | 'behind';
+
+// The subset of the WHIT-231 server goal record this selector reads. `account_id` present
+// => a SYNCED source (current balance is the live signed `balance` input); otherwise
+// `manual_balance` present => a MANUAL source (and is itself the current balance). For a
+// paydown goal `baseline` doubles as the starting balance the % is measured down from.
+export interface BalanceGoal {
+  direction: BalanceGoalDirection;
+  target_amount: number;          // >= 0; grow guarantees > 0 server-side
+  target_date: string;            // ISO YYYY-MM-DD
+  baseline?: number | null;       // optional "count from £X"
+  account_id?: string | null;     // present => synced source
+  manual_balance?: number | null; // present => manual source (and the current balance)
+  manual_as_of?: string | null;
+}
+
+export interface BalanceGoalInput {
+  goal: BalanceGoal;
+  // Live SIGNED balance for a SYNCED goal (AccountBalance.amount: spending +, loan/credit −);
+  // null = not yet polled. Ignored for a manual goal (its balance is on the record).
+  balance: number | null;
+  payCycle: { length: number; last_pay_date: string };
+}
+
+export interface BalanceGoalView {
+  progress: number | null;        // 0..1, or null when the % can't be computed safely
+  pacePerPayday: number | null;   // amount to move each payday, or null when the balance is unknown
+  paydaysLeft: number;            // >= 0
+  // WHIT-232: ALWAYS null this card. Ahead/behind needs a fixed goal START (date + starting
+  // balance) the record doesn't persist — `manual_as_of` is the CURRENT snapshot's date and
+  // moves forward on every balance update (WHIT-235), so it can't anchor "elapsed time". A
+  // follow-up adds start_date/start_balance; a later card fills this in.
+  status: BalanceGoalStatus | null;
+}
+
+// Count the paydays remaining before a target date: the payday dates `last_pay_date +
+// n*length` that fall in the half-open window (today, target] — strictly after today, on or
+// before target. Whole-day UTC math (like cycleClock) so a Melbourne daylight-saving change
+// can't shift the count. The count of integers n with today < pay + n*len <= target is
+// floor(dTarget/len) − floor(dToday/len); floor handles a last_pay_date in the future (n<0).
+export function paydaysUntil(
+  payCycle: { length: number; last_pay_date: string },
+  targetISO: string,
+  today?: Date,
+): number {
+  const len = payCycle.length;
+  if (!(len > 0)) return 0;
+  const [py, pm, pd] = payCycle.last_pay_date.split('-').map(Number);
+  const [ty, tm, td] = targetISO.split('-').map(Number);
+  const DAY = 86400000;
+  const pay = Date.UTC(py, pm - 1, pd);
+  const target = Date.UTC(ty, tm - 1, td);
+  const now = today ?? new Date();
+  const todayUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const dToday = Math.round((todayUTC - pay) / DAY);
+  const dTarget = Math.round((target - pay) / DAY);
+  if (Number.isNaN(dTarget) || Number.isNaN(dToday)) return 0;
+  return Math.max(0, Math.floor(dTarget / len) - Math.floor(dToday / len));
+}
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+
+// The goal engine. Pure over its inputs. Progress + pace are correct for both directions;
+// status is null this card (see BalanceGoalView).
+export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalView {
+  const { goal } = s;
+  const target = goal.target_amount;
+  const baseline = goal.baseline ?? null;
+  const synced = !!goal.account_id;
+
+  // The current balance: a synced goal's live SIGNED input, else the manual record value.
+  const raw = synced ? s.balance : (goal.manual_balance ?? null);
+  const bal: number | null = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+  const known = bal !== null;
+
+  // Normalise into a non-negative quantity, source-aware:
+  //  grow    -> current savings; an overdrawn synced account (−50) clamps to 0, never abs.
+  //  paydown -> amount OWED as a positive: synced owed = max(0, −balance) (loan stored
+  //             negative); manual debt is entered positive so owed = max(0, manual_balance).
+  //             A credit balance clamps to 0 (met) — no phantom debt from a blanket abs.
+  let current = 0;
+  if (bal !== null) {
+    current = goal.direction === 'grow' ? Math.max(0, bal) : Math.max(0, synced ? -bal : bal);
+  }
+
+  const paydaysLeft = paydaysUntil(s.payCycle, goal.target_date, today);
+
+  // Progress % (0..1). Every denominator guarded — a clamp can't rescue 0/0 = NaN.
+  let progress: number | null = null;
+  if (known) {
+    if (goal.direction === 'grow') {
+      const lo = baseline ?? 0;
+      const denom = target - lo;                 // > 0 unless target <= baseline (or target <= 0)
+      if (denom > 0) progress = clamp01((current - lo) / denom);
+    } else if (baseline != null) {
+      const denom = baseline - target;           // > 0 unless the start isn't above the target
+      if (denom > 0) progress = clamp01((baseline - current) / denom);
+    }
+    // paydown without a baseline start reference -> progress stays null (owed/target shown instead)
+  }
+
+  // Per-payday pace: remaining (floored at 0 so a met goal is 0, never negative) over the
+  // paydays left. 0 paydays left (overdue / before the next payday) -> the whole amount now.
+  let pacePerPayday: number | null = null;
+  if (known) {
+    const remaining = goal.direction === 'grow'
+      ? Math.max(0, target - current)
+      : Math.max(0, current - target);
+    pacePerPayday = paydaysLeft > 0 ? remaining / paydaysLeft : remaining;
+  }
+
+  return { progress, pacePerPayday, paydaysLeft, status: null };
+}
+
 export interface BudgetView {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
