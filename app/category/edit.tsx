@@ -61,7 +61,13 @@ export default function CategoryEdit() {
   // parent picker's live re-filter). New children inherit the parent's bucket, so they stay.
   useEffect(() => {
     const okIds = new Set(eligibleChildren(categories, categoryId ?? null, parent, bucket).map((c) => c.id));
-    setAttachIds((prev) => prev.filter((id) => okIds.has(id)));
+    // Return the SAME array when nothing is dropped — `filter` always allocates a fresh array,
+    // and setting a new reference here would re-render → re-run this effect → loop forever if
+    // `categories` identity is unstable (WHIT-244). Only change state when picks actually go.
+    setAttachIds((prev) => {
+      const next = prev.filter((id) => okIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
   }, [bucket, parent, categories, categoryId]);
 
   const color = existing?.color ?? C.accent;

@@ -203,10 +203,15 @@ export interface CategoriesData {
   refetch: () => void;
   refetchStale: () => void;
 }
+// A single frozen empty array for the not-yet-loaded case, so `categories` keeps a STABLE
+// identity across renders while the query is cold. A fresh `?? []` each render would make
+// every consumer's `[categories]`-keyed memo/effect re-fire on every redraw — and in
+// category/edit that turned an effect into an infinite re-render loop (WHIT-244).
+const EMPTY_CATEGORIES: Category[] = [];
 export function useCategories(): CategoriesData {
   const authed = useIsAuthed();
   const categoriesQuery = useCategoriesQuery(authed);
-  const categories = categoriesQuery.data ?? [];
+  const categories = categoriesQuery.data ?? EMPTY_CATEGORIES;
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
   const refetch = useCallback(() => { categoriesQuery.refetch(); }, [categoriesQuery]);
