@@ -8,6 +8,7 @@ import { useAppContext, budgetEditInfo, cycleName } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { queryClient } from '../../src/queryClient';
 import { Header } from '../../src/components/Header';
+import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
 export default function BudgetEdit() {
   const s = useAppContext(); // saveBudget writer stays on the store
@@ -25,6 +26,9 @@ export default function BudgetEdit() {
   }, [info.existing?.budget]);
   const [histOpen, setHistOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // WHIT-241: same-frame double-tap guard on Save (must be declared with the other hooks,
+  // above the early returns below, to satisfy the rules of hooks).
+  const runSave = useInFlightGuard();
 
   if (!info.category) return <View style={{ flex: 1 }}><Header title="Set budget" /></View>;
   // WHIT-202: a Savings category can't carry a budget target (the Budgets screen skips it),
@@ -47,7 +51,7 @@ export default function BudgetEdit() {
   const num = parseFloat(input) || 0;
   const canSave = num > 0 && !submitting;
 
-  const save = async () => {
+  const save = () => runSave(async () => {
     if (!canSave) return;
     setSubmitting(true);
     const ok = await s.saveBudget(categoryId, num);
@@ -61,7 +65,7 @@ export default function BudgetEdit() {
     } else {
       setSubmitting(false); // stay on the screen so the user can retry
     }
-  };
+  });
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>

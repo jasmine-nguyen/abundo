@@ -9,6 +9,7 @@ import { useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { CategoryFields } from '../../src/components/CategoryFields';
 import { QuickCreateCategory } from '../../src/components/QuickCreateCategory';
+import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
 export default function CategoryEdit() {
   const s = useAppContext(); // saveCategory / deleteCategory writers stay on the store
@@ -76,7 +77,10 @@ export default function CategoryEdit() {
   const editingUnloaded = !!categoryId && !existing;
   const canSave = name.trim().length > 0 && !submitting && !editingUnloaded;
 
-  const save = async () => {
+  // WHIT-241: guard the whole save against a same-frame double-tap (the visible `submitting`
+  // flag only blocks from the NEXT render, so two taps in one frame would both create/save).
+  const runSave = useInFlightGuard();
+  const save = () => runSave(async () => {
     if (!canSave) return;
     setSubmitting(true);
     // 1) Save the category itself. A NEW parent must persist first so its children can point
@@ -111,14 +115,17 @@ export default function CategoryEdit() {
       s.showToast(`Saved '${name.trim()}', but ${failed} sub-categor${failed === 1 ? 'y' : 'ies'} couldn't be attached — add them from its page.`);
     }
     router.back();
-  };
-  const remove = async () => {
+  });
+  // WHIT-241: same-frame double-tap guard on Delete (a separate latch from save — each button
+  // guards only its own double-tap).
+  const runRemove = useInFlightGuard();
+  const remove = () => runRemove(async () => {
     if (!categoryId || submitting) return;
     setSubmitting(true);
     const ok = await s.deleteCategory(categoryId);
     if (ok) router.back();
     else setSubmitting(false);
-  };
+  });
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>

@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { C, FONT } from '../theme';
 import { Bucket, Category, eligibleParents } from '../context';
 import { CategoryFields } from './CategoryFields';
+import { useInFlightGuard } from '../hooks/useInFlightGuard';
 
 // A category draft the caller decides what to do with: the categorise sheet (WHIT-238)
 // persists it and files the transaction into it; the category-edit screen (WHIT-237)
@@ -50,10 +51,16 @@ export function QuickCreateCategory({
     setParent((cur) => (cur !== null && !eligibleParents(categories, null, bucket).some((c) => c.id === cur) ? null : cur));
   }, [bucket, parentPicker, categories]);
 
+  // WHIT-241: a synchronous latch so a same-frame double-tap of the submit button can't emit
+  // `onSubmit` twice (which, for the create-and-file / add-sub hosts, would create the category
+  // twice). Awaiting `onSubmit` holds the latch for the whole host op — the visible `busy` gate
+  // below only flips on the next render, a beat too late for two taps in one frame.
+  const runSubmit = useInFlightGuard();
   const canSave = name.trim().length > 0 && !busy;
   const submit = () => {
     if (!canSave) return;
-    onSubmit({ name: name.trim(), bucket, icon, parent: parentPicker ? parent : fixedParent });
+    const draft = { name: name.trim(), bucket, icon, parent: parentPicker ? parent : fixedParent };
+    runSubmit(() => onSubmit(draft));
   };
 
   return (
