@@ -5,8 +5,8 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
-import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, listEnrichments } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
+import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
 import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
@@ -55,6 +55,10 @@ export const accountBalancesKey = ['accountBalances'] as const;
 // the literal ['rules'] the rule writes double-write in context.tsx (context imports
 // queryClient directly, not this key, to avoid a circular import) — WHIT-195.
 export const rulesKey = ['rules'] as const;
+// The user's savings/debt goals (the Goals hub) — WHIT-233. Un-windowed flat key, kept in
+// sync with the literal ['goals'] the goal writes touch in context.tsx (context imports
+// queryClient directly, not this key, to avoid a circular import).
+export const goalsKey = ['goals'] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
@@ -80,6 +84,15 @@ export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
   return Object.entries(rollups)
     .filter(([, rollup]) => rollup.target > 0) // skip target<=0 so budget math never divides by 0
     .map(([id, rollup]) => toBudget(id, rollup));
+}
+// WHIT-233: the /goals payload is already the client GoalRecord shape (the server owns no
+// mapping), so this is a passthrough that only FAILS LOUDLY on a malformed shape — mirroring
+// selectCategories/selectRules. A non-array (a wrapped or changed payload) rejects the query
+// → the hub shows its error card, instead of a cryptic "goals.map is not a function" later. A
+// genuinely empty backlog is `[]`, which passes.
+export function selectGoals(raw: unknown): GoalRecord[] {
+  if (!Array.isArray(raw)) throw new Error(`selectGoals: expected an array from /goals, got ${typeof raw}`);
+  return raw as GoalRecord[];
 }
 
 // Server default, mirrored from AppProvider's seed (src/context.tsx) — used for the
@@ -180,6 +193,13 @@ export function useRepaymentQuery(enabled: boolean) {
 // never blank the transaction list or the account cards (which derive from transactions).
 export function useAccountBalancesQuery(enabled: boolean) {
   return useQuery({ queryKey: accountBalancesKey, queryFn: fetchAccountBalances, enabled });
+}
+
+// WHIT-233: the user's savings/debt goals. Empty [] before the first goal is created — a
+// normal success, not an error (the hub shows its "no goals yet" state). selectGoals guards
+// the shape so a malformed payload rejects the query rather than crashing a downstream .map.
+export function useGoalsQuery(enabled: boolean) {
+  return useQuery({ queryKey: goalsKey, queryFn: fetchGoals, enabled, select: selectGoals });
 }
 
 // WHIT-195: the categorisation rules. Mapped in the queryFn (not `select`) so the cache
@@ -535,6 +555,79 @@ export function useRulesScreenData(): RulesScreenData {
     rules: rulesQuery.data ?? [],
     rulesError: firstLoadError(rulesQuery),
     ...status,
+  };
+}
+
+// --- the Goals hub's composite view (WHIT-233) -------------------------------
+// A frozen empty array for the not-yet-loaded case, so `goals` keeps a STABLE identity
+// across renders while the query is cold — a fresh `?? []` each render would re-fire every
+// consumer's `[goals]`-keyed memo/effect on every redraw (the WHIT-244 trap).
+const EMPTY_GOALS: GoalRecord[] = [];
+
+export interface GoalsScreenData {
+  goals: GoalRecord[];
+  payCycle: PayCycle; // for the per-goal pace math (balanceGoalView needs the cycle)
+  // Resolve a SYNCED goal's live SIGNED balance (AccountBalance.amount) by its account id;
+  // null when that account isn't in the balances payload yet (unpolled) or the balances read
+  // hasn't landed. Feeds balanceGoalView's `balance` input.
+  balanceFor: (accountId: string | null | undefined) => number | null;
+  loanFacts: LoanFacts; // the mortgage summary card (WHIT-233 keeps the mortgage as one card)
+  homeLoan: HomeLoanState;
+  // The mortgage summary card's OWN first-load error, kept separate from the aggregate so a
+  // mortgage hiccup shows the card's "—" + retry, never blanks the goals list.
+  mortgageError: boolean;
+  isLoading: boolean; // first load, nothing cached yet → spinner
+  isError: boolean; // a PRIMARY read failed after retries → inline retry
+  refetch: () => void; // force a refresh (inline Retry / pull-to-refresh)
+  refetchStale: () => void; // focus refresh — only refetches stale queries
+}
+
+/**
+ * Everything the Goals hub reads: the user's goals, the pay cycle (the pace math needs it),
+ * a live-balance lookup for synced goals, and the mortgage summary (kept as one card this
+ * card). isLoading/isError come ONLY from the two PRIMARY reads — the goals list + pay cycle,
+ * which the screen genuinely can't render without. Account balances and the mortgage reads
+ * are SECONDARY (WHIT-212 pattern): a hiccup there degrades one card ("—" + its own retry),
+ * never blanks the whole hub — so they're kept out of the primary loading/error status.
+ */
+export function useGoalsScreenData(): GoalsScreenData {
+  const authed = useIsAuthed();
+  const goalsQuery = useGoalsQuery(authed);
+  const payCycleQuery = usePayCycleQuery(authed);
+  const balancesQuery = useAccountBalancesQuery(authed);
+  const homeLoanQuery = useHomeLoanQuery(authed);
+  const loanFactsQuery = useLoanFactsQuery(authed);
+
+  // account_id → live SIGNED balance. Secondary data: a balances failure/empty just means a
+  // synced card shows "—", so it must NOT gate the screen's loading/error status.
+  const byAccount = useMemo(
+    () => new Map((balancesQuery.data ?? []).map((b) => [b.account_id, b.amount])),
+    [balancesQuery.data],
+  );
+  const balanceFor = useCallback(
+    (accountId: string | null | undefined) => (accountId == null ? null : byAccount.get(accountId) ?? null),
+    [byAccount],
+  );
+
+  // Retry / pull-to-refresh fire EVERY read (incl. the secondary balances + mortgage summary)
+  // so a pull refreshes the whole hub. But isLoading/isError below come from only the two
+  // PRIMARY reads, so this can't be a straight `...status` spread like the other composites.
+  const combined = useCombineScreenQueries([goalsQuery, payCycleQuery, balancesQuery, homeLoanQuery, loanFactsQuery]);
+
+  return {
+    goals: goalsQuery.data ?? EMPTY_GOALS,
+    payCycle: payCycleQuery.data ?? DEFAULT_PAY_CYCLE,
+    balanceFor,
+    loanFacts: loanFactsQuery.data ?? EMPTY_LOAN_FACTS,
+    homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
+    // firstLoadError (not bare .isError, like homeLoanError in useGoalScreenData): a cached
+    // balance — real OR a genuine "not polled yet" null — survives a failed background
+    // refetch as honest waiting copy; only a NEVER-loaded read flags the card's error.
+    mortgageError: firstLoadError(homeLoanQuery),
+    isLoading: goalsQuery.isLoading || payCycleQuery.isLoading,
+    isError: goalsQuery.isError || payCycleQuery.isError,
+    refetch: combined.refetch,
+    refetchStale: combined.refetchStale,
   };
 }
 
