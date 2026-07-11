@@ -64,14 +64,20 @@ def _send_batch(messages: list, token) -> list:
     return payload.get("data") or []
 
 
-def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=None) -> dict:
+def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=None,
+              receipt_repo=None) -> dict:
     """Send {title, body} to every token via Expo Push. Best-effort: never raises.
 
     Batches into EXPO_PUSH_BATCH_MAX per request, prunes tokens Expo flags as
     ``DeviceNotRegistered`` (via ``device_repo``, or the real DeviceRepository when
     omitted), and returns a summary ``{sent, ok, pruned}``. ``access_token``
-    overrides the SSM read (pass "" to send unauthenticated); ``device_repo`` is
-    injectable for tests. Tokens are de-duplicated, empties dropped.
+    overrides the SSM read (pass "" to send unauthenticated); ``device_repo`` /
+    ``receipt_repo`` are injectable for tests. Tokens are de-duplicated, empties dropped.
+
+    Each ACCEPTED push returns a receipt id, which is stashed with its token via
+    ``receipt_repo`` (or the real PushReceiptRepository when omitted) so a later sweep
+    can poll Expo's receipts for the true delivery outcome (WHIT-139) — see ``ok`` below.
+    Stashing is best-effort: a store failure never breaks the send.
 
     ``ok`` is the count of tokens Expo ACCEPTED (ticket status "ok") — it stays 0
     for a batch that hit a transport/decode error (swallowed above). So
@@ -91,6 +97,7 @@ def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=N
 
     ok = 0
     pruned: list = []
+    receipts: list = []  # (receipt_id, token) for each accepted push (WHIT-139)
     for batch in _chunk(tokens, EXPO_PUSH_BATCH_MAX):
         messages = [{"to": t, "title": title, "body": body} for t in batch]
         try:
@@ -99,17 +106,23 @@ def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=N
             logger.exception("Expo push batch failed for %d token(s)", len(batch))
             continue
         # Expo returns tickets in the same order as the messages, so zip maps
-        # each ticket back to its token.
+        # each ticket back to its token. (Scoped per batch so a dropped batch above
+        # can't shift the token↔ticket alignment.)
         for tok, ticket in zip(batch, tickets):
             if not isinstance(ticket, dict):
                 continue
             if ticket.get("status") == "ok":
                 ok += 1
+                receipt_id = ticket.get("id")
+                if receipt_id:
+                    receipts.append((receipt_id, tok))
             elif (ticket.get("details") or {}).get("error") == "DeviceNotRegistered":
                 pruned.append(tok)
 
     for tok in pruned:
         _safe_prune(tok, device_repo)
+    if receipts:
+        _safe_store_receipts(receipts, receipt_repo)
 
     return {"sent": len(tokens), "ok": ok, "pruned": pruned}
 
@@ -136,3 +149,26 @@ def _default_repo():
     # a caller injects its own device_repo (and tests never touch DynamoDB).
     from repository_device import DeviceRepository
     return DeviceRepository()
+
+
+def _safe_store_receipts(receipts, receipt_repo) -> None:
+    """Stash (receipt_id, token) pairs so a later receipts sweep (WHIT-139) can poll
+    Expo for each push's delivery outcome. Best-effort — a store failure (or an
+    unreadable store) must never break the send; the ids self-expire via TTL anyway."""
+    try:
+        repo = receipt_repo or _default_receipt_repo()
+    except Exception:
+        logger.exception("could not open the push-receipt store")
+        return
+    for receipt_id, token in receipts:
+        try:
+            repo.put(receipt_id, token)
+        except Exception:
+            logger.exception("could not stash push receipt id")
+
+
+def _default_receipt_repo():
+    # Lazy import, like _default_repo: keeps send_push free of a hard store dependency
+    # when a caller injects its own receipt_repo (and tests never touch DynamoDB).
+    from repository_push_receipt import PushReceiptRepository
+    return PushReceiptRepository()
