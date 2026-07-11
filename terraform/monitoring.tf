@@ -88,3 +88,39 @@ resource "aws_cloudwatch_metric_alarm" "age_out_delete_failures" {
   alarm_description   = "The age-out sweep failed to delete one or more stale pendings in the last day (DynamoDB throttling / IAM)."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
+
+# --- Push-receipts delivery-failure alarm (WHIT-139) ------------------------
+
+# One datapoint per push Expo ACCEPTED but then failed to DELIVER — the receipts sweep
+# logs a distinct "PUSH_DELIVERY_FAILED ..." line for each (MessageTooBig, RateExceeded,
+# an expired credential, ...) and carries on best-effort. This is the "sent ≠ delivered"
+# silent-failure signal: without it a budget/milestone alert can vanish unnoticed.
+resource "aws_cloudwatch_log_metric_filter" "push_delivery_failures" {
+  name           = "${var.project_name}-push-delivery-failures"
+  log_group_name = aws_cloudwatch_log_group.push_receipts.name
+  pattern        = "PUSH_DELIVERY_FAILED"
+
+  metric_transformation {
+    name          = "PushDeliveryFailures"
+    namespace     = "${var.project_name}/PushReceipts"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+# Breaches when one or more pushes failed to deliver in the last hour. A 30-min sweep
+# means a failure surfaces within the hour; the SNS topic de-dupes the email. Best-effort
+# means the sweep still returns cleanly, so this alarm is the only way the failure is seen.
+resource "aws_cloudwatch_metric_alarm" "push_delivery_failures" {
+  alarm_name          = "${var.project_name}-push-delivery-failures"
+  namespace           = "${var.project_name}/PushReceipts"
+  metric_name         = "PushDeliveryFailures"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "One or more Expo pushes were accepted but failed to deliver in the last hour (a budget/milestone alert may have silently not arrived)."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}

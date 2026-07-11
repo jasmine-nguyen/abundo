@@ -39,6 +39,16 @@ variable "balance_poll_schedule_expression" {
   default     = "rate(1 day)"
 }
 
+# Cadence for the Expo push-receipts sweep (WHIT-139). Every 30 min: Expo retains
+# receipts only ~24h, and prompt detection of a silently-failed alert is the point of
+# the sweep — cost is negligible at single-user volume. Accepts any EventBridge Scheduler
+# expression.
+variable "push_receipts_schedule_expression" {
+  description = "EventBridge Scheduler expression controlling how often Expo push receipts are swept"
+  type        = string
+  default     = "rate(30 minutes)"
+}
+
 # Cadence for the stale-pending age-out sweep (WHIT-79). Daily is plenty — a pending
 # only becomes reapable once it's >10 days old, so nothing is gained by sweeping more
 # often. Accepts any EventBridge Scheduler expression.

@@ -71,6 +71,14 @@ data "archive_file" "balance_poller_zip" {
   output_path = "${path.module}/artifacts/balance_poller.zip"
 }
 
+# Push-receipts sweep lambda source (WHIT-139). Contains only handler.py; push.py,
+# repository_push_receipt.py, repository_device.py, ssm.py come from the shared layer.
+data "archive_file" "push_receipts_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../lambda_push_receipts"
+  output_path = "${path.module}/artifacts/push_receipts.zip"
+}
+
 resource "aws_lambda_function" "transaction_ingest" {
   function_name    = "${var.project_name}-transaction-ingest"
   role             = aws_iam_role.transaction_exec.arn
@@ -257,6 +265,34 @@ resource "aws_lambda_function" "homeloan_request" {
   }
 }
 
+# Triggered every 30 min by EventBridge Scheduler (see scheduler.tf) to poll Expo's
+# getReceipts for the true delivery outcome of each accepted push, prune dead tokens,
+# and log a PUSH_DELIVERY_FAILED line (drives the delivery-failure alarm) on a hard
+# failure (WHIT-139). Needs the shared layer (push.py/repository_push_receipt.py/
+# repository_device.py/ssm.py) AND DynamoDB Query/Delete/Update + TABLE_NAME.
+resource "aws_lambda_function" "push_receipts" {
+  function_name    = "${var.project_name}-push-receipts"
+  role             = aws_iam_role.push_receipts_exec.arn
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 60
+  memory_size      = 128
+  filename         = data.archive_file.push_receipts_zip.output_path
+  source_code_hash = data.archive_file.push_receipts_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.push_receipts.name
+  }
+}
+
 # WHIT-224: label renames only (deployed function_name values are unchanged from
 # WHIT-219), so these are pure state moves — no destroy/recreate. Same pattern as
 # the WHIT-153 route moves in apigateway.tf; garbage-collect once applied.
@@ -321,5 +357,10 @@ resource "aws_cloudwatch_log_group" "transaction_trigger" {
 
 resource "aws_cloudwatch_log_group" "homeloan_request" {
   name              = "/aws/lambda/${var.project_name}-homeloan-request"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "push_receipts" {
+  name              = "/aws/lambda/${var.project_name}-push-receipts"
   retention_in_days = 30
 }

@@ -46,7 +46,7 @@ jobs:
         run: |
           python -m pytest \
             --cov=shared --cov=lambda --cov=lambda_api --cov=lambda_sync_trigger \
-            --cov=lambda_balance_poller --cov=lambda_presignup \
+            --cov=lambda_balance_poller --cov=lambda_presignup --cov=lambda_push_receipts \
             --cov-report=term-missing \
             --cov-fail-under=72
 

@@ -55,6 +55,21 @@ resource "aws_iam_role" "homeloan_request_exec" {
   })
 }
 
+# Execution role for the push-receipts sweep lambda (WHIT-139). Reads the Expo access
+# token from SSM, Queries the pending-receipts partition and Deletes resolved rows,
+# UpdateItem-prunes dead device tokens, and writes its own logs.
+resource "aws_iam_role" "push_receipts_exec" {
+  name = "${var.project_name}-push-receipts-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "transaction_dynamodb" {
   name = "${var.project_name}-transaction-dynamodb"
   role = aws_iam_role.transaction_exec.id
@@ -294,6 +309,73 @@ resource "aws_iam_role_policy" "homeloan_request_logs" {
       ]
       Resource = [
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-homeloan-request:*"
+      ]
+    }]
+  })
+}
+
+# Push-receipts sweep lambda: Query the pending-receipts partition (list_pending),
+# DeleteItem resolved rows (delete), and UpdateItem to prune a dead device token
+# (DeviceRepository.remove uses a DELETE-expression UpdateItem). All hit base-table
+# items — no GSI is touched — so this is scoped to the base table ARN only, matching
+# homeloan_request_dynamodb's tight scoping. No Scan.
+resource "aws_iam_role_policy" "push_receipts_dynamodb" {
+  name = "${var.project_name}-push-receipts-dynamodb"
+  role = aws_iam_role.push_receipts_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:Query",
+        "dynamodb:DeleteItem",
+        "dynamodb:UpdateItem"
+      ]
+      Resource = [
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+      ]
+    }]
+  })
+}
+
+# Push-receipts sweep lambda: read the Expo access token (the getReceipts calls carry
+# Authorization: Bearer). ssm:GetParameter alone decrypts the SecureString via the
+# AWS-managed key (same pattern as transaction_ssm).
+resource "aws_iam_role_policy" "push_receipts_ssm" {
+  name = "${var.project_name}-push-receipts-ssm"
+  role = aws_iam_role.push_receipts_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssm:GetParameter"
+      ]
+      Resource = [
+        aws_ssm_parameter.expo_access_token.arn,
+      ]
+    }]
+  })
+}
+
+# Push-receipts sweep lambda: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "push_receipts_logs" {
+  name = "${var.project_name}-push-receipts-logs"
+  role = aws_iam_role.push_receipts_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = [
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-push-receipts:*"
       ]
     }]
   })
