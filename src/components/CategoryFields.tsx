@@ -72,6 +72,7 @@ export function CategoryFields({
     return (
       <Pressable
         key={k}
+        testID={`icon-${k}`}
         onPress={() => onIconChange(k)}
         style={[s.iconBtn, { borderColor: sel ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: sel ? 'rgba(124,140,255,.14)' : unselectedBg }]}
       >
