@@ -42,7 +42,19 @@ jest.mock('../context', () => {
 // Query-fed rows for Insights/Settings — minimal loaded shapes so each ScrollView renders.
 const category = (_id: string | null) => undefined;
 jest.mock('../queries', () => ({
-  // WHIT-197: Goals reads from the query layer. All-null/empty facts → the "set up" state renders.
+  // WHIT-233: the Goals tab is now the hub, reading useGoalsScreenData. Empty goals → the
+  // empty state + the always-shown mortgage card render inside the shared ScrollChromeHeader.
+  useGoalsScreenData: () => ({
+    goals: [],
+    payCycle: { length: 14, last_pay_date: '2024-01-03' },
+    balanceFor: () => null,
+    loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
+    homeLoan: { balance: null, asOf: null },
+    mortgageError: false,
+    isLoading: false, isError: false,
+    refetch: jest.fn(), refetchStale: jest.fn(),
+  }),
+  // Insights (also rendered below) still reads the mortgage composite for its aiGoalSignal.
   useGoalScreenData: () => ({
     loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
     homeLoan: { balance: null, asOf: null },

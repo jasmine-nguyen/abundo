@@ -1,4 +1,4 @@
-// WHIT-121 — GAP tests for the Goal-tab last-repayment error branch. The implementer's
+// WHIT-121 — GAP tests for the mortgage-screen last-repayment error branch. The implementer's
 // repayment.edges.screen.test.tsx locks the error state / precedence / cache-first cases
 // with the FULLY-null NO_REPAYMENT and a FULLY-present repayment. These add the gaps:
 //   1. a MALFORMED payload (amount xor date) on a SUCCESSFUL fetch (repaymentError:false) →
@@ -29,7 +29,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: () => {},
 }));
 
-import Goals from '../../app/(tabs)/goals';
+import Mortgage from '../../app/mortgage';
 
 beforeEach(() => {
   mockPush.mockClear();
@@ -47,7 +47,7 @@ it('shows the error branch for a malformed amount-only payload even with NO erro
     repayment: { amount: 1440, date: null, principal: null, interest: null },
     repaymentError: false,
   });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
   expect(screen.queryByText(/No repayment on record yet/)).toBeNull();
   expect(screen.queryByText('$1,440')).toBeNull(); // the real card never half-rendered
@@ -61,7 +61,7 @@ it('shows the error branch for a malformed date-only payload even with NO error 
     repayment: { amount: null, date: '2026-07-01', principal: null, interest: null },
     repaymentError: false,
   });
-  render(<Goals />);
+  render(<Mortgage />);
   expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();
   expect(screen.queryByText(/No repayment on record yet/)).toBeNull();
 });
@@ -81,7 +81,7 @@ it('shows the balance error and the repayment error independently when BOTH read
     homeLoanError: true,
     refetch,
   });
-  render(<Goals />);
+  render(<Mortgage />);
   // Both errors surface, each in its own card.
   expect(screen.getByText("Couldn't load your balance.")).toBeTruthy();
   expect(screen.getByText("Couldn't load your last repayment.")).toBeTruthy();

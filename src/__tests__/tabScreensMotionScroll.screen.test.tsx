@@ -21,6 +21,19 @@ jest.mock('../context', () => {
 
 const category = (_id: string | null) => undefined;
 jest.mock('../queries', () => ({
+  // WHIT-233: the Goals tab is now the hub (useGoalsScreenData). Empty goals still render the
+  // ScrollChromeHeader-wrapped ScrollView this suite scrolls to exercise the hide/show wiring.
+  useGoalsScreenData: () => ({
+    goals: [],
+    payCycle: { length: 14, last_pay_date: '2024-01-03' },
+    balanceFor: () => null,
+    loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
+    homeLoan: { balance: null, asOf: null },
+    mortgageError: false,
+    isLoading: false, isError: false,
+    refetch: jest.fn(), refetchStale: jest.fn(),
+  }),
+  // Insights (also rendered below) still reads the mortgage composite for its aiGoalSignal.
   useGoalScreenData: () => ({
     loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
     homeLoan: { balance: null, asOf: null },
