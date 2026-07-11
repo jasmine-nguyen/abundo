@@ -25,33 +25,16 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # --coverage enforces the floor in jest.config.js (coverageThreshold) and
-      # prints the per-file table into the Actions log. A ratchet, like the Python gate.
+      # The FULL suite (both projects), no coverage. `npm test` alone now runs only the
+      # fast `logic` project (the dev inner loop), so CI uses test:all to keep the heavy
+      # `screen` project in the gate. Tests are the pass/fail gate here.
+      #
+      # Coverage is temporarily OFF in CI (WHIT-243). The 100+ screen suites boot the whole
+      # React Native module graph; the old istanbul coverage provider pushed a worker past
+      # Node's ~2GB heap ceiling (OOM crash), and switching to V8 coverage traded the crash
+      # for a ~9-min hang while it remaps source. Rather than block merges, we run the tests
+      # without coverage and restore the floor separately via sharding (WHIT-243).
+      # --workerIdleMemoryLimit (in test:all) recycles a bloated worker between files and
+      # --maxWorkers=2 bounds concurrency, both as memory backstops.
       - name: Run tests
-        run: npm test -- --coverage
-
-      # Render the coverage table onto the run summary page so it's visible
-      # without opening the job log. Runs even if the tests failed (if: always),
-      # so a floor breach still shows the numbers. Reads the json-summary file.
-      - name: Coverage summary
-        if: always()
-        run: |
-          node -e '
-            const fs = require("fs");
-            let data;
-            try { data = JSON.parse(fs.readFileSync("coverage/coverage-summary.json")); }
-            catch { process.exit(0); }
-            const cwd = process.cwd() + "/";
-            const pct = (x) => `${x.pct}%`;
-            const t = data.total;
-            let md = "## 🧪 Jest coverage\n\n";
-            md += "Floor: statements 30% · branches 42% · functions 22% · lines 30%\n\n";
-            md += "| file | stmts | branch | funcs | lines |\n|---|---|---|---|---|\n";
-            md += `| **TOTAL** | ${pct(t.statements)} | ${pct(t.branches)} | ${pct(t.functions)} | ${pct(t.lines)} |\n`;
-            for (const [k, v] of Object.entries(data)) {
-              if (k === "total") continue;
-              const rel = k.startsWith(cwd) ? k.slice(cwd.length) : k;
-              md += `| ${rel} | ${pct(v.statements)} | ${pct(v.branches)} | ${pct(v.functions)} | ${pct(v.lines)} |\n`;
-            }
-            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + "\n");
-          '
+        run: npm run test:all -- --maxWorkers=2
