@@ -11,90 +11,9 @@ the implementer's test_goal_nudge.py leaves open:
 Fortnightly cycle, paydays land …Jul4, Jul18, Aug1, Aug15; today = Sat 11 Jul 2026.
 """
 
-from datetime import date
 from decimal import Decimal
 
-CYCLE = {"length": 14, "last_pay_date": "2026-06-06"}
-TODAY = date(2026, 7, 11)
-
-
-class FakeGoalsRepo:
-    def __init__(self, goals):
-        self._goals = goals
-
-    def list_goals(self):
-        return dict(self._goals)
-
-
-class FakeDeviceRepo:
-    def __init__(self, tokens=("tok-1",)):
-        self._tokens = list(tokens)
-
-    def list_tokens(self):
-        return list(self._tokens)
-
-
-class FakePayCycleRepo:
-    def __init__(self, cycle=CYCLE):
-        self._cycle = cycle
-
-    def get_paycycle(self):
-        return dict(self._cycle)
-
-
-class FakeBalanceRepo:
-    def __init__(self, balances):
-        self._balances = balances
-
-    def list_balances(self, account_ids):
-        return [{"account_id": a, "amount": self._balances[a]}
-                for a in account_ids if a in self._balances]
-
-
-class FakeNotifyRepo:
-    """Mirrors the SHARED FIRED set: goal + budget markers share one per-cycle partition."""
-
-    def __init__(self, seed=None):
-        self.store = {}
-        if seed:
-            for (lpd, length), markers in seed.items():
-                self.store[(lpd, length)] = set(markers)
-
-    def fired_markers(self, last_pay_date, length):
-        return set(self.store.get((last_pay_date, length), set()))
-
-    def mark_fired(self, last_pay_date, length, marker):
-        self.store.setdefault((last_pay_date, length), set()).add(marker)
-
-
-class SendRecorder:
-    def __init__(self, ok=1):
-        self._ok = ok
-        self.calls = []
-
-    def __call__(self, title, body, tokens):
-        self.calls.append({"title": title, "body": body, "tokens": list(tokens)})
-        return {"sent": len(tokens), "ok": self._ok if tokens else 0, "pruned": 0}
-
-
-def _grow(**over):
-    g = {"name": "Holiday fund", "direction": "grow", "target_amount": Decimal(10000),
-         "target_date": "2026-07-18", "account_id": "up-spending"}
-    g.update(over)
-    return g
-
-
-def _run(shared, monkeypatch, goals, *, balances=None, tokens=("tok-1",), notify=None,
-         send_ok=1, today=TODAY, cycle=CYCLE):
-    recorder = SendRecorder(ok=send_ok)
-    monkeypatch.setattr(shared.goal_nudge, "send_push", recorder)
-    notify = notify if notify is not None else FakeNotifyRepo()
-    sent = shared.goal_nudge.notify_behind_goals(
-        goals_repo=FakeGoalsRepo(goals), balance_repo=FakeBalanceRepo(balances or {}),
-        paycycle_repo=FakePayCycleRepo(cycle), device_repo=FakeDeviceRepo(tokens),
-        notify_repo=notify, today=today,
-    )
-    return sent, recorder, notify
+from _goal_nudge_fakes import CYCLE, TODAY, FakeNotifyRepo, _grow, _run
 
 
 # --- is_behind: the <=1 cliff + date boundaries ------------------------------
@@ -161,7 +80,7 @@ class TestNotifyMultiAndCollisions:
         balances = {"up-spending": Decimal(4000)}  # shared account; met overrides below
         goals["met"]["account_id"] = "met-acct"
         balances["met-acct"] = Decimal(10000)
-        sent, rec, notify = _run(shared, monkeypatch, goals, balances=balances)
+        sent, rec, notify, *_ = _run(shared, monkeypatch, goals, balances=balances)
         assert sent == 1
         assert [c["body"] for c in rec.calls] == ["Your Behind needs $6,000/payday to hit July."]
         markers = notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
@@ -173,7 +92,7 @@ class TestNotifyMultiAndCollisions:
             "g1": _grow(name="Alpha", target_date="2026-07-18", account_id="a1"),
             "g2": _grow(name="Beta", target_date="2026-07-18", account_id="a2"),
         }
-        sent, rec, notify = _run(shared, monkeypatch, goals,
+        sent, rec, notify, *_ = _run(shared, monkeypatch, goals,
                                  balances={"a1": Decimal(4000), "a2": Decimal(4000)})
         assert sent == 2
         assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == {"GOAL#g1", "GOAL#g2"}
@@ -183,7 +102,7 @@ class TestNotifyMultiAndCollisions:
         # "groceries#80" marker present must NOT be mistaken for the goal's "GOAL#g1"
         # marker: the goal still fires, and both markers coexist afterwards.
         notify = FakeNotifyRepo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"groceries#80"}})
-        sent, rec, notify = _run(shared, monkeypatch, {"g1": _grow()},
+        sent, rec, notify, *_ = _run(shared, monkeypatch, {"g1": _grow()},
                                  balances={"up-spending": Decimal(4000)}, notify=notify)
         assert sent == 1
         assert notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"]) == {"groceries#80", "GOAL#g1"}
@@ -192,7 +111,7 @@ class TestNotifyMultiAndCollisions:
         # [A36] a leftover "GOAL#gone" marker for a goal that no longer exists neither
         # fires nor errors; the live behind goal still fires normally.
         notify = FakeNotifyRepo(seed={(CYCLE["last_pay_date"], CYCLE["length"]): {"GOAL#gone"}})
-        sent, rec, notify = _run(shared, monkeypatch, {"g1": _grow()},
+        sent, rec, notify, *_ = _run(shared, monkeypatch, {"g1": _grow()},
                                  balances={"up-spending": Decimal(4000)}, notify=notify)
         assert sent == 1
         assert "GOAL#g1" in notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
