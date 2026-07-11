@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
-import { MONTHS } from './dateutil';
+import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
@@ -969,12 +969,9 @@ export function cycleClock(
   today?: Date,
 ): { cycleLen: number; daysLeft: number } {
   const length = payCycle.length;
-  const [y, m, d] = payCycle.last_pay_date.split('-').map(Number);
-  const pay = Date.UTC(y, m - 1, d);
+  const pay = isoToUtcDayMs(payCycle.last_pay_date);
   const now = today ?? new Date();
-  const t = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()); // device calendar day
-  const DAY = 86400000;
-  const elapsedDays = Math.round((t - pay) / DAY);                     // integer-exact whole days
+  const elapsedDays = wholeDaysBetween(pay, dateToUtcDayMs(now));       // integer-exact whole days
   const cyclesElapsed = Math.max(0, Math.floor(elapsedDays / length)); // mirrors max(0, //)
   const daysIntoCycle = elapsedDays - cyclesElapsed * length;
   const daysLeft = Math.max(0, Math.min(length, length - daysIntoCycle));
@@ -1027,9 +1024,10 @@ export interface BalanceGoalView {
 
 // Count the paydays remaining before a target date: the payday dates `last_pay_date +
 // n*length` that fall in the half-open window (today, target] — strictly after today, on or
-// before target. Whole-day UTC math (like cycleClock) so a Melbourne daylight-saving change
-// can't shift the count. The count of integers n with today < pay + n*len <= target is
-// floor(dTarget/len) − floor(dToday/len); floor handles a last_pay_date in the future (n<0).
+// before target. Whole-day UTC math via the shared dateutil helpers (also used by cycleClock)
+// so a Melbourne daylight-saving change can't shift the count. The count of integers n with
+// today < pay + n*len <= target is floor(dTarget/len) − floor(dToday/len); floor handles a
+// last_pay_date in the future (n<0).
 export function paydaysUntil(
   payCycle: { length: number; last_pay_date: string },
   targetISO: string,
@@ -1037,16 +1035,12 @@ export function paydaysUntil(
 ): number {
   const len = payCycle.length;
   if (!(len > 0)) return 0;
-  const [py, pm, pd] = payCycle.last_pay_date.split('-').map(Number);
-  const [ty, tm, td] = targetISO.split('-').map(Number);
-  const DAY = 86400000;
-  const pay = Date.UTC(py, pm - 1, pd);
-  const target = Date.UTC(ty, tm - 1, td);
+  const pay = isoToUtcDayMs(payCycle.last_pay_date);
+  const target = isoToUtcDayMs(targetISO);
   const now = today ?? new Date();
-  const todayUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-  const dToday = Math.round((todayUTC - pay) / DAY);
-  const dTarget = Math.round((target - pay) / DAY);
-  if (Number.isNaN(dTarget) || Number.isNaN(dToday)) return 0;
+  const dToday = wholeDaysBetween(pay, dateToUtcDayMs(now));
+  const dTarget = wholeDaysBetween(pay, target);
+  if (Number.isNaN(dTarget) || Number.isNaN(dToday)) return 0; // this selector's contract: bad date -> 0
   return Math.max(0, Math.floor(dTarget / len) - Math.floor(dToday / len));
 }
 
@@ -2100,7 +2094,7 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   let schedule: MilestoneView['schedule'] = null;
   if (hasBalance) {
     const now = today ?? new Date();
-    const t = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const t = dateToUtcDayMs(now);
     const expectedBalance = expectedBalanceAt(t);
     const delta = expectedBalance - balance;   // >0 => balance lower than planned => ahead
     const deltaAmount = Math.abs(delta);

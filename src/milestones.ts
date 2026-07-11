@@ -9,6 +9,8 @@
 // (e.g. 770000 * 0.8 - 544000 = 72000 at Sprint 0), which is what pins the two
 // constants below.
 
+import { isoToUtcDayMs } from './dateutil';
+
 // Reference property value + LVR. As of the Loan facts card these are NO LONGER
 // the live source — the app reads the user-entered `homeValue`/`lvr` from context
 // (`s.loanFacts`) and shows a "set this up" state until saved. These constants
@@ -54,12 +56,11 @@ for (let i = 1; i < MILESTONES.length; i++) {
 }
 
 // Parse an ISO "YYYY-MM-DD" milestone/today date to a UTC-midnight timestamp.
-// UTC so a device timezone / daylight-saving shift can't move a day boundary
-// (same approach as cycleClock in context.tsx).
+// UTC so a device timezone / daylight-saving shift can't move a day boundary.
+// Uses the shared dateutil helper so the parse lives in one place (WHIT-253).
 export function milestoneTime(m: { targetDate: string } | string): number {
   const iso = typeof m === 'string' ? m : m.targetDate;
-  const [y, mo, d] = iso.split('-').map(Number);
-  return Date.UTC(y, mo - 1, d);
+  return isoToUtcDayMs(iso);
 }
 
 // Usable equity toward the next deposit: what you could borrow against the
