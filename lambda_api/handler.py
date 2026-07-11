@@ -191,7 +191,7 @@ def lambda_handler(event, context):
             return _json_response(200, list_goals(GoalsRepository()))
 
         if path.startswith(f"{GOALS_PATH}/") and method == "PUT":
-            return upsert_goal(event, GoalsRepository())
+            return upsert_goal(event, GoalsRepository(), AccountBalanceRepository())
 
         if path.startswith(f"{GOALS_PATH}/") and method == "DELETE":
             return delete_goal(event, GoalsRepository())
@@ -1642,16 +1642,46 @@ def list_goals(repo: GoalsRepository) -> list:
     return [{"id": goal_id, **goal} for goal_id, goal in repo.list_goals().items()]
 
 
-def upsert_goal(event: dict, repo: GoalsRepository) -> dict:
+def _goal_start_candidate(goal: dict, balance_repo: AccountBalanceRepository) -> dict:
+    """The immutable start (start_date + start_balance) to stamp IF this upsert is the
+    goal's first — WHIT-252. Captured as a PAIR so both always describe the SAME moment.
+
+    - Manual goal: the entered balance is on the body, so the pair is available now.
+    - Synced goal: the live balance, but only if the account has been polled. If it
+      hasn't, return {} — no start yet; the first later upsert that finds a balance
+      stamps the pair, then repository_goals freezes it.
+
+    start_date is the SERVER stamp date (create day, or the day the synced balance first
+    became available), NOT necessarily the day the balance was measured — the deferred
+    status card should treat it as the stamp date. start_balance carries the same
+    source-aware SIGN split the current balance uses: SIGNED for a synced goal (a debt
+    account is negative), and as-entered for a manual one (which MAY be negative — a debt
+    snapshot). The status card must normalise the two the same way balanceGoalView does,
+    never compare a signed synced start to an as-entered manual current.
+    """
+    if "manual_balance" in goal:
+        return {"start_date": _melbourne_today().isoformat(), "start_balance": goal["manual_balance"]}
+    rows = balance_repo.list_balances([goal["account_id"]])
+    if rows:
+        return {"start_date": _melbourne_today().isoformat(), "start_balance": rows[0]["amount"]}
+    return {}
+
+
+def upsert_goal(event: dict, repo: GoalsRepository, balance_repo: AccountBalanceRepository) -> dict:
     """PUT /goals/{id} — create or replace a goal (idempotent upsert). 404 on a
-    missing/blank id (an empty map key would 500 at DynamoDB), 400 on a bad body."""
+    missing/blank id (an empty map key would 500 at DynamoDB), 400 on a bad body.
+
+    On the FIRST write for an id, an immutable start (date + balance) is stamped; every
+    later replace carries the existing start forward (WHIT-252) — see repository_goals.
+    """
     goal_id = (event.get("pathParameters") or {}).get("id")
     if not goal_id:
         return _json_response(404, {"error": "goal not found"})
     goal, error = _validate_goal_body(event)
     if error:
         return error
-    return _json_response(200, repo.upsert_goal(goal_id, goal))
+    start_candidate = _goal_start_candidate(goal, balance_repo)
+    return _json_response(200, repo.upsert_goal(goal_id, goal, start_candidate))
 
 
 def delete_goal(event: dict, repo: GoalsRepository) -> dict:

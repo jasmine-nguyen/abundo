@@ -172,3 +172,15 @@ describe('balanceGoalView — edges', () => {
     }
   });
 });
+
+// --- WHIT-252: the immutable start fields are carried but not yet read ---------
+describe('balanceGoalView — start_date / start_balance (WHIT-252)', () => {
+  it('accepts a goal carrying the start fields and still reports status null', () => {
+    const withStart = goal({ start_date: '2026-06-06', start_balance: 2000 });
+    const v = balanceGoalView({ goal: withStart, balance: 4000, payCycle: CYCLE }, TODAY);
+    // status is still deferred to the follow-up card...
+    expect(v.status).toBeNull();
+    // ...and the start fields don't perturb the existing progress (40% at 4000/10000).
+    expect(v.progress).toBeCloseTo(0.4, 5);
+  });
+});

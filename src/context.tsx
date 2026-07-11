@@ -1001,6 +1001,10 @@ export interface BalanceGoal {
   account_id?: string | null;     // present => synced source
   manual_balance?: number | null; // present => manual source (and the current balance)
   manual_as_of?: string | null;
+  // WHIT-252: the immutable start (date + balance when the goal began). Server-stamped; the
+  // deferred ahead/behind card reads these to draw expected pace. `status` stays null until then.
+  start_date?: string | null;
+  start_balance?: number | null;
 }
 
 export interface BalanceGoalInput {
