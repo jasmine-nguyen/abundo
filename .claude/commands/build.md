@@ -10,6 +10,7 @@ authority and stop to ask you at decision points, which a fire-and-return subage
 can't do.
 
 Two words, kept distinct:
+
 - **Sign-off** — a human stop where YOU say go. There are exactly two: the **Plan
   Sign-off** (before any code) and the **Implementation Sign-off** (before anything
   ships). You stop at both.
@@ -77,8 +78,14 @@ Target card (optional): $ARGUMENTS
      async, a new dependency, a public API/auth choice), STOP and ask the user
      — a short multiple-choice question (AGENTS.md "Presenting a decision" format)
      — then continue. Never resolve such a decision silently mid-implementation.
-
-7. **Write the first tests + self-check.** As the implementer, write tests as you
+7. **Coding standards**
+   - Simpler is better. Do not overcomplicate code.
+   - Readability is important, unless the logic is very simple, avoid ternary, as
+     it is very hard for people without context to understand the code.
+   - Avoid overly defensive programming.
+   - Avoid isinstance checks, unless the code is public facing and needs to be defensive.
+   - Only manage exceptions when neccessary, avoid try/except blocks unless necessary.
+8. **Write the first tests + self-check.** As the implementer, write tests as you
    build — the happy path + the acceptance criteria + the obvious edges. That's your
    "prove it works" half; the `qa` agent writes the independent adversarial half in
    Phase 3. Then run the suites + typecheck for anything the change touches — the
@@ -178,11 +185,12 @@ Target card (optional): $ARGUMENTS
       directs).
 
 ## Hard rules
+
 - **Never rush to a conclusion. Read the code first.** Whether you're diagnosing a
   bug, answering a "why does X happen" question, or planning a change, do NOT
   theorise from memory, guess, or reason from the symptom alone. Read the actual
   code paths, trace the data flow, and check the git history (`git blame` / `git
-  show` the commits that touched the area) until you can point to the exact line
+show` the commits that touched the area) until you can point to the exact line
   and the exact reason. Only propose a fix once the evidence — not a hunch —
   supports it. A confident-sounding guess that turns out wrong wastes the user's
   trust; "let me read it and get back to you with proof" is always the right move.
