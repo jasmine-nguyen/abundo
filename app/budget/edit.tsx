@@ -54,16 +54,21 @@ export default function BudgetEdit() {
   const save = () => runSave(async () => {
     if (!canSave) return;
     setSubmitting(true);
-    const ok = await s.saveBudget(categoryId, num);
-    if (ok) {
-      // WHIT-188: the Budgets tab now reads the query cache, so mark budgets stale —
-      // otherwise the just-saved change wouldn't show until the 45s staleTime elapsed.
-      // Prefix key ['budgets'] matches every ['budgets', cycleLen] entry.
-      queryClient.invalidateQueries({ queryKey: ['budgets'] });
-      router.dismissAll?.();
-      router.replace('/(tabs)/budgets');
-    } else {
-      setSubmitting(false); // stay on the screen so the user can retry
+    try {
+      const ok = await s.saveBudget(categoryId, num);
+      if (ok) {
+        // WHIT-188: the Budgets tab now reads the query cache, so mark budgets stale —
+        // otherwise the just-saved change wouldn't show until the 45s staleTime elapsed.
+        // Prefix key ['budgets'] matches every ['budgets', cycleLen] entry.
+        queryClient.invalidateQueries({ queryKey: ['budgets'] });
+        router.dismissAll?.();
+        router.replace('/(tabs)/budgets');
+      } else {
+        setSubmitting(false); // stay on the screen so the user can retry
+      }
+    } catch (error) {
+      setSubmitting(false); // WHIT-249: re-enable on an unexpected throw; re-throw so the guard logs it
+      throw error;
     }
   });
 

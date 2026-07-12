@@ -144,17 +144,27 @@ export default function GoalEdit() {
     }
 
     setSaving(true);
-    const ok = await s.saveGoal(editing ? id! : null, body);
-    setSaving(false);
-    if (ok) router.back();
+    try {
+      const ok = await s.saveGoal(editing ? id! : null, body);
+      setSaving(false);
+      if (ok) router.back();
+    } catch (error) {
+      setSaving(false); // WHIT-249: re-enable on an unexpected throw; re-throw so the guard logs it
+      throw error;
+    }
   });
 
   const onDelete = () => runAction(async () => {
     if (!editing || saving) return;
     setSaving(true);
-    const ok = await s.deleteGoal(id!);
-    if (ok) router.back();
-    else setSaving(false);
+    try {
+      const ok = await s.deleteGoal(id!);
+      if (ok) router.back();
+      else setSaving(false);
+    } catch (error) {
+      setSaving(false); // WHIT-249: re-enable on an unexpected throw; re-throw so the guard logs it
+      throw error;
+    }
   });
 
   const grow = direction === 'grow';

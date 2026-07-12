@@ -2,7 +2,7 @@
 // render states — nothing ever pressed Save. This presses the real button and asserts
 // saveBudget fires once + navigation to the budgets tab, so an onPress rewired to the wrong
 // handler (app/budget/edit.tsx) turns it red.
-import { it, expect, jest, beforeEach } from '@jest/globals';
+import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { AppContext } from '../context';
@@ -30,6 +30,10 @@ import BudgetEdit from '../../app/budget/edit';
 
 beforeEach(() => { mockSaveBudget.mockClear(); mockReplace.mockClear(); });
 
+// Restore any per-test console.error spy even if a test fails mid-body (targets console.error
+// only, so jest.setup's console.warn silence stays intact).
+afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
+
 it('pressing Add budget saves the amount once and navigates to the budgets tab', async () => {
   // SPEND category (not Income/Savings) with no existing budget → save button reads 'Add budget'.
   // saveBudget is read off useAppContext(); the query hooks are re-routed from mockState.
@@ -47,4 +51,27 @@ it('pressing Add budget saves the amount once and navigates to the budgets tab',
   expect(mockSaveBudget).toHaveBeenCalledTimes(1);
   expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 300);
   await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+});
+
+// WHIT-249: an UNEXPECTED saveBudget throw used to leave the Add budget button stuck disabled
+// (the caller's setSubmitting(false) sits on the false-return branch, which a throw skips). The
+// handler now resets `submitting` in a catch (and re-throws so the guard logs). Fail-on-revert:
+// drop the catch → the 2nd press early-returns on the stuck `submitting` flag → saveBudget once.
+it('re-enables the Add budget button so a retry runs after saveBudget throws', async () => {
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  mockState = {
+    categories: [SPEND],
+    budgets: [],
+    saveBudget: mockSaveBudget,
+  } as unknown as AppContext;
+  mockSaveBudget.mockRejectedValueOnce(new Error('network blew up'));
+  render(<BudgetEdit />);
+
+  fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
+  await act(async () => { fireEvent.press(screen.getByText('Add budget')); }); // throws → guard logs
+  await act(async () => { fireEvent.press(screen.getByText('Add budget')); }); // only fires if re-enabled
+
+  expect(mockSaveBudget).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
+  expect(errorSpy).toHaveBeenCalled();
 });

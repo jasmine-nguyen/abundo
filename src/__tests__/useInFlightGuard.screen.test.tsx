@@ -3,9 +3,13 @@
 // tick — a genuine same-frame double-tap. fireEvent CAN'T reproduce this: RTL flushes a
 // re-render between two press events, which is exactly why the duplicate-create bug slips
 // past normal screen tests. We test the latch directly instead.
-import { it, expect, jest } from '@jest/globals';
+import { it, expect, jest, afterEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
+
+// Restore any per-test console.error spy even if a test fails mid-body (a trailing mockRestore()
+// would be skipped on an earlier assertion failure, leaking the silence into later tests).
+afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
 
 // [G-latch] The core guarantee: two same-frame calls → the action runs ONCE.
 // Fail-on-revert: delete the `if (inFlight.current) return` line and the second call fires,
@@ -44,13 +48,15 @@ it('re-enables once the in-flight action settles', async () => {
 
 // [G-throw] A FAILING action must still release the latch (via `finally`), so a save that
 // errored can be retried. Fail-on-revert: change the `finally` to a plain post-await reset
-// and a thrown action leaves the latch stuck → `retry` never fires.
+// and a thrown action leaves the latch stuck → `retry` never fires. The guard now catches +
+// logs the rejection (WHIT-249), so silence console.error to keep the output clean.
 it('releases the latch when the action throws (retry still works)', async () => {
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   const { result } = renderHook(() => useInFlightGuard());
   const boom = jest.fn(() => Promise.reject(new Error('save failed')));
   const retry = jest.fn(() => Promise.resolve());
 
-  await act(async () => { await result.current(boom).catch(() => {}); });
+  await act(async () => { await result.current(boom); });
   expect(boom).toHaveBeenCalledTimes(1);
 
   await act(async () => { result.current(retry); });
