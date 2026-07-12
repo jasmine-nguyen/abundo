@@ -11,6 +11,24 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { GoalRecord, AccountBalance } from '../api';
 
+// WHIT-257 override of the global jest.setup picker mock (which fires a FIXED 20 Jun 2026 — a
+// PAST date the new save-time guard now rejects). Emits a configurable date so the happy paths
+// can pick a FUTURE one and the guard tests can drive a past/today one. Default = future.
+// Relative to the real clock so it can't rot: the guard is date-sensitive, so a hardcoded future
+// year would flip every happy path red once that date passes.
+const FUTURE = new Date(new Date().getFullYear() + 2, 0, 15);
+let mockPickedDate = FUTURE;
+jest.mock('@react-native-community/datetimepicker', () => {
+  const ReactLib = require('react');
+  const { Pressable, Text } = require('react-native');
+  const MockPicker = (props: any) => ReactLib.createElement(
+    Pressable,
+    { testID: 'mock-datepicker', onPress: () => props.onChange && props.onChange({ type: 'set' }, mockPickedDate) },
+    ReactLib.createElement(Text, null, 'picker'),
+  );
+  return { __esModule: true, default: MockPicker };
+});
+
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
 const mockShowToast = jest.fn();
@@ -79,6 +97,7 @@ beforeEach(() => {
   mockGoals = [];
   mockBalances = new Map([['acc-1', balance('acc-1', 2500)]]);
   mockTransactions = [{ account_id: 'acc-1', account_name: 'Everyday Savings' }];
+  mockPickedDate = FUTURE; // reset to the future default; a guard test overrides it
 });
 
 // Restore any per-test console.error spy even if a test fails mid-body (a trailing mockRestore()
@@ -318,5 +337,52 @@ describe('validation blocks the save (toast, no writer call)', () => {
     await press('goal-save');
     expect(mockShowToast).toHaveBeenCalledWith('The starting amount should be below your target.');
     expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+});
+
+// WHIT-257 — a save-time guard backs up the picker's minimumDate: if a platform lets a past date
+// through at pick time, the save is still blocked. Scoped to a CHANGED date so editing an already-
+// overdue goal (whose past date was saved earlier) isn't blocked.
+describe('WHIT-257: save-time future-date guard on the target date', () => {
+  const fillSyncedGrow = () => {
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Trip');
+    fireEvent.press(screen.getByTestId('goal-source-synced'));
+    fireEvent.press(screen.getByTestId('goal-account-acc-1'));
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+  };
+
+  it('a freshly-picked PAST target date is rejected with a toast, no save', async () => {
+    mockPickedDate = new Date(2020, 0, 1); // definitively past
+    render(<GoalEdit />);
+    fillSyncedGrow();
+    setTargetDate();
+    await press('goal-save');
+    expect(mockShowToast).toHaveBeenCalledWith('Pick a target date in the future.');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  it('a target date of TODAY is rejected (strictly future, matching minimumDate=tomorrow)', async () => {
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    mockPickedDate = todayMidnight; // component's `today` is the same real day → today !> today
+    render(<GoalEdit />);
+    fillSyncedGrow();
+    setTargetDate();
+    await press('goal-save');
+    expect(mockShowToast).toHaveBeenCalledWith('Pick a target date in the future.');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  it('editing an OVERDUE goal without touching its date still saves (guard bites only changed dates)', async () => {
+    const overdue: GoalRecord = { ...RAINY_DAY, id: 'gp', target_date: '2020-01-01' };
+    mockParams = { id: 'gp' };
+    mockGoals = [overdue];
+    render(<GoalEdit />);
+    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Renamed');
+    await press('goal-save');
+    expect(mockShowToast).not.toHaveBeenCalled();
+    const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(editId).toBe('gp');
+    expect(body).toMatchObject({ name: 'Renamed', target_date: '2020-01-01' });
   });
 });

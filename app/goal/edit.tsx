@@ -109,6 +109,12 @@ export default function GoalEdit() {
     if (direction === 'paydown' && !(amount >= 0)) return s.showToast('Enter a target amount.');
 
     if (targetDate == null) return s.showToast('Pick a target date.');
+    // Defence-in-depth for the picker's minimumDate: if a platform lets a past date through, still
+    // reject it at save. Scoped to a CHANGED date so an already-saved past date on an overdue goal
+    // (still editable) doesn't block a rename/amount edit (WHIT-257).
+    if (targetDate !== existing?.target_date && !(targetDate > todayISO)) {
+      return s.showToast('Pick a target date in the future.');
+    }
 
     // Baseline (optional): the starting point the progress bar measures from. For a grow goal
     // it must sit BELOW the target; for a pay-down goal it's the starting balance owed, ABOVE
@@ -130,6 +136,10 @@ export default function GoalEdit() {
     } else {
       const startBalance = parseAmount(manualBalance);
       if (!(startBalance >= 0)) return s.showToast('Enter a starting balance.');
+      // Mirror the target guard: only a freshly-changed as-of is bounded to today-or-earlier.
+      if (manualAsOf !== existing?.manual_as_of && !(manualAsOf <= todayISO)) {
+        return s.showToast("The as-of date can't be in the future.");
+      }
       body = { ...common, manual_balance: startBalance, manual_as_of: manualAsOf };
     }
 
