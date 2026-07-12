@@ -284,6 +284,16 @@ class ConfigItemTable:
         that moved under it (someone else wrote), then the retry converges."""
         self._bump_before_next_update = True
 
+    def always_race(self):
+        """Arm the lock race on EVERY update, so the optimistic-lock retry never converges:
+        the repo exhausts its retry budget and raises VersionConflictError. Contrast
+        race_next_update(), which loses exactly one update then converges. Call once per table."""
+        original = self.update_item
+        def armed_update(*args, **kwargs):
+            self.race_next_update()
+            return original(*args, **kwargs)
+        self.update_item = armed_update
+
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
                     ExpressionAttributeValues, ConditionExpression=None):
         self.update_calls += 1

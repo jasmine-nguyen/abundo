@@ -73,14 +73,7 @@ def test_delete_budget_raises_a_conflict_when_it_cannot_converge(shared, budget_
     from repository_errors import VersionConflictError
 
     table = config_item_table("BUDGETS", items={"groceries": {"target": Decimal(300)}})
-    # Keep re-arming the race so every attempt loses -> exhausts the retry budget.
-    original = table.update_item
-
-    def _always_race(*a, **k):
-        table._bump_before_next_update = True
-        return original(*a, **k)
-
-    table.update_item = _always_race
+    table.always_race()   # every attempt loses the lock -> exhausts the retry budget
     _with_table(budget_repo, table)
 
     with pytest.raises(VersionConflictError):
