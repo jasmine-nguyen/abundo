@@ -13,6 +13,12 @@ import { useCallback, useRef } from 'react';
 // the disabled-button styling. The latch releases in `finally`, so a failed or early-returning
 // action re-enables the button for a retry. `action` may be sync or async — `await` handles both,
 // and awaiting means the latch stays held for the whole async op (not just the first tick).
+//
+// Error contract (WHIT-249): guarded actions own their OWN user-facing error messaging (the
+// context writers catch and toast their known failures, returning false/null). This guard catches
+// anything that still escapes and logs it, so an unexpected throw becomes a visible dev log —
+// never a silent unhandled promise rejection — and the returned promise always resolves. Callers
+// therefore never need to `.catch()` it.
 export function useInFlightGuard(): (action: () => Promise<unknown> | unknown) => Promise<void> {
   const inFlight = useRef(false);
   return useCallback(async (action: () => Promise<unknown> | unknown) => {
@@ -20,6 +26,8 @@ export function useInFlightGuard(): (action: () => Promise<unknown> | unknown) =
     inFlight.current = true;
     try {
       await action();
+    } catch (error) {
+      console.error('[useInFlightGuard] guarded action threw', error);
     } finally {
       inFlight.current = false;
     }

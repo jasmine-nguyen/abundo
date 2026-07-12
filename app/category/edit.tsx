@@ -83,47 +83,54 @@ export default function CategoryEdit() {
   const save = () => runSave(async () => {
     if (!canSave) return;
     setSubmitting(true);
-    // 1) Save the category itself. A NEW parent must persist first so its children can point
-    // at its server-assigned id (WHIT-237).
-    let parentId = categoryId ?? null;
-    // WHIT-240: the parent + every child write run SILENT so the per-op toasts don't stack;
-    // this screen fires one summary toast at the end. On a parent failure the writer no longer
-    // toasts, so own that message here before bailing.
-    if (categoryId) {
-      const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
-      if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
-    } else {
-      const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
-      if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
-      parentId = created.id;
+    // WHIT-249: re-enable the button if a writer throws UNEXPECTEDLY (the known-failure branches
+    // already reset + return; success navigates away). Re-throw so the guard still logs it.
+    try {
+      // 1) Save the category itself. A NEW parent must persist first so its children can point
+      // at its server-assigned id (WHIT-237).
+      let parentId = categoryId ?? null;
+      // WHIT-240: the parent + every child write run SILENT so the per-op toasts don't stack;
+      // this screen fires one summary toast at the end. On a parent failure the writer no longer
+      // toasts, so own that message here before bailing.
+      if (categoryId) {
+        const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
+        if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
+      } else {
+        const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
+        if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
+        parentId = created.id;
+      }
+      // 2) Attach the picked existing children + create the new inline ones under this parent.
+      // Re-parenting resends the child's OWN name/bucket/icon (the PATCH replaces them); new subs
+      // inherit this category's bucket. Run them together; a failure drops only that child.
+      const byId = new Map(categories.map((c) => [c.id, c]));
+      const ops: Promise<boolean | Category | null>[] = [];
+      for (const id of attachIds) {
+        const child = byId.get(id);
+        if (child) ops.push(s.saveCategory(id, { name: child.name, bucket: child.bucket, icon: child.icon, parent: parentId }, { silent: true }));
+      }
+      for (const nc of newChildren) {
+        ops.push(s.createCategoryInline({ name: nc.name, bucket, icon: nc.icon, parent: parentId }, { silent: true }));
+      }
+      const results = ops.length ? await Promise.allSettled(ops) : [];
+      const failed = results.filter((r) => r.status === 'rejected' || r.value === false || r.value === null).length;
+      // WHIT-240: exactly ONE summary toast. Lead with created/updated (matching the writers' own
+      // copy) so the message reads consistently, then report the sub-category outcome. Option A
+      // (agreed WHIT-237): a flaky child never rolls back a good parent — it's reported, not undone.
+      const verb = categoryId ? 'updated' : 'created';
+      const subCount = (n: number) => `${n} sub-categor${n === 1 ? 'y' : 'ies'}`;
+      if (failed > 0) {
+        s.showToast(`Category ${verb}, but ${subCount(failed)} couldn't be attached — add ${failed === 1 ? 'it' : 'them'} from its page.`);
+      } else if (ops.length > 0) {
+        s.showToast(`Category ${verb}, with ${subCount(ops.length)}.`);
+      } else {
+        s.showToast(`Category ${verb}.`);
+      }
+      router.back();
+    } catch (error) {
+      setSubmitting(false);
+      throw error;
     }
-    // 2) Attach the picked existing children + create the new inline ones under this parent.
-    // Re-parenting resends the child's OWN name/bucket/icon (the PATCH replaces them); new subs
-    // inherit this category's bucket. Run them together; a failure drops only that child.
-    const byId = new Map(categories.map((c) => [c.id, c]));
-    const ops: Promise<boolean | Category | null>[] = [];
-    for (const id of attachIds) {
-      const child = byId.get(id);
-      if (child) ops.push(s.saveCategory(id, { name: child.name, bucket: child.bucket, icon: child.icon, parent: parentId }, { silent: true }));
-    }
-    for (const nc of newChildren) {
-      ops.push(s.createCategoryInline({ name: nc.name, bucket, icon: nc.icon, parent: parentId }, { silent: true }));
-    }
-    const results = ops.length ? await Promise.allSettled(ops) : [];
-    const failed = results.filter((r) => r.status === 'rejected' || r.value === false || r.value === null).length;
-    // WHIT-240: exactly ONE summary toast. Lead with created/updated (matching the writers' own
-    // copy) so the message reads consistently, then report the sub-category outcome. Option A
-    // (agreed WHIT-237): a flaky child never rolls back a good parent — it's reported, not undone.
-    const verb = categoryId ? 'updated' : 'created';
-    const subCount = (n: number) => `${n} sub-categor${n === 1 ? 'y' : 'ies'}`;
-    if (failed > 0) {
-      s.showToast(`Category ${verb}, but ${subCount(failed)} couldn't be attached — add ${failed === 1 ? 'it' : 'them'} from its page.`);
-    } else if (ops.length > 0) {
-      s.showToast(`Category ${verb}, with ${subCount(ops.length)}.`);
-    } else {
-      s.showToast(`Category ${verb}.`);
-    }
-    router.back();
   });
   // WHIT-241: same-frame double-tap guard on Delete (a separate latch from save — each button
   // guards only its own double-tap).
@@ -131,9 +138,14 @@ export default function CategoryEdit() {
   const remove = () => runRemove(async () => {
     if (!categoryId || submitting) return;
     setSubmitting(true);
-    const ok = await s.deleteCategory(categoryId);
-    if (ok) router.back();
-    else setSubmitting(false);
+    try {
+      const ok = await s.deleteCategory(categoryId);
+      if (ok) router.back();
+      else setSubmitting(false);
+    } catch (error) {
+      setSubmitting(false); // WHIT-249: re-enable on an unexpected throw; re-throw so the guard logs it
+      throw error;
+    }
   });
 
   return (

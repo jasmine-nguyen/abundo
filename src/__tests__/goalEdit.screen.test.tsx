@@ -6,7 +6,7 @@
 //
 // The date picker + safe-area are stubbed globally (jest.setup): the mock picker fires a fixed
 // date on press. Platform defaults to iOS, so each DateField renders its picker inline.
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { GoalRecord, AccountBalance } from '../api';
@@ -80,6 +80,11 @@ beforeEach(() => {
   mockBalances = new Map([['acc-1', balance('acc-1', 2500)]]);
   mockTransactions = [{ account_id: 'acc-1', account_name: 'Everyday Savings' }];
 });
+
+// Restore any per-test console.error spy even if a test fails mid-body (a trailing mockRestore()
+// would be skipped on an earlier assertion failure, leaking the silence into later tests). Targets
+// console.error only, so jest.setup's console.warn silence stays intact (no RN warning noise).
+afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
 
 describe('create', () => {
   it('a synced grow goal → saveGoal(null, {…account_id}) with no manual arm, then back', async () => {
@@ -215,6 +220,41 @@ describe('edit', () => {
     expect(mockDeleteGoal).toHaveBeenCalledTimes(1);
     expect(mockDeleteGoal).toHaveBeenCalledWith('g1');
     await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+  });
+});
+
+// WHIT-249: an UNEXPECTED writer throw (not the normal false/null failure) used to leave the
+// visible Save/Delete button stuck disabled — the caller's setSaving(false) sits after the await,
+// so a throw skipped it and `saving` stayed true. The handler now resets it in a catch (and
+// re-throws so the guard still logs). Fail-on-revert: drop the catch → the 2nd press early-returns
+// on the stuck `saving` flag → saveGoal/deleteGoal called only once.
+describe('WHIT-249: an unexpected writer throw re-enables the button', () => {
+  it('goal-save re-enables so a retry runs after saveGoal throws', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockParams = { id: 'g1' };
+    mockGoals = [RAINY_DAY];
+    mockSaveGoal.mockRejectedValueOnce(new Error('network blew up'));
+    render(<GoalEdit />);
+
+    await press('goal-save'); // 1st: throws → guard logs → button must re-enable
+    await press('goal-save'); // 2nd: only fires if `saving` was reset
+    expect(mockSaveGoal).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it('goal-delete re-enables so a retry runs after deleteGoal throws', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockParams = { id: 'g1' };
+    mockGoals = [RAINY_DAY];
+    mockDeleteGoal.mockRejectedValueOnce(new Error('network blew up'));
+    render(<GoalEdit />);
+
+    await press('goal-delete');
+    await press('goal-delete');
+    expect(mockDeleteGoal).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+    expect(errorSpy).toHaveBeenCalled();
   });
 });
 

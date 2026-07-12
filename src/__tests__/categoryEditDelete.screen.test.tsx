@@ -3,7 +3,7 @@
 // the wrong handler (or a future refactor dropping the guard wrapper) would slip through.
 // This presses the real button and asserts the writer fires once + navigation, so a revert
 // (rewire onPress in app/category/edit.tsx) turns it red.
-import { it, expect, jest, beforeEach } from '@jest/globals';
+import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../context';
@@ -34,6 +34,10 @@ import CategoryEdit from '../../app/category/edit';
 
 beforeEach(() => { mockDeleteCategory.mockClear(); mockBack.mockClear(); });
 
+// Restore any per-test console.error spy even if a test fails mid-body (targets console.error
+// only, so jest.setup's console.warn silence stays intact).
+afterEach(() => { jest.spyOn(console, 'error').mockRestore(); });
+
 it('pressing Delete category calls deleteCategory once and navigates back', async () => {
   mockCategories = [
     { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
@@ -46,4 +50,24 @@ it('pressing Delete category calls deleteCategory once and navigates back', asyn
   expect(mockDeleteCategory).toHaveBeenCalledTimes(1);
   expect(mockDeleteCategory).toHaveBeenCalledWith('coffee');
   await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+});
+
+// WHIT-249: an UNEXPECTED deleteCategory throw used to leave Delete stuck disabled (the caller's
+// setSubmitting(false) sits on the else branch a throw skips). The handler now resets `submitting`
+// in a catch (and re-throws so the guard logs). Fail-on-revert: drop the catch → the 2nd press
+// early-returns on the stuck `submitting` flag → deleteCategory called only once.
+it('re-enables Delete so a retry runs after deleteCategory throws', async () => {
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  mockCategories = [
+    { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null },
+  ];
+  mockDeleteCategory.mockRejectedValueOnce(new Error('network blew up'));
+  render(<CategoryEdit />);
+
+  await act(async () => { fireEvent.press(screen.getByText('Delete category')); }); // throws → guard logs
+  await act(async () => { fireEvent.press(screen.getByText('Delete category')); }); // only fires if re-enabled
+
+  expect(mockDeleteCategory).toHaveBeenCalledTimes(2);
+  await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+  expect(errorSpy).toHaveBeenCalled();
 });

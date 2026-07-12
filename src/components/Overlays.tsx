@@ -131,9 +131,14 @@ function PickerSheet() {
   // ['categories'] cache the inline create just mirrored into. A null result already toasted.
   const createAndFile = async (draft: CategoryDraft) => {
     setSubmitting(true);
-    const created = await s.createCategoryInline(draft);
-    if (created) s.chooseCategory(created.id);
-    else setSubmitting(false);
+    try {
+      const created = await s.createCategoryInline(draft);
+      if (created) s.chooseCategory(created.id);
+      else setSubmitting(false);
+    } catch (error) {
+      setSubmitting(false); // WHIT-249: re-enable on an unexpected throw; re-throw so the guard logs it
+      throw error;
+    }
   };
 
   if (creating) {
