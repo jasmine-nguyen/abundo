@@ -1605,6 +1605,61 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
   return { rows, total };
 }
 
+// One row per category, ordered as a tree for the picker (WHIT-273): each parent immediately
+// followed by its children, depth-first, siblings A–Z. `depth` drives the indent, `hasChildren`
+// whether to show the expand chevron. Unlike categoryBreakdown this includes EVERY category
+// regardless of spend — the picker must offer them all. Cycle-safe (a corrupt A→B→A can't loop
+// or drop a category), and a category whose `parent` isn't a real same-bucket category renders
+// as a top-level row rather than vanishing (mirrors categoryBreakdown's same-bucket parent rule).
+export interface CategoryTreeRow {
+  category: Category;
+  depth: number;
+  parentId: string | null;
+  hasChildren: boolean;
+}
+export function categoryTreeRows(categories: Category[]): CategoryTreeRow[] {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  // The parent a category actually nests under: its `parent` id, but only when that points at
+  // a real same-bucket category. Otherwise null (top-level) — so orphans and cross-bucket
+  // links surface instead of disappearing.
+  const effectiveParent = (c: Category): string | null => {
+    const parentId = c.parent ?? null;
+    const parent = parentId ? byId.get(parentId) : undefined;
+    if (parent && parent.bucket === c.bucket) return parentId;
+    return null;
+  };
+  const childrenByParent = new Map<string | null, Category[]>();
+  for (const c of categories) {
+    const key = effectiveParent(c);
+    const siblings = childrenByParent.get(key);
+    if (siblings) siblings.push(c); else childrenByParent.set(key, [c]);
+  }
+  for (const siblings of childrenByParent.values()) siblings.sort((a, b) => a.name.localeCompare(b.name));
+
+  const rows: CategoryTreeRow[] = [];
+  const emitted = new Set<string>();
+  const walk = (parentId: string | null, depth: number) => {
+    for (const category of childrenByParent.get(parentId) ?? []) {
+      if (emitted.has(category.id)) continue; // cycle guard
+      emitted.add(category.id);
+      const hasChildren = (childrenByParent.get(category.id) ?? []).length > 0;
+      rows.push({ category, depth, parentId, hasChildren });
+      walk(category.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  // Trailing sweep: a corrupt cycle (A→B→A) leaves nodes with no root ancestor, so the walk
+  // from roots never reaches them. Emit any leftover as a top-level row so no category vanishes.
+  for (const category of categories) {
+    if (emitted.has(category.id)) continue;
+    emitted.add(category.id);
+    const hasChildren = (childrenByParent.get(category.id) ?? []).length > 0;
+    rows.push({ category, depth: 0, parentId: null, hasChildren });
+    walk(category.id, 1);
+  }
+  return rows;
+}
+
 export interface TransactionView {
   id: string; merchant: string; amountLabel: string; amountColor: string;
   isPending: boolean; icon: string; iconColor: string; chipBg: string;
