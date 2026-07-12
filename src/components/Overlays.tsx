@@ -17,6 +17,17 @@ import { parseAmount, numText } from '../numutil';
 import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
 
 export function Overlays() {
+  // WHIT-268: unmount the whole overlay layer while not authed. This is the privacy
+  // shield — a toast/sheet over the login screen ('anon') OR the Face ID lock screen
+  // ('locked') is the leak this card closes, and unmounting is the only reliable hide
+  // because SheetHost is a native Modal that portals ABOVE any parent styling. The
+  // context-held `sheet`/`toast`/`notif` values survive (AppProvider only clears them
+  // on 'anon'), so a toast reappears after unlock — but a sheet's LOCAL form state
+  // (half-typed rule/goal text) is lost on a lock, since unmounting destroys it.
+  // Preserving in-progress input across a lock needs the app kept mounted under an
+  // opaque cover — that's WHIT-266's mechanism, deliberately not built here.
+  const isAuthed = useIsAuthed();
+  if (!isAuthed) return null;
   return (
     <>
       <NotifBanner />
