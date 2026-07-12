@@ -17,6 +17,11 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => mockState };
 });
 
+// WHIT-272: the row's trailing chevron routes to the detail page via useRouter. Stub it and
+// capture push so the chevron-routing test can assert the destination.
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
+
 import { TransactionRow } from '../components/TransactionRow';
 
 const openPicker = jest.fn();
@@ -26,6 +31,7 @@ function stateWith() {
 
 beforeEach(() => {
   openPicker.mockClear();
+  mockPush.mockClear();
 });
 
 it('renders merchant, amount and category for a categorized row', () => {
@@ -55,5 +61,16 @@ it('a categorized row does not open the picker on tap', () => {
   mockState = stateWith();
   render(<TransactionRow t={txn({ transaction_id: 'tx1', category: 'coffee' })} category={mockState.category} />);
   fireEvent.press(screen.getByText('Cafes & Coffee'));
+  expect(openPicker).not.toHaveBeenCalled();
+});
+
+// WHIT-272: the trailing chevron opens /transaction/[id]. It is a SEPARATE Pressable from the
+// row body, so pressing it routes to the detail page and never fires the category picker —
+// even on an uncategorized (tappable) row.
+it('the trailing chevron opens the transaction detail page without opening the picker', () => {
+  mockState = stateWith();
+  render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);
+  fireEvent.press(screen.getByLabelText('View transaction details'));
+  expect(mockPush).toHaveBeenCalledWith('/transaction/tx9');
   expect(openPicker).not.toHaveBeenCalled();
 });
