@@ -1019,10 +1019,10 @@ export interface BalanceGoalView {
   progress: number | null;        // 0..1, or null when the % can't be computed safely
   pacePerPayday: number | null;   // amount to move each payday, or null when the balance is unknown
   paydaysLeft: number;            // >= 0
-  // WHIT-232: ALWAYS null this card. Ahead/behind needs a fixed goal START (date + starting
-  // balance) the record doesn't persist — `manual_as_of` is the CURRENT snapshot's date and
-  // moves forward on every balance update (WHIT-235), so it can't anchor "elapsed time". A
-  // follow-up adds start_date/start_balance; a later card fills this in.
+  // WHIT-262: ahead / on-track / behind when the goal has an immutable start (date + balance);
+  // null when it can't be judged — no start yet, unknown balance, or a degenerate span. Anchored
+  // on start_balance, NOT the display baseline, so the progress bar and this label can measure
+  // from slightly different starting points by design.
   status: BalanceGoalStatus | null;
 }
 
@@ -1050,8 +1050,59 @@ export function paydaysUntil(
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
-// The goal engine. Pure over its inputs. Progress + pace are correct for both directions;
-// status is null this card (see BalanceGoalView).
+// Source-aware normalise into a non-negative quantity — used for BOTH the current and the
+// start balance so they're always measured the same way:
+//  grow    -> savings amount; an overdrawn synced account (−50) clamps to 0, never abs.
+//  paydown -> amount OWED as a positive: synced owed = max(0, −value) (loan stored negative);
+//             a manual debt is entered positive so owed = max(0, value). A credit clamps to 0.
+function normaliseBalance(value: number, direction: BalanceGoalDirection, synced: boolean): number {
+  return direction === 'grow' ? Math.max(0, value) : Math.max(0, synced ? -value : value);
+}
+
+// WHIT-262: a goal within this many percentage-points (0.05 = 5pp) of its straight-line expected
+// fill reads "on track"; beyond it, ahead/behind. An absolute band (not a ratio) so it stays
+// stable near the start, where the expected fill is ≈ 0 and a ratio would blow up.
+export const GOAL_PACE_TOLERANCE = 0.05;
+
+// WHIT-262: ahead / on-track / behind, by comparing the ACTUAL fill from the immutable start
+// against the straight-line EXPECTED fill at today. `currentN` is the already-normalised current
+// balance. Returns null (no honest label) when: no persisted start, the start isn't above the
+// target (nothing to measure), or the start→target span is zero/negative/unparseable.
+function goalPaceStatus(
+  goal: BalanceGoal,
+  currentN: number,
+  today: Date | undefined,
+): BalanceGoalStatus | null {
+  if (goal.start_date == null || goal.start_balance == null || !Number.isFinite(goal.start_balance)) {
+    return null;
+  }
+  const synced = !!goal.account_id;
+  const startN = normaliseBalance(goal.start_balance, goal.direction, synced);
+
+  // Actual fill measured from the START anchor (distinct from `progress`, which counts from
+  // baseline). Guard the denominator: a start already at/past the target has nothing to measure.
+  const actualDenom = goal.direction === 'grow' ? goal.target_amount - startN : startN - goal.target_amount;
+  if (!(actualDenom > 0)) return null;
+  const actualFrac = clamp01(
+    goal.direction === 'grow'
+      ? (currentN - startN) / actualDenom
+      : (startN - currentN) / actualDenom,
+  );
+
+  // Expected straight-line fill: elapsed days / total days (start_date → target_date). `!(x > 0)`
+  // rejects a zero/negative span AND a NaN from an unparseable date (NaN <= 0 is false).
+  const startMs = isoToUtcDayMs(goal.start_date);
+  const totalDays = wholeDaysBetween(startMs, isoToUtcDayMs(goal.target_date));
+  if (!(totalDays > 0)) return null;
+  const expectedFrac = clamp01(wholeDaysBetween(startMs, dateToUtcDayMs(today ?? new Date())) / totalDays);
+
+  if (actualFrac >= expectedFrac + GOAL_PACE_TOLERANCE) return 'ahead';
+  if (actualFrac <= expectedFrac - GOAL_PACE_TOLERANCE) return 'behind';
+  return 'on_track';
+}
+
+// The goal engine. Pure over its inputs. Progress, pace, and status are correct for both
+// directions (see BalanceGoalView for what status measures).
 export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalView {
   const { goal } = s;
   const target = goal.target_amount;
@@ -1063,14 +1114,10 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   const bal: number | null = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
   const known = bal !== null;
 
-  // Normalise into a non-negative quantity, source-aware:
-  //  grow    -> current savings; an overdrawn synced account (−50) clamps to 0, never abs.
-  //  paydown -> amount OWED as a positive: synced owed = max(0, −balance) (loan stored
-  //             negative); manual debt is entered positive so owed = max(0, manual_balance).
-  //             A credit balance clamps to 0 (met) — no phantom debt from a blanket abs.
+  // Normalise into a non-negative quantity, source-aware (see normaliseBalance).
   let current = 0;
   if (bal !== null) {
-    current = goal.direction === 'grow' ? Math.max(0, bal) : Math.max(0, synced ? -bal : bal);
+    current = normaliseBalance(bal, goal.direction, synced);
   }
 
   const paydaysLeft = paydaysUntil(s.payCycle, goal.target_date, today);
@@ -1099,7 +1146,10 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
     pacePerPayday = paydaysLeft > 0 ? remaining / paydaysLeft : remaining;
   }
 
-  return { progress, pacePerPayday, paydaysLeft, status: null };
+  // Status only when the balance is known; goalPaceStatus guards the rest (no start, span, etc).
+  const status = known ? goalPaceStatus(goal, current, today) : null;
+
+  return { progress, pacePerPayday, paydaysLeft, status };
 }
 
 export interface BudgetView {

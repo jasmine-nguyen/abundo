@@ -1,9 +1,10 @@
-// WHIT-232 — balanceGoalView + paydaysUntil: the pure goal pace engine. Progress % and
-// per-payday pace for grow (savings) and paydown (debt), source-aware sign normalisation,
-// every denominator guarded. Status is always null this card. Expecteds are computed by
-// hand in the comments so a revert fails. Runner pins TZ=Australia/Melbourne (package.json).
+// WHIT-232 / WHIT-262 — balanceGoalView + paydaysUntil: the pure goal pace engine. Progress %
+// and per-payday pace for grow (savings) and paydown (debt), source-aware sign normalisation,
+// every denominator guarded. Status (ahead/on_track/behind) measured from the immutable start.
+// Expecteds are computed by hand in the comments so a revert fails. Runner pins
+// TZ=Australia/Melbourne (package.json).
 import { describe, it, expect } from '@jest/globals';
-import { paydaysUntil, balanceGoalView, BalanceGoal } from '../context';
+import { paydaysUntil, balanceGoalView, GOAL_PACE_TOLERANCE, BalanceGoal } from '../context';
 
 // A fortnightly cycle whose paydays land Jun6, Jun20, Jul4, Jul18, Aug1, Aug15, Aug29, ...
 const CYCLE = { length: 14, last_pay_date: '2026-06-06' };
@@ -149,7 +150,7 @@ describe('balanceGoalView — edges', () => {
     expect(v.paydaysLeft).toBe(3);
   });
 
-  it('status is always null this card', () => {
+  it('status stays null without the start fields (grow + paydown)', () => {
     const cases = [
       balanceGoalView({ goal: goal(), balance: 4000, payCycle: CYCLE }, TODAY),
       balanceGoalView({ goal: goal({ direction: 'paydown', target_amount: 0, baseline: 20000 }), balance: -12000, payCycle: CYCLE }, TODAY),
@@ -157,30 +158,149 @@ describe('balanceGoalView — edges', () => {
     for (const v of cases) expect(v.status).toBeNull();
   });
 
-  it('never emits NaN / Infinity across degenerate inputs', () => {
+  it('never emits NaN / Infinity or a bogus status across degenerate inputs', () => {
     const degenerate: { goal: BalanceGoal; balance: number | null }[] = [
       { goal: goal({ baseline: 10000, target_amount: 10000 }), balance: 5000 },
       { goal: goal({ direction: 'paydown', target_amount: 0, baseline: 0, account_id: null, manual_balance: 0, manual_as_of: '2026-07-01' }), balance: null },
       { goal: goal({ target_date: '2026-06-01' }), balance: -99999 },
       { goal: goal(), balance: null },
+      // start-bearing degenerates: unparseable date, zero span, start at target.
+      { goal: goal({ start_date: 'not-a-date', start_balance: 2000 }), balance: 4000 },
+      { goal: goal({ start_date: '2026-08-15', start_balance: 2000 }), balance: 4000 },
+      { goal: goal({ start_date: '2026-06-06', start_balance: 10000 }), balance: 10000 },
     ];
     for (const d of degenerate) {
       const v = balanceGoalView({ goal: d.goal, balance: d.balance, payCycle: CYCLE }, TODAY);
       expect(v.progress === null || (Number.isFinite(v.progress) && v.progress >= 0 && v.progress <= 1)).toBe(true);
       expect(v.pacePerPayday === null || (Number.isFinite(v.pacePerPayday) && v.pacePerPayday >= 0)).toBe(true);
       expect(Number.isFinite(v.paydaysLeft) && v.paydaysLeft >= 0).toBe(true);
+      expect(v.status === null || ['ahead', 'on_track', 'behind'].includes(v.status)).toBe(true);
     }
   });
 });
 
-// --- WHIT-252: the immutable start fields are carried but not yet read ---------
+// --- WHIT-252: the immutable start fields are carried through ------------------
 describe('balanceGoalView — start_date / start_balance (WHIT-252)', () => {
-  it('accepts a goal carrying the start fields and still reports status null', () => {
+  it('carries the start fields without perturbing the existing progress', () => {
     const withStart = goal({ start_date: '2026-06-06', start_balance: 2000 });
     const v = balanceGoalView({ goal: withStart, balance: 4000, payCycle: CYCLE }, TODAY);
-    // status is still deferred to the follow-up card...
-    expect(v.status).toBeNull();
-    // ...and the start fields don't perturb the existing progress (40% at 4000/10000).
+    // progress still counts from baseline (0 here): 40% at 4000/10000, unchanged by the start.
     expect(v.progress).toBeCloseTo(0.4, 5);
+  });
+});
+
+// --- WHIT-262: ahead / on-track / behind from the immutable start -------------
+// Start Jun6 -> target Aug15 = 70 days; TODAY Jul11 = 35 elapsed -> expected fill 0.5.
+// Tolerance 0.05 -> on-track band [0.45, 0.55]. All fractions hand-computed so a revert fails.
+describe('balanceGoalView — status (WHIT-262)', () => {
+  const START = { start_date: '2026-06-06', start_balance: 2000 }; // grow: startN 2000, denom 8000
+  const paced = (over: Partial<BalanceGoal> = {}) => goal({ ...START, ...over });
+
+  it('exports a 0.05 tolerance (change is a conscious test update)', () => {
+    expect(GOAL_PACE_TOLERANCE).toBe(0.05);
+  });
+
+  describe('grow (synced)', () => {
+    it('behind when actual < expected − tol (0.25 vs 0.5)', () => {
+      // (4000−2000)/8000 = 0.25 <= 0.45.
+      const v = balanceGoalView({ goal: paced(), balance: 4000, payCycle: CYCLE }, TODAY);
+      expect(v.status).toBe('behind');
+    });
+    it('on_track inside the band (0.5 vs 0.5)', () => {
+      // (6000−2000)/8000 = 0.5.
+      const v = balanceGoalView({ goal: paced(), balance: 6000, payCycle: CYCLE }, TODAY);
+      expect(v.status).toBe('on_track');
+    });
+    it('ahead when actual > expected + tol (0.75 vs 0.5)', () => {
+      // (8000−2000)/8000 = 0.75 >= 0.55.
+      const v = balanceGoalView({ goal: paced(), balance: 8000, payCycle: CYCLE }, TODAY);
+      expect(v.status).toBe('ahead');
+    });
+  });
+
+  it('grow (manual) matches the synced-signed equivalent', () => {
+    const synced = balanceGoalView({ goal: paced(), balance: 4000, payCycle: CYCLE }, TODAY);
+    const manual = balanceGoalView(
+      { goal: paced({ account_id: null, manual_balance: 4000, manual_as_of: '2026-07-01' }), balance: null, payCycle: CYCLE },
+      TODAY);
+    expect(manual.status).toBe(synced.status);
+    expect(manual.status).toBe('behind');
+  });
+
+  describe('paydown (signed start + balance)', () => {
+    // start owing 20000 -> start_balance −20000 -> startN 20000; target 0 -> denom 20000.
+    const debt = (over: Partial<BalanceGoal> = {}) =>
+      goal({ direction: 'paydown', target_amount: 0, baseline: 20000, start_date: '2026-06-06', start_balance: -20000, ...over });
+
+    it('behind: owe 12000 -> 0.4 fill', () => {
+      // (20000−12000)/20000 = 0.4 <= 0.45.
+      const v = balanceGoalView({ goal: debt(), balance: -12000, payCycle: CYCLE }, TODAY);
+      expect(v.status).toBe('behind');
+    });
+    it('on_track: owe 10000 -> 0.5 fill', () => {
+      const v = balanceGoalView({ goal: debt(), balance: -10000, payCycle: CYCLE }, TODAY);
+      expect(v.status).toBe('on_track');
+    });
+    it('ahead: owe 8000 -> 0.6 fill', () => {
+      const v = balanceGoalView({ goal: debt(), balance: -8000, payCycle: CYCLE }, TODAY);
+      expect(v.status).toBe('ahead');
+    });
+    it('manual debt (as-entered positive start) matches the synced-signed equivalent', () => {
+      const synced = balanceGoalView({ goal: debt(), balance: -12000, payCycle: CYCLE }, TODAY);
+      const manual = balanceGoalView(
+        { goal: debt({ account_id: null, start_balance: 20000, manual_balance: 12000, manual_as_of: '2026-07-01' }), balance: null, payCycle: CYCLE },
+        TODAY);
+      expect(manual.status).toBe(synced.status);
+      expect(manual.status).toBe('behind');
+    });
+  });
+
+  describe('the tolerance boundary is inclusive on both edges', () => {
+    it('exactly expected − tol reads behind (0.45)', () => {
+      // (5600−2000)/8000 = 0.45; behind uses <=.
+      expect(balanceGoalView({ goal: paced(), balance: 5600, payCycle: CYCLE }, TODAY).status).toBe('behind');
+    });
+    it('exactly expected + tol reads ahead (0.55)', () => {
+      // (6400−2000)/8000 = 0.55; ahead uses >=.
+      expect(balanceGoalView({ goal: paced(), balance: 6400, payCycle: CYCLE }, TODAY).status).toBe('ahead');
+    });
+  });
+
+  describe('null fallbacks (no honest label)', () => {
+    it('missing start_date', () => {
+      expect(balanceGoalView({ goal: goal({ start_balance: 2000 }), balance: 4000, payCycle: CYCLE }, TODAY).status).toBeNull();
+    });
+    it('missing start_balance', () => {
+      expect(balanceGoalView({ goal: goal({ start_date: '2026-06-06' }), balance: 4000, payCycle: CYCLE }, TODAY).status).toBeNull();
+    });
+    it('unknown (unpolled) balance', () => {
+      expect(balanceGoalView({ goal: paced(), balance: null, payCycle: CYCLE }, TODAY).status).toBeNull();
+    });
+    it('start already at/above the target (grow denom 0)', () => {
+      expect(balanceGoalView({ goal: paced({ start_balance: 10000 }), balance: 9000, payCycle: CYCLE }, TODAY).status).toBeNull();
+    });
+    it('zero-duration span (start_date == target_date)', () => {
+      expect(balanceGoalView({ goal: paced({ start_date: '2026-08-15' }), balance: 6000, payCycle: CYCLE }, TODAY).status).toBeNull();
+    });
+    it('target before start (negative span)', () => {
+      expect(balanceGoalView({ goal: paced({ start_date: '2026-09-01' }), balance: 6000, payCycle: CYCLE }, TODAY).status).toBeNull();
+    });
+    it('unparseable start_date', () => {
+      expect(balanceGoalView({ goal: paced({ start_date: 'not-a-date' }), balance: 6000, payCycle: CYCLE }, TODAY).status).toBeNull();
+    });
+  });
+
+  it('today before start_date reads ahead (expected 0), never crashes', () => {
+    // start Aug1 (after today), target Sep1: elapsed −21 clamps to 0 -> expected 0; actual 0.25 -> ahead.
+    const v = balanceGoalView(
+      { goal: paced({ start_date: '2026-08-01', target_date: '2026-09-01' }), balance: 4000, payCycle: CYCLE }, TODAY);
+    expect(v.status).toBe('ahead');
+  });
+
+  it('near the deadline (expected > 0.95) a met goal reads on_track, not ahead (documented ceiling)', () => {
+    // start Jun6 -> target Jul12 = 36 days; 35 elapsed -> expected 0.972. A full 1.0 fill sits
+    // inside [0.922, 1.022], so ahead is unreachable in the final 5% by design.
+    const v = balanceGoalView({ goal: paced({ target_date: '2026-07-12' }), balance: 10000, payCycle: CYCLE }, TODAY);
+    expect(v.status).toBe('on_track');
   });
 });
