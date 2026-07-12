@@ -35,6 +35,11 @@ jest.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
 }));
 
+// WHIT-267: auth.ts gates the unlock-time guarded re-store on Platform.OS === 'ios'
+// (via a tolerant lazy require — see isIOS). This node-env suite must mock react-native
+// to exercise that branch; suites that don't mock it simply skip the re-store.
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+
 const REFRESH_KEY = 'whittle.cognito.refreshToken';
 const SENTINEL_KEY = 'whittle.cognito.hasSession';
 const METHOD_KEY = 'whittle.cognito.authMethod';
@@ -106,6 +111,10 @@ describe('refresh-token rotation', () => {
     const rotatedWrite = refreshWrites().find((c) => c[1] === 'R2');
     expect(rotatedWrite).toBeTruthy();
     expect(rotatedWrite![2]).toMatchObject({ requireAuthentication: true });
+    // WHIT-267 ordering pin: the unlock-time re-store of the PRE-rotation token runs
+    // BEFORE refreshTokens, so the rotated token is always the LAST write — moving the
+    // re-store after the refresh would persist the stale token and break next launch.
+    expect(refreshWrites().at(-1)![1]).toBe('R2');
 
     // Next refresh must use the ROTATED token from memory — proves the in-memory copy
     // was updated — and must NOT re-read the guarded keychain (no second Face ID).
@@ -361,6 +370,92 @@ describe('unlock with missing OAuth config', () => {
     expect(auth.getStatus()).toBe('locked');
     // The stored session must NOT be wiped on a config/transient failure — the user can
     // retry (or Sign in again); this is not the null-token "biometrics changed" path.
-    expect(mockDeleteItem.mock.calls.some((c) => c[0] === REFRESH_KEY)).toBe(false);
+    // (WHIT-267 rebind: the re-store's delete-then-create DOES touch REFRESH_KEY now, so
+    // "no delete ever" is no longer the wipe signal. The wipe signals are: the sentinel
+    // being deleted, or a delete NOT followed by a re-write of the same token.)
+    expect(mockDeleteItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
+    expect(refreshWrites().some((c) => c[1] === 'R')).toBe(true); // net token state preserved
+  });
+});
+
+// --- WHIT-267: unlock-time guarded re-store (the flag-flip migration) ------------
+describe('unlock re-stores the token GUARDED (WHIT-267)', () => {
+  // The bug: a session seated while the flag was OFF is stored unguarded, and iOS reads
+  // it through silently even with guarded opts — so the mock below returning the token
+  // regardless of read opts IS the device behaviour, not a shortcut.
+  const seedFlagFlipSession = () => {
+    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+    mockCanUseBiometric.mockReturnValue(true);
+    mockGetItem.mockImplementation(async (k) => {
+      if (k === SENTINEL_KEY) return '1';
+      if (k === REFRESH_KEY) return 'R';
+      return null;
+    });
+  };
+
+  it('fail-on-revert: the silently-read token is re-stored GUARDED via the silent delete-then-create path, one read only', async () => {
+    seedFlagFlipSession();
+    // NON-rotating refresh, so the ONLY possible guarded REFRESH_KEY write is the
+    // WHIT-267 re-store — on revert, no guarded write happens at all and this fails.
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await auth.unlockOrRestore();
+
+    const guardedWrite = refreshWrites().find(
+      (c) => (c[2] as { requireAuthentication?: boolean } | undefined)?.requireAuthentication,
+    );
+    expect(guardedWrite).toBeTruthy();
+    expect(guardedWrite![1]).toBe('R');
+    // WHIT-170 silent CREATE path: the guarded write is preceded by the delete.
+    expect(mockDeleteItem.mock.calls.some((c) => c[0] === REFRESH_KEY)).toBe(true);
+    // One-prompt invariant: exactly ONE keychain read of the refresh token — the
+    // re-store must never add a probe read (a probe of a guarded item would prompt).
+    expect(refreshReads()).toHaveLength(1);
+    expect(auth.getStatus()).toBe('authed');
+  });
+
+  it('a FAILED re-store is best-effort: unlock still completes from the in-memory token, sentinel untouched, never mistaken for a cancel', async () => {
+    seedFlagFlipSession();
+    mockSetItem.mockImplementation(async (k) => {
+      if (k === REFRESH_KEY) throw new Error('keychain write denied');
+    });
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await auth.unlockOrRestore();
+
+    // The refresh ran with the in-memory token (unlock proceeded past the failure)…
+    expect((mockRefresh.mock.calls[0][0] as { refreshToken: string }).refreshToken).toBe('R');
+    // …ending authed (a write failure is NOT the outer catch's "cancelled → locked").
+    expect(auth.getStatus()).toBe('authed');
+    // The sentinel is never deleted by the best-effort path (no rollback, no wipe).
+    expect(mockDeleteItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
+  });
+
+  it('a CANCELLED prompt is unchanged: stays locked, zero token writes (no re-store attempted)', async () => {
+    seedFlagFlipSession();
+    mockGetItem.mockImplementation(async (k) => {
+      if (k === SENTINEL_KEY) return '1';
+      if (k === REFRESH_KEY) throw new Error('user cancelled');
+      return null;
+    });
+    const auth = loadAuth();
+
+    await auth.unlockOrRestore();
+
+    expect(auth.getStatus()).toBe('locked');
+    expect(refreshWrites()).toHaveLength(0);
+  });
+
+  it('a NULL read (biometrics changed) is unchanged: clean re-login, zero token writes', async () => {
+    seedFlagFlipSession();
+    mockGetItem.mockImplementation(async (k) => (k === SENTINEL_KEY ? '1' : null));
+    const auth = loadAuth();
+
+    await auth.unlockOrRestore();
+
+    expect(auth.getStatus()).toBe('anon');
+    expect(refreshWrites()).toHaveLength(0);
   });
 });

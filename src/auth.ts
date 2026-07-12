@@ -797,6 +797,19 @@ export function unlock(): Promise<boolean> {
   return unlockInFlight;
 }
 
+// Lazy + tolerant platform probe (WHIT-267): react-native resolves everywhere the app
+// actually runs (metro, the jest screen project); only the plain-node logic project
+// can't load it — there the catch answers false, which skips the iOS-only re-store
+// (the unlock logic tests that DO exercise it mock react-native explicitly).
+function isIOS(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require("react-native").Platform.OS === "ios";
+  } catch {
+    return false;
+  }
+}
+
 async function performUnlock(): Promise<boolean> {
   setStatus("locked");
   try {
@@ -808,6 +821,30 @@ async function performUnlock(): Promise<boolean> {
       await clearStoredSession();
       clearSession(); // → anon
       return false;
+    }
+    // WHIT-267: a session seated while the biometric flag was OFF is stored UNGUARDED,
+    // and iOS reads it through SILENTLY even with guarded opts (expo-secure-store's
+    // native get() ignores JS read options and searches the no-auth keychain service
+    // first) — so the lock screen never actually prompted for those sessions. Re-store
+    // the token GUARDED here, right after the one read: best-effort and silent (the
+    // WHIT-170 delete-then-CREATE path never prompts on iOS), so the NEXT launch/resume
+    // genuinely requires Face ID. Unconditional on every unlock: guarded-vs-unguarded
+    // is indistinguishable from JS without a read, and re-storing an already-guarded
+    // token is an idempotent silent rewrite. Runs BEFORE refreshTokens so a rotating
+    // refresh's own guarded write always lands last. iOS-only: on Android the guarded
+    // WRITE itself opens a biometric prompt (AESEncryptor authenticates the cipher),
+    // which would double-prompt every unlock — Android needs its own migration story
+    // if the biometric flag ever ships there.
+    // Accepted risk: process death in the millisecond delete→create window leaves
+    // sentinel-without-token, which the null-read path above self-heals to a clean
+    // re-login on the next launch.
+    if (isIOS() && canBiometricLock()) {
+      try {
+        await setRefreshToken(refreshToken);
+      } catch {
+        // Best-effort: the token is in memory, so THIS launch proceeds; a failed
+        // re-store must not be mistaken for a cancelled prompt (the outer catch).
+      }
     }
     // Seed the in-memory refresh token so the refresh below (and every later hourly
     // refresh) reuses it — one biometric prompt per launch/resume, never per refresh.
@@ -851,7 +888,11 @@ export function lock(): void {
  *
  * Only called from unlockOrRestore, under `canBiometricLock()` and only when the
  * sentinel is absent — so it never touches a WHIT-161 session (which always carries a
- * sentinel). Token → sentinel order (the lockstep landmine): setRefreshToken guarded
+ * sentinel). The OTHER unguarded-token shape — sentinel PRESENT but the token stored
+ * while the flag was off (a flag-flip, WHIT-267) — is handled inside performUnlock,
+ * which re-stores the token guarded after its one read; it can't be handled here
+ * because with the sentinel present the launch path never reaches this function.
+ * Token → sentinel order (the lockstep landmine): setRefreshToken guarded
  * deletes-then-creates, so a failed create leaves no token, and the sentinel is written
  * LAST, so a partial migration never leaves an orphan sentinel. A write that fails
  * partway rolls back to a clean signed-out state (clearStoredSession → the caller's
@@ -926,8 +967,11 @@ async function getRefreshToken(): Promise<string | null> {
 }
 
 // WHIT-172: read the refresh token with an EXPLICIT UNGUARDED query ({} — NOT
-// secureOpts()). A pre-WHIT-161 item is unguarded, so this reads it silently with no
-// Face ID prompt and none of the iOS guarded-query-of-unguarded-item ambiguity. Used
+// secureOpts()). A pre-WHIT-161 item is unguarded, so this reads it silently. NOTE
+// (WHIT-267): the silence comes from the ITEM being unguarded, not the query — iOS
+// ignores JS read options, and a `{}` read of a GUARDED item still pops Face ID (the
+// item's own ACL prompts). So this is only safe where the item is known unguarded or
+// absent, as here. Used
 // only by migrateUnguardedSession to detect + upgrade a pre-biometric session. No
 // try/catch (mirrors getRefreshToken): a throw propagates into migrateUnguardedSession's
 // try → clearStoredSession → return false.
