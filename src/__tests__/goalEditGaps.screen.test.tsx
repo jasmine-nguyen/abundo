@@ -12,6 +12,11 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { GoalRecord, AccountBalance } from '../api';
 
+// WHIT-257/264 — override the global fixed-past picker mock with the shared configurable one so
+// the save-time date guards can be driven with a specific picked date. See support/mockDatePicker.
+jest.mock('@react-native-community/datetimepicker', () => require('./support/mockDatePicker').mockDatePickerModule());
+import { setPickedDate, resetPickedDate, FUTURE, FUTURE_ISO } from './support/mockDatePicker';
+
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
 const mockShowToast = jest.fn();
@@ -95,6 +100,7 @@ beforeEach(() => {
   mockGoals = [];
   mockBalances = new Map([['acc-1', balance('acc-1', 2500)]]);
   mockTransactions = [{ account_id: 'acc-1', account_name: 'Everyday Savings' }];
+  resetPickedDate(); // reset to the future default; a guard test overrides it
 });
 
 describe('writer failure does not navigate', () => {
@@ -257,6 +263,126 @@ describe('baseline must itself be a clean number', () => {
     await press('goal-save');
 
     expect(mockShowToast).toHaveBeenCalledWith('Enter a valid starting amount.');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+});
+
+// WHIT-257 — the manual "as of" date gets the mirror of the target-date guard: a freshly-picked
+// FUTURE as-of is rejected at save (it can only be today or earlier); an untouched one saves.
+describe('WHIT-257: save-time guard on the manual as-of date', () => {
+  const fillManual = () => {
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Cash');
+    fireEvent.press(screen.getByTestId('goal-source-manual'));
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. 2500'), '800');
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+  };
+
+  it('a freshly-picked FUTURE as-of date is rejected with a toast, no save', async () => {
+    setPickedDate(FUTURE); // future — drives BOTH pickers; target stays valid
+    render(<GoalEdit />);
+    fillManual();
+    // The AS OF field is seeded to today, so on iOS its pill is the first inline picker.
+    fireEvent.press(screen.getAllByTestId('mock-datepicker')[0]); // as-of → future
+    setTargetDate();                                              // target → future (valid)
+    await press('goal-save');
+    expect(mockShowToast).toHaveBeenCalledWith("The as-of date can't be in the future.");
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  it('a manual goal with the as-of left at today saves fine (the guard allows today)', async () => {
+    render(<GoalEdit />);
+    fillManual();
+    setTargetDate(); // target future; as-of untouched = seeded today
+    await press('goal-save');
+    expect(mockShowToast).not.toHaveBeenCalled();
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(body.manual_as_of).toMatch(ISO);
+  });
+});
+
+// WHIT-257 QA GAPS (adversarial) — the changed-only scoping must still BITE a freshly-changed bad
+// date on the EDIT path, and the boundary/ordering/arm-gating the implementer's tests leave open.
+describe('WHIT-257 QA gaps: changed-date scoping still bites on the edit path', () => {
+  const OVERDUE: GoalRecord = { ...RAINY_DAY, id: 'gp', target_date: '2020-01-01' };
+
+  // [G1] Editing an overdue goal and CHANGING the target to a DIFFERENT past date must REJECT —
+  // the changed-only scope is not a blanket "any edit of an overdue goal saves any date".
+  it('overdue goal, target CHANGED to a new past date → rejected, no save', async () => {
+    setPickedDate(new Date(2019, 5, 15)); // 2019-06-15, past AND != the seeded 2020-01-01
+    mockParams = { id: 'gp' };
+    mockGoals = [OVERDUE];
+    render(<GoalEdit />);
+    setTargetDate(); // picks 2019-06-15 → differs from existing.target_date → guard fires
+    await press('goal-save');
+    expect(mockShowToast).toHaveBeenCalledWith('Pick a target date in the future.');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  // [G2] Editing an overdue goal and CHANGING the target to a FUTURE date SAVES with the new date.
+  it('overdue goal, target CHANGED to a future date → saves the new date', async () => {
+    setPickedDate(FUTURE);
+    mockParams = { id: 'gp' };
+    mockGoals = [OVERDUE];
+    render(<GoalEdit />);
+    setTargetDate();
+    await press('goal-save');
+    expect(mockShowToast).not.toHaveBeenCalled();
+    const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(editId).toBe('gp');
+    expect(body.target_date).toBe(FUTURE_ISO);
+  });
+
+  // [G3] Boundary on the EDIT path: changing the target to EXACTLY today is rejected (strictly
+  // future). The implementer's today-boundary test is on the CREATE path only.
+  it('edit path, target CHANGED to exactly today → rejected (strictly future)', async () => {
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    setPickedDate(todayMidnight); // toISODate(today) === component todayISO → today !> today
+    mockParams = { id: 'gp' };
+    mockGoals = [OVERDUE];
+    render(<GoalEdit />);
+    setTargetDate();
+    await press('goal-save');
+    expect(mockShowToast).toHaveBeenCalledWith('Pick a target date in the future.');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+});
+
+describe('WHIT-257 QA gaps: a synced goal omits manual_as_of and a stale unchanged one is inert', () => {
+  // [G4] A SYNCED goal's saved body carries NO manual_as_of (that field belongs to the manual arm),
+  // and a stale-but-unchanged as-of on the record doesn't block a rename — the changed-scope keeps
+  // it inert. (Arm-placement itself isn't observable here: a synced goal has no AS OF field to
+  // change, so manualAsOf can never differ from the seed to reach the guard.)
+  it('synced goal with a stale future manual_as_of on the record → saves, body omits manual_as_of', async () => {
+    const staleSynced: GoalRecord = { ...RAINY_DAY, id: 'gs', manual_as_of: '2999-01-01' };
+    mockParams = { id: 'gs' };
+    mockGoals = [staleSynced];
+    render(<GoalEdit />);
+    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Renamed'); // target untouched
+    await press('goal-save');
+    expect(mockShowToast).not.toHaveBeenCalled();
+    const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(editId).toBe('gs');
+    expect(body).toHaveProperty('account_id', 'acc-1');
+    expect(body).not.toHaveProperty('manual_as_of'); // synced arm never emits it
+  });
+});
+
+describe('WHIT-257 QA gaps: guard ordering', () => {
+  // [G5] Both a wrong-side baseline AND a freshly-picked past target date are invalid. The target
+  // guard runs BEFORE the baseline side-check, so the target-date toast wins. Locks the ordering.
+  it('bad baseline + past target date → the target-date toast fires (guard runs first)', async () => {
+    setPickedDate(new Date(2020, 0, 1)); // past
+    render(<GoalEdit />);
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Order');
+    fireEvent.press(screen.getByTestId('goal-source-synced'));
+    fireEvent.press(screen.getByTestId('goal-account-acc-1'));
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '5000');
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. 500'), '9000'); // baseline > target: wrong side
+    setTargetDate();
+    await press('goal-save');
+    expect(mockShowToast).toHaveBeenCalledWith('Pick a target date in the future.');
+    expect(mockShowToast).not.toHaveBeenCalledWith('The starting amount should be below your target.');
     expect(mockSaveGoal).not.toHaveBeenCalled();
   });
 });
