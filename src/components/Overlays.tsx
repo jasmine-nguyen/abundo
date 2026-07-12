@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, merchantLabel } from '../context';
+import { useAppContext, merchantLabel, categoryTreeRows } from '../context';
 import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET } from '../motion/sheetMotion';
@@ -132,12 +132,30 @@ function PickerSheet() {
   // list for the mini-form; `submitting` guards a double-tap while the create is in flight.
   const [creating, setCreating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // WHIT-273: which parents are folded away. Empty = everything expanded, so the picker opens
+  // fully revealed (you're here to find a category fast). A `collapsed` Set (vs Insights'
+  // `expanded`) gives that expanded-by-default without pre-seeding every parent id.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = useCallback((id: string) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
   const sh = s.sheet;
   if (sh?.mode !== 'picker') return null;
   const tx = transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
-  // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
-  const categories = [...cats].sort((a, b) => a.name.localeCompare(b.name));
+  // WHIT-273: render as a parent→child tree (siblings A–Z within each group, so a newly-created
+  // category isn't stranded — WHIT-158). A row shows only when its whole parent chain is expanded;
+  // rows arrive depth-first (parent before child) so this single pass is enough.
+  const treeRows = categoryTreeRows(cats);
+  const visibleIds = new Set<string>();
+  for (const row of treeRows) {
+    if (row.parentId === null || (visibleIds.has(row.parentId) && !collapsed.has(row.parentId))) {
+      visibleIds.add(row.category.id);
+    }
+  }
+  const visibleRows = treeRows.filter((row) => visibleIds.has(row.category.id));
 
   // Create the category, then file THIS transaction into it. `chooseCategory` advances the
   // sheet (still mode 'picker') to the confirm step, which reads the new category from the
@@ -189,15 +207,37 @@ function PickerSheet() {
           </View>
           <Text style={[styles.pickName, { color: C.accentSofter }]}>New category</Text>
         </Pressable>
-        {categories.map((c) => (
-          <Pressable key={c.id} onPress={() => s.chooseCategory(c.id)} style={styles.pickRow}>
-            <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
-              <Icon name={c.icon} size={19} color={c.color} />
+        {visibleRows.map(({ category: c, depth, hasChildren }) => {
+          const isCollapsed = collapsed.has(c.id);
+          return (
+            // Two sibling tap targets, never nested: the name (chip + label) selects the
+            // category; the chevron folds its subs. Keeping them separate means a fold tap
+            // can't also file the transaction. The chevron shows only on parents (a childless
+            // row has nothing to fold), so a chevron always means "tap to expand/collapse".
+            <View
+              key={c.id}
+              style={[styles.pickRow, depth > 0 && { marginLeft: depth * 18, borderLeftWidth: 2, borderLeftColor: c.color, paddingLeft: 11 }]}
+            >
+              <Pressable onPress={() => s.chooseCategory(c.id)} style={styles.pickNameHit}>
+                <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
+                  <Icon name={c.icon} size={19} color={c.color} />
+                </View>
+                <Text testID="pickerCatName" style={styles.pickName}>{c.name}</Text>
+              </Pressable>
+              {hasChildren && (
+                <Pressable
+                  testID={`pickerCatToggle-${c.id}`}
+                  onPress={() => toggle(c.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: !isCollapsed }}
+                  style={styles.pickToggle}
+                >
+                  <Glyph name={isCollapsed ? 'chevron' : 'chevronDown'} size={16} color={C.textFaint} />
+                </Pressable>
+              )}
             </View>
-            <Text testID="pickerCatName" style={styles.pickName}>{c.name}</Text>
-            <Glyph name="chevron" size={16} color={C.textFaint} />
-          </Pressable>
-        ))}
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -490,6 +530,8 @@ const styles = StyleSheet.create({
   sheetMerchant: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 8 },
   sheetAmount: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: '#f1f1f4', marginTop: 2, letterSpacing: -0.5 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 11 },
+  pickNameHit: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13 },
+  pickToggle: { padding: 6 },
   pickChip: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   pickName: { flex: 1, fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#f1f1f4' },
   confirmChip: { width: 52, height: 52, borderRadius: 15, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
