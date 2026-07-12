@@ -104,12 +104,34 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
   }
 
   const target = gateRedirect({ navReady, status, onIndex });
-  if (target) return <Redirect href={target} />;
-
-  return <>{children}</>;
+  // WHIT-265: the children (the root <Stack>) stay MOUNTED while a redirect is in
+  // flight, and the wrapper is unconditional WITHIN THIS TAIL — both are load-bearing.
+  // Rendering <Redirect> INSTEAD of the children (or wrapping them only sometimes,
+  // which moves their tree position) unmounts the Stack; navigation state then resets
+  // to the index route, the gate re-redirects, and the mount/unmount ping-pong exceeds
+  // React's update depth — an instant launch crash in release builds. (The locked/
+  // loading branches above still swap the whole subtree — safe, each swap redirects at
+  // most once on re-entry; the lost-place-on-unlock cost is WHIT-266.) The cover is
+  // the privacy/touch shield while the redirect completes: opaque C.bg, and default
+  // pointerEvents so touches never reach the covered children.
+  return (
+    <View style={styles.gate}>
+      {children}
+      {target != null && (
+        <View style={styles.cover} testID="gate-cover">
+          <Redirect href={target} />
+        </View>
+      )}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
+  gate: { flex: 1 },
+  // NOTE: explicit four-edge fill on purpose — RN 0.85 removed StyleSheet.absoluteFillObject.
+  // zIndex above the in-gate maximum (floating headers use 10/20) so the cover always
+  // paints on top, including on web; the 200/300 Overlays live OUTSIDE AuthGate.
+  cover: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, backgroundColor: C.bg },
   lock: { flex: 1, backgroundColor: C.bg, alignItems: "center", justifyContent: "center", padding: 32, gap: 14 },
   lockTitle: { fontFamily: FONT.display, fontWeight: "800", fontSize: 24, color: "#fff" },
   lockSubtitle: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, marginBottom: 10 },

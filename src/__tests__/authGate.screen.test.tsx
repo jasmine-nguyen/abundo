@@ -4,8 +4,9 @@
 // rules, not a stub. getStatus/subscribe/restoreSession are controllable.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
+import { C } from '../theme';
 
 const mockRedirectSpy = jest.fn();
 let mockSegments: string[] = [];
@@ -60,7 +61,14 @@ it('redirects an anon user on a protected route to the login screen', () => {
   mockSegments = ['(tabs)', 'budgets'];
   renderGate();
   expect(mockRedirectSpy).toHaveBeenCalledWith('/');
-  expect(screen.queryByTestId('child')).toBeNull();
+  // WHIT-265: the child (the root Stack) stays MOUNTED during the redirect —
+  // unmounting it resets navigation and loops the gate. The opaque absolute-fill
+  // cover is the privacy shield hiding the protected screen while the redirect lands.
+  expect(screen.getByTestId('child')).toBeTruthy();
+  const cover = StyleSheet.flatten(screen.getByTestId('gate-cover').props.style);
+  expect(cover.backgroundColor).toBe(C.bg);
+  expect(cover.position).toBe('absolute');
+  expect([cover.top, cover.right, cover.bottom, cover.left]).toEqual([0, 0, 0, 0]);
 });
 
 it('redirects an anon user on a ROOT-LEVEL detail route (e.g. /loan) to login', () => {
@@ -71,7 +79,8 @@ it('redirects an anon user on a ROOT-LEVEL detail route (e.g. /loan) to login', 
   mockSegments = ['loan'];
   renderGate();
   expect(mockRedirectSpy).toHaveBeenCalledWith('/');
-  expect(screen.queryByTestId('child')).toBeNull();
+  expect(screen.getByTestId('child')).toBeTruthy(); // WHIT-265: stays mounted, covered
+  expect(screen.getByTestId('gate-cover')).toBeTruthy();
 });
 
 it('does NOT bounce an authed user off a root-level detail route (e.g. /loan)', () => {
@@ -80,6 +89,7 @@ it('does NOT bounce an authed user off a root-level detail route (e.g. /loan)', 
   renderGate();
   expect(mockRedirectSpy).not.toHaveBeenCalled();
   expect(screen.getByTestId('child')).toBeTruthy();
+  expect(screen.queryByTestId('gate-cover')).toBeNull(); // no redirect → no cover
 });
 
 it('forwards an authed user off the login screen into the app', () => {
@@ -87,6 +97,8 @@ it('forwards an authed user off the login screen into the app', () => {
   mockSegments = []; // index/login route
   renderGate();
   expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
+  expect(screen.getByTestId('child')).toBeTruthy(); // WHIT-265: stays mounted, covered
+  expect(screen.getByTestId('gate-cover')).toBeTruthy();
 });
 
 it('leaves an anon user on the login screen (no redirect loop)', () => {
@@ -95,6 +107,7 @@ it('leaves an anon user on the login screen (no redirect loop)', () => {
   renderGate();
   expect(mockRedirectSpy).not.toHaveBeenCalled();
   expect(screen.getByTestId('child')).toBeTruthy();
+  expect(screen.queryByTestId('gate-cover')).toBeNull(); // no redirect → no cover
 });
 
 it('shows a placeholder (no child, no redirect) while loading', () => {
@@ -114,7 +127,8 @@ it('gate is UNCONDITIONAL (WHIT-162): redirects an anon user even with no flag s
   mockSegments = ['(tabs)', 'budgets'];
   renderGate();
   expect(mockRedirectSpy).toHaveBeenCalledWith('/');
-  expect(screen.queryByTestId('child')).toBeNull();
+  expect(screen.getByTestId('child')).toBeTruthy(); // WHIT-265: stays mounted, covered
+  expect(screen.getByTestId('gate-cover')).toBeTruthy();
 });
 
 it('does not redirect before the navigator is mounted (mounted guard)', () => {
@@ -124,4 +138,5 @@ it('does not redirect before the navigator is mounted (mounted guard)', () => {
   renderGate();
   expect(mockRedirectSpy).not.toHaveBeenCalled();
   expect(screen.getByTestId('child')).toBeTruthy();
+  expect(screen.queryByTestId('gate-cover')).toBeNull(); // no redirect → no cover
 });

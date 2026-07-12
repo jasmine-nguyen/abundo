@@ -73,5 +73,7 @@ it('transitions loading -> anon via the subscribe listener and then redirects', 
   // The redirect only appears if the gate re-rendered off 'loading' via the listener.
   expect(await screen.findByTestId('redirect')).toBeTruthy();
   expect(mockRedirectSpy).toHaveBeenCalledWith('/');
-  expect(screen.queryByTestId('child')).toBeNull();
+  // WHIT-265: the child stays mounted behind the opaque cover during the redirect.
+  expect(screen.getByTestId('child')).toBeTruthy();
+  expect(screen.getByTestId('gate-cover')).toBeTruthy();
 });
