@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Platform, Animated } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
@@ -12,6 +12,8 @@ import { springSheetIn, SHEET_ENTER_OFFSET } from '../motion/sheetMotion';
 // date components (not UTC) so the calendar and label show the day the user picked —
 // no midnight-timezone drift. Shared with the loan form's goal-date picker (WHIT-126).
 import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
+import { useNativeDate } from './NativeDateField';
+import { parseAmount, numText } from '../numutil';
 import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
 
 export function Overlays() {
@@ -287,23 +289,12 @@ function PayCycleSheet() {
   // here immediately.
   const { payCycle } = usePayCycle();
   const opts = [{ n: 'Weekly', len: 7 }, { n: 'Fortnightly', len: 14 }, { n: 'Monthly', len: 30 }];
-  const isIOS = Platform.OS === 'ios';
-  // iOS shows a COMPACT date pill inline (tap -> calendar popover), so it needs no
-  // toggle. Android has no compact display, so a row opens the modal dialog.
-  const [showAndroidPicker, setShowAndroidPicker] = useState(false);
+  // iOS shows a COMPACT date pill inline; Android opens the modal dialog off a row.
+  // The pick-vs-dismiss + arg-extraction quirk lives in the shared hook (WHIT-255).
+  const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => s.setPayday(iso));
 
   // A payday can be today or in the past, never the future — so does the picker.
   const today = new Date();
-
-  // The picker's callback is onChange, which fires as (event, date) — the Date is
-  // the SECOND arg, not the first — so pull it out of whichever position it lands
-  // in, rather than assume arg 0 is the Date (assuming arg 0 crashed once:
-  // `event.getMonth()` is undefined). On a cancel/dismiss the date is undefined, so
-  // nothing is committed.
-  const commitDate = (a?: unknown, b?: unknown) => {
-    const picked = a instanceof Date ? a : b instanceof Date ? b : undefined;
-    if (picked) s.setPayday(toISODate(picked));
-  };
 
   return (
     <View>
@@ -337,27 +328,25 @@ function PayCycleSheet() {
             maximumDate={today}
             themeVariant="dark"        // light text on the dark sheet
             accentColor={C.accent}     // selected day + popover accent match the palette
-            onChange={commitDate}
+            onChange={commit}
           />
         </View>
       ) : (
         <Pressable
-          onPress={() => setShowAndroidPicker(true)}
+          onPress={openPicker}
           style={[styles.cycleRow, { marginTop: 10, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
         >
           <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(payCycle.last_pay_date)}</Text>
           <Glyph name="calendar" size={18} color={C.textDim} />
         </Pressable>
       )}
-      {!isIOS && showAndroidPicker && (
+      {!isIOS && showPicker && (
         <DateTimePicker
           value={parseISODate(payCycle.last_pay_date)}
           mode="date"
           display="default"
           maximumDate={today}
-          // Android fires onChange for both pick and dismiss; close the dialog
-          // either way, and commitDate only saves when a Date came through.
-          onChange={(event, date) => { setShowAndroidPicker(false); commitDate(event, date); }}
+          onChange={commit}
         />
       )}
 
@@ -379,28 +368,22 @@ function GoalBalanceSheet() {
   // form). Keyed on goalId in SheetHost, so these initialisers re-run per goal.
   const goal = useGoalsQuery(useIsAuthed()).data?.find((g) => g.id === goalId);
   const today = new Date();
-  const isIOS = Platform.OS === 'ios';
-  const [balance, setBalance] = useState(goal?.manual_balance != null ? String(goal.manual_balance) : '');
+  const [balance, setBalance] = useState(numText(goal?.manual_balance));
   // Default the as-of to TODAY: an update means "here's the balance now". The user can
   // back-date it (max today) if they're entering a figure from an earlier statement.
   const [asOf, setAsOf] = useState(toISODate(today));
-  const [showAndroidPicker, setShowAndroidPicker] = useState(false);
+  const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => setAsOf(iso));
   const [saving, setSaving] = useState(false);
 
   // The goal can be gone (deleted elsewhere) or not yet cached — close cleanly rather than
   // crash, like PickerSheet/ConfirmSheet do for a missing transaction.
   if (!goal) return null;
 
-  const commitDate = (a?: unknown, b?: unknown) => {
-    const picked = a instanceof Date ? a : b instanceof Date ? b : undefined;
-    if (picked) setAsOf(toISODate(picked));
-  };
-
   const onSave = async () => {
-    // Strict decimal only — the regex has no sign, so blanks / trailing garbage / negatives
-    // are all rejected, and any value that passes is >= 0.
-    if (!/^\d*\.?\d+$/.test(balance.trim())) return s.showToast('Enter a balance of $0 or more.');
-    const amount = parseFloat(balance.trim());
+    // parseAmount rejects blanks / trailing garbage / negatives and is unsigned, so any value
+    // it accepts is >= 0.
+    const amount = parseAmount(balance);
+    if (Number.isNaN(amount)) return s.showToast('Enter a balance of $0 or more.');
     setSaving(true);
     const ok = await s.saveGoal(goal.id, {
       name: goal.name, icon: goal.icon, direction: goal.direction,
@@ -440,26 +423,26 @@ function GoalBalanceSheet() {
             maximumDate={today}
             themeVariant="dark"
             accentColor={C.accent}
-            onChange={commitDate}
+            onChange={commit}
           />
         </View>
       ) : (
         <Pressable
           testID="goal-asof-open"
-          onPress={() => setShowAndroidPicker(true)}
+          onPress={openPicker}
           style={[styles.cycleRow, { marginTop: 6, backgroundColor: C.cardAlt, borderColor: 'rgba(255,255,255,.07)' }]}
         >
           <Text style={[styles.cycleText, { color: C.textMid }]}>{formatDayMonthYear(asOf)}</Text>
           <Glyph name="calendar" size={18} color={C.textDim} />
         </Pressable>
       )}
-      {!isIOS && showAndroidPicker && (
+      {!isIOS && showPicker && (
         <DateTimePicker
           value={parseISODate(asOf)}
           mode="date"
           display="default"
           maximumDate={today}
-          onChange={(event, date) => { setShowAndroidPicker(false); commitDate(event, date); }}
+          onChange={commit}
         />
       )}
 

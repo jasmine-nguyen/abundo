@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Platform } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
@@ -8,23 +7,14 @@ import { Icon, ICON_KEYS } from '../../src/icons';
 import { useAppContext, accountSummaries } from '../../src/context';
 import { useGoalsQuery, useTransactionsScreenData, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
+import { NativeDateField } from '../../src/components/NativeDateField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
-import { parseISODate, toISODate, formatDayMonthYear } from '../../src/dateutil';
+import { toISODate } from '../../src/dateutil';
+import { parseAmount, numText } from '../../src/numutil';
 import type { GoalWriteBody } from '../../src/api';
 
 type Direction = 'grow' | 'paydown';
 type Source = 'synced' | 'manual';
-
-// A clean decimal number only — reject trailing garbage ("80abc"), exponents, and blanks
-// (which a paste can slip past the decimal-pad keyboard). Mirrors app/loan.tsx:38.
-function parseAmount(text: string): number {
-  const t = text.trim();
-  if (!/^\d*\.?\d+$/.test(t)) return NaN;
-  return parseFloat(t);
-}
-
-// number | null -> the text an input starts with ('' when unset).
-const numText = (n: number | null | undefined) => (n == null ? '' : String(n));
 
 // The add/edit goal form (WHIT-234). Fleshes out the WHIT-233 stub. A pushed screen reached
 // from the Goals hub: `/goal/edit` to create, `/goal/edit?id=<goal>` to edit. Mirrors the
@@ -239,7 +229,8 @@ export default function GoalEdit() {
         {source === 'manual' && (
           <>
             <AmountField label="STARTING BALANCE" placeholder="e.g. 2500" value={manualBalance} onChangeText={setManualBalance} />
-            <DateField label="AS OF" value={manualAsOf} onChange={(iso) => setManualAsOf(iso ?? todayISO)} maximumDate={today} />
+            <Text style={styles.label}>AS OF</Text>
+            <NativeDateField value={manualAsOf} onChange={(iso) => setManualAsOf(iso ?? todayISO)} maximumDate={today} />
           </>
         )}
 
@@ -252,7 +243,7 @@ export default function GoalEdit() {
         />
 
         <Text style={styles.label}>TARGET DATE</Text>
-        <DateField label="" value={targetDate} onChange={setTargetDate} minimumDate={tomorrowOf(today)} placeholder="Pick a date" />
+        <NativeDateField value={targetDate} onChange={setTargetDate} minimumDate={tomorrowOf(today)} placeholder="Pick a date" />
 
         <AmountField
           label={grow ? 'COUNT FROM (OPTIONAL)' : 'STARTING AMOUNT OWED (OPTIONAL)'}
@@ -326,59 +317,6 @@ function AmountField({ label, placeholder, value, onChangeText, hint }: {
   );
 }
 
-// A native date field. iOS shows the compact pill inline; Android opens the dialog on tap.
-// `value` may be null (target date before it's set); the picker seeds from `minimumDate` or
-// today in that case. Mirrors app/loan.tsx's GoalDateField (which is local + not exportable).
-function DateField({ label, value, onChange, minimumDate, maximumDate, placeholder }: {
-  label: string; value: string | null; onChange: (iso: string | null) => void;
-  minimumDate?: Date; maximumDate?: Date; placeholder?: string;
-}) {
-  const [showPicker, setShowPicker] = useState(false);
-  const isIOS = Platform.OS === 'ios';
-  const pickerValue = value ? parseISODate(value) : (minimumDate ?? new Date());
-  // Show the inline iOS pill only once a value exists (or the user has opened the picker). An
-  // empty REQUIRED field must not show a pre-filled "tomorrow" pill that reads as already-set —
-  // it shows the "Set date" affordance instead, matching Android.
-  const showInlinePill = isIOS && (value != null || showPicker);
-
-  // Android fires onChange for both a pick and a dismiss; close the dialog either way and only
-  // commit when a Date came through (the second arg).
-  const commit = (_event: unknown, date?: Date) => {
-    setShowPicker(false);
-    if (date) onChange(toISODate(date));
-  };
-
-  return (
-    <View>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
-      <View style={styles.inputRow}>
-        <Text style={[styles.rowInput, !value && { color: C.placeholder }]}>
-          {value ? formatDayMonthYear(value) : (placeholder ?? 'Not set')}
-        </Text>
-        {showInlinePill ? (
-          <DateTimePicker
-            value={pickerValue}
-            mode="date"
-            display="compact"
-            minimumDate={minimumDate}
-            maximumDate={maximumDate}
-            themeVariant="dark"
-            accentColor={C.accent}
-            onChange={commit}
-          />
-        ) : (
-          <Pressable testID="date-open" onPress={() => setShowPicker(true)} accessibilityRole="button">
-            <Text style={styles.changeDate}>{value ? 'Change' : 'Set date'}</Text>
-          </Pressable>
-        )}
-      </View>
-      {!isIOS && showPicker && (
-        <DateTimePicker value={pickerValue} mode="date" display="default" minimumDate={minimumDate} maximumDate={maximumDate} onChange={commit} />
-      )}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   label: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 18, marginBottom: 8, marginHorizontal: 2 },
   input: { fontFamily: FONT.body, fontSize: 16, color: C.text, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
@@ -386,7 +324,6 @@ const styles = StyleSheet.create({
   rowInput: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%', textAlignVertical: 'center' },
   affix: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textDim },
   hint: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, marginTop: 5 },
-  changeDate: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.accent, paddingHorizontal: 4 },
 
   iconGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   iconBtn: { width: 46, height: 46, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
