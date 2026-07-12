@@ -71,6 +71,14 @@ function guardedRefreshWrites() {
     (c) => (c[2] as { requireAuthentication?: boolean } | undefined)?.requireAuthentication,
   );
 }
+function unguardedRefreshWrites() {
+  return refreshWrites().filter(
+    (c) => !(c[2] as { requireAuthentication?: boolean } | undefined)?.requireAuthentication,
+  );
+}
+function deletesOf(key: string) {
+  return mockDeleteItem.mock.calls.filter((c) => c[0] === key);
+}
 
 // The WHIT-267 shape: sentinel present, token stored while the flag was off. iOS reads
 // the unguarded item through silently even with guarded opts, so the mock returning the
@@ -243,5 +251,122 @@ describe('WHIT-267 re-store gating', () => {
     expect(auth.getStatus()).toBe('authed'); // the exclusion never breaks the unlock itself
     expect(refreshReads()).toHaveLength(1);
     expect(refreshWrites()).toHaveLength(0); // no guarded re-store on android
+  });
+});
+
+// WHIT-270 — the flag-flip kill switch. After a WHIT-267 unlock the token is stored
+// GUARDED; if the Face ID flag is later turned OFF, the signed-out restore reads that
+// guarded item with an unguarded query and iOS still pops Face ID (the item's own ACL).
+// The read can be CANCELLED (must not hang the gate) or SUCCEED (must not keep prompting
+// on every future launch). Flag OFF here means EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED unset
+// and mockCanUseBiometric false (both from beforeEach) → canBiometricLock() false →
+// unlockOrRestore takes restoreSession, and getRefreshToken reads with `{}` opts.
+describe('WHIT-270 — flag-off restore never hangs on a cancelled prompt', () => {
+  // The prompt is CANCELLED → the guarded read rejects. restoreSession must RESOLVE to a
+  // clean 'anon' (login screen), never reject/hang on 'loading' (the blank screen). The
+  // stale guarded item is cleared so the next sign-in writes a fresh token.
+  // Fail-on-revert: remove the try/catch around the read and the rejection propagates →
+  // restoreSession() REJECTS → the `.resolves` assertion fails.
+  it('a cancelled restore prompt resolves to anon and clears the stale item', async () => {
+    mockGetItem.mockImplementation(async (k) => {
+      if (k === REFRESH_KEY) throw new Error('user cancelled Face ID');
+      return null;
+    });
+    const auth = loadAuth();
+
+    await expect(auth.restoreSession()).resolves.toBe(false);
+    expect(auth.getStatus()).toBe('anon');
+    expect(deletesOf(REFRESH_KEY).length).toBeGreaterThan(0);
+    expect(deletesOf(SENTINEL_KEY).length).toBeGreaterThan(0);
+  });
+
+  // getAuthToken (the hourly-refresh entry) shares the same choke point, so it must
+  // recover the same way rather than surface an unhandled rejection.
+  it('getAuthToken also recovers to anon on a cancelled read', async () => {
+    mockGetItem.mockImplementation(async (k) => {
+      if (k === REFRESH_KEY) throw new Error('user cancelled Face ID');
+      return null;
+    });
+    const auth = loadAuth();
+
+    await expect(auth.getAuthToken()).resolves.toBeUndefined();
+    expect(auth.getStatus()).toBe('anon');
+  });
+});
+
+describe('WHIT-270 — flag-off restore re-stores the token unguarded (no repeat prompt)', () => {
+  // The prompt SUCCEEDS → the read returns the token. Flag is OFF, so the token is
+  // re-stored UNGUARDED via delete-then-create, so later launches read it silently.
+  // Fail-on-revert: remove the resaveUnguarded call → no delete and no unguarded write.
+  it('re-stores unguarded (delete-then-create) after a successful flag-off read', async () => {
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await expect(auth.restoreSession()).resolves.toBe(true);
+    expect(auth.getStatus()).toBe('authed');
+    expect(refreshWrites()).toHaveLength(1); // non-rotating refresh → the re-store is the only write
+    expect(unguardedRefreshWrites()).toHaveLength(1); // and it carries no requireAuthentication
+    expect(deletesOf(REFRESH_KEY).length).toBeGreaterThan(0); // silent replace, not an in-place update
+  });
+
+  // End-to-end recurrence pin against a stateful keychain that starts GUARDED. After the
+  // first flag-off launch the on-disk item must end UNGUARDED, so a second launch reads it
+  // silently. Fail-on-revert: without the re-store the item stays guarded.
+  it('leaves the on-disk token unguarded so a second launch does not re-prompt', async () => {
+    let stored: string | null = 'R';
+    let guarded = true;
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? stored : null));
+    mockDeleteItem.mockImplementation(async (k) => {
+      if (k === REFRESH_KEY) {
+        stored = null;
+        guarded = false;
+      }
+    });
+    mockSetItem.mockImplementation(async (k, v, opts) => {
+      if (k === REFRESH_KEY) {
+        stored = v;
+        guarded = !!(opts as { requireAuthentication?: boolean } | undefined)?.requireAuthentication;
+      }
+    });
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await expect(auth.restoreSession()).resolves.toBe(true);
+    expect(stored).toBe('R');
+    expect(guarded).toBe(false);
+  });
+});
+
+describe('WHIT-270 — re-store safety gate', () => {
+  // The guard must NEVER strip protection while the biometric flag is ON (that would
+  // silently disable Face ID). Exercise the keychain read directly via getAuthToken with
+  // the flag on. Fail-on-revert: drop `|| canBiometricLock()` and the guard gets stripped.
+  it('never re-stores unguarded while the biometric flag is ON', async () => {
+    process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
+    mockCanUseBiometric.mockReturnValue(true);
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await expect(auth.getAuthToken()).resolves.toBe('ID');
+    expect(auth.getStatus()).toBe('authed');
+    expect(deletesOf(REFRESH_KEY)).toHaveLength(0);
+    expect(unguardedRefreshWrites()).toHaveLength(0);
+  });
+
+  // Android exclusion: the re-store is deliberately iOS-only (a guarded write prompts on
+  // Android; the delete-then-create is skipped entirely). Restore still succeeds.
+  // Fail-on-revert: drop `!isIOS() ||` and the delete+write fire on android.
+  it('skips the re-store on Android — restore still succeeds', async () => {
+    mockPlatformOS = 'android';
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
+    mockRefresh.mockResolvedValue({ idToken: 'ID', accessToken: 'A', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await expect(auth.restoreSession()).resolves.toBe(true);
+    expect(auth.getStatus()).toBe('authed');
+    expect(deletesOf(REFRESH_KEY)).toHaveLength(0);
+    expect(refreshWrites()).toHaveLength(0);
   });
 });
