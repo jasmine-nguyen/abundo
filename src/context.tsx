@@ -12,6 +12,7 @@ export type { LoanFacts, LoanFactsInput } from './api';
 // Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
 // a circular import — ./queries imports from this module.
 import { queryClient } from './queryClient';
+import { getStatus, subscribe } from './auth';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
 // module const so every "unset" origin (initial state, a failed fetch) agrees.
@@ -407,6 +408,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     queryClient.setQueryData<Rule[]>(['rules'], (prev) => (prev ? fn(prev) : prev));
   }, []);
 
+	// WHIT-268: bumped once per sign-out (the anon subscription below). An async AI
+	// request captures the epoch before its await and bails if it changed by the time
+	// it settles — so a response that lands after sign-out is dropped even if a NEW
+	// session is already live, WITHOUT dropping a response that merely lands during a
+	// Face ID 'locked' window (same session, epoch unchanged — the Overlays gate hides
+	// it, unlock shows it). A plain status !== 'authed' check would wrongly discard that
+	// locked-window response.
+	const sessionEpoch = useRef(0);
+
 	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
 	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
 	// true only when the last GENERATE failed, so the button can show a retry; a
@@ -415,8 +425,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	const [aiInsightsLoading, setAiInsightsLoading] = useState(false);
 	const [aiInsightsError, setAiInsightsError] = useState(false);
 	const refreshAiInsights = useCallback(async () => {
+		const epoch = sessionEpoch.current;
 		try {
-			setAiInsights(await fetchAiInsights());
+			const result = await fetchAiInsights();
+			if (epoch !== sessionEpoch.current) return; // signed out mid-flight
+			setAiInsights(result);
 		} catch {
 			// A failed cache read leaves the current state intact (no error surfaced);
 			// the user can still generate.
@@ -426,14 +439,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// read from a closure here — so this stays a stable useCallback([]) and can never
 	// send a stale goal.
 	const generateAiInsights = useCallback(async (goal?: AiGoalSignal | null) => {
+		const epoch = sessionEpoch.current;
 		setAiInsightsLoading(true);
 		setAiInsightsError(false);
 		try {
-			setAiInsights(await apiGenerateAiInsights(goal));
+			const result = await apiGenerateAiInsights(goal);
+			if (epoch !== sessionEpoch.current) return; // signed out mid-flight
+			setAiInsights(result);
 		} catch {
-			setAiInsightsError(true);
+			if (epoch === sessionEpoch.current) setAiInsightsError(true);
 		} finally {
-			setAiInsightsLoading(false);
+			// Only the run that still owns the session may clear the spinner. A stale run
+			// (signed out, then a NEW session started its own generate) must NOT flip the
+			// live run's spinner off — that would let the new user double-fire.
+			if (epoch === sessionEpoch.current) setAiInsightsLoading(false);
 		}
 	}, []);
 
@@ -447,6 +466,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clearTimeout(toastTimer.current);
     clearTimeout(notifTimer.current);
   }, []);
+
+  // WHIT-268: overlays render OUTSIDE the auth gate in app/_layout.tsx, so the gate's
+  // privacy cover can never hide them — the session's end must clear them here. Fires
+  // on ANY broadcast into 'anon' (sign-out, a failed refresh, invalidated biometrics),
+  // whichever path broadcast it. Also drops the server-derived AI insights (and its
+  // stale error/loading flags), which queryClient.clear() never touches, and bumps the
+  // session epoch so any in-flight AI request settling later is discarded.
+  useEffect(() => subscribe(() => {
+    if (getStatus() !== 'anon') return;
+    sessionEpoch.current += 1;
+    clearTimeout(toastTimer.current);
+    clearTimeout(notifTimer.current);
+    setSheet(null);
+    setToast(null);
+    setNotif(null);
+    setAiInsights(null);
+    setAiInsightsError(false);
+    setAiInsightsLoading(false);
+  }), []);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
