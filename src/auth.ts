@@ -704,7 +704,30 @@ async function refreshFromStoredToken(): Promise<string | undefined> {
   // keychain and re-prompting Face ID. Only fall back to a keychain read (which,
   // when guarded, IS the prompt) when memory is empty — a cold, non-biometric
   // launch, where the read is unguarded and silent.
-  const refreshToken = session?.refreshToken ?? (await getRefreshToken());
+  let refreshToken: string | null;
+  if (session?.refreshToken) {
+    refreshToken = session.refreshToken;
+  } else {
+    // WHIT-270: on a cold flag-OFF launch the token may still be stored GUARDED (a
+    // WHIT-267 unlock re-stores it guarded), so iOS pops Face ID for this read even
+    // though our query is unguarded — the item's own ACL prompts. Handle both outcomes:
+    try {
+      refreshToken = await getRefreshToken();
+    } catch {
+      // Cancelled/failed prompt. There is no lock screen on this path, so recover to a
+      // clean re-login ('anon') instead of leaving the gate stuck on 'loading' (blank
+      // screen). Drop the stale guarded item so the next sign-in writes a fresh token.
+      // Mirrors the unlock path's null-read recovery; the unlock CANCEL path keeps its
+      // own throw semantics because this catch is NOT in getRefreshToken.
+      await clearStoredSession().catch(() => {});
+      clearSession();
+      return undefined;
+    }
+    // The read succeeded. If the item was guarded, it just prompted and — with a
+    // non-rotating refresh — would prompt again on every future launch. The Face ID
+    // flag is OFF, so re-store the token UNGUARDED now: one prompt total, then silent.
+    if (refreshToken) await resaveUnguarded(refreshToken);
+  }
   if (!refreshToken) {
     clearSession();
     return undefined;
@@ -964,6 +987,28 @@ async function getRefreshToken(): Promise<string | null> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const SecureStore = require("expo-secure-store");
   return SecureStore.getItemAsync(REFRESH_TOKEN_KEY, secureOpts());
+}
+
+// WHIT-270: re-store the refresh token UNGUARDED, so a token left GUARDED by a WHIT-267
+// unlock stops re-prompting Face ID once the biometric flag has been turned OFF. Guarded
+// ONLY to the flag-OFF case (canBiometricLock() false) so this can never strip protection
+// from an active-lock session, and iOS-only (a guarded item can't arise on this path on
+// Android — the biometric flag isn't shipped there). Delete-then-create: deleting never
+// prompts, whereas an in-place overwrite of a guarded item WOULD re-prompt (WHIT-170).
+// Best-effort/silent — the token is already in memory, so this launch proceeds regardless.
+async function resaveUnguarded(refreshToken: string): Promise<void> {
+  if (!isIOS() || canBiometricLock()) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const SecureStore = require("expo-secure-store");
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken, {});
+  } catch {
+    // Best-effort: this launch already holds the token in memory, so it proceeds regardless.
+    // If the delete failed the old guarded item survives (next launch prompts once more, then
+    // this re-store retries); if the create failed after the delete the item is gone (next
+    // launch reads null → a clean silent re-login). Either way, never a hang.
+  }
 }
 
 // WHIT-172: read the refresh token with an EXPLICIT UNGUARDED query ({} — NOT
