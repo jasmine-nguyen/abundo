@@ -11,24 +11,11 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { GoalRecord, AccountBalance } from '../api';
-import { toISODate } from '../dateutil';
 
-// WHIT-257: override the global picker mock (fixed 20 Jun 2026, a PAST date the new save guard
-// rejects) with a configurable one; default to a FUTURE date so the existing happy paths pass.
-// Relative to the real clock (the guard is date-sensitive, so a hardcoded year would rot).
-const FUTURE = new Date(new Date().getFullYear() + 2, 0, 15);
-const FUTURE_ISO = toISODate(FUTURE);
-let mockPickedDate = FUTURE;
-jest.mock('@react-native-community/datetimepicker', () => {
-  const ReactLib = require('react');
-  const { Pressable, Text } = require('react-native');
-  const MockPicker = (props: any) => ReactLib.createElement(
-    Pressable,
-    { testID: 'mock-datepicker', onPress: () => props.onChange && props.onChange({ type: 'set' }, mockPickedDate) },
-    ReactLib.createElement(Text, null, 'picker'),
-  );
-  return { __esModule: true, default: MockPicker };
-});
+// WHIT-257/264 — override the global fixed-past picker mock with the shared configurable one so
+// the save-time date guards can be driven with a specific picked date. See support/mockDatePicker.
+jest.mock('@react-native-community/datetimepicker', () => require('./support/mockDatePicker').mockDatePickerModule());
+import { setPickedDate, resetPickedDate, FUTURE, FUTURE_ISO } from './support/mockDatePicker';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
@@ -113,7 +100,7 @@ beforeEach(() => {
   mockGoals = [];
   mockBalances = new Map([['acc-1', balance('acc-1', 2500)]]);
   mockTransactions = [{ account_id: 'acc-1', account_name: 'Everyday Savings' }];
-  mockPickedDate = FUTURE; // reset to the future default; a guard test overrides it
+  resetPickedDate(); // reset to the future default; a guard test overrides it
 });
 
 describe('writer failure does not navigate', () => {
@@ -291,7 +278,7 @@ describe('WHIT-257: save-time guard on the manual as-of date', () => {
   };
 
   it('a freshly-picked FUTURE as-of date is rejected with a toast, no save', async () => {
-    mockPickedDate = FUTURE; // future — drives BOTH pickers; target stays valid
+    setPickedDate(FUTURE); // future — drives BOTH pickers; target stays valid
     render(<GoalEdit />);
     fillManual();
     // The AS OF field is seeded to today, so on iOS its pill is the first inline picker.
@@ -321,7 +308,7 @@ describe('WHIT-257 QA gaps: changed-date scoping still bites on the edit path', 
   // [G1] Editing an overdue goal and CHANGING the target to a DIFFERENT past date must REJECT —
   // the changed-only scope is not a blanket "any edit of an overdue goal saves any date".
   it('overdue goal, target CHANGED to a new past date → rejected, no save', async () => {
-    mockPickedDate = new Date(2019, 5, 15); // 2019-06-15, past AND != the seeded 2020-01-01
+    setPickedDate(new Date(2019, 5, 15)); // 2019-06-15, past AND != the seeded 2020-01-01
     mockParams = { id: 'gp' };
     mockGoals = [OVERDUE];
     render(<GoalEdit />);
@@ -333,7 +320,7 @@ describe('WHIT-257 QA gaps: changed-date scoping still bites on the edit path', 
 
   // [G2] Editing an overdue goal and CHANGING the target to a FUTURE date SAVES with the new date.
   it('overdue goal, target CHANGED to a future date → saves the new date', async () => {
-    mockPickedDate = FUTURE;
+    setPickedDate(FUTURE);
     mockParams = { id: 'gp' };
     mockGoals = [OVERDUE];
     render(<GoalEdit />);
@@ -350,7 +337,7 @@ describe('WHIT-257 QA gaps: changed-date scoping still bites on the edit path', 
   it('edit path, target CHANGED to exactly today → rejected (strictly future)', async () => {
     const todayMidnight = new Date();
     todayMidnight.setHours(0, 0, 0, 0);
-    mockPickedDate = todayMidnight; // toISODate(today) === component todayISO → today !> today
+    setPickedDate(todayMidnight); // toISODate(today) === component todayISO → today !> today
     mockParams = { id: 'gp' };
     mockGoals = [OVERDUE];
     render(<GoalEdit />);
@@ -385,7 +372,7 @@ describe('WHIT-257 QA gaps: guard ordering', () => {
   // [G5] Both a wrong-side baseline AND a freshly-picked past target date are invalid. The target
   // guard runs BEFORE the baseline side-check, so the target-date toast wins. Locks the ordering.
   it('bad baseline + past target date → the target-date toast fires (guard runs first)', async () => {
-    mockPickedDate = new Date(2020, 0, 1); // past
+    setPickedDate(new Date(2020, 0, 1)); // past
     render(<GoalEdit />);
     fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'Order');
     fireEvent.press(screen.getByTestId('goal-source-synced'));

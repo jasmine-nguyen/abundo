@@ -11,23 +11,11 @@ import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { GoalRecord, AccountBalance } from '../api';
 
-// WHIT-257 override of the global jest.setup picker mock (which fires a FIXED 20 Jun 2026 — a
-// PAST date the new save-time guard now rejects). Emits a configurable date so the happy paths
-// can pick a FUTURE one and the guard tests can drive a past/today one. Default = future.
-// Relative to the real clock so it can't rot: the guard is date-sensitive, so a hardcoded future
-// year would flip every happy path red once that date passes.
-const FUTURE = new Date(new Date().getFullYear() + 2, 0, 15);
-let mockPickedDate = FUTURE;
-jest.mock('@react-native-community/datetimepicker', () => {
-  const ReactLib = require('react');
-  const { Pressable, Text } = require('react-native');
-  const MockPicker = (props: any) => ReactLib.createElement(
-    Pressable,
-    { testID: 'mock-datepicker', onPress: () => props.onChange && props.onChange({ type: 'set' }, mockPickedDate) },
-    ReactLib.createElement(Text, null, 'picker'),
-  );
-  return { __esModule: true, default: MockPicker };
-});
+// WHIT-257/264 — override the global fixed-past picker mock (jest.setup fires 20 Jun 2026, which
+// the new save-time guard rejects) with the shared configurable one, so the guard tests can drive
+// a past/today date and the happy paths a future one. See support/mockDatePicker.
+jest.mock('@react-native-community/datetimepicker', () => require('./support/mockDatePicker').mockDatePickerModule());
+import { setPickedDate, resetPickedDate } from './support/mockDatePicker';
 
 const mockSaveGoal = jest.fn(async (_editId: string | null, _body: unknown) => true);
 const mockDeleteGoal = jest.fn(async (_id: string) => true);
@@ -97,7 +85,7 @@ beforeEach(() => {
   mockGoals = [];
   mockBalances = new Map([['acc-1', balance('acc-1', 2500)]]);
   mockTransactions = [{ account_id: 'acc-1', account_name: 'Everyday Savings' }];
-  mockPickedDate = FUTURE; // reset to the future default; a guard test overrides it
+  resetPickedDate(); // reset to the future default; a guard test overrides it
 });
 
 // Restore any per-test console.error spy even if a test fails mid-body (a trailing mockRestore()
@@ -352,7 +340,7 @@ describe('WHIT-257: save-time future-date guard on the target date', () => {
   };
 
   it('a freshly-picked PAST target date is rejected with a toast, no save', async () => {
-    mockPickedDate = new Date(2020, 0, 1); // definitively past
+    setPickedDate(new Date(2020, 0, 1)); // definitively past
     render(<GoalEdit />);
     fillSyncedGrow();
     setTargetDate();
@@ -364,7 +352,7 @@ describe('WHIT-257: save-time future-date guard on the target date', () => {
   it('a target date of TODAY is rejected (strictly future, matching minimumDate=tomorrow)', async () => {
     const todayMidnight = new Date();
     todayMidnight.setHours(0, 0, 0, 0);
-    mockPickedDate = todayMidnight; // component's `today` is the same real day → today !> today
+    setPickedDate(todayMidnight); // component's `today` is the same real day → today !> today
     render(<GoalEdit />);
     fillSyncedGrow();
     setTargetDate();
