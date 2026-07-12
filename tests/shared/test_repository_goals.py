@@ -100,13 +100,7 @@ def test_upsert_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_rep
     from repository_errors import VersionConflictError
 
     table = config_item_table("GOALS", items={})
-    original = table.update_item
-
-    def _always_race(*a, **k):                        # every attempt loses
-        table._bump_before_next_update = True
-        return original(*a, **k)
-
-    table.update_item = _always_race
+    table.always_race()                               # every attempt loses
     _with_table(goals_repo, table)
 
     with pytest.raises(VersionConflictError):
@@ -240,13 +234,7 @@ def test_delete_goal_raises_a_conflict_when_it_cannot_converge(shared, goals_rep
     from repository_errors import VersionConflictError
 
     table = config_item_table("GOALS", items={"g1": _goal()})
-    original = table.update_item
-
-    def _always_race(*a, **k):
-        table._bump_before_next_update = True
-        return original(*a, **k)
-
-    table.update_item = _always_race
+    table.always_race()
     _with_table(goals_repo, table)
 
     with pytest.raises(VersionConflictError):
