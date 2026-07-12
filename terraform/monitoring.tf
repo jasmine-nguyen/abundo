@@ -164,3 +164,68 @@ resource "aws_cloudwatch_metric_alarm" "goal_nudge_sweep_failures" {
   alarm_description   = "The daily behind-pace goal-nudge sweep swallowed one or more failures in the last day (a broken sweep, invisible via the built-in Errors metric)."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
+
+# --- Goal-nudge liveness alarms (WHIT-260) ----------------------------------
+# The WHIT-258 alarm above only fires when the sweep RUNS and logs a swallowed failure. It is
+# blind to the sweep NEVER running (schedule disabled/misconfigured) or CRASHING ON IMPORT
+# (before the try/except in handler.py) — both produce no "failed" line, so that metric stays 0
+# and its notBreaching alarm sits green during a total outage. These two close that gap.
+
+# One datapoint each time the sweep completes a healthy run (handler.py logs
+# "goal-nudge sweep: N nudge(s) sent" ONLY on success — the swallowed-failure path returns
+# before it). This is the heartbeat. Quoted → exact-substring match (parentheses are literal;
+# mirrors the WHIT-258 quoting so this silent-failure monitor can't itself silently never
+# match). Keep the pattern and handler.py:42 in lockstep. default_value 0 so a live run still
+# publishes a datapoint.
+resource "aws_cloudwatch_log_metric_filter" "goal_nudge_runs" {
+  name           = "${var.project_name}-goal-nudge-runs"
+  log_group_name = aws_cloudwatch_log_group.goal_nudge.name
+  pattern        = "\"nudge(s) sent\""
+
+  metric_transformation {
+    name          = "GoalNudgeRuns"
+    namespace     = "${var.project_name}/GoalNudge"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+# Breaches if the sweep has not logged a healthy run across two consecutive days — catches a
+# disabled schedule, an import crash, or a sweep that always fails. treat_missing_data
+# "breaching" is load-bearing: total silence (no invocation → empty log group → no datapoints)
+# MUST page; notBreaching here would reintroduce the exact blind spot this alarm exists to fix.
+# Mirrors the age-out sibling (age_out_not_running).
+resource "aws_cloudwatch_metric_alarm" "goal_nudge_not_running" {
+  alarm_name          = "${var.project_name}-goal-nudge-not-running"
+  namespace           = "${var.project_name}/GoalNudge"
+  metric_name         = "GoalNudgeRuns"
+  statistic           = "Sum"
+  period              = 86400
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+  alarm_description   = "The daily behind-pace goal-nudge sweep has not logged a healthy run for 2 days (schedule disabled, crashing on import, or always failing)."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
+# Fast crash detection: the built-in Lambda Errors metric fires only on an infra failure the
+# handler CAN'T swallow — an import crash (before the try), a timeout, or OOM. A short period so
+# a crash pages within minutes rather than waiting on the 2-day heartbeat above. notBreaching:
+# no invocation is not an error (the never-ran case belongs to the heartbeat alarm).
+resource "aws_cloudwatch_metric_alarm" "goal_nudge_errors" {
+  alarm_name          = "${var.project_name}-goal-nudge-errors"
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = aws_lambda_function.goal_nudge.function_name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "The goal-nudge lambda errored at the infra level (import crash / timeout / OOM) — a failure it cannot swallow, so it never reaches the sweep-failure log line."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
