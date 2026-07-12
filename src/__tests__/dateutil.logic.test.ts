@@ -16,7 +16,8 @@ describe('dateutil (WHIT-126)', () => {
 
   it('formats an ISO date as a local "D Mon YYYY" label', () => {
     expect(formatDayMonthYear('2026-06-20')).toBe('20 Jun 2026');
-    expect(formatDayMonthYear('2027-01-01')).toBe('1 Jan 2027');
+    expect(formatDayMonthYear('2027-01-01')).toBe('1 Jan 2027');   // low month edge, single-digit day
+    expect(formatDayMonthYear('2026-12-25')).toBe('25 Dec 2026');  // high month edge (MONTHS[11])
   });
 
   it('round-trips a Date through toISODate and back on the same local day', () => {
