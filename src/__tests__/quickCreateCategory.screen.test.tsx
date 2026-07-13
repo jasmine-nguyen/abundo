@@ -56,3 +56,16 @@ it('busy blocks submit (double-submit guard)', () => {
   fireEvent.press(screen.getByText('Create & file'));
   expect(onSubmit).not.toHaveBeenCalled();
 });
+
+// [A9] WHIT-283: the draft persistence is OPT-IN. With no readDraft/writeDraft (the category-edit
+// host), the form initialises empty and typing runs the persist effect as a no-op — no throw,
+// even with NO AppProvider (this whole suite renders without one). Locks the shared-component
+// no-regression contract: category-edit is unchanged.
+it('no draft props: form starts empty and typing does not throw (opt-in, no context coupling)', () => {
+  render(<QuickCreateCategory initialBucket="Lifestyle" submitLabel="Add sub-category" onSubmit={onSubmit} />);
+  const input = screen.getByPlaceholderText('Category name');
+  expect(input.props.value).toBe('');                     // draft not consulted → empty default
+  fireEvent.changeText(input, 'Gym');                     // persist effect fires with writeDraft undefined → no-op
+  fireEvent.press(screen.getByText('Add sub-category'));
+  expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ name: 'Gym' }));
+});

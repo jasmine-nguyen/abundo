@@ -20,6 +20,8 @@ const fns = {
   createCategoryInline: jest.fn(async (_form: unknown) => NEW_CAT as Category | null),
   chooseCategory: jest.fn(),
   setSheet: jest.fn(),
+  readSheetDraft: () => undefined,
+  writeSheetDraft: () => {},
   dismissNotif: jest.fn(),
 };
 
