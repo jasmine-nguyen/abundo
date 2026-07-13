@@ -19,7 +19,7 @@
     "name": "Whittle",
     "slug": "whittle",
     "ios": {
-      "bundleIdentifier": "com.anonymous.whittle",
+      "bundleIdentifier": "com.jasminenguyen.whittle",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -31,7 +31,7 @@
       }
     },
     "android": {
-      "package": "com.anonymous.whittleapp"
+      "package": "com.jasminenguyen.whittle"
     },
     "owner": "ramen_broth"
   }
