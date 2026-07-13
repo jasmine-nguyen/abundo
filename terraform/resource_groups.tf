@@ -6,7 +6,8 @@
 
 resource "aws_resourcegroups_group" "app" {
   name        = var.project_name
-  description = "All ${var.project_name} resources, grouped by the App tag."
+  # AWS Resource Groups descriptions allow only [\s a-zA-Z0-9 _ . -] — no commas.
+  description = "All ${var.project_name} resources grouped by the App tag."
 
   resource_query {
     query = jsonencode({
