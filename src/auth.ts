@@ -70,6 +70,14 @@ interface Session {
   refreshToken: string | undefined;
 }
 
+// A refresh-credential-only session: the refresh token is present, but there's no valid
+// id/access token yet — those are minted by the refresh that runs straight after. Named so
+// this specific, non-obvious state lives in one place (and one point to evolve if the Session
+// shape gains a field), instead of an inline literal at the call site. WHIT-286.
+function seedRefreshOnlySession(refreshToken: string): Session {
+  return { idToken: undefined, accessToken: "", issuedAt: 0, expiresIn: 0, refreshToken };
+}
+
 // SecureStore key for the long-lived refresh token. Single-user, so one fixed key.
 const REFRESH_TOKEN_KEY = "whittle.cognito.refreshToken";
 // Unguarded marker written in lockstep with the refresh token, so the gate can
@@ -728,11 +736,11 @@ async function refreshFromStoredToken(): Promise<string | undefined> {
     // flag is OFF, so re-store the token UNGUARDED now: one prompt total, then silent.
     if (refreshToken) {
       await resaveUnguarded(refreshToken);
-      // WHIT-274: seed the in-memory refresh token (mirrors the unlock path at ~874) so
+      // WHIT-274: seed the in-memory refresh token (same seed as the unlock path) so
       // later hourly refreshes reuse memory and skip this keychain read + resave. On a
       // rotating server cacheToken overwrites it with the fresh token; on a non-rotating
       // one cacheToken's `token.refreshToken ?? session?.refreshToken` fallback preserves it.
-      session = { idToken: undefined, accessToken: "", issuedAt: 0, expiresIn: 0, refreshToken };
+      session = seedRefreshOnlySession(refreshToken);
     }
   }
   if (!refreshToken) {
@@ -878,7 +886,7 @@ async function performUnlock(): Promise<boolean> {
     }
     // Seed the in-memory refresh token so the refresh below (and every later hourly
     // refresh) reuses it — one biometric prompt per launch/resume, never per refresh.
-    session = { idToken: undefined, accessToken: "", issuedAt: 0, expiresIn: 0, refreshToken };
+    session = seedRefreshOnlySession(refreshToken);
     // Refresh via the pure helper (NOT refreshFromStoredToken): on an offline failure
     // it must NOT broadcast 'anon'. unlock owns the terminal status here, so the gate
     // never renders a stray login redirect before the lock screen. WHIT-171.
