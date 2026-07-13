@@ -98,7 +98,6 @@ export default function Budgets() {
             <View style={{ marginTop: 15 }}>
               <WhittleBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} />
               <View style={styles.paceRow}>
-                <Text style={[styles.paceTarget, { left: `${b.targetPct}%` }]}>target</Text>
                 <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
               </View>
             </View>
@@ -144,9 +143,11 @@ const styles = StyleSheet.create({
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
-  paceRow: { position: 'relative', height: 18, marginTop: 1 },
-  paceTarget: { position: 'absolute', top: 5, transform: [{ translateX: -16 }], fontFamily: FONT.body, fontSize: 10, color: '#73737d', fontWeight: '500' },
-  paceLabel: { position: 'absolute', top: 3, right: 0, fontFamily: FONT.body, fontSize: 11.5, fontWeight: '700' },
+  // WHIT-281: the "today's pace" tick is labelled once in the legend up top; a per-row
+  // "target" caption here was redundant AND overlapped the right-aligned pace status when
+  // the tick sat far right. Removed — only the pace status remains, right-aligned.
+  paceRow: { height: 18, marginTop: 1, alignItems: 'flex-end', justifyContent: 'center' },
+  paceLabel: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '700' },
 
   addBudget: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', backgroundColor: 'rgba(124,140,255,.07)', borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addBudgetText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
