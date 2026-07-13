@@ -1,20 +1,21 @@
-// WHIT-271 round-2 — the app/category/edit.tsx SCREEN guard `if (getStatus() === 'anon')`, added
-// after the parent-save await (line ~100) AND after the child-ops Promise.allSettled (line ~122).
-// Round-1 F1: this screen toasts on BOTH success and failure and router.back()s, so a writer that
-// merely returns its FAILURE sentinel after a mid-save sign-out would still leak a generic toast +
-// navigate into the next session. The screen guard bails silently. Every committed WHIT-271 test is
-// hook/provider-level — NONE renders app/category/edit.tsx, so this screen guard is otherwise
-// unpinned. Mock pattern mirrors categoryEditSummaryToast.screen.test.tsx.
+// WHIT-282 — the app/category/edit.tsx SCREEN guard now keys on the SESSION STAMP
+// (`s.getSessionEpoch()`) captured at save start, not `getStatus() === 'anon'`. This screen toasts
+// on BOTH success and failure and router.back()s from its OWN local result, so it needs a guard the
+// writers' return-false can't provide. Keying on the epoch makes it bail on ANY session change
+// mid-save — sign-out OR a different-account re-auth (status back to 'authed'), the case the old
+// getStatus check missed. Three guard sites: after the parent UPDATE (:100), the parent CREATE
+// (:104), and the child Promise.allSettled (:122). This screen is otherwise unpinned.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import type { Category } from '../context';
 
-// A controllable auth status so a mock writer can flip the session to 'anon' mid-save, exactly
-// like a real sign-out landing during the round-trip. `mock`-prefixed so the jest.mock factory
-// may reference it (jest's out-of-scope-variable allowance).
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-jest.mock('../../src/auth', () => ({ getStatus: () => mockStatus }));
+// The session stamp the screen captures at save start and re-reads across the await. A writer bumps
+// it mid-save to model a session change (sign-out OR re-auth). `mock`-prefixed for jest's factory rule.
+let mockEpoch = 0;
+// The screen no longer reads getStatus, but the real context module (requireActual below) imports
+// ../auth at load — stub it so that import resolves without pulling the real auth module.
+jest.mock('../../src/auth', () => ({ getStatus: () => 'authed' }));
 
 const mockSaveCategory = jest.fn(async (_id: string | null, _form: unknown, _opts?: { silent?: boolean }) => true as boolean);
 const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => ({
@@ -23,7 +24,7 @@ const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; ic
 const mockShowToast = jest.fn();
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, createCategoryInline: mockCreateInline, deleteCategory: jest.fn(), showToast: mockShowToast }) };
+  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, createCategoryInline: mockCreateInline, deleteCategory: jest.fn(), showToast: mockShowToast, getSessionEpoch: () => mockEpoch }) };
 });
 
 let mockCategories: Category[] = [];
@@ -45,7 +46,7 @@ const LIVING = (id: string, name: string, parent: string | null = null): Categor
   ({ id, name, bucket: 'Living', icon: 'car', color: '#8ab4f8', recent: 0, parent });
 
 beforeEach(() => {
-  mockStatus = 'authed';
+  mockEpoch = 0;
   mockParams = {};
   mockCategories = [];
   mockSaveCategory.mockClear(); mockSaveCategory.mockImplementation(async () => true);
@@ -54,56 +55,84 @@ beforeEach(() => {
   mockShowToast.mockClear(); mockBack.mockClear();
 });
 
-// [A-EDIT-PARENT] The writer returns its FAILURE sentinel (false) after a mid-save sign-out AND the
-// session is now 'anon'. The screen guard must bail silently: NO 'Could not save category' toast,
-// NO router.back(). Fail-on-revert: delete the `if (getStatus() === 'anon')` line after the parent
-// await and the `if (!ok)` branch fires the generic toast → this test fails.
-it('a mid-save sign-out on the parent write shows no toast and does not navigate', async () => {
+// [A-EDIT-PARENT] A session change lands during the parent UPDATE write (writer bumps the epoch and
+// returns its failure sentinel). The :100 guard must bail silently: NO toast, NO router.back().
+// Fail-on-revert: drop the :100 epoch guard → the `if (!ok)` generic toast fires → this test fails.
+it('a session change on the parent update write shows no toast and does not navigate', async () => {
   mockParams = { categoryId: 'transport' };
   mockCategories = [LIVING('transport', 'Transport')];
-  // Model the real post-sign-out state: the writer returns false AND getStatus is now 'anon'.
-  mockSaveCategory.mockImplementation(async () => { mockStatus = 'anon'; return false; });
+  mockSaveCategory.mockImplementation(async () => { mockEpoch += 1; return false; });
   render(<CategoryEdit />);
 
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });
 
-  // Give any un-awaited summary/toast a chance to fire, then assert it never did.
   await waitFor(() => expect(mockSaveCategory).toHaveBeenCalled());
   expect(mockShowToast).not.toHaveBeenCalled();
   expect(mockBack).not.toHaveBeenCalled();
 });
 
-// [A-EDIT-CHILD] Parent saves fine IN-SESSION (status stays 'authed', ok=true), then the sign-out
-// lands DURING the child writes. The post-child guard must bail: NO summary toast, NO router.back().
-// Fail-on-revert: delete the `if (getStatus() === 'anon')` line after the Promise.allSettled and the
-// summary toast ("Category updated, but 1 sub-category couldn't be attached…") + router.back() fire.
-it('a sign-out during the child writes fires no summary toast and does not navigate', async () => {
+// [A-EDIT-CREATE] The parent CREATE path (:104), previously unpinned. A session change lands during
+// createCategoryInline (bumps the epoch, returns null). The :104 guard must bail silently.
+// Fail-on-revert: drop the :104 epoch guard → the `if (!created)` generic toast fires → fails.
+it('a session change on the parent create write shows no toast and does not navigate', async () => {
+  mockParams = {}; // no categoryId → the create path
+  render(<CategoryEdit />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. Coffee runs'), 'New cat'); // canSave needs a name
+  mockCreateInline.mockImplementation(async () => { mockEpoch += 1; return null; });
+
+  await act(async () => { fireEvent.press(screen.getByText('Save category')); });
+
+  await waitFor(() => expect(mockCreateInline).toHaveBeenCalled());
+  expect(mockShowToast).not.toHaveBeenCalled();
+  expect(mockBack).not.toHaveBeenCalled();
+});
+
+// [A-EDIT-REAUTH] THE CARD'S BUG: a DIFFERENT account fully signs in mid-save. Status is 'authed'
+// again (so the old getStatus()==='anon' guard would PASS), but the epoch bumped. The writer even
+// returns a SUCCESS-shaped value — so only the EPOCH tells the screen this isn't its session. The
+// guard must bail: NO 'Category updated' summary toast, NO router.back() into the new session.
+// Fail-on-revert: restore `getStatus() === 'anon'` → status 'authed' → guard passes → toast + nav fire.
+it('a different-account sign-in mid-save (epoch bumped, status authed) shows no toast and does not navigate', async () => {
+  mockParams = { categoryId: 'transport' };
+  mockCategories = [LIVING('transport', 'Transport')];
+  mockSaveCategory.mockImplementation(async () => { mockEpoch += 1; return true; }); // re-auth: success-shaped, new session
+  render(<CategoryEdit />);
+
+  await act(async () => { fireEvent.press(screen.getByText('Save category')); });
+
+  await waitFor(() => expect(mockSaveCategory).toHaveBeenCalled());
+  expect(mockShowToast).not.toHaveBeenCalled();
+  expect(mockBack).not.toHaveBeenCalled();
+});
+
+// [A-EDIT-CHILD] Parent succeeds in-session (epoch unchanged, ok=true); the session change lands
+// DURING the child writes. The post-Promise.allSettled guard (:122) must bail: NO summary toast, NO nav.
+it('a session change during the child writes fires no summary toast and does not navigate', async () => {
   mockParams = { categoryId: 'transport' };
   mockCategories = [LIVING('transport', 'Transport'), LIVING('parking', 'Parking')];
   let call = 0;
   mockSaveCategory.mockImplementation(async () => {
     call += 1;
-    if (call === 1) return true;      // parent self-save succeeds in-session (status still 'authed')
-    mockStatus = 'anon';              // sign-out lands during the child write
-    return false;                     // writer's post-sign-out sentinel
+    if (call === 1) return true; // parent self-save succeeds in-session
+    mockEpoch += 1;              // session change lands during the child write
+    return false;
   });
   render(<CategoryEdit />);
   fireEvent.press(screen.getByTestId('attachChild-parking'));
 
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });
 
-  await waitFor(() => expect(mockSaveCategory).toHaveBeenCalledTimes(2)); // parent + child both ran
-  expect(mockShowToast).not.toHaveBeenCalled(); // no summary toast into the next session
-  expect(mockBack).not.toHaveBeenCalled();      // no navigation into the next session
+  await waitFor(() => expect(mockSaveCategory).toHaveBeenCalledTimes(2));
+  expect(mockShowToast).not.toHaveBeenCalled();
+  expect(mockBack).not.toHaveBeenCalled();
 });
 
-// [A-EDIT-CONTROL] Regression: with NO sign-out (status stays 'authed'), a genuine in-session
-// FAILURE must STILL toast — the guard must not over-suppress the real error path. Proves
-// `getStatus() === 'anon'` is the ONLY thing the guard keys on.
+// [A-EDIT-CONTROL] Regression: with NO session change (epoch stays 0), a genuine in-session FAILURE
+// must STILL toast — the guard must not over-suppress the real error path.
 it('an in-session parent-save failure still shows the failure toast (guard does not over-suppress)', async () => {
   mockParams = { categoryId: 'transport' };
   mockCategories = [LIVING('transport', 'Transport')];
-  mockSaveCategory.mockResolvedValue(false); // real failure, status stays 'authed'
+  mockSaveCategory.mockResolvedValue(false); // real failure, epoch unchanged
   render(<CategoryEdit />);
 
   await act(async () => { fireEvent.press(screen.getByText('Save category')); });

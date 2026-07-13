@@ -11,7 +11,7 @@ import type { Category } from '../context';
 const mockSaveCategory = jest.fn(async () => true);
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn(), getSessionEpoch: () => 0 }) };
 });
 
 let mockCategory: (id: string | null) => Category | undefined;
