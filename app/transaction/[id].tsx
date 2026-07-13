@@ -16,8 +16,11 @@ import { RetryButton } from '../../src/components/ui';
 // fields (WHIT-272) plus an editable note + tags (WHIT-275) that save optimistically and roll
 // back on failure via applyTransactionEdit.
 // Server caps (mirrored here as input limits for good UX; the server is the real gate).
+// TAG_MAX_COUNT must match TAG_MAX_COUNT in lambda_api/handler.py — no shared constant
+// spans the TS/Python boundary, so if the server cap moves, move this too.
 const NOTE_MAX_LEN = 500;
 const TAG_MAX_LEN = 50;
+const TAG_MAX_COUNT = 20;
 
 export default function TransactionDetail() {
   const insets = useSafeAreaInsets();
@@ -92,7 +95,7 @@ export default function TransactionDetail() {
 // cache (the single source of truth) — every add/remove goes through applyTransactionEdit,
 // which patches the cache optimistically, so the chips reflect the change immediately.
 function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
-  const { applyTransactionEdit } = useAppContext();
+  const { applyTransactionEdit, showToast } = useAppContext();
   const txId = transaction.transaction_id;
   const savedNote = transaction.notes ?? '';
   const tags = transaction.tags ?? [];
@@ -123,6 +126,14 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
     if (!trimmed) return;
     // Dedupe case-insensitively, keeping the existing tags' original casing.
     if (tags.some((t) => t.toLowerCase() === trimmed.toLowerCase())) return;
+    // Refuse a new tag at the cap with a friendly nudge, rather than adding it
+    // optimistically only for the server to 400 it and roll back (WHIT-280). Dedupe
+    // runs first, so re-typing an existing tag at the cap stays a silent no-op. The
+    // server is still the real gate; two adds in one tick could both pass this check.
+    if (tags.length >= TAG_MAX_COUNT) {
+      showToast(`Up to ${TAG_MAX_COUNT} tags.`);
+      return;
+    }
     applyTransactionEdit(txId, { tags: [...tags, trimmed] });
   };
 
