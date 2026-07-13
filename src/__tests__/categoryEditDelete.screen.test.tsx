@@ -15,7 +15,7 @@ const mockBack = jest.fn();
 
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ deleteCategory: mockDeleteCategory, saveCategory: jest.fn(async () => true), createCategoryInline: jest.fn(), showToast: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({ deleteCategory: mockDeleteCategory, saveCategory: jest.fn(async () => true), createCategoryInline: jest.fn(), showToast: jest.fn(), getSessionEpoch: () => 0 }) };
 });
 
 let mockCategories: Category[] = [];

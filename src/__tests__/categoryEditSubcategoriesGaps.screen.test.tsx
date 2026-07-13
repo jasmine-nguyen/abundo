@@ -16,7 +16,7 @@ const mockCreateInline = jest.fn(async (form: { name: string; bucket: string; ic
 const mockShowToast = jest.fn();
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, createCategoryInline: mockCreateInline, deleteCategory: jest.fn(), showToast: mockShowToast }) };
+  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, createCategoryInline: mockCreateInline, deleteCategory: jest.fn(), showToast: mockShowToast, getSessionEpoch: () => 0 }) };
 });
 
 let mockCategories: Category[] = [];

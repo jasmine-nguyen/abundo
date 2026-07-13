@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, MAX_CATEGORY_DEPTH } from '../../src/context';
-import { getStatus } from '../../src/auth';
 import { useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { CategoryFields } from '../../src/components/CategoryFields';
@@ -84,6 +83,13 @@ export default function CategoryEdit() {
   const save = () => runSave(async () => {
     if (!canSave) return;
     setSubmitting(true);
+    // WHIT-282: capture the session stamp before the round-trip. Bail below on ANY change (sign-out
+    // OR a different-account re-auth), mirroring the writers' epoch guard — a stricter superset of
+    // WHIT-271's getStatus()==='anon' check, which passed once a new account had signed back in.
+    // Relies on every account swap transiting 'anon' (sign-in requires a prior sign-out →
+    // clearSession bumps the epoch); a future "switch account without signing out" flow would need
+    // to bump the epoch on that path too.
+    const epoch = s.getSessionEpoch();
     // WHIT-249: re-enable the button if a writer throws UNEXPECTEDLY (the known-failure branches
     // already reset + return; success navigates away). Re-throw so the guard still logs it.
     try {
@@ -95,13 +101,13 @@ export default function CategoryEdit() {
       // toasts, so own that message here before bailing.
       if (categoryId) {
         const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
-        // WHIT-271: a mid-save sign-out makes the writer return false; bail silently rather than
+        // WHIT-282: the session changed mid-save (sign-out or re-auth) → bail silently rather than
         // toasting the generic failure / navigating into the next session.
-        if (getStatus() === 'anon') { setSubmitting(false); return; }
+        if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
         if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
       } else {
         const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
-        if (getStatus() === 'anon') { setSubmitting(false); return; }
+        if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
         if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
         parentId = created.id;
       }
@@ -118,8 +124,8 @@ export default function CategoryEdit() {
         ops.push(s.createCategoryInline({ name: nc.name, bucket, icon: nc.icon, parent: parentId }, { silent: true }));
       }
       const results = ops.length ? await Promise.allSettled(ops) : [];
-      // WHIT-271: sign-out during the child writes → don't fire the summary toast + router.back().
-      if (getStatus() === 'anon') { setSubmitting(false); return; }
+      // WHIT-282: a session change during the child writes → don't fire the summary toast + router.back().
+      if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
       const failed = results.filter((r) => r.status === 'rejected' || r.value === false || r.value === null).length;
       // WHIT-240: exactly ONE summary toast. Lead with created/updated (matching the writers' own
       // copy) so the message reads consistently, then report the sub-category outcome. Option A

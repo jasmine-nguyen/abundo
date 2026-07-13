@@ -10,7 +10,7 @@ import type { Category } from '../context';
 const mockSaveCategory = jest.fn(async (_id: string | null, _form: { name: string; bucket: string; icon: string; parent?: string | null }, _opts?: { silent?: boolean }) => true);
 jest.mock('../../src/context', () => {
   const actual = jest.requireActual('../../src/context') as typeof import('../../src/context');
-  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn(), showToast: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({ saveCategory: mockSaveCategory, deleteCategory: jest.fn(), showToast: jest.fn(), getSessionEpoch: () => 0 }) };
 });
 
 let mockCategories: Category[] = [];

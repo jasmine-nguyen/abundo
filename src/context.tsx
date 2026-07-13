@@ -330,6 +330,9 @@ export interface AppContext {
   // WHIT-277: read/write a pop-up sheet's draft so it survives a Face ID lock (cleared on close + sign-out).
   readSheetDraft: (key: string) => unknown;
   writeSheetDraft: (key: string, value: unknown) => void;
+  // WHIT-282: the current session stamp; a screen captures it at save start and compares across an
+  // await, so it bails on any session change (sign-out OR a different-account re-auth), not just anon.
+  getSessionEpoch: () => number;
   showToast: (m: string) => void;
   dismissNotif: () => void;
   toggleAlerts: () => void;
@@ -433,6 +436,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// it, unlock shows it). A plain status !== 'authed' check would wrongly discard that
 	// locked-window response.
 	const sessionEpoch = useRef(0);
+	// WHIT-282: read the current session stamp so a screen can capture-and-compare it across an await,
+	// mirroring the writers' epoch guard (and getStatus()'s call idiom). Lets category/edit bail on ANY
+	// session change mid-save — sign-out OR a different-account re-auth — not just a still-anon status.
+	const getSessionEpoch = useCallback(() => sessionEpoch.current, []);
 
 	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
 	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
@@ -1100,12 +1107,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppContext>(() => ({
     goal, alerts,
     sheet, toast, notif,
-    setSheet, readSheetDraft, writeSheetDraft, showToast, dismissNotif,
+    setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
     openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
