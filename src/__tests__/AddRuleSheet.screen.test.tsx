@@ -58,3 +58,66 @@ it('submitting calls updateRule with the id, not saveManualRule', () => {
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs');
   expect(fns.saveManualRule).not.toHaveBeenCalled();
 });
+
+// WHIT-284 — a restored/prefilled categoryId whose category no longer exists must be dropped:
+// no selection, save disabled, and it can never be submitted.
+const CATS = [
+  { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+  { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+];
+function ruleState(over: Partial<Record<string, unknown>>): AppContext {
+  return { sheet: { mode: 'addrule' }, toast: null, notif: null, rules: [], categories: CATS, ...fns, ...over } as unknown as AppContext;
+}
+
+it('[WHIT-284] a DEAD prefilled categoryId (its category was deleted) keeps the save button disabled', () => {
+  mockState = { ...editState(), rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'ghost', isNew: false }] } as AppContext;
+  render(<Overlays />);
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).not.toHaveBeenCalled(); // dead id dropped → canSave false → no submit
+});
+
+it('[WHIT-284] a DEAD restored draft categoryId (WHIT-277 unlock) keeps the save button disabled', () => {
+  mockState = ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) });
+  render(<Overlays />);
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.saveManualRule).not.toHaveBeenCalled();
+});
+
+it('[WHIT-284] the LAST category was deleted → loaded-but-EMPTY list still drops the dead id (disabled)', () => {
+  // The case a `cats.length > 0` guard would miss: empty list, but LOADED (not loading).
+  mockState = ruleState({ categories: [], categoriesLoading: false, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'ghost' }) });
+  render(<Overlays />);
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.saveManualRule).not.toHaveBeenCalled();
+});
+
+it('[WHIT-284] a VALID restored categoryId is NOT cleared — save works', () => {
+  mockState = ruleState({ readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
+  render(<Overlays />);
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs');
+});
+
+it('[WHIT-284] a valid restored id survives the LOADING window: save is held disabled, then re-enables once the list arrives', () => {
+  // While loading, no id can be resolved → save is disabled (so a dead id is never submittable mid-load,
+  // WHIT-284 [E1]). The drop effect is gated on !loading, so the valid id is KEPT, not cleared — and the
+  // moment the list loads it resolves and save works. Fail-on-revert: restore the `catsLoading ||` escape
+  // and the first press would submit during load.
+  mockState = ruleState({ categories: [], categoriesLoading: true, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
+  const { rerender } = render(<Overlays />);
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.saveManualRule).not.toHaveBeenCalled(); // loading → id unverifiable → save disabled
+
+  mockState = ruleState({ categories: CATS, categoriesLoading: false, readSheetDraft: () => ({ pattern: 'NETFLIX', categoryId: 'subs' }) });
+  rerender(<Overlays />);
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs'); // valid id kept through load → save works
+});
+
+it('[WHIT-284] re-picking a real category after a dead one re-enables save', () => {
+  mockState = { ...editState(), rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'ghost', isNew: false }] } as AppContext;
+  render(<Overlays />);
+  fireEvent.press(screen.getByText('Groceries')); // pick a valid category
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'groceries');
+});
