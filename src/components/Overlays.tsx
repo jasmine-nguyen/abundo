@@ -128,9 +128,19 @@ function PickerSheet() {
   // from the always-mounted tab bar), not the old store.
   const { transactions } = useTransactionsScreenData();
   const { categories: cats } = useCategories();
+  // WHIT-283: per-transaction draft keys, derived before the hooks so they're stable. The inline
+  // new-category form + its "form is open" flag survive a Face ID lock (Overlays unmounts the whole
+  // layer while locked) and restore on unlock — scoped by txId so two transactions' drafts can't
+  // cross. SheetHost only mounts PickerSheet for mode 'picker', so txId is non-null in practice.
+  const { readSheetDraft, writeSheetDraft } = s;
+  const sh = s.sheet;
+  const txId = sh?.mode === 'picker' ? sh.txId : null;
+  const creatingKey = `pickercreating:${txId}`;
+  const catDraftKey = `pickercat:${txId}`;
   // WHIT-238: create a category inline instead of leaving for Settings. `creating` swaps the
   // list for the mini-form; `submitting` guards a double-tap while the create is in flight.
-  const [creating, setCreating] = useState(false);
+  // WHIT-283: `creating` restores from the draft so unlock reopens INTO the form, not the list.
+  const [creating, setCreating] = useState(() => readSheetDraft(creatingKey) === true);
   const [submitting, setSubmitting] = useState(false);
   // WHIT-273: which parents are folded away. Empty = everything expanded, so the picker opens
   // fully revealed (you're here to find a category fast). A `collapsed` Set (vs Insights'
@@ -141,7 +151,12 @@ function PickerSheet() {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   }), []);
-  const sh = s.sheet;
+  // WHIT-283: persist the open-form flag; hand the shared QuickCreateCategory stable read/write
+  // callbacks for its own fields. All ref writes → zero re-render. Cleared on close/sign-out by the
+  // provider (WHIT-277), so this only ever preserves across a lock.
+  useEffect(() => { writeSheetDraft(creatingKey, creating); }, [creating, creatingKey, writeSheetDraft]);
+  const readCatDraft = useCallback(() => readSheetDraft(catDraftKey) as Partial<CategoryDraft> | undefined, [readSheetDraft, catDraftKey]);
+  const writeCatDraft = useCallback((d: CategoryDraft) => writeSheetDraft(catDraftKey, d), [writeSheetDraft, catDraftKey]);
   if (sh?.mode !== 'picker') return null;
   const tx = transactions.find((t) => t.transaction_id === sh.txId);
   if (!tx) return null;
@@ -185,7 +200,11 @@ function PickerSheet() {
             submitLabel="Create & file"
             busy={submitting}
             onSubmit={createAndFile}
-            onCancel={() => setCreating(false)}
+            // WHIT-283: Cancel discards the draft, so cancel→reopen is a fresh empty form (exactly
+            // like today); a Face ID lock is the only thing that preserves it.
+            onCancel={() => { setCreating(false); writeSheetDraft(catDraftKey, undefined); }}
+            readDraft={readCatDraft}
+            writeDraft={writeCatDraft}
           />
         </View>
       </View>

@@ -29,6 +29,8 @@ export function QuickCreateCategory({
   onSubmit,
   onCancel,
   busy = false,
+  readDraft,
+  writeDraft,
 }: {
   initialBucket: Bucket;
   lockBucket?: boolean;
@@ -39,17 +41,32 @@ export function QuickCreateCategory({
   onSubmit: (draft: CategoryDraft) => void;
   onCancel?: () => void;
   busy?: boolean;
+  // WHIT-283: OPT-IN draft persistence so a half-typed new category survives a Face ID lock.
+  // The picker host passes these (backed by the WHIT-277 draft store); the category-edit host
+  // passes nothing → `readDraft` is undefined (no restore) and the persist effect no-ops, so this
+  // shared component is byte-for-byte unchanged there. Callbacks (not a context hook) keep the
+  // component decoupled — quickCreateCategory.screen.test.tsx renders it with NO AppProvider.
+  readDraft?: () => Partial<CategoryDraft> | undefined;
+  writeDraft?: (draft: CategoryDraft) => void;
 }) {
-  const [name, setName] = useState('');
-  const [bucket, setBucket] = useState<Bucket>(initialBucket);
-  const [icon, setIcon] = useState('coffee');
-  const [parent, setParent] = useState<string | null>(fixedParent);
+  const draft = readDraft?.();
+  const [name, setName] = useState(() => draft?.name ?? '');
+  const [bucket, setBucket] = useState<Bucket>(() => draft?.bucket ?? initialBucket);
+  const [icon, setIcon] = useState(() => draft?.icon ?? 'coffee');
+  const [parent, setParent] = useState<string | null>(() => (draft ? draft.parent ?? null : fixedParent));
 
   // A picked parent must stay same-bucket: if the bucket changes under it, drop to top-level.
   useEffect(() => {
     if (!parentPicker) return;
     setParent((cur) => (cur !== null && !eligibleParents(categories, null, bucket).some((c) => c.id === cur) ? null : cur));
   }, [bucket, parentPicker, categories]);
+
+  // WHIT-283: persist the draft after each change from the COMMITTED state (an effect, not the
+  // field handlers, so no stale closure). No-op when `writeDraft` is omitted (category-edit).
+  // Persists the RAW name so the field round-trips exactly across a lock; submit keeps its .trim().
+  useEffect(() => {
+    writeDraft?.({ name, bucket, icon, parent: parentPicker ? parent : fixedParent });
+  }, [name, bucket, icon, parent, parentPicker, fixedParent, writeDraft]);
 
   // WHIT-241: a synchronous latch so a same-frame double-tap of the submit button can't emit
   // `onSubmit` twice (which, for the create-and-file / add-sub hosts, would create the category

@@ -19,7 +19,7 @@ import { Overlays } from '../components/Overlays';
 const cat = (id: string, name: string, parent: string | null = null): Category =>
   ({ id, name, icon: 'tag', color: '#e8a87c', bucket: 'Lifestyle', recent: 0, parent });
 
-const fns = { chooseCategory: jest.fn(), setSheet: jest.fn(), dismissNotif: jest.fn() };
+const fns = { chooseCategory: jest.fn(), setSheet: jest.fn(), dismissNotif: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {} };
 
 function pickerState(categories: Category[]): AppContext {
   return {
