@@ -78,6 +78,9 @@ function unguardedRefreshWrites() {
 function deletesOf(key: string) {
   return mockDeleteItem.mock.calls.filter((c) => c[0] === key);
 }
+function refreshReads() {
+  return mockGetItem.mock.calls.filter((c) => c[0] === REFRESH_KEY);
+}
 
 beforeEach(() => {
   jest.resetModules();
@@ -195,5 +198,38 @@ describe('WHIT-270 — null read on the flag-off path is unchanged', () => {
     expect(auth.getStatus()).toBe('anon');
     expect(refreshWrites()).toHaveLength(0);
     expect(deletesOf(REFRESH_KEY)).toHaveLength(0);
+  });
+});
+
+// [G5] WHIT-274 — the seed pin. On the flag-off NON-ROTATING path the first restore reads
+// the keychain once and re-saves the token unguarded. The fix seeds session.refreshToken so
+// the NEXT hourly refresh reuses memory — no second keychain read, no second resave. Without
+// the seed, cacheToken leaves session.refreshToken undefined (a refresh omits it and there's
+// nothing to fall back to), so every hourly refresh re-enters the keychain-read branch and
+// re-runs resaveUnguarded (delete + create) forever. Fail-on-revert: drop the `session = {…}`
+// seed → the second getAuthToken re-reads the keychain → reads==2 and a second delete/write,
+// and each count assertion below fails.
+describe('WHIT-274 — flag-off non-rotating restore seeds memory for the hourly refresh', () => {
+  it('a second refresh reuses the in-memory token: no extra keychain read or resave', async () => {
+    mockGetItem.mockImplementation(async (k) => (k === REFRESH_KEY ? 'R' : null));
+    // Non-rotating: neither response carries a refreshToken. The first id token is already
+    // near-expiry so the second getAuthToken forces a real refresh instead of serving cache.
+    mockRefresh
+      .mockResolvedValueOnce({ idToken: 'ID1', accessToken: 'A', issuedAt: nowSec() - 4000, expiresIn: 3600 })
+      .mockResolvedValueOnce({ idToken: 'ID2', accessToken: 'A2', issuedAt: nowSec(), expiresIn: 3600 });
+    const auth = loadAuth();
+
+    await expect(auth.restoreSession()).resolves.toBe(true);
+    expect(auth.getStatus()).toBe('authed');
+
+    // The hourly refresh: the near-expiry first token forces a genuine second swap.
+    await expect(auth.getAuthToken()).resolves.toBe('ID2');
+
+    // The seed made the second refresh reuse memory — the keychain was touched only once.
+    expect(refreshReads()).toHaveLength(1);
+    expect(deletesOf(REFRESH_KEY)).toHaveLength(1); // only the first restore's resave delete
+    expect(refreshWrites()).toHaveLength(1); //         only the first restore's resave create
+    // And the second refresh reused the same token 'R', not a fresh keychain read.
+    expect((mockRefresh.mock.calls[1][0] as { refreshToken: string }).refreshToken).toBe('R');
   });
 });

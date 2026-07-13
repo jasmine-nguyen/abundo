@@ -726,7 +726,14 @@ async function refreshFromStoredToken(): Promise<string | undefined> {
     // The read succeeded. If the item was guarded, it just prompted and — with a
     // non-rotating refresh — would prompt again on every future launch. The Face ID
     // flag is OFF, so re-store the token UNGUARDED now: one prompt total, then silent.
-    if (refreshToken) await resaveUnguarded(refreshToken);
+    if (refreshToken) {
+      await resaveUnguarded(refreshToken);
+      // WHIT-274: seed the in-memory refresh token (mirrors the unlock path at ~874) so
+      // later hourly refreshes reuse memory and skip this keychain read + resave. On a
+      // rotating server cacheToken overwrites it with the fresh token; on a non-rotating
+      // one cacheToken's `token.refreshToken ?? session?.refreshToken` fallback preserves it.
+      session = { idToken: undefined, accessToken: "", issuedAt: 0, expiresIn: 0, refreshToken };
+    }
   }
   if (!refreshToken) {
     clearSession();
