@@ -9,12 +9,13 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 
 const mockEdit = jest.fn();
+const mockToast = jest.fn();
 let mockTx: ReturnType<typeof txData>;
 jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ applyTransactionEdit: mockEdit }) };
+  return { ...actual, useAppContext: () => ({ applyTransactionEdit: mockEdit, showToast: mockToast }) };
 });
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: 't1' }),
@@ -38,8 +39,13 @@ function txData(over: Partial<{ transactions: unknown[] }> = {}) {
 
 beforeEach(() => {
   mockEdit.mockClear();
+  mockToast.mockClear();
   mockTx = txData();
 });
+
+// WHIT-280: a small helper to seed a transaction already carrying `count` distinct tags.
+const withTags = (count: number) =>
+  txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', tags: Array.from({ length: count }, (_, i) => `t${i}`) })] });
 
 it('renders the existing note and tag chips', () => {
   render(<TransactionDetail />);
@@ -99,4 +105,57 @@ it('removes a tag via its ✕ button', () => {
   render(<TransactionDetail />);
   fireEvent.press(screen.getByLabelText('Remove tag work'));
   expect(mockEdit).toHaveBeenCalledWith('t1', { tags: [] });
+});
+
+// WHIT-280: the pre-flight tag-count guard.
+it('at 20 tags, a new tag is refused with a friendly toast and is not saved', () => {
+  mockTx = withTags(20);
+  render(<TransactionDetail />);
+  const input = screen.getByTestId('tag-input');
+  fireEvent.changeText(input, 'overflow');
+  fireEvent(input, 'submitEditing');
+  expect(mockToast).toHaveBeenCalledWith('Up to 20 tags.');
+  expect(mockEdit).not.toHaveBeenCalled();
+});
+
+it('at 20 tags, the comma path is also guarded', () => {
+  mockTx = withTags(20);
+  render(<TransactionDetail />);
+  fireEvent.changeText(screen.getByTestId('tag-input'), 'overflow,');
+  expect(mockToast).toHaveBeenCalledWith('Up to 20 tags.');
+  expect(mockEdit).not.toHaveBeenCalled();
+});
+
+it('at 20 tags, re-typing an existing tag stays a silent no-op (dedupe before the cap nudge)', () => {
+  mockTx = withTags(20);
+  render(<TransactionDetail />);
+  const input = screen.getByTestId('tag-input');
+  fireEvent.changeText(input, 't5'); // already present
+  fireEvent(input, 'submitEditing');
+  expect(mockToast).not.toHaveBeenCalled();
+  expect(mockEdit).not.toHaveBeenCalled();
+});
+
+it('under the cap (19 tags) a new tag still adds normally', () => {
+  mockTx = withTags(19);
+  render(<TransactionDetail />);
+  const input = screen.getByTestId('tag-input');
+  fireEvent.changeText(input, 'twenty');
+  fireEvent(input, 'submitEditing');
+  expect(mockEdit).toHaveBeenCalledWith('t1', { tags: [...Array.from({ length: 19 }, (_, i) => `t${i}`), 'twenty'] });
+  expect(mockToast).not.toHaveBeenCalled();
+});
+
+// WHIT-280 — [A10] at the cap, whitespace-only entry must NOT toast: the empty-input
+// early-return runs BEFORE the count guard, so a stray space/comma at 20 tags is a
+// silent no-op, not a spurious "Up to 20 tags." nudge. Locks that ordering.
+it('at 20 tags, whitespace-only entry is a silent no-op (no toast, no save)', () => {
+  mockTx = withTags(20);
+  render(<TransactionDetail />);
+  const input = screen.getByTestId('tag-input');
+  fireEvent.changeText(input, '   ');
+  fireEvent(input, 'submitEditing');
+  fireEvent.changeText(input, '   ,'); // comma path with only whitespace before it
+  expect(mockToast).not.toHaveBeenCalled();
+  expect(mockEdit).not.toHaveBeenCalled();
 });
