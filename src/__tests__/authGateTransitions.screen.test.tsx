@@ -193,11 +193,12 @@ it('[A8] authed→anon flip while the into-app redirect is in flight drops the s
 });
 
 // [A9] The resume path: background→active fires the gate's re-lock listener
-// (lock() → LockScreen replaces the Stack → unlock() → authed). The Stack REMOUNTS
-// at the index route — exactly the pre-fix loop condition, reached via AppState
-// instead of cold launch. Must land ONE redirect and settle (pre-fix: max update
-// depth exceeded, the test itself would throw).
-it('[A9] background→Face-ID resume: lock → unlock converges with one redirect, no loop', async () => {
+// (lock() → lock cover over the STILL-MOUNTED Stack → unlock() → authed). WHIT-266: the
+// Stack is NOT unmounted, so it never remounts (stackMounts stays 1), navigation is never
+// reset to index, and unlock therefore fires ZERO redirects — you stay exactly where you
+// were (budgets here), no Budgets bounce. This is the direct inverse of the pre-WHIT-266
+// unmount-and-remount that this test used to assert.
+it('[A9] background→Face-ID resume: app stays mounted under the lock cover, no remount, no Budgets bounce', async () => {
   mockAutoComplete = true;
   mockStatus = 'authed';
   render(
@@ -215,22 +216,25 @@ it('[A9] background→Face-ID resume: lock → unlock converges with one redirec
     appStateHandler('background');
     appStateHandler('active'); // the gate's listener runs lock() then void unlock()
   });
-  // The seal committed: the LockScreen replaced the Stack (children unmounted).
+  // Locked: the lock cover is up, but the app stays MOUNTED underneath — the Stack did not
+  // unmount, so navigation still sits on budgets.
   expect(mockLock).toHaveBeenCalledTimes(1);
   expect(screen.getByText('Whittle is locked')).toBeTruthy();
-  expect(screen.queryByTestId('child')).toBeNull();
+  // Mounted but hidden from screen readers while locked.
+  expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
+  expect(stackMounts).toBe(1); // never unmounted while locked
+  expect(mockSegStore.segs).toEqual(['(tabs)', 'budgets']);
 
   await act(async () => {}); // flush the unlock's resolution → 'authed'
 
   expect(mockUnlock).toHaveBeenCalledTimes(1);
-  // Unlocked and settled: lock screen gone, Stack remounted once, exactly one
-  // redirect back into the app, no cover, no ping-pong.
+  // Unlocked and settled: lock cover gone, SAME Stack instance (never remounted), no cover,
+  // and crucially NO redirect — you're back on budgets exactly as you left it.
   expect(screen.queryByText('Whittle is locked')).toBeNull();
   expect(screen.getByTestId('child')).toBeTruthy();
   expect(screen.queryByTestId('gate-cover')).toBeNull();
-  expect(stackMounts).toBe(2); // one launch mount + one post-unlock remount — not N
-  expect(mockRedirectSpy).toHaveBeenCalledTimes(1);
-  expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
+  expect(stackMounts).toBe(1); // one launch mount, zero remounts — the whole point of WHIT-266
+  expect(mockRedirectSpy).not.toHaveBeenCalled();
 });
 
 // [A10] navReady false→true on a LATER render: the mounted-guard must RELEASE — the
