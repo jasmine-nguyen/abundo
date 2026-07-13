@@ -83,6 +83,28 @@ it('renders budget rows from the queries, fetched in parallel with the pay cycle
   expect(mockFetchCategories).toHaveBeenCalledTimes(1);
 });
 
+it('does not render the redundant per-row "target" caption (the pace tick is labelled once in the legend)', async () => {
+  // WHIT-281: a per-row "target" caption pinned under the moving pace tick overlapped the
+  // right-aligned pace status when the tick sat far right. It was redundant — the tick is
+  // already explained once, in the top legend — so it was removed.
+  renderBudgets();
+  await screen.findByText('Cafes & Coffee');
+  expect(screen.queryAllByText('target')).toHaveLength(0); // the overlapping caption is gone
+  expect(screen.getByText("Today's pace")).toBeTruthy();   // the tick is still explained (legend)
+});
+
+it('still renders the per-row pace STATUS after the caption removal (info kept, not lost)', async () => {
+  // WHIT-281 — [A-pace] the fix removed the redundant \"target\" caption but the pace STATUS
+  // ($X over/under budget) must survive. The logic layer proves budgetViews COMPUTES paceLabel;
+  // this proves the screen still RENDERS it. Removing budgets.tsx:101 (the paceLabel <Text/>)
+  // is invisible to the logic tests AND to the absence/legend test above — this is the guard.
+  // Over-budget so the label is date-independent: spent 120 of 100 -> exactly "$20 over budget".
+  mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 120, pending: 0 } });
+  renderBudgets();
+  await screen.findByText('Cafes & Coffee');
+  expect(screen.getByText('$20 over budget')).toBeTruthy();
+});
+
 it('shows a spinner first, then the rows (cache-first render)', async () => {
   renderBudgets();
   expect(screen.getByTestId('budgets-loading')).toBeTruthy(); // nothing cached yet
