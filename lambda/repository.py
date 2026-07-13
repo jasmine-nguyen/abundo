@@ -428,15 +428,34 @@ class TransactionRepository:
         return pool.pop(best)
 
     @staticmethod
-    def _with_carried_category(posted_txn: Transaction, source_row: dict) -> Transaction:
+    def _with_carried_category(
+        posted_txn: Transaction, source_row: dict, *, keep_posted_notes_tags: bool = False
+    ) -> Transaction:
         """A copy of the posted txn with the user-owned fields — `category`, `notes`
         and `tags` — carried from `source_row` (the matched pending / existing
         posted) when that row has them. Falsy/absent -> keep the posted txn's own
         value, so a cleared note/tag never overwrites a real one. (Named for
         `category`, its original and still-primary carried field; notes/tags ride
-        along so a note on a pending charge survives settlement — WHIT-275.)"""
+        along so a note on a pending charge survives settlement — WHIT-275.)
+
+        keep_posted_notes_tags (WHIT-279): when True, a note/tag the posted row
+        ALREADY holds is never overwritten by the source's — only an absent one is
+        filled. notes/tags are user-only + sparse, so a truthy posted value means
+        the user edited the posted itself; the one-time dedupe sweep passes this so
+        a stale pending twin can't clobber a note the user added after settlement.
+        Category is NEVER skipped (the bank always sets one, so there's no clean
+        'user set it' signal, and carrying the pending's category is the sweep's
+        purpose). Default False keeps the live reconcile carry byte-identical.
+
+        Accepted residual (WHIT-279): the sweep still overwrites a value the user set
+        DIRECTLY on the posted when it can't detect it — category always (no bank-vs-
+        user signal), and a CLEARED note/tag (a falsy posted value reads as absent, so
+        the pending's old one refills). Only reachable on the manual sweep when a stale
+        pending twin survived reconciliation."""
         carried = posted_txn.copy()
         for field in ("category", "notes", "tags"):
+            if keep_posted_notes_tags and field in ("notes", "tags") and posted_txn.get(field):
+                continue  # posted already holds a user note/tag — don't clobber it
             value = source_row.get(field)
             if value:
                 carried[field] = value
