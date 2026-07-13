@@ -21,6 +21,11 @@ class Transaction(TypedDict):
     # path lights up automatically the day they do. None on pending rows too.
     # Only the webhook sets this; the read API leaves it unset (sparse on write).
     pending_transaction_id: Optional[str]
+    # User-authored, optional, sparse (WHIT-275). A free-text note and free-text
+    # tags. Cleared fields are REMOVEd (not stored as ""/[]), so an absent value
+    # reads back as None rather than an empty string/list.
+    notes: Optional[str]
+    tags: Optional[list[str]]
 
 
 class Category(TypedDict):

@@ -318,6 +318,83 @@ def test_update_category_maps_other_database_error(repo, client_error, database_
 
 
 # --------------------------------------------------------------------------- #
+# update_transaction_fields (WHIT-275)                                         #
+# --------------------------------------------------------------------------- #
+
+def test_update_fields_sets_notes_only_leaving_others_intact(repo):
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES"}}
+    assert repo.update_transaction_fields(key[0], key[1], notes="lunch with sam") is True
+    row = repo._table.store[key]
+    assert row["notes"] == "lunch with sam"
+    assert row["category"] == "GROCERIES"  # a field not passed is left untouched
+    assert "tags" not in row
+
+
+def test_update_fields_sets_tags_only(repo):
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1]}}
+    assert repo.update_transaction_fields(key[0], key[1], tags=["work", "travel"]) is True
+    assert repo._table.store[key]["tags"] == ["work", "travel"]
+
+
+def test_update_fields_sets_category_notes_and_tags_together(repo):
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1]}}
+    assert repo.update_transaction_fields(
+        key[0], key[1], category="FOOD", notes="brunch", tags=["a"]
+    ) is True
+    row = repo._table.store[key]
+    assert (row["category"], row["notes"], row["tags"]) == ("FOOD", "brunch", ["a"])
+
+
+def test_update_fields_clears_note_by_removing_the_attribute(repo):
+    # A cleared note ("") must REMOVE the attribute so it reads back ABSENT, not "".
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "notes": "old note"}}
+    assert repo.update_transaction_fields(key[0], key[1], notes="") is True
+    assert "notes" not in repo._table.store[key]
+
+
+def test_update_fields_clears_tags_by_removing_the_attribute(repo):
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "tags": ["x"]}}
+    assert repo.update_transaction_fields(key[0], key[1], tags=[]) is True
+    assert "tags" not in repo._table.store[key]
+
+
+def test_update_fields_mixes_set_and_remove_in_one_write(repo):
+    # Set tags AND clear the note in a single call → the SET/REMOVE combined expression.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "notes": "old", "tags": ["x"]}}
+    assert repo.update_transaction_fields(key[0], key[1], notes="", tags=["new"]) is True
+    row = repo._table.store[key]
+    assert row["tags"] == ["new"]
+    assert "notes" not in row
+
+
+def test_update_fields_returns_false_when_row_gone(repo):
+    # attribute_exists(pk) guard fails on a vanished row → False (a 404), not a 500.
+    assert repo.update_transaction_fields("ACCOUNT#x", "TXN#gone", notes="x") is False
+
+
+def test_update_fields_with_no_fields_is_a_noop_without_writing(repo):
+    # All fields _UNSET → nothing to write. It must NOT issue a (malformed) empty-
+    # expression UpdateItem: returning True for a MISSING row proves the attribute_
+    # exists guard was never reached (a real write would have returned False).
+    assert repo.update_transaction_fields("ACCOUNT#x", "TXN#missing") is True
+
+
+def test_update_fields_maps_other_database_error(repo, client_error, database_error, monkeypatch):
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    monkeypatch.setattr(repo._table, "update_item", boom)
+    with pytest.raises(database_error):
+        repo.update_transaction_fields("pk", "sk", notes="x")
+
+
+# --------------------------------------------------------------------------- #
 # update_transaction_categories (batch, WHIT-70)                              #
 # --------------------------------------------------------------------------- #
 

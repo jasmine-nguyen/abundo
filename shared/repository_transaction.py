@@ -14,6 +14,11 @@ from constants import DEAD_LETTER_TTL_SECONDS, MAX_PAGE_SIZE
 from models import Transaction
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
+# Sentinel for update_transaction_fields: distinguishes "field not in this request"
+# (leave it untouched) from "clear this field" (None/""/[]). A plain None can't do
+# that — None is a legitimate "clear" value.
+_UNSET = object()
+
 
 def sanitise_transaction(txn: Transaction) -> dict[str, Any]:
     """Strips out unassigned None properties to keep DynamoDB documents sparse."""
@@ -170,6 +175,68 @@ class TransactionRepository:
                 ExpressionAttributeValues={":category": category},
                 ConditionExpression="attribute_exists(pk)",
             )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "write")
+
+    def update_transaction_fields(
+        self, pk: str, sk: str, *, category=_UNSET, notes=_UNSET, tags=_UNSET
+    ) -> bool:
+        """Set/clear a transaction's user-editable fields, leaving others intact.
+
+        Only fields explicitly passed (not _UNSET) are touched. A truthy value is
+        SET; a cleared note ("") or empty tag list ([]) is REMOVEd, so a cleared
+        field reads back ABSENT — rows are sparse and sanitise_transaction keeps
+        falsy-non-None, so storing ""/[] would read back as an empty value. One
+        UpdateItem can legally mix SET and REMOVE clauses. Fields are aliased (a
+        single #f/#v scheme) because 'category' is a reserved word; aliasing all
+        three keeps the builder uniform. Conditional on the row still existing
+        (attribute_exists(pk)): a row deleted between the key lookup and here
+        yields False (a 404 for the caller), not a 500.
+        """
+        names: dict[str, str] = {}
+        values: dict[str, Any] = {}
+        set_clauses: list[str] = []
+        remove_clauses: list[str] = []
+
+        for index, (field, provided) in enumerate(
+            (("category", category), ("notes", notes), ("tags", tags))
+        ):
+            if provided is _UNSET:
+                continue
+            name_alias = f"#f{index}"
+            names[name_alias] = field
+            if provided:
+                value_alias = f":v{index}"
+                values[value_alias] = provided
+                set_clauses.append(f"{name_alias} = {value_alias}")
+            else:
+                remove_clauses.append(name_alias)
+
+        # No field supplied (all _UNSET) — nothing to write. Return without issuing a
+        # malformed empty-expression UpdateItem.
+        if not set_clauses and not remove_clauses:
+            return True
+
+        expression_parts: list[str] = []
+        if set_clauses:
+            expression_parts.append("SET " + ", ".join(set_clauses))
+        if remove_clauses:
+            expression_parts.append("REMOVE " + ", ".join(remove_clauses))
+
+        update_kwargs: dict[str, Any] = {
+            "Key": {"pk": pk, "sk": sk},
+            "UpdateExpression": " ".join(expression_parts),
+            "ExpressionAttributeNames": names,
+            "ConditionExpression": "attribute_exists(pk)",
+        }
+        if values:
+            update_kwargs["ExpressionAttributeValues"] = values
+
+        try:
+            self._get_table().update_item(**update_kwargs)
             return True
         except ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":

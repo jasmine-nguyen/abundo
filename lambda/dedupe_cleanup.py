@@ -62,20 +62,27 @@ def dedupe_account(repo, account_id: str, dry_run: bool) -> dict:
         summary["pairs"] += 1
 
         carried = repo._with_carried_category(posted, pending)
-        old_category, new_category = posted.get("category"), carried.get("category")
+        # Re-put the posted when ANY carried user field (category, notes, tags)
+        # differs — not category alone, or a note/tag on a same-category pending
+        # twin would be deleted with the pending and never written to the posted
+        # (WHIT-275).
+        changed = any(
+            carried.get(field) != posted.get(field)
+            for field in ("category", "notes", "tags")
+        )
         logger.info(
-            "twin account=%s posted=%s pending=%s amount=%s category %r -> %r%s",
+            "twin account=%s posted=%s pending=%s amount=%s category %r -> %r changed=%s%s",
             account_id, posted.get("transaction_id"), pending.get("transaction_id"),
-            posted.get("amount"), old_category, new_category,
+            posted.get("amount"), posted.get("category"), carried.get("category"), changed,
             " [dry-run]" if dry_run else "",
         )
         if dry_run:
             continue
 
-        # Re-put the posted only when the category actually changes; always delete the
-        # stale pending (the dedup). Insert BEFORE delete so an interrupted run never
-        # loses the category (the pending still holds it until the posted has it).
-        if new_category != old_category:
+        # Re-put the posted only when a carried field changed; always delete the stale
+        # pending (the dedup). Insert BEFORE delete so an interrupted run never loses
+        # the carried data (the pending still holds it until the posted has it).
+        if changed:
             repo.insert_transactions([carried])
         repo._delete_pending_if_present(pending["pk"], pending["sk"])
         summary["deduped"] += 1

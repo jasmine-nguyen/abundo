@@ -111,7 +111,7 @@ def lambda_handler(event, context):
             return patch_transactions_batch(event, TransactionRepository())
 
         if path.startswith(f"{TRANSACTION_PATH}/") and method == "PATCH":
-            return patch_transaction_category(event, TransactionRepository())
+            return patch_transaction(event, TransactionRepository())
 
         if path == CATEGORY_PATH and method == "GET":
             return _json_response(200, list_categories(CategoryRepository()))
@@ -315,13 +315,87 @@ def register_device(event: dict, repo: DeviceRepository) -> dict:
     return _json_response(200, {"token": token})
 
 
-def patch_transaction_category(event: dict, repo: TransactionRepository) -> dict:
-    """PATCH /transactions/{id} — set a transaction's category and persist it.
+# Free-text note/tag caps (WHIT-275). Kept as literals HERE, not in constants.py:
+# a shared constant imported by a repository_* module at load must be mirrored in
+# lambda_api/constants.py or the deployed API 500s on import (the constants-shadow
+# landmine). These are used only by this handler, so literals sidestep it entirely.
+NOTE_MAX_LEN = 500
+TAG_MAX_COUNT = 20
+TAG_MAX_LEN = 50
 
-    Takes the repository as a parameter so it can be unit-tested with a fake
-    repo, no patching required. Expects a JSON object body
-    {"category": "<non-empty string>"}. Clearing a category (null/empty) is
-    intentionally not supported yet; it returns 400.
+
+def _clean_tags(raw) -> tuple[list[str], dict | None]:
+    """Validate + normalise a tags list: trim each, drop empties, cap per-tag
+    length, dedupe keeping the FIRST-seen casing, cap the count. Returns
+    (tags, error); [] (or an all-empty list) means clear. A non-list, a non-string
+    element, an over-long tag, or too many tags is a 400."""
+    if not isinstance(raw, list):
+        return [], _json_response(400, {"error": "tags must be a list"})
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for tag in raw:
+        if not isinstance(tag, str):
+            return [], _json_response(400, {"error": "each tag must be a string"})
+        trimmed = tag.strip()
+        if not trimmed:
+            continue
+        if len(trimmed) > TAG_MAX_LEN:
+            return [], _json_response(400, {"error": f"tag too long (max {TAG_MAX_LEN})"})
+        lowered = trimmed.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(trimmed)
+    if len(cleaned) > TAG_MAX_COUNT:
+        return [], _json_response(400, {"error": f"too many tags (max {TAG_MAX_COUNT})"})
+    return cleaned, None
+
+
+def _validate_transaction_patch(body: dict) -> tuple[dict, dict | None]:
+    """Validate a PATCH /transactions/{id} body. Returns (fields, error): `fields`
+    is the subset of {category, notes, tags} actually present in the body (so the
+    repo touches only those), `error` is a 400 response or None. `category` is
+    set-only (clearing it is still a 400); `notes`/`tags` MAY clear (notes null/""
+    and tags [] delete the stored field). At least one field is required."""
+    fields: dict = {}
+
+    if "category" in body:
+        category = body["category"]
+        if not isinstance(category, str) or not category.strip():
+            return {}, _json_response(400, {"error": "category is required"})
+        fields["category"] = category
+
+    if "notes" in body:
+        notes = body["notes"]
+        if notes is None:
+            notes = ""
+        if not isinstance(notes, str):
+            return {}, _json_response(400, {"error": "notes must be a string"})
+        notes = notes.strip()
+        if len(notes) > NOTE_MAX_LEN:
+            return {}, _json_response(400, {"error": f"notes too long (max {NOTE_MAX_LEN})"})
+        fields["notes"] = notes
+
+    if "tags" in body:
+        tags, error = _clean_tags(body["tags"])
+        if error:
+            return {}, error
+        fields["tags"] = tags
+
+    if not fields:
+        return {}, _json_response(400, {"error": "category, notes, or tags is required"})
+
+    return fields, None
+
+
+def patch_transaction(event: dict, repo: TransactionRepository) -> dict:
+    """PATCH /transactions/{id} — set/clear a transaction's category, note, and/or tags.
+
+    Takes the repository as a parameter so it can be unit-tested with a fake repo,
+    no patching required. Body is a JSON object carrying any of `category`,
+    `notes`, `tags`; at least one is required. `category` is set-only (clearing it
+    stays a 400). `notes`/`tags` may be cleared. Unknown id -> 404;
+    malformed/oversized body -> 400. Echoes back the fields it applied.
     """
     transaction_id = (event.get("pathParameters") or {}).get("id")
     if not transaction_id:
@@ -331,18 +405,18 @@ def patch_transaction_category(event: dict, repo: TransactionRepository) -> dict
     if error:
         return error
 
-    category = body.get("category")
-    if not isinstance(category, str) or not category.strip():
-        return _json_response(400, {"error": "category is required"})
+    fields, error = _validate_transaction_patch(body)
+    if error:
+        return error
 
     keys = repo.get_transaction_keys_by_id(transaction_id)
     if keys is None:
         return _json_response(404, {"error": "transaction not found"})
 
-    if not repo.update_transaction_category(keys["pk"], keys["sk"], category):
+    if not repo.update_transaction_fields(keys["pk"], keys["sk"], **fields):
         return _json_response(404, {"error": "transaction not found"})
 
-    return _json_response(200, {"transaction_id": transaction_id, "category": category})
+    return _json_response(200, {"transaction_id": transaction_id, **fields})
 
 
 def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:

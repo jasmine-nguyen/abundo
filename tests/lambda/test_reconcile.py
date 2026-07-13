@@ -66,6 +66,42 @@ def test_reconcile_carries_category_and_deletes_pending(lam, repo):
     assert len(store) == 1                                   # no duplicate
 
 
+def test_reconcile_carries_notes_and_tags_onto_posted(lam, repo):
+    # WHIT-275: a note/tags on a pending charge must survive settlement, exactly as
+    # category does. notes/tags aren't bank fields (normalise strips them), so inject
+    # them onto the stored pending row directly.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = "reimburse from work"
+    repo._table.store[(acc, "TXN#A")]["tags"] = ["work", "travel"]
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["notes"] == "reimburse from work"   # note carried
+    assert row["tags"] == ["work", "travel"]        # tags carried
+    assert row["category"] == "coffee"              # category still carried too
+    assert (acc, "TXN#A") not in repo._table.store  # stale pending removed
+
+
+def test_reconcile_does_not_carry_an_empty_note(lam, repo):
+    # A cleared/absent note on the pending must NOT overwrite — the truthy carry
+    # guard means the posted keeps its own (here: no note).
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = ""  # cleared
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    assert "notes" not in repo._table.store[(acc, "TXN#B")]  # empty note not carried
+
+
 def test_no_match_inserts_posted_normally(lam, repo):
     posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
                    pending=False, category="FOOD_AND_DRINK")

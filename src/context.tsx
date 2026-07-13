@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { tint, fmt } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -59,6 +59,10 @@ export interface Transaction {
   status: 'pending' | 'posted';
   type: string;
   counts_to_budget: boolean;
+  // WHIT-275: user-authored, optional. Absent when never set or cleared (the
+  // server REMOVEs a cleared field, so it reads back undefined, not ""/[]).
+  notes?: string;
+  tags?: string[];
 }
 // `pattern` mirrors the server rule's `value`; `field`/`operator` carry the
 // server facts (default description/contains for app-authored rules) so a rule
@@ -332,6 +336,7 @@ export interface AppContext {
   openGoalBalance: (goalId: string) => void;
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
+  applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[] }) => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
@@ -561,6 +566,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  // WHIT-190a/WHIT-275: optimistic tx edits go straight into the ['transactions'] query
+  // cache the migrated list + tab badge + budget detail + detail screen read. Guard an
+  // evicted/absent cache (gcTime is finite). Lifted out of applyCategory so the note/tag
+  // edit action reuses the exact same cache-patch primitive.
+  const patchTransactions = useCallback((fn: (prev: Transaction[]) => Transaction[]) => {
+    queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => (prev ? fn(prev) : prev));
+  }, []);
+
   const applyCategory = useCallback(async (scope: 'one' | 'all'): Promise<void> => {
     // This is only ever triggered from the confirm sheet; ignore any other state.
     if (!sheet || sheet.mode !== 'confirm') return;
@@ -577,12 +590,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // WHIT-190a: optimistic tx edits go straight into the ['transactions'] query cache the
-    // migrated list + tab badge + budget detail read. Guard an evicted/absent cache
-    // (gcTime is finite).
-    const patchTransactions = (fn: (prev: Transaction[]) => Transaction[]) => {
-      queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => (prev ? fn(prev) : prev));
-    };
     // After a categorisation persists, invalidate the query caches the migrated screens
     // read. The ['budgets']/['breakdown']/['transactions'] invalidation is what closes the
     // ≤45s staleness (WHIT-193).
@@ -708,7 +715,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }));
       showToast('Could not save category. Please try again.');
     }
-  }, [sheet, showToast, patchRules]);
+  }, [sheet, showToast, patchRules, patchTransactions]);
+
+  // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
+  // single-transaction path — snapshot the current values, optimistically patch the
+  // ['transactions'] cache the detail screen reads, persist, and roll back on failure.
+  // `patch` carries only the fields being changed, so a note edit never clobbers tags
+  // (and vice-versa); a passed "" note / [] tags clears that field on the server.
+  const applyTransactionEdit = useCallback(
+    async (txId: string, patch: { notes?: string; tags?: string[] }): Promise<void> => {
+      const transactions = queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+      const transaction = transactions.find((t) => t.transaction_id === txId);
+      if (!transaction) return; // cache evicted / unknown id — nothing to edit
+
+      // Snapshot only the fields we're about to change, so a failed save restores
+      // exactly them (undefined restores an absent field, not an empty value).
+      const previous: { notes?: string; tags?: string[] } = {};
+      if ('notes' in patch) previous.notes = transaction.notes;
+      if ('tags' in patch) previous.tags = transaction.tags;
+
+      patchTransactions((prev) =>
+        prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...patch } : existing)));
+
+      try {
+        await apiSetTransactionFields(txId, patch);
+        queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      } catch {
+        patchTransactions((prev) =>
+          prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...previous } : existing)));
+        showToast('Could not save. Please try again.');
+      }
+    },
+    [patchTransactions, showToast],
+  );
 
   const saveBudget = useCallback(
     async (categoryId: string, value: number): Promise<boolean> => {
@@ -979,9 +1018,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openGoalBalance, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
+    openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openGoalBalance, chooseCategory, applyCategory, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
