@@ -82,10 +82,17 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-it('renders the lock screen (not the app) when a session is locked', () => {
+it('renders the lock screen over the still-mounted app when a session is locked', () => {
+  // WHIT-266: the app now stays MOUNTED under an opaque cover (so scroll/form state
+  // survives), instead of being unmounted and replaced by the lock screen.
   renderGate();
   expect(screen.getByText('Whittle is locked')).toBeTruthy();
+  expect(screen.getByTestId('lock-cover')).toBeTruthy();
+  // The app stays MOUNTED (so scroll/form state survives unlock) but is hidden from screen
+  // readers while locked: the default a11y-respecting query can't see it; includeHiddenElements
+  // reveals it's still in the tree.
   expect(screen.queryByTestId('child')).toBeNull();
+  expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
 });
 
 it('reveals the app after a successful Unlock', () => {
@@ -101,7 +108,8 @@ it('keeps the lock screen (with a working retry) when Unlock is cancelled', () =
   fireEvent.press(screen.getByText('Unlock'));
   expect(mockUnlock).toHaveBeenCalled();
   expect(screen.getByText('Whittle is locked')).toBeTruthy();
-  expect(screen.queryByTestId('child')).toBeNull();
+  // Still locked → app stays mounted under the cover, hidden from screen readers (WHIT-266).
+  expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
 });
 
 it('Sign in again signs out (→ anon, gate redirects to login)', () => {

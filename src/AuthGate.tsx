@@ -11,7 +11,7 @@
 // until the biometric-guarded keychain read (the Face ID prompt) succeeds. Face ID
 // stays OPT-IN (the flag); login itself is not optional.
 import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, StyleSheet, AppState } from "react-native";
+import { View, Text, Pressable, StyleSheet, AppState, Keyboard } from "react-native";
 import { Redirect, useSegments, useRootNavigationState } from "expo-router";
 import { C, FONT } from "./theme";
 import {
@@ -92,34 +92,58 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
   // (Cast: expo-router types useSegments() as a fixed-length tuple, but the index
   // route yields an empty array at runtime.)
   const onIndex = (segments as string[]).length === 0;
+  // A biometric-sealed session ('locked' is only ever set when biometrics are active) now
+  // keeps the app MOUNTED underneath an opaque lock cover (rendered in the tail below), so
+  // scroll/form state survives the lock→unlock instead of being destroyed (WHIT-266).
+  const locked = status === "locked";
 
-  // A biometric-sealed session shows the lock screen until Face ID succeeds
-  // ('locked' is only ever set when biometrics are active).
-  if (status === "locked") return <LockScreen />;
+  // WHIT-266: dismiss the keyboard as the lock cover goes up. Now that the app stays mounted
+  // under the cover, a focused TextInput keeps first-responder — and iOS draws the software
+  // keyboard as a system window our RN cover can't paint over, so blur it explicitly.
+  useEffect(() => {
+    if (locked) Keyboard.dismiss();
+  }, [locked]);
 
-  // While restoring a returning session, hold a plain background instead of
-  // flashing a protected screen.
+  // While restoring a returning session, hold a plain background instead of flashing a
+  // protected screen. Cold launch only — nothing is mounted yet, so there's nothing to
+  // preserve; this is the one branch that still swaps the whole subtree.
   if (status === "loading") {
     return <View style={{ flex: 1, backgroundColor: C.bg }} />;
   }
 
   const target = gateRedirect({ navReady, status, onIndex });
-  // WHIT-265: the children (the root <Stack>) stay MOUNTED while a redirect is in
-  // flight, and the wrapper is unconditional WITHIN THIS TAIL — both are load-bearing.
-  // Rendering <Redirect> INSTEAD of the children (or wrapping them only sometimes,
-  // which moves their tree position) unmounts the Stack; navigation state then resets
-  // to the index route, the gate re-redirects, and the mount/unmount ping-pong exceeds
-  // React's update depth — an instant launch crash in release builds. (The locked/
-  // loading branches above still swap the whole subtree — safe, each swap redirects at
-  // most once on re-entry; the lost-place-on-unlock cost is WHIT-266.) The cover is
-  // the privacy/touch shield while the redirect completes: opaque C.bg, and default
-  // pointerEvents so touches never reach the covered children.
+  // WHIT-265/266: the children (the root <Stack>) stay MOUNTED at a FIXED tree position —
+  // through redirects (WHIT-265) AND through the lock (WHIT-266) — so navigation, scroll, and
+  // form state all survive. `content` is UNCONDITIONAL: rendering something else instead of the
+  // children, or wrapping them only sometimes, moves their tree position and unmounts the Stack;
+  // navigation then resets to the index route, the gate re-redirects, and the mount/unmount
+  // ping-pong exceeds React's update depth — an instant launch crash in release builds. Only the
+  // covers on top and `content`'s a11y props change with status. The `loading` branch above is
+  // the sole remaining full-subtree swap (cold launch, nothing to preserve).
+  // - Redirect cover (WHIT-265): opaque + touch shield while a redirect completes (visual only —
+  //   a11y-hiding is lock-only). gateRedirect returns null while locked, so it never competes
+  //   with the lock cover.
+  // - Lock cover (WHIT-266): opaque, touch-blocking, screen-reader-hidden shield over the
+  //   still-mounted app while biometrically locked. `content` is marked a11y-hidden while locked
+  //   (belt) and the cover is marked modal (suspenders) so VoiceOver/TalkBack can't read behind it.
   return (
     <View style={styles.gate}>
-      {children}
+      <View
+        testID="gate-content"
+        style={styles.content}
+        accessibilityElementsHidden={locked}
+        importantForAccessibility={locked ? "no-hide-descendants" : "auto"}
+      >
+        {children}
+      </View>
       {target != null && (
         <View style={styles.cover} testID="gate-cover">
           <Redirect href={target} />
+        </View>
+      )}
+      {locked && (
+        <View style={styles.lockCover} testID="lock-cover" accessibilityViewIsModal>
+          <LockScreen />
         </View>
       )}
     </View>
@@ -128,10 +152,17 @@ export function AuthGate({ children }: { children: React.ReactNode }): React.Rea
 
 const styles = StyleSheet.create({
   gate: { flex: 1 },
+  // Holds the mounted app. flex:1 fills the gate — layout-neutral vs children being a direct
+  // child of `gate` — but its FIXED presence is what keeps the Stack from remounting (WHIT-266).
+  content: { flex: 1 },
   // NOTE: explicit four-edge fill on purpose — RN 0.85 removed StyleSheet.absoluteFillObject.
   // zIndex above the in-gate maximum (floating headers use 10/20) so the cover always
   // paints on top, including on web; the 200/300 Overlays live OUTSIDE AuthGate.
   cover: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, backgroundColor: C.bg },
+  // The lock cover sits above even the redirect cover (they never co-occur — gateRedirect is
+  // null while locked — but keep lock topmost defensively). Opaque C.bg + default pointerEvents
+  // so touches never reach the covered app.
+  lockCover: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 60, backgroundColor: C.bg },
   lock: { flex: 1, backgroundColor: C.bg, alignItems: "center", justifyContent: "center", padding: 32, gap: 14 },
   lockTitle: { fontFamily: FONT.display, fontWeight: "800", fontSize: 24, color: "#fff" },
   lockSubtitle: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, marginBottom: 10 },
