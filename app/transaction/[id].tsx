@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
@@ -8,7 +8,7 @@ import { formatDayMonthYear } from '../../src/dateutil';
 import { useTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
-import { RetryButton } from '../../src/components/ui';
+import { DetailStates } from '../../src/components/DetailStates';
 
 // WHIT-272 / WHIT-275: the per-transaction detail screen. Reached by the trailing chevron on
 // a TransactionRow; the id in the route is the transaction_id. The transaction comes from the
@@ -29,11 +29,6 @@ export default function TransactionDetail() {
   const transaction = transactions.find((t) => t.transaction_id === id);
   const view = transaction ? transactionView({ category }, transaction) : null;
 
-  // Cache-first, mirroring the account screen: only show the spinner/error when there is
-  // NOTHING cached to render. A background refetch over cached rows keeps the detail up.
-  const showSpinner = isLoading && transactions.length === 0;
-  const showError = isError && transactions.length === 0;
-
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title="Transaction" />
@@ -42,49 +37,44 @@ export default function TransactionDetail() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {showSpinner && (
-          <View testID="transaction-loading" style={styles.state}>
-            <ActivityIndicator color={C.accent} />
-          </View>
-        )}
-
-        {showError && (
-          <View testID="transaction-error" style={styles.state}>
-            <Text style={styles.stateText}>Couldn't load this transaction.</Text>
-            <RetryButton onPress={refetch} label="Retry loading this transaction" testID="transaction-retry" style={styles.retryBtn} textStyle={styles.retryText} />
-          </View>
-        )}
-
-        {!showSpinner && !showError && transaction && view && (
-          <>
-            <View style={styles.hero}>
-              <View style={[styles.chip, { backgroundColor: view.chipBg }]}>
-                <Icon name={view.icon} size={30} color={view.iconColor} />
+        <DetailStates
+          isLoading={isLoading}
+          isError={isError}
+          hasCache={transactions.length > 0}
+          idPrefix="transaction"
+          errorText="Couldn't load this transaction."
+          retryLabel="Retry loading this transaction"
+          onRetry={refetch}
+        >
+          {transaction && view ? (
+            <>
+              <View style={styles.hero}>
+                <View style={[styles.chip, { backgroundColor: view.chipBg }]}>
+                  <Icon name={view.icon} size={30} color={view.iconColor} />
+                </View>
+                <Text style={styles.merchant} numberOfLines={2}>{view.merchant}</Text>
+                <Text style={[styles.amount, { color: view.amountColor }]}>{view.amountLabel}</Text>
               </View>
-              <Text style={styles.merchant} numberOfLines={2}>{view.merchant}</Text>
-              <Text style={[styles.amount, { color: view.amountColor }]}>{view.amountLabel}</Text>
+
+              <View style={styles.card}>
+                <Field label="Date" value={formatDayMonthYear(transaction.date)} />
+                <Field label="Account" value={transaction.account_name} />
+                <Field label="Category" value={view.categoryLabel} valueColor={view.categoryColor} />
+                <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
+              </View>
+
+              {/* Keyed by id so switching transactions reseeds the local note text. */}
+              <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} />
+            </>
+          ) : (
+            // No transaction carries this id (stale/unknown link) — settled, not loading.
+            <View style={styles.empty}>
+              <Glyph name="search" size={26} color={C.textFaint} />
+              <Text style={styles.emptyTitle}>Transaction not found</Text>
+              <Text style={styles.emptySub}>This transaction is no longer in your recent list.</Text>
             </View>
-
-            <View style={styles.card}>
-              <Field label="Date" value={formatDayMonthYear(transaction.date)} />
-              <Field label="Account" value={transaction.account_name} />
-              <Field label="Category" value={view.categoryLabel} valueColor={view.categoryColor} />
-              <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
-            </View>
-
-            {/* Keyed by id so switching transactions reseeds the local note text. */}
-            <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} />
-          </>
-        )}
-
-        {/* No transaction carries this id (stale/unknown link) — settled, not loading. */}
-        {!showSpinner && !showError && !transaction && (
-          <View style={styles.empty}>
-            <Glyph name="search" size={26} color={C.textFaint} />
-            <Text style={styles.emptyTitle}>Transaction not found</Text>
-            <Text style={styles.emptySub}>This transaction is no longer in your recent list.</Text>
-          </View>
-        )}
+          )}
+        </DetailStates>
       </ScrollView>
     </View>
   );
@@ -224,11 +214,6 @@ const styles = StyleSheet.create({
   tagText: { fontFamily: FONT.body, fontSize: 13, color: C.textBright },
   tagRemove: { fontFamily: FONT.body, fontSize: 17, lineHeight: 18, color: C.textDim, fontWeight: '600' },
   tagInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 10, fontFamily: FONT.body, fontSize: 14, color: C.textBright },
-
-  state: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
-  stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
-  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 
   empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30, gap: 8 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, marginTop: 4 },
