@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, MAX_CATEGORY_DEPTH } from '../../src/context';
+import { getStatus } from '../../src/auth';
 import { useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { CategoryFields } from '../../src/components/CategoryFields';
@@ -94,9 +95,13 @@ export default function CategoryEdit() {
       // toasts, so own that message here before bailing.
       if (categoryId) {
         const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
+        // WHIT-271: a mid-save sign-out makes the writer return false; bail silently rather than
+        // toasting the generic failure / navigating into the next session.
+        if (getStatus() === 'anon') { setSubmitting(false); return; }
         if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
       } else {
         const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
+        if (getStatus() === 'anon') { setSubmitting(false); return; }
         if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
         parentId = created.id;
       }
@@ -113,6 +118,8 @@ export default function CategoryEdit() {
         ops.push(s.createCategoryInline({ name: nc.name, bucket, icon: nc.icon, parent: parentId }, { silent: true }));
       }
       const results = ops.length ? await Promise.allSettled(ops) : [];
+      // WHIT-271: sign-out during the child writes → don't fire the summary toast + router.back().
+      if (getStatus() === 'anon') { setSubmitting(false); return; }
       const failed = results.filter((r) => r.status === 'rejected' || r.value === false || r.value === null).length;
       // WHIT-240: exactly ONE summary toast. Lead with created/updated (matching the writers' own
       // copy) so the message reads consistently, then report the sub-category outcome. Option A
