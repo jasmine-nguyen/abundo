@@ -15,6 +15,7 @@ import { parseISODate, toISODate, formatDayMonthYear } from '../dateutil';
 import { useNativeDate } from './NativeDateField';
 import { parseAmount, numText } from '../numutil';
 import { QuickCreateCategory, CategoryDraft } from './QuickCreateCategory';
+import { useSheetDraft } from '../hooks/useSheetDraft';
 
 export function Overlays() {
   // WHIT-268: unmount the whole overlay layer while not authed. This is the privacy
@@ -140,7 +141,7 @@ function PickerSheet() {
   // WHIT-238: create a category inline instead of leaving for Settings. `creating` swaps the
   // list for the mini-form; `submitting` guards a double-tap while the create is in flight.
   // WHIT-283: `creating` restores from the draft so unlock reopens INTO the form, not the list.
-  const [creating, setCreating] = useState(() => readSheetDraft(creatingKey) === true);
+  const [creating, setCreating] = useSheetDraft<boolean>(creatingKey, (draft) => draft === true);
   const [submitting, setSubmitting] = useState(false);
   // WHIT-273: which parents are folded away. Empty = everything expanded, so the picker opens
   // fully revealed (you're here to find a category fast). A `collapsed` Set (vs Insights'
@@ -151,10 +152,9 @@ function PickerSheet() {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   }), []);
-  // WHIT-283: persist the open-form flag; hand the shared QuickCreateCategory stable read/write
-  // callbacks for its own fields. All ref writes → zero re-render. Cleared on close/sign-out by the
-  // provider (WHIT-277), so this only ever preserves across a lock.
-  useEffect(() => { writeSheetDraft(creatingKey, creating); }, [creating, creatingKey, writeSheetDraft]);
+  // WHIT-283: hand the shared QuickCreateCategory stable read/write callbacks for its own fields.
+  // All ref writes → zero re-render. Cleared on close/sign-out by the provider (WHIT-277), so this
+  // only ever preserves across a lock. (`creating` persists via useSheetDraft above.)
   const readCatDraft = useCallback(() => readSheetDraft(catDraftKey) as Partial<CategoryDraft> | undefined, [readSheetDraft, catDraftKey]);
   const writeCatDraft = useCallback((d: CategoryDraft) => writeSheetDraft(catDraftKey, d), [writeSheetDraft, catDraftKey]);
   if (sh?.mode !== 'picker') return null;
@@ -306,13 +306,26 @@ function AddRuleSheet() {
   // rule, matching SheetHost's remount key), else fall back to today's prefill. Lazy init runs
   // once on (re)mount, so the unlock remount reads back the stashed text.
   const draftKey = `addrule:${(sh?.mode === 'addrule' ? sh.ruleId : undefined) ?? 'new'}`;
-  const draft = s.readSheetDraft(draftKey) as { pattern?: string; categoryId?: string | null } | undefined;
-  const [pattern, setPattern] = useState(() => draft?.pattern ?? editing?.pattern ?? '');
-  const [categoryId, setCategoryId] = useState<string | null>(() => draft?.categoryId ?? editing?.categoryId ?? null);
-  // Persist the draft after each change from the COMMITTED state (an effect, not the onChange
-  // handler, so it never lags a keystroke). Cleared on close/sign-out by the provider.
-  const { writeSheetDraft } = s;
-  useEffect(() => { writeSheetDraft(draftKey, { pattern, categoryId }); }, [pattern, categoryId, draftKey, writeSheetDraft]);
+  // WHIT-285: persist + restore both fields under one key via the shared hook. The two fields
+  // share one object state so a single draft round-trips; the alias setters keep the JSX below
+  // byte-identical and bail on an unchanged value, so re-selecting the same category writes nothing.
+  // The aliases take a plain value (not a functional updater) — every call site passes one.
+  const [draft, setDraft] = useSheetDraft<{ pattern: string; categoryId: string | null }>(
+    draftKey,
+    (stored) => ({
+      pattern: stored?.pattern ?? editing?.pattern ?? '',
+      categoryId: stored?.categoryId ?? editing?.categoryId ?? null,
+    }),
+  );
+  const { pattern, categoryId } = draft;
+  const setPattern = (value: string) => setDraft((prev) => {
+    if (prev.pattern === value) return prev;
+    return { ...prev, pattern: value };
+  });
+  const setCategoryId = (value: string | null) => setDraft((prev) => {
+    if (prev.categoryId === value) return prev;
+    return { ...prev, categoryId: value };
+  });
   // WHIT-284: once the category list has LOADED, drop a restored/prefilled categoryId that no longer
   // exists (its category was deleted — e.g. on another device while locked). This clears the (invisible)
   // dead pill and lets the persist effect re-clean the draft so the dead id can't be re-restored on the
@@ -322,7 +335,8 @@ function AddRuleSheet() {
   // reports isLoading=false with an empty list, and dropping there would WRONGLY clear a valid id (and
   // stickily wipe it from the draft) — so only drop on a genuine loaded-OK list, never on a failed one.
   // Depends on `cats` (not the memoised `category` selector) so it re-fires whenever the list swaps —
-  // an in-session delete must re-run the drop.
+  // an in-session delete must re-run the drop. setCategoryId(null) routes through the hook's persist
+  // effect (WHIT-285), so the dead id is scrubbed from the stored draft too.
   useEffect(() => {
     if (!catsLoading && !catsError && categoryId && !cats.some((c) => c.id === categoryId)) setCategoryId(null);
   }, [catsLoading, catsError, cats, categoryId]);
@@ -468,17 +482,29 @@ function GoalBalanceSheet() {
   // SheetHost's remount key), else the live balance / today. Lazy init runs before the
   // `if (!goal) return null` below, so the draft survives even a momentary goal-undefined remount.
   const draftKey = `goalbalance:${goalId}`;
-  const draft = s.readSheetDraft(draftKey) as { balance?: string; asOf?: string } | undefined;
-  const [balance, setBalance] = useState(() => draft?.balance ?? numText(goal?.manual_balance));
-  // Default the as-of to TODAY: an update means "here's the balance now". The user can
-  // back-date it (max today) if they're entering a figure from an earlier statement.
-  const [asOf, setAsOf] = useState(() => draft?.asOf ?? toISODate(today));
+  // WHIT-285: persist + restore both fields under one key via the shared hook. The two fields
+  // share one object state; the alias setters keep the JSX below byte-identical and bail on an
+  // unchanged value (they take a plain value, not a functional updater). Default the as-of to
+  // TODAY: an update means "here's the balance now"; the user can back-date it (max today) if
+  // entering a figure from an earlier statement.
+  const [draft, setDraft] = useSheetDraft<{ balance: string; asOf: string }>(
+    draftKey,
+    (stored) => ({
+      balance: stored?.balance ?? numText(goal?.manual_balance),
+      asOf: stored?.asOf ?? toISODate(today),
+    }),
+  );
+  const { balance, asOf } = draft;
+  const setBalance = (value: string) => setDraft((prev) => {
+    if (prev.balance === value) return prev;
+    return { ...prev, balance: value };
+  });
+  const setAsOf = (value: string) => setDraft((prev) => {
+    if (prev.asOf === value) return prev;
+    return { ...prev, asOf: value };
+  });
   const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => setAsOf(iso));
   const [saving, setSaving] = useState(false);
-  // Persist the draft from the COMMITTED state after each change (an effect, not the handlers,
-  // so it captures the fresh value with no stale closure). Cleared on close/sign-out by the provider.
-  const { writeSheetDraft } = s;
-  useEffect(() => { writeSheetDraft(draftKey, { balance, asOf }); }, [balance, asOf, draftKey, writeSheetDraft]);
 
   // The goal can be gone (deleted elsewhere) or not yet cached — close cleanly rather than
   // crash, like PickerSheet/ConfirmSheet do for a missing transaction.
