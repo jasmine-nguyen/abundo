@@ -107,6 +107,88 @@ def test_dedupe_identical_twin_skips_the_reput(lam, repo, monkeypatch):
     assert reputs == []                 # but no needless re-put issued
 
 
+def test_dedupe_fills_an_absent_posted_note_from_the_pending(lam, repo):
+    # The mirror: the posted has TAGS (protected) but no NOTE; the pending has both. The
+    # posted's tags survive AND the pending's note fills the empty slot (per-field guard).
+    _store(lam, repo,
+           _raw_row("pend1", pending=True, category="groceries"),
+           _raw_row("post1", pending=False, category="groceries"))
+    for item in repo._table.store.values():
+        tid = item.get("transaction_id")
+        if tid == "pend1":
+            item["notes"], item["tags"] = "carried note", ["stale"]
+        elif tid == "post1":
+            item["tags"] = ["mine"]  # tags only, no note
+
+    summary = lam.dedupe_cleanup.dedupe_pre_reconciliation(repo, dry_run=False)
+
+    assert summary["deduped"] == 1
+    rows = _rows(repo)
+    assert rows["post1"]["tags"] == ["mine"]          # posted's own tags kept
+    assert rows["post1"]["notes"] == "carried note"   # posted lacked a note -> pending's carried
+
+
+def test_dedupe_still_carries_category_even_when_the_posted_has_a_note(lam, repo):
+    # The fix protects notes/tags but must NOT freeze category: a note on the posted is kept,
+    # yet the pending's category still carries onto it (the sweep's core purpose). The pending
+    # also holds a note, so reverting the guard would clobber the posted note here too —
+    # making this fail-on-revert on the note while still proving category carries.
+    _store(lam, repo,
+           _raw_row("pend1", pending=True, category="groceries"),
+           _raw_row("post1", pending=False, category="FOOD_AND_DRINK"))
+    for item in repo._table.store.values():
+        tid = item.get("transaction_id")
+        if tid == "pend1":
+            item["notes"] = "stale pending note"  # would win if the guard were reverted
+        elif tid == "post1":
+            item["notes"] = "keep me"
+
+    summary = lam.dedupe_cleanup.dedupe_pre_reconciliation(repo, dry_run=False)
+
+    assert summary["deduped"] == 1
+    rows = _rows(repo)
+    assert rows["post1"]["notes"] == "keep me"          # posted note protected
+    assert rows["post1"]["category"] == "groceries"     # category still carried from the pending
+    assert "pend1" not in rows
+
+
+def test_dedupe_keeps_posted_note_and_tags_over_stale_pending_and_skips_reput(lam, repo, monkeypatch):
+    # WHIT-279: the user edited the note/tags on the POSTED row after settlement; a stale
+    # pending twin still holds OLDER ones with the SAME category. The sweep must keep the
+    # posted's own (fill-only, not clobber), and because the carried row then equals the
+    # posted, the `changed` gate must skip the re-put (no write amplification) yet STILL
+    # delete the stale pending. Reverting the keep_posted_notes_tags guard makes the
+    # pending's note win -> changed -> a re-put is issued and the posted note is overwritten.
+    # notes/tags aren't bank fields, so inject onto the stored rows directly.
+    _store(lam, repo,
+           _raw_row("pend1", pending=True, category="groceries"),
+           _raw_row("post1", pending=False, category="groceries"))
+    for item in repo._table.store.values():
+        tid = item.get("transaction_id")
+        if tid == "pend1":
+            item["notes"], item["tags"] = "stale pending note", ["stale"]
+        elif tid == "post1":
+            item["notes"], item["tags"] = "my newer note", ["mine"]
+
+    reputs = []
+    original_insert = repo.insert_transactions
+    monkeypatch.setattr(
+        repo, "insert_transactions",
+        lambda txns: reputs.append(txns) or original_insert(txns),
+    )
+
+    summary = lam.dedupe_cleanup.dedupe_pre_reconciliation(repo, dry_run=False)
+
+    assert summary["deduped"] == 1
+    assert reputs == []                                 # carried == posted -> no needless re-put
+    rows = _rows(repo)
+    assert "pend1" not in rows                          # stale pending still deleted
+    assert rows["post1"]["notes"] == "my newer note"    # the user's newer note survives
+    assert rows["post1"]["tags"] == ["mine"]            # the user's newer tags survive
+    assert rows["post1"]["tags"] == ["mine"]            # protected tags untouched
+    assert reputs == []                                 # nothing changed -> no needless re-put
+
+
 def test_uncategorized_pending_twin_is_still_deleted(lam, repo):
     # Even when the pending has no user category to carry, the twin is a duplicate:
     # delete the stale pending, leave the posted's own category untouched.

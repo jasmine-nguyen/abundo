@@ -61,7 +61,11 @@ def dedupe_account(repo, account_id: str, dry_run: bool) -> dict:
         pending = bucket.pop(0)  # claim exactly one
         summary["pairs"] += 1
 
-        carried = repo._with_carried_category(posted, pending)
+        # keep_posted_notes_tags (WHIT-279): the posted here is an EXISTING stored row
+        # that may already carry a note/tag the user added AFTER settlement. Fill only
+        # notes/tags the posted lacks, so a stale pending twin can't clobber a newer
+        # posted note. Category still carries pending->posted (the sweep's core purpose).
+        carried = repo._with_carried_category(posted, pending, keep_posted_notes_tags=True)
         # Re-put the posted when ANY carried user field (category, notes, tags)
         # differs — not category alone, or a note/tag on a same-category pending
         # twin would be deleted with the pending and never written to the posted
