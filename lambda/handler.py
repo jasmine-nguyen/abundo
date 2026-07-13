@@ -25,6 +25,9 @@ from repository_notify import NotifyRepository
 from repository_paycycle import PayCycleRepository
 
 logger = logging.getLogger(__name__)
+# The Text-format Lambda runtime leaves the root logger at WARNING, so INFO logs are
+# dropped unless we opt in — matching sync_trigger / balance_poller / presignup.
+logger.setLevel(logging.INFO)
 
 BANKSYNC_WEBHOOK_SECRET_PATH = "/whittle/banksync-webhook-secret"
 
@@ -59,6 +62,12 @@ def lambda_handler(event, context) -> dict:
         payload = verify_and_parse(event)
     except Exception:
         return {"statusCode": 401, "body": "invalid signature"}
+
+    # Observability: the normal path was otherwise silent (CloudWatch showed only the
+    # Lambda START/END). Log every verified delivery's event id + row count so the
+    # hourly webhook fan-out — and which deliveries are duplicates vs carry rows — is
+    # visible in the logs.
+    logger.info("webhook %s: %d rows", payload["id"], len(payload.get("data", [])))
 
     if repo.has_event(payload["id"]):
         return {"statusCode": 200, "body": "duplicate event - skipped"}

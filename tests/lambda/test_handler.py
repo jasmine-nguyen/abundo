@@ -23,6 +23,7 @@ surfaces as 500 rather than a false 200 "ok") and the WHIT-84 dead-letter uuid.
 
 import base64
 import json
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -91,6 +92,49 @@ def test_duplicate_event_is_skipped_without_processing(lam, monkeypatch):
     assert first["statusCode"] == 200 and first["body"] == "ok"
     assert second["statusCode"] == 200 and second["body"] == "duplicate event - skipped"
     assert len(calls) == 1  # processed exactly once
+
+
+# --- observability: per-delivery log line ------------------------------------
+
+
+def test_webhook_logs_event_id_and_row_count(lam, monkeypatch, caplog):
+    # Every verified delivery logs its event id + row count, so the hourly webhook
+    # fan-out is visible in CloudWatch (the normal path was otherwise silent — only
+    # the Lambda START/END showed). Fail-on-revert: drop the logger.info line and
+    # these assertions go red.
+    handler = lam.handler
+    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
+    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_log", "data": [{"a": 1}, {"b": 2}]})
+
+    with caplog.at_level(logging.INFO, logger="handler"):
+        resp = handler.lambda_handler({}, None)
+
+    assert resp["statusCode"] == 200
+    assert "evt_log" in caplog.text
+    assert "2 rows" in caplog.text
+
+
+def test_webhook_logs_even_a_duplicate_delivery(lam, monkeypatch, caplog):
+    # The log sits BEFORE the dedup check, so a re-delivered (duplicate) event is
+    # logged too — that's the point: it reveals how many of the hourly deliveries are
+    # BankSync re-sends vs new work.
+    handler = lam.handler
+    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
+    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_dup", "data": []})
+
+    handler.lambda_handler({}, None)  # first delivery: processed + marked
+    with caplog.at_level(logging.INFO, logger="handler"):
+        second = handler.lambda_handler({}, None)  # same id re-delivered
+
+    assert second["body"] == "duplicate event - skipped"
+    assert "evt_dup" in caplog.text  # logged despite being a duplicate
+
+
+def test_handler_logger_opts_into_info(lam):
+    # The Text-format Lambda runtime leaves the root logger at WARNING, so the module
+    # must opt into INFO explicitly or the observability log above is silently dropped
+    # in prod (caplog.at_level masks this, so it needs its own guard).
+    assert lam.handler.logger.level == logging.INFO
 
 
 # --- signature glue: real verification through our handler -------------------
