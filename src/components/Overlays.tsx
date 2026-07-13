@@ -296,7 +296,7 @@ function ConfirmSheet() {
 function AddRuleSheet() {
   const s = useAppContext(); // sheet + updateRule + saveManualRule (writers)
   const { rules } = useRulesScreenData();
-  const { categories: cats } = useCategories();
+  const { categories: cats, isLoading: catsLoading, isError: catsError, category } = useCategories();
   const sh = s.sheet;
   // ruleId present -> editing an existing rule; prefill from it. The sheet is
   // keyed on ruleId (see SheetHost), so it remounts per rule and these
@@ -313,9 +313,26 @@ function AddRuleSheet() {
   // handler, so it never lags a keystroke). Cleared on close/sign-out by the provider.
   const { writeSheetDraft } = s;
   useEffect(() => { writeSheetDraft(draftKey, { pattern, categoryId }); }, [pattern, categoryId, draftKey, writeSheetDraft]);
+  // WHIT-284: once the category list has LOADED, drop a restored/prefilled categoryId that no longer
+  // exists (its category was deleted — e.g. on another device while locked). This clears the (invisible)
+  // dead pill and lets the persist effect re-clean the draft so the dead id can't be re-restored on the
+  // next lock. Gate on `!catsLoading`, NOT cats.length: an EMPTY list is ambiguous (still loading vs the
+  // LAST category was just deleted), and a length gate would miss the last-category case — leaving the
+  // dead id live, the exact bug this fixes. Also gate on `!catsError`: a cold-load ERROR (no cache) also
+  // reports isLoading=false with an empty list, and dropping there would WRONGLY clear a valid id (and
+  // stickily wipe it from the draft) — so only drop on a genuine loaded-OK list, never on a failed one.
+  // Depends on `cats` (not the memoised `category` selector) so it re-fires whenever the list swaps —
+  // an in-session delete must re-run the drop.
+  useEffect(() => {
+    if (!catsLoading && !catsError && categoryId && !cats.some((c) => c.id === categoryId)) setCategoryId(null);
+  }, [catsLoading, catsError, cats, categoryId]);
   // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
   const categories = [...cats].sort((a, b) => a.name.localeCompare(b.name));
-  const canSave = pattern.trim().length > 0 && !!categoryId;
+  // WHIT-284: save is enabled only when the picked id resolves to a REAL category. This alone forbids
+  // submitting a dead id — including in the loading window before the drop effect runs (while loading
+  // the selector can't resolve any id, so save stays disabled until the list arrives; the effect above
+  // still keeps a valid restored id selected so it re-enables the moment the list loads).
+  const canSave = pattern.trim().length > 0 && !!category(categoryId);
   const submit = () => {
     if (!canSave) return;
     if (editing) s.updateRule(editing.id, pattern, categoryId!);
