@@ -23,7 +23,7 @@ const SPEND_CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7
 
 const sheetFns = {
   chooseCategory: jest.fn(), saveManualRule: jest.fn(), updateRule: jest.fn(),
-  setSheet: jest.fn(), dismissNotif: jest.fn(),
+  setSheet: jest.fn(), dismissNotif: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {},
 };
 
 it('Categories list renders the Income group + its categories (WHIT-158)', () => {

@@ -283,8 +283,17 @@ function AddRuleSheet() {
   // keyed on ruleId (see SheetHost), so it remounts per rule and these
   // initialisers re-run.
   const editing = sh?.mode === 'addrule' && sh.ruleId ? rules.find((r) => r.id === sh.ruleId) : undefined;
-  const [pattern, setPattern] = useState(editing?.pattern ?? '');
-  const [categoryId, setCategoryId] = useState<string | null>(editing?.categoryId ?? null);
+  // WHIT-277: survive a Face ID lock — restore any draft stashed before the lock (keyed on the
+  // rule, matching SheetHost's remount key), else fall back to today's prefill. Lazy init runs
+  // once on (re)mount, so the unlock remount reads back the stashed text.
+  const draftKey = `addrule:${(sh?.mode === 'addrule' ? sh.ruleId : undefined) ?? 'new'}`;
+  const draft = s.readSheetDraft(draftKey) as { pattern?: string; categoryId?: string | null } | undefined;
+  const [pattern, setPattern] = useState(() => draft?.pattern ?? editing?.pattern ?? '');
+  const [categoryId, setCategoryId] = useState<string | null>(() => draft?.categoryId ?? editing?.categoryId ?? null);
+  // Persist the draft after each change from the COMMITTED state (an effect, not the onChange
+  // handler, so it never lags a keystroke). Cleared on close/sign-out by the provider.
+  const { writeSheetDraft } = s;
+  useEffect(() => { writeSheetDraft(draftKey, { pattern, categoryId }); }, [pattern, categoryId, draftKey, writeSheetDraft]);
   // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
   const categories = [...cats].sort((a, b) => a.name.localeCompare(b.name));
   const canSave = pattern.trim().length > 0 && !!categoryId;
@@ -419,12 +428,21 @@ function GoalBalanceSheet() {
   // form). Keyed on goalId in SheetHost, so these initialisers re-run per goal.
   const goal = useGoalsQuery(useIsAuthed()).data?.find((g) => g.id === goalId);
   const today = new Date();
-  const [balance, setBalance] = useState(numText(goal?.manual_balance));
+  // WHIT-277: restore any draft stashed before a Face ID lock (keyed on the goal, matching
+  // SheetHost's remount key), else the live balance / today. Lazy init runs before the
+  // `if (!goal) return null` below, so the draft survives even a momentary goal-undefined remount.
+  const draftKey = `goalbalance:${goalId}`;
+  const draft = s.readSheetDraft(draftKey) as { balance?: string; asOf?: string } | undefined;
+  const [balance, setBalance] = useState(() => draft?.balance ?? numText(goal?.manual_balance));
   // Default the as-of to TODAY: an update means "here's the balance now". The user can
   // back-date it (max today) if they're entering a figure from an earlier statement.
-  const [asOf, setAsOf] = useState(toISODate(today));
+  const [asOf, setAsOf] = useState(() => draft?.asOf ?? toISODate(today));
   const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => setAsOf(iso));
   const [saving, setSaving] = useState(false);
+  // Persist the draft from the COMMITTED state after each change (an effect, not the handlers,
+  // so it captures the fresh value with no stale closure). Cleared on close/sign-out by the provider.
+  const { writeSheetDraft } = s;
+  useEffect(() => { writeSheetDraft(draftKey, { balance, asOf }); }, [balance, asOf, draftKey, writeSheetDraft]);
 
   // The goal can be gone (deleted elsewhere) or not yet cached — close cleanly rather than
   // crash, like PickerSheet/ConfirmSheet do for a missing transaction.
