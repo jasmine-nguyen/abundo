@@ -212,32 +212,27 @@ export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<st
 }
 
 /**
- * Set (persist) a single transaction's category.
+ * Set (persist) a single transaction's category. Thin wrapper over
+ * setTransactionFields (WHIT-278): the route/headers/body/error-guard live there, so
+ * the single-transaction category and note/tags writes can't drift apart.
  *
  * @param id - The transaction_id to categorise.
  * @param category - The category id/slug to file it under.
- * @returns The transaction_id and the category that was saved.
+ * @returns The saved transaction_id and category.
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
 export async function setTransactionCategory(
   id: string,
   category: string
-): Promise<{ transaction_id: string; category: string }> {
-  const response = await apiFetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ category }),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return response.json();
+): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[] }> {
+  return setTransactionFields(id, { category });
 }
 
 /**
  * Set (persist) a single transaction's editable fields — any of category, notes,
- * tags — in one PATCH (WHIT-275). Only the provided keys are sent, so editing the
- * note never touches the tags (and vice-versa); a "" note or a [] tags list clears
- * that field server-side. Same route/shape as setTransactionCategory.
+ * tags — in one PATCH (WHIT-275). The canonical single-transaction PATCH: only the
+ * provided keys are sent, so editing the note never touches the tags (and vice-versa);
+ * a "" note or a [] tags list clears that field server-side.
  *
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
