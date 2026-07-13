@@ -429,13 +429,17 @@ class TransactionRepository:
 
     @staticmethod
     def _with_carried_category(posted_txn: Transaction, source_row: dict) -> Transaction:
-        """A copy of the posted txn with `category` carried from `source_row` (the
-        matched pending / existing posted) when that row has one. Falsy/absent ->
-        keep the posted txn's own (bank) category."""
+        """A copy of the posted txn with the user-owned fields — `category`, `notes`
+        and `tags` — carried from `source_row` (the matched pending / existing
+        posted) when that row has them. Falsy/absent -> keep the posted txn's own
+        value, so a cleared note/tag never overwrites a real one. (Named for
+        `category`, its original and still-primary carried field; notes/tags ride
+        along so a note on a pending charge survives settlement — WHIT-275.)"""
         carried = posted_txn.copy()
-        source_category = source_row.get("category")
-        if source_category:
-            carried["category"] = source_category
+        for field in ("category", "notes", "tags"):
+            value = source_row.get(field)
+            if value:
+                carried[field] = value
         return carried
 
     def _delete_pending_if_present(self, pk: str, sk: str) -> None:

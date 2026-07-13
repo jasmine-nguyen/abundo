@@ -11,6 +11,13 @@ import { makeState, cat, txn } from './factory';
 let mockTx: ReturnType<typeof txData>;
 jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
 
+// WHIT-275: the screen's note/tags editor reads applyTransactionEdit from the context; stub
+// it (real selectors kept) so these render without an AppProvider.
+jest.mock('../context', () => {
+  const actual = jest.requireActual('../context') as typeof import('../context');
+  return { ...actual, useAppContext: () => ({ applyTransactionEdit: jest.fn() }) };
+});
+
 let mockId = 't1';
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: mockId }),

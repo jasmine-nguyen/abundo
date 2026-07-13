@@ -233,6 +233,28 @@ export async function setTransactionCategory(
   return response.json();
 }
 
+/**
+ * Set (persist) a single transaction's editable fields — any of category, notes,
+ * tags — in one PATCH (WHIT-275). Only the provided keys are sent, so editing the
+ * note never touches the tags (and vice-versa); a "" note or a [] tags list clears
+ * that field server-side. Same route/shape as setTransactionCategory.
+ *
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export async function setTransactionFields(
+  id: string,
+  fields: { category?: string; notes?: string; tags?: string[] }
+): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[] }> {
+  const response = await apiFetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(fields),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /** One transaction's outcome in a batch category update (WHIT-70). */
 export interface BatchCategoryResult {
   id: string;

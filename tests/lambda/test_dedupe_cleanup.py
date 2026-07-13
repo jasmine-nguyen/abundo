@@ -65,6 +65,48 @@ def test_dedupe_carries_category_and_deletes_pending(lam, repo):
     assert rows["post1"]["category"] == "groceries"  # category carried onto posted
 
 
+def test_dedupe_carries_a_note_on_a_same_category_twin(lam, repo):
+    # WHIT-275: the OLD gate re-put ONLY when the category changed, so a note on a
+    # SAME-category pending twin was deleted with the pending and never written to
+    # the posted. The whole-row gate re-puts, carrying the note. notes aren't bank
+    # fields (normalise strips them), so inject onto the stored pending directly.
+    _store(lam, repo,
+           _raw_row("pend1", pending=True, category="groceries"),
+           _raw_row("post1", pending=False, category="groceries"))
+    for item in repo._table.store.values():
+        if item.get("transaction_id") == "pend1":
+            item["notes"] = "reimburse me"
+            item["tags"] = ["work"]
+
+    summary = lam.dedupe_cleanup.dedupe_pre_reconciliation(repo, dry_run=False)
+
+    assert summary["deduped"] == 1
+    rows = _rows(repo)
+    assert "pend1" not in rows                       # stale pending deleted
+    assert rows["post1"]["notes"] == "reimburse me"  # note carried onto posted
+    assert rows["post1"]["tags"] == ["work"]         # tags carried onto posted
+
+
+def test_dedupe_identical_twin_skips_the_reput(lam, repo, monkeypatch):
+    # Same category, no note/tag difference → nothing to carry → skip the re-put
+    # (still delete the pending). Guards against re-putting on every dedupe.
+    _store(lam, repo,
+           _raw_row("pend1", pending=True, category="groceries"),
+           _raw_row("post1", pending=False, category="groceries"))
+    reputs = []
+    original_insert = repo.insert_transactions
+    monkeypatch.setattr(
+        repo, "insert_transactions",
+        lambda txns: reputs.append(txns) or original_insert(txns),
+    )
+
+    summary = lam.dedupe_cleanup.dedupe_pre_reconciliation(repo, dry_run=False)
+
+    assert summary["deduped"] == 1
+    assert "pend1" not in _rows(repo)   # pending still deleted
+    assert reputs == []                 # but no needless re-put issued
+
+
 def test_uncategorized_pending_twin_is_still_deleted(lam, repo):
     # Even when the pending has no user category to carry, the twin is a duplicate:
     # delete the stale pending, leave the posted's own category untouched.

@@ -201,17 +201,29 @@ class FakeTable:
         return {"Item": dict(item)} if item is not None else {}
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
-                    ExpressionAttributeValues, ConditionExpression=None):
+                    ExpressionAttributeValues=None, ConditionExpression=None):
         key = (Key["pk"], Key["sk"])
         if ConditionExpression == "attribute_exists(pk)" and key not in self.store:
             raise _client_error("ConditionalCheckFailedException")
+        values = ExpressionAttributeValues or {}
         item = self.store.setdefault(key, {"pk": Key["pk"], "sk": Key["sk"]})
-        # Parse the "SET #a = :x, #b = :y" clause the repository builds.
-        assignments = UpdateExpression[len("SET "):].split(",")
-        for pair in assignments:
-            name_alias, value_alias = (part.strip() for part in pair.split("="))
-            attr = ExpressionAttributeNames[name_alias]
-            item[attr] = ExpressionAttributeValues[value_alias]
+        # The repository builds "SET ... [REMOVE ...]" — either clause optional
+        # (update_transaction_fields; update_transaction_category is SET-only). SET
+        # assigns aliased name = value; REMOVE deletes each aliased attribute, so a
+        # cleared field reads back ABSENT (not ""/[]). ExpressionAttributeValues is
+        # omitted for a REMOVE-only update, matching real DynamoDB.
+        set_part, _, remove_part = UpdateExpression.strip().partition("REMOVE")
+        set_part = set_part.strip()
+        if set_part.startswith("SET"):
+            for pair in set_part[len("SET"):].split(","):
+                if not pair.strip():
+                    continue
+                name_alias, value_alias = (part.strip() for part in pair.split("="))
+                item[ExpressionAttributeNames[name_alias]] = values[value_alias]
+        for name_alias in remove_part.split(","):
+            name_alias = name_alias.strip()
+            if name_alias:
+                item.pop(ExpressionAttributeNames[name_alias], None)
 
     def query(self, KeyConditionExpression=None, FilterExpression=None,
               ScanIndexForward=None, Limit=None, IndexName=None,

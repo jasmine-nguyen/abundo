@@ -2,7 +2,7 @@
 GET /transactions recent feed (get_recent_transactions).
 
 The handler is provided by the `handler` fixture (see conftest.py), which imports
-lambda_api/handler.py in isolation. patch_transaction_category and
+lambda_api/handler.py in isolation. patch_transaction and
 get_recent_transactions both take the repo as a parameter, so most tests call them
 directly with a fake repo — no patching, no AWS. Dispatch tests drive them through
 lambda_handler to prove the wiring (and, for the feed, that its real body runs).
@@ -16,9 +16,14 @@ from decimal import Decimal
 
 import pytest
 
+_UNSET = object()
+
 
 class FakeRepo:
-    """Stand-in for TransactionRepository that records the write it's asked to do."""
+    """Stand-in for TransactionRepository that records the field write it's asked to do.
+
+    Records each update as (pk, sk, {only the provided fields}), mirroring
+    update_transaction_fields' keyword-only, sentinel-gated signature."""
 
     def __init__(self, keys=None, update_result=True):
         self._keys = keys
@@ -28,8 +33,13 @@ class FakeRepo:
     def get_transaction_keys_by_id(self, transaction_id):
         return self._keys
 
-    def update_transaction_category(self, pk, sk, category):
-        self.update_calls.append((pk, sk, category))
+    def update_transaction_fields(self, pk, sk, *, category=_UNSET, notes=_UNSET, tags=_UNSET):
+        provided = {
+            field: value
+            for field, value in (("category", category), ("notes", notes), ("tags", tags))
+            if value is not _UNSET
+        }
+        self.update_calls.append((pk, sk, provided))
         return self._update_result
 
 
@@ -109,22 +119,22 @@ def _patch_event(transaction_id="txn-1", body='{"category": "groceries"}', is_b6
 def test_patch_success_persists_category(handler):
     repo = FakeRepo(keys={"pk": "ACCOUNT#up-spending", "sk": "TXN#txn-1"})
 
-    resp = handler.patch_transaction_category(_patch_event(), repo)
+    resp = handler.patch_transaction(_patch_event(), repo)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"transaction_id": "txn-1", "category": "groceries"}
-    # persisted against the keys the resolver returned, with the given category.
-    assert repo.update_calls == [("ACCOUNT#up-spending", "TXN#txn-1", "groceries")]
+    # persisted against the keys the resolver returned, with only the given field.
+    assert repo.update_calls == [("ACCOUNT#up-spending", "TXN#txn-1", {"category": "groceries"})]
 
 
 def test_patch_decodes_base64_body(handler):
     repo = FakeRepo(keys={"pk": "p", "sk": "s"})
     encoded = base64.b64encode(b'{"category": "coffee"}').decode()
 
-    resp = handler.patch_transaction_category(_patch_event(body=encoded, is_b64=True), repo)
+    resp = handler.patch_transaction(_patch_event(body=encoded, is_b64=True), repo)
 
     assert resp["statusCode"] == 200
-    assert repo.update_calls == [("p", "s", "coffee")]
+    assert repo.update_calls == [("p", "s", {"category": "coffee"})]
 
 
 # --- 404s --------------------------------------------------------------------
@@ -133,7 +143,7 @@ def test_patch_decodes_base64_body(handler):
 def test_patch_unknown_id_returns_404_without_writing(handler):
     repo = FakeRepo(keys=None)
 
-    resp = handler.patch_transaction_category(_patch_event(), repo)
+    resp = handler.patch_transaction(_patch_event(), repo)
 
     assert resp["statusCode"] == 404
     assert repo.update_calls == []  # never attempt the write if the id doesn't resolve
@@ -144,7 +154,7 @@ def test_patch_row_vanished_returns_404(handler):
     # (row deleted in between) -> update returns False -> 404, not 500.
     repo = FakeRepo(keys={"pk": "p", "sk": "s"}, update_result=False)
 
-    resp = handler.patch_transaction_category(_patch_event(), repo)
+    resp = handler.patch_transaction(_patch_event(), repo)
 
     assert resp["statusCode"] == 404
 
@@ -153,7 +163,7 @@ def test_patch_missing_path_id_returns_404(handler):
     event = _patch_event()
     event["pathParameters"] = {}  # no id
 
-    resp = handler.patch_transaction_category(event, FakeRepo(keys={"pk": "p", "sk": "s"}))
+    resp = handler.patch_transaction(event, FakeRepo(keys={"pk": "p", "sk": "s"}))
 
     assert resp["statusCode"] == 404
 
@@ -162,7 +172,7 @@ def test_patch_missing_path_id_returns_404(handler):
 
 
 def test_patch_invalid_json_returns_400(handler):
-    resp = handler.patch_transaction_category(_patch_event(body="not json"),
+    resp = handler.patch_transaction(_patch_event(body="not json"),
                                               FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
@@ -171,27 +181,131 @@ def test_patch_base64_non_utf8_body_returns_400(handler):
     # Valid base64, but the decoded bytes aren't UTF-8 — must be a clean 400, not a 500.
     encoded = base64.b64encode(b"\xff\xfe\xff").decode()
 
-    resp = handler.patch_transaction_category(_patch_event(body=encoded, is_b64=True),
+    resp = handler.patch_transaction(_patch_event(body=encoded, is_b64=True),
                                               FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
 def test_patch_non_dict_body_returns_400(handler):
-    resp = handler.patch_transaction_category(_patch_event(body="[1, 2, 3]"),
+    resp = handler.patch_transaction(_patch_event(body="[1, 2, 3]"),
                                               FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
 def test_patch_missing_category_returns_400(handler):
-    resp = handler.patch_transaction_category(_patch_event(body='{"note": "x"}'),
+    resp = handler.patch_transaction(_patch_event(body='{"note": "x"}'),
                                               FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
 
 
 def test_patch_blank_category_returns_400(handler):
-    resp = handler.patch_transaction_category(_patch_event(body='{"category": "   "}'),
+    resp = handler.patch_transaction(_patch_event(body='{"category": "   "}'),
                                               FakeRepo(keys={"pk": "p", "sk": "s"}))
     assert resp["statusCode"] == 400
+
+
+# --- notes & tags PATCH (WHIT-275) -------------------------------------------
+
+
+def test_patch_notes_only_trims_persists_and_echoes(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{"notes": "  lunch with sam  "}'), repo)
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {"transaction_id": "txn-1", "notes": "lunch with sam"}
+    assert repo.update_calls == [("p", "s", {"notes": "lunch with sam"})]
+
+
+def test_patch_tags_only_trims_drops_empty_and_dedupes_keeping_first_casing(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{"tags": ["Work", " work ", "travel", "  "]}'), repo)
+    assert resp["statusCode"] == 200
+    # "work" is a case-insensitive dup of "Work" (first-seen casing kept); "" is dropped.
+    assert json.loads(resp["body"])["tags"] == ["Work", "travel"]
+    assert repo.update_calls == [("p", "s", {"tags": ["Work", "travel"]})]
+
+
+def test_patch_category_notes_and_tags_in_one_request(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(
+        _patch_event(body='{"category": "food", "notes": "n", "tags": ["a"]}'), repo)
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("p", "s", {"category": "food", "notes": "n", "tags": ["a"]})]
+
+
+def test_patch_clearing_note_is_allowed(handler):
+    # Unlike category, a null/empty note clears the field (server REMOVEs it).
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{"notes": null}'), repo)
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("p", "s", {"notes": ""})]
+
+
+def test_patch_clearing_tags_is_allowed(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{"tags": []}'), repo)
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("p", "s", {"tags": []})]
+
+
+def test_patch_empty_body_returns_400(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{}'), repo)
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []  # nothing to change → never write
+
+
+def test_patch_note_too_long_returns_400(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    body = json.dumps({"notes": "x" * (handler.NOTE_MAX_LEN + 1)})
+    resp = handler.patch_transaction(_patch_event(body=body), repo)
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []
+
+
+def test_patch_too_many_tags_returns_400(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    body = json.dumps({"tags": [f"t{i}" for i in range(handler.TAG_MAX_COUNT + 1)]})
+    resp = handler.patch_transaction(_patch_event(body=body), repo)
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []
+
+
+def test_patch_tag_too_long_returns_400(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    body = json.dumps({"tags": ["x" * (handler.TAG_MAX_LEN + 1)]})
+    resp = handler.patch_transaction(_patch_event(body=body), repo)
+    assert resp["statusCode"] == 400
+
+
+def test_patch_non_string_tag_returns_400(handler):
+    resp = handler.patch_transaction(_patch_event(body='{"tags": [1, 2]}'),
+                                     FakeRepo(keys={"pk": "p", "sk": "s"}))
+    assert resp["statusCode"] == 400
+
+
+def test_patch_tags_not_a_list_returns_400(handler):
+    resp = handler.patch_transaction(_patch_event(body='{"tags": "work"}'),
+                                     FakeRepo(keys={"pk": "p", "sk": "s"}))
+    assert resp["statusCode"] == 400
+
+
+def test_patch_notes_non_string_returns_400(handler):
+    resp = handler.patch_transaction(_patch_event(body='{"notes": 5}'),
+                                     FakeRepo(keys={"pk": "p", "sk": "s"}))
+    assert resp["statusCode"] == 400
+
+
+def test_patch_notes_unknown_id_returns_404_without_writing(handler):
+    repo = FakeRepo(keys=None)
+    resp = handler.patch_transaction(_patch_event(body='{"notes": "x"}'), repo)
+    assert resp["statusCode"] == 404
+    assert repo.update_calls == []
+
+
+def test_patch_notes_row_vanished_returns_404(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"}, update_result=False)
+    resp = handler.patch_transaction(_patch_event(body='{"notes": "x"}'), repo)
+    assert resp["statusCode"] == 404
 
 
 # --- batch PATCH /transactions (WHIT-70) -------------------------------------
@@ -303,7 +417,7 @@ def test_batch_dispatches_and_does_not_hit_single_handler(handler, monkeypatch):
     # /{id} item handler. Guards against a future startswith broadening swallowing it.
     repo = FakeBatchRepo()
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    monkeypatch.setattr(handler, "patch_transaction_category",
+    monkeypatch.setattr(handler, "patch_transaction",
                         lambda *a, **k: pytest.fail("collection PATCH reached the item handler"))
 
     resp = handler.lambda_handler(_batch_event('{"updates": [{"id": "t1", "category": "coffee"}]}'), None)
@@ -321,7 +435,7 @@ def test_patch_dispatches_through_lambda_handler(handler, monkeypatch):
     resp = handler.lambda_handler(_patch_event(), None)
 
     assert resp["statusCode"] == 200
-    assert repo.update_calls == [("p", "s", "groceries")]
+    assert repo.update_calls == [("p", "s", {"category": "groceries"})]
 
 
 def test_get_transactions_still_dispatches(handler, monkeypatch):
