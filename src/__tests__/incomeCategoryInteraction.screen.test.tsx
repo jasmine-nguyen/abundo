@@ -25,7 +25,7 @@ const SPEND_CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7
 
 const fns = {
   chooseCategory: jest.fn(), saveManualRule: jest.fn(), updateRule: jest.fn(),
-  setSheet: jest.fn(), dismissNotif: jest.fn(),
+  setSheet: jest.fn(), dismissNotif: jest.fn(), readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
 };
 beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
 

@@ -19,7 +19,7 @@ import { Overlays } from '../components/Overlays';
 const fns = {
   updateRule: jest.fn(),
   saveManualRule: jest.fn(),
-  setSheet: jest.fn(),
+  setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {},
   dismissNotif: jest.fn(),
 };
 

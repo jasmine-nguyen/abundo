@@ -37,7 +37,7 @@ const HOLIDAY: GoalRecord = {
   account_id: null, manual_balance: 300, manual_as_of: '2026-07-02',
 };
 
-const fns = { saveGoal: jest.fn(async (_id: string, _body: unknown) => true), showToast: jest.fn(), setSheet: jest.fn() };
+const fns = { saveGoal: jest.fn(async (_id: string, _body: unknown) => true), showToast: jest.fn(), setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {} };
 
 function sheetState(goalId = 'g2'): AppContext {
   return {

@@ -327,6 +327,9 @@ export interface AppContext {
   sheet: Sheet; toast: string | null; notif: { body: string; time: string } | null;
   // actions
   setSheet: (s: Sheet) => void;
+  // WHIT-277: read/write a pop-up sheet's draft so it survives a Face ID lock (cleared on close + sign-out).
+  readSheetDraft: (key: string) => unknown;
+  writeSheetDraft: (key: string, value: unknown) => void;
   showToast: (m: string) => void;
   dismissNotif: () => void;
   toggleAlerts: () => void;
@@ -403,6 +406,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [notif, setNotif] = useState<{ body: string; time: string } | null>(null);
+  // WHIT-277: a half-typed pop-up sheet's draft must survive a Face ID lock. The sheet UNMOUNTS
+  // while locked — Overlays' WHIT-268 privacy shield returns null (a native Modal would otherwise
+  // float above the lock cover) — so its local useState is destroyed. Stash the draft here in the
+  // always-mounted provider (above the gate), so it outlives the lock. A REF, not state: a
+  // keystroke writes it with zero re-renders, and the sheet reads it once on remount (post-unlock).
+  // Cleared when any sheet closes (submit/cancel) and on sign-out, so nothing leaks to the next session.
+  const sheetDrafts = useRef<Map<string, unknown>>(new Map());
+  const readSheetDraft = useCallback((key: string): unknown => sheetDrafts.current.get(key), []);
+  const writeSheetDraft = useCallback((key: string, value: unknown) => { sheetDrafts.current.set(key, value); }, []);
   // WHIT-192: rule edits are mirrored straight into the ['rules'] query cache the Rules
   // screen + Settings count read (the old eager store is gone). Applies the functional
   // updater to the cache — including the client-only isNew "NEW" badge, which a refetch
@@ -478,12 +490,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // whichever path broadcast it. Also drops the server-derived AI insights (and its
   // stale error/loading flags), which queryClient.clear() never touches, and bumps the
   // session epoch so any in-flight AI request settling later is discarded.
+  // WHIT-277: clear stashed drafts whenever the sheet closes — submit AND cancel both route
+  // through setSheet(null). Only one sheet is open at a time, so clearing all is correct, and a
+  // picker→confirm transition (chooseCategory) never passes through null, so it isn't cleared.
+  useEffect(() => { if (sheet === null) sheetDrafts.current.clear(); }, [sheet]);
+
   useEffect(() => subscribe(() => {
     if (getStatus() !== 'anon') return;
     sessionEpoch.current += 1;
     clearTimeout(toastTimer.current);
     clearTimeout(notifTimer.current);
     setSheet(null);
+    sheetDrafts.current.clear(); // WHIT-277: wipe any half-typed draft on sign-out (WHIT-268 parity)
     setToast(null);
     setNotif(null);
     setAiInsights(null);
@@ -1082,12 +1100,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppContext>(() => ({
     goal, alerts,
     sheet, toast, notif,
-    setSheet, showToast, dismissNotif,
+    setSheet, readSheetDraft, writeSheetDraft, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
     openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
