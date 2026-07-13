@@ -17,7 +17,7 @@
       ]
     ],
     "name": "Whittle",
-    "slug": "whittle",
+    "slug": "whittle-app",
     "ios": {
       "bundleIdentifier": "com.anonymous.whittle-app",
       "infoPlist": {
