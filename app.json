@@ -19,7 +19,7 @@
     "name": "Whittle",
     "slug": "whittle",
     "ios": {
-      "bundleIdentifier": "com.anonymous.whittle-app",
+      "bundleIdentifier": "com.anonymous.whittle",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -27,11 +27,12 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "38dc6b5e-3c1c-4410-a18a-30b9a8cc57b0"
+        "projectId": "215737dd-f14c-4f8c-bd56-acfb38db9401"
       }
     },
     "android": {
       "package": "com.anonymous.whittleapp"
-    }
+    },
+    "owner": "ramen_broth"
   }
 }
