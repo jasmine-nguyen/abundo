@@ -61,7 +61,7 @@ function NotifBanner() {
       <Pressable onPress={dismissNotif} style={styles.notif}>
         <View style={styles.notifIcon}>
           <View style={styles.notifLogo}>
-            <Glyph name="check" size={16} color="#15123a" />
+            <Glyph name="check" size={16} color={C.heroInk} />
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
@@ -588,14 +588,14 @@ const styles = StyleSheet.create({
   // toast
   toastWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 200 },
   toast: { maxWidth: '88%', backgroundColor: '#26262f', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', paddingVertical: 11, paddingHorizontal: 16, borderRadius: 14 },
-  toastText: { fontFamily: FONT.body, color: '#f1f1f4', fontSize: 13.5, textAlign: 'center' },
+  toastText: { fontFamily: FONT.body, color: C.textBright, fontSize: 13.5, textAlign: 'center' },
   // load-error banner (read failures). Sits just under a notif's z so the rare notif
   // wins if both are up at once.
   // notif
   notifWrap: { position: 'absolute', left: 12, right: 12, zIndex: 300 },
   notif: { backgroundColor: 'rgba(34,34,40,.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', borderRadius: 20, padding: 14 },
   notifIcon: { flexDirection: 'row', gap: 11, alignItems: 'flex-start' },
-  notifLogo: { width: 30, height: 30, borderRadius: 8, backgroundColor: '#35d9a0', alignItems: 'center', justifyContent: 'center' },
+  notifLogo: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.good, alignItems: 'center', justifyContent: 'center' },
   notifApp: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700', color: '#cfd2ff', letterSpacing: 0.4 },
   notifTime: { fontFamily: FONT.body, fontSize: 11, color: C.textDim },
   notifBody: { fontFamily: FONT.body, fontSize: 13.5, color: '#e6e6ea', lineHeight: 19 },
@@ -606,16 +606,16 @@ const styles = StyleSheet.create({
   sheetLift: { width: '100%', alignItems: 'center' },
   sheet: { width: '100%', maxWidth: 440, backgroundColor: '#161620', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: 34, borderTopWidth: 1, borderColor: 'rgba(255,255,255,.08)' },
   grabber: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,.18)', marginBottom: 14 },
-  sheetTitle: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: '#f4f4f6', letterSpacing: -0.3 },
+  sheetTitle: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   sheetMerchant: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 8 },
-  sheetAmount: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: '#f1f1f4', marginTop: 2, letterSpacing: -0.5 },
+  sheetAmount: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: C.textBright, marginTop: 2, letterSpacing: -0.5 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 11 },
   pickNameHit: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13 },
   pickToggle: { padding: 6 },
   pickChip: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  pickName: { flex: 1, fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#f1f1f4' },
+  pickName: { flex: 1, fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
   confirmChip: { width: 52, height: 52, borderRadius: 15, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
-  confirmTitle: { fontFamily: FONT.display, fontSize: 19, fontWeight: '700', color: '#f4f4f6', textAlign: 'center' },
+  confirmTitle: { fontFamily: FONT.display, fontSize: 19, fontWeight: '700', color: C.text, textAlign: 'center' },
   confirmSub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', lineHeight: 20, marginTop: 8 },
   btn: { paddingVertical: 15, borderRadius: 15, alignItems: 'center', marginTop: 10 },
   btnPrimary: { backgroundColor: C.accent },

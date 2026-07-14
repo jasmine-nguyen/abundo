@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { tint, fmt } from './theme';
+import { C, tint, fmt } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
@@ -88,7 +88,7 @@ export type Sheet =
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
 export const BUCKET_COLOR: Record<Bucket, string> = {
-  Living: '#7FA9F0', Lifestyle: '#E59BD0', Income: '#35d9a0', Savings: '#C7A8F0',
+  Living: '#7FA9F0', Lifestyle: '#E59BD0', Income: C.good, Savings: '#C7A8F0',
 };
 export const PALETTE = ['#E8A87C', '#7FD49B', '#F08C8C', '#8AB4F8', '#F2A0C9', '#C7A8F0', '#F2C94C', '#6FD0C9', '#8FD46B', '#B0A8F0'];
 
@@ -1419,10 +1419,10 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       const met = actual >= b.budget;
       const pendingPct = Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
       let paceLabel: string, paceColor: string;
-      if (met) { paceLabel = fmt(actual - b.budget) + ' over target'; paceColor = '#35d9a0'; }
-      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = '#35d9a0'; }
+      if (met) { paceLabel = fmt(actual - b.budget) + ' over target'; paceColor = C.good; }
+      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = C.good; }
       else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = '#cfd2ff'; }
-      else { paceLabel = 'on pace'; paceColor = '#35d9a0'; }
+      else { paceLabel = 'on pace'; paceColor = C.good; }
       const spentLabel = pending > 0
         ? `${fmt(actual)} earned (${fmt(pending)} pending) of ${fmt(b.budget)}`
         : `${fmt(actual)} earned of ${fmt(b.budget)}`;
@@ -1431,7 +1431,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         spentLabel,
         remainAmount: fmt(met ? actual - b.budget : b.budget - actual),
         remainLabel: met ? 'over target' : 'to go',
-        remainColor: met ? '#35d9a0' : '#cfd2ff',
+        remainColor: met ? C.good : '#cfd2ff',
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
         pendingTint: tint(c.color, 0.45), paceLabel, paceColor, over: false,
         depth, parentId,
@@ -1450,18 +1450,18 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const over = spent > b.budget;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
     let paceLabel: string, paceColor: string;
-    if (over) { paceLabel = fmt(spent - b.budget) + ' over budget'; paceColor = '#ff6b6b'; }
-    else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = '#f4b740'; }
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = '#35d9a0'; }
-    else { paceLabel = 'on pace'; paceColor = '#35d9a0'; }
+    if (over) { paceLabel = fmt(spent - b.budget) + ' over budget'; paceColor = C.bad; }
+    else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
+    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = C.good; }
+    else { paceLabel = 'on pace'; paceColor = C.good; }
     const spentLabel = pending > 0
       ? `${fmt(spent)} spent (${fmt(pending)} pending) of ${fmt(b.budget)}`
       : `${fmt(spent)} spent of ${fmt(b.budget)}`;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
-      spentLabel, remainAmount: fmt(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? '#ff6b6b' : '#cfd2ff',
-      postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? '#ff6b6b' : c.color,
-      pendingTint: tint(over ? '#ff6b6b' : c.color, 0.45), paceLabel, paceColor, over,
+      spentLabel, remainAmount: fmt(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : '#cfd2ff',
+      postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : c.color,
+      pendingTint: tint(over ? C.bad : c.color, 0.45), paceLabel, paceColor, over,
       depth, parentId,
     });
     group(parentId, b.id);
@@ -1706,7 +1706,7 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     }
   }
   if (uncategorized) {
-    rowById.set(UNCATEGORIZED_KEY, mk(UNCATEGORIZED_KEY, 'Uncategorized', '#c9b3f5', 'q',
+    rowById.set(UNCATEGORIZED_KEY, mk(UNCATEGORIZED_KEY, 'Uncategorized', C.purple, 'q',
       'rgba(160,130,240,.16)', uncategorized.posted, uncategorized.pending, 0, null, false, true));
     pushEmit(null, UNCATEGORIZED_KEY);
   }
@@ -1835,12 +1835,12 @@ export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Tr
   const key = uncategorized ? 'q' : isIncome ? 'home' : c!.icon;
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return {
-    id: t.transaction_id, merchant: merchantLabel(t), amountLabel: amtStr, amountColor: t.amount > 0 ? '#35d9a0' : '#f1f1f4',
+    id: t.transaction_id, merchant: merchantLabel(t), amountLabel: amtStr, amountColor: t.amount > 0 ? C.good : C.textBright,
     isPending: t.status === 'pending', icon: key,
-    iconColor: uncategorized ? '#c9b3f5' : isIncome ? '#9aa2b5' : c!.color,
+    iconColor: uncategorized ? C.purple : isIncome ? '#9aa2b5' : c!.color,
     chipBg: uncategorized ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),
     categoryLabel: uncategorized ? 'Uncategorized' : isIncome ? 'Income' : c!.name,
-    categoryColor: uncategorized ? '#c9b3f5' : isIncome ? '#9aa2b5' : '#9a9aa4',
+    categoryColor: uncategorized ? C.purple : isIncome ? '#9aa2b5' : C.textMid,
     categoryWeight: uncategorized ? '700' : '500', tappable: uncategorized,
   };
 }
@@ -1969,7 +1969,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
       ...common,
       spentBig: fmt(actual), ofBudget: 'of ' + fmt(b.budget),
       statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
-      statusColor: met ? '#35d9a0' : '#cfd2ff',
+      statusColor: met ? C.good : '#cfd2ff',
       postedPct, pendingPct,
       postedColor: c.color, pendingTint: tint(c.color, 0.45),
       dailyLabel: met ? 'Target reached' : `${fmt(perDay)}/day to target`,
@@ -1986,9 +1986,9 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     ...common,
     spentBig: fmt(spent), ofBudget: 'of ' + fmt(b.budget),
     statusLabel: over ? 'Over budget — ease up' : 'On target — keep it up',
-    statusColor: over ? '#ff6b6b' : '#35d9a0',
+    statusColor: over ? C.bad : C.good,
     postedPct, pendingPct,
-    postedColor: over ? '#ff6b6b' : c.color, pendingTint: tint(over ? '#ff6b6b' : c.color, 0.45),
+    postedColor: over ? C.bad : c.color, pendingTint: tint(over ? C.bad : c.color, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
   };
 }

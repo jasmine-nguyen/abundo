@@ -56,7 +56,7 @@ const CATS = [
   { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
 ];
 
-// A category pill's label goes white (#fff) when selected, C.textMid ('#9a9aa4') otherwise
+// A category pill's label goes white (#fff) when selected, C.textMid otherwise
 // (Overlays.tsx ruleCatText style). Flatten the style array and read the effective color.
 function pillColor(name: string): string | undefined {
   const el = screen.getByText(name);

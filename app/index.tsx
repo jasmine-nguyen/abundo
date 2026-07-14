@@ -21,8 +21,8 @@ function Logo() {
         </LinearGradient>
       </Defs>
       <Rect width={64} height={64} rx={18} fill="url(#wlogo)" />
-      <Polyline points="15,18 23,40 32,27 41,40 49,24" fill="none" stroke="#15123a" strokeWidth={5.2} strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx={49} cy={24} r={3.1} fill="#15123a" />
+      <Polyline points="15,18 23,40 32,27 41,40 49,24" fill="none" stroke={C.heroInk} strokeWidth={5.2} strokeLinecap="round" strokeLinejoin="round" />
+      <Circle cx={49} cy={24} r={3.1} fill={C.heroInk} />
     </Svg>
   );
 }

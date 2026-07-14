@@ -5,6 +5,7 @@
 // literal id 'income', not on the bucket).
 import { describe, it, expect } from '@jest/globals';
 import { transactionView } from '../context';
+import { C } from '../theme';
 import { makeState, cat, txn } from './factory';
 
 describe('transactionView — user income category is first-class (WHIT-158)', () => {
@@ -23,6 +24,6 @@ describe('transactionView — user income category is first-class (WHIT-158)', (
     const v = transactionView(s(), txn({ category: 'salary', amount: 5000 }));
     expect(v.tappable).toBe(false);
     expect(v.amountLabel).toBe('+$5,000.00');
-    expect(v.amountColor).toBe('#35d9a0');
+    expect(v.amountColor).toBe(C.good);
   });
 });

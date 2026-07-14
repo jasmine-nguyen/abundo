@@ -3,6 +3,7 @@
 // makeState. This is the single testable unit driving the screen.
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown, UNCATEGORIZED_KEY } from '../context';
+import { C } from '../theme';
 import { makeState, cat, spend } from './factory';
 
 const cats = [
@@ -55,7 +56,7 @@ describe('categoryBreakdown', () => {
     expect(uncat.name).toBe('Uncategorized');
     expect(uncat.uncategorized).toBe(true);
     expect(uncat.icon).toBe('q');
-    expect(uncat.color).toBe('#c9b3f5');
+    expect(uncat.color).toBe(C.purple);
   });
 
   it('drops zero/negative-spend rows and excludes them from the total', () => {

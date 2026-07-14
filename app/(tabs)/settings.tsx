@@ -136,9 +136,9 @@ function Row({ icon, label, value, onPress, last }: { icon: string; label: strin
 
 const styles = StyleSheet.create({
   profile: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 16, marginBottom: 18 },
-  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#7079e3', alignItems: 'center', justifyContent: 'center' },
-  avatarImg: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#7079e3' },
-  avatarText: { fontFamily: FONT.display, fontWeight: '800', fontSize: 19, color: C.heroInk },
+  avatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
+  avatarImg: { width: 52, height: 52, borderRadius: 26, backgroundColor: C.accent },
+  avatarText: { fontFamily: FONT.display, fontWeight: '800', fontSize: 19, color: C.accentInk },
   profileName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.text },
   profileEmail: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 1 },
 

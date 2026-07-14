@@ -1,36 +1,41 @@
 // Design tokens ported from Whittle.dc.html (Whittle).
 export const C = {
-  bg: '#0c0c10',
-  bgDeep: '#0a0a0d',
-  card: '#16161c',
-  cardAlt: '#1c1c23',
-  hairline: 'rgba(255,255,255,.05)',
-  hairlineStrong: 'rgba(255,255,255,.08)',
+  bg: '#16161e',
+  bgDeep: '#13131a',
+  card: '#1f2030',
+  cardAlt: '#24263a',
+  hairline: 'rgba(122,162,247,.1)',
+  hairlineStrong: 'rgba(122,162,247,.16)',
 
-  text: '#f4f4f6',
-  textBright: '#f1f1f4',
-  textMid: '#9a9aa4',
-  textDim: '#83838d',
-  textFaint: '#6a6a74',
-  textFaintest: '#5a5a64',
-  placeholder: '#6a6a74',
+  text: '#c0caf5',
+  textBright: '#d5daf5',
+  textMid: '#a9b1d6',
+  textDim: '#8f97c0',
+  textFaint: '#565f89',
+  textFaintest: '#414868',
+  placeholder: '#565f89',
 
-  accent: '#7c8cff',
-  accentSoft: '#a8b2ff',
-  accentSofter: '#c4caff',
-  accentInk: '#13132e',
+  accent: '#7aa2f7',
+  accentSoft: '#9db3f9',
+  accentSofter: '#c0caf5',
+  accentInk: '#16161e',
 
-  good: '#35d9a0',
-  goodBright: '#2fe3a6',
-  warn: '#f4b740',
-  warnAmber: '#f4b740',
-  bad: '#ff6b6b',
-  badBright: '#ff8e8e',
+  good: '#2ac3de',
+  goodBright: '#42d4ec',
+  warn: '#e0af68',
+  warnAmber: '#e0af68',
+  bad: '#f7768e',
+  badBright: '#ff8fa3',
 
-  purple: '#c9b3f5',
+  purple: '#bb9af7',
 
-  heroInk: '#15123a',
-  heroInk2: '#1c1846',
+  heroInk: '#16161e',
+  heroInk2: '#1a1b26',
+
+  // Hero card gradient (Tokyo Night): accent-blue → indigo → purple, 150°.
+  heroGradFrom: '#7aa2f7',
+  heroGradMid: '#8b8ff5',
+  heroGradTo: '#bb9af7',
 } as const;
 
 export const FONT = {

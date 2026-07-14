@@ -6,7 +6,7 @@ import { Icon } from '../../src/icons';
 import { useAppContext, categoryBreakdown } from '../../src/context';
 import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { RetryButton } from '../../src/components/ui';
+import { RetryButton, HeroGradientFill } from '../../src/components/ui';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
 
 export default function Insights() {
@@ -76,6 +76,7 @@ export default function Insights() {
 
         {/* hero: where the money went in the selected cycle */}
         <View style={styles.hero}>
+          <HeroGradientFill />
           <View style={styles.heroBlob} />
           <Text style={styles.heroEyebrow}>{cycle === 0 ? 'THIS PAY CYCLE' : 'LAST PAY CYCLE'}</Text>
           {/* Never show a confident "$0" over a load/error — the total reads breakdown,
@@ -165,7 +166,7 @@ const styles = StyleSheet.create({
   cycleTabText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
   cycleTabTextActive: { color: C.accentSoft, fontWeight: '700' },
 
-  hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: '#6f7bf0' },
+  hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
   heroBlob: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.65)', letterSpacing: 0.2 },
   heroTotal: { fontFamily: FONT.display, fontSize: 40, fontWeight: '800', color: C.heroInk, letterSpacing: -1.5, marginTop: 4 },
@@ -175,7 +176,7 @@ const styles = StyleSheet.create({
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
-  rowAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: '#f1f1f4', letterSpacing: -0.4 },
+  rowAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, letterSpacing: -0.4 },
   track: { flexDirection: 'row', gap: 2, height: 8, marginTop: 14, backgroundColor: 'rgba(255,255,255,.05)', borderRadius: 5, overflow: 'hidden' },
 
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },
