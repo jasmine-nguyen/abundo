@@ -3,6 +3,7 @@
 // on the budgets screens, so they're the highest-value regression lock.
 import { describe, it, expect } from '@jest/globals';
 import { elapsedFrac, budgetViews, budgetDetail } from '../context';
+import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
 
 describe('elapsedFrac', () => {
@@ -70,7 +71,7 @@ describe('budgetViews', () => {
 // WHIT-69: an Income-bucket category's budget is an earn-target (a floor). Over is
 // GOOD, so the direction and colours invert — never the red "over budget" branch —
 // and income rows are kept OUT of the spend hero totals.
-const RED = '#ff6b6b';
+const RED = C.bad;
 const income = (over = {}) => cat({ id: 'salary', name: 'Salary', color: '#35d9a0', bucket: 'Income', ...over });
 
 describe('budgetViews — income earn-targets (over-is-good)', () => {
@@ -94,7 +95,7 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
   it('ahead of the linear pace shows green "ahead of pace", still not met', () => {
     const row = budgetViews(state(3000)).rows[0];   // 3000 > 2500 target, < 5000 goal
     expect(row.paceLabel).toContain('ahead of pace');
-    expect(row.paceColor).toBe('#35d9a0');
+    expect(row.paceColor).toBe(C.good);
     expect(row.remainLabel).toBe('to go');
     expect(row.over).toBe(false);
   });
@@ -103,7 +104,7 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
     const row = budgetViews(state(6000)).rows[0];   // earned 6000 ≥ 5000 floor
     expect(row.remainLabel).toBe('over target');
     expect(row.remainAmount).toBe('$1,000');        // 6000 - 5000 over the floor
-    expect(row.remainColor).toBe('#35d9a0');
+    expect(row.remainColor).toBe(C.good);
     expect(row.paceLabel).toContain('over target');
     expect(row.over).toBe(false);
   });
@@ -148,7 +149,7 @@ describe('budgetDetail — income earn-targets', () => {
   it('target reached: green status and no daily-to-go', () => {
     const d = detail(6000);
     expect(d.statusLabel).toBe('Target reached — nice');
-    expect(d.statusColor).toBe('#35d9a0');
+    expect(d.statusColor).toBe(C.good);
     expect(d.dailyLabel).toBe('Target reached');
   });
 });

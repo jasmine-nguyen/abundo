@@ -6,7 +6,7 @@ import { C, FONT, fmt } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
-import { Bar, RetryButton } from '../src/components/ui';
+import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { Header } from '../src/components/Header';
 
 // WHIT-233: the home-loan detail screen, relocated out of the Goal tab (which is now the
@@ -39,6 +39,7 @@ export default function Mortgage() {
         {/* hero — real payoff progress once loan facts are set, else a set-up prompt
             that still shows the one thing we genuinely know: the live balance. */}
         <View style={styles.hero}>
+          <HeroGradientFill />
           <View style={styles.heroBlob} />
           {g.factsReady && g.balanceKnown ? (
             <>
@@ -262,7 +263,7 @@ export default function Mortgage() {
 
 const styles = StyleSheet.create({
 
-  hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 14, backgroundColor: '#6470de' },
+  hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 14, backgroundColor: C.accent },
   heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,.1)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3 },
   heroBig: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },

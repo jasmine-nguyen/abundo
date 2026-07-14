@@ -1,6 +1,29 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ViewStyle, TextStyle, StyleProp } from 'react-native';
+import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { C, FONT } from '../theme';
+
+// Full-bleed 150° accent→purple gradient fill for hero cards (Tokyo Night). Renders as an
+// absolutely-positioned layer, so drop it as the FIRST child of a position:relative,
+// overflow:hidden hero card — it sits behind the decorative blobs and the content, which
+// use C.heroInk / C.heroInk2 so they stay legible on the light-blue fill. Reads the
+// heroGradFrom → heroGradMid → heroGradTo theme tokens.
+export function HeroGradientFill() {
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Svg width="100%" height="100%">
+        <Defs>
+          <LinearGradient id="heroGrad" x1="0" y1="0" x2="0.5" y2="1">
+            <Stop offset="0" stopColor={C.heroGradFrom} />
+            <Stop offset="0.55" stopColor={C.heroGradMid} />
+            <Stop offset="1" stopColor={C.heroGradTo} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill="url(#heroGrad)" />
+      </Svg>
+    </View>
+  );
+}
 
 // A Retry affordance for a failed-read error state. Owns the accessibility contract (button
 // role + a screen-reader label) and the "Retry" label in ONE place, so the app's several
