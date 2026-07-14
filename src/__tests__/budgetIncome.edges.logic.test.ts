@@ -31,12 +31,12 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
     expect(row.postedColor).not.toBe(RED);
   });
 
-  it('earned EXACTLY on the linear pace → calm green "on pace", still "to go"', () => {
+  it('earned EXACTLY on the linear pace → "on pace" (muted pace), still "to go"', () => {
     const row = budgetViews(viewState(2500)).rows[0]; // 2500 == elapsed*budget, < floor
     expect(row.paceLabel).toBe('on pace');
-    expect(row.paceColor).toBe(C.good);
+    expect(row.paceColor).toBe('#cfd2ff');
     expect(row.remainLabel).toBe('to go');
-    expect(row.remainColor).toBe('#cfd2ff');
+    expect(row.remainColor).toBe(C.good); // remain amount is the cyan highlight
     expect(row.remainAmount).toBe('$2,500');        // 5000 - 2500 still to earn
     expect(row.over).toBe(false);
   });
