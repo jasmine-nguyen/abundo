@@ -1449,10 +1449,12 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       const met = actual >= b.budget;
       const pendingPct = Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
       let paceLabel: string, paceColor: string;
-      if (met) { paceLabel = fmt(actual - b.budget) + ' over target'; paceColor = C.good; }
-      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = C.good; }
+      // Same hierarchy as spend rows: the remaining amount is the cyan highlight, the pace
+      // sub-label is the muted #cfd2ff.
+      if (met) { paceLabel = fmt(actual - b.budget) + ' over target'; paceColor = '#cfd2ff'; }
+      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = '#cfd2ff'; }
       else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = '#cfd2ff'; }
-      else { paceLabel = 'on pace'; paceColor = C.good; }
+      else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
       const spentLabel = pending > 0
         ? `${fmt(actual)} earned (${fmt(pending)} pending) of ${fmt(b.budget)}`
         : `${fmt(actual)} earned of ${fmt(b.budget)}`;
@@ -1461,7 +1463,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         spentLabel,
         remainAmount: fmt(met ? actual - b.budget : b.budget - actual),
         remainLabel: met ? 'over target' : 'to go',
-        remainColor: met ? C.good : '#cfd2ff',
+        remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
         pendingTint: tint(c.color, 0.45), paceLabel, paceColor, over: false,
         depth, parentId,
@@ -1480,16 +1482,18 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const over = spent > b.budget;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
     let paceLabel: string, paceColor: string;
+    // The "left" amount is the row's cyan highlight; the pace sub-label is the muted #cfd2ff.
+    // Warnings keep their own colour (over pace = amber, over budget = red).
     if (over) { paceLabel = fmt(spent - b.budget) + ' over budget'; paceColor = C.bad; }
     else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = C.good; }
-    else { paceLabel = 'on pace'; paceColor = C.good; }
+    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = '#cfd2ff'; }
+    else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
     const spentLabel = pending > 0
       ? `${fmt(spent)} spent (${fmt(pending)} pending) of ${fmt(b.budget)}`
       : `${fmt(spent)} spent of ${fmt(b.budget)}`;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
-      spentLabel, remainAmount: fmt(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : '#cfd2ff',
+      spentLabel, remainAmount: fmt(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : c.color,
       pendingTint: tint(over ? C.bad : c.color, 0.45), paceLabel, paceColor, over,
       depth, parentId,

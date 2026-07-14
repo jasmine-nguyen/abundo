@@ -92,10 +92,10 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
     expect(row.paceLabel).toContain('to go');       // 2500 target vs 1000 earned → behind, but calm
   });
 
-  it('ahead of the linear pace shows green "ahead of pace", still not met', () => {
+  it('ahead of the linear pace reads "ahead of pace" (muted pace), still not met', () => {
     const row = budgetViews(state(3000)).rows[0];   // 3000 > 2500 target, < 5000 goal
     expect(row.paceLabel).toContain('ahead of pace');
-    expect(row.paceColor).toBe(C.good);
+    expect(row.paceColor).toBe('#cfd2ff'); // pace sub-label is muted; the remain amount is the cyan highlight
     expect(row.remainLabel).toBe('to go');
     expect(row.over).toBe(false);
   });
