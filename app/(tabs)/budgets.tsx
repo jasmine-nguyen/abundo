@@ -6,7 +6,7 @@ import { Icon, Glyph } from '../../src/icons';
 import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { WhittleBar, RetryButton } from '../../src/components/ui';
+import { WhittleBar, RetryButton, HeroGradientFill } from '../../src/components/ui';
 
 export default function Budgets() {
   const router = useRouter();
@@ -56,6 +56,7 @@ export default function Budgets() {
       <>
         {/* hero */}
         <View style={styles.hero}>
+          <HeroGradientFill />
           <View style={styles.heroBlob1} />
           <View style={styles.heroBlob2} />
           <Text style={styles.heroEyebrow}>THIS PAY CYCLE</Text>
@@ -119,7 +120,7 @@ const styles = StyleSheet.create({
   fill: { flexGrow: 1 },
   addBtn: { width: 40, height: 40, backgroundColor: 'rgba(124,140,255,.16)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
-  hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: '#6f7bf0' },
+  hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
   heroBlob1: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },
   heroBlob2: { position: 'absolute', right: 34, bottom: -46, width: 90, height: 90, borderRadius: 45, backgroundColor: 'rgba(255,255,255,.08)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.65)', letterSpacing: 0.2 },

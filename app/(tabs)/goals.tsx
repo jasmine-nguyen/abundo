@@ -7,7 +7,7 @@ import { balanceGoalView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { Bar, RetryButton } from '../../src/components/ui';
+import { Bar, RetryButton, HeroGradientFill } from '../../src/components/ui';
 
 // "2026-08-15" -> "Aug 2026". Parsed by hand (no Date) so the label can't shift across a
 // timezone boundary. Falls back to the raw ISO if it's somehow unparseable.
@@ -70,6 +70,7 @@ export default function Goals() {
         <>
           {/* The mortgage — always shown (its own big goal), taps into the full payoff screen. */}
           <Pressable testID="mortgage-link" onPress={() => router.push('/mortgage')} style={styles.mortgageCard}>
+            <HeroGradientFill />
             <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
             <View style={{ flex: 1 }}>
               <Text style={styles.mortgageTitle}>The mortgage</Text>
@@ -173,7 +174,7 @@ const styles = StyleSheet.create({
   addBtn: { width: 40, height: 40, backgroundColor: 'rgba(124,140,255,.16)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   // The mortgage entry — a light hero-tinted card so it reads as the headline goal.
-  mortgageCard: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: '#6470de', borderRadius: 20, padding: 18, marginBottom: 20 },
+  mortgageCard: { position: 'relative', overflow: 'hidden', flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.accent, borderRadius: 20, padding: 18, marginBottom: 20 },
   mortgageChip: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(21,18,58,.16)', alignItems: 'center', justifyContent: 'center' },
   mortgageTitle: { fontFamily: FONT.display, fontSize: 17, fontWeight: '800', color: C.heroInk, letterSpacing: -0.3 },
   mortgageSub: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInk2, marginTop: 2 },

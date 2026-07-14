@@ -50,7 +50,7 @@ export default function Transactions() {
           // the cold-load state, so the two don't both spin at once (code-critic).
           refreshing={isFetching && transactions.length > 0}
           onRefresh={onRefresh}
-          tintColor="#7c8cff"
+          tintColor={C.accent}
           progressViewOffset={headerHeight}
         />
       )}
@@ -151,10 +151,10 @@ export default function Transactions() {
 function Seg({ label, active, onPress, flex, badge }: { label: string; active: boolean; onPress: () => void; flex: number; badge?: number }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && styles.segPressed]}>
-      <Text style={[styles.segText, { color: active ? '#13132e' : C.textMid }]}>{label}</Text>
+      <Text style={[styles.segText, { color: active ? C.accentInk : C.textMid }]}>{label}</Text>
       {badge !== undefined && (
-        <View style={[styles.badge, { backgroundColor: active ? 'rgba(19,19,46,.18)' : 'rgba(255,107,107,.2)' }]}>
-          <Text style={[styles.badgeText, { color: active ? '#13132e' : '#ff8e8e' }]}>{badge}</Text>
+        <View style={[styles.badge, { backgroundColor: active ? tint(C.accentInk, 0.18) : tint(C.bad, 0.2) }]}>
+          <Text style={[styles.badgeText, { color: active ? C.accentInk : C.badBright }]}>{badge}</Text>
         </View>
       )}
     </Pressable>

@@ -7,6 +7,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { budgetDetail, budgetEditInfo } from '../context';
 import type { BudgetDetailInput, BudgetEditInput } from '../context';
+import { C } from '../theme';
 import { cat, budget, txn } from './factory';
 
 describe('budgetDetail — narrow BudgetDetailInput', () => {
@@ -24,7 +25,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
     expect(bd!.ofBudget).toBe('of $100');
     expect(bd!.postedPct).toBe(40);
     expect(bd!.statusLabel).toBe('On target — keep it up');
-    expect(bd!.statusColor).toBe('#35d9a0');
+    expect(bd!.statusColor).toBe(C.good);
     expect(bd!.relEmpty).toBe(false);
     expect(bd!.relGroups).toHaveLength(1);
   });

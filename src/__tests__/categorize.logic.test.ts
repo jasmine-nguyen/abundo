@@ -4,6 +4,7 @@
 // regression here would silently mislabel money.
 import { describe, it, expect } from '@jest/globals';
 import { isUncategorized, countUncategorized, transactionView, transactionGroups } from '../context';
+import { C } from '../theme';
 import { makeState, cat, txn } from './factory';
 
 const state = () => makeState({ categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', color: '#E8A87C' })] });
@@ -53,7 +54,7 @@ describe('transactionView', () => {
     const v = transactionView(state(), txn({ category: 'income', amount: 2500 }));
     expect(v.categoryLabel).toBe('Income');
     expect(v.tappable).toBe(false);
-    expect(v.amountColor).toBe('#35d9a0'); // positive amount → good/green
+    expect(v.amountColor).toBe(C.good); // positive amount → good/cyan
   });
 
   it('renders a categorized row with the category name and colour, not tappable', () => {
