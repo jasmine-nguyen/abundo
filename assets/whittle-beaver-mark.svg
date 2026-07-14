@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Bucky the Beaver — mark only, transparent background. In-app use at any size. -->
+  <!-- Ears -->
+  <circle cx="152" cy="140" r="64" fill="#8a5a30"/>
+  <circle cx="360" cy="140" r="64" fill="#8a5a30"/>
+  <circle cx="152" cy="146" r="35" fill="#70481f"/>
+  <circle cx="360" cy="146" r="35" fill="#70481f"/>
+
+  <!-- Head -->
+  <ellipse cx="256" cy="286" rx="206" ry="192" fill="#b07642"/>
+
+  <!-- Cheeks -->
+  <ellipse cx="118" cy="330" rx="44" ry="33" fill="#f28e8e" opacity="0.6"/>
+  <ellipse cx="394" cy="330" rx="44" ry="33" fill="#f28e8e" opacity="0.6"/>
+
+  <!-- Muzzle -->
+  <ellipse cx="256" cy="352" rx="120" ry="98" fill="#cf9660"/>
+
+  <!-- Eye whites -->
+  <ellipse cx="194" cy="248" rx="53" ry="60" fill="#ffffff"/>
+  <ellipse cx="318" cy="248" rx="53" ry="60" fill="#ffffff"/>
+
+  <!-- Irises -->
+  <circle cx="206" cy="258" r="28" fill="#2b2118"/>
+  <circle cx="306" cy="258" r="28" fill="#2b2118"/>
+  <!-- Highlights -->
+  <circle cx="196" cy="248" r="9" fill="#ffffff"/>
+  <circle cx="296" cy="248" r="9" fill="#ffffff"/>
+
+  <!-- Nose -->
+  <ellipse cx="256" cy="330" rx="35" ry="27" fill="#2b2118"/>
+
+  <!-- Mouth -->
+  <path d="M214 366 Q235 392 256 392 Q277 392 298 366" fill="none"
+        stroke="#2b2118" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Teeth -->
+  <rect x="238" y="392" width="17" height="46" rx="7" fill="#ffffff" stroke="#d9d2c6" stroke-width="2"/>
+  <rect x="257" y="392" width="17" height="46" rx="7" fill="#ffffff" stroke="#d9d2c6" stroke-width="2"/>
+</svg>

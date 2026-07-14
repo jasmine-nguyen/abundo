@@ -1,7 +1,7 @@
 {
   "expo": {
     "scheme": "acme",
-    "icon": "./assets/whittle-logo.png",
+    "icon": "./assets/whittle-beaver-icon-ios.png",
     "plugins": [
       "expo-router",
       "expo-font",
@@ -20,6 +20,7 @@
     "slug": "whittle",
     "ios": {
       "bundleIdentifier": "com.jasminenguyen.whittle",
+      "icon": "./assets/whittle-beaver-icon-ios.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -31,7 +32,11 @@
       }
     },
     "android": {
-      "package": "com.jasminenguyen.whittle"
+      "package": "com.jasminenguyen.whittle",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/whittle-beaver-adaptive-foreground.png",
+        "backgroundColor": "#2ac3de"
+      }
     },
     "owner": "ramen_broth"
   }
