@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, letterSpacing: 0.2, marginHorizontal: 4, marginBottom: 4 },
 
   empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30 },
-  emptyIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: 'rgba(53,217,160,.12)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  emptyIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: tint(C.good, 0.12), alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright },
   emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
 

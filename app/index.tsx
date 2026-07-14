@@ -4,7 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Rect, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
-import { C, FONT } from '../src/theme';
+import { C, FONT, tint } from '../src/theme';
 import { signInWithPassword, signInWithGoogle, completeNewPassword, requestPasswordReset, confirmPasswordReset } from '../src/auth';
 
 // Required so a returning OAuth redirect (Google) can dismiss the auth browser and
@@ -391,6 +391,6 @@ const styles = StyleSheet.create({
   altText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: '#e2e2e8' },
   errorBox: { backgroundColor: 'rgba(255,107,107,.12)', borderWidth: 1, borderColor: 'rgba(255,107,107,.35)', borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginBottom: 14 },
   errorText: { fontFamily: FONT.body, fontSize: 13.5, color: C.bad, textAlign: 'center' },
-  noticeBox: { backgroundColor: 'rgba(127,212,155,.12)', borderWidth: 1, borderColor: 'rgba(127,212,155,.35)', borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginBottom: 14 },
-  noticeText: { fontFamily: FONT.body, fontSize: 13.5, color: '#7fd49b', textAlign: 'center' },
+  noticeBox: { backgroundColor: tint(C.good, 0.12), borderWidth: 1, borderColor: tint(C.good, 0.35), borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginBottom: 14 },
+  noticeText: { fontFamily: FONT.body, fontSize: 13.5, color: C.good, textAlign: 'center' },
 });

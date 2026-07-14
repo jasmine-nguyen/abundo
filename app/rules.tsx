@@ -90,7 +90,7 @@ const styles = StyleSheet.create({
   ruleBody: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   pattern: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.textBright, letterSpacing: 0.2 },
   target: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
-  newBadge: { fontFamily: FONT.body, fontSize: 10, fontWeight: '700', color: C.good, backgroundColor: 'rgba(53,217,160,.14)', paddingVertical: 3, paddingHorizontal: 7, borderRadius: 6, overflow: 'hidden' },
+  newBadge: { fontFamily: FONT.body, fontSize: 10, fontWeight: '700', color: C.good, backgroundColor: tint(C.good, 0.14), paddingVertical: 3, paddingHorizontal: 7, borderRadius: 6, overflow: 'hidden' },
   trash: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   stateCard: { alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingVertical: 28, paddingHorizontal: 14, marginBottom: 8 },
   stateText: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center' },

@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, fmt } from '../src/theme';
+import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { milestoneView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
@@ -98,7 +98,7 @@ export default function Milestone() {
           <Text style={styles.cardTitle}>The 36-month plan</Text>
           {v.rows.map((r) => (
             <View key={r.sprint} style={styles.row}>
-              <View style={[styles.check, { backgroundColor: r.cleared ? 'rgba(53,217,160,.16)' : 'rgba(255,255,255,.06)' }]}>
+              <View style={[styles.check, { backgroundColor: r.cleared ? tint(C.good, 0.16) : 'rgba(255,255,255,.06)' }]}>
                 <Glyph name={r.cleared ? 'check' : 'target'} size={16} color={r.cleared ? C.good : C.textFaint} />
               </View>
               <View style={{ flex: 1 }}>
