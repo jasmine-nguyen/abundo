@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, fmt } from '../src/theme';
+import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
 import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   contribBody: { fontFamily: FONT.body, fontSize: 13, color: '#a6a6b0', lineHeight: 19, marginTop: 6 },
   contribStrong: { color: '#e6e6ea', fontWeight: '700' },
 
-  repayChip: { width: 42, height: 42, borderRadius: 13, backgroundColor: 'rgba(53,217,160,.14)', alignItems: 'center', justifyContent: 'center' },
+  repayChip: { width: 42, height: 42, borderRadius: 13, backgroundColor: tint(C.good, 0.14), alignItems: 'center', justifyContent: 'center' },
   repayTitle: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.textBright },
   repaySub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   repayAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.good },
