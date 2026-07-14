@@ -36,6 +36,10 @@ export default function TransactionDetail() {
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        // The NOTE + TAGS fields sit at the bottom of the screen, so the keyboard opens
+        // right over them and you can't see what you're typing. This insets the scroll
+        // content by the keyboard height and scrolls the focused field into view (iOS).
+        automaticallyAdjustKeyboardInsets
       >
         <DetailStates
           isLoading={isLoading}
