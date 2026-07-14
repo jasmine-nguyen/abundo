@@ -88,9 +88,39 @@ export type Sheet =
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
 export const BUCKET_COLOR: Record<Bucket, string> = {
-  Living: '#7FA9F0', Lifestyle: '#E59BD0', Income: C.good, Savings: '#C7A8F0',
+  Living: '#7aa2f7', Lifestyle: '#bb9af7', Income: C.good, Savings: '#73daca',
 };
-export const PALETTE = ['#E8A87C', '#7FD49B', '#F08C8C', '#8AB4F8', '#F2A0C9', '#C7A8F0', '#F2C94C', '#6FD0C9', '#8FD46B', '#B0A8F0'];
+export const PALETTE = ['#ff9e64', '#2ac3de', '#f7768e', '#7aa2f7', '#ff75a0', '#bb9af7', '#e0af68', '#73daca', '#7dcfff', '#b4a5f7'];
+
+// Tokyo Night category palette (theme re-skin). The old warm palette — greens, tan, pink —
+// clashed with the Tokyo Night theme, so every legacy category colour maps to a Tokyo Night
+// hue (greens → cyan/teal; nothing warm/green left). Applied on READ (toCategory) so existing
+// categories — whose colour is stored server-side — recolour with no data migration. A colour
+// that isn't a known legacy value (already-Tokyo-Night, or a future custom pick) passes through.
+const CATEGORY_COLOR_MAP: Record<string, string> = {
+  '#e8a87c': '#ff9e64', // tan → orange
+  '#7fd49b': '#2ac3de', // green → cyan
+  '#f08c8c': '#f7768e', // coral → rose
+  '#8ab4f8': '#7aa2f7', // blue → blue
+  '#f2a0c9': '#ff75a0', // pink → pink
+  '#c7a8f0': '#bb9af7', // lavender → purple
+  '#f2c94c': '#e0af68', // yellow → gold
+  '#6fd0c9': '#73daca', // teal-green → teal
+  '#8fd46b': '#7dcfff', // green → sky
+  '#b0a8f0': '#b4a5f7', // light purple → periwinkle
+  '#f0b27a': '#cba6f7', // orange → mauve
+  '#6fb6d0': '#41a6b5', // blue → deep teal
+  '#e59bd0': '#9d7cd8', // magenta → violet
+  '#7fa9f0': '#6a89f7', // blue → indigo
+};
+
+// Translate a stored category colour to its Tokyo Night equivalent. Unknown colours (already
+// re-themed, or a custom value) pass through unchanged. Returns undefined for a null/blank input
+// so callers can fall back to the palette default.
+export function normalizeCategoryColor(hex: string | null | undefined): string | undefined {
+  if (!hex) return undefined;
+  return CATEGORY_COLOR_MAP[hex.toLowerCase()] ?? hex;
+}
 
 // Max charges per batch category write. Mirrors the server's TRANSACTION_BATCH_MAX
 // (lambda_api/constants.py) — the "All from this merchant" sweep splits into chunks
@@ -380,7 +410,7 @@ export function toCategory(raw: any): Category {
     name: raw.name,
     bucket: raw.bucket,
     icon: raw.icon ?? 'coffee',
-    color: raw.color ?? PALETTE[0],
+    color: normalizeCategoryColor(raw.color) ?? PALETTE[0],
     recent: typeof raw.recent === 'number' ? raw.recent : 0,
     parent: raw.parent ?? null,
   };

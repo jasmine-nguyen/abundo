@@ -45,11 +45,30 @@ describe('selectCategories', () => {
       { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
       { id: 'x', name: 'X', bucket: 'Living' }, // missing icon/color/recent
     ]);
-    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52, parent: null });
+    // The legacy warm palette is remapped to Tokyo Night on read (#E8A87C tan → #ff9e64 orange).
+    expect(out[0]).toEqual({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#ff9e64', recent: 52, parent: null });
     expect(out[1].icon).toBe('coffee'); // guaranteed-present fallback glyph
     expect(out[1].recent).toBe(0); // default so budget math never sees undefined
     expect(typeof out[1].color).toBe('string'); // palette default
     expect(out[1].parent).toBeNull(); // absent parent normalised to null (top-level)
+  });
+
+  it('remaps every legacy warm category colour to its Tokyo Night hue (greens → cyan/teal)', () => {
+    const out = selectCategories([
+      { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }, // green
+      { id: 'shopping', name: 'Shopping', bucket: 'Lifestyle', icon: 'bag', color: '#6FD0C9', recent: 0 }, // teal-green
+      { id: 'fitness', name: 'Fitness', bucket: 'Lifestyle', icon: 'dumbbell', color: '#8FD46B', recent: 0 }, // green
+    ]);
+    expect(out[0].color).toBe('#2ac3de'); // green → cyan
+    expect(out[1].color).toBe('#73daca'); // teal-green → teal
+    expect(out[2].color).toBe('#7dcfff'); // green → sky
+  });
+
+  it('passes an already-Tokyo-Night / unknown colour through unchanged', () => {
+    const out = selectCategories([
+      { id: 'x', name: 'X', bucket: 'Living', icon: 'cart', color: '#2ac3de', recent: 0 },
+    ]);
+    expect(out[0].color).toBe('#2ac3de');
   });
 
   it('carries a category parent link through unchanged', () => {
