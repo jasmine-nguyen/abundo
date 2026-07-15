@@ -107,18 +107,32 @@ function SheetHost() {
       animationType={reduceMotion ? 'none' : 'fade'}
       onRequestClose={() => s.setSheet(null)}
     >
-      <Pressable style={styles.scrim} onPress={() => s.setSheet(null)}>
-        <Animated.View style={[styles.sheetLift, { transform: [{ translateY }] }]}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      {/* WHIT-288: the tap-to-close backdrop sits BEHIND the sheet (a sibling absoluteFill
+          Pressable), not WRAPPED around it. The old structure wrapped the sheet — and its
+          ScrollView — in a Pressable (to swallow taps so they didn't close the sheet); that
+          Pressable competed with the ScrollView for the touch, so the picker scrolled only
+          intermittently depending on where the finger landed. As a sibling underneath, the
+          backdrop still catches taps OUTSIDE the sheet (close), while the sheet is a plain View
+          whose ScrollView now owns the gesture and scrolls reliably. `box-none` on the lift lets
+          taps in the empty margins beside a narrow sheet fall through to the backdrop. */}
+      <View style={styles.scrim}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => s.setSheet(null)}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        />
+        <Animated.View style={[styles.sheetLift, { transform: [{ translateY }] }]} pointerEvents="box-none">
+          <View style={styles.sheet}>
             <View style={styles.grabber} />
             {s.sheet?.mode === 'picker' && <PickerSheet />}
             {s.sheet?.mode === 'confirm' && <ConfirmSheet />}
             {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
             {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
             {s.sheet?.mode === 'goalbalance' && <GoalBalanceSheet key={s.sheet.goalId} />}
-          </Pressable>
+          </View>
         </Animated.View>
-      </Pressable>
+      </View>
     </Modal>
   );
 }
