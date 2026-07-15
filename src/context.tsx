@@ -1455,9 +1455,9 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = '#cfd2ff'; }
       else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = '#cfd2ff'; }
       else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
-      const spentLabel = pending > 0
-        ? `${fmt(actual)} earned (${fmt(pending)} pending) of ${fmt(b.budget)}`
-        : `${fmt(actual)} earned of ${fmt(b.budget)}`;
+      // `actual` already includes pending, so the single "earned of budget" line counts it
+      // without the separate "(… pending)" breakout.
+      const spentLabel = `${fmt(actual)} earned of ${fmt(b.budget)}`;
       viewById.set(b.id, {
         id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
         spentLabel,
@@ -1488,9 +1488,9 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = '#cfd2ff'; }
     else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
-    const spentLabel = pending > 0
-      ? `${fmt(spent)} spent (${fmt(pending)} pending) of ${fmt(b.budget)}`
-      : `${fmt(spent)} spent of ${fmt(b.budget)}`;
+    // `spent` (= posted + pending) already counts pending, so a single "spent of budget" line
+    // is enough — no separate "(… pending)" breakout.
+    const spentLabel = `${fmt(spent)} spent of ${fmt(b.budget)}`;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmt(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,

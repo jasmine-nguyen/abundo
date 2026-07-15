@@ -41,9 +41,9 @@ describe('budgetViews — income earn-target boundaries (WHIT-69)', () => {
     expect(row.over).toBe(false);
   });
 
-  it('ONLY pending earnings ($0 posted) → ahead-of-pace from pending, "(… pending)" label', () => {
+  it('ONLY pending earnings ($0 posted) → ahead-of-pace from pending, folded into "earned"', () => {
     const row = budgetViews(viewState(0, 3000)).rows[0]; // actual 3000 > pace 2500
-    expect(row.spentLabel).toBe('$3,000 earned ($3,000 pending) of $5,000');
+    expect(row.spentLabel).toBe('$3,000 earned of $5,000'); // pending folded into earned, no breakout
     expect(row.paceLabel).toContain('ahead of pace');
     expect(row.postedPct).toBe(0);                  // nothing posted yet
     expect(row.pendingPct).toBe(60);                // 3000/5000 = 60%, not capped here

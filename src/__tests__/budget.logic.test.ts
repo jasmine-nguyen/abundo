@@ -55,11 +55,13 @@ describe('budgetViews', () => {
     expect(over.over).toBe(false); // over PACE, not over budget
   });
 
-  it('shows the pending amount in the spent label only when pending > 0', () => {
+  it('folds pending into the spent amount and omits the "(… pending)" breakout', () => {
+    // spent = posted + pending = 50, so pending is counted without a separate breakout.
     const withPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(withPending.spentLabel).toContain('pending');
+    expect(withPending.spentLabel).toBe('$50 spent of $100');
+    expect(withPending.spentLabel).not.toContain('pending');
     const noPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
-    expect(noPending.spentLabel).not.toContain('pending');
+    expect(noPending.spentLabel).toBe('$40 spent of $100');
   });
 
   it('skips a budget whose category no longer exists', () => {
@@ -111,7 +113,8 @@ describe('budgetViews — income earn-targets (over-is-good)', () => {
 
   it('labels the earned/target amount as "earned", not "spent"', () => {
     expect(budgetViews(state(1000)).rows[0].spentLabel).toBe('$1,000 earned of $5,000');
-    expect(budgetViews(state(1000, 200)).rows[0].spentLabel).toBe('$1,200 earned ($200 pending) of $5,000');
+    // earned already includes pending (1000 + 200), no separate pending breakout.
+    expect(budgetViews(state(1000, 200)).rows[0].spentLabel).toBe('$1,200 earned of $5,000');
   });
 
   it('excludes income rows from the spend hero totals but still lists them', () => {
