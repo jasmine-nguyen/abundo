@@ -1,0 +1,48 @@
+name: iOS → TestFlight
+
+# Build the production iOS app on EAS and submit it to TestFlight, hands-free.
+#
+# Trigger: a version tag (v*) OR the manual "Run workflow" button — deliberately
+# NOT every push to main, which would burn EAS build credits and clutter TestFlight.
+# To ship: `git tag v1.0.1 && git push origin v1.0.1` (or click Run workflow).
+#
+# To switch to build-on-every-merge instead, replace the `push.tags` block with:
+#   push:
+#     branches: [main]
+#
+# Requires one secret — EXPO_TOKEN (an Expo robot access token) — in
+# GitHub → Settings → Secrets and variables → Actions. The App Store Connect API
+# key is stored on EAS from the first interactive `eas submit`, so --auto-submit
+# works non-interactively here.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build-and-submit:
+    name: Build + submit to TestFlight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build on EAS and submit to TestFlight
+        run: eas build --platform ios --profile production --auto-submit --non-interactive
