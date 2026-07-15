@@ -6,13 +6,28 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://whittle-auth.auth.ap-southeast-2.amazoncognito.com",
+        "EXPO_PUBLIC_COGNITO_APP_CLIENT_ID": "35sg5n36igapvpatb67lcgukn1",
+        "EXPO_PUBLIC_COGNITO_USER_POOL_ID": "ap-southeast-2_EVVtKlGsJ"
+      }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://whittle-auth.auth.ap-southeast-2.amazoncognito.com",
+        "EXPO_PUBLIC_COGNITO_APP_CLIENT_ID": "35sg5n36igapvpatb67lcgukn1",
+        "EXPO_PUBLIC_COGNITO_USER_POOL_ID": "ap-southeast-2_EVVtKlGsJ"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://whittle-auth.auth.ap-southeast-2.amazoncognito.com",
+        "EXPO_PUBLIC_COGNITO_APP_CLIENT_ID": "35sg5n36igapvpatb67lcgukn1",
+        "EXPO_PUBLIC_COGNITO_USER_POOL_ID": "ap-southeast-2_EVVtKlGsJ"
+      }
     }
   },
   "submit": {
