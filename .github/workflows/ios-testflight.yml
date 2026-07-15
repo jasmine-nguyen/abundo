@@ -25,6 +25,14 @@ jobs:
   build-and-submit:
     name: Build + submit to TestFlight
     runs-on: ubuntu-latest
+    # EAS capability-sync auto-DISABLES any Apple capability it can't see in the
+    # entitlements. expo-notifications only injects aps-environment at build time, so
+    # the syncer wrongly strips Push Notifications from the App ID every run, and the
+    # generated provisioning profile then lacks aps-environment → the build fails to
+    # sign. Turn the syncer off; Push stays enabled on the App ID as configured.
+    # https://docs.expo.dev/build-reference/ios-capabilities/
+    env:
+      EXPO_NO_CAPABILITY_SYNC: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
