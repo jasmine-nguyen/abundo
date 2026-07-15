@@ -25,6 +25,7 @@ const TAG_MAX_COUNT = 20;
 export default function TransactionDetail() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { openPicker } = useAppContext();
   const { transactions, category, isLoading, isError, refetch } = useTransactionsScreenData();
   const transaction = transactions.find((t) => t.transaction_id === id);
   const view = transaction ? transactionView({ category }, transaction) : null;
@@ -63,7 +64,18 @@ export default function TransactionDetail() {
               <View style={styles.card}>
                 <Field label="Date" value={formatDayMonthYear(transaction.date)} />
                 <Field label="Account" value={transaction.account_name} />
-                <Field label="Category" value={view.categoryLabel} valueColor={view.categoryColor} />
+                {/* WHIT-287: the Category row is tappable — it re-opens the SAME categorize
+                    picker the lists use (openPicker → PickerSheet → ConfirmSheet), so any
+                    transaction can be re-filed, not just the Uncategorized ones a list row
+                    offers. `refileOnly` scopes the confirm step to THIS charge (no merchant-wide
+                    rule). The chevron marks it as the one editable field in this card. */}
+                <Field
+                  label="Category"
+                  value={view.categoryLabel}
+                  valueColor={view.categoryColor}
+                  onPress={() => openPicker(transaction.transaction_id, { refileOnly: true })}
+                  actionLabel={`Change category, currently ${view.categoryLabel}`}
+                />
                 <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
               </View>
 
@@ -190,12 +202,34 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
   );
 }
 
-function Field({ label, value, valueColor, last }: { label: string; value: string; valueColor?: string; last?: boolean }) {
-  return (
-    <View style={[styles.field, last && styles.fieldLast]}>
+// A label/value row inside the details card. When `onPress` is given the whole row
+// becomes a button (with a trailing chevron + press dim) — that's how the Category
+// row opens the re-categorize picker (WHIT-287). Without it, the row is static.
+function Field({ label, value, valueColor, last, onPress, actionLabel }: {
+  label: string; value: string; valueColor?: string; last?: boolean;
+  onPress?: () => void; actionLabel?: string;
+}) {
+  const inner = (
+    <>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <Text style={[styles.fieldValue, valueColor && { color: valueColor }]} numberOfLines={1}>{value}</Text>
-    </View>
+      <View style={styles.fieldValueWrap}>
+        <Text style={[styles.fieldValue, valueColor && { color: valueColor }]} numberOfLines={1}>{value}</Text>
+        {onPress && <Glyph name="chevron" size={16} color={C.textFaint} />}
+      </View>
+    </>
+  );
+  if (!onPress) {
+    return <View style={[styles.field, last && styles.fieldLast]}>{inner}</View>;
+  }
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={actionLabel}
+      style={({ pressed }) => [styles.field, last && styles.fieldLast, pressed && styles.fieldPressed]}
+    >
+      {inner}
+    </Pressable>
   );
 }
 
@@ -208,7 +242,9 @@ const styles = StyleSheet.create({
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, marginTop: 6 },
   field: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: C.hairline },
   fieldLast: { borderBottomWidth: 0 },
+  fieldPressed: { opacity: 0.6 },
   fieldLabel: { fontFamily: FONT.body, fontSize: 13.5, color: C.textMid },
+  fieldValueWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, justifyContent: 'flex-end' },
   fieldValue: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textBright, flexShrink: 1, textAlign: 'right' },
 
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 8, marginHorizontal: 4 },
