@@ -79,8 +79,11 @@ export interface Goal {
 // principal as a positive number, null until the balance poller's first run lands.
 export interface HomeLoanState { balance: number | null; asOf: string | null; }
 export type Sheet =
-  | { mode: 'picker'; txId: string }
-  | { mode: 'confirm'; txId: string; categoryId: string }
+  // WHIT-287: `refileOnly` marks a re-categorise opened from a transaction's detail screen —
+  // the confirm step then re-files ONLY this charge (applyCategory('one')) with no "all from
+  // this merchant" rule sweep. Absent/false on the list flow, which keeps both options.
+  | { mode: 'picker'; txId: string; refileOnly?: boolean }
+  | { mode: 'confirm'; txId: string; categoryId: string; refileOnly?: boolean }
   | { mode: 'addrule'; ruleId?: string }   // ruleId set -> editing an existing rule
   | { mode: 'paycycle' }
   | { mode: 'goalbalance'; goalId: string } // update a manual goal's balance in place (WHIT-235)
@@ -368,7 +371,7 @@ export interface AppContext {
   toggleAlerts: () => void;
   setPayCycleLength: (len: number) => void;
   setPayday: (last_pay_date: string) => void;
-  openPicker: (txId: string) => void;
+  openPicker: (txId: string, opts?: { refileOnly?: boolean }) => void;
   openGoalBalance: (goalId: string) => void;
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
@@ -626,10 +629,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);
 
-  const openPicker = useCallback((txId: string) => setSheet({ mode: 'picker', txId }), []);
+  // WHIT-287: opts.refileOnly (set by the transaction detail screen) carries through to the
+  // confirm step, where it collapses to a single-charge re-file with no merchant-wide rule.
+  const openPicker = useCallback((txId: string, opts?: { refileOnly?: boolean }) => setSheet({ mode: 'picker', txId, refileOnly: opts?.refileOnly }), []);
   const openGoalBalance = useCallback((goalId: string) => setSheet({ mode: 'goalbalance', goalId }), []);
   const chooseCategory = useCallback(
-    (categoryId: string) => setSheet((s) => (s && s.mode === 'picker' ? { mode: 'confirm', txId: s.txId, categoryId } : s)),
+    (categoryId: string) => setSheet((s) => (s && s.mode === 'picker' ? { mode: 'confirm', txId: s.txId, categoryId, refileOnly: s.refileOnly } : s)),
     [],
   );
 
