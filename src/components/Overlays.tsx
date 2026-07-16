@@ -100,22 +100,38 @@ function SheetHost() {
     springSheetIn(translateY, rm);
   }, [open, translateY]);
 
-  // WHIT-290: drag the grabber DOWN to dismiss. The handle sits above the ScrollView and claims
-  // its own touches (onStartShouldSetResponder), so it never competes with list scrolling or the
-  // backdrop. We track the finger delta from grant via pageY (no gesture library), move the sheet
-  // with the finger (down only), and on release either dismiss past the threshold or spring back
-  // to rest. Reads via stable refs so the handler object is created once with no stale capture.
+  // WHIT-290/WHIT-293: drag the grabber DOWN to dismiss. The handle sits above the ScrollView and
+  // claims its own touches (onStartShouldSetResponder), so it never competes with list scrolling or
+  // the backdrop. We track the finger delta from grant via pageY (no gesture library) and move the
+  // sheet with the finger (down only). On release we dismiss on EITHER a far-enough pull OR a quick
+  // downward flick — the flick makes it forgiving, so a short fast pull works instead of springing
+  // back. Velocity is the last move segment's speed (Δpx/Δms from event timestamps); dt≤0 or a
+  // missing timestamp falls back to 0 so the distance path still decides. Stable refs → the handler
+  // object is created once with no stale capture.
   const dragStartY = useRef(0);
+  const lastY = useRef(0);
+  const lastT = useRef(0);
+  const lastVy = useRef(0);
   const closeRef = useRef<() => void>(() => {});
   closeRef.current = () => s.setSheet(null);
   const grabHandlers = useRef({
     onStartShouldSetResponder: () => true,
-    onResponderGrant: (e: GestureResponderEvent) => { dragStartY.current = e.nativeEvent.pageY; },
+    onResponderGrant: (e: GestureResponderEvent) => {
+      dragStartY.current = e.nativeEvent.pageY;
+      lastY.current = e.nativeEvent.pageY;
+      lastT.current = e.nativeEvent.timestamp;
+      lastVy.current = 0;
+    },
     onResponderMove: (e: GestureResponderEvent) => {
-      translateY.setValue(Math.max(0, e.nativeEvent.pageY - dragStartY.current)); // down only
+      const { pageY, timestamp } = e.nativeEvent;
+      const dt = timestamp - lastT.current;
+      lastVy.current = dt > 0 ? (pageY - lastY.current) / dt : 0; // instantaneous downward speed
+      lastY.current = pageY;
+      lastT.current = timestamp;
+      translateY.setValue(Math.max(0, pageY - dragStartY.current)); // down only
     },
     onResponderRelease: (e: GestureResponderEvent) => {
-      if (shouldDismissSheet(e.nativeEvent.pageY - dragStartY.current)) closeRef.current();
+      if (shouldDismissSheet(e.nativeEvent.pageY - dragStartY.current, lastVy.current)) closeRef.current();
       else springSheetIn(translateY, reduceMotionRef.current); // snap back to rest
     },
     onResponderTerminate: () => springSheetIn(translateY, reduceMotionRef.current),
@@ -692,11 +708,14 @@ const styles = StyleSheet.create({
   // Wraps the sheet so the spring transform (translateY) doesn't disturb its bottom-anchored,
   // horizontally-centred layout (WHIT-199).
   sheetLift: { width: '100%', alignItems: 'center' },
-  sheet: { width: '100%', maxWidth: 440, backgroundColor: '#161620', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: 34, borderTopWidth: 1, borderColor: 'rgba(255,255,255,.08)' },
-  // WHIT-290: the grabber's drag target — a full-width strip across the top of the sheet so a
-  // pull-down anywhere up here dismisses. The old grabber's marginBottom (the gap before content)
-  // now lives on this wrapper as paddingBottom, so the visual spacing is unchanged.
-  grabHandle: { alignSelf: 'stretch', alignItems: 'center', paddingTop: 6, paddingBottom: 14 },
+  // WHIT-293: paddingTop trimmed (20 → 12) to offset the taller grab strip above, so the grabber
+  // bar stays put visually while its touch target grows up toward the sheet's top edge.
+  sheet: { width: '100%', maxWidth: 440, backgroundColor: '#161620', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingTop: 12, paddingBottom: 34, borderTopWidth: 1, borderColor: 'rgba(255,255,255,.08)' },
+  // WHIT-290/WHIT-293: the grabber's drag target — a full-width strip across the top of the sheet
+  // so a pull-down anywhere up here dismisses. Enlarged vertically (WHIT-293) so a pull that starts
+  // a little off the thin bar still lands on the target instead of missing. The extra paddingTop
+  // is absorbed by trimming the sheet's own top padding below, so the bar doesn't visibly shift.
+  grabHandle: { alignSelf: 'stretch', alignItems: 'center', paddingTop: 14, paddingBottom: 16 },
   grabber: { width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,.18)' },
   sheetTitle: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   sheetMerchant: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 8 },
