@@ -1,9 +1,10 @@
 import React, { useCallback, useState } from 'react';
 import { RefreshControl, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint, fmtBalance } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { transactionGroups, countUncategorized, accountSummaries } from '../../src/context';
+import { transactionGroups, countUncategorized, accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -18,9 +19,34 @@ const ACCT_COLORS = ['#7FD49B', '#8AB4F8', '#F0B67F', '#C9B3F5', '#F08C8C'];
 export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { openMultiPicker } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer.
   const { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
+
+  // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
+  // holds the chosen ids. Exiting (Cancel, tab switch) clears the set. Tapping "Re-categorise"
+  // captures the ids into the picker sheet (openMultiPicker) and leaves selection mode — cancelling
+  // the picker returns to the normal list.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const exitSelection = useCallback(() => { setSelectionMode(false); setSelected(new Set()); }, []);
+  const toggleSelect = useCallback((id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
+  // Switching tabs leaves selection mode, so a selection never straddles a context the user
+  // can't see (e.g. the Accounts tab has no rows).
+  const changeTab = useCallback((t: Tab) => { setTab(t); exitSelection(); }, [exitSelection]);
+  // Only carry ids still in the live list — a background refetch (pull-to-refresh) can evict a
+  // selected charge mid-selection, and this keeps the picker's "File N" count honest.
+  const onRecategorize = () => {
+    const live = new Set(transactions.map((t) => t.transaction_id));
+    openMultiPicker([...selected].filter((id) => live.has(id)));
+    exitSelection();
+  };
 
   const view = { transactions, category };
   const uncategorizedCount = countUncategorized(view);
@@ -40,10 +66,26 @@ export default function Transactions() {
   // wrapper (WHIT-199). The RefreshControl is a render-prop so this screen keeps its own
   // refreshing/onRefresh state while the wrapper hands back headerHeight for the spinner
   // offset (WHIT-211 — otherwise the spinner draws behind the opaque floating header).
+  // WHIT-291: a "Select" button enters selection mode; it becomes "Cancel" while selecting.
+  // Hidden on the Accounts tab (no transaction rows to select there).
+  const headerRight = selectionMode ? (
+    <Pressable onPress={exitSelection} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
+      <Text style={styles.hdrBtnText}>Cancel</Text>
+    </Pressable>
+  ) : tab !== 'accounts' ? (
+    <Pressable onPress={() => setSelectionMode(true)} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
+      <Text style={styles.hdrBtnText}>Select</Text>
+    </Pressable>
+  ) : (
+    <View style={styles.slot} />
+  );
+
   return (
+    <View style={{ flex: 1 }}>
     <ScrollChromeHeader
       title="Transactions"
-      right={<View style={styles.searchBtn}><Glyph name="search" size={20} color={C.textMid} /></View>}
+      right={headerRight}
+      contentContainerStyle={selectionMode ? styles.contentWithBar : undefined}
       refreshControl={(headerHeight) => (
         <RefreshControl
           // Spin only while refreshing data we ALREADY have — the inline spinner owns
@@ -57,19 +99,19 @@ export default function Transactions() {
     >
         {/* segmented control */}
         <View style={styles.seg}>
-          <Seg label="All" active={tab === 'all'} onPress={() => setTab('all')} flex={1} />
-          <Seg label="Uncategorized" active={tab === 'uncategorized'} onPress={() => setTab('uncategorized')} flex={1.45} badge={uncategorizedCount} />
-          <Seg label="Accounts" active={tab === 'accounts'} onPress={() => setTab('accounts')} flex={1} />
+          <Seg label="All" active={tab === 'all'} onPress={() => changeTab('all')} flex={1} />
+          <Seg label="Uncategorized" active={tab === 'uncategorized'} onPress={() => changeTab('uncategorized')} flex={1.45} badge={uncategorizedCount} />
+          <Seg label="Accounts" active={tab === 'accounts'} onPress={() => changeTab('accounts')} flex={1} />
         </View>
 
-        {tab !== 'accounts' && (
+        {tab !== 'accounts' && !selectionMode && (
           <View style={styles.search}>
             <Glyph name="search" size={18} color="#6e6e78" />
             <Text style={styles.searchText}>Search transactions</Text>
           </View>
         )}
 
-        {tab === 'uncategorized' && uncategorizedCount > 0 && (
+        {tab === 'uncategorized' && uncategorizedCount > 0 && !selectionMode && (
           <View style={styles.hint}>
             <Glyph name="star" size={18} color={C.accentSoft} />
             <Text style={styles.hintText}>
@@ -96,7 +138,16 @@ export default function Transactions() {
         {tab !== 'accounts' && !showSpinner && !showError && groups.map((g) => (
           <View key={g.label} style={{ marginTop: 18 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} category={category} />)}
+            {g.items.map((t) => (
+              <TransactionRow
+                key={t.transaction_id}
+                t={t}
+                category={category}
+                selectable={selectionMode}
+                selected={selected.has(t.transaction_id)}
+                onToggleSelect={() => toggleSelect(t.transaction_id)}
+              />
+            ))}
           </View>
         ))}
 
@@ -145,6 +196,22 @@ export default function Transactions() {
           </View>
         )}
     </ScrollChromeHeader>
+    {/* WHIT-291: the selection action bar floats above the tab bar while selecting. */}
+    {selectionMode && (
+      <View style={[styles.actionBar, { paddingBottom: insets.bottom + 12 }]}>
+        <Text style={styles.actionCount}>{selected.size} selected</Text>
+        <Pressable
+          onPress={onRecategorize}
+          disabled={selected.size === 0}
+          accessibilityRole="button"
+          accessibilityLabel="Re-categorize selected transactions"
+          style={[styles.actionBtn, selected.size === 0 && styles.actionBtnDisabled]}
+        >
+          <Text style={[styles.actionBtnText, selected.size === 0 && styles.actionBtnTextDisabled]}>Re-categorize</Text>
+        </Pressable>
+      </View>
+    )}
+    </View>
   );
 }
 
@@ -163,6 +230,18 @@ function Seg({ label, active, onPress, flex, badge }: { label: string; active: b
 
 const styles = StyleSheet.create({
   searchBtn: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,.06)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  // WHIT-291: header Select/Cancel button + a 40px spacer (keeps the title centred on Accounts).
+  slot: { width: 40 },
+  hdrBtn: { height: 40, paddingHorizontal: 8, alignItems: 'flex-end', justifyContent: 'center' },
+  hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
+  // Extra bottom padding so the last rows can scroll clear of the floating action bar.
+  contentWithBar: { paddingBottom: 108 },
+  actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: '#161620', borderTopWidth: 1, borderTopColor: C.hairline },
+  actionCount: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textMid },
+  actionBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 13, backgroundColor: C.accent },
+  actionBtnDisabled: { backgroundColor: 'rgba(124,140,255,.22)' },
+  actionBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
+  actionBtnTextDisabled: { color: '#6a6a90' },
 
   seg: { flexDirection: 'row', gap: 4, padding: 4, backgroundColor: C.card, borderRadius: 14, marginBottom: 8 },
   segBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },

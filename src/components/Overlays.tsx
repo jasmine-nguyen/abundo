@@ -149,7 +149,9 @@ function SheetHost() {
               <View style={styles.grabber} />
             </View>
             {s.sheet?.mode === 'picker' && <PickerSheet />}
+            {s.sheet?.mode === 'pickerMany' && <PickerSheet />}
             {s.sheet?.mode === 'confirm' && <ConfirmSheet />}
+            {s.sheet?.mode === 'confirmMany' && <ConfirmSheet />}
             {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
             {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
             {s.sheet?.mode === 'goalbalance' && <GoalBalanceSheet key={s.sheet.goalId} />}
@@ -172,9 +174,15 @@ function PickerSheet() {
   // cross. SheetHost only mounts PickerSheet for mode 'picker', so txId is non-null in practice.
   const { readSheetDraft, writeSheetDraft } = s;
   const sh = s.sheet;
+  // WHIT-291: the picker serves both a single charge ('picker') and a captured multi-select set
+  // ('pickerMany'). Derive the target once; drafts scope per target ('many' for the set) so two
+  // pickers can't cross their inline new-category forms.
+  const isMany = sh?.mode === 'pickerMany';
   const txId = sh?.mode === 'picker' ? sh.txId : null;
-  const creatingKey = `pickercreating:${txId}`;
-  const catDraftKey = `pickercat:${txId}`;
+  const manyIds = sh?.mode === 'pickerMany' ? sh.txIds : null;
+  const draftScope = txId ?? 'many';
+  const creatingKey = `pickercreating:${draftScope}`;
+  const catDraftKey = `pickercat:${draftScope}`;
   // WHIT-238: create a category inline instead of leaving for Settings. `creating` swaps the
   // list for the mini-form; `submitting` guards a double-tap while the create is in flight.
   // WHIT-283: `creating` restores from the draft so unlock reopens INTO the form, not the list.
@@ -194,9 +202,12 @@ function PickerSheet() {
   // only ever preserves across a lock. (`creating` persists via useSheetDraft above.)
   const readCatDraft = useCallback(() => readSheetDraft(catDraftKey) as Partial<CategoryDraft> | undefined, [readSheetDraft, catDraftKey]);
   const writeCatDraft = useCallback((d: CategoryDraft) => writeSheetDraft(catDraftKey, d), [writeSheetDraft, catDraftKey]);
-  if (sh?.mode !== 'picker') return null;
-  const tx = transactions.find((t) => t.transaction_id === sh.txId);
-  if (!tx) return null;
+  if (sh?.mode !== 'picker' && sh?.mode !== 'pickerMany') return null;
+  const tx = txId ? transactions.find((t) => t.transaction_id === txId) : null;
+  if (sh.mode === 'picker' && !tx) return null;
+  // Header label: a single charge shows its merchant + amount; a multi-select shows the count.
+  const count = manyIds?.length ?? 0;
+  const headerLabel = isMany ? `${count} ${count === 1 ? 'transaction' : 'transactions'}` : merchantLabel(tx!);
   // WHIT-273: render as a parent→child tree (siblings A–Z within each group, so a newly-created
   // category isn't stranded — WHIT-158). A row shows only when its whole parent chain is expanded;
   // rows arrive depth-first (parent before child) so this single pass is enough.
@@ -228,7 +239,7 @@ function PickerSheet() {
     return (
       <View>
         <Text style={styles.sheetTitle}>New category</Text>
-        <Text style={styles.sheetMerchant}>File '{merchantLabel(tx)}' into a new category</Text>
+        <Text style={styles.sheetMerchant}>{isMany ? `File ${headerLabel} into a new category` : `File '${merchantLabel(tx!)}' into a new category`}</Text>
         <View style={{ marginTop: 14 }}>
           <QuickCreateCategory
             initialBucket="Lifestyle"
@@ -251,10 +262,11 @@ function PickerSheet() {
   return (
     <View>
       <Text style={styles.sheetTitle}>Categorize</Text>
-      <Text style={styles.sheetMerchant}>{merchantLabel(tx)}</Text>
+      <Text style={styles.sheetMerchant}>{headerLabel}</Text>
       {/* Sign-aware: an income transaction is positive, so a hardcoded "-$" would
-          misread it as spend once income categories are pickable (WHIT-158). */}
-      <Text style={styles.sheetAmount}>{fmt2(tx.amount)}</Text>
+          misread it as spend once income categories are pickable (WHIT-158). A multi-select
+          has no single amount, so the amount line is omitted there (WHIT-291). */}
+      {!isMany && <Text style={styles.sheetAmount}>{fmt2(tx!.amount)}</Text>}
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
         {/* WHIT-238: make a category on the spot rather than round-tripping to Settings. */}
         <Pressable testID="pickerNewCategory" onPress={() => setCreating(true)} style={styles.pickRow}>
@@ -304,6 +316,29 @@ function ConfirmSheet() {
   const { transactions } = useTransactionsScreenData();
   const { category } = useCategories();
   const sh = s.sheet;
+
+  // WHIT-291: multi-select confirm — re-file the whole captured set under one category in one
+  // batch. No merchant rule (the ids are exactly what the user picked); a single "File N" action.
+  if (sh?.mode === 'confirmMany') {
+    const c = category(sh.categoryId);
+    if (!c) return null;
+    const { txIds, categoryId } = sh;
+    const count = txIds.length;
+    const noun = count === 1 ? 'transaction' : 'transactions';
+    return (
+      <View>
+        <View style={[styles.confirmChip, { backgroundColor: tint(c.color, 0.16) }]}>
+          <Icon name={c.icon} size={26} color={c.color} />
+        </View>
+        <Text style={styles.confirmTitle}>File as {c.name}</Text>
+        <Text style={styles.confirmSub}>Re-file {count} {noun} under {c.name}.</Text>
+        <Pressable onPress={() => s.applyCategoryToMany(txIds, categoryId)} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>File {count} {noun}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   if (sh?.mode !== 'confirm') return null;
   const tx = transactions.find((t) => t.transaction_id === sh.txId);
   const c = category(sh.categoryId);
