@@ -18,6 +18,7 @@ const mockApi = api as jest.Mocked<typeof api>;
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd49b', recent: 100 } as const;
+const DINING = { id: 'dining', name: 'Dining', bucket: 'Lifestyle', icon: 'utensils', color: '#f7768e', recent: 0 } as const;
 const txn = (id: string): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
   description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
@@ -96,4 +97,37 @@ it('applyCategory(all) rolls back ONLY the failed ids in the cache (partial)', a
 
   expect(cachedCategory('t1')).toBe('groceries'); // saved → stays
   expect(cachedCategory('t2')).toBeNull(); // not saved → reverted (partial rollback)
+});
+
+// --- WHIT-291: applyCategoryToMany (multi-select batch re-file) ------------------------------
+
+it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + invalidates', async () => {
+  const result = mount([txn('t1'), txn('t2'), txn('t3')]);
+  const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
+
+  await act(async () => { await result.current.applyCategoryToMany(['t1', 't3'], 'groceries'); });
+
+  expect(cachedCategory('t1')).toBe('groceries');
+  expect(cachedCategory('t3')).toBe('groceries');
+  expect(cachedCategory('t2')).toBeNull(); // not in the set → untouched
+  const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'transactions']));
+  invalidateSpy.mockRestore();
+});
+
+it('applyCategoryToMany reverts only the FAILED ids to their previous category (partial)', async () => {
+  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] }); // t2 not saved
+  const result = mount([{ ...txn('t1'), category: 'dining' }, { ...txn('t2'), category: 'dining' }]);
+  queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
+
+  await act(async () => { await result.current.applyCategoryToMany(['t1', 't2'], 'groceries'); });
+
+  expect(cachedCategory('t1')).toBe('groceries'); // saved → stays
+  expect(cachedCategory('t2')).toBe('dining');    // failed → back to its PREVIOUS category, not null
+});
+
+it('applyCategoryToMany drops ids not in the cache and never calls the batch on an empty set', async () => {
+  const result = mount([txn('t1')]);
+  await act(async () => { await result.current.applyCategoryToMany(['ghost'], 'groceries'); });
+  expect(mockApi.setTransactionCategories).not.toHaveBeenCalled(); // nothing real to file
 });

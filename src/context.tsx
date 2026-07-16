@@ -84,6 +84,11 @@ export type Sheet =
   // this merchant" rule sweep. Absent/false on the list flow, which keeps both options.
   | { mode: 'picker'; txId: string; refileOnly?: boolean }
   | { mode: 'confirm'; txId: string; categoryId: string; refileOnly?: boolean }
+  // WHIT-291: multi-select re-categorise. `pickerMany`/`confirmMany` carry a captured SET of
+  // transaction ids (from the Transactions selection mode) instead of one; the confirm re-files
+  // them all at once via applyCategoryToMany (batch persist + partial rollback, no rule sweep).
+  | { mode: 'pickerMany'; txIds: string[] }
+  | { mode: 'confirmMany'; txIds: string[]; categoryId: string }
   | { mode: 'addrule'; ruleId?: string }   // ruleId set -> editing an existing rule
   | { mode: 'paycycle' }
   | { mode: 'goalbalance'; goalId: string } // update a manual goal's balance in place (WHIT-235)
@@ -372,9 +377,13 @@ export interface AppContext {
   setPayCycleLength: (len: number) => void;
   setPayday: (last_pay_date: string) => void;
   openPicker: (txId: string, opts?: { refileOnly?: boolean }) => void;
+  // WHIT-291: open the category picker for a captured SET of transactions (multi-select).
+  openMultiPicker: (txIds: string[]) => void;
   openGoalBalance: (goalId: string) => void;
   chooseCategory: (categoryId: string) => void;
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
+  // WHIT-291: re-file every id under one category in a single batch (partial rollback on failure).
+  applyCategoryToMany: (txIds: string[], categoryId: string) => Promise<void>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[] }) => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
@@ -632,9 +641,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // WHIT-287: opts.refileOnly (set by the transaction detail screen) carries through to the
   // confirm step, where it collapses to a single-charge re-file with no merchant-wide rule.
   const openPicker = useCallback((txId: string, opts?: { refileOnly?: boolean }) => setSheet({ mode: 'picker', txId, refileOnly: opts?.refileOnly }), []);
+  // WHIT-291: open the picker for a captured set of ids. A no-op on an empty set (nothing to file).
+  const openMultiPicker = useCallback((txIds: string[]) => { if (txIds.length) setSheet({ mode: 'pickerMany', txIds }); }, []);
   const openGoalBalance = useCallback((goalId: string) => setSheet({ mode: 'goalbalance', goalId }), []);
+  // Advance the picker to its confirm step, carrying whichever target the picker held: a single
+  // charge (with the refileOnly flag) or a multi-select set (WHIT-291).
   const chooseCategory = useCallback(
-    (categoryId: string) => setSheet((s) => (s && s.mode === 'picker' ? { mode: 'confirm', txId: s.txId, categoryId, refileOnly: s.refileOnly } : s)),
+    (categoryId: string) => setSheet((s) => {
+      if (s && s.mode === 'picker') return { mode: 'confirm', txId: s.txId, categoryId, refileOnly: s.refileOnly };
+      if (s && s.mode === 'pickerMany') return { mode: 'confirmMany', txIds: s.txIds, categoryId };
+      return s;
+    }),
     [],
   );
 
@@ -793,6 +810,62 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (epoch === sessionEpoch.current) showToast('Could not save category. Please try again.');
     }
   }, [sheet, showToast, patchRules, patchTransactions]);
+
+  // WHIT-291: re-file a captured SET of transactions under one category in a single action
+  // (multi-select). This is applyCategory's 'all' batch path WITHOUT the merchant rule/sweep —
+  // the ids are exactly what the user selected. Optimistically patch the cache, batch-persist in
+  // chunks under the server cap, then reconcile BY ID and roll back only the ones that failed to
+  // their PREVIOUS category (never a blanket null — a re-filed charge may have been categorised).
+  const applyCategoryToMany = useCallback(async (txIds: string[], categoryId: string): Promise<void> => {
+    const transactions = queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+    const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
+    const category = categories.find((c) => c.id === categoryId);
+    // Only touch ids that are actually in the cache; dedupe defensively.
+    const ids = Array.from(new Set(txIds)).filter((id) => transactions.some((t) => t.transaction_id === id));
+    if (!category || ids.length === 0) { setSheet(null); return; }
+
+    // Snapshot each charge's current category so a partial-failure rollback restores exactly it.
+    const previousById = new Map(
+      transactions.filter((t) => ids.includes(t.transaction_id)).map((t) => [t.transaction_id, t.category] as const));
+
+    patchTransactions((prev) =>
+      prev.map((existing) => (ids.includes(existing.transaction_id) ? { ...existing, category: categoryId } : existing)));
+    showToast(ids.length === 1
+      ? `This transaction filed under ${category.name}.`
+      : `${ids.length} transactions filed under ${category.name}.`);
+    setSheet(null); // close the confirm sheet
+
+    // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate late toasts on epoch.
+    const epoch = sessionEpoch.current;
+
+    // Split into chunks under the server's per-request cap (mirrors applyCategory('all')).
+    const updates = ids.map((id) => ({ id, category: categoryId }));
+    const chunks: { id: string; category: string }[][] = [];
+    for (let i = 0; i < updates.length; i += CATEGORY_BATCH_LIMIT) chunks.push(updates.slice(i, i + CATEGORY_BATCH_LIMIT));
+    const outcomes = await Promise.allSettled(chunks.map((chunk) => apiSetTransactionCategories(chunk)));
+
+    // An id is saved only if some chunk returned it 'updated' (a rejected/malformed chunk leaves
+    // its ids absent -> treated as failed -> reverted to their previous category).
+    const savedIds = new Set<string>();
+    for (const outcome of outcomes) {
+      if (outcome.status !== 'fulfilled') continue;
+      for (const r of outcome.value.results ?? []) if (r.status === 'updated') savedIds.add(r.id);
+    }
+    const failedIds = ids.filter((id) => !savedIds.has(id));
+    if (failedIds.length > 0) {
+      patchTransactions((prev) =>
+        prev.map((existing) => (failedIds.includes(existing.transaction_id)
+          ? { ...existing, category: previousById.get(existing.transaction_id) ?? null }
+          : existing)));
+      if (epoch === sessionEpoch.current) showToast('Could not save some categories. Please try again.');
+    }
+    // Some categorisations persisted -> refresh the migrated Budgets/Insights/Transactions reads.
+    if (failedIds.length < ids.length) {
+      queryClient.invalidateQueries({ queryKey: ['budgets'] });
+      queryClient.invalidateQueries({ queryKey: ['breakdown'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    }
+  }, [showToast, patchTransactions]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
@@ -1145,9 +1218,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openGoalBalance, chooseCategory, applyCategory, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
