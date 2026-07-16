@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent, KeyboardAvoidingView, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
@@ -152,7 +152,13 @@ function SheetHost() {
           backdrop still catches taps OUTSIDE the sheet (close), while the sheet is a plain View
           whose ScrollView now owns the gesture and scrolls reliably. `box-none` on the lift lets
           taps in the empty margins beside a narrow sheet fall through to the backdrop. */}
-      <View style={styles.scrim}>
+      {/* WHIT-294: a KeyboardAvoidingView lifts the bottom-anchored sheet above the keyboard so a
+          focused field's form — including its submit button — stays visible instead of being hidden
+          under the keyboard (you no longer have to dismiss the keyboard to reach the button). Shared
+          here, so every input sheet (New category, New rule, Update balance) benefits. `padding`
+          insets the bottom by the keyboard height on iOS (which flex-end then lifts the sheet into);
+          Android uses `height`. Keyboard-less sheets get 0 inset, so nothing changes for them. */}
+      <KeyboardAvoidingView style={styles.scrim} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <Pressable
           style={StyleSheet.absoluteFill}
           onPress={() => s.setSheet(null)}
@@ -173,7 +179,7 @@ function SheetHost() {
             {s.sheet?.mode === 'goalbalance' && <GoalBalanceSheet key={s.sheet.goalId} />}
           </View>
         </Animated.View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
