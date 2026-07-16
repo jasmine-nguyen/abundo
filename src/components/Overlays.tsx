@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
@@ -7,7 +7,7 @@ import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel, categoryTreeRows } from '../context';
 import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
-import { springSheetIn, SHEET_ENTER_OFFSET } from '../motion/sheetMotion';
+import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
 // The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
 // date components (not UTC) so the calendar and label show the day the user picked —
 // no midnight-timezone drift. Shared with the loan form's goal-date picker (WHIT-126).
@@ -100,6 +100,27 @@ function SheetHost() {
     springSheetIn(translateY, rm);
   }, [open, translateY]);
 
+  // WHIT-290: drag the grabber DOWN to dismiss. The handle sits above the ScrollView and claims
+  // its own touches (onStartShouldSetResponder), so it never competes with list scrolling or the
+  // backdrop. We track the finger delta from grant via pageY (no gesture library), move the sheet
+  // with the finger (down only), and on release either dismiss past the threshold or spring back
+  // to rest. Reads via stable refs so the handler object is created once with no stale capture.
+  const dragStartY = useRef(0);
+  const closeRef = useRef<() => void>(() => {});
+  closeRef.current = () => s.setSheet(null);
+  const grabHandlers = useRef({
+    onStartShouldSetResponder: () => true,
+    onResponderGrant: (e: GestureResponderEvent) => { dragStartY.current = e.nativeEvent.pageY; },
+    onResponderMove: (e: GestureResponderEvent) => {
+      translateY.setValue(Math.max(0, e.nativeEvent.pageY - dragStartY.current)); // down only
+    },
+    onResponderRelease: (e: GestureResponderEvent) => {
+      if (shouldDismissSheet(e.nativeEvent.pageY - dragStartY.current)) closeRef.current();
+      else springSheetIn(translateY, reduceMotionRef.current); // snap back to rest
+    },
+    onResponderTerminate: () => springSheetIn(translateY, reduceMotionRef.current),
+  }).current;
+
   return (
     <Modal
       visible={open}
@@ -124,7 +145,9 @@ function SheetHost() {
         />
         <Animated.View style={[styles.sheetLift, { transform: [{ translateY }] }]} pointerEvents="box-none">
           <View style={styles.sheet}>
-            <View style={styles.grabber} />
+            <View testID="sheet-grabber" style={styles.grabHandle} {...grabHandlers}>
+              <View style={styles.grabber} />
+            </View>
             {s.sheet?.mode === 'picker' && <PickerSheet />}
             {s.sheet?.mode === 'confirm' && <ConfirmSheet />}
             {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
@@ -635,7 +658,11 @@ const styles = StyleSheet.create({
   // horizontally-centred layout (WHIT-199).
   sheetLift: { width: '100%', alignItems: 'center' },
   sheet: { width: '100%', maxWidth: 440, backgroundColor: '#161620', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingBottom: 34, borderTopWidth: 1, borderColor: 'rgba(255,255,255,.08)' },
-  grabber: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,.18)', marginBottom: 14 },
+  // WHIT-290: the grabber's drag target — a full-width strip across the top of the sheet so a
+  // pull-down anywhere up here dismisses. The old grabber's marginBottom (the gap before content)
+  // now lives on this wrapper as paddingBottom, so the visual spacing is unchanged.
+  grabHandle: { alignSelf: 'stretch', alignItems: 'center', paddingTop: 6, paddingBottom: 14 },
+  grabber: { width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,.18)' },
   sheetTitle: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   sheetMerchant: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 8 },
   sheetAmount: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: C.textBright, marginTop: 2, letterSpacing: -0.5 },
