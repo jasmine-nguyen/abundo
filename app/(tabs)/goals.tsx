@@ -68,7 +68,11 @@ export default function Goals() {
         </View>
       ) : (
         <>
-          {/* The mortgage — always shown (its own big goal), taps into the full payoff screen. */}
+          {/* WHIT-295: the mortgage is your HEADLINE goal, so it lives INSIDE "YOUR GOALS" as the
+              first card (label moved above it). Because it's always here, the hub never claims
+              "no goals" while your biggest debt sits right in front of you. Taps into the payoff screen. */}
+          <Text style={styles.sectionLabel}>YOUR GOALS</Text>
+
           <Pressable testID="mortgage-link" onPress={() => router.push('/mortgage')} style={styles.mortgageCard}>
             <HeroGradientFill />
             <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
@@ -85,16 +89,12 @@ export default function Goals() {
             <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
           </Pressable>
 
-          <Text style={styles.sectionLabel}>YOUR GOALS</Text>
-
           {goals.length === 0 ? (
-            <View testID="goals-empty" style={styles.emptyCard}>
-              <View style={styles.emptyChip}><Glyph name="target" size={24} color={C.accentSoft} /></View>
-              <Text style={styles.emptyTitle}>No goals yet</Text>
-              <Text style={styles.emptyBody}>
-                Set a savings target or a debt to pay down, and we'll show how far you've come and how much to put aside each payday.
-              </Text>
-            </View>
+            // WHIT-295: no "No goals yet" card — the mortgage above IS a goal. Just a short additive
+            // invite to track more alongside it.
+            <Text testID="goals-empty-hint" style={styles.emptyHint}>
+              The mortgage is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
+            </Text>
           ) : (
             goals.map((goal) => {
               const v = balanceGoalView({ goal, balance: balanceFor(goal.account_id), payCycle });
@@ -198,10 +198,9 @@ const styles = StyleSheet.create({
   updateBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 11, backgroundColor: 'rgba(124,140,255,.14)' },
   updateText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
 
-  emptyCard: { alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 24, marginBottom: 12 },
-  emptyChip: { width: 52, height: 52, borderRadius: 16, backgroundColor: 'rgba(124,140,255,.14)', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-  emptyTitle: { fontFamily: FONT.display, fontSize: 17, fontWeight: '800', color: C.textBright, letterSpacing: -0.3 },
-  emptyBody: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, lineHeight: 19, textAlign: 'center', marginTop: 6 },
+  // WHIT-295: the additive invite shown when the mortgage is your only goal — a light hint line,
+  // not a "you have nothing" card, since the mortgage above already counts.
+  emptyHint: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, lineHeight: 19, textAlign: 'center', marginTop: 2, marginBottom: 14, paddingHorizontal: 10 },
 
   addGoal: { marginTop: 8, marginBottom: 6, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', backgroundColor: 'rgba(124,140,255,.07)', borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addGoalText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },

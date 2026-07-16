@@ -68,13 +68,21 @@ beforeEach(() => {
 });
 afterEach(() => { jest.useRealTimers(); });
 
-describe('empty state', () => {
-  it('shows the "no goals yet" prompt, the add button, and the mortgage card', () => {
+describe('empty state (WHIT-295: the mortgage IS a goal)', () => {
+  it('shows the mortgage as the headline goal + an additive invite — never "No goals yet"', () => {
     render(<Goals />);
-    expect(screen.getByTestId('goals-empty')).toBeTruthy();
-    expect(screen.getByText('No goals yet')).toBeTruthy();
+    expect(screen.getByTestId('mortgage-link')).toBeTruthy(); // the headline goal, always shown
     expect(screen.getByTestId('add-goal-cta')).toBeTruthy();
-    expect(screen.getByTestId('mortgage-link')).toBeTruthy(); // always shown (Option A)
+    // The additive invite replaces the old contradictory "No goals yet" card.
+    expect(screen.getByTestId('goals-empty-hint')).toBeTruthy();
+    expect(screen.queryByText('No goals yet')).toBeNull();
+    expect(screen.queryByTestId('goals-empty')).toBeNull();
+  });
+
+  it('lists the mortgage UNDER the "YOUR GOALS" heading (it counts as a goal)', () => {
+    render(<Goals />);
+    expect(screen.getByText('YOUR GOALS')).toBeTruthy();
+    expect(within(screen.getByTestId('mortgage-link')).getByText('The mortgage')).toBeTruthy();
   });
 });
 
@@ -118,7 +126,7 @@ describe('the mortgage card', () => {
     mockData = baseData({ homeLoan: { balance: null, asOf: null }, mortgageError: true });
     render(<Goals />);
     expect(within(screen.getByTestId('mortgage-link')).getByText('Tap to open your payoff plan')).toBeTruthy();
-    expect(screen.getByTestId('goals-empty')).toBeTruthy(); // hub still renders its goals section
+    expect(screen.getByTestId('goals-empty-hint')).toBeTruthy(); // hub still renders its goals section
   });
 });
 
@@ -127,7 +135,7 @@ describe('loading + error', () => {
     mockData = baseData({ isLoading: true });
     render(<Goals />);
     expect(screen.getByTestId('goals-loading')).toBeTruthy();
-    expect(screen.queryByTestId('goals-empty')).toBeNull();
+    expect(screen.queryByTestId('goals-empty-hint')).toBeNull();
   });
 
   it('shows an error + Retry when a PRIMARY read fails with nothing cached', () => {
