@@ -63,6 +63,9 @@ export interface Transaction {
   // server REMOVEs a cleared field, so it reads back undefined, not ""/[]).
   notes?: string;
   tags?: string[];
+  // WHIT-296: user override to exclude this transaction from budgets ("mark as
+  // transfer"). Absent (undefined) = not excluded; only True is stored server-side.
+  budget_excluded?: boolean;
 }
 // `pattern` mirrors the server rule's `value`; `field`/`operator` carry the
 // server facts (default description/contains for app-authored rules) so a rule
@@ -384,7 +387,7 @@ export interface AppContext {
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
   // WHIT-291: re-file every id under one category in a single batch (partial rollback on failure).
   applyCategoryToMany: (txIds: string[], categoryId: string) => Promise<void>;
-  applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[] }) => Promise<void>;
+  applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
@@ -707,7 +710,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const ruleValue = rulePattern(transaction);
       const sameMerchantIds = transactions
         .filter((t) =>
-          t.counts_to_budget &&
+          contributesToBudget(t) &&
           categoryIsUnmapped(t.category, (id) => categories.find((c) => c.id === id)) &&
           matchesRulePattern(t, ruleValue, transaction))
         .map((t) => t.transaction_id);
@@ -873,16 +876,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // `patch` carries only the fields being changed, so a note edit never clobbers tags
   // (and vice-versa); a passed "" note / [] tags clears that field on the server.
   const applyTransactionEdit = useCallback(
-    async (txId: string, patch: { notes?: string; tags?: string[] }): Promise<void> => {
+    async (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }): Promise<void> => {
       const transactions = queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
       const transaction = transactions.find((t) => t.transaction_id === txId);
       if (!transaction) return; // cache evicted / unknown id — nothing to edit
 
       // Snapshot only the fields we're about to change, so a failed save restores
       // exactly them (undefined restores an absent field, not an empty value).
-      const previous: { notes?: string; tags?: string[] } = {};
+      const previous: { notes?: string; tags?: string[]; budget_excluded?: boolean } = {};
       if ('notes' in patch) previous.notes = transaction.notes;
       if ('tags' in patch) previous.tags = transaction.tags;
+      if ('budget_excluded' in patch) previous.budget_excluded = transaction.budget_excluded;
 
       patchTransactions((prev) =>
         prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...patch } : existing)));
@@ -1940,6 +1944,14 @@ export function isUncategorized(s: Pick<TransactionListInput, 'category'>, t: Tr
   return categoryIsUnmapped(t.category, s.category);
 }
 
+// Whether a transaction counts toward budgets on the client: the bank said it
+// counts AND the user hasn't manually excluded it ("mark as transfer", WHIT-296).
+// Single source of truth so the uncategorized tab, its count, and the "apply to
+// every {merchant}" sweep all drop an excluded transfer the same way the server does.
+export function contributesToBudget(t: Transaction): boolean {
+  return t.counts_to_budget && !t.budget_excluded;
+}
+
 export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Transaction): TransactionView {
   const c = t.category == null || t.category === 'income' ? undefined : s.category(t.category);
   const uncategorized = isUncategorized(s, t);
@@ -1958,7 +1970,7 @@ export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Tr
 }
 
 export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncategorized') {
-  const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? t.counts_to_budget && isUncategorized(s, t) : true);
+  const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? contributesToBudget(t) && isUncategorized(s, t) : true);
   const seen = new Map<string, Transaction[]>();
   const order: string[] = [];
   for (const t of s.transactions.filter(tabFilter)) {
@@ -1970,7 +1982,7 @@ export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncateg
 }
 
 export function countUncategorized(s: TransactionListInput) {
-  return s.transactions.filter((t) => t.counts_to_budget && isUncategorized(s, t)).length;
+  return s.transactions.filter((t) => contributesToBudget(t) && isUncategorized(s, t)).length;
 }
 
 // --- Accounts (WHIT-215): the Accounts tab + the per-account detail screen -----

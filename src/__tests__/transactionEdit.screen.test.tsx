@@ -159,3 +159,33 @@ it('at 20 tags, whitespace-only entry is a silent no-op (no toast, no save)', ()
   expect(mockToast).not.toHaveBeenCalled();
   expect(mockEdit).not.toHaveBeenCalled();
 });
+
+// WHIT-296 — the "Exclude from budgets / Mark as transfer" toggle.
+const withExcluded = (excluded?: boolean) =>
+  txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', budget_excluded: excluded })] });
+
+it('renders the exclude toggle OFF when the charge is not excluded', () => {
+  mockTx = withExcluded(undefined);
+  render(<TransactionDetail />);
+  expect(screen.getByRole('switch', { name: 'Exclude from budgets' }).props.accessibilityState.checked).toBe(false);
+});
+
+it('renders the exclude toggle ON when the charge is already excluded', () => {
+  mockTx = withExcluded(true);
+  render(<TransactionDetail />);
+  expect(screen.getByRole('switch', { name: 'Exclude from budgets' }).props.accessibilityState.checked).toBe(true);
+});
+
+it('tapping the toggle when off requests exclusion', () => {
+  mockTx = withExcluded(undefined);
+  render(<TransactionDetail />);
+  fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
+  expect(mockEdit).toHaveBeenCalledWith('t1', { budget_excluded: true });
+});
+
+it('tapping the toggle when on requests re-inclusion', () => {
+  mockTx = withExcluded(true);
+  render(<TransactionDetail />);
+  fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
+  expect(mockEdit).toHaveBeenCalledWith('t1', { budget_excluded: false });
+});

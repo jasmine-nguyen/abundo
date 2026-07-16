@@ -87,6 +87,28 @@ def test_dedupe_carries_a_note_on_a_same_category_twin(lam, repo):
     assert rows["post1"]["tags"] == ["work"]         # tags carried onto posted
 
 
+def test_dedupe_carries_a_budget_exclude_override_on_a_same_category_twin(lam, repo):
+    # WHIT-296: the `changed` gate re-puts only when a carried user field differs. A
+    # budget_excluded override on a SAME-category pending twin (with no note/tag
+    # difference) must be in that gate, or the posted is NOT re-put and the pending —
+    # the only row holding the override — is deleted, silently dropping the exclusion.
+    # Fail-on-revert: drop "budget_excluded" from the gate tuple and this goes red.
+    # budget_excluded isn't a bank field (normalise strips it), so inject directly.
+    _store(lam, repo,
+           _raw_row("pend1", pending=True, category="groceries"),
+           _raw_row("post1", pending=False, category="groceries"))
+    for item in repo._table.store.values():
+        if item.get("transaction_id") == "pend1":
+            item["budget_excluded"] = True
+
+    summary = lam.dedupe_cleanup.dedupe_pre_reconciliation(repo, dry_run=False)
+
+    assert summary["deduped"] == 1
+    rows = _rows(repo)
+    assert "pend1" not in rows                          # stale pending deleted
+    assert rows["post1"]["budget_excluded"] is True     # override carried onto posted
+
+
 def test_dedupe_identical_twin_skips_the_reput(lam, repo, monkeypatch):
     # Same category, no note/tag difference → nothing to carry → skip the re-put
     # (still delete the pending). Guards against re-putting on every dedupe.

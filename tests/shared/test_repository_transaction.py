@@ -373,6 +373,41 @@ def test_update_fields_mixes_set_and_remove_in_one_write(repo):
     assert "notes" not in row
 
 
+# --------------------------------------------------------------------------- #
+# budget_excluded override (WHIT-296) — rides the same SET/REMOVE machinery.    #
+# --------------------------------------------------------------------------- #
+
+def test_update_fields_sets_budget_excluded_true(repo):
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES"}}
+    assert repo.update_transaction_fields(key[0], key[1], budget_excluded=True) is True
+    row = repo._table.store[key]
+    assert row["budget_excluded"] is True
+    assert row["category"] == "GROCERIES"  # untouched
+
+
+def test_update_fields_clears_budget_excluded_false_by_removing(repo):
+    # False must REMOVE the attribute so it reads back ABSENT (not stored False),
+    # matching the sparse notes/tags clear — an absent override means "not excluded".
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "budget_excluded": True}}
+    assert repo.update_transaction_fields(key[0], key[1], budget_excluded=False) is True
+    assert "budget_excluded" not in repo._table.store[key]
+
+
+def test_update_fields_budget_excluded_with_notes_in_one_write(repo):
+    # Setting the override AND clearing the note in one call builds a single valid
+    # SET+REMOVE UpdateItem (proves the added field slots into the mixed expression).
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "notes": "old"}}
+    assert repo.update_transaction_fields(
+        key[0], key[1], notes="", budget_excluded=True
+    ) is True
+    row = repo._table.store[key]
+    assert row["budget_excluded"] is True
+    assert "notes" not in row
+
+
 def test_update_fields_returns_false_when_row_gone(repo):
     # attribute_exists(pk) guard fails on a vanished row → False (a 404), not a 500.
     assert repo.update_transaction_fields("ACCOUNT#x", "TXN#gone", notes="x") is False

@@ -40,6 +40,17 @@ describe('countUncategorized', () => {
     });
     expect(countUncategorized(s)).toBe(2);
   });
+
+  it('drops a user-excluded (budget_excluded) uncategorized charge (WHIT-296)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'coffee' })],
+      transactions: [
+        txn({ transaction_id: '1', category: null, counts_to_budget: true }),                        // counts
+        txn({ transaction_id: '2', category: null, counts_to_budget: true, budget_excluded: true }), // excluded → no
+      ],
+    });
+    expect(countUncategorized(s)).toBe(1);
+  });
 });
 
 describe('transactionView', () => {
@@ -87,6 +98,19 @@ describe('transactionGroups', () => {
     const groups = transactionGroups(s, 'uncategorized');
     const ids = groups.flatMap((g) => g.items.map((t) => t.transaction_id));
     expect(ids).toEqual(['1']);
+  });
+
+  it('the uncategorized tab drops a user-excluded charge (WHIT-296)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'coffee' })],
+      transactions: [
+        txn({ transaction_id: '1', category: null, counts_to_budget: true, date: '2026-05-01' }),
+        txn({ transaction_id: '2', category: null, counts_to_budget: true, budget_excluded: true, date: '2026-05-01' }),
+      ],
+    });
+    const groups = transactionGroups(s, 'uncategorized');
+    const ids = groups.flatMap((g) => g.items.map((t) => t.transaction_id));
+    expect(ids).toEqual(['1']); // the excluded charge is gone; the all-tab still keeps it
   });
 
   it('the all tab keeps every transaction, grouped by date', () => {

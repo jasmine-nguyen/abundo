@@ -25,10 +25,17 @@ class FakeRepo:
     def get_transaction_keys_by_id(self, transaction_id):
         return self._keys
 
-    def update_transaction_fields(self, pk, sk, *, category=_UNSET, notes=_UNSET, tags=_UNSET):
+    def update_transaction_fields(
+        self, pk, sk, *, category=_UNSET, notes=_UNSET, tags=_UNSET, budget_excluded=_UNSET
+    ):
         provided = {
             field: value
-            for field, value in (("category", category), ("notes", notes), ("tags", tags))
+            for field, value in (
+                ("category", category),
+                ("notes", notes),
+                ("tags", tags),
+                ("budget_excluded", budget_excluded),
+            )
             if value is not _UNSET
         }
         self.update_calls.append((pk, sk, provided))

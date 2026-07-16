@@ -82,3 +82,26 @@ it('is a no-op (no API call) when the transaction is not in the cache', async ()
   await act(async () => { await result.current.applyTransactionEdit('ghost', { notes: 'x' }); });
   expect(mockApi.setTransactionFields).not.toHaveBeenCalled();
 });
+
+// WHIT-296: the budget-exclude override rides the same optimistic write + rollback.
+it('excludes from budgets optimistically, calling the API with only that field', async () => {
+  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true });
+  const result = mount([txn({ notes: 'keep me' })]);
+
+  await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
+
+  expect(cached('t1')?.budget_excluded).toBe(true); // optimistic cache write
+  expect(cached('t1')?.notes).toBe('keep me');      // other fields untouched
+  expect(mockApi.setTransactionFields).toHaveBeenCalledWith('t1', { budget_excluded: true });
+});
+
+it('rolls budget_excluded back to absent on failure when it was unset before', async () => {
+  // Without the widened rollback snapshot this stays stuck `true` — the fail-on-revert anchor.
+  mockApi.setTransactionFields.mockRejectedValue(new Error('boom'));
+  const result = mount([txn()]); // no override
+
+  await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
+
+  expect(cached('t1')?.budget_excluded).toBeUndefined(); // restored to absent, not true
+  expect(result.current.toast).toMatch(/could not save/i);
+});

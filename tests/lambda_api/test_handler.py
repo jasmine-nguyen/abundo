@@ -33,10 +33,17 @@ class FakeRepo:
     def get_transaction_keys_by_id(self, transaction_id):
         return self._keys
 
-    def update_transaction_fields(self, pk, sk, *, category=_UNSET, notes=_UNSET, tags=_UNSET):
+    def update_transaction_fields(
+        self, pk, sk, *, category=_UNSET, notes=_UNSET, tags=_UNSET, budget_excluded=_UNSET
+    ):
         provided = {
             field: value
-            for field, value in (("category", category), ("notes", notes), ("tags", tags))
+            for field, value in (
+                ("category", category),
+                ("notes", notes),
+                ("tags", tags),
+                ("budget_excluded", budget_excluded),
+            )
             if value is not _UNSET
         }
         self.update_calls.append((pk, sk, provided))
@@ -252,6 +259,35 @@ def test_patch_empty_body_returns_400(handler):
     resp = handler.patch_transaction(_patch_event(body='{}'), repo)
     assert resp["statusCode"] == 400
     assert repo.update_calls == []  # nothing to change → never write
+
+
+# --- budget_excluded override PATCH (WHIT-296) -------------------------------
+
+
+def test_patch_budget_excluded_true_persists_and_echoes(handler):
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{"budget_excluded": true}'), repo)
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {"transaction_id": "txn-1", "budget_excluded": True}
+    assert repo.update_calls == [("p", "s", {"budget_excluded": True})]
+
+
+def test_patch_budget_excluded_false_is_allowed_and_satisfies_required(handler):
+    # A bare {budget_excluded: false} is a valid patch (clears the override); it must
+    # NOT trip the "at least one field required" 400 just because the value is falsy.
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{"budget_excluded": false}'), repo)
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("p", "s", {"budget_excluded": False})]
+
+
+def test_patch_budget_excluded_non_bool_returns_400(handler):
+    # A string/number is rejected — only a JSON boolean is a valid override value.
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    for bad in ('{"budget_excluded": "true"}', '{"budget_excluded": 1}'):
+        resp = handler.patch_transaction(_patch_event(body=bad), repo)
+        assert resp["statusCode"] == 400
+    assert repo.update_calls == []  # never written
 
 
 def test_patch_note_too_long_returns_400(handler):
