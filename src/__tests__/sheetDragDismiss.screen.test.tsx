@@ -30,26 +30,42 @@ function sheetState(): AppContext {
   } as unknown as AppContext;
 }
 
-// Drive a grabber drag from y=100 down to y=100+distance via the raw responder handlers.
+// A slow drag from y=100 down to y=100+distance (timestamps far apart → negligible velocity, so
+// the DISTANCE path decides). Raw responder events, no gesture library.
 function dragGrabber(distance: number) {
   const grabber = screen.getByTestId('sheet-grabber');
-  fireEvent(grabber, 'responderGrant', { nativeEvent: { pageY: 100 } });
-  fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 100 + distance } });
-  fireEvent(grabber, 'responderRelease', { nativeEvent: { pageY: 100 + distance } });
+  fireEvent(grabber, 'responderGrant', { nativeEvent: { pageY: 100, timestamp: 0 } });
+  fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
+  fireEvent(grabber, 'responderRelease', { nativeEvent: { pageY: 100 + distance, timestamp: 400 } });
 }
 
-describe('shouldDismissSheet threshold (WHIT-290)', () => {
+// A quick short flick: a small total distance but a fast last segment (18px in 8ms ≈ 2.25 px/ms).
+function flickGrabber() {
+  const grabber = screen.getByTestId('sheet-grabber');
+  fireEvent(grabber, 'responderGrant', { nativeEvent: { pageY: 100, timestamp: 0 } });
+  fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 118, timestamp: 8 } });
+  fireEvent(grabber, 'responderMove', { nativeEvent: { pageY: 136, timestamp: 16 } });
+  fireEvent(grabber, 'responderRelease', { nativeEvent: { pageY: 138, timestamp: 18 } }); // dy=38 (< distance)
+}
+
+describe('shouldDismissSheet decision (WHIT-290/WHIT-293)', () => {
   // Pure decision behind the drag; lives in the screen project because sheetMotion imports
   // Animated (the logic project can't load react-native).
-  it('dismisses past the threshold, springs back at/under it, ignores upward drags', () => {
-    expect(shouldDismissSheet(SHEET_DISMISS_DISTANCE + 1)).toBe(true);
-    expect(shouldDismissSheet(SHEET_DISMISS_DISTANCE)).toBe(false);
-    expect(shouldDismissSheet(0)).toBe(false);
-    expect(shouldDismissSheet(-200)).toBe(false);
+  it('dismisses a far-enough pull, springs back under it, ignores upward drags', () => {
+    expect(shouldDismissSheet(SHEET_DISMISS_DISTANCE + 1, 0)).toBe(true);
+    expect(shouldDismissSheet(SHEET_DISMISS_DISTANCE, 0)).toBe(false);
+    expect(shouldDismissSheet(0, 0)).toBe(false);
+    expect(shouldDismissSheet(-200, 0)).toBe(false);
+  });
+
+  it('dismisses a quick downward flick even when the pull is short (WHIT-293)', () => {
+    expect(shouldDismissSheet(24, 1.0)).toBe(true);   // short but fast → dismiss
+    expect(shouldDismissSheet(24, 0.1)).toBe(false);  // short and slow → spring back
+    expect(shouldDismissSheet(-24, 2.0)).toBe(false); // fast but UPWARD → never dismiss
   });
 });
 
-describe('grabber pull-down-to-dismiss (WHIT-290)', () => {
+describe('grabber pull-down-to-dismiss (WHIT-290/WHIT-293)', () => {
   it('a drag past the threshold closes the sheet', () => {
     mockState = sheetState();
     render(<Overlays />);
@@ -57,10 +73,17 @@ describe('grabber pull-down-to-dismiss (WHIT-290)', () => {
     expect(fns.setSheet).toHaveBeenCalledWith(null);
   });
 
-  it('a short drag springs back and does NOT close', () => {
+  it('a short, slow drag springs back and does NOT close', () => {
     mockState = sheetState();
     render(<Overlays />);
     dragGrabber(20);
     expect(fns.setSheet).not.toHaveBeenCalled();
+  });
+
+  it('a quick short flick closes the sheet (WHIT-293)', () => {
+    mockState = sheetState();
+    render(<Overlays />);
+    flickGrabber();
+    expect(fns.setSheet).toHaveBeenCalledWith(null);
   });
 });

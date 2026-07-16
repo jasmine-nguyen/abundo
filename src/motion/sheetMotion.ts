@@ -6,14 +6,20 @@ import { Animated } from 'react-native';
 // not a full-height slide — combined with the Modal's fade it reads as a native spring.
 export const SHEET_ENTER_OFFSET = 64;
 
-// WHIT-290: how far (px) the sheet must be dragged DOWN by its grabber before releasing
-// dismisses it. Release short of this springs the sheet back to rest. Distance-based (not
-// velocity) so the decision is deterministic and unit-testable without a gesture library.
-export const SHEET_DISMISS_DISTANCE = 90;
+// WHIT-290/WHIT-293: the grabber's pull-to-dismiss decision. A release dismisses the sheet when
+// EITHER the drag went far enough OR it was a quick downward flick — matching how a real bottom
+// sheet feels. Both thresholds are deterministic + unit-testable without a gesture library.
+// WHIT-293: distance lowered from 90 (a 90px pull was too much on a short sheet, so pulls sprang
+// back and read as "didn't work"); a flick path added so a fast short pull — the natural gesture —
+// also dismisses.
+export const SHEET_DISMISS_DISTANCE = 56;   // px dragged down
+export const SHEET_DISMISS_VELOCITY = 0.5;  // px per ms at release (~500 px/s)
 
-// Whether releasing a grabber-drag of `dy` px (positive = downward) should dismiss the sheet.
-export function shouldDismissSheet(dy: number): boolean {
-  return dy > SHEET_DISMISS_DISTANCE;
+// Whether releasing a grabber-drag should dismiss: `dy` px moved (positive = downward) and `vy`
+// the downward velocity (px/ms) at release. Requires a real downward drag (dy > 0) so a plain tap
+// (dy ≈ 0) never dismisses; then EITHER a far-enough pull OR a fast flick closes it.
+export function shouldDismissSheet(dy: number, vy: number): boolean {
+  return dy > 0 && (dy > SHEET_DISMISS_DISTANCE || vy > SHEET_DISMISS_VELOCITY);
 }
 
 // Spring the sheet's translateY to its resting position (0) on open. reduce-motion → jump
