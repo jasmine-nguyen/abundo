@@ -8,6 +8,7 @@ import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill } from '../../src/components/ui';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
+import { SpendingDonut } from '../../src/components/SpendingDonut';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
@@ -32,7 +33,12 @@ export default function Insights() {
     if (r.parentId === null || (shown.has(r.parentId) && expanded.has(r.parentId))) shown.add(r.id);
   }
   const visibleRows = rows.filter((r) => shown.has(r.id));
-  const topLevelCount = rows.filter((r) => r.depth === 0).length;  // hero "N categories"
+  const topLevelRows = rows.filter((r) => r.depth === 0);
+  const topLevelCount = topLevelRows.length;  // hero "N categories"
+  // Donut slices: one per top-level category (its combined spend), painted in its own colour
+  // so the ring and the rows below read as one legend. Sums to the hero total (every txn rolls
+  // up to exactly one top-level row), so the total sits in the centre.
+  const donutSlices = topLevelRows.map((r) => ({ id: r.id, name: r.name, color: r.color, value: r.spent }));
 
   // Re-pull on focus: breakdown via the query (staleness-gated), AI insights via the
   // store. Spend depends on the current cycle (rolls over on payday; categorising
@@ -115,6 +121,12 @@ export default function Insights() {
           <Text style={styles.empty}>
             {cycle === 0 ? 'No spending yet this pay cycle.' : 'No spending in that pay cycle.'}
           </Text>
+        )}
+
+        {/* Pie/donut of where the cycle's money went — one wedge per top-level category, in
+            its own colour, sized by share of the total. The rows below are its legend. */}
+        {!showSpinner && !showError && rows.length > 0 && (
+          <SpendingDonut slices={donutSlices} testID="insights-donut" />
         )}
 
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
