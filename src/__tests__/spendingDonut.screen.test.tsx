@@ -5,7 +5,7 @@
 import { describe, it, expect } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { SpendingDonut, reduceSlices, type DonutSlice } from '../components/SpendingDonut';
+import { SpendingDonut, reduceSlices, sliceEmphasis, type DonutSlice } from '../components/SpendingDonut';
 
 const s = (id: string, value: number): DonutSlice => ({ id, name: id, color: '#7aa2f7', value });
 
@@ -90,16 +90,11 @@ describe('SpendingDonut', () => {
     expect(screen.getByTestId('donut-slice-g').props.accessibilityLabel).toBe('Groceries, $75, 75 percent');
   });
 
-  it('pops the tapped wedge out — thicker band than the un-tapped ones', () => {
-    render(<SpendingDonut slices={TWO} />);
-    const restingWidth = screen.getByTestId('donut-slice-g').props.strokeWidth;
-    expect(screen.getByTestId('donut-slice-c').props.strokeWidth).toBe(restingWidth); // all equal at rest
-
-    fireEvent.press(screen.getByTestId('donut-slice-g'));
-    const g = screen.getByTestId('donut-slice-g');
-    const c = screen.getByTestId('donut-slice-c');
-    expect(g.props.strokeWidth).toBeGreaterThan(restingWidth); // tapped wedge grew
-    expect(g.props.strokeWidth).toBeGreaterThan(c.props.strokeWidth); // ...and is bigger than the rest
-    expect(c.props.opacity).toBeLessThan(1); // the others dim back
+  // The pop/dim is animated (scale + opacity on a spring), so the resting/target emphasis is
+  // pinned via the pure helper rather than by reading the interpolated SVG props.
+  it('maps selection to an emphasis: tapped pops (+1), the rest dim (−1), all rest at 0', () => {
+    expect(sliceEmphasis(true, true)).toBe(1);   // this wedge is the tapped one → pop out
+    expect(sliceEmphasis(false, true)).toBe(-1); // another is tapped → dim back
+    expect(sliceEmphasis(false, false)).toBe(0); // nothing tapped → resting
   });
 });

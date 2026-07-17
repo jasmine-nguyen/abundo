@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { G, Circle, Path } from 'react-native-svg';
 import { C, FONT, fmt } from '../theme';
+import { useReduceMotion } from '../motion/useReduceMotion';
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
 // category, sized by its share of the total, painted in that category's own colour so the
@@ -29,26 +30,34 @@ export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
   return kept;
 }
 
+// Where a wedge sits on the emphasis axis, given the current selection: +1 popped (this is the
+// tapped one), −1 dimmed (something else is tapped), 0 at rest (nothing tapped). Pure so a test
+// can pin it without reaching into the animation. The scale/opacity below are just this mapped.
+export function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0 | 1 {
+  if (isSelected) return 1;
+  return anySelected ? -1 : 0;
+}
+
 // Fixed geometry — a square SVG the ring is inscribed in. A ~26px band leaves a roomy hole
-// for the centred stat. PAD keeps the ring clear of the canvas edge so a tapped wedge has room
-// to POP outward (grow past the others) without clipping.
+// for the centred stat. PAD keeps the ring clear of the canvas edge so a popped wedge (scaled
+// up about the centre) has room to grow into without clipping.
 const SIZE = 192;
 const STROKE = 26;
-const PAD = 11;      // clear space around the ring
-const POP = 9;       // how far the selected wedge grows outward
+const PAD = 11;
 const CENTER = SIZE / 2;
-const R = CENTER - PAD - STROKE / 2;        // resting mid-line radius of the ring
+const R = CENTER - PAD - STROKE / 2;        // mid-line radius of the ring
 const CIRC = 2 * Math.PI * R;
 // A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
 // angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
 const GAP_DEG = (2 / CIRC) * 360;
-// The selected wedge grows OUTWARD only — its mid-line lifts by POP/2 and it thickens by POP —
-// so its inner edge stays put (never eats into the centre text) while its outer edge bulges out.
-const R_SEL = R + POP / 2;
-const STROKE_SEL = STROKE + POP;
+// The popped wedge scales up about the centre — grows outward + a touch thicker. 1.1 keeps its
+// outer edge (85 × 1.1 ≈ 94) just inside the 96 canvas, so it never clips.
+const SEL_SCALE = 1.1;
 // How far the un-focused wedges fade back when one is picked. Low enough to clearly recede,
 // high enough to stay legible (they're not gone, just quiet).
 const DIM = 0.22;
+
+const AnimatedG = Animated.createAnimatedComponent(G);
 
 // A point at `deg` on a circle of radius `r` (0° = 3 o'clock, +ve clockwise in SVG's y-down space).
 function ptOnRing(deg: number, r: number): [number, number] {
@@ -68,12 +77,36 @@ function arcPath(startDeg: number, endDeg: number, r: number): string {
 
 // A donut of category spend for the selected cycle. `slices` are the top-level categories
 // (already this cycle's). The hole shows the leading category's share by default; tap any wedge
-// to read that category's name + total instead. Renders nothing when there is no positive
-// spend — the screen shows its own empty state instead.
+// to pop it out and read that category's name + total instead. Renders nothing when there is no
+// positive spend — the screen shows its own empty state instead.
 export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
   const painted = reduceSlices(slices);
   const sum = painted.reduce((acc, s) => acc + s.value, 0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const reduceMotion = useReduceMotion();
+  // One Animated.Value per wedge on the [−1, +1] emphasis axis (see sliceEmphasis). Kept in a
+  // ref so it survives redraws; new ids default to 0 (at rest), which is the correct start.
+  const anims = useRef<Map<string, Animated.Value>>(new Map()).current;
+  const emphasisOf = (id: string): Animated.Value => {
+    let v = anims.get(id);
+    if (!v) { v = new Animated.Value(0); anims.set(id, v); }
+    return v;
+  };
+
+  // Spring each wedge toward its target when the selection changes (instant under reduce-motion).
+  useEffect(() => {
+    const springs = painted.map((s) => {
+      const target = sliceEmphasis(s.id === selectedId, selectedId !== null);
+      const v = emphasisOf(s.id);
+      if (reduceMotion) { v.setValue(target); return null; }
+      return Animated.spring(v, { toValue: target, useNativeDriver: false, friction: 7, tension: 120 });
+    });
+    if (!reduceMotion) Animated.parallel(springs.filter(Boolean) as Animated.CompositeAnimation[]).start();
+    // painted is derived from slices each render; the selection + reduce-motion flag are what
+    // actually re-target the springs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, reduceMotion]);
+
   if (sum <= 0) return null;
 
   const pct = (v: number) => (sum > 0 ? Math.round((v / sum) * 100) : 0);
@@ -88,52 +121,52 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     const end = cursor + sweep;
     cursor = end;
     const isSel = s.id === selectedId;
-    // The tapped wedge pops OUT (bigger radius + thicker band); the rest dim back so it stands out.
-    const opacity = selected && !isSel ? DIM : 1;
-    const r = isSel ? R_SEL : R;
-    const strokeW = isSel ? STROKE_SEL : STROKE;
     const onPress = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
     // react-native-svg's native types expose only accessibilityLabel (not role/state), so the
     // selected state rides in the label rather than accessibilityState.
     const a11y = `${s.name}, ${fmt(s.value)}, ${pct(s.value)} percent${isSel ? ', selected' : ''}`;
 
-    if (single) {
+    // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side.
+    const v = emphasisOf(s.id);
+    const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
+    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [DIM, 1, 1], extrapolate: 'clamp' });
+
+    const shape = single ? (
       // A lone 100% slice is a full ring — an arc whose start and end coincide degenerates, so
       // draw it as a plain circle instead.
-      return (
-        <Circle
-          key={s.id}
-          testID={`donut-slice-${s.id}`}
-          cx={CENTER}
-          cy={CENTER}
-          r={r}
-          fill="none"
-          stroke={s.color}
-          strokeWidth={strokeW}
-          opacity={opacity}
-          onPress={onPress}
-          accessible
-          accessibilityLabel={a11y}
-        />
-      );
-    }
-    // Inset each end by half the gap so neighbours don't touch; a wedge too thin to inset keeps
-    // its full sweep rather than inverting.
-    const inset = sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0;
-    return (
-      <Path
-        key={s.id}
+      <Circle
         testID={`donut-slice-${s.id}`}
-        d={arcPath(start + inset, end - inset, r)}
+        cx={CENTER}
+        cy={CENTER}
+        r={R}
         fill="none"
         stroke={s.color}
-        strokeWidth={strokeW}
-        strokeLinecap="butt"
-        opacity={opacity}
+        strokeWidth={STROKE}
         onPress={onPress}
         accessible
         accessibilityLabel={a11y}
       />
+    ) : (
+      // Inset each end by half the gap so neighbours don't touch; a wedge too thin to inset keeps
+      // its full sweep rather than inverting.
+      <Path
+        testID={`donut-slice-${s.id}`}
+        d={arcPath(start + (sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0), end - (sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0), R)}
+        fill="none"
+        stroke={s.color}
+        strokeWidth={STROKE}
+        strokeLinecap="butt"
+        onPress={onPress}
+        accessible
+        accessibilityLabel={a11y}
+      />
+    );
+
+    // Scale about the canvas centre so the pop grows the wedge outward, not in place.
+    return (
+      <AnimatedG key={s.id} scale={scale} originX={CENTER} originY={CENTER} opacity={opacity}>
+        {shape}
+      </AnimatedG>
     );
   });
   // Draw the popped wedge last so its enlarged band sits on top of its neighbours.
@@ -154,7 +187,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
       <Svg width={SIZE} height={SIZE}>
         {/* Track behind the wedges so a partial ring still reads as a full circle. */}
         <Circle cx={CENTER} cy={CENTER} r={R} fill="none" stroke={C.hairlineStrong} strokeWidth={STROKE} />
-        <G>{wedges}</G>
+        {wedges}
       </Svg>
       {/* Centre readout. Default: the leading category's share. Tapped: that category's name +
           total — which is what "tap a slice to see the amount" asks for. pointerEvents=none so
