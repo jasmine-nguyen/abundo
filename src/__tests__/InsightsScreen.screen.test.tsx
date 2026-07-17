@@ -100,6 +100,24 @@ it('shows an empty state when there is no spend', () => {
   expect(screen.getByText('No spending yet this pay cycle.')).toBeTruthy();
 });
 
+it('draws the spending donut once there is spend, and never over an empty/loading/error state', () => {
+  mockInsights = insightsData({ breakdown: { coffee: { posted: 20, pending: 5 }, groceries: { posted: 80, pending: 0 } } });
+  const { rerender } = render(<Insights />);
+  expect(screen.getByTestId('insights-donut')).toBeTruthy();
+
+  mockInsights = insightsData({ breakdown: {} }); // no spend → no chart
+  rerender(<Insights />);
+  expect(screen.queryByTestId('insights-donut')).toBeNull();
+
+  mockInsights = insightsData({ breakdown: {}, isLoading: true }); // first load → no chart
+  rerender(<Insights />);
+  expect(screen.queryByTestId('insights-donut')).toBeNull();
+
+  mockInsights = insightsData({ breakdown: {}, isError: true }); // error → no chart
+  rerender(<Insights />);
+  expect(screen.queryByTestId('insights-donut')).toBeNull();
+});
+
 it('refreshes breakdown (query) AND AI on focus', () => {
   render(<Insights />);
   expect(refetchStale).toHaveBeenCalled();
