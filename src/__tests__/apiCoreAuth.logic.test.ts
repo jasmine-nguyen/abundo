@@ -13,7 +13,7 @@ import { getAuthToken } from '../auth';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories,
-  fetchPayCycle, setPayCycle, setBudget, fetchHomeLoan, fetchRepayment,
+  fetchPayCycle, setPayCycle, setBudget, deleteBudget, fetchHomeLoan, fetchRepayment,
   fetchLoanFacts, setLoanFacts, listEnrichments, createEnrichment, updateEnrichment,
   deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice,
 } from '../api';
@@ -48,6 +48,7 @@ const ALL_FETCHERS: [string, () => Promise<unknown>][] = [
   ['fetchPayCycle', () => fetchPayCycle()],
   ['setPayCycle', () => setPayCycle({ length: 14, last_pay_date: '2026-06-06' })],
   ['setBudget', () => setBudget('groceries', 300)],
+  ['deleteBudget', () => deleteBudget('groceries')],
   ['fetchHomeLoan', () => fetchHomeLoan()],
   ['fetchRepayment', () => fetchRepayment()],
   ['fetchLoanFacts', () => fetchLoanFacts()],

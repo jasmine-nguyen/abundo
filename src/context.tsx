@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -389,6 +389,7 @@ export interface AppContext {
   applyCategoryToMany: (txIds: string[], categoryId: string) => Promise<void>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number) => Promise<boolean>;
+  deleteBudget: (categoryId: string) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
@@ -953,6 +954,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [showToast],
   );
 
+  // WHIT-203: remove a category's budget target (the Budget detail screen's Delete). The
+  // category and its transactions are untouched — only the pay-cycle target is dropped, so
+  // the category simply stops appearing on the Budgets tab. Optimistically strips the id from
+  // every ['budgets', cycleLen] cache entry (a Record keyed by id — the raw queryFn output the
+  // Budgets screen reads), rolling the snapshots back on failure, then invalidates to reconcile
+  // with the server rollup.
+  const deleteBudget = useCallback(
+    async (categoryId: string): Promise<boolean> => {
+      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      // Snapshot every ['budgets'] entry so a failure can restore exactly what was there.
+      const snapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] });
+      snapshots.forEach(([key, data]) => {
+        if (!data || !(categoryId in data)) return;
+        const { [categoryId]: _removed, ...rest } = data;
+        queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
+      });
+      // WHIT-271: a failure settling after sign-out must not restore stale rollups into the
+      // cleared cache, nor toast into the next session.
+      const epoch = sessionEpoch.current;
+      try {
+        await apiDeleteBudget(categoryId);
+        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+        queryClient.invalidateQueries({ queryKey: ['budgets'] });
+        if (c) showToast(`${c.name} budget removed.`);
+        return true;
+      } catch {
+        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+        snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
+        showToast('Could not remove budget. Please try again.');
+        return false;
+      }
+    },
+    [showToast],
+  );
+
   // Create a category and RETURN it (not just a boolean), so a caller can act on the new
   // id straight away — the categorise sheet files the transaction into it (WHIT-238), the
   // category-edit screen re-parents children under it (WHIT-237). Mirrors the new row into
@@ -1222,9 +1258,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

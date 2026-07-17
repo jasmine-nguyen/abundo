@@ -31,6 +31,7 @@ class FakeBudgetRepo:
         self._budgets = budgets or {}
         self._conflict_exc = conflict_exc
         self.set_calls = []
+        self.delete_calls = []
         self.list_calls = 0
 
     def list_budgets(self):
@@ -42,6 +43,13 @@ class FakeBudgetRepo:
         if self._conflict_exc is not None:
             raise self._conflict_exc("boom")
         return {"id": cat_id, "target": target}
+
+    def delete_budget(self, cat_id):
+        self.delete_calls.append(cat_id)
+        if self._conflict_exc is not None:
+            raise self._conflict_exc("boom")
+        # Mirror the real repo's idempotent no-op: drop the target if present.
+        self._budgets.pop(cat_id, None)
 
 
 def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
@@ -706,16 +714,80 @@ def test_put_budget_dispatch(handler, monkeypatch):
 
 
 def test_unknown_budget_method_falls_through_404(handler, monkeypatch):
-    # DELETE /budgets/{category} isn't a route -> catch-all 404.
+    # Only GET/PUT/DELETE are routed on /budgets/{category}; an unsupported method
+    # (PATCH) hits the catch-all 404.
     monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
 
     resp = handler.lambda_handler({
         "rawPath": "/budgets/coffee",
-        "requestContext": {"http": {"method": "DELETE"}},
+        "requestContext": {"http": {"method": "PATCH"}},
         "pathParameters": {"category": "coffee"},
     }, None)
 
     assert resp["statusCode"] == 404
+
+
+# --- handler-level: DELETE /budgets/{category} -------------------------------
+
+
+def _delete_budget_event(category="coffee"):
+    return {
+        "rawPath": f"/budgets/{category}",
+        "requestContext": {"http": {"method": "DELETE"}},
+        "pathParameters": {"category": category},
+    }
+
+
+def test_delete_budget_success(handler):
+    repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+
+    resp = handler.delete_budget(_delete_budget_event(), repo)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {"id": "coffee"}
+    assert repo.delete_calls == [("coffee")]
+
+
+def test_delete_budget_unknown_id_is_idempotent_200(handler):
+    # No stored target for this id -> the repo no-ops, the handler still returns 200
+    # (mirrors delete_goal / delete_enrichment).
+    repo = FakeBudgetRepo()
+
+    resp = handler.delete_budget(_delete_budget_event(category="never_budgeted"), repo)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"]) == {"id": "never_budgeted"}
+    assert repo.delete_calls == [("never_budgeted")]
+
+
+def test_delete_budget_missing_category_returns_404(handler):
+    repo = FakeBudgetRepo()
+
+    resp = handler.delete_budget({"pathParameters": {}}, repo)
+
+    assert resp["statusCode"] == 404
+    assert repo.delete_calls == []
+
+
+def test_delete_budget_routes_via_lambda_handler(handler, monkeypatch):
+    repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
+
+    resp = handler.lambda_handler(_delete_budget_event(), None)
+
+    assert resp["statusCode"] == 200
+    assert repo.delete_calls == [("coffee")]
+
+
+def test_delete_budget_conflict_returns_409(handler, monkeypatch):
+    # A repo that exhausts its retry budget raises VersionConflictError; the shared
+    # dispatch wrapper maps it to 409 (same as the PUT path).
+    repo = FakeBudgetRepo(conflict_exc=handler.VersionConflictError)
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
+
+    resp = handler.lambda_handler(_delete_budget_event(), None)
+
+    assert resp["statusCode"] == 409
 
 
 def test_set_budget_conflict_returns_409(handler, monkeypatch):

@@ -7,7 +7,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories, fetchPayCycle,
-  setPayCycle, setBudget, fetchHomeLoan, fetchLoanFacts, setLoanFacts, fetchRepayment,
+  setPayCycle, setBudget, deleteBudget, fetchHomeLoan, fetchLoanFacts, setLoanFacts, fetchRepayment,
 } from '../api';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
@@ -207,6 +207,15 @@ describe('transaction + budget + paycycle writes', () => {
     expectAuth(opts);
     expect(JSON.parse(opts.body)).toEqual({ target: 300 });
   });
+
+  it('deleteBudget DELETEs /budgets/{categoryId} url-encoded with the Bearer token', async () => {
+    fetchMock.mockReturnValue(okJson({ id: 'a/b' }));
+    await deleteBudget('a/b');
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/budgets/a%2Fb`);   // special char proves the encoding
+    expect(opts.method).toBe('DELETE');
+    expectAuth(opts);
+  });
 });
 
 describe('every fetcher throws on a not-OK response', () => {
@@ -227,6 +236,7 @@ describe('every fetcher throws on a not-OK response', () => {
     ['setTransactionCategories', () => setTransactionCategories([{ id: 't1', category: 'c' }])],
     ['setPayCycle', () => setPayCycle({ length: 14, last_pay_date: '2026-06-06' })],
     ['setBudget', () => setBudget('groceries', 100)],
+    ['deleteBudget', () => deleteBudget('groceries')],
   ];
 
   it.each(cases)('%s throws API error on 500', async (_name, call) => {
