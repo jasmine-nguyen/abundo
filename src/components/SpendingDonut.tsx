@@ -46,6 +46,9 @@ const GAP_DEG = (2 / CIRC) * 360;
 // so its inner edge stays put (never eats into the centre text) while its outer edge bulges out.
 const R_SEL = R + POP / 2;
 const STROKE_SEL = STROKE + POP;
+// How far the un-focused wedges fade back when one is picked. Low enough to clearly recede,
+// high enough to stay legible (they're not gone, just quiet).
+const DIM = 0.22;
 
 // A point at `deg` on a circle of radius `r` (0° = 3 o'clock, +ve clockwise in SVG's y-down space).
 function ptOnRing(deg: number, r: number): [number, number] {
@@ -86,7 +89,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     cursor = end;
     const isSel = s.id === selectedId;
     // The tapped wedge pops OUT (bigger radius + thicker band); the rest dim back so it stands out.
-    const opacity = selected && !isSel ? 0.32 : 1;
+    const opacity = selected && !isSel ? DIM : 1;
     const r = isSel ? R_SEL : R;
     const strokeW = isSel ? STROKE_SEL : STROKE;
     const onPress = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
