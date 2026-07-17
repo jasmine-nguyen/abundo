@@ -1,22 +1,43 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { budgetDetail, transactionView, Transaction, Category } from '../../src/context';
+import { budgetDetail, transactionView, Transaction, Category, useAppContext } from '../../src/context';
 import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { WhittleBar } from '../../src/components/ui';
+import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
 export default function BudgetDetail() {
   // WHIT-203: the rollup + this category's transactions now come from the cached query
   // layer (fed to budgetDetail as a narrow input) instead of the eager store.
   const d = useBudgetDetailScreenData();
+  const s = useAppContext(); // deleteBudget writer stays on the store
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const bd = budgetDetail(d, id);
+  const [deleting, setDeleting] = useState(false);
+  // WHIT-241: same-frame double-tap guard on Delete (declared with the other hooks, above the
+  // early returns below, to satisfy the rules of hooks).
+  const runDelete = useInFlightGuard();
+
+  const onDelete = () => runDelete(async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      const ok = await s.deleteBudget(id);
+      // On success the budget is gone from the Budgets tab; go back to it. On failure the
+      // writer toasts — stay on the screen so the user can retry.
+      if (ok) router.back();
+      else setDeleting(false);
+    } catch (error) {
+      setDeleting(false); // WHIT-249: re-enable on an unexpected throw; re-throw so the guard logs it
+      throw error;
+    }
+  });
 
   // WHIT-72: a first-load pay-cycle failure would render the detail's pace/projection
   // against the DEFAULT cycle (wrong). This screen is reached from the Budgets tab (which
@@ -77,6 +98,10 @@ export default function BudgetDetail() {
           </View>
         ))}
         {bd.relEmpty && <Text style={styles.empty}>No transactions in this category in the last 7 days.</Text>}
+
+        <Pressable testID="budget-delete" onPress={onDelete} disabled={deleting} style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}>
+          <Text style={styles.deleteText}>{deleting ? 'Removing…' : 'Delete budget'}</Text>
+        </Pressable>
       </ScrollView>
     </View>
   );
@@ -130,4 +155,6 @@ const styles = StyleSheet.create({
   txAmount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
   txBucket: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim, marginTop: 2 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },
+  deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
+  deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
 });

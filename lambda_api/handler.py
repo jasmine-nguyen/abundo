@@ -137,6 +137,9 @@ def lambda_handler(event, context):
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
             return set_budget(event, BudgetRepository(), CategoryRepository())
 
+        if path.startswith(f"{BUDGET_PATH}/") and method == "DELETE":
+            return delete_budget(event, BudgetRepository())
+
         if path == BREAKDOWN_PATH and method == "GET":
             # Spend by category (window derived server-side from the stored pay cycle,
             # like /budgets). Optional ?cycle= looks back: 0 = current (default), n =
@@ -1613,6 +1616,22 @@ def set_budget(
 
     saved = repo.set_budget(cat_id, Decimal(str(target)))
     return _json_response(200, saved)
+
+
+def delete_budget(event: dict, repo: BudgetRepository) -> dict:
+    """DELETE /budgets/{category} — remove a category's budget target.
+
+    Idempotent: an unknown/already-gone id still returns 200 (the repo's
+    delete_budget is a no-op when no target exists), mirroring delete_goal /
+    delete_enrichment. The category itself is untouched — only its target is
+    dropped, so its spend keeps being tracked; the user can set a new target
+    later via PUT.
+    """
+    cat_id = (event.get("pathParameters") or {}).get("category")
+    if not cat_id:
+        return _json_response(404, {"error": "budget not found"})
+    repo.delete_budget(cat_id)
+    return _json_response(200, {"id": cat_id})
 
 
 # --- Goals (WHIT-231) ------------------------------------------------------

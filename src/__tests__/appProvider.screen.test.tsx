@@ -346,6 +346,41 @@ it('saveBudget on an uncached (cold) category falls through to the server, not t
   expect(result.current.toast).toBe('Could not save budget. Please try again.');
 });
 
+// --- deleteBudget ------------------------------------------------------------
+
+it('deleteBudget removes the target from the budgets cache, calls the API, and toasts', async () => {
+  mockApi.deleteBudget.mockResolvedValue({ id: 'groceries' });
+  seed();
+  // A stored target for 'groceries' in the RAW ['budgets', cycleLen] Record.
+  queryClient.setQueryData(['budgets', 14], { groceries: { target: 300, posted: 40, pending: 10 } });
+  const result = mount();
+
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.deleteBudget('groceries'); });
+
+  expect(ok).toBe(true);
+  expect(mockApi.deleteBudget).toHaveBeenCalledWith('groceries');
+  // The id is stripped from the cache optimistically (before the invalidate reconciles).
+  expect(queryClient.getQueryData(['budgets', 14])).toEqual({});
+  expect(result.current.toast).toBe('Groceries budget removed.');
+});
+
+it('deleteBudget returns false, restores the cache, and toasts on failure', async () => {
+  mockApi.deleteBudget.mockRejectedValue(new Error('x'));
+  seed();
+  const before = { groceries: { target: 300, posted: 40, pending: 10 } };
+  queryClient.setQueryData(['budgets', 14], { ...before });
+  const result = mount();
+
+  let ok: boolean | undefined;
+  await act(async () => { ok = await result.current.deleteBudget('groceries'); });
+
+  expect(ok).toBe(false);
+  // The optimistic strip is rolled back to the pre-delete snapshot.
+  expect(queryClient.getQueryData(['budgets', 14])).toEqual(before);
+  expect(result.current.toast).toBe('Could not remove budget. Please try again.');
+});
+
 // --- saveCategory ------------------------------------------------------------
 
 it('saveCategory creates a new category', async () => {

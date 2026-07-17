@@ -14,6 +14,13 @@ import type { ScreenState } from './support/screenQueryMocks';
 let mockState: ScreenState;
 jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
 
+// The detail screen reads deleteBudget off useAppContext() (for the Delete button); keep the
+// real budgetDetail/transactionView pure functions and stub only the hook.
+jest.mock('../context', () => {
+  const actual = jest.requireActual('../context') as typeof import('../context');
+  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn(async () => true) }) };
+});
+
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
   useLocalSearchParams: () => ({ id: 'coffee' }),

@@ -583,6 +583,25 @@ export async function setBudget(
 }
 
 /**
+ * Delete a category's budget target. Idempotent — a category with no target
+ * (or an unknown id) still returns 200. Only the target is removed; the
+ * category and its transactions are untouched.
+ *
+ * @param categoryId - The category id/slug whose budget to remove (e.g. "groceries").
+ * @returns The id whose budget was removed.
+ * @throws If the response status is not OK.
+ */
+export async function deleteBudget(categoryId: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * List every categorisation rule from the enrichments API. Auth-gated.
  *
  * @returns The rules currently held by BankSync (source of truth).
