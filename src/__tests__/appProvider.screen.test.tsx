@@ -119,6 +119,8 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
   expect(byId.t2).toBe('groceries');
   expect(byId.t3).toBeNull();                                        // Woolworths untouched
   expect(rules()).toHaveLength(1);
+  // WHIT-292: the sweep toast names the count it filed alongside the future rule (t1 + t2).
+  expect(result.current.toast).toBe('2 transactions filed — future COLES charges file as Groceries.');
 });
 
 it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank category, not just null ones', async () => {
@@ -183,6 +185,43 @@ it('applyCategory(all) rolls back ALL ids when the whole batch call rejects', as
   expect(byId.t1).toBeNull();
   expect(byId.t2).toBeNull();
   expect(result.current.toast).toBe('Could not save some categories. Please try again.');
+});
+
+it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule rolled back) when the rule fails but the batch succeeds', async () => {
+  // WHIT-292 gap: the rule-only-failure branch (context.tsx "Filed, but could not save the
+  // rule…") had ZERO coverage, and it's exactly the branch the batch/rule extraction moves.
+  // createEnrichment rejects while every charge saves -> charges stay filed, the optimistic
+  // rule is removed, and the toast is the rule-only copy (NOT the generic "some categories").
+  // Also locks the concurrency structure: the rule is ISSUED before the batch, and its
+  // rejection never floats as an unhandled rejection (allSettled attached synchronously).
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  mockApi.createEnrichment.mockRejectedValue(new Error('banksync down'));
+  mockApi.setTransactionCategories.mockResolvedValue({
+    results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }],
+  });
+  seed([
+    { ...TXN, transaction_id: 't1', category: null },
+    { ...TXN, transaction_id: 't2', category: null },
+  ]);
+  const result = mount();
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
+  expect(byId.t1).toBe('groceries');                 // charges stay filed (batch succeeded)
+  expect(byId.t2).toBe('groceries');
+  expect(rules()).toHaveLength(0);                   // optimistic rule rolled back (rule failed)
+  expect(result.current.toast).toBe('Filed, but could not save the rule for future charges.');
+  // Concurrency: the rule is issued BEFORE the batch (prior call order), matching the old
+  // single Promise.allSettled([createEnrichment, ...chunks]).
+  expect(mockApi.createEnrichment.mock.invocationCallOrder[0])
+    .toBeLessThan(mockApi.setTransactionCategories.mock.invocationCallOrder[0]);
+
+  process.off('unhandledRejection', onUnhandled);
+  expect(unhandled).toEqual([]);                     // rule rejection handled, never floated
 });
 
 it('applyCategory(all) invalidates budgets + breakdown when at least one charge saved', async () => {
