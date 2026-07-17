@@ -4,7 +4,7 @@
 // the chart carries, not on drawn paths.
 import { describe, it, expect } from '@jest/globals';
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 import { SpendingDonut, reduceSlices, type DonutSlice } from '../components/SpendingDonut';
 
 const s = (id: string, value: number): DonutSlice => ({ id, name: id, color: '#7aa2f7', value });
@@ -55,5 +55,38 @@ describe('SpendingDonut', () => {
     const node = screen.getByTestId('donut');
     expect(node.props.accessibilityLabel).toContain('Groceries 75 percent');
     expect(node.props.accessibilityLabel).toContain('Coffee 25 percent');
+  });
+
+  const TWO = [
+    { id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 },
+    { id: 'c', name: 'Coffee', color: '#E8A87C', value: 25 },
+  ];
+
+  it('tapping a wedge shows that category name + total in the hole', () => {
+    render(<SpendingDonut slices={TWO} />);
+    // Default: leading share, no amount.
+    expect(screen.getByText('75%')).toBeTruthy();
+    expect(screen.queryByTestId('donut-center-amount')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('donut-slice-c')); // tap the smaller (non-leading) wedge
+    expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25');
+    expect(screen.getByText('Coffee')).toBeTruthy();
+    expect(screen.queryByText('75%')).toBeNull(); // default readout is replaced
+  });
+
+  it('tapping the selected wedge again clears back to the default readout', () => {
+    render(<SpendingDonut slices={TWO} />);
+    fireEvent.press(screen.getByTestId('donut-slice-g'));
+    expect(screen.getByTestId('donut-center-amount').props.children).toBe('$75');
+
+    fireEvent.press(screen.getByTestId('donut-slice-g')); // same wedge → toggle off
+    expect(screen.queryByTestId('donut-center-amount')).toBeNull();
+    expect(screen.getByText('75%')).toBeTruthy();
+    expect(screen.getByText('top category')).toBeTruthy();
+  });
+
+  it('each wedge is a labelled button carrying its dollar total', () => {
+    render(<SpendingDonut slices={TWO} />);
+    expect(screen.getByTestId('donut-slice-g').props.accessibilityLabel).toBe('Groceries, $75, 75 percent');
   });
 });

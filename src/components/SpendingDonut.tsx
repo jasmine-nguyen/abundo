@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import Svg, { G, Circle } from 'react-native-svg';
-import { C, FONT } from '../theme';
+import Svg, { G, Circle, Path } from 'react-native-svg';
+import { C, FONT, fmt } from '../theme';
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
 // category, sized by its share of the total, painted in that category's own colour so the
 // ring and the rows below it read as one legend. The category rows underneath double as the
 // chart's legend + table view (name · amount · share), so the donut needs no separate key.
+// Tap a wedge to read that category's name + total in the hole; tap it again to clear.
 
 // Neutral grey for the grouped "Other" slice — distinct from any category hue, and reads as
 // "not one thing" rather than competing for identity with the real categories.
@@ -29,72 +30,130 @@ export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
 }
 
 // Fixed geometry — a square SVG the ring is inscribed in. A ~26px band leaves a roomy hole
-// for the centred leading-share stat.
+// for the centred stat.
 const SIZE = 184;
 const STROKE = 26;
 const R = (SIZE - STROKE) / 2;
 const CIRC = 2 * Math.PI * R;
 const CENTER = SIZE / 2;
-// A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills), in
-// path-length units. Dropped when there is only one slice (a full ring has no seam).
-const GAP = 2;
+// A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
+// angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
+const GAP_DEG = (2 / CIRC) * 360;
+
+// A point on the ring at `deg` (0° = 3 o'clock, +ve clockwise in SVG's y-down space).
+function ptOnRing(deg: number): [number, number] {
+  const a = (deg * Math.PI) / 180;
+  return [CENTER + R * Math.cos(a), CENTER + R * Math.sin(a)];
+}
+
+// A stroked arc path following the ring from `startDeg` to `endDeg` (clockwise). The stroke
+// band (width STROKE) IS the visible wedge, and — unlike a full-circle dashed stroke — its hit
+// area is only this segment, so each wedge can own a tap.
+function arcPath(startDeg: number, endDeg: number): string {
+  const [x1, y1] = ptOnRing(startDeg);
+  const [x2, y2] = ptOnRing(endDeg);
+  const large = endDeg - startDeg > 180 ? 1 : 0;
+  return `M ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2}`;
+}
 
 // A donut of category spend for the selected cycle. `slices` are the top-level categories
-// (already this cycle's). The hole highlights the leading category — where most of the money
-// went — complementing (not repeating) the hero total above. Renders nothing when there is no
-// positive spend — the screen shows its own empty state instead.
+// (already this cycle's). The hole shows the leading category's share by default; tap any wedge
+// to read that category's name + total instead. Renders nothing when there is no positive
+// spend — the screen shows its own empty state instead.
 export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
   const painted = reduceSlices(slices);
   const sum = painted.reduce((acc, s) => acc + s.value, 0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   if (sum <= 0) return null;
 
+  const pct = (v: number) => (sum > 0 ? Math.round((v / sum) * 100) : 0);
   const single = painted.length === 1;
-  let offset = 0;
-  const arcs = painted.map((s) => {
-    const frac = s.value / sum;
-    const gap = single ? 0 : GAP;
-    // Clamp so a hair-thin slice never goes negative once the gap is subtracted.
-    const seg = Math.max(0, frac * CIRC - gap);
-    const dash = `${seg} ${CIRC - seg}`;
-    const arc = (
-      <Circle
+  const selected = painted.find((s) => s.id === selectedId) ?? null;
+
+  // Lay the wedges out by angle, starting at 12 o'clock (−90°) and running clockwise.
+  let cursor = -90;
+  const wedges = painted.map((s) => {
+    const sweep = (s.value / sum) * 360;
+    const start = cursor;
+    const end = cursor + sweep;
+    cursor = end;
+    const isSel = s.id === selectedId;
+    // Dim the other wedges once one is picked, so the selection stands out.
+    const opacity = selected && !isSel ? 0.32 : 1;
+    const onPress = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
+    // react-native-svg's native types expose only accessibilityLabel (not role/state), so the
+    // selected state rides in the label rather than accessibilityState.
+    const a11y = `${s.name}, ${fmt(s.value)}, ${pct(s.value)} percent${isSel ? ', selected' : ''}`;
+
+    if (single) {
+      // A lone 100% slice is a full ring — an arc whose start and end coincide degenerates, so
+      // draw it as a plain circle instead.
+      return (
+        <Circle
+          key={s.id}
+          testID={`donut-slice-${s.id}`}
+          cx={CENTER}
+          cy={CENTER}
+          r={R}
+          fill="none"
+          stroke={s.color}
+          strokeWidth={STROKE}
+          opacity={opacity}
+          onPress={onPress}
+          accessible
+          accessibilityLabel={a11y}
+        />
+      );
+    }
+    // Inset each end by half the gap so neighbours don't touch; a wedge too thin to inset keeps
+    // its full sweep rather than inverting.
+    const inset = sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0;
+    return (
+      <Path
         key={s.id}
-        cx={CENTER}
-        cy={CENTER}
-        r={R}
+        testID={`donut-slice-${s.id}`}
+        d={arcPath(start + inset, end - inset)}
         fill="none"
         stroke={s.color}
         strokeWidth={STROKE}
-        strokeDasharray={dash}
-        strokeDashoffset={-offset}
+        strokeLinecap="butt"
+        opacity={opacity}
+        onPress={onPress}
+        accessible
+        accessibilityLabel={a11y}
       />
     );
-    offset += frac * CIRC;
-    return arc;
   });
 
-  const pct = (v: number) => (sum > 0 ? Math.round((v / sum) * 100) : 0);
   // painted[0] is the largest single category — kept slices are sorted desc and "Other" (a sum
   // of the smaller tail) is only ever appended after them, so it can never be painted[0].
   const lead = painted[0];
   const label = `Spending by category. ${painted
     .map((s) => `${s.name} ${pct(s.value)} percent`)
-    .join(', ')}.`;
+    .join(', ')}. Tap a slice for its total.`;
 
   return (
-    <View style={styles.wrap} testID={testID} accessibilityRole="image" accessibilityLabel={label}>
+    <View style={styles.wrap} testID={testID} accessibilityLabel={label}>
       <Svg width={SIZE} height={SIZE}>
         {/* Track behind the wedges so a partial ring still reads as a full circle. */}
         <Circle cx={CENTER} cy={CENTER} r={R} fill="none" stroke={C.hairlineStrong} strokeWidth={STROKE} />
-        {/* Start the first wedge at 12 o'clock and run clockwise. */}
-        <G rotation={-90} origin={`${CENTER}, ${CENTER}`}>{arcs}</G>
+        <G>{wedges}</G>
       </Svg>
-      {/* The hole highlights the leading share as a bare percentage (the colour ring + the
-          rows below name WHICH category) — a repeated $-total or category name would just
-          duplicate the hero/rows. */}
+      {/* Centre readout. Default: the leading category's share. Tapped: that category's name +
+          total — which is what "tap a slice to see the amount" asks for. pointerEvents=none so
+          taps fall through to the wedges beneath. */}
       <View style={styles.center} pointerEvents="none">
-        <Text style={styles.centerPct}>{pct(lead.value)}%</Text>
-        <Text style={styles.centerName}>top category</Text>
+        {selected ? (
+          <>
+            <Text testID="donut-center-amount" style={styles.centerAmount}>{fmt(selected.value)}</Text>
+            <Text style={styles.centerName} numberOfLines={2}>{selected.name}</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.centerPct}>{pct(lead.value)}%</Text>
+            <Text style={styles.centerName}>top category</Text>
+          </>
+        )}
       </View>
     </View>
   );
@@ -102,7 +161,8 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
 
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
-  center: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
+  center: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 34 },
   centerPct: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.textBright, letterSpacing: -1 },
+  centerAmount: { fontFamily: FONT.display, fontSize: 28, fontWeight: '800', color: C.textBright, letterSpacing: -1 },
   centerName: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.textDim, marginTop: 2, textAlign: 'center' },
 });
