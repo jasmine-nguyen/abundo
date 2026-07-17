@@ -87,13 +87,14 @@ def test_dedupe_carries_a_note_on_a_same_category_twin(lam, repo):
     assert rows["post1"]["tags"] == ["work"]         # tags carried onto posted
 
 
-def test_dedupe_carries_a_budget_exclude_override_on_a_same_category_twin(lam, repo):
-    # WHIT-296: the `changed` gate re-puts only when a carried user field differs. A
-    # budget_excluded override on a SAME-category pending twin (with no note/tag
-    # difference) must be in that gate, or the posted is NOT re-put and the pending —
-    # the only row holding the override — is deleted, silently dropping the exclusion.
-    # Fail-on-revert: drop "budget_excluded" from the gate tuple and this goes red.
-    # budget_excluded isn't a bank field (normalise strips it), so inject directly.
+def test_dedupe_does_not_re_exclude_a_reincluded_charge(lam, repo, monkeypatch):
+    # WHIT-300: the user RE-INCLUDED the posted (override cleared -> reads back absent). A
+    # stale pending twin still marked budget_excluded=True must NOT be carried onto it, or the
+    # sweep would silently re-exclude a charge the user just turned back on — then delete the
+    # twin, leaving no trace. The sweep is posted-authoritative for the override: the posted
+    # stays included, and with nothing to carry the sweep issues no re-put.
+    # Fail-on-revert: restore the fill-if-absent carry and post1 regains budget_excluded=True
+    # (and a re-put fires). budget_excluded isn't a bank field (normalise strips it), inject it.
     _store(lam, repo,
            _raw_row("pend1", pending=True, category="groceries"),
            _raw_row("post1", pending=False, category="groceries"))
@@ -101,12 +102,20 @@ def test_dedupe_carries_a_budget_exclude_override_on_a_same_category_twin(lam, r
         if item.get("transaction_id") == "pend1":
             item["budget_excluded"] = True
 
+    reputs = []
+    original_insert = repo.insert_transactions
+    monkeypatch.setattr(
+        repo, "insert_transactions",
+        lambda txns: reputs.append(txns) or original_insert(txns),
+    )
+
     summary = lam.dedupe_cleanup.dedupe_pre_reconciliation(repo, dry_run=False)
 
     assert summary["deduped"] == 1
     rows = _rows(repo)
     assert "pend1" not in rows                          # stale pending deleted
-    assert rows["post1"]["budget_excluded"] is True     # override carried onto posted
+    assert rows["post1"].get("budget_excluded") is None  # charge stays INCLUDED (the fix)
+    assert reputs == []                                 # nothing differs -> no needless re-put
 
 
 def test_dedupe_identical_twin_skips_the_reput(lam, repo, monkeypatch):
@@ -179,7 +188,7 @@ def test_dedupe_keeps_posted_note_and_tags_over_stale_pending_and_skips_reput(la
     # pending twin still holds OLDER ones with the SAME category. The sweep must keep the
     # posted's own (fill-only, not clobber), and because the carried row then equals the
     # posted, the `changed` gate must skip the re-put (no write amplification) yet STILL
-    # delete the stale pending. Reverting the keep_posted_notes_tags guard makes the
+    # delete the stale pending. Reverting the dedupe_sweep guard makes the
     # pending's note win -> changed -> a re-put is issued and the posted note is overwritten.
     # notes/tags aren't bank fields, so inject onto the stored rows directly.
     _store(lam, repo,

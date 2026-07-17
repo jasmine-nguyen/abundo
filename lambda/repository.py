@@ -429,7 +429,7 @@ class TransactionRepository:
 
     @staticmethod
     def _with_carried_category(
-        posted_txn: Transaction, source_row: dict, *, keep_posted_notes_tags: bool = False
+        posted_txn: Transaction, source_row: dict, *, dedupe_sweep: bool = False
     ) -> Transaction:
         """A copy of the posted txn with the user-owned fields — `category`, `notes`,
         `tags` and `budget_excluded` — carried from `source_row` (the matched pending
@@ -440,28 +440,34 @@ class TransactionRepository:
         budget_excluded rides along so a "mark as transfer" override survives it —
         WHIT-296.)
 
-        keep_posted_notes_tags (WHIT-279): when True, a note/tag/override the posted
-        row ALREADY holds is never overwritten by the source's — only an absent one is
-        filled. These are user-only + sparse, so a truthy posted value means the user
-        edited the posted itself; the one-time dedupe sweep passes this so a stale
-        pending twin can't clobber one the user set after settlement. Category is
-        NEVER skipped (the bank always sets one, so there's no clean 'user set it'
-        signal, and carrying the pending's category is the sweep's purpose). Default
-        False keeps the live reconcile carry byte-identical.
+        dedupe_sweep: set by the one-time dedupe sweep (WHIT-80) so a stale pending
+        twin can't clobber what the user set after settlement.
+          - notes/tags (WHIT-279): a value the posted ALREADY holds is never overwritten;
+            only an absent one is filled (a truthy posted value means the user edited the
+            posted itself).
+          - budget_excluded (WHIT-300): posted-authoritative — NEVER carried from the
+            source. A re-include the user just made clears the override (reads back
+            absent), so filling it from a stale pending twin still marked True would
+            silently re-exclude the charge. The cost is the mirror case (a genuinely
+            marked pending whose posted lacks the override isn't excluded by the sweep),
+            which errs toward showing/counting the charge — the safer direction.
+          - category is NEVER skipped (the bank always sets one, so there's no clean
+            'user set it' signal, and carrying the pending's category is the sweep's
+            purpose).
+        Default False keeps the live reconcile carry byte-identical.
 
         Accepted residual (WHIT-279): the sweep still overwrites a value the user set
         DIRECTLY on the posted when it can't detect it — category always (no bank-vs-
-        user signal), and a CLEARED note/tag/override (a falsy posted value reads as
-        absent, so the pending's old one refills). Only reachable on the manual sweep
-        when a stale pending twin survived reconciliation."""
+        user signal), and a CLEARED note/tag (a falsy posted value reads as absent, so
+        the pending's old one refills). Only reachable on the manual sweep when a stale
+        pending twin survived reconciliation."""
         carried = posted_txn.copy()
         for field in ("category", "notes", "tags", "budget_excluded"):
-            if (
-                keep_posted_notes_tags
-                and field in ("notes", "tags", "budget_excluded")
-                and posted_txn.get(field)
-            ):
-                continue  # posted already holds a user note/tag/override — don't clobber it
+            if dedupe_sweep:
+                if field == "budget_excluded":
+                    continue  # WHIT-300: posted-authoritative — never carry the override
+                if field in ("notes", "tags") and posted_txn.get(field):
+                    continue  # WHIT-279: posted already holds a user note/tag — don't clobber
             value = source_row.get(field)
             if value:
                 carried[field] = value

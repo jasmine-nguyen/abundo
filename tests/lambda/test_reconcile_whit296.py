@@ -43,11 +43,28 @@ def test_absent_source_override_keeps_the_posted_own_override(lam, repo):
 
 
 def test_dedupe_guard_keeps_a_post_settlement_override(lam, repo):
-    # keep_posted_notes_tags (the dedupe sweep): the user excluded the POSTED after
+    # dedupe_sweep (the dedupe sweep): the user excluded the POSTED after
     # settlement; a stale pending twin without the override must not un-exclude it.
     posted = {"transaction_id": "B", "category": "coffee", "budget_excluded": True}
     source = {"category": "coffee"}  # stale pending, no override
 
-    carried = repo._with_carried_category(posted, source, keep_posted_notes_tags=True)
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
 
     assert carried["budget_excluded"] is True
+
+
+# --- WHIT-300: the sweep is posted-authoritative for the exclude override ---------
+
+
+def test_dedupe_guard_does_not_carry_a_stale_exclude_onto_a_reincluded_posted(lam, repo):
+    # The user RE-INCLUDED the posted (override cleared -> absent). On the sweep a stale
+    # pending twin still marked excluded must NOT re-exclude it — that's the WHIT-300 bug.
+    # Fail-on-revert: restore the old fill-if-absent carry and budget_excluded reappears.
+    # (The live path staying intact — the sweep-only scope of this change — is guarded by
+    # test_carry_brings_budget_excluded_onto_a_fresh_posted above.)
+    posted = {"transaction_id": "B", "category": "coffee"}  # re-included: no override
+    source = {"category": "coffee", "budget_excluded": True}  # stale pending
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried.get("budget_excluded") is None  # stays included
