@@ -89,4 +89,17 @@ describe('SpendingDonut', () => {
     render(<SpendingDonut slices={TWO} />);
     expect(screen.getByTestId('donut-slice-g').props.accessibilityLabel).toBe('Groceries, $75, 75 percent');
   });
+
+  it('pops the tapped wedge out — thicker band than the un-tapped ones', () => {
+    render(<SpendingDonut slices={TWO} />);
+    const restingWidth = screen.getByTestId('donut-slice-g').props.strokeWidth;
+    expect(screen.getByTestId('donut-slice-c').props.strokeWidth).toBe(restingWidth); // all equal at rest
+
+    fireEvent.press(screen.getByTestId('donut-slice-g'));
+    const g = screen.getByTestId('donut-slice-g');
+    const c = screen.getByTestId('donut-slice-c');
+    expect(g.props.strokeWidth).toBeGreaterThan(restingWidth); // tapped wedge grew
+    expect(g.props.strokeWidth).toBeGreaterThan(c.props.strokeWidth); // ...and is bigger than the rest
+    expect(c.props.opacity).toBeLessThan(1); // the others dim back
+  });
 });

@@ -30,30 +30,37 @@ export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
 }
 
 // Fixed geometry — a square SVG the ring is inscribed in. A ~26px band leaves a roomy hole
-// for the centred stat.
-const SIZE = 184;
+// for the centred stat. PAD keeps the ring clear of the canvas edge so a tapped wedge has room
+// to POP outward (grow past the others) without clipping.
+const SIZE = 192;
 const STROKE = 26;
-const R = (SIZE - STROKE) / 2;
-const CIRC = 2 * Math.PI * R;
+const PAD = 11;      // clear space around the ring
+const POP = 9;       // how far the selected wedge grows outward
 const CENTER = SIZE / 2;
+const R = CENTER - PAD - STROKE / 2;        // resting mid-line radius of the ring
+const CIRC = 2 * Math.PI * R;
 // A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
 // angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
 const GAP_DEG = (2 / CIRC) * 360;
+// The selected wedge grows OUTWARD only — its mid-line lifts by POP/2 and it thickens by POP —
+// so its inner edge stays put (never eats into the centre text) while its outer edge bulges out.
+const R_SEL = R + POP / 2;
+const STROKE_SEL = STROKE + POP;
 
-// A point on the ring at `deg` (0° = 3 o'clock, +ve clockwise in SVG's y-down space).
-function ptOnRing(deg: number): [number, number] {
+// A point at `deg` on a circle of radius `r` (0° = 3 o'clock, +ve clockwise in SVG's y-down space).
+function ptOnRing(deg: number, r: number): [number, number] {
   const a = (deg * Math.PI) / 180;
-  return [CENTER + R * Math.cos(a), CENTER + R * Math.sin(a)];
+  return [CENTER + r * Math.cos(a), CENTER + r * Math.sin(a)];
 }
 
-// A stroked arc path following the ring from `startDeg` to `endDeg` (clockwise). The stroke
-// band (width STROKE) IS the visible wedge, and — unlike a full-circle dashed stroke — its hit
-// area is only this segment, so each wedge can own a tap.
-function arcPath(startDeg: number, endDeg: number): string {
-  const [x1, y1] = ptOnRing(startDeg);
-  const [x2, y2] = ptOnRing(endDeg);
+// A stroked arc path following radius `r` from `startDeg` to `endDeg` (clockwise). The stroke
+// band IS the visible wedge, and — unlike a full-circle dashed stroke — its hit area is only
+// this segment, so each wedge can own a tap.
+function arcPath(startDeg: number, endDeg: number, r: number): string {
+  const [x1, y1] = ptOnRing(startDeg, r);
+  const [x2, y2] = ptOnRing(endDeg, r);
   const large = endDeg - startDeg > 180 ? 1 : 0;
-  return `M ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2}`;
+  return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
 }
 
 // A donut of category spend for the selected cycle. `slices` are the top-level categories
@@ -78,8 +85,10 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     const end = cursor + sweep;
     cursor = end;
     const isSel = s.id === selectedId;
-    // Dim the other wedges once one is picked, so the selection stands out.
+    // The tapped wedge pops OUT (bigger radius + thicker band); the rest dim back so it stands out.
     const opacity = selected && !isSel ? 0.32 : 1;
+    const r = isSel ? R_SEL : R;
+    const strokeW = isSel ? STROKE_SEL : STROKE;
     const onPress = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
     // react-native-svg's native types expose only accessibilityLabel (not role/state), so the
     // selected state rides in the label rather than accessibilityState.
@@ -94,10 +103,10 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
           testID={`donut-slice-${s.id}`}
           cx={CENTER}
           cy={CENTER}
-          r={R}
+          r={r}
           fill="none"
           stroke={s.color}
-          strokeWidth={STROKE}
+          strokeWidth={strokeW}
           opacity={opacity}
           onPress={onPress}
           accessible
@@ -112,10 +121,10 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
       <Path
         key={s.id}
         testID={`donut-slice-${s.id}`}
-        d={arcPath(start + inset, end - inset)}
+        d={arcPath(start + inset, end - inset, r)}
         fill="none"
         stroke={s.color}
-        strokeWidth={STROKE}
+        strokeWidth={strokeW}
         strokeLinecap="butt"
         opacity={opacity}
         onPress={onPress}
@@ -124,6 +133,11 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
       />
     );
   });
+  // Draw the popped wedge last so its enlarged band sits on top of its neighbours.
+  if (selectedId) {
+    const i = wedges.findIndex((w) => w.key === selectedId);
+    if (i >= 0) wedges.push(...wedges.splice(i, 1));
+  }
 
   // painted[0] is the largest single category — kept slices are sorted desc and "Other" (a sum
   // of the smaller tail) is only ever appended after them, so it can never be painted[0].
