@@ -1947,6 +1947,9 @@ export interface TransactionView {
   id: string; merchant: string; amountLabel: string; amountColor: string;
   isPending: boolean; icon: string; iconColor: string; chipBg: string;
   categoryLabel: string; categoryColor: string; categoryWeight: '500' | '700'; tappable: boolean;
+  // WHIT-298: this charge doesn't count toward budgets — either the bank flagged it (a
+  // transfer / card payment) or the user excluded it. Drives the row's "Not in budget" tag.
+  excluded: boolean;
 }
 
 // The taxonomy test behind isUncategorized, taking the raw category id + a lookup,
@@ -2002,6 +2005,7 @@ export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Tr
     categoryLabel: uncategorized ? 'Uncategorized' : isIncome ? 'Income' : c!.name,
     categoryColor: uncategorized ? C.purple : isIncome ? '#9aa2b5' : C.textMid,
     categoryWeight: uncategorized ? '700' : '500', tappable: uncategorized,
+    excluded: !contributesToBudget(t),
   };
 }
 

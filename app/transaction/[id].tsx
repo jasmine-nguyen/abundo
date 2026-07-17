@@ -79,8 +79,16 @@ export default function TransactionDetail() {
                 <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
               </View>
 
-              {/* WHIT-296: the user override to exclude this charge from budgets. */}
-              <BudgetExcludeToggle transaction={transaction} />
+              {/* WHIT-298: a bank-excluded charge (transfer / card payment) can't be manually
+                  un-excluded, so show a read-only note in place of the WHIT-296 manual toggle.
+                  A normal charge keeps the toggle so the user can still exclude it themselves.
+                  Gate on the same "bank doesn't count this" test the row tag uses (falsy
+                  counts_to_budget), so the list and this screen never disagree. */}
+              {transaction.counts_to_budget ? (
+                <BudgetExcludeToggle transaction={transaction} />
+              ) : (
+                <BudgetExcludedNote />
+              )}
 
               {/* Keyed by id so switching transactions reseeds the local note text. */}
               <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} />
@@ -124,6 +132,22 @@ function BudgetExcludeToggle({ transaction }: { transaction: Transaction }) {
         <View style={[styles.switchKnob, excluded && styles.switchKnobOn]} />
       </View>
     </Pressable>
+  );
+}
+
+// WHIT-298: shown in place of the manual toggle when the BANK doesn't count the charge
+// (counts_to_budget falsy). Read-only, because the manual toggle can't un-exclude a bank
+// transfer — so we explain the auto-exclusion rather than offer an inert switch.
+function BudgetExcludedNote() {
+  return (
+    <View
+      style={styles.excludedNote}
+      accessible
+      accessibilityLabel="Excluded from budgets. This looks like a transfer or card payment, so it doesn't count toward budgets or insights."
+    >
+      <Text style={styles.toggleTitle}>Excluded (transfer)</Text>
+      <Text style={styles.toggleSub}>This looks like a transfer or card payment, so it doesn't count toward budgets or insights.</Text>
+    </View>
   );
 }
 
@@ -279,6 +303,8 @@ const styles = StyleSheet.create({
   fieldValue: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textBright, flexShrink: 1, textAlign: 'right' },
 
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginTop: 12 },
+  // WHIT-298: same card as the toggle, but a plain informational block (no switch).
+  excludedNote: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginTop: 12, gap: 3 },
   toggleText: { flex: 1, minWidth: 0, gap: 3 },
   toggleTitle: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textBright },
   toggleSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, lineHeight: 17 },
