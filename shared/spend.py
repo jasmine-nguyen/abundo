@@ -100,7 +100,8 @@ def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal
     summarise_income: they differ only in WHICH categories they roll up and the
     direction of the amount, not in how a contributing transaction maps to a bucket.
 
-    Contributes only if `counts_to_budget` is truthy and `status` is a known
+    Contributes only if `counts_to_budget` is truthy, the user hasn't manually
+    excluded it (`budget_excluded`, WHIT-296), and `status` is a known
     pending/posted (an unknown status is skipped, never guessed).
 
     `sign` flips the stored amount into a positive contribution:
@@ -110,7 +111,7 @@ def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal
         a reversal/clawback (negative amount) reduces it.
     Callers clamp each bucket at >= 0.
     """
-    if not transaction.get("counts_to_budget"):
+    if not transaction.get("counts_to_budget") or transaction.get("budget_excluded"):
         return None
     status = transaction.get("status")
     if status == PENDING_STATUS:

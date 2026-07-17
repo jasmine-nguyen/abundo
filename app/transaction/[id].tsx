@@ -79,6 +79,9 @@ export default function TransactionDetail() {
                 <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
               </View>
 
+              {/* WHIT-296: the user override to exclude this charge from budgets. */}
+              <BudgetExcludeToggle transaction={transaction} />
+
               {/* Keyed by id so switching transactions reseeds the local note text. */}
               <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} />
             </>
@@ -93,6 +96,34 @@ export default function TransactionDetail() {
         </DetailStates>
       </ScrollView>
     </View>
+  );
+}
+
+// WHIT-296: the "Exclude from budgets / Mark as transfer" override. A switch row that
+// writes budget_excluded through the SAME applyTransactionEdit path as notes/tags, so it
+// updates the screen immediately and rolls back on a failed save. When ON, the charge
+// drops from budget bars, the breakdown, and Insights (server honours the flag). Reads
+// straight from the cached row (undefined = not excluded), so no local state to reseed.
+function BudgetExcludeToggle({ transaction }: { transaction: Transaction }) {
+  const { applyTransactionEdit } = useAppContext();
+  const excluded = transaction.budget_excluded ?? false;
+  return (
+    <Pressable
+      onPress={() => applyTransactionEdit(transaction.transaction_id, { budget_excluded: !excluded })}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: excluded }}
+      accessibilityLabel="Exclude from budgets"
+      accessibilityHint="Marks this as a transfer so it doesn't count toward budgets or insights"
+      style={({ pressed }) => [styles.toggleRow, pressed && styles.fieldPressed]}
+    >
+      <View style={styles.toggleText}>
+        <Text style={styles.toggleTitle}>Exclude from budgets</Text>
+        <Text style={styles.toggleSub}>Mark as a transfer — won't count toward budgets or insights.</Text>
+      </View>
+      <View style={[styles.switchTrack, excluded && styles.switchTrackOn]}>
+        <View style={[styles.switchKnob, excluded && styles.switchKnobOn]} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -246,6 +277,15 @@ const styles = StyleSheet.create({
   fieldLabel: { fontFamily: FONT.body, fontSize: 13.5, color: C.textMid },
   fieldValueWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, justifyContent: 'flex-end' },
   fieldValue: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textBright, flexShrink: 1, textAlign: 'right' },
+
+  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, marginTop: 12 },
+  toggleText: { flex: 1, minWidth: 0, gap: 3 },
+  toggleTitle: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textBright },
+  toggleSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, lineHeight: 17 },
+  switchTrack: { width: 46, height: 28, borderRadius: 999, backgroundColor: C.cardAlt, borderWidth: 1, borderColor: C.hairlineStrong, padding: 3, justifyContent: 'center' },
+  switchTrackOn: { backgroundColor: C.accent, borderColor: C.accent },
+  switchKnob: { width: 20, height: 20, borderRadius: 999, backgroundColor: C.textDim, alignSelf: 'flex-start' },
+  switchKnobOn: { backgroundColor: C.accentInk, alignSelf: 'flex-end' },
 
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 8, marginHorizontal: 4 },
   noteInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 14, minHeight: 88, fontFamily: FONT.body, fontSize: 14.5, color: C.textBright, textAlignVertical: 'top' },

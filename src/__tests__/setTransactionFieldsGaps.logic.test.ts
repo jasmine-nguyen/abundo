@@ -48,4 +48,15 @@ describe('setTransactionFields (WHIT-275)', () => {
     fetchMock.mockReturnValue(notOk(404));
     await expect(setTransactionFields('t1', { notes: 'x' })).rejects.toThrow('API error: 404');
   });
+
+  // WHIT-296: the budget-exclude override travels on the same PATCH body.
+  it('sends the budget_excluded override verbatim (true and false both reach the server)', async () => {
+    fetchMock.mockReturnValue(okJson({ transaction_id: 't1', budget_excluded: true }));
+    await setTransactionFields('t1', { budget_excluded: true });
+    expect(JSON.parse((fetchMock.mock.calls[0] as [string, any])[1].body)).toEqual({ budget_excluded: true });
+
+    fetchMock.mockReturnValue(okJson({ transaction_id: 't1' }));
+    await setTransactionFields('t1', { budget_excluded: false }); // false clears — must not be omitted
+    expect(JSON.parse((fetchMock.mock.calls[1] as [string, any])[1].body)).toEqual({ budget_excluded: false });
+  });
 });

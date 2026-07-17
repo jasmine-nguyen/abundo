@@ -182,19 +182,26 @@ class TransactionRepository:
             handle_database_error(e, "write")
 
     def update_transaction_fields(
-        self, pk: str, sk: str, *, category=_UNSET, notes=_UNSET, tags=_UNSET
+        self,
+        pk: str,
+        sk: str,
+        *,
+        category=_UNSET,
+        notes=_UNSET,
+        tags=_UNSET,
+        budget_excluded=_UNSET,
     ) -> bool:
         """Set/clear a transaction's user-editable fields, leaving others intact.
 
         Only fields explicitly passed (not _UNSET) are touched. A truthy value is
-        SET; a cleared note ("") or empty tag list ([]) is REMOVEd, so a cleared
-        field reads back ABSENT — rows are sparse and sanitise_transaction keeps
-        falsy-non-None, so storing ""/[] would read back as an empty value. One
-        UpdateItem can legally mix SET and REMOVE clauses. Fields are aliased (a
-        single #f/#v scheme) because 'category' is a reserved word; aliasing all
-        three keeps the builder uniform. Conditional on the row still existing
-        (attribute_exists(pk)): a row deleted between the key lookup and here
-        yields False (a 404 for the caller), not a 500.
+        SET; a cleared note ("") or empty tag list ([]) or budget_excluded=False is
+        REMOVEd, so a cleared field reads back ABSENT — rows are sparse and
+        sanitise_transaction keeps falsy-non-None, so storing ""/[]/False would read
+        back as an empty value. One UpdateItem can legally mix SET and REMOVE
+        clauses. Fields are aliased (a single #f/#v scheme) because 'category' is a
+        reserved word; aliasing all four keeps the builder uniform. Conditional on
+        the row still existing (attribute_exists(pk)): a row deleted between the key
+        lookup and here yields False (a 404 for the caller), not a 500.
         """
         names: dict[str, str] = {}
         values: dict[str, Any] = {}
@@ -202,7 +209,12 @@ class TransactionRepository:
         remove_clauses: list[str] = []
 
         for index, (field, provided) in enumerate(
-            (("category", category), ("notes", notes), ("tags", tags))
+            (
+                ("category", category),
+                ("notes", notes),
+                ("tags", tags),
+                ("budget_excluded", budget_excluded),
+            )
         ):
             if provided is _UNSET:
                 continue

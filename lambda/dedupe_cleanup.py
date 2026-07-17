@@ -66,13 +66,13 @@ def dedupe_account(repo, account_id: str, dry_run: bool) -> dict:
         # notes/tags the posted lacks, so a stale pending twin can't clobber a newer
         # posted note. Category still carries pending->posted (the sweep's core purpose).
         carried = repo._with_carried_category(posted, pending, keep_posted_notes_tags=True)
-        # Re-put the posted when ANY carried user field (category, notes, tags)
-        # differs — not category alone, or a note/tag on a same-category pending
-        # twin would be deleted with the pending and never written to the posted
-        # (WHIT-275).
+        # Re-put the posted when ANY carried user field (category, notes, tags,
+        # budget_excluded) differs — not category alone, or a note/tag/override on a
+        # same-category pending twin would be deleted with the pending and never
+        # written to the posted (WHIT-275, WHIT-296).
         changed = any(
             carried.get(field) != posted.get(field)
-            for field in ("category", "notes", "tags")
+            for field in ("category", "notes", "tags", "budget_excluded")
         )
         logger.info(
             "twin account=%s posted=%s pending=%s amount=%s category %r -> %r changed=%s%s",

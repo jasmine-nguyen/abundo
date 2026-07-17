@@ -230,16 +230,17 @@ export async function setTransactionCategory(
 
 /**
  * Set (persist) a single transaction's editable fields — any of category, notes,
- * tags — in one PATCH (WHIT-275). The canonical single-transaction PATCH: only the
- * provided keys are sent, so editing the note never touches the tags (and vice-versa);
- * a "" note or a [] tags list clears that field server-side.
+ * tags, budget_excluded — in one PATCH (WHIT-275, WHIT-296). The canonical
+ * single-transaction PATCH: only the provided keys are sent, so editing the note
+ * never touches the tags (and vice-versa); a "" note or a [] tags list clears that
+ * field server-side, as does budget_excluded=false.
  *
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
 export async function setTransactionFields(
   id: string,
-  fields: { category?: string; notes?: string; tags?: string[] }
-): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[] }> {
+  fields: { category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean }
+): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean }> {
   const response = await apiFetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: await buildHeaders({ "Content-Type": "application/json" }),

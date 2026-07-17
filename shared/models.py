@@ -26,6 +26,13 @@ class Transaction(TypedDict):
     # reads back as None rather than an empty string/list.
     notes: Optional[str]
     tags: Optional[list[str]]
+    # User override (WHIT-296). When True, the user has manually excluded this
+    # transaction from budgets ("mark as transfer"), overriding the bank-derived
+    # counts_to_budget. Sparse: only True is stored, so absent reads back as None
+    # (not excluded). Kept separate from counts_to_budget so a re-import recompute
+    # of the bank value can't wipe the user's choice; carried across re-sync like
+    # notes/tags.
+    budget_excluded: Optional[bool]
 
 
 class Category(TypedDict):

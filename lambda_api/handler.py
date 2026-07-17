@@ -353,10 +353,11 @@ def _clean_tags(raw) -> tuple[list[str], dict | None]:
 
 def _validate_transaction_patch(body: dict) -> tuple[dict, dict | None]:
     """Validate a PATCH /transactions/{id} body. Returns (fields, error): `fields`
-    is the subset of {category, notes, tags} actually present in the body (so the
-    repo touches only those), `error` is a 400 response or None. `category` is
-    set-only (clearing it is still a 400); `notes`/`tags` MAY clear (notes null/""
-    and tags [] delete the stored field). At least one field is required."""
+    is the subset of {category, notes, tags, budget_excluded} actually present in the
+    body (so the repo touches only those), `error` is a 400 response or None.
+    `category` is set-only (clearing it is still a 400); `notes`/`tags` MAY clear
+    (notes null/"" and tags [] delete the stored field); `budget_excluded` is a bool
+    (False clears the override). At least one field is required."""
     fields: dict = {}
 
     if "category" in body:
@@ -382,19 +383,29 @@ def _validate_transaction_patch(body: dict) -> tuple[dict, dict | None]:
             return {}, error
         fields["tags"] = tags
 
+    if "budget_excluded" in body:
+        budget_excluded = body["budget_excluded"]
+        if not isinstance(budget_excluded, bool):
+            return {}, _json_response(400, {"error": "budget_excluded must be a boolean"})
+        fields["budget_excluded"] = budget_excluded
+
     if not fields:
-        return {}, _json_response(400, {"error": "category, notes, or tags is required"})
+        return {}, _json_response(
+            400, {"error": "category, notes, tags, or budget_excluded is required"}
+        )
 
     return fields, None
 
 
 def patch_transaction(event: dict, repo: TransactionRepository) -> dict:
-    """PATCH /transactions/{id} — set/clear a transaction's category, note, and/or tags.
+    """PATCH /transactions/{id} — set/clear a transaction's category, note, tags,
+    and/or budget-exclude override.
 
     Takes the repository as a parameter so it can be unit-tested with a fake repo,
     no patching required. Body is a JSON object carrying any of `category`,
-    `notes`, `tags`; at least one is required. `category` is set-only (clearing it
-    stays a 400). `notes`/`tags` may be cleared. Unknown id -> 404;
+    `notes`, `tags`, `budget_excluded`; at least one is required. `category` is
+    set-only (clearing it stays a 400). `notes`/`tags` may be cleared;
+    `budget_excluded=False` clears the override. Unknown id -> 404;
     malformed/oversized body -> 400. Echoes back the fields it applied.
     """
     transaction_id = (event.get("pathParameters") or {}).get("id")
