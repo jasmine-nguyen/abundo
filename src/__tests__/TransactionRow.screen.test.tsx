@@ -48,6 +48,25 @@ it('shows a Pending pill for a pending transaction', () => {
   expect(screen.getByText('Pending')).toBeTruthy();
 });
 
+// WHIT-298: a charge that doesn't count toward budgets shows a quiet "Not in budget" tag.
+it('shows a "Not in budget" tag on a bank-excluded (counts_to_budget false) row', () => {
+  mockState = stateWith();
+  render(<TransactionRow t={txn({ category: 'coffee', counts_to_budget: false })} category={mockState.category} />);
+  expect(screen.getByText('Not in budget')).toBeTruthy();
+});
+
+it('shows the "Not in budget" tag on a user-excluded (budget_excluded) row too', () => {
+  mockState = stateWith();
+  render(<TransactionRow t={txn({ category: 'coffee', counts_to_budget: true, budget_excluded: true })} category={mockState.category} />);
+  expect(screen.getByText('Not in budget')).toBeTruthy();
+});
+
+it('does NOT show the tag on a normal counted row', () => {
+  mockState = stateWith();
+  render(<TransactionRow t={txn({ category: 'coffee', counts_to_budget: true })} category={mockState.category} />);
+  expect(screen.queryByText('Not in budget')).toBeNull();
+});
+
 it('an uncategorized row is labelled Uncategorized and opens the picker on tap', () => {
   mockState = stateWith();
   render(<TransactionRow t={txn({ transaction_id: 'tx9', category: null })} category={mockState.category} />);

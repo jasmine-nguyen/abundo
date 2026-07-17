@@ -189,3 +189,28 @@ it('tapping the toggle when on requests re-inclusion', () => {
   fireEvent.press(screen.getByRole('switch', { name: 'Exclude from budgets' }));
   expect(mockEdit).toHaveBeenCalledWith('t1', { budget_excluded: false });
 });
+
+// WHIT-298 — a BANK-excluded charge (counts_to_budget false) shows a read-only note IN PLACE
+// OF the manual toggle (the toggle can't un-exclude a bank transfer, so it would be inert).
+const bankExcluded = () =>
+  txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: false })] });
+
+it('shows the read-only "Excluded (transfer)" note when the bank auto-excluded the charge', () => {
+  mockTx = bankExcluded();
+  render(<TransactionDetail />);
+  expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
+  expect(screen.getByText(/doesn't count toward budgets or insights/)).toBeTruthy();
+});
+
+it('hides the manual exclude toggle when the bank already excluded the charge', () => {
+  mockTx = bankExcluded();
+  render(<TransactionDetail />);
+  expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
+});
+
+it('keeps the manual toggle (and no read-only note) on a normal counted charge', () => {
+  mockTx = txData(); // counts_to_budget defaults true
+  render(<TransactionDetail />);
+  expect(screen.getByRole('switch', { name: 'Exclude from budgets' })).toBeTruthy();
+  expect(screen.queryByText('Excluded (transfer)')).toBeNull();
+});

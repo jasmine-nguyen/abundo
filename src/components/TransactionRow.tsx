@@ -63,6 +63,13 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
                 <Text style={styles.pendingText}>Pending</Text>
               </View>
             )}
+            {/* WHIT-298: a quiet tag on charges that don't count toward budgets (a bank
+                transfer / card payment, or one the user excluded). */}
+            {v.excluded && (
+              <View style={styles.excluded} accessible accessibilityLabel="Not counted in budgets">
+                <Text style={styles.excludedText}>Not in budget</Text>
+              </View>
+            )}
           </View>
         </View>
         <Text style={[styles.amount, { color: v.amountColor }]}>{v.amountLabel}</Text>
@@ -98,5 +105,8 @@ const styles = StyleSheet.create({
   category: { fontFamily: FONT.body, fontSize: 12.5 },
   pending: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingLeft: 5, paddingRight: 7, borderRadius: 6 },
   pendingText: { fontFamily: FONT.body, fontSize: 11, color: '#8b8b95' },
+  // WHIT-298: same quiet pill as Pending, text-only (no glyph, so it never implies a wrong icon).
+  excluded: { backgroundColor: 'rgba(255,255,255,.06)', paddingVertical: 2, paddingHorizontal: 7, borderRadius: 6 },
+  excludedText: { fontFamily: FONT.body, fontSize: 11, color: C.textDim },
   amount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
 });
