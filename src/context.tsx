@@ -139,6 +139,34 @@ export function normalizeCategoryColor(hex: string | null | undefined): string |
 // server's per-request cap. Keep the two equal.
 const CATEGORY_BATCH_LIMIT = 100;
 
+// WHIT-292: the batch category write shared by applyCategory('all') and applyCategoryToMany.
+// Chunk the ids under the server's per-request cap (CATEGORY_BATCH_LIMIT), send the chunks
+// together, then reconcile BY ID — never array position, so server order is never trusted.
+// An id counts as saved only if some chunk returned it with status 'updated'; a rejected chunk
+// (or a malformed/missing `results`, guarded by `?? []`) leaves its ids in failedIds. Empty ids
+// yield no chunks -> no API call (the server would 400 an empty body). Each caller keeps its OWN
+// optimistic write, rollback strategy, and toasts — only this common middle lives here.
+export async function persistCategoryBatch(
+  ids: string[],
+  categoryId: string,
+): Promise<{ savedIds: Set<string>; failedIds: string[] }> {
+  const updates = ids.map((id) => ({ id, category: categoryId }));
+  const chunks: { id: string; category: string }[][] = [];
+  for (let i = 0; i < updates.length; i += CATEGORY_BATCH_LIMIT) {
+    chunks.push(updates.slice(i, i + CATEGORY_BATCH_LIMIT));
+  }
+  const outcomes = await Promise.allSettled(chunks.map((chunk) => apiSetTransactionCategories(chunk)));
+  const savedIds = new Set<string>();
+  for (const outcome of outcomes) {
+    if (outcome.status !== 'fulfilled') continue;
+    for (const r of outcome.value.results ?? []) {
+      if (r.status === 'updated') savedIds.add(r.id);
+    }
+  }
+  const failedIds = ids.filter((id) => !savedIds.has(id));
+  return { savedIds, failedIds };
+}
+
 // ---------------------------------------------------------------------------
 // Seed data (ported verbatim from Whittle.dc.html)
 // ---------------------------------------------------------------------------
@@ -730,24 +758,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
         ...prev,
       ]);
-      showToast(`Rule saved — future ${cleanName(transaction.description)} charges file as ${category.name}.`);
+      // WHIT-292: word the toast for what actually happened. The rule is created either way
+      // (it's forward-looking), so an EMPTY sweep — e.g. the tapped charge is budget-excluded,
+      // so nothing current qualifies — shows the rule-only copy instead of claiming charges
+      // filed. A non-empty sweep names the count it just filed alongside the future rule.
+      const merchantWord = cleanName(transaction.description);
+      const sweepCount = sameMerchantIds.length;
+      let sweepToast = `Rule saved — future ${merchantWord} charges file as ${category.name}.`;
+      if (sweepCount > 0) {
+        const countWord = sweepCount === 1 ? 'transaction' : 'transactions';
+        sweepToast = `${sweepCount} ${countWord} filed — future ${merchantWord} charges file as ${category.name}.`;
+      }
+      showToast(sweepToast);
       setSheet(null); // close the confirm sheet
 
-      // Persist the rule AND all the categorisations. The rule hits BankSync; the
-      // charges go through the batch endpoint (WHIT-70) instead of N single PATCHes.
-      // The server caps one request at CATEGORY_BATCH_LIMIT rows, so split into
-      // chunks under that cap and send them together — one chunk for a normal sweep,
-      // more only for an unusually large merchant. An empty sweep yields no chunks
-      // (no call at all — the server would 400 an empty body).
-      const updates = sameMerchantIds.map((id) => ({ id, category: categoryId }));
-      const chunks: { id: string; category: string }[][] = [];
-      for (let i = 0; i < updates.length; i += CATEGORY_BATCH_LIMIT) {
-        chunks.push(updates.slice(i, i + CATEGORY_BATCH_LIMIT));
-      }
-      const [ruleOutcome, ...chunkOutcomes] = await Promise.allSettled([
-        createEnrichment({ value: ruleValue, categoryId }),
-        ...chunks.map((chunk) => apiSetTransactionCategories(chunk)),
-      ]);
+      // Persist the rule AND all the categorisations CONCURRENTLY. The rule hits BankSync;
+      // the charges go through persistCategoryBatch (the batch endpoint, WHIT-70, chunked
+      // under the server cap) — shared with applyCategoryToMany since WHIT-292. Wrapping the
+      // rule call in Promise.allSettled BEFORE awaiting the batch attaches its rejection
+      // handler synchronously, so a rule failure can never float as an unhandled rejection
+      // while the batch is in flight; issuing it first preserves the prior rule-before-charges
+      // call order.
+      const ruleSettled = Promise.allSettled([createEnrichment({ value: ruleValue, categoryId })]);
+      const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId);
+      const [ruleOutcome] = await ruleSettled;
 
       // Reconcile the optimistic rule: swap in the real BankSync id on success (so
       // a later delete targets the real rule), or remove it on failure.
@@ -758,19 +792,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } else {
         patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       }
-
-      // Failures, mapped BY ID (not array position — never trust server order),
-      // merged across every chunk. An id is "saved" only if some chunk returned it
-      // with status 'updated'; a rejected chunk (or a malformed/missing `results`,
-      // guarded by `?? []`) leaves its ids absent -> treated as failed -> reverted.
-      const savedIds = new Set<string>();
-      for (const outcome of chunkOutcomes) {
-        if (outcome.status !== 'fulfilled') continue;
-        for (const r of outcome.value.results ?? []) {
-          if (r.status === 'updated') savedIds.add(r.id);
-        }
-      }
-      const failedIds = sameMerchantIds.filter((id) => !savedIds.has(id));
       if (failedIds.length > 0) {
         // Roll back only the ones whose save failed (back to uncategorised) — same
         // partial set on BOTH stores.
@@ -842,20 +863,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate late toasts on epoch.
     const epoch = sessionEpoch.current;
 
-    // Split into chunks under the server's per-request cap (mirrors applyCategory('all')).
-    const updates = ids.map((id) => ({ id, category: categoryId }));
-    const chunks: { id: string; category: string }[][] = [];
-    for (let i = 0; i < updates.length; i += CATEGORY_BATCH_LIMIT) chunks.push(updates.slice(i, i + CATEGORY_BATCH_LIMIT));
-    const outcomes = await Promise.allSettled(chunks.map((chunk) => apiSetTransactionCategories(chunk)));
-
-    // An id is saved only if some chunk returned it 'updated' (a rejected/malformed chunk leaves
-    // its ids absent -> treated as failed -> reverted to their previous category).
-    const savedIds = new Set<string>();
-    for (const outcome of outcomes) {
-      if (outcome.status !== 'fulfilled') continue;
-      for (const r of outcome.value.results ?? []) if (r.status === 'updated') savedIds.add(r.id);
-    }
-    const failedIds = ids.filter((id) => !savedIds.has(id));
+    // Batch-persist in chunks under the server cap and reconcile BY ID (shared with
+    // applyCategory('all') since WHIT-292). A rejected/malformed chunk leaves its ids in
+    // failedIds -> rolled back to their previous category below.
+    const { failedIds } = await persistCategoryBatch(ids, categoryId);
     if (failedIds.length > 0) {
       patchTransactions((prev) =>
         prev.map((existing) => (failedIds.includes(existing.transaction_id)
