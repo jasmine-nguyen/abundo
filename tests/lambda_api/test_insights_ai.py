@@ -66,6 +66,9 @@ def test_generate_suggestions_builds_request_and_parses(insights_ai, monkeypatch
     # The real numbers AND the "don't invent" instruction reach the model.
     assert "52.0" in captured["body"]["messages"][0]["content"]
     assert "only" in captured["body"]["system"].lower()
+    # Thinking is disabled: Sonnet runs internal reasoning by default, which with the
+    # 700-token cap could truncate the JSON reply. This guards that it stays off.
+    assert captured["body"]["thinking"] == {"type": "disabled"}
 
 
 def test_generate_suggestions_extracts_json_wrapped_in_prose(insights_ai, monkeypatch):

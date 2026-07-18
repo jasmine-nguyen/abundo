@@ -55,10 +55,18 @@ ANTHROPIC_API_KEY_PATH = "/whittle/anthropic-api-key"
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_MESSAGES_PATH = "/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
-# Start on Haiku 4.5 — cheap + plenty for a short "here are the totals, give tips"
-# call. Escalate to claude-opus-4-8 only if suggestions feel shallow.
-ANTHROPIC_MODEL = "claude-haiku-4-5"
+# Sonnet 5: on a real side-by-side against Haiku (same numbers, same prompt) it gave
+# sharper, more consistent tips — spotted cross-category patterns Haiku missed and
+# stayed inside the "don't invent figures" guardrail that Haiku occasionally broke.
+# Opus 4.8 above it added cost with no visible quality gain, so Sonnet is the pick.
+ANTHROPIC_MODEL = "claude-sonnet-5"
 ANTHROPIC_MAX_TOKENS = 700
+# Sonnet 5 runs internal "thinking" (extra reasoning before answering) by DEFAULT when
+# the request omits it — and with our 700-token cap it can spend that budget thinking
+# and truncate the JSON reply mid-answer. This task needs no reasoning, so disable it:
+# the call stays a fast, single-shot answer within the token cap (mirrors Haiku, which
+# never thought). Sent as the request's "thinking" field in insights_ai.py.
+ANTHROPIC_THINKING = {"type": "disabled"}
 # api.anthropic.com sits behind Cloudflare, which 403s the default urllib
 # User-Agent — the UA is load-bearing (same lesson as the BankSync client).
 ANTHROPIC_USER_AGENT = "whittle-app-api"

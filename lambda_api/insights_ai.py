@@ -28,6 +28,7 @@ from constants import (
     ANTHROPIC_MAX_TOKENS,
     ANTHROPIC_MESSAGES_PATH,
     ANTHROPIC_MODEL,
+    ANTHROPIC_THINKING,
     ANTHROPIC_TIMEOUT_SECONDS,
     ANTHROPIC_USER_AGENT,
     ANTHROPIC_VERSION,
@@ -131,6 +132,9 @@ def generate_suggestions(model_input: dict) -> dict:
     body = {
         "model": ANTHROPIC_MODEL,
         "max_tokens": ANTHROPIC_MAX_TOKENS,
+        # Disable Sonnet's default "thinking" so it can't eat the 700-token budget and
+        # truncate the JSON reply — this is a single-shot answer, no reasoning needed.
+        "thinking": ANTHROPIC_THINKING,
         "system": _SYSTEM_PROMPT,
         "messages": [
             {
