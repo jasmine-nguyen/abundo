@@ -351,8 +351,8 @@ export default function Login() {
     >
       <View style={styles.brand}>
         <Logo />
-        <Text style={styles.wordmark}>Whittle</Text>
-        <Text style={styles.tagline}>Whittle the mortgage down to nothing.</Text>
+        <Text style={styles.wordmark}>Abundo</Text>
+        <Text style={styles.tagline}>Pay the mortgage down to nothing.</Text>
       </View>
 
       {notice ? (

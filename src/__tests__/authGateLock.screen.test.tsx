@@ -86,7 +86,7 @@ it('renders the lock screen over the still-mounted app when a session is locked'
   // WHIT-266: the app now stays MOUNTED under an opaque cover (so scroll/form state
   // survives), instead of being unmounted and replaced by the lock screen.
   renderGate();
-  expect(screen.getByText('Whittle is locked')).toBeTruthy();
+  expect(screen.getByText('Abundo is locked')).toBeTruthy();
   expect(screen.getByTestId('lock-cover')).toBeTruthy();
   // The app stays MOUNTED (so scroll/form state survives unlock) but is hidden from screen
   // readers while locked: the default a11y-respecting query can't see it; includeHiddenElements
@@ -107,7 +107,7 @@ it('keeps the lock screen (with a working retry) when Unlock is cancelled', () =
   renderGate();
   fireEvent.press(screen.getByText('Unlock'));
   expect(mockUnlock).toHaveBeenCalled();
-  expect(screen.getByText('Whittle is locked')).toBeTruthy();
+  expect(screen.getByText('Abundo is locked')).toBeTruthy();
   // Still locked → app stays mounted under the cover, hidden from screen readers (WHIT-266).
   expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
 });
@@ -142,6 +142,6 @@ it('flag off → no lock screen, renders the app (WHIT-160 preserved)', () => {
   delete process.env.EXPO_PUBLIC_AUTH_GATE_ENABLED;
   mockStatus = 'authed';
   renderGate();
-  expect(screen.queryByText('Whittle is locked')).toBeNull();
+  expect(screen.queryByText('Abundo is locked')).toBeNull();
   expect(screen.getByTestId('child')).toBeTruthy();
 });

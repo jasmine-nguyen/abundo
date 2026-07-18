@@ -12,12 +12,12 @@
       [
         "expo-secure-store",
         {
-          "faceIDPermission": "Whittle uses Face ID to unlock your account and protect your login."
+          "faceIDPermission": "Abundo uses Face ID to unlock your account and protect your login."
         }
       ]
     ],
-    "name": "Whittle",
-    "slug": "whittle",
+    "name": "Abundo",
+    "slug": "abundo",
     "ios": {
       "bundleIdentifier": "com.jasminenguyen.whittle",
       "icon": "./assets/whittle-beaver-icon-ios.png",

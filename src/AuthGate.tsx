@@ -67,7 +67,7 @@ function useAuthSession(): AuthStatus {
 function LockScreen(): React.ReactElement {
   return (
     <View style={styles.lock}>
-      <Text style={styles.lockTitle}>Whittle is locked</Text>
+      <Text style={styles.lockTitle}>Abundo is locked</Text>
       <Text style={styles.lockSubtitle}>Unlock with Face ID to continue.</Text>
       <Pressable onPress={() => void unlock()} style={styles.unlockButton}>
         <Text style={styles.unlockText}>Unlock</Text>
