@@ -82,7 +82,7 @@ def test_repayment_fires_one_push_with_the_amount(lam, monkeypatch):
     sent, notify = _run(lam, monkeypatch, [txn])
     assert len(sent) == 1
     title, body, toks = sent[0]
-    assert title == "Nice one! \U0001fa93 Another chunk down"
+    assert title == "Nice one! Another chunk down"
     assert "$3,667 toward the mortgage" in body
     assert toks == ["ExpoPushToken[a]"]
     assert notify.fired == {"r1"}

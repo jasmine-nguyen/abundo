@@ -57,10 +57,15 @@ _OK_PAYLOAD = {
 
 
 class _FakeRepo:
-    """Recording stand-in for HomeLoanBalanceRepository."""
+    """Recording stand-in for HomeLoanBalanceRepository. `prior` is what get_balance
+    returns (the pre-upsert row) — None means nothing stored yet (first poll)."""
 
-    def __init__(self):
+    def __init__(self, prior=None):
         self.calls = []
+        self.prior = prior
+
+    def get_balance(self, account_id):
+        return self.prior
 
     def upsert_balance(self, account_id, balance, as_of, currency):
         self.calls.append((account_id, balance, as_of, currency))
@@ -321,3 +326,47 @@ def test_poll_account_balances_isolates_a_single_account_failure(handler, monkey
     assert stored == 2  # spending + anz stored; the mortgage poll was skipped
     ids = {c[0] for c in accounts.calls}
     assert ids == {"up-spending", "anz-rewards-black-visa"}
+
+
+# --- WHIT-301: milestone celebration hook in _poll_homeloan ------------------
+
+def test_poll_homeloan_calls_milestone_detector_with_old_then_new(handler, monkeypatch):
+    """Reads the pre-upsert balance and passes (old, new) to the detector after storing."""
+    fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
+    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
+    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
+    seen = {}
+    monkeypatch.setattr(handler, "notify_milestone_crossing",
+                        lambda old, new, **kw: seen.update(old=old, new=new) or 1)
+
+    assert handler._poll_homeloan("key") is True
+    assert seen["old"] == Decimal("600000")            # the pre-upsert (last-good) balance
+    assert seen["new"] == Decimal("596642.43")         # the freshly-polled balance
+    assert fake.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
+
+
+def test_poll_homeloan_first_poll_passes_none_as_old(handler, monkeypatch):
+    fake = _FakeRepo(prior=None)  # nothing stored yet
+    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
+    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
+    seen = {}
+    monkeypatch.setattr(handler, "notify_milestone_crossing",
+                        lambda old, new, **kw: seen.update(old=old, new=new) or 0)
+
+    handler._poll_homeloan("key")
+    assert seen["old"] is None
+
+
+def test_poll_homeloan_milestone_failure_is_swallowed_balance_still_stored(handler, monkeypatch):
+    """Best-effort: a milestone-push failure must never flip the stored-balance result."""
+    fake = _FakeRepo(prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
+    monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: fake)
+    monkeypatch.setattr(handler, "fetch_balance", lambda *a, **k: _OK_PAYLOAD)
+
+    def boom(*a, **k):
+        raise RuntimeError("expo down")
+
+    monkeypatch.setattr(handler, "notify_milestone_crossing", boom)
+
+    assert handler._poll_homeloan("key") is True  # balance still stored despite the failure
+    assert fake.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]

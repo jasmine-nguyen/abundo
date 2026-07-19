@@ -336,7 +336,7 @@ def test_double_crossing_sends_only_100_but_marks_both(alerts, monkeypatch):
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
                            before=[], normalised=[new])
     assert len(sent) == 1
-    assert sent[0][0] == "Budget hit \U0001fa93"
+    assert sent[0][0] == "Budget hit"
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80", "groceries#100"}
 
 
@@ -995,7 +995,7 @@ def test_parent_vault_past_both_thresholds_marks_both(alerts, monkeypatch):
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
                            before=before, normalised=[new], cats=_CAR_TREE)
     assert len(sent) == 1
-    assert sent[0][0] == "Budget hit \U0001fa93"
+    assert sent[0][0] == "Budget hit"
     assert sent[0][1] == "You've spent your whole Car budget for this cycle."
     assert notify.fired_markers("2026-07-01", 14) == {"car#80", "car#100"}
 
