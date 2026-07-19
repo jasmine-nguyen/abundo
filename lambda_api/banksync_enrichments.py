@@ -13,7 +13,7 @@ shape, so BankSync's vocabulary never leaks to the client:
                           action:{field:"category", value:<categoryId>}}]}}
 
 BankSync is the source of truth — we store no rules of our own; list/create/
-delete all proxy straight through. One BankSync enrichment == one Whittle Rule
+delete all proxy straight through. One BankSync enrichment == one Abundo Rule
 (so `Rule.id` is the enrichment id and delete/list map 1:1).
 
 The urllib + SSM + custom-User-Agent pattern mirrors lambda_sync_trigger; the

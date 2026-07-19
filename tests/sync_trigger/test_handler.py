@@ -105,7 +105,7 @@ def test_trigger_sync_happy_path_builds_correct_request(monkeypatch):
     assert req.data == b""  # empty body => incremental sync
     # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".
     assert req.get_header("X-api-key") == "the-key"
-    assert req.get_header("User-agent") == "whittle-transaction-trigger"
+    assert req.get_header("User-agent") == "abundo-transaction-trigger"
     assert captured["timeout"] == handler.SYNC_TIMEOUT_SECONDS
 
 

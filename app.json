@@ -19,7 +19,7 @@
     "name": "Abundo",
     "slug": "abundo",
     "ios": {
-      "bundleIdentifier": "com.jasminenguyen.whittle",
+      "bundleIdentifier": "com.jasminenguyen.abundo",
       "icon": "./assets/abundo-icon-ios.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -32,7 +32,7 @@
       }
     },
     "android": {
-      "package": "com.jasminenguyen.whittle",
+      "package": "com.jasminenguyen.abundo",
       "adaptiveIcon": {
         "foregroundImage": "./assets/abundo-adaptive-foreground.png",
         "backgroundColor": "#1a1b26"

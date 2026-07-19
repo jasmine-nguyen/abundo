@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-# Maps BankSync account ids to whittle's internal account ids.
+# Maps BankSync account ids to abundo's internal account ids.
 ACCOUNT_ID_MAP = {
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": "anz-rewards-black-visa",
     "3zVQJ8Btz_IRmqp78VrQnQ": "up-spending",
@@ -41,8 +41,8 @@ MIN_REPAYMENT_NOTIFY = 10
 # Confirmed against real Up data (2026-07-03).
 NON_BUDGET_CATEGORIES = {"TRANSFER_IN", "TRANSFER_OUT", "LOAN_PAYMENTS"}
 
-# SSM SecureString path holding the BankSync REST API key (read by whittle-transaction-trigger).
-BANKSYNC_API_KEY_PATH = "/whittle/banksync-api-key"
+# SSM SecureString path holding the BankSync REST API key (read by abundo-transaction-trigger).
+BANKSYNC_API_KEY_PATH = "/abundo/banksync-api-key"
 
 # Base URL for the BankSync REST API.
 BANKSYNC_BASE_URL = "https://api.banksync.io"
@@ -131,7 +131,7 @@ assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
     "every BALANCE_SOURCES `aid` must be a key in ACCOUNT_ID_MAP"
 )
 
-# API Gateway route path for the read API that the whittle app calls.
+# API Gateway route path for the read API that the abundo app calls.
 TRANSACTION_PATH = "/transactions"
 # Date-range transactions query route (WHIT-34). Consumed only by lambda_api/handler.py
 # (which imports the shadowing lambda_api/constants.py at runtime); mirrored here for

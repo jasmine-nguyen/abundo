@@ -43,7 +43,7 @@ jest.mock('expo-web-browser', () => ({
 }));
 
 const REFRESH_KEY = 'abundo.cognito.refreshToken';
-const DOMAIN = 'https://whittle-auth.auth.ap-southeast-2.amazoncognito.com';
+const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);

@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Prefix used for naming all resources"
   type        = string
-  default     = "whittle"
+  default     = "abundo"
 }
 
 # Emails permitted to sign in (WHIT-162). The Cognito Pre-Sign-Up trigger rejects
@@ -96,7 +96,7 @@ variable "auth_logout_urls" {
 variable "cognito_domain_prefix" {
   description = "Prefix for the Cognito Hosted UI domain (must be globally unique across all AWS accounts)"
   type        = string
-  default     = "whittle-auth"
+  default     = "abundo-auth"
 }
 
 # Google/Apple federated IdP credentials. Each IdP is count-gated on its id being

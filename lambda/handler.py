@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # dropped unless we opt in — matching sync_trigger / balance_poller / presignup.
 logger.setLevel(logging.INFO)
 
-BANKSYNC_WEBHOOK_SECRET_PATH = "/whittle/banksync-webhook-secret"
+BANKSYNC_WEBHOOK_SECRET_PATH = "/abundo/banksync-webhook-secret"
 
 _webhook_signing_secret = None
 

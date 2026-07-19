@@ -175,7 +175,7 @@ resource "aws_cognito_user_pool_client" "app" {
 # Prefix domain (<prefix>.auth.<region>.amazoncognito.com). No ACM cert / custom
 # domain needed — the JWT authorizer keys off the pool's issuer URL, not this
 # domain. NOTE: the prefix must be globally unique across ALL AWS accounts; if
-# `whittle-auth` is taken, `apply` errors — change var.cognito_domain_prefix.
+# `abundo-auth` is taken, `apply` errors — change var.cognito_domain_prefix.
 resource "aws_cognito_user_pool_domain" "hosted_ui" {
   domain       = var.cognito_domain_prefix
   user_pool_id = aws_cognito_user_pool.pool.id

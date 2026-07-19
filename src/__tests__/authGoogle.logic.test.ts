@@ -54,7 +54,7 @@ beforeEach(() => {
   mockGetItem.mockReset().mockResolvedValue(null);
   mockSetItem.mockReset().mockResolvedValue(undefined);
   mockDeleteItem.mockReset().mockResolvedValue(undefined);
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = 'https://whittle-auth.auth.ap-southeast-2.amazoncognito.com';
+  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
   process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
 });
 afterEach(() => {

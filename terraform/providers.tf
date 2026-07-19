@@ -12,7 +12,7 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
-  # Stamp every managed resource with App=<project_name> (e.g. "whittle") so all of
+  # Stamp every managed resource with App=<project_name> (e.g. "abundo") so all of
   # this app's resources can be filtered and grouped in one place — Resource Groups
   # (see aws_resourcegroups_group.app in resource_groups.tf), Tag Editor, and cost
   # allocation. Purely additive labels: applying this only ADDS a tag, it never
