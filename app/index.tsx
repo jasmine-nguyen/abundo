@@ -372,7 +372,7 @@ export default function Login() {
       <View style={styles.brand}>
         <Logo />
         <Text style={styles.wordmark}>Abundo</Text>
-        <Text style={styles.tagline}>Pay the mortgage down to nothing.</Text>
+        <Text style={styles.tagline}>Grow what's yours.</Text>
       </View>
 
       {notice ? (
