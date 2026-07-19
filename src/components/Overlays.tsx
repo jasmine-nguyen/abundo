@@ -79,6 +79,12 @@ function NotifBanner() {
 function SheetHost() {
   const s = useAppContext();
   const open = !!s.sheet;
+  // The category picker is the one sheet whose inline "New category" form can grow taller than the
+  // space left above the keyboard (its name field auto-focuses, so the keyboard is up on open). Only
+  // that sheet opts into the shrink chain below (sheetLift → sheet → the form's own ScrollView), so a
+  // too-tall form scrolls within the visible area instead of being pushed off the top. Every other
+  // sheet is short and keeps its exact layout — the flag scopes the change to where it's needed.
+  const isPickerMode = s.sheet?.mode === 'picker' || s.sheet?.mode === 'pickerMany';
   const reduceMotion = useReduceMotion();
   // WHIT-199: a native-feeling spring on open. The sheet rises from SHEET_ENTER_OFFSET and
   // springs to rest; reduce-motion jumps instantly (springSheetIn). The CLOSE is the Modal's
@@ -165,8 +171,8 @@ function SheetHost() {
           accessibilityRole="button"
           accessibilityLabel="Close"
         />
-        <Animated.View style={[styles.sheetLift, { transform: [{ translateY }] }]} pointerEvents="box-none">
-          <View style={styles.sheet}>
+        <Animated.View style={[styles.sheetLift, isPickerMode && styles.sheetShrink, { transform: [{ translateY }] }]} pointerEvents="box-none">
+          <View style={[styles.sheet, isPickerMode && styles.sheetShrink]}>
             <View testID="sheet-grabber" style={styles.grabHandle} {...grabHandlers}>
               <View style={styles.grabber} />
             </View>
@@ -259,10 +265,21 @@ function PickerSheet() {
 
   if (creating) {
     return (
-      <View>
+      <View style={styles.createForm}>
         <Text style={styles.sheetTitle}>New category</Text>
         <Text style={styles.sheetMerchant}>{isMany ? `File ${headerLabel} into a new category` : `File '${merchantLabel(tx!)}' into a new category`}</Text>
-        <View style={{ marginTop: 14 }}>
+        {/* The name field auto-focuses, so the keyboard is up the moment this form opens and the
+            keyboard-avoider lifts the whole sheet. On a shorter screen the form is taller than the
+            room above the keyboard, so its top — the title and the Category name field — was pushed
+            off the screen with no way to pull it back. A bounded, shrinking ScrollView keeps the whole
+            form reachable: the name field sits at the top of the scroll region (visible on open) and
+            the buckets / icons / buttons scroll into view. `keyboardShouldPersistTaps` lets a chip or
+            button tap land on the first press instead of being swallowed to dismiss the keyboard. */}
+        <ScrollView
+          style={styles.createScroll}
+          contentContainerStyle={styles.createScrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
           <QuickCreateCategory
             initialBucket="Lifestyle"
             parentPicker
@@ -276,7 +293,7 @@ function PickerSheet() {
             readDraft={readCatDraft}
             writeDraft={writeCatDraft}
           />
-        </View>
+        </ScrollView>
       </View>
     );
   }
@@ -714,6 +731,10 @@ const styles = StyleSheet.create({
   // Wraps the sheet so the spring transform (translateY) doesn't disturb its bottom-anchored,
   // horizontally-centred layout (WHIT-199).
   sheetLift: { width: '100%', alignItems: 'center' },
+  // Opt-in for the category picker only (see SheetHost): lets the sheet shrink to the space above the
+  // keyboard so a tall inline "New category" form scrolls inside it instead of overflowing off the top.
+  // Inert when the content already fits (the plain picker list), so that layout is unchanged.
+  sheetShrink: { flexShrink: 1 },
   // WHIT-293: paddingTop trimmed (20 → 12) to offset the taller grab strip above, so the grabber
   // bar stays put visually while its touch target grows up toward the sheet's top edge.
   sheet: { width: '100%', maxWidth: 440, backgroundColor: '#161620', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 20, paddingTop: 12, paddingBottom: 34, borderTopWidth: 1, borderColor: 'rgba(255,255,255,.08)' },
@@ -725,6 +746,12 @@ const styles = StyleSheet.create({
   grabber: { width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,.18)' },
   sheetTitle: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', color: C.text, letterSpacing: -0.3 },
   sheetMerchant: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, marginTop: 8 },
+  // The inline "New category" form: the title/subtitle stay fixed while the form scrolls. flexShrink
+  // lets this View (and the ScrollView inside) shrink within the keyboard-bounded sheet so the form
+  // never spills off-screen; the paddingTop replaces the old 14px gap under the subtitle.
+  createForm: { flexShrink: 1 },
+  createScroll: { flexShrink: 1 },
+  createScrollContent: { paddingTop: 14 },
   sheetAmount: { fontFamily: FONT.display, fontSize: 22, fontWeight: '800', color: C.textBright, marginTop: 2, letterSpacing: -0.5 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 11 },
   pickNameHit: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13 },
