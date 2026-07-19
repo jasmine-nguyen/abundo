@@ -9,7 +9,7 @@ resource "aws_apigatewayv2_stage" "default" {
   auto_deploy = true
 }
 
-# lambda api endpoint used by whittle app to retrieve data from DynamoDB
+# lambda api endpoint used by abundo app to retrieve data from DynamoDB
 resource "aws_apigatewayv2_integration" "get_transactions_integration" {
   api_id                 = aws_apigatewayv2_api.api.id
   integration_type       = "AWS_PROXY"

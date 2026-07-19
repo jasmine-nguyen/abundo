@@ -30,7 +30,7 @@ import pytest
 
 from standardwebhooks.webhooks import Webhook as _RealWebhook
 
-_SECRET = base64.b64encode(b"whittle-test-signing-key").decode()
+_SECRET = base64.b64encode(b"abundo-test-signing-key").decode()
 
 
 class _Repo:

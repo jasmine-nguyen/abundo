@@ -60,7 +60,7 @@ def counts_to_budget(internal_account_id: str, category: str) -> bool:
 class BankSyncClient:
     @staticmethod
     def normalise(row: dict) -> Transaction:
-        """Maps BankSync's specific fields to whittle's standard format"""
+        """Maps BankSync's specific fields to abundo's standard format"""
         internal_account_id = resolve_account_id(str(row["accountId"]))
         normalised: Transaction = {
             "transaction_id": str(row["id"]),

@@ -36,7 +36,7 @@ EXPO_RECEIPTS_MAX = 1000
 # the Expo project has "Enhanced Security for Push Notifications" enabled, so every
 # send must carry Authorization: Bearer <token>. Seeded as a placeholder by
 # terraform/ssm.tf; the real value is set out-of-band (console/CLI).
-EXPO_ACCESS_TOKEN_PATH = "/whittle/expo-access-token"
+EXPO_ACCESS_TOKEN_PATH = "/abundo/expo-access-token"
 
 logger = logging.getLogger(__name__)
 

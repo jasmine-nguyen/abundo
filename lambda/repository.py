@@ -13,7 +13,7 @@ from repository_errors import DatabaseError
 
 REGION_NAME = "ap-southeast-2"
 RESOURCE_NAME = "dynamodb"
-TABLE_NAME = "whittle-dynamodb-table"
+TABLE_NAME = "abundo-dynamodb-table"
 
 
 def handle_database_error(e: ClientError, action: str) -> NoReturn:

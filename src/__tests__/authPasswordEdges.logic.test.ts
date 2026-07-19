@@ -72,7 +72,7 @@ beforeEach(() => {
   mockRefreshAsync.mockReset();
   mockFetch = jest.fn<(url: string, init?: { body: string }) => Promise<{ ok: boolean; json: () => Promise<unknown> }>>();
   (globalThis as unknown as { fetch: unknown }).fetch = mockFetch;
-  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = 'https://whittle-auth.auth.ap-southeast-2.amazoncognito.com';
+  process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
   process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID = 'client123';
   process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID = POOL_ID;
 });

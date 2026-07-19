@@ -58,7 +58,7 @@ jest.mock('react-native', () => ({
 
 const REFRESH_KEY = 'abundo.cognito.refreshToken';
 const METHOD_KEY = 'abundo.cognito.authMethod';
-const DOMAIN = 'https://whittle-auth.auth.ap-southeast-2.amazoncognito.com';
+const DOMAIN = 'https://abundo-auth.auth.ap-southeast-2.amazoncognito.com';
 const POOL_ID = 'ap-southeast-2_pool123';
 const nowSec = () => Math.floor(Date.now() / 1000);
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports

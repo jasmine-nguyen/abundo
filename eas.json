@@ -9,7 +9,7 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_TOKEN": "64e3c9500f435bd3f35a5215b7b454d5223d06253d2fe3a5d9f8ef81d24ceb13",
-        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://whittle-auth.auth.ap-southeast-2.amazoncognito.com",
+        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://abundo-auth.auth.ap-southeast-2.amazoncognito.com",
         "EXPO_PUBLIC_COGNITO_APP_CLIENT_ID": "35sg5n36igapvpatb67lcgukn1",
         "EXPO_PUBLIC_COGNITO_USER_POOL_ID": "ap-southeast-2_EVVtKlGsJ",
         "EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED": "true"
@@ -19,7 +19,7 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_TOKEN": "64e3c9500f435bd3f35a5215b7b454d5223d06253d2fe3a5d9f8ef81d24ceb13",
-        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://whittle-auth.auth.ap-southeast-2.amazoncognito.com",
+        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://abundo-auth.auth.ap-southeast-2.amazoncognito.com",
         "EXPO_PUBLIC_COGNITO_APP_CLIENT_ID": "35sg5n36igapvpatb67lcgukn1",
         "EXPO_PUBLIC_COGNITO_USER_POOL_ID": "ap-southeast-2_EVVtKlGsJ",
         "EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED": "true"
@@ -29,7 +29,7 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_TOKEN": "64e3c9500f435bd3f35a5215b7b454d5223d06253d2fe3a5d9f8ef81d24ceb13",
-        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://whittle-auth.auth.ap-southeast-2.amazoncognito.com",
+        "EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN": "https://abundo-auth.auth.ap-southeast-2.amazoncognito.com",
         "EXPO_PUBLIC_COGNITO_APP_CLIENT_ID": "35sg5n36igapvpatb67lcgukn1",
         "EXPO_PUBLIC_COGNITO_USER_POOL_ID": "ap-southeast-2_EVVtKlGsJ",
         "EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED": "true"

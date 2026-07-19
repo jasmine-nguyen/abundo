@@ -90,7 +90,7 @@ def test_create_rule_builds_correct_payload_and_headers(enrichments, monkeypatch
     assert req.full_url == "https://api.banksync.io/v1/enrichments"
     # urllib title-cases header keys: "X-API-Key" -> "X-api-key".
     assert req.get_header("X-api-key") == "test-api-key"
-    assert req.get_header("User-agent") == "whittle-app-api"
+    assert req.get_header("User-agent") == "abundo-app-api"
 
     sent = json.loads(req.data)
     assert sent["type"] == "rule"
@@ -328,7 +328,7 @@ def test_update_rule_builds_correct_put_payload(enrichments, monkeypatch):
     assert req.method == "PUT"
     assert req.full_url == "https://api.banksync.io/v1/enrichments/enr_1"
     assert req.get_header("X-api-key") == "test-api-key"
-    assert req.get_header("User-agent") == "whittle-app-api"
+    assert req.get_header("User-agent") == "abundo-app-api"
 
     sent = json.loads(req.data)
     assert sent["allFeeds"] is True
