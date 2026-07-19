@@ -10,20 +10,13 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, activeSelection, type DonutSlice } from '../components/SpendingDonut';
+import { opacityOf } from './support/donut';
 
 const TWO: DonutSlice[] = [
   { id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 },
   { id: 'c', name: 'Coffee', color: '#E8A87C', value: 25 },
 ];
 const ONLY_G: DonutSlice[] = [{ id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 }];
-
-// The emphasis opacity lives on the AnimatedG wrapping each testID'd shape (resolved to a plain
-// number under the jest SVG stub). Walk up from the shape to the first ancestor that carries it.
-const opacityOf = (id: string): number => {
-  let node: any = screen.getByTestId(`donut-slice-${id}`);
-  while (node && node.props?.opacity === undefined) node = node.parent;
-  return node.props.opacity;
-};
 
 describe('activeSelection (pure)', () => {
   it('keeps the id while its category is still painted', () => {

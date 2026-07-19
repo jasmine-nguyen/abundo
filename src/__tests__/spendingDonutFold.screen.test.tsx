@@ -10,15 +10,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-
-// Walk up from the shape to the first ancestor carrying the emphasis `opacity` (the AnimatedG).
-const opacityOf = (id: string): number => {
-  let node: any = screen.getByTestId(`donut-slice-${id}`);
-  while (node && node.props?.opacity === undefined) node = node.parent;
-  return node.props.opacity;
-};
-
-const sl = (id: string, value: number): DonutSlice => ({ id, name: id, color: '#7aa2f7', value });
+import { opacityOf, sl } from './support/donut';
 
 describe('SpendingDonut — selected tail slice folds into __other__ (gap)', () => {
   // [A5] Tapped 'coffee' is individually painted, then a data change pushes it into the tail so it
