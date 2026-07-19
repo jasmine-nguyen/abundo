@@ -12,8 +12,8 @@ paths. These add the edges it doesn't:
       fresh: sends the nearer fresh one, marks every fresh  [fail-on-revert]
     - loan facts present but original < new_balance -> negative "$-N down" copy
       (characterization: documents a latent copy bug, no guard exists)
-    - usable_equity half-dollar rounding is Python banker's round, which DIVERGES
-      from the client twin's Math.round (characterization + drift flag)
+    - usable_equity rounds a half-dollar UP (math.floor(x + 0.5)), matching the
+      client twin's Math.round (fail-on-revert on the WHIT-307 rounding fix)
 
 Mirrors test_milestones.py's fake-repo + send_push-recorder pattern.
 """
@@ -134,13 +134,15 @@ def test_negative_paid_down_clamps_to_zero(shared, recorder):
     assert "$72,000 in equity unlocked" in body  # equity clamp still sane: 616000-544000
 
 
-# --- usable_equity half-dollar rounding: banker's, diverges from the TS twin ---
-# WHIT-301 — [A24] CHARACTERIZATION: pins Python round-half-to-even; flags twin drift vs Math.round.
+# --- usable_equity half-dollar rounding: half-up, matches the TS twin (WHIT-307) ---
+# WHIT-307 — fail-on-revert on math.floor(x + 0.5): a half-dollar rounds UP, matching the
+# client twin's Math.round. Reverting to Python's built-in round() (banker's) turns 0.5 -> 0
+# and 2.5 -> 2 and trips this.
 
-def test_usable_equity_uses_bankers_rounding_at_the_half_dollar(shared):
-    # 3.0*0.5 - 0 = 1.5 -> round-half-to-even -> 2 (Math.round would also give 2 here)
+def test_usable_equity_rounds_half_dollar_up_like_the_client_twin(shared):
+    # 3.0*0.5 = 1.5 -> half-up -> 2 (Math.round(1.5) === 2; agrees with banker's here too)
     assert shared.milestones.usable_equity(3.0, 0.0, 0.5) == 2
-    # 1.0*0.5 - 0 = 0.5 -> banker's -> 0, but the client twin's Math.round(0.5) === 1.
-    assert shared.milestones.usable_equity(1.0, 0.0, 0.5) == 0
-    # 5.0*0.5 - 0 = 2.5 -> banker's -> 2, client twin's Math.round(2.5) === 3.
-    assert shared.milestones.usable_equity(5.0, 0.0, 0.5) == 2
+    # 1.0*0.5 = 0.5 -> half-up -> 1 (Math.round(0.5) === 1); built-in round() would give 0.
+    assert shared.milestones.usable_equity(1.0, 0.0, 0.5) == 1
+    # 5.0*0.5 = 2.5 -> half-up -> 3 (Math.round(2.5) === 3); built-in round() would give 2.
+    assert shared.milestones.usable_equity(5.0, 0.0, 0.5) == 3

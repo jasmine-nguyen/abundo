@@ -17,6 +17,7 @@ only moves down, so the crossing is never re-detected to retry).
 """
 
 import logging
+import math
 from dataclasses import dataclass
 
 from push import send_push
@@ -61,9 +62,11 @@ _BODY_BARE = "Another mortgage milestone in the bag. Keep building! \U0001f4aa"
 
 def usable_equity(home_value: float, balance: float, lvr: float) -> int:
     """Usable equity toward a deposit: property value × LVR − balance, clamped at 0,
-    whole dollars. Mirrors src/milestones.ts usableEquity so the push figure matches the
-    in-app milestone screen."""
-    return max(0, round(home_value * lvr - balance))
+    whole dollars. Mirrors src/milestones.ts usableEquity — INCLUDING its Math.round, which
+    rounds a half-dollar UP (toward +∞). Python's built-in round() is half-to-even (banker's),
+    so it would disagree with the in-app screen by exactly $1 on a half-dollar; math.floor(x +
+    0.5) reproduces Math.round so the push figure always matches the screen (WHIT-307)."""
+    return max(0, math.floor(home_value * lvr - balance + 0.5))
 
 
 def crossed_milestones(old_balance, new_balance) -> list:
