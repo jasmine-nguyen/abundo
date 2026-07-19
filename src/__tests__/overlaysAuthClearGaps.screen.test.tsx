@@ -83,12 +83,12 @@ it('a visible notification banner is cleared (state AND render) when status flip
 
   act(() => ctx.fireRepayment()); // the only notif producer — seeds a real banner + 5.6s timer
   expect(ctx.notif).not.toBeNull();
-  expect(screen.getByText('WHITTLE')).toBeTruthy(); // the banner is genuinely on screen
+  expect(screen.getByText('ABUNDO')).toBeTruthy(); // the banner is genuinely on screen
 
   act(() => mockSetStatus('anon'));
 
   expect(ctx.notif).toBeNull(); // hard-cleared by the anon subscription…
-  expect(screen.queryByText('WHITTLE')).toBeNull(); // …and gone from the tree
+  expect(screen.queryByText('ABUNDO')).toBeNull(); // …and gone from the tree
 });
 
 // WHIT-268 — [A7] the FREE insights cache read (fired on every Insights tab focus)

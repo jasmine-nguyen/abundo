@@ -31,7 +31,7 @@ beforeEach(() => { mockGoal = makeGoalData(); });
 it('renders the whittled-so-far hero with the real paid-off figure and progress', () => {
   mockGoal = makeGoalData({ homeLoan: { balance: 432900, asOf: '2026-07-04T00:00:00Z' } });
   render(<Mortgage />);
-  expect(screen.getByText('THE MORTGAGE · WHITTLED SO FAR')).toBeTruthy();
+  expect(screen.getByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeTruthy();
   expect(screen.getByText('$67,100')).toBeTruthy();          // paidOff = 500000 - 432900
   expect(screen.getByText('13% gone')).toBeTruthy();          // round(67100/500000*100)
   expect(screen.getByText('$432,900 to go')).toBeTruthy();    // balanceLabel
