@@ -42,7 +42,7 @@ jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: (...a: unknown[]) => mockOpenAuthSession(...(a as [string, string])),
 }));
 
-const REFRESH_KEY = 'whittle.cognito.refreshToken';
+const REFRESH_KEY = 'abundo.cognito.refreshToken';
 const DOMAIN = 'https://whittle-auth.auth.ap-southeast-2.amazoncognito.com';
 
 function nowSec(): number {

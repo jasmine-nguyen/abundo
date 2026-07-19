@@ -34,9 +34,9 @@ jest.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
 }));
 
-const REFRESH_KEY = 'whittle.cognito.refreshToken';
-const SENTINEL_KEY = 'whittle.cognito.hasSession';
-const METHOD_KEY = 'whittle.cognito.authMethod';
+const REFRESH_KEY = 'abundo.cognito.refreshToken';
+const SENTINEL_KEY = 'abundo.cognito.hasSession';
+const METHOD_KEY = 'abundo.cognito.authMethod';
 const nowSec = () => Math.floor(Date.now() / 1000);
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
 const loadAuth = (): typeof import('../auth') => require('../auth');

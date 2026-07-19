@@ -79,19 +79,19 @@ function seedRefreshOnlySession(refreshToken: string): Session {
 }
 
 // SecureStore key for the long-lived refresh token. Single-user, so one fixed key.
-const REFRESH_TOKEN_KEY = "whittle.cognito.refreshToken";
+const REFRESH_TOKEN_KEY = "abundo.cognito.refreshToken";
 // Unguarded marker written in lockstep with the refresh token, so the gate can
 // tell "a session exists" WITHOUT reading the guarded token (which would pop Face
 // ID blindly). Written AFTER the token, deleted with it. Flag-independent, so a
 // session created while biometrics are off is still found when the flag flips on.
-const SESSION_SENTINEL_KEY = "whittle.cognito.hasSession";
+const SESSION_SENTINEL_KEY = "abundo.cognito.hasSession";
 // WHIT-178: which surface minted the session — "srp" (native email/password via
 // InitiateAuth) vs absent/"oauth" (Hosted UI / federated Google). The REFRESH path
 // must match the mint surface: an SRP-minted refresh token isn't reliably redeemable
 // at the OAuth /oauth2/token endpoint (it can come back with no id token), so SRP
 // sessions refresh via InitiateAuth REFRESH_TOKEN_AUTH. Unguarded like the sentinel
 // (not secret); read on cold launch. Absent = a pre-WHIT-178 OAuth session.
-const AUTH_METHOD_KEY = "whittle.cognito.authMethod";
+const AUTH_METHOD_KEY = "abundo.cognito.authMethod";
 // Refresh this many seconds BEFORE the id token actually expires, to absorb clock
 // skew / in-flight latency (a device clock a little fast must not send a token the
 // API already considers expired).

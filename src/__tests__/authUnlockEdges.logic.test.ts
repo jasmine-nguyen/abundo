@@ -40,9 +40,9 @@ jest.mock('expo-secure-store', () => ({
 // to exercise that branch; suites that don't mock it simply skip the re-store.
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 
-const REFRESH_KEY = 'whittle.cognito.refreshToken';
-const SENTINEL_KEY = 'whittle.cognito.hasSession';
-const METHOD_KEY = 'whittle.cognito.authMethod';
+const REFRESH_KEY = 'abundo.cognito.refreshToken';
+const SENTINEL_KEY = 'abundo.cognito.hasSession';
+const METHOD_KEY = 'abundo.cognito.authMethod';
 const DOMAIN = 'https://whittle-auth.auth.ap-southeast-2.amazoncognito.com';
 const nowSec = () => Math.floor(Date.now() / 1000);
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
