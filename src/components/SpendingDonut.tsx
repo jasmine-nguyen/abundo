@@ -38,6 +38,13 @@ export function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0
   return anySelected ? -1 : 0;
 }
 
+// A tapped category can leave the data — its spend drops to 0, or it folds into "Other" on a cycle
+// change. Treat the selection as active only while its category is still painted: a stale id would
+// otherwise dim every wedge for a selection that no longer exists. Pure + exported so a test pins it.
+export function activeSelection(selectedId: string | null, painted: DonutSlice[]): string | null {
+  return selectedId !== null && painted.some((s) => s.id === selectedId) ? selectedId : null;
+}
+
 // Fixed geometry — the ring is DRAWN centred on the coordinate origin (0,0); a single static
 // parent <G> then shifts it to the box centre (see the render). The ring band is sized as if
 // inscribed in a RING_BOX square with a PAD margin — that's what fixes its radius. The actual
@@ -107,25 +114,30 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     return v;
   };
 
+  // The selection is only live while its category is still painted (a tapped category can drop out
+  // of the data). Declared above the effect + the early return below because the effect closes over it.
+  const activeId = activeSelection(selectedId, painted);
+
   // Spring each wedge toward its target when the selection changes (instant under reduce-motion).
   useEffect(() => {
     const springs = painted.map((s) => {
-      const target = sliceEmphasis(s.id === selectedId, selectedId !== null);
+      const target = sliceEmphasis(s.id === activeId, activeId !== null);
       const v = emphasisOf(s.id);
       if (reduceMotion) { v.setValue(target); return null; }
       return Animated.spring(v, { toValue: target, useNativeDriver: false, friction: 7, tension: 120 });
     });
     if (!reduceMotion) Animated.parallel(springs.filter(Boolean) as Animated.CompositeAnimation[]).start();
-    // painted is derived from slices each render; the selection + reduce-motion flag are what
-    // actually re-target the springs.
+    // painted is derived from slices each render; the active selection + reduce-motion flag are what
+    // re-target the springs. When the selected category leaves the data, activeId flips to null and
+    // this re-runs, springing every wedge back to rest — no stuck all-dimmed ring.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, reduceMotion]);
+  }, [activeId, reduceMotion]);
 
   if (sum <= 0) return null;
 
   const pct = (v: number) => (sum > 0 ? Math.round((v / sum) * 100) : 0);
   const single = painted.length === 1;
-  const selected = painted.find((s) => s.id === selectedId) ?? null;
+  const selected = painted.find((s) => s.id === activeId) ?? null;
 
   // Lay the wedges out by angle, starting at 12 o'clock (−90°) and running clockwise. Compute
   // each wedge's arc geometry once so the on-top overlay can reuse it without recomputing.
@@ -153,7 +165,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
     const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [DIM, 1, 1], extrapolate: 'clamp' });
 
-    const isSel = s.id === selectedId;
+    const isSel = s.id === activeId;
     const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
     const shapeProps = interactive
       ? {
@@ -185,7 +197,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   // detaches the animating node and hitches; instead the selected wedge is redrawn once by an
   // appended overlay, so it sits on top of its neighbours without any reorder.
   const wedges = layout.map((d) => renderWedge(d, true));
-  const selectedLayout = selectedId ? layout.find((d) => d.s.id === selectedId) : null;
+  const selectedLayout = activeId ? layout.find((d) => d.s.id === activeId) : null;
   const topWedge = selectedLayout ? renderWedge(selectedLayout, false) : null;
 
   // painted[0] is the largest single category — kept slices are sorted desc and "Other" (a sum
