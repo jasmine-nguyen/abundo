@@ -40,8 +40,8 @@ from push import send_push
 logger = logging.getLogger(__name__)
 
 # Push copy. {amount} = the repayment amount, whole dollars with thousands separators.
-_TITLE = "Nice one! \U0001fa93 Another chunk down"
-_BODY = "You just put ${amount} toward the mortgage. You're crushing it — keep whittling! \U0001f4aa"
+_TITLE = "Nice one! Another chunk down"
+_BODY = "You just put ${amount} toward the mortgage. You're crushing it — keep building! \U0001f4aa"
 
 
 def is_homeloan_repayment(txn) -> bool:

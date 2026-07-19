@@ -32,7 +32,14 @@ from constants import (
     HOMELOAN_BALANCE_SOURCE,
     HOMELOAN_BALANCE_TIMEOUT_SECONDS,
 )
-from repository import AccountBalanceRepository, HomeLoanBalanceRepository
+from milestones import notify_milestone_crossing
+from repository import (
+    AccountBalanceRepository,
+    DeviceRepository,
+    HomeLoanBalanceRepository,
+    LoanFactsRepository,
+)
+from repository_notify import NotifyRepository
 from ssm import get_param
 
 logger = logging.getLogger(__name__)
@@ -166,7 +173,15 @@ def _poll_homeloan(api_key: str) -> bool:
     try:
         payload = fetch_balance(source["bid"], source["aid"], api_key)
         normalised = normalise_balance(payload)
-        HomeLoanBalanceRepository().upsert_balance(
+        repo = HomeLoanBalanceRepository()
+        try:
+            previous = repo.get_balance(HOMELOAN_ACCOUNT_ID)  # read BEFORE the upsert
+            old_balance = previous["balance"] if previous else None
+        except Exception as e:
+            # Milestone detection is best-effort — a read hiccup must never skip the store.
+            logger.warning("pre-upsert balance read failed, skipping milestone check: %s", e)
+            old_balance = None
+        repo.upsert_balance(
             HOMELOAN_ACCOUNT_ID,
             normalised["balance"],
             normalised["as_of"],
@@ -182,6 +197,20 @@ def _poll_homeloan(api_key: str) -> bool:
         normalised["balance"],
         normalised["as_of"],
     )
+
+    # WHIT-301: celebrate crossing a payoff milestone. Best-effort — a push failure must
+    # never flip the stored-balance result, so it's isolated in its own try/except.
+    try:
+        notify_milestone_crossing(
+            old_balance,
+            normalised["balance"],
+            loanfacts_repo=LoanFactsRepository(),
+            device_repo=DeviceRepository(),
+            notify_repo=NotifyRepository(),
+        )
+    except Exception as e:
+        logger.error("milestone push failed (balance still stored): %s", e)
+
     return True
 
 

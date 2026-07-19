@@ -35,6 +35,9 @@ def _pk(last_pay_date: str, length: int) -> str:
 # The single marker item holding every already-notified repayment id (WHIT-15).
 _REPAYMENT_KEY = {"pk": "NOTIFY#REPAYMENT", "sk": "FIRED"}
 
+# The single marker item holding every already-celebrated payoff-milestone sprint (WHIT-301).
+_MILESTONE_KEY = {"pk": "NOTIFY#MILESTONE", "sk": "FIRED"}
+
 
 class NotifyRepository:
     """Per-cycle budget-alert debounce markers. `fired_markers` reads the set of
@@ -98,3 +101,27 @@ class NotifyRepository:
             )
         except ClientError as e:
             handle_database_error(e, "mark repayment notified")
+
+    def fired_milestones(self) -> set:
+        """The set of payoff-milestone sprint numbers (as strings) already celebrated (WHIT-301)."""
+        try:
+            item = self._get_table().get_item(Key=_MILESTONE_KEY).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read milestone-notify markers")
+        if item is None:
+            return set()
+        return set(item.get("fired", set()))
+
+    def mark_milestone_fired(self, sprint: str) -> None:
+        """Record that payoff milestone `sprint` has been celebrated. Deliberately NO TTL
+        (unlike the per-cycle/per-repayment markers above): the paydown is monotonic, so a
+        milestone is a once-ever event that must never expire and re-fire."""
+        try:
+            self._get_table().update_item(
+                Key=_MILESTONE_KEY,
+                UpdateExpression="ADD #f :m",
+                ExpressionAttributeNames={"#f": "fired"},
+                ExpressionAttributeValues={":m": {sprint}},
+            )
+        except ClientError as e:
+            handle_database_error(e, "mark milestone celebrated")

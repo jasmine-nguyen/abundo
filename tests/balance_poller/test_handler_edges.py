@@ -40,9 +40,13 @@ class _FakeResponse:
 
 
 class _FakeRepo:
-    def __init__(self, raise_on_upsert=False):
+    def __init__(self, raise_on_upsert=False, prior=None):
         self.calls = []
         self._raise = raise_on_upsert
+        self.prior = prior
+
+    def get_balance(self, account_id):
+        return self.prior
 
     def upsert_balance(self, account_id, balance, as_of, currency):
         self.calls.append((account_id, balance, as_of, currency))

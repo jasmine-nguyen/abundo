@@ -61,7 +61,7 @@ _MAX_PAGES_PER_ACCOUNT = 1000
 # Push copy per threshold pct. {name} = the category's display name.
 _COPY = {
     80: ("Heads up \U0001f440", "{name} is at 80% of its budget this cycle."),
-    100: ("Budget hit \U0001fa93", "You've spent your whole {name} budget for this cycle."),
+    100: ("Budget hit", "You've spent your whole {name} budget for this cycle."),
 }
 
 

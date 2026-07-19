@@ -31,11 +31,13 @@ export interface Milestone {
 // loan is being paid DOWN, so each later milestone is a lower balance). The
 // invariant below enforces both, because milestoneView's schedule curve and
 // next-milestone selection both rely on this ordering.
+// Labels kept in lockstep with the server twin (shared/milestones.py); the payoff-push
+// drift-pin test pins these exact rows, so update BOTH if the plan changes.
 export const MILESTONES: Milestone[] = [
-  { sprint: 0, label: 'Offset Split',   targetBalance: 544000, targetDate: '2026-06-18' },
-  { sprint: 1, label: 'Month 9',        targetBalance: 420000, targetDate: '2027-03-18' },
+  { sprint: 0, label: 'Kickoff',        targetBalance: 544000, targetDate: '2026-06-18' },
+  { sprint: 1, label: 'Quarter way',    targetBalance: 420000, targetDate: '2027-03-18' },
   { sprint: 2, label: 'Halfway',        targetBalance: 295000, targetDate: '2027-12-18' },
-  { sprint: 3, label: 'Three-quarter',  targetBalance: 170000, targetDate: '2028-09-18' },
+  { sprint: 3, label: 'Three-quarters', targetBalance: 170000, targetDate: '2028-09-18' },
   { sprint: 4, label: 'Target',         targetBalance: 55000,  targetDate: '2029-06-18' },
 ];
 
