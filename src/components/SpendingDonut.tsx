@@ -38,9 +38,8 @@ export function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0
   return anySelected ? -1 : 0;
 }
 
-// Fixed geometry — a square SVG the ring is inscribed in. A ~26px band leaves a roomy hole
-// for the centred stat. PAD keeps the ring clear of the canvas edge so a popped wedge (scaled
-// up about the centre) has room to grow into without clipping.
+// Fixed geometry — the ring is inscribed in a SIZE×SIZE square with its centre at CENTER.
+// A ~26px band leaves a roomy hole for the centred stat.
 const SIZE = 192;
 const STROKE = 26;
 const PAD = 11;
@@ -50,12 +49,25 @@ const CIRC = 2 * Math.PI * R;
 // A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
 // angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
 const GAP_DEG = (2 / CIRC) * 360;
-// The popped wedge scales up about the centre — grows outward + a touch thicker. 1.1 keeps its
-// outer edge (85 × 1.1 ≈ 94) just inside the 96 canvas, so it never clips.
+// The popped wedge grows a touch (1.1×) to lift it off its neighbours. It must scale about the
+// canvas CENTRE so it grows in place. react-native-svg won't honour originX/originY on an
+// *animated* G (they drop out of the per-frame transform), so we emulate centre-scaling: scale
+// about the origin, then nudge the group back by CENTER×(1−s) — algebraically identical to
+// scaling about the centre. Scale + nudge are driven off the *same* animated value, so they
+// always move together and the pop never lurches sideways (see POP_SHIFT below).
 const SEL_SCALE = 1.1;
+const POP_SHIFT = CENTER * (1 - SEL_SCALE);  // the re-centring translate at full pop (−9.6)
 // How far the un-focused wedges fade back when one is picked. Low enough to clearly recede,
 // high enough to stay legible (they're not gone, just quiet).
 const DIM = 0.22;
+// Give the SVG canvas headroom so a popped wedge can never touch the edge and clip. Derived
+// from SEL_SCALE (not a hardcoded budget) so the margin can't silently go negative if the pop
+// is ever retuned: POP_OUTER is the farthest a popped wedge reaches from the centre; pad the
+// box out past that by MARGIN. The ring geometry (R, CENTER) is unchanged — only the box grows.
+const POP_OUTER = (R + STROKE / 2) * SEL_SCALE;                        // 93.5 with defaults
+const MARGIN = 6;                                                      // anti-alias / rounding slack
+const CANVAS_PAD = Math.max(0, Math.ceil(POP_OUTER + MARGIN - CENTER)); // 4 with defaults
+const VIEW = SIZE + 2 * CANVAS_PAD;                                    // 200 with defaults
 
 const AnimatedG = Animated.createAnimatedComponent(G);
 
@@ -113,67 +125,66 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   const single = painted.length === 1;
   const selected = painted.find((s) => s.id === selectedId) ?? null;
 
-  // Lay the wedges out by angle, starting at 12 o'clock (−90°) and running clockwise.
+  // Lay the wedges out by angle, starting at 12 o'clock (−90°) and running clockwise. Compute
+  // each wedge's arc geometry once so the on-top overlay can reuse it without recomputing.
   let cursor = -90;
-  const wedges = painted.map((s) => {
+  const layout = painted.map((s) => {
     const sweep = (s.value / sum) * 360;
     const start = cursor;
     const end = cursor + sweep;
     cursor = end;
-    const isSel = s.id === selectedId;
-    const onPress = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
-    // react-native-svg's native types expose only accessibilityLabel (not role/state), so the
-    // selected state rides in the label rather than accessibilityState.
-    const a11y = `${s.name}, ${fmt(s.value)}, ${pct(s.value)} percent${isSel ? ', selected' : ''}`;
+    // Inset each end by half the gap so neighbours don't touch; a wedge too thin to inset keeps
+    // its full sweep rather than inverting.
+    const inset = sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0;
+    return { s, start, end, inset };
+  });
 
-    // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side.
+  // Render one wedge's animated group. Interactive wedges own the tap + accessibility label; the
+  // single on-top overlay copy is inert — no tap target, not focusable — so it neither duplicates
+  // the hit area / a11y label nor collides with the base wedge's testID.
+  const renderWedge = ({ s, start, end, inset }: (typeof layout)[number], interactive: boolean) => {
+    // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side. The
+    // pop scales about the centre via scale + a compensating translate driven off the same value.
     const v = emphasisOf(s.id);
     const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
+    const shift = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 0, POP_SHIFT], extrapolate: 'clamp' });
     const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [DIM, 1, 1], extrapolate: 'clamp' });
+
+    const isSel = s.id === selectedId;
+    const shapeProps = interactive
+      ? {
+          testID: `donut-slice-${s.id}`,
+          onPress: () => setSelectedId((cur) => (cur === s.id ? null : s.id)),
+          accessible: true,
+          // react-native-svg's native types expose only accessibilityLabel (not role/state), so
+          // the selected state rides in the label rather than accessibilityState.
+          accessibilityLabel: `${s.name}, ${fmt(s.value)}, ${pct(s.value)} percent${isSel ? ', selected' : ''}`,
+        }
+      : { testID: 'donut-top', accessible: false };
 
     const shape = single ? (
       // A lone 100% slice is a full ring — an arc whose start and end coincide degenerates, so
       // draw it as a plain circle instead.
-      <Circle
-        testID={`donut-slice-${s.id}`}
-        cx={CENTER}
-        cy={CENTER}
-        r={R}
-        fill="none"
-        stroke={s.color}
-        strokeWidth={STROKE}
-        onPress={onPress}
-        accessible
-        accessibilityLabel={a11y}
-      />
+      <Circle cx={CENTER} cy={CENTER} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} {...shapeProps} />
     ) : (
-      // Inset each end by half the gap so neighbours don't touch; a wedge too thin to inset keeps
-      // its full sweep rather than inverting.
-      <Path
-        testID={`donut-slice-${s.id}`}
-        d={arcPath(start + (sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0), end - (sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0), R)}
-        fill="none"
-        stroke={s.color}
-        strokeWidth={STROKE}
-        strokeLinecap="butt"
-        onPress={onPress}
-        accessible
-        accessibilityLabel={a11y}
-      />
+      <Path d={arcPath(start + inset, end - inset, R)} fill="none" stroke={s.color} strokeWidth={STROKE} strokeLinecap="butt" {...shapeProps} />
     );
 
-    // Scale about the canvas centre so the pop grows the wedge outward, not in place.
+    // Scale + a compensating translate, both about the centre, so the pop grows the wedge in
+    // place — not toward a corner (which would slide it off-canvas and clip).
     return (
-      <AnimatedG key={s.id} scale={scale} originX={CENTER} originY={CENTER} opacity={opacity}>
+      <AnimatedG key={interactive ? s.id : '__top__'} scale={scale} x={shift} y={shift} opacity={opacity}>
         {shape}
       </AnimatedG>
     );
-  });
-  // Draw the popped wedge last so its enlarged band sits on top of its neighbours.
-  if (selectedId) {
-    const i = wedges.findIndex((w) => w.key === selectedId);
-    if (i >= 0) wedges.push(...wedges.splice(i, 1));
-  }
+  };
+
+  // Base wedges in stable paint order — never reordered. Reordering keyed children mid-animation
+  // detaches the animating node and hitches; instead the selected wedge is redrawn once by an
+  // appended, inert overlay, so it sits on top of its neighbours without any reorder.
+  const wedges = layout.map((d) => renderWedge(d, true));
+  const selectedLayout = selectedId ? layout.find((d) => d.s.id === selectedId) : null;
+  const topWedge = selectedLayout ? renderWedge(selectedLayout, false) : null;
 
   // painted[0] is the largest single category — kept slices are sorted desc and "Other" (a sum
   // of the smaller tail) is only ever appended after them, so it can never be painted[0].
@@ -184,10 +195,14 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
 
   return (
     <View style={styles.wrap} testID={testID} accessibilityLabel={label}>
-      <Svg width={SIZE} height={SIZE}>
+      {/* viewBox padded past the ring by CANVAS_PAD so a popped wedge never reaches the edge and
+          clips; width/height match the viewBox for 1:1 pixels, and coord 96 still maps to the
+          physical centre, so the readout in the hole stays aligned. */}
+      <Svg width={VIEW} height={VIEW} viewBox={`${-CANVAS_PAD} ${-CANVAS_PAD} ${VIEW} ${VIEW}`}>
         {/* Track behind the wedges so a partial ring still reads as a full circle. */}
         <Circle cx={CENTER} cy={CENTER} r={R} fill="none" stroke={C.hairlineStrong} strokeWidth={STROKE} />
         {wedges}
+        {topWedge}
       </Svg>
       {/* Centre readout. Default: the leading category's share. Tapped: that category's name +
           total — which is what "tap a slice to see the amount" asks for. pointerEvents=none so

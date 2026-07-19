@@ -90,6 +90,23 @@ describe('SpendingDonut', () => {
     expect(screen.getByTestId('donut-slice-g').props.accessibilityLabel).toBe('Groceries, $75, 75 percent');
   });
 
+  // The selected wedge is redrawn once on top by an inert overlay (so it sits above its neighbours
+  // without reordering the animating children). The overlay only exists while something is picked,
+  // and is not a second focusable tap target.
+  it('overlays the selected wedge on top, inert, and clears it when deselected', () => {
+    render(<SpendingDonut slices={TWO} />);
+    expect(screen.queryByTestId('donut-top')).toBeNull(); // nothing selected → no overlay
+
+    fireEvent.press(screen.getByTestId('donut-slice-c'));
+    const top = screen.getByTestId('donut-top');
+    expect(top.props.accessible).toBe(false); // not a duplicate button / focus target
+    expect(top.props.onPress).toBeUndefined();
+    expect(screen.getByTestId('donut-slice-c')).toBeTruthy(); // base wedge keeps the tap target
+
+    fireEvent.press(screen.getByTestId('donut-slice-c')); // toggle off
+    expect(screen.queryByTestId('donut-top')).toBeNull();
+  });
+
   // The pop/dim is animated (scale + opacity on a spring), so the resting/target emphasis is
   // pinned via the pure helper rather than by reading the interpolated SVG props.
   it('maps selection to an emphasis: tapped pops (+1), the rest dim (−1), all rest at 0', () => {
