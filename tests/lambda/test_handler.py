@@ -30,7 +30,7 @@ import pytest
 
 from standardwebhooks.webhooks import Webhook as _RealWebhook
 
-_SECRET = base64.b64encode(b"whittle-test-signing-key").decode()
+_SECRET = base64.b64encode(b"abundo-test-signing-key").decode()
 
 
 class _Repo:
@@ -92,6 +92,19 @@ def test_duplicate_event_is_skipped_without_processing(lam, monkeypatch):
     assert first["statusCode"] == 200 and first["body"] == "ok"
     assert second["statusCode"] == 200 and second["body"] == "duplicate event - skipped"
     assert len(calls) == 1  # processed exactly once
+
+
+def test_summary_event_without_data_key_is_acked_not_500(lam, monkeypatch):
+    # A BankSync `sync.completed` summary delivery carries NO "data" key (unlike a
+    # transaction event). It must be treated as zero rows and acked with 200 — not
+    # KeyError'd into a 500 that BankSync then retries forever (WHIT-302 cutover).
+    # Runs the REAL process_transaction: fail-on-revert — restore `payload["data"]`
+    # and this goes 500.
+    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_summary"})  # note: no "data"
+
+    resp = handler.lambda_handler({}, None)
+
+    assert resp == {"statusCode": 200, "body": "ok"}
 
 
 # --- observability: per-delivery log line ------------------------------------

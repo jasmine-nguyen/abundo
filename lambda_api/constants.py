@@ -35,11 +35,11 @@ FEED_WINDOW_DAYS = 7
 # repeated here for the enrichments proxy to import them. Keep equal to
 # shared/constants.py.
 BANKSYNC_BASE_URL = "https://api.banksync.io"
-BANKSYNC_API_KEY_PATH = "/whittle/banksync-api-key"
+BANKSYNC_API_KEY_PATH = "/abundo/banksync-api-key"
 # BankSync sits behind Cloudflare, which 403s the default "Python-urllib"
 # User-Agent (error 1010). Send our own on every request (matches the
-# transaction-trigger lambda, which uses its own "whittle-transaction-trigger").
-BANKSYNC_USER_AGENT = "whittle-app-api"
+# transaction-trigger lambda, which uses its own "abundo-transaction-trigger").
+BANKSYNC_USER_AGENT = "abundo-app-api"
 # HTTP timeout, in seconds, for a single enrichments request to BankSync.
 BANKSYNC_TIMEOUT_SECONDS = 30
 
@@ -51,7 +51,7 @@ ENRICHMENTS_PATH = "/enrichments"
 # (urllib + SSM key + custom User-Agent, mirroring the BankSync client). The app
 # never holds the key. GET reads the per-cycle cache; POST generates.
 INSIGHTS_AI_PATH = "/insights/ai"
-ANTHROPIC_API_KEY_PATH = "/whittle/anthropic-api-key"
+ANTHROPIC_API_KEY_PATH = "/abundo/anthropic-api-key"
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_MESSAGES_PATH = "/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -69,7 +69,7 @@ ANTHROPIC_MAX_TOKENS = 700
 ANTHROPIC_THINKING = {"type": "disabled"}
 # api.anthropic.com sits behind Cloudflare, which 403s the default urllib
 # User-Agent — the UA is load-bearing (same lesson as the BankSync client).
-ANTHROPIC_USER_AGENT = "whittle-app-api"
+ANTHROPIC_USER_AGENT = "abundo-app-api"
 ANTHROPIC_TIMEOUT_SECONDS = 30
 # How many PRIOR pay cycles of category spend to include for trend context.
 INSIGHTS_PRIOR_CYCLES = 1

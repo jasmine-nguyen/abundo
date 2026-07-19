@@ -8,7 +8,7 @@ Flow:
         -> this lambda
         -> POST https://api.banksync.io/v1/feeds/{id}/sync   (per feed)
         -> BankSync fetches new transactions and pushes them to our webhook
-           receiver (whittle-transaction-ingest), which writes them to DynamoDB.
+           receiver (abundo-transaction-ingest), which writes them to DynamoDB.
 
 BankSync's UI scheduler is capped at daily on our tier; calling the REST sync
 endpoint ourselves lets us pick our own cadence.
@@ -60,7 +60,7 @@ def trigger_sync(feed_id: str, api_key: str) -> None:
             "X-API-Key": api_key,
             # BankSync sits behind Cloudflare, which blocks the default
             # "Python-urllib" User-Agent with a 403 (error 1010). Send our own.
-            "User-Agent": "whittle-transaction-trigger",
+            "User-Agent": "abundo-transaction-trigger",
         },
         method="POST",
     )

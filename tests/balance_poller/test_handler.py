@@ -169,7 +169,7 @@ def test_fetch_balance_builds_correct_get_request(handler, monkeypatch):
     assert req.full_url == "https://api.banksync.io/v1/banks/fiskil_3/accounts/T6d8ppsYssBDFCwl1qEb0w/balances"
     # urllib title-cases header keys, so "X-API-Key" is stored as "X-api-key".
     assert req.get_header("X-api-key") == "the-key"
-    assert req.get_header("User-agent") == "whittle-homeloan-request"
+    assert req.get_header("User-agent") == "abundo-homeloan-request"
     assert captured["timeout"] == handler.HOMELOAN_BALANCE_TIMEOUT_SECONDS
     assert out == _OK_PAYLOAD
 
