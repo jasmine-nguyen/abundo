@@ -73,14 +73,24 @@ aws dynamodb restore-table-from-backup \
   --target-table-name abundo-dynamodb-table \
   --backup-arn <arn from step 2>
 
-# wait until ACTIVE, then have Terraform adopt it instead of creating a new one
+# wait until it's ACTIVE
+aws dynamodb wait table-exists --table-name abundo-dynamodb-table
+
+# IMPORTANT: drop the OLD table from Terraform state first, WITHOUT deleting the
+# real table (state rm only forgets it; the live whittle table stays as a fallback).
+# Skipping this makes the next import fail with "resource already managed".
+terraform state rm aws_dynamodb_table.dynamodb_table
+
+# now have Terraform adopt the restored table
 terraform import aws_dynamodb_table.dynamodb_table abundo-dynamodb-table
 ```
-- After import, `terraform plan` should show the table as **no-change** (or a
-  harmless in-place tweak). If it wants to *replace* it, stop — the restored table's
-  indexes/TTL don't match config; reconcile before continuing.
-- **Skip this whole step** if you chose the clean-slate option — the apply will just
-  create an empty `abundo-dynamodb-table`.
+- After import, run `terraform plan`. The table should show an **in-place update**
+  only — restore doesn't carry over TTL (`expires_at`) or the `App=abundo` tag, so
+  Terraform re-adds those. That's expected and safe.
+- **If the plan says the table "must be replaced" / "forces replacement" → STOP.**
+  That would recreate it empty (data loss). Reconcile the diff before continuing.
+- **Skip this whole step** only if you chose the clean-slate option — then the apply
+  just creates an empty `abundo-dynamodb-table`.
 
 ### 4. Apply the rest
 - `terraform apply`.
