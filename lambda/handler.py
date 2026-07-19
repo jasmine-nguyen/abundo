@@ -79,6 +79,7 @@ def lambda_handler(event, context) -> dict:
         # write (below), so a failed write leaves it UNMARKED and BankSync's retry
         # re-processes it — a transaction can never be dropped by a failed write, and
         # no rollback is needed. (Writes overwrite by id, so a retry is idempotent.)
+        logger.exception("webhook %s: processing failed", payload["id"])
         return {"statusCode": 500, "body": str(e)}
 
     repo.mark_event(payload["id"])
@@ -88,7 +89,10 @@ def lambda_handler(event, context) -> dict:
 def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     normalised_transactions: list[Transaction] = []
     unmapped_transactions: list[dict] = []
-    for row in payload["data"]:
+    # Summary events (e.g. sync.completed) carry no `data` key — treat as zero rows,
+    # not a KeyError. Matches the defensive `.get` in the row-count log above; without
+    # this a data-less delivery 500s and BankSync retries it forever (WHIT-302 cutover).
+    for row in payload.get("data", []):
         try:
             normalised_transactions.append(BankSyncClient.normalise(row))
         except (UnknownAccountError, KeyError):
