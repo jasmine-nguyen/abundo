@@ -105,33 +105,42 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   const sum = painted.reduce((acc, s) => acc + s.value, 0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const reduceMotion = useReduceMotion();
-  // One Animated.Value per wedge on the [−1, +1] emphasis axis (see sliceEmphasis). Kept in a
-  // ref so it survives redraws; new ids default to 0 (at rest), which is the correct start.
+  // The selection is only live while its category is still painted (a tapped category can drop out
+  // of the data). Declared above emphasisOf + the effect + the early return, all of which read it.
+  const activeId = activeSelection(selectedId, painted);
+  // Where a wedge should sit given the current selection — its birth value AND its spring target, so
+  // the two can never drift out of sync.
+  const targetFor = (id: string): -1 | 0 | 1 => sliceEmphasis(id === activeId, activeId !== null);
+  // One Animated.Value per wedge on the [−1, +1] emphasis axis (see sliceEmphasis). Kept in a ref so
+  // it survives redraws. A brand-new wedge starts at its CURRENT target, not 0 — so a wedge that
+  // appears while another category is selected paints dimmed on frame one instead of flashing full.
   const anims = useRef<Map<string, Animated.Value>>(new Map()).current;
   const emphasisOf = (id: string): Animated.Value => {
     let v = anims.get(id);
-    if (!v) { v = new Animated.Value(0); anims.set(id, v); }
+    if (!v) { v = new Animated.Value(targetFor(id)); anims.set(id, v); }
     return v;
   };
 
-  // The selection is only live while its category is still painted (a tapped category can drop out
-  // of the data). Declared above the effect + the early return below because the effect closes over it.
-  const activeId = activeSelection(selectedId, painted);
+  // A stable key for the set of painted ids (JSON so any backend category id is escaped safely).
+  // Adding it to the effect deps makes the springs re-target when a wedge enters or leaves, not
+  // only when the selection changes.
+  const paintedKey = JSON.stringify(painted.map((s) => s.id));
 
-  // Spring each wedge toward its target when the selection changes (instant under reduce-motion).
+  // Spring each wedge toward its target when the selection OR the painted set changes (instant under
+  // reduce-motion).
   useEffect(() => {
     const springs = painted.map((s) => {
-      const target = sliceEmphasis(s.id === activeId, activeId !== null);
+      const target = targetFor(s.id);
       const v = emphasisOf(s.id);
       if (reduceMotion) { v.setValue(target); return null; }
       return Animated.spring(v, { toValue: target, useNativeDriver: false, friction: 7, tension: 120 });
     });
     if (!reduceMotion) Animated.parallel(springs.filter(Boolean) as Animated.CompositeAnimation[]).start();
-    // painted is derived from slices each render; the active selection + reduce-motion flag are what
-    // re-target the springs. When the selected category leaves the data, activeId flips to null and
-    // this re-runs, springing every wedge back to rest — no stuck all-dimmed ring.
+    // Re-targets on selection change (activeId) AND on any wedge entering/leaving (paintedKey): a
+    // category that appears or re-appears while another is selected dims to match its peers, and a
+    // selected category leaving flips activeId to null and springs everything back to rest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, reduceMotion]);
+  }, [activeId, reduceMotion, paintedKey]);
 
   if (sum <= 0) return null;
 
