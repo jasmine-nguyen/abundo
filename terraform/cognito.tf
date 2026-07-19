@@ -87,9 +87,17 @@ resource "aws_cognito_identity_provider" "google" {
       condition     = var.google_client_secret != ""
       error_message = "google_client_id is set but google_client_secret is empty — Google sign-in needs both."
     }
+    ignore_changes = [
+      provider_details["attributes_url"],
+      provider_details["attributes_url_add_attributes"],
+      provider_details["authorize_url"],
+      provider_details["oidc_issuer"],
+      provider_details["token_request_method"],
+      provider_details["token_url"],
+      attribute_mapping["username"],
+    ]
   }
 }
-
 resource "aws_cognito_identity_provider" "apple" {
   count         = var.apple_services_id != "" ? 1 : 0
   user_pool_id  = aws_cognito_user_pool.pool.id
