@@ -38,8 +38,9 @@ export function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0
   return anySelected ? -1 : 0;
 }
 
-// Fixed geometry — the ring is inscribed in a SIZE×SIZE square with its centre at CENTER.
-// A ~26px band leaves a roomy hole for the centred stat.
+// Fixed geometry — a ~26px band leaves a roomy hole for the centred stat. The ring is DRAWN
+// centred on the coordinate origin (0,0); a single static parent <G> then shifts it to the box
+// centre (see the render). CENTER is half the nominal ring box, used only to derive the radius.
 const SIZE = 192;
 const STROKE = 26;
 const PAD = 11;
@@ -49,32 +50,33 @@ const CIRC = 2 * Math.PI * R;
 // A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
 // angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
 const GAP_DEG = (2 / CIRC) * 360;
-// The popped wedge grows a touch (1.1×) to lift it off its neighbours. It must scale about the
-// canvas CENTRE so it grows in place. react-native-svg won't honour originX/originY on an
-// *animated* G (they drop out of the per-frame transform), so we emulate centre-scaling: scale
-// about the origin, then nudge the group back by CENTER×(1−s) — algebraically identical to
-// scaling about the centre. Scale + nudge are driven off the *same* animated value, so they
-// always move together and the pop never lurches sideways (see POP_SHIFT below).
+// The popped wedge grows a touch (1.1×) to lift it off its neighbours, and must grow ABOUT THE
+// CENTRE so it stays in place. react-native-svg's native group takes a single pre-composed
+// `matrix`, and on an *animated* G only the scale component of that matrix reliably lands each
+// frame — any translate/origin is dropped (so scaling an animated G alone happens about the
+// origin (0,0), sliding the wedge toward a corner). The centring therefore lives on the STATIC
+// parent group (baked in once at render, never dropped); each wedge's animation carries ONLY a
+// scale about its own origin, which the parent's shift turns into a scale about the centre.
 const SEL_SCALE = 1.1;
-const POP_SHIFT = CENTER * (1 - SEL_SCALE);  // the re-centring translate at full pop (−9.6)
 // How far the un-focused wedges fade back when one is picked. Low enough to clearly recede,
 // high enough to stay legible (they're not gone, just quiet).
 const DIM = 0.22;
-// Give the SVG canvas headroom so a popped wedge can never touch the edge and clip. Derived
-// from SEL_SCALE (not a hardcoded budget) so the margin can't silently go negative if the pop
-// is ever retuned: POP_OUTER is the farthest a popped wedge reaches from the centre; pad the
-// box out past that by MARGIN. The ring geometry (R, CENTER) is unchanged — only the box grows.
-const POP_OUTER = (R + STROKE / 2) * SEL_SCALE;                        // 93.5 with defaults
-const MARGIN = 6;                                                      // anti-alias / rounding slack
-const CANVAS_PAD = Math.max(0, Math.ceil(POP_OUTER + MARGIN - CENTER)); // 4 with defaults
-const VIEW = SIZE + 2 * CANVAS_PAD;                                    // 200 with defaults
+// Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
+// POP_OUTER is the farthest a popped wedge reaches from the centre; pad past it by MARGIN, and
+// centre the ring in the box so the headroom is symmetric on every side. Derived from SEL_SCALE
+// (not a hardcoded budget) so the margin can't silently go negative if the pop is retuned.
+const POP_OUTER = (R + STROKE / 2) * SEL_SCALE;   // 93.5 with defaults — farthest reach when popped
+const MARGIN = 10;                                // breathing room around the popped ring
+const VIEW = 2 * Math.ceil(POP_OUTER + MARGIN);   // 208 with defaults — box grows, ring stays same size
 
 const AnimatedG = Animated.createAnimatedComponent(G);
 
-// A point at `deg` on a circle of radius `r` (0° = 3 o'clock, +ve clockwise in SVG's y-down space).
+// A point at `deg` on a circle of radius `r` centred on the origin (0° = 3 o'clock, +ve clockwise
+// in SVG's y-down space). Origin-centred so a wedge's scale (about its own origin) grows it in
+// place; the static parent <G> shifts the whole ring to the box centre.
 function ptOnRing(deg: number, r: number): [number, number] {
   const a = (deg * Math.PI) / 180;
-  return [CENTER + r * Math.cos(a), CENTER + r * Math.sin(a)];
+  return [r * Math.cos(a), r * Math.sin(a)];
 }
 
 // A stroked arc path following radius `r` from `startDeg` to `endDeg` (clockwise). The stroke
@@ -143,11 +145,11 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   // single on-top overlay copy is inert — no tap target, not focusable — so it neither duplicates
   // the hit area / a11y label nor collides with the base wedge's testID.
   const renderWedge = ({ s, start, end, inset }: (typeof layout)[number], interactive: boolean) => {
-    // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side. The
-    // pop scales about the centre via scale + a compensating translate driven off the same value.
+    // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side. Scale
+    // ONLY — no translate/origin (those get dropped on an animated G). The wedge is drawn about the
+    // origin, so this scales it in place; the static parent <G> shifts it to the box centre.
     const v = emphasisOf(s.id);
     const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
-    const shift = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 0, POP_SHIFT], extrapolate: 'clamp' });
     const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [DIM, 1, 1], extrapolate: 'clamp' });
 
     const isSel = s.id === selectedId;
@@ -165,15 +167,13 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     const shape = single ? (
       // A lone 100% slice is a full ring — an arc whose start and end coincide degenerates, so
       // draw it as a plain circle instead.
-      <Circle cx={CENTER} cy={CENTER} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} {...shapeProps} />
+      <Circle cx={0} cy={0} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} {...shapeProps} />
     ) : (
       <Path d={arcPath(start + inset, end - inset, R)} fill="none" stroke={s.color} strokeWidth={STROKE} strokeLinecap="butt" {...shapeProps} />
     );
 
-    // Scale + a compensating translate, both about the centre, so the pop grows the wedge in
-    // place — not toward a corner (which would slide it off-canvas and clip).
     return (
-      <AnimatedG key={interactive ? s.id : '__top__'} scale={scale} x={shift} y={shift} opacity={opacity}>
+      <AnimatedG key={interactive ? s.id : '__top__'} scale={scale} opacity={opacity}>
         {shape}
       </AnimatedG>
     );
@@ -195,14 +195,17 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
 
   return (
     <View style={styles.wrap} testID={testID} accessibilityLabel={label}>
-      {/* viewBox padded past the ring by CANVAS_PAD so a popped wedge never reaches the edge and
-          clips; width/height match the viewBox for 1:1 pixels, and coord 96 still maps to the
-          physical centre, so the readout in the hole stays aligned. */}
-      <Svg width={VIEW} height={VIEW} viewBox={`${-CANVAS_PAD} ${-CANVAS_PAD} ${VIEW} ${VIEW}`}>
-        {/* Track behind the wedges so a partial ring still reads as a full circle. */}
-        <Circle cx={CENTER} cy={CENTER} r={R} fill="none" stroke={C.hairlineStrong} strokeWidth={STROKE} />
-        {wedges}
-        {topWedge}
+      {/* The box is VIEW×VIEW with 1:1 pixels. Everything is drawn about the origin and shifted to
+          the box centre by ONE static parent <G> (its translate is baked into the group's matrix
+          at render, so — unlike an animated translate — it's never dropped). A popped wedge then
+          scales about that centre and grows in place with symmetric headroom, never clipping. */}
+      <Svg width={VIEW} height={VIEW} viewBox={`0 0 ${VIEW} ${VIEW}`}>
+        <G x={VIEW / 2} y={VIEW / 2}>
+          {/* Track behind the wedges so a partial ring still reads as a full circle. */}
+          <Circle cx={0} cy={0} r={R} fill="none" stroke={C.hairlineStrong} strokeWidth={STROKE} />
+          {wedges}
+          {topWedge}
+        </G>
       </Svg>
       {/* Centre readout. Default: the leading category's share. Tapped: that category's name +
           total — which is what "tap a slice to see the amount" asks for. pointerEvents=none so
