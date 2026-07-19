@@ -38,14 +38,14 @@ export function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0
   return anySelected ? -1 : 0;
 }
 
-// Fixed geometry — a ~26px band leaves a roomy hole for the centred stat. The ring is DRAWN
-// centred on the coordinate origin (0,0); a single static parent <G> then shifts it to the box
-// centre (see the render). CENTER is half the nominal ring box, used only to derive the radius.
-const SIZE = 192;
-const STROKE = 26;
+// Fixed geometry — the ring is DRAWN centred on the coordinate origin (0,0); a single static
+// parent <G> then shifts it to the box centre (see the render). The ring band is sized as if
+// inscribed in a RING_BOX square with a PAD margin — that's what fixes its radius. The actual
+// (transparent) canvas is larger (VIEW, below) so a popped wedge has room to grow without clipping.
+const RING_BOX = 192;
+const STROKE = 26;                          // ~26px band, leaving a roomy hole for the centred stat
 const PAD = 11;
-const CENTER = SIZE / 2;
-const R = CENTER - PAD - STROKE / 2;        // mid-line radius of the ring
+const R = RING_BOX / 2 - PAD - STROKE / 2;  // 72 — mid-line radius of the ring band
 const CIRC = 2 * Math.PI * R;
 // A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
 // angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
@@ -141,9 +141,10 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     return { s, start, end, inset };
   });
 
-  // Render one wedge's animated group. Interactive wedges own the tap + accessibility label; the
-  // single on-top overlay copy is inert — no tap target, not focusable — so it neither duplicates
-  // the hit area / a11y label nor collides with the base wedge's testID.
+  // Render one wedge's animated group. The base (interactive) wedge owns the accessibility label;
+  // the single on-top overlay copy is not exposed to screen readers (the base beneath owns a11y)
+  // but DOES carry the same tap handler, so tapping a popped wedge still deselects it whether the
+  // tap lands on this top copy or the base under it — no reliance on the tap falling through.
   const renderWedge = ({ s, start, end, inset }: (typeof layout)[number], interactive: boolean) => {
     // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side. Scale
     // ONLY — no translate/origin (those get dropped on an animated G). The wedge is drawn about the
@@ -153,16 +154,17 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [DIM, 1, 1], extrapolate: 'clamp' });
 
     const isSel = s.id === selectedId;
+    const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
     const shapeProps = interactive
       ? {
           testID: `donut-slice-${s.id}`,
-          onPress: () => setSelectedId((cur) => (cur === s.id ? null : s.id)),
+          onPress: toggle,
           accessible: true,
           // react-native-svg's native types expose only accessibilityLabel (not role/state), so
           // the selected state rides in the label rather than accessibilityState.
           accessibilityLabel: `${s.name}, ${fmt(s.value)}, ${pct(s.value)} percent${isSel ? ', selected' : ''}`,
         }
-      : { testID: 'donut-top', accessible: false };
+      : { testID: 'donut-top', onPress: toggle, accessible: false };
 
     const shape = single ? (
       // A lone 100% slice is a full ring — an arc whose start and end coincide degenerates, so
@@ -181,7 +183,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
 
   // Base wedges in stable paint order — never reordered. Reordering keyed children mid-animation
   // detaches the animating node and hitches; instead the selected wedge is redrawn once by an
-  // appended, inert overlay, so it sits on top of its neighbours without any reorder.
+  // appended overlay, so it sits on top of its neighbours without any reorder.
   const wedges = layout.map((d) => renderWedge(d, true));
   const selectedLayout = selectedId ? layout.find((d) => d.s.id === selectedId) : null;
   const topWedge = selectedLayout ? renderWedge(selectedLayout, false) : null;
