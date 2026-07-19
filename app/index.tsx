@@ -3,7 +3,7 @@ import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndic
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Rect, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import Svg, { Path, Circle } from 'react-native-svg';
 import { C, FONT, tint } from '../src/theme';
 import { signInWithPassword, signInWithGoogle, completeNewPassword, requestPasswordReset, confirmPasswordReset } from '../src/auth';
 
@@ -11,18 +11,38 @@ import { signInWithPassword, signInWithGoogle, completeNewPassword, requestPassw
 // resolve the pending promptAsync (a no-op on native, where promptAsync resolves).
 WebBrowser.maybeCompleteAuthSession();
 
+// Abundo tree mark (ported from assets/abundo-tree-mark.svg) — a flat oak with a
+// rounded canopy. Transparent, so it sits on the login screen's dark background.
 function Logo() {
   return (
     <Svg width={76} height={76} viewBox="0 0 64 64">
-      <Defs>
-        <LinearGradient id="wlogo" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#8e9cff" />
-          <Stop offset="1" stopColor="#5d68d6" />
-        </LinearGradient>
-      </Defs>
-      <Rect width={64} height={64} rx={18} fill="url(#wlogo)" />
-      <Polyline points="15,18 23,40 32,27 41,40 49,24" fill="none" stroke={C.heroInk} strokeWidth={5.2} strokeLinecap="round" strokeLinejoin="round" />
-      <Circle cx={49} cy={24} r={3.1} fill={C.heroInk} />
+      {/* branches */}
+      <Path d="M32 42 L24 32" stroke="#7a5230" strokeWidth={3.5} strokeLinecap="round" fill="none" />
+      <Path d="M32 42 L40 32" stroke="#7a5230" strokeWidth={3.5} strokeLinecap="round" fill="none" />
+      <Path d="M32 44 L32 26" stroke="#7a5230" strokeWidth={3.5} strokeLinecap="round" fill="none" />
+      {/* trunk */}
+      <Path d="M28 34 L36 34 C 36 45 37 52 40 55 C 41 56.5 42 57 43 57 L21 57 C 22 57 23 56.5 24 55 C 27 52 28 45 28 34 Z" fill="#7a5230" />
+      <Path d="M34 34 L36 34 C 36 45 37 52 40 55 C 41 56.5 42 57 43 57 L37 57 C 36 56 35 53 34.5 49 C 34 44 34 39 34 34 Z" fill="#6a4526" />
+      {/* canopy — base green */}
+      <Circle cx={32} cy={24} r={16} fill="#5cb64a" />
+      <Circle cx={19} cy={28} r={10} fill="#5cb64a" />
+      <Circle cx={45} cy={28} r={10} fill="#5cb64a" />
+      <Circle cx={24} cy={16} r={9.5} fill="#5cb64a" />
+      <Circle cx={40} cy={16} r={9.5} fill="#5cb64a" />
+      {/* canopy — shadow */}
+      <Circle cx={17} cy={31} r={6} fill="#3f8f3a" />
+      <Circle cx={47} cy={31} r={6} fill="#3f8f3a" />
+      <Circle cx={32} cy={35} r={7} fill="#3f8f3a" />
+      {/* canopy — highlight */}
+      <Circle cx={24} cy={15} r={6} fill="#86d16a" />
+      <Circle cx={37} cy={15} r={5.5} fill="#86d16a" />
+      <Circle cx={20} cy={24} r={4.5} fill="#86d16a" />
+      <Circle cx={32} cy={20} r={5} fill="#86d16a" />
+      {/* canopy — dapple */}
+      <Circle cx={22} cy={13} r={2} fill="#aee584" />
+      <Circle cx={35} cy={13} r={1.8} fill="#aee584" />
+      <Circle cx={29} cy={18} r={1.8} fill="#aee584" />
+      <Circle cx={42} cy={24} r={1.6} fill="#aee584" />
     </Svg>
   );
 }
@@ -351,8 +371,8 @@ export default function Login() {
     >
       <View style={styles.brand}>
         <Logo />
-        <Text style={styles.wordmark}>Whittle</Text>
-        <Text style={styles.tagline}>Whittle the mortgage down to nothing.</Text>
+        <Text style={styles.wordmark}>Abundo</Text>
+        <Text style={styles.tagline}>Grow what's yours.</Text>
       </View>
 
       {notice ? (

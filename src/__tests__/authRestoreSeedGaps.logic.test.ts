@@ -56,8 +56,8 @@ jest.mock('react-native', () => ({
   },
 }));
 
-const REFRESH_KEY = 'whittle.cognito.refreshToken';
-const METHOD_KEY = 'whittle.cognito.authMethod';
+const REFRESH_KEY = 'abundo.cognito.refreshToken';
+const METHOD_KEY = 'abundo.cognito.authMethod';
 const DOMAIN = 'https://whittle-auth.auth.ap-southeast-2.amazoncognito.com';
 const POOL_ID = 'ap-southeast-2_pool123';
 const nowSec = () => Math.floor(Date.now() / 1000);

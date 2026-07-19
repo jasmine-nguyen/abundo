@@ -87,11 +87,11 @@ describe('WHIT-266 lock cover', () => {
     expect(childMounts).toBe(1); // mounted once on launch
 
     act(() => setStatus('locked'));
-    expect(screen.getByText('Whittle is locked')).toBeTruthy();
+    expect(screen.getByText('Abundo is locked')).toBeTruthy();
     expect(childMounts).toBe(1); // still mounted — the lock covered it, didn't destroy it
 
     act(() => setStatus('authed'));
-    expect(screen.queryByText('Whittle is locked')).toBeNull();
+    expect(screen.queryByText('Abundo is locked')).toBeNull();
     expect(screen.getByTestId('child')).toBeTruthy();
     expect(childMounts).toBe(1); // SAME instance throughout — never rebuilt (the whole point)
   });

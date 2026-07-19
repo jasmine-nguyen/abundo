@@ -41,9 +41,9 @@ jest.mock('expo-auth-session', () => ({
   refreshAsync: (...a: unknown[]) => mockRefreshAsync(...a),
 }));
 
-const REFRESH_KEY = 'whittle.cognito.refreshToken';
-const SENTINEL_KEY = 'whittle.cognito.hasSession';
-const METHOD_KEY = 'whittle.cognito.authMethod';
+const REFRESH_KEY = 'abundo.cognito.refreshToken';
+const SENTINEL_KEY = 'abundo.cognito.hasSession';
+const METHOD_KEY = 'abundo.cognito.authMethod';
 const POOL_ID = 'ap-southeast-2_abc123';
 const nowSec = () => Math.floor(Date.now() / 1000);
 // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports

@@ -118,7 +118,7 @@ export default function Settings() {
           </Pressable>
         </View>
 
-        <Text style={styles.version}>Whittle · v1.0 · death-pledge slayer</Text>
+        <Text style={styles.version}>Abundo · v1.0 · death-pledge slayer</Text>
     </ScrollChromeHeader>
   );
 }

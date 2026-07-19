@@ -66,7 +66,7 @@ export default function Loan() {
       <Header title="Loan details" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
         <Text style={styles.intro}>
-          Add your loan facts so Whittle can show real progress and equity. We only ask for what the bank feed can't tell us.
+          Add your loan facts so Abundo can show real progress and equity. We only ask for what the bank feed can't tell us.
         </Text>
 
         <Field label="Original loan amount" hint="What you first borrowed" placeholder="e.g. 600000" prefix="$" value={original} onChangeText={setOriginal} />

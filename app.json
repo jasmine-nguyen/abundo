@@ -1,7 +1,7 @@
 {
   "expo": {
     "scheme": "acme",
-    "icon": "./assets/whittle-beaver-icon-ios.png",
+    "icon": "./assets/abundo-icon-ios.png",
     "plugins": [
       "expo-router",
       "expo-font",
@@ -12,15 +12,15 @@
       [
         "expo-secure-store",
         {
-          "faceIDPermission": "Whittle uses Face ID to unlock your account and protect your login."
+          "faceIDPermission": "Abundo uses Face ID to unlock your account and protect your login."
         }
       ]
     ],
-    "name": "Whittle",
-    "slug": "whittle",
+    "name": "Abundo",
+    "slug": "abundo",
     "ios": {
       "bundleIdentifier": "com.jasminenguyen.whittle",
-      "icon": "./assets/whittle-beaver-icon-ios.png",
+      "icon": "./assets/abundo-icon-ios.png",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -34,8 +34,8 @@
     "android": {
       "package": "com.jasminenguyen.whittle",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/whittle-beaver-adaptive-foreground.png",
-        "backgroundColor": "#2ac3de"
+        "foregroundImage": "./assets/abundo-adaptive-foreground.png",
+        "backgroundColor": "#1a1b26"
       }
     },
     "owner": "ramen_broth"

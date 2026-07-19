@@ -65,7 +65,7 @@ function NotifBanner() {
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-              <Text style={styles.notifApp}>WHITTLE</Text>
+              <Text style={styles.notifApp}>ABUNDO</Text>
               <Text style={styles.notifTime}>{notif.time}</Text>
             </View>
             <Text style={styles.notifBody}>{notif.body}</Text>

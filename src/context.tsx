@@ -1976,7 +1976,7 @@ export function categoryIsUnmapped(
   return categoryId !== 'income' && (categoryId == null || !lookup(categoryId));
 }
 
-// A transaction is uncategorized when it has no resolvable Whittle category: its
+// A transaction is uncategorized when it has no resolvable Abundo category: its
 // category is null, or it points at an id not in the taxonomy (e.g. a raw BankSync
 // category not yet mapped). 'income' is a category, not uncategorized. Single
 // source of truth so the row label, the tab list, the badge — and the "apply to

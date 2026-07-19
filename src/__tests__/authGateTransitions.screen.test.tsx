@@ -219,7 +219,7 @@ it('[A9] background→Face-ID resume: app stays mounted under the lock cover, no
   // Locked: the lock cover is up, but the app stays MOUNTED underneath — the Stack did not
   // unmount, so navigation still sits on budgets.
   expect(mockLock).toHaveBeenCalledTimes(1);
-  expect(screen.getByText('Whittle is locked')).toBeTruthy();
+  expect(screen.getByText('Abundo is locked')).toBeTruthy();
   // Mounted but hidden from screen readers while locked.
   expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
   expect(stackMounts).toBe(1); // never unmounted while locked
@@ -230,7 +230,7 @@ it('[A9] background→Face-ID resume: app stays mounted under the lock cover, no
   expect(mockUnlock).toHaveBeenCalledTimes(1);
   // Unlocked and settled: lock cover gone, SAME Stack instance (never remounted), no cover,
   // and crucially NO redirect — you're back on budgets exactly as you left it.
-  expect(screen.queryByText('Whittle is locked')).toBeNull();
+  expect(screen.queryByText('Abundo is locked')).toBeNull();
   expect(screen.getByTestId('child')).toBeTruthy();
   expect(screen.queryByTestId('gate-cover')).toBeNull();
   expect(stackMounts).toBe(1); // one launch mount, zero remounts — the whole point of WHIT-266

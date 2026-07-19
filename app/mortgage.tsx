@@ -43,7 +43,7 @@ export default function Mortgage() {
           <View style={styles.heroBlob} />
           {g.factsReady && g.balanceKnown ? (
             <>
-              <Text style={styles.heroEyebrow}>THE MORTGAGE · WHITTLED SO FAR</Text>
+              <Text style={styles.heroEyebrow}>THE MORTGAGE · PAID DOWN SO FAR</Text>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 7 }}>
                 <Text style={styles.heroBig}>{fmt(g.paidOff!)}</Text>
                 <Text style={styles.heroPct}>{Math.round(g.paidPct)}% gone</Text>
@@ -61,7 +61,7 @@ export default function Mortgage() {
               <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
               <Text style={[styles.heroBig, { marginTop: 6 }]}>{g.balanceLabel}</Text>
               <Text style={styles.heroSetupBody}>
-                Add your loan amount and repayments to see how much you've whittled and your real payoff progress.
+                Add your loan amount and repayments to see how much you've paid down and your real payoff progress.
               </Text>
               <Pressable onPress={() => router.push('/loan')} style={styles.heroSetupBtn}>
                 <Text style={styles.heroSetupBtnText}>Set up loan details →</Text>
@@ -83,7 +83,7 @@ export default function Mortgage() {
             <>
               <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
               <Text style={[styles.heroBig, { marginTop: 6 }]}>{g.balanceLabel}</Text>
-              <Text style={styles.heroSetupBody}>We'll show your whittled-so-far progress once your balance loads.</Text>
+              <Text style={styles.heroSetupBody}>We'll show your payoff progress once your balance loads.</Text>
             </>
           )}
         </View>
