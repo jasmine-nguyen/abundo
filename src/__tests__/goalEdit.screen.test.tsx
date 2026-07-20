@@ -9,6 +9,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
 import type { GoalRecord, AccountBalance } from '../api';
 
 // WHIT-257/264 — override the global fixed-past picker mock (jest.setup fires 20 Jun 2026, which
@@ -372,5 +373,20 @@ describe('WHIT-257: save-time future-date guard on the target date', () => {
     const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
     expect(editId).toBe('gp');
     expect(body).toMatchObject({ name: 'Renamed', target_date: '2020-01-01' });
+  });
+});
+
+describe('keyboard', () => {
+  // The Save/Delete buttons sit at the bottom of the form scroll, so the keyboard opens over
+  // them. The scroll must inset for the keyboard AND keep taps alive, or they're unreachable
+  // while typing. Fail-on-revert: drop the props in app/goal/edit.tsx → find() returns undefined.
+  it('wraps the form in a keyboard-inset, tap-persisting scroll so Save/Delete stay reachable', () => {
+    const { UNSAFE_getAllByType } = render(<GoalEdit />);
+    const formScroll = UNSAFE_getAllByType(ScrollView).find(
+      (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
+    );
+    expect(formScroll).toBeTruthy();
+    // Save must live INSIDE that insetted scroll — that's what keeps it reachable over the keyboard.
+    expect(formScroll!.findAll((n) => n === screen.getByTestId('goal-save'))).toHaveLength(1);
   });
 });

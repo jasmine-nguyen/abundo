@@ -4,6 +4,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
 import type { AppContext, LoanFacts, LoanFactsInput } from '../context';
 
 // WHIT-192: loan.tsx reads saveLoanFacts + showToast off the store; the saved facts come
@@ -97,4 +98,18 @@ it('seeds inputs from already-saved facts (LVR shown as a percent)', () => {
   // 0.8 fraction is shown as "80" in the percent field.
   expect(screen.getByDisplayValue('80')).toBeTruthy();
   expect(screen.getByDisplayValue('770000')).toBeTruthy();
+});
+
+// The Save button sits below the fields, so the keyboard opens over it. The form scroll must
+// inset for the keyboard AND keep taps alive. Fail-on-revert: drop the props in app/loan.tsx →
+// find() returns undefined.
+it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reachable', () => {
+  mockState = state({});
+  const { UNSAFE_getAllByType } = render(<Loan />);
+  const formScroll = UNSAFE_getAllByType(ScrollView).find(
+    (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
+  );
+  expect(formScroll).toBeTruthy();
+  // Save must live INSIDE that insetted scroll — that's what keeps it reachable over the keyboard.
+  expect(formScroll!.findAll((n) => n === screen.getByText('Save loan details'))).toHaveLength(1);
 });

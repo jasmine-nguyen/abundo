@@ -172,7 +172,14 @@ export default function GoalEdit() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title={editing ? 'Edit goal' : 'Add a goal'} />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        // The keyboard opens over the Save/Delete buttons at the bottom — inset the scroll by
+        // the keyboard height so they scroll into reach (iOS), and let a tap on them land.
+        automaticallyAdjustKeyboardInsets
+      >
         <Text style={styles.label}>NAME</Text>
         <TextInput
           style={styles.input}
