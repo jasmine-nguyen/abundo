@@ -31,7 +31,7 @@ jest.mock('../context', () => {
 // Run the focus callback through a real effect so refresh-on-focus is exercised.
 jest.mock('expo-router', () => {
   const React = require('react');
-  return { useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), [cb]) };
+  return { useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
 import Insights from '../../app/(tabs)/insights';
