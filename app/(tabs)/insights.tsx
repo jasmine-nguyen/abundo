@@ -96,7 +96,7 @@ export default function Insights() {
             </>
           ) : (
             <>
-              <Text style={styles.heroTotal}>{fmt(total)}</Text>
+              <Text testID="insights-hero-total" style={styles.heroTotal}>{fmt(total)}</Text>
               <Text style={styles.heroSub}>spent across {topLevelCount} {topLevelCount === 1 ? 'category' : 'categories'}</Text>
             </>
           )}

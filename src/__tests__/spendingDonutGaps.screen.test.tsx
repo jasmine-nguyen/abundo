@@ -62,7 +62,7 @@ describe('SpendingDonut — overlay uniqueness & base interactivity (gaps)', () 
     fireEvent.press(screen.getByTestId('donut-top')); // tap the popped overlay (now over c)
     expect(screen.queryByTestId('donut-center-amount')).toBeNull(); // cleared, NOT re-showing $75
     expect(screen.queryByTestId('donut-top')).toBeNull();
-    expect(screen.getByText('75%')).toBeTruthy(); // back to the default leading-share readout
+    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100'); // back to the default total-spent readout
   });
 
   // [A-G2] Switching the selection straight from one wedge to another (no deselect in between)
@@ -95,8 +95,8 @@ describe('SpendingDonut — single 100% slice (gaps)', () => {
   it('[A-G3] renders donut-slice-<id>, selecting overlays + reads it, tapping again clears', () => {
     render(<SpendingDonut slices={SOLO} />);
     expect(screen.getByTestId('donut-slice-solo')).toBeTruthy();
-    expect(screen.getByText('100%')).toBeTruthy();
-    expect(screen.getByText('top category')).toBeTruthy();
+    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
+    expect(screen.getByText('total spent')).toBeTruthy();
     expect(screen.queryByTestId('donut-top')).toBeNull();
 
     fireEvent.press(screen.getByTestId('donut-slice-solo'));

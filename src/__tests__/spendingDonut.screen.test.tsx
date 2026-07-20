@@ -44,10 +44,10 @@ describe('SpendingDonut', () => {
     expect(toJSON()).toBeNull();
   });
 
-  it('highlights the leading category share in the hole', () => {
+  it('shows the total spent in the hole by default', () => {
     render(<SpendingDonut slices={[{ id: 'g', name: 'Groceries', color: '#7FD49B', value: 75 }, { id: 'c', name: 'Coffee', color: '#E8A87C', value: 25 }]} />);
-    expect(screen.getByText('75%')).toBeTruthy();
-    expect(screen.getByText('top category')).toBeTruthy();
+    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100'); // 75 + 25
+    expect(screen.getByText('total spent')).toBeTruthy();
   });
 
   it('gives the chart an accessible summary of each slice', () => {
@@ -64,14 +64,14 @@ describe('SpendingDonut', () => {
 
   it('tapping a wedge shows that category name + total in the hole', () => {
     render(<SpendingDonut slices={TWO} />);
-    // Default: leading share, no amount.
-    expect(screen.getByText('75%')).toBeTruthy();
+    // Default: total spent, no category amount.
+    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
     expect(screen.queryByTestId('donut-center-amount')).toBeNull();
 
     fireEvent.press(screen.getByTestId('donut-slice-c')); // tap the smaller (non-leading) wedge
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25');
     expect(screen.getByText('Coffee')).toBeTruthy();
-    expect(screen.queryByText('75%')).toBeNull(); // default readout is replaced
+    expect(screen.queryByTestId('donut-center-total')).toBeNull(); // default readout is replaced
   });
 
   it('tapping the selected wedge again clears back to the default readout', () => {
@@ -81,8 +81,19 @@ describe('SpendingDonut', () => {
 
     fireEvent.press(screen.getByTestId('donut-slice-g')); // same wedge → toggle off
     expect(screen.queryByTestId('donut-center-amount')).toBeNull();
-    expect(screen.getByText('75%')).toBeTruthy();
-    expect(screen.getByText('top category')).toBeTruthy();
+    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
+    expect(screen.getByText('total spent')).toBeTruthy();
+  });
+
+  it('tapping the centre resets a selection back to the total-spent readout', () => {
+    render(<SpendingDonut slices={TWO} />);
+    fireEvent.press(screen.getByTestId('donut-slice-c'));
+    expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25');
+
+    fireEvent.press(screen.getByTestId('donut-center-reset')); // tap the hole → clear
+    expect(screen.queryByTestId('donut-center-amount')).toBeNull();
+    expect(screen.getByTestId('donut-center-total').props.children).toBe('$100');
+    expect(screen.getByText('total spent')).toBeTruthy();
   });
 
   it('each wedge is a labelled button carrying its dollar total', () => {
