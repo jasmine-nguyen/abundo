@@ -130,6 +130,14 @@ export default function Insights() {
           <SpendingDonut slices={donutSlices} testID="insights-donut" />
         )}
 
+        {/* Each row's bar is its share of total spend this cycle (matches the donut) — NOT
+            spend-vs-budget. Caption it so the short bars aren't read as "budget barely used". */}
+        {!showSpinner && !showError && rows.length > 0 && (
+          <Text testID="insights-bars-caption" style={styles.barsCaption}>
+            Each bar shows the category's share of total spend — not its budget.
+          </Text>
+        )}
+
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
             taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
         {!showError && visibleRows.map((r) => {
@@ -194,6 +202,7 @@ const styles = StyleSheet.create({
   rowAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, letterSpacing: -0.4 },
   track: { flexDirection: 'row', gap: 2, height: 8, marginTop: 14, backgroundColor: 'rgba(255,255,255,.05)', borderRadius: 5, overflow: 'hidden' },
 
+  barsCaption: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, textAlign: 'center', marginTop: -6, marginBottom: 16 },
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 14 },
   retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
