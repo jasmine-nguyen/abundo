@@ -114,9 +114,9 @@ function arcPath(startDeg: number, endDeg: number, r: number): string {
 }
 
 // A donut of category spend for the selected cycle. `slices` are the top-level categories
-// (already this cycle's). The hole shows the leading category's share by default; tap any wedge
-// to pop it out and read that category's name + total instead. Renders nothing when there is no
-// positive spend — the screen shows its own empty state instead.
+// (already this cycle's). The hole shows the total spent by default; tap any wedge to pop it out
+// and read that category's name + total instead, and tap the hole to clear back to the total.
+// Renders nothing when there is no positive spend — the screen shows its own empty state instead.
 export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
   const painted = reduceSlices(slices);
   const sum = painted.reduce((acc, s) => acc + s.value, 0);
