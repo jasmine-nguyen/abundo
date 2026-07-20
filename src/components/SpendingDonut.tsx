@@ -67,9 +67,11 @@ const GAP_DEG = (2 / CIRC) * 360;
 // parent group (baked in once at render, never dropped); each wedge's animation carries ONLY a
 // scale about its own origin, which the parent's shift turns into a scale about the centre.
 const SEL_SCALE = 1.1;
-// How far the un-focused wedges fade back when one is picked. Low enough to clearly recede,
-// high enough to stay legible (they're not gone, just quiet).
-const DIM = 0.22;
+// How far the un-focused wedges fade back when one is picked. High enough that each wedge KEEPS
+// its colour identity (at a heavier fade, distinct hues all collapse toward the black background
+// and two different categories read as the same muddy tone), low enough that the picked wedge —
+// full opacity, popped — still clearly leads.
+const DIM = 0.4;
 // Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
 // POP_OUTER is the farthest a popped wedge reaches from the centre; pad past it by MARGIN, and
 // centre the ring in the box so the headroom is symmetric on every side. Derived from SEL_SCALE

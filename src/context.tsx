@@ -101,16 +101,23 @@ export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
 export const BUCKET_COLOR: Record<Bucket, string> = {
   Living: '#7aa2f7', Lifestyle: '#bb9af7', Income: C.good, Savings: '#73daca',
 };
-export const PALETTE = ['#ff9e64', '#2ac3de', '#f7768e', '#7aa2f7', '#ff75a0', '#bb9af7', '#e0af68', '#73daca', '#7dcfff', '#b4a5f7'];
+// Warm/cool-alternating so consecutively-created categories never land on two neighbouring cool
+// hues (the old order clustered cyan/teal/sky). PALETTE[0] stays '#ff9e64' — the fallback default.
+export const PALETTE = ['#ff9e64', '#7aa2f7', '#f7768e', '#73daca', '#e0af68', '#bb9af7', '#ff75a0', '#2ac3de', '#9ece6a', '#b4a5f7'];
 
-// Tokyo Night category palette (theme re-skin). The old warm palette — greens, tan, pink —
-// clashed with the Tokyo Night theme, so every legacy category colour maps to a Tokyo Night
-// hue (greens → cyan/teal; nothing warm/green left). Applied on READ (toCategory) so existing
-// categories — whose colour is stored server-side — recolour with no data migration. A colour
-// that isn't a known legacy value (already-Tokyo-Night, or a future custom pick) passes through.
+// Tokyo Night category palette (theme re-skin). The old warm palette — tan, coral, yellow — clashed
+// with the Tokyo Night theme, so every legacy category colour maps to a Tokyo Night hue. Applied on
+// READ (toCategory) so existing categories — whose colour is stored server-side — recolour with no
+// data migration. A colour that isn't a known legacy value (already-Tokyo-Night, or a future custom
+// pick) passes through.
+//
+// The targets are deliberately SPREAD across the wheel so no two categories read as the same colour.
+// The four blue-greens the seed set used to share (groceries/shopping/fitness/travel) are pulled
+// apart: groceries → green, shopping → teal, travel → cyan, fitness → sky — a clear step from green
+// to blue rather than four near-identical teals.
 const CATEGORY_COLOR_MAP: Record<string, string> = {
   '#e8a87c': '#ff9e64', // tan → orange
-  '#7fd49b': '#2ac3de', // green → cyan
+  '#7fd49b': '#9ece6a', // green → green
   '#f08c8c': '#f7768e', // coral → rose
   '#8ab4f8': '#7aa2f7', // blue → blue
   '#f2a0c9': '#ff75a0', // pink → pink
@@ -120,7 +127,7 @@ const CATEGORY_COLOR_MAP: Record<string, string> = {
   '#8fd46b': '#7dcfff', // green → sky
   '#b0a8f0': '#b4a5f7', // light purple → periwinkle
   '#f0b27a': '#cba6f7', // orange → mauve
-  '#6fb6d0': '#41a6b5', // blue → deep teal
+  '#6fb6d0': '#2ac3de', // blue → cyan
   '#e59bd0': '#9d7cd8', // magenta → violet
   '#7fa9f0': '#6a89f7', // blue → indigo
 };

@@ -23,9 +23,12 @@ from repository_errors import (
 # so keeping them local makes the layer self-contained. Ids are the curated slugs
 # from src/context.tsx SEED_CATS (the vocabulary BankSync rules + client
 # budgets/rules reference); `recent` is omitted (client-derived).
+# Ordered so consecutively-created categories alternate warm/cool once mapped to their Tokyo
+# Night hue (src/context.tsx CATEGORY_COLOR_MAP) — the old order clustered three cool blue-greens
+# at the tail, so two categories created back-to-back could read as the same colour.
 CATEGORY_PALETTE = [
-    "#E8A87C", "#7FD49B", "#F08C8C", "#8AB4F8", "#F2A0C9",
-    "#C7A8F0", "#F2C94C", "#6FD0C9", "#8FD46B", "#B0A8F0",
+    "#E8A87C", "#8AB4F8", "#F08C8C", "#6FD0C9", "#F2C94C",
+    "#C7A8F0", "#F2A0C9", "#7FD49B", "#B0A8F0", "#8FD46B",
 ]
 
 SEED_CATEGORIES = {

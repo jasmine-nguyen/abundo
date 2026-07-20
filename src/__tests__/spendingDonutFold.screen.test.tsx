@@ -15,9 +15,9 @@ import { opacityOf, sl } from './support/donut';
 describe('SpendingDonut — selected tail slice folds into __other__ (gap)', () => {
   // [A5] Tapped 'coffee' is individually painted, then a data change pushes it into the tail so it
   // folds into '__other__' — its id LEAVES painted. activeId flips to null → ring un-dims. 'a'
-  // existed before, was dimmed to 0.22, and survives; it must return to 1.
+  // existed before, was dimmed to 0.4, and survives; it must return to 1.
   // FAIL-ON-REVERT: with selectedId (not activeId) in the effect deps/target, the effect never
-  // re-runs on this data change (selectedId is still 'coffee'), so 'a' stays stuck at 0.22.
+  // re-runs on this data change (selectedId is still 'coffee'), so 'a' stays stuck at 0.4.
   it('[A5] folding the selected slice into __other__ un-dims the ring (coffee → __other__)', () => {
     const before: DonutSlice[] = [
       sl('a', 100), sl('b', 60), sl('c', 50), { id: 'coffee', name: 'Coffee', color: '#E8A87C', value: 40 }, sl('e', 20),
@@ -25,7 +25,7 @@ describe('SpendingDonut — selected tail slice folds into __other__ (gap)', () 
     const { rerender } = render(<SpendingDonut slices={before} />);
 
     fireEvent.press(screen.getByTestId('donut-slice-coffee'));
-    expect(opacityOf('a')).toBeCloseTo(0.22); // a dims while Coffee is popped
+    expect(opacityOf('a')).toBeCloseTo(0.4); // a dims while Coffee is popped
 
     const after: DonutSlice[] = [
       sl('a', 100), sl('b', 90), sl('c', 80), sl('d', 70), sl('e', 60), sl('f', 50),
@@ -54,7 +54,7 @@ describe('SpendingDonut — selecting __other__ then its composition changes (ga
     fireEvent.press(screen.getByTestId('donut-slice-__other__'));
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$50');
     expect(opacityOf('__other__')).toBeCloseTo(1);   // Other popped
-    expect(opacityOf('a')).toBeCloseTo(0.22);        // siblings dimmed
+    expect(opacityOf('a')).toBeCloseTo(0.4);        // siblings dimmed
 
     const seven2: DonutSlice[] = [
       sl('a', 100), sl('b', 90), sl('c', 80), sl('d', 70), sl('e', 60), sl('f', 30), sl('g', 45),
@@ -63,7 +63,7 @@ describe('SpendingDonut — selecting __other__ then its composition changes (ga
 
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$75'); // hole re-reads Other sum
     expect(opacityOf('__other__')).toBeCloseTo(1);   // still popped (selection preserved)
-    expect(opacityOf('a')).toBeCloseTo(0.22);        // siblings still dimmed
+    expect(opacityOf('a')).toBeCloseTo(0.4);        // siblings still dimmed
   });
 });
 
@@ -81,7 +81,7 @@ describe('SpendingDonut — data change that spares the selection (gap)', () => 
 
     fireEvent.press(screen.getByTestId('donut-slice-c'));
     expect(opacityOf('c')).toBeCloseTo(1);    // Coffee popped
-    expect(opacityOf('g')).toBeCloseTo(0.22); // Groceries dimmed
+    expect(opacityOf('g')).toBeCloseTo(0.4); // Groceries dimmed
 
     rerender(
       <SpendingDonut slices={[
@@ -93,6 +93,6 @@ describe('SpendingDonut — data change that spares the selection (gap)', () => 
 
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$25'); // still Coffee
     expect(opacityOf('c')).toBeCloseTo(1);    // still popped
-    expect(opacityOf('g')).toBeCloseTo(0.22); // still dimmed
+    expect(opacityOf('g')).toBeCloseTo(0.4); // still dimmed
   });
 });

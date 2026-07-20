@@ -53,15 +53,18 @@ describe('selectCategories', () => {
     expect(out[1].parent).toBeNull(); // absent parent normalised to null (top-level)
   });
 
-  it('remaps every legacy warm category colour to its Tokyo Night hue (greens → cyan/teal)', () => {
+  it('remaps every legacy category colour to a spread-out Tokyo Night hue', () => {
     const out = selectCategories([
       { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }, // green
       { id: 'shopping', name: 'Shopping', bucket: 'Lifestyle', icon: 'bag', color: '#6FD0C9', recent: 0 }, // teal-green
       { id: 'fitness', name: 'Fitness', bucket: 'Lifestyle', icon: 'dumbbell', color: '#8FD46B', recent: 0 }, // green
+      { id: 'travel', name: 'Travel', bucket: 'Lifestyle', icon: 'plane', color: '#6FB6D0', recent: 0 }, // blue
     ]);
-    expect(out[0].color).toBe('#2ac3de'); // green → cyan
+    // The four ex-blue-greens now step green → teal → sky → cyan, no two alike.
+    expect(out[0].color).toBe('#9ece6a'); // green → green
     expect(out[1].color).toBe('#73daca'); // teal-green → teal
     expect(out[2].color).toBe('#7dcfff'); // green → sky
+    expect(out[3].color).toBe('#2ac3de'); // travel → cyan
   });
 
   it('passes an already-Tokyo-Night / unknown colour through unchanged', () => {
