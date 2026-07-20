@@ -2204,6 +2204,13 @@ export interface BudgetDetailInput {
   transactions: Transaction[];
   cycleLen: number;
   daysLeft: number;
+  // The current pay cycle's start (ISO YYYY-MM-DD) — the client twin of the server's
+  // current_cycle_window start (via cycleWindow(payCycle, 0)). The related list is filtered
+  // to it so it can only show transactions the spend total (a per-cycle server rollup) counts.
+  // Without it the list was a rolling 7-day feed and could show a charge from BEFORE this cycle
+  // — e.g. a still-pending purchase authorised the day before payday — sitting under a total
+  // that (correctly) excludes it, reading as a broken budget.
+  cycleStart: string;
 }
 export interface BudgetEditInput {
   category: (id: string) => Category | undefined;
@@ -2226,7 +2233,11 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
   const relSeen = new Map<string, Transaction[]>();
   const relOrder: string[] = [];
-  for (const t of s.transactions.filter((t) => t.category === b.id)) {
+  // Scope the list to the current cycle (t.date >= cycleStart) so it shows only what the spend
+  // total counts. The feed's upper bound is already today (the cycle's end), so a lower bound is
+  // the whole window. A charge dated before this cycle — even if still pending — belongs to the
+  // prior cycle's budget and must not appear under this cycle's total (WHIT: cross-cycle leak).
+  for (const t of s.transactions.filter((t) => t.category === b.id && t.date >= s.cycleStart)) {
     const label = dateLabel(t.date);
     if (!relSeen.has(label)) { relSeen.set(label, []); relOrder.push(label); }
     relSeen.get(label)!.push(t);

@@ -18,6 +18,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
       transactions: [txn({ transaction_id: 'x1', category: 'coffee' })],
       cycleLen: 14,
       daysLeft: 7,
+      cycleStart: '0000-01-01',
     };
     const bd = budgetDetail(input, 'coffee');
     expect(bd).not.toBeNull();
@@ -37,6 +38,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
       transactions: [],
       cycleLen: 14,
       daysLeft: 7,
+      cycleStart: '0000-01-01',
     };
     expect(budgetDetail(cold, 'coffee')).toBeNull();
   });
@@ -48,6 +50,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
       transactions: [],
       cycleLen: 14,
       daysLeft: 7,
+      cycleStart: '0000-01-01',
     };
     expect(budgetDetail(partial, 'coffee')).toBeNull();
   });
