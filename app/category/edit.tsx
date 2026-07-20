@@ -164,7 +164,15 @@ export default function CategoryEdit() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title={categoryId ? 'Edit category' : 'New category'} />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        // Save + Delete sit at the bottom, so the keyboard opens right over them. Inset the
+        // scroll by the keyboard height so they scroll into reach (iOS); persistTaps lets a
+        // tap on Save land instead of only dismissing the keyboard.
+        automaticallyAdjustKeyboardInsets
+      >
         <View style={styles.preview}>
           <View style={[styles.previewChip, { backgroundColor: tint(color, 0.15) }]}><Icon name={icon} size={34} color={color} /></View>
         </View>

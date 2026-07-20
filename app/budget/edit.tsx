@@ -75,7 +75,14 @@ export default function BudgetEdit() {
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
       <Header title={info.title} />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        // The keyboard opens over the Save button at the bottom — inset the scroll by the
+        // keyboard height so it scrolls into reach (iOS), and let a tap on Save land.
+        automaticallyAdjustKeyboardInsets
+      >
         <View style={styles.categoryRow}>
           <View style={[styles.chip, { backgroundColor: tint(info.category.color, 0.15) }]}><Icon name={info.category.icon} size={30} color={info.category.color} /></View>
           <View>

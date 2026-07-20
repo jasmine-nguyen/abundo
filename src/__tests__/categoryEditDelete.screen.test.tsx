@@ -6,6 +6,7 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
 import type { Category } from '../context';
 
 // Hoisted module-scope mocks so navigation + the writer are assertable across renders:
@@ -70,4 +71,18 @@ it('re-enables Delete so a retry runs after deleteCategory throws', async () => 
   expect(mockDeleteCategory).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
   expect(errorSpy).toHaveBeenCalled();
+});
+
+// The Save + Delete buttons live at the bottom of the form scroll, so the keyboard opens over
+// them. The scroll must inset for the keyboard AND keep taps alive, or they're unreachable while
+// typing. Fail-on-revert: drop the props in app/category/edit.tsx → find() returns undefined.
+it('wraps the form in a keyboard-inset, tap-persisting scroll so Save/Delete stay reachable', () => {
+  mockCategories = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#e8a87c', recent: 0, parent: null }];
+  const { UNSAFE_getAllByType } = render(<CategoryEdit />);
+  const formScroll = UNSAFE_getAllByType(ScrollView).find(
+    (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
+  );
+  expect(formScroll).toBeTruthy();
+  // Save must live INSIDE that insetted scroll — that's what keeps it reachable over the keyboard.
+  expect(formScroll!.findAll((n) => n === screen.getByText('Save category'))).toHaveLength(1);
 });

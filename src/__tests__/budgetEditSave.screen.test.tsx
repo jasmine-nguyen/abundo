@@ -5,6 +5,7 @@
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
 import type { AppContext } from '../context';
 
 // Hoisted module-scope mocks so replace() + the writer are assertable across renders
@@ -74,4 +75,18 @@ it('re-enables the Add budget button so a retry runs after saveBudget throws', a
   expect(mockSaveBudget).toHaveBeenCalledTimes(2);
   await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
   expect(errorSpy).toHaveBeenCalled();
+});
+
+// The Save button sits below the amount field, so the keyboard opens over it. The form scroll
+// must inset for the keyboard AND keep taps alive. Fail-on-revert: drop the props in
+// app/budget/edit.tsx → find() returns undefined.
+it('wraps the form in a keyboard-inset, tap-persisting scroll so Save stays reachable', () => {
+  mockState = { categories: [SPEND], budgets: [], saveBudget: mockSaveBudget } as unknown as AppContext;
+  const { UNSAFE_getAllByType } = render(<BudgetEdit />);
+  const formScroll = UNSAFE_getAllByType(ScrollView).find(
+    (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
+  );
+  expect(formScroll).toBeTruthy();
+  // Save must live INSIDE that insetted scroll — that's what keeps it reachable over the keyboard.
+  expect(formScroll!.findAll((n) => n === screen.getByText('Add budget'))).toHaveLength(1);
 });

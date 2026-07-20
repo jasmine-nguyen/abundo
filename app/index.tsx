@@ -368,6 +368,9 @@ export default function Login() {
     <ScrollView
       contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 30, paddingBottom: insets.bottom + 30 }]}
       keyboardShouldPersistTaps="handled"
+      // Inset the scroll by the keyboard height so the sign-in button below the fields stays
+      // reachable when the keyboard is up (iOS).
+      automaticallyAdjustKeyboardInsets
     >
       <View style={styles.brand}>
         <Logo />

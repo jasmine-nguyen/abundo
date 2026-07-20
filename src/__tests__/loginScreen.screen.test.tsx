@@ -6,6 +6,7 @@
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { ScrollView } from 'react-native';
 
 const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
@@ -75,4 +76,17 @@ it('Forgot password opens the reset-code request form (WHIT-182)', () => {
   const { getByTestId } = render(<Login />);
   fireEvent.press(getByTestId('login-forgot'));
   expect(getByTestId('forgot-request-form')).toBeTruthy();
+});
+
+// The sign-in button sits below the email/password fields, so the keyboard can open over it.
+// The scroll insets for the keyboard and keeps taps alive. Fail-on-revert: drop the props in
+// app/index.tsx → find() returns undefined.
+it('wraps the sign-in form in a keyboard-inset, tap-persisting scroll', () => {
+  const { UNSAFE_getAllByType, getByTestId } = render(<Login />);
+  const formScroll = UNSAFE_getAllByType(ScrollView).find(
+    (sv) => sv.props.automaticallyAdjustKeyboardInsets === true && sv.props.keyboardShouldPersistTaps === 'handled',
+  );
+  expect(formScroll).toBeTruthy();
+  // The sign-in button must live INSIDE that insetted scroll — that's what keeps it reachable.
+  expect(formScroll!.findAll((n) => n === getByTestId('login-submit'))).toHaveLength(1);
 });
