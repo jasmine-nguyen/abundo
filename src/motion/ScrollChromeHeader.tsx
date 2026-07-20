@@ -11,7 +11,7 @@ import { FONT } from '../theme';
 import { useNavBarsHeader, floatingHeaderStyle } from './useNavBarsHeader';
 
 export function ScrollChromeHeader({
-  title, left, right, refreshControl, contentContainerStyle, children,
+  title, left, right, refreshControl, contentContainerStyle, keyboardShouldPersistTaps, children,
 }: {
   title: string;
   left?: React.ReactNode;
@@ -21,6 +21,9 @@ export function ScrollChromeHeader({
   // or the spinner draws behind the opaque floating header at y≈0 (WHIT-211).
   refreshControl?: (headerHeight: number) => React.ReactElement<RefreshControlProps>;
   contentContainerStyle?: StyleProp<ViewStyle>;
+  // Forwarded to the ScrollView — a screen with a search field passes 'handled' so a tap on a
+  // result lands instead of only dismissing the keyboard. Omitted → RN's default (unchanged).
+  keyboardShouldPersistTaps?: 'always' | 'never' | 'handled';
   children: React.ReactNode;
 }) {
   const { onScroll, scrollEventThrottle, headerStyle, headerHeight, headerPaddingTop, contentPadding } = useNavBarsHeader();
@@ -40,6 +43,7 @@ export function ScrollChromeHeader({
         // a screen's extra style (e.g. Budgets' flexGrow for its centered spinner/error).
         contentContainerStyle={StyleSheet.flatten([{ paddingHorizontal: 18, ...contentPadding }, contentContainerStyle])}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps={keyboardShouldPersistTaps}
         refreshControl={refreshControl?.(headerHeight)}
       >
         {children}
