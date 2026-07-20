@@ -491,6 +491,48 @@ export function useTransactionsScreenData(): TransactionsScreenData {
   };
 }
 
+// --- the category drill-in screen's composite view (WHIT-308) ----------------
+// app/category/[id].tsx feeds categoryTransactions(s, drillId, cycleWindow(payCycle, cycle)):
+// the transaction list + taxonomy filtered to one category, over the selected cycle's window.
+// The transaction list is the SAME cached ['transactions'] query the tabs use — no new fetch.
+// Unlike useTransactionsScreenData this also carries the pay cycle (the window needs it) and
+// surfaces payCycleError: a first-load pay-cycle failure would build the window from the
+// DEFAULT cycle, so the drilled list would silently cover the wrong dates — force the error
+// card instead (mirrors the budget-detail composite, WHIT-72). No balances query (no balance
+// card on this screen).
+export interface CategoryTransactionsScreenData {
+  transactions: Transaction[];
+  category: (id: string | null) => Category | undefined;
+  payCycle: PayCycle;
+  isLoading: boolean;
+  isError: boolean;
+  payCycleError: boolean;
+  refetch: () => void;
+  refetchStale: () => void;
+}
+export function useCategoryTransactionsScreenData(): CategoryTransactionsScreenData {
+  const authed = useIsAuthed();
+  const payCycleQuery = usePayCycleQuery(authed);
+  const transactionsQuery = useTransactionsQuery(authed);
+  const categoriesQuery = useCategoriesQuery(authed);
+
+  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
+  const categories = categoriesQuery.data ?? [];
+  const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
+
+  const status = useCombineScreenQueries([payCycleQuery, transactionsQuery, categoriesQuery]);
+  const payCycleError = firstLoadError(payCycleQuery);
+
+  return {
+    transactions: transactionsQuery.data ?? [],
+    category,
+    payCycle,
+    payCycleError,
+    ...status,
+  };
+}
+
 // --- the Settings screen's composite view (WHIT-191a) ------------------------
 export interface SettingsScreenData {
   categoriesCount: number;

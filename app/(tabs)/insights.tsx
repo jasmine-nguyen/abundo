@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, categoryBreakdown } from '../../src/context';
@@ -12,6 +12,7 @@ import { SpendingDonut } from '../../src/components/SpendingDonut';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
+  const router = useRouter();
   // WHIT-68: which pay cycle the hero + category rows show — 0 = this (current, partial)
   // cycle, 1 = last (full) cycle. Only the breakdown reads move; the AI coach stays current.
   const [cycle, setCycle] = useState(0);
@@ -143,8 +144,10 @@ export default function Insights() {
           return (
             <View key={r.id} style={[styles.row, r.depth > 0 && { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
               <Pressable
-                onPress={r.hasChildren ? () => toggle(r.id) : undefined}
-                accessibilityRole={r.hasChildren ? 'button' : undefined}
+                // WHIT-308: a parent row still expands its subs; a leaf / "Directly in X" /
+                // Uncategorized row drills into its transactions for the selected cycle.
+                onPress={r.hasChildren ? () => toggle(r.id) : () => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+                accessibilityRole="button"
                 accessibilityState={r.hasChildren ? { expanded: open } : undefined}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}
               >

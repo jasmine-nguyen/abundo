@@ -47,7 +47,7 @@ jest.mock('../context', () => {
 
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]) };
+  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
 import Insights from '../../app/(tabs)/insights';
