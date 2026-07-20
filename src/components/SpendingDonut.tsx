@@ -8,7 +8,8 @@ import { useReduceMotion } from '../motion/useReduceMotion';
 // category, sized by its share of the total, painted in that category's own colour so the
 // ring and the rows below it read as one legend. The category rows underneath double as the
 // chart's legend + table view (name · amount · share), so the donut needs no separate key.
-// Tap a wedge to read that category's name + total in the hole; tap it again to clear.
+// At rest the hole shows the TOTAL spent. Tap a wedge to read that category's name + total instead;
+// tap it again — OR tap the hole — to clear back to the total.
 
 // Neutral grey for the grouped "Other" slice — distinct from any category hue, and reads as
 // "not one thing" rather than competing for identity with the real categories.
@@ -52,10 +53,18 @@ export function activeSelection(selectedId: string | null, painted: DonutSlice[]
 // A bigger ring gives every wedge a longer arc, so a small category isn't a hair-thin tap
 // target that takes two tries to hit.
 const RING_BOX = 240;
-const STROKE = 30;                          // band width — also the radial depth of a wedge's tap area
+const STROKE = 30;                          // VISIBLE band width — the painted ring's thickness
 const PAD = 11;
 const R = RING_BOX / 2 - PAD - STROKE / 2;  // 94 — mid-line radius of the ring band
 const CIRC = 2 * Math.PI * R;
+// The TAP target is a wider, invisible band concentric with the visible one, so a thin wedge isn't
+// a hair-thin target that takes two tries to hit. Each wedge paints its colour at STROKE, then lays
+// a transparent HIT_STROKE-wide copy on top that owns the tap — and that copy takes its FULL sweep
+// (no inter-wedge gap), so the tap targets tile the ring edge-to-edge instead of leaving a dead
+// strip between neighbours. The extra inner reach is harmlessly overlaid by the centre reset disc
+// (drawn on top), so in practice the radial widening lands OUTWARD, into the transparent margin —
+// never into the hole where the readout + the reset tap live.
+const HIT_STROKE = 46;
 // A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
 // angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
 const GAP_DEG = (2 / CIRC) * 360;
@@ -73,12 +82,18 @@ const SEL_SCALE = 1.1;
 // full opacity, popped — still clearly leads.
 const DIM = 0.4;
 // Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
-// POP_OUTER is the farthest a popped wedge reaches from the centre; pad past it by MARGIN, and
+// POP_OUTER is the farthest anything DRAWN OR TAPPED reaches from the centre — the wider HIT band
+// out-reaches the visible one, so budget from whichever is thicker (else a popped wedge's tap area
+// would be clipped by the SVG bounds and stop responding near the rim). Pad past it by MARGIN, and
 // centre the ring in the box so the headroom is symmetric on every side. Derived from SEL_SCALE
 // (not a hardcoded budget) so the margin can't silently go negative if the pop is retuned.
-const POP_OUTER = (R + STROKE / 2) * SEL_SCALE;   // 93.5 with defaults — farthest reach when popped
+const POP_OUTER = (R + Math.max(STROKE, HIT_STROKE) / 2) * SEL_SCALE;  // farthest reach when popped
 const MARGIN = 10;                                // breathing room around the popped ring
-const VIEW = 2 * Math.ceil(POP_OUTER + MARGIN);   // 208 with defaults — box grows, ring stays same size
+const VIEW = 2 * Math.ceil(POP_OUTER + MARGIN);   // box grows, ring stays the same size
+// The clear-selection tap disc fills the visible hole exactly (inner edge of the VISIBLE band).
+// Drawn on top of the wedges so a centre tap always resets, and so each wedge's inward hit reach
+// (from the wider HIT_STROKE) is ceded to the hole rather than stealing centre taps.
+const HOLE_R = R - STROKE / 2;
 
 const AnimatedG = Animated.createAnimatedComponent(G);
 
@@ -101,9 +116,9 @@ function arcPath(startDeg: number, endDeg: number, r: number): string {
 }
 
 // A donut of category spend for the selected cycle. `slices` are the top-level categories
-// (already this cycle's). The hole shows the leading category's share by default; tap any wedge
-// to pop it out and read that category's name + total instead. Renders nothing when there is no
-// positive spend — the screen shows its own empty state instead.
+// (already this cycle's). The hole shows the total spent by default; tap any wedge to pop it out
+// and read that category's name + total instead, and tap the hole to clear back to the total.
+// Renders nothing when there is no positive spend — the screen shows its own empty state instead.
 export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
   const painted = reduceSlices(slices);
   const sum = painted.reduce((acc, s) => acc + s.value, 0);
@@ -166,10 +181,14 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     return { s, start, end, inset };
   });
 
-  // Render one wedge's animated group. The base (interactive) wedge owns the accessibility label;
-  // the single on-top overlay copy is not exposed to screen readers (the base beneath owns a11y)
-  // but DOES carry the same tap handler, so tapping a popped wedge still deselects it whether the
-  // tap lands on this top copy or the base under it — no reliance on the tap falling through.
+  // Render one wedge's animated group. Two concentric shapes: the VISIBLE band (the painted colour,
+  // STROKE wide, inset a hair from its neighbours for the surface gap) and, on top of it, a wider
+  // TRANSPARENT hit band (HIT_STROKE wide, taking the FULL sweep) that owns the tap + a11y — so the
+  // touch target is fatter than the paint and tiles the ring with no dead gap between wedges. The
+  // base (interactive) wedge owns the accessibility label; the single on-top overlay copy is not
+  // exposed to screen readers (the base beneath owns a11y) but DOES carry the same tap handler, so
+  // tapping a popped wedge still deselects it whether the tap lands on this top copy or the base
+  // under it — no reliance on the tap falling through.
   const renderWedge = ({ s, start, end, inset }: (typeof layout)[number], interactive: boolean) => {
     // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side. Scale
     // ONLY — no translate/origin (those get dropped on an animated G). The wedge is drawn about the
@@ -180,7 +199,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
 
     const isSel = s.id === activeId;
     const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
-    const shapeProps = interactive
+    const hitProps = interactive
       ? {
           testID: `donut-slice-${s.id}`,
           onPress: toggle,
@@ -191,17 +210,25 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
         }
       : { testID: 'donut-top', onPress: toggle, accessible: false };
 
-    const shape = single ? (
-      // A lone 100% slice is a full ring — an arc whose start and end coincide degenerates, so
-      // draw it as a plain circle instead.
-      <Circle cx={0} cy={0} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} {...shapeProps} />
+    // The painted band and its transparent tap target. The lone 100% slice is a full ring — an arc
+    // whose start and end coincide degenerates, so both are drawn as plain circles. The hit copy
+    // fills its FULL sweep (start→end, no inset) so adjacent tap targets meet edge-to-edge, and the
+    // visible band's opacity/dim never touches the hit copy (it's fully transparent either way).
+    const visible = single ? (
+      <Circle cx={0} cy={0} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} />
     ) : (
-      <Path d={arcPath(start + inset, end - inset, R)} fill="none" stroke={s.color} strokeWidth={STROKE} strokeLinecap="butt" {...shapeProps} />
+      <Path d={arcPath(start + inset, end - inset, R)} fill="none" stroke={s.color} strokeWidth={STROKE} strokeLinecap="butt" />
+    );
+    const hit = single ? (
+      <Circle cx={0} cy={0} r={R} fill="none" stroke="transparent" strokeWidth={HIT_STROKE} {...hitProps} />
+    ) : (
+      <Path d={arcPath(start, end, R)} fill="none" stroke="transparent" strokeWidth={HIT_STROKE} strokeLinecap="butt" {...hitProps} />
     );
 
     return (
       <AnimatedG key={interactive ? s.id : '__top__'} scale={scale} opacity={opacity}>
-        {shape}
+        {visible}
+        {hit}
       </AnimatedG>
     );
   };
@@ -213,12 +240,9 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   const selectedLayout = activeId ? layout.find((d) => d.s.id === activeId) : null;
   const topWedge = selectedLayout ? renderWedge(selectedLayout, false) : null;
 
-  // painted[0] is the largest single category — kept slices are sorted desc and "Other" (a sum
-  // of the smaller tail) is only ever appended after them, so it can never be painted[0].
-  const lead = painted[0];
   const label = `Spending by category. ${painted
     .map((s) => `${s.name} ${pct(s.value)} percent`)
-    .join(', ')}. Tap a slice for its total.`;
+    .join(', ')}. Tap a slice for its total, or the centre for the total spent.`;
 
   return (
     <View style={styles.wrap} testID={testID} accessibilityLabel={label}>
@@ -232,11 +256,26 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
           <Circle cx={0} cy={0} r={R} fill="none" stroke={C.hairlineStrong} strokeWidth={STROKE} />
           {wedges}
           {topWedge}
+          {/* Tap the hole to clear the selection and return to the total-spent readout. A
+              transparent disc filling the whole visible hole, drawn LAST so it sits on top: it
+              always wins a centre tap, and cedes each wedge's inward hit reach to itself. Only a
+              live a11y target while something is selected — at rest a centre tap is a harmless
+              no-op (the readout already shows the total). */}
+          <Circle
+            cx={0}
+            cy={0}
+            r={HOLE_R}
+            fill="transparent"
+            testID="donut-center-reset"
+            onPress={() => setSelectedId(null)}
+            accessible={activeId !== null}
+            accessibilityLabel="Show total spent"
+          />
         </G>
       </Svg>
-      {/* Centre readout. Default: the leading category's share. Tapped: that category's name +
+      {/* Centre readout. Default: the total spent this cycle. Tapped: that category's name +
           total — which is what "tap a slice to see the amount" asks for. pointerEvents=none so
-          taps fall through to the wedges beneath. */}
+          taps fall through to the reset disc + wedges beneath. */}
       <View style={styles.center} pointerEvents="none">
         {selected ? (
           <>
@@ -245,8 +284,8 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
           </>
         ) : (
           <>
-            <Text style={styles.centerPct}>{pct(lead.value)}%</Text>
-            <Text style={styles.centerName}>top category</Text>
+            <Text testID="donut-center-total" style={styles.centerAmount}>{fmt(sum)}</Text>
+            <Text style={styles.centerName}>total spent</Text>
           </>
         )}
       </View>
@@ -257,7 +296,6 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
   center: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 34 },
-  centerPct: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.textBright, letterSpacing: -1 },
   centerAmount: { fontFamily: FONT.display, fontSize: 28, fontWeight: '800', color: C.textBright, letterSpacing: -1 },
   centerName: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.textDim, marginTop: 2, textAlign: 'center' },
 });

@@ -127,7 +127,8 @@ it('refreshes breakdown (query) AND AI on focus', () => {
 it('renders the hero total and pluralised category count', () => {
   mockInsights = insightsData({ breakdown: { coffee: { posted: 20, pending: 5 }, groceries: { posted: 80, pending: 0 } } }); // 25 + 80
   render(<Insights />);
-  expect(screen.getByText('$105')).toBeTruthy();
+  // The donut centre also reads the total now, so target the hero by testID to disambiguate.
+  expect(screen.getByTestId('insights-hero-total').props.children).toBe('$105');
   expect(screen.getByText(/across 2 categories/)).toBeTruthy();
 });
 

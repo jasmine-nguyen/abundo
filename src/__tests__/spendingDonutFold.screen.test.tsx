@@ -36,7 +36,7 @@ describe('SpendingDonut — selected tail slice folds into __other__ (gap)', () 
     expect(screen.getByTestId('donut-slice-__other__')).toBeTruthy(); // fold happened
     expect(screen.queryByTestId('donut-slice-coffee')).toBeNull();    // coffee no longer painted
     expect(opacityOf('a')).toBeCloseTo(1);                            // ring un-dimmed, NOT stuck
-    expect(screen.getByText('top category')).toBeTruthy();           // hole back to default (nothing popped)
+    expect(screen.getByTestId('donut-center-total').props.children).toBe('$451'); // hole back to the total (nothing popped)
   });
 });
 
