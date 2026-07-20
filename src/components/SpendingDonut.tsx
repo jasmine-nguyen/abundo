@@ -49,10 +49,12 @@ export function activeSelection(selectedId: string | null, painted: DonutSlice[]
 // parent <G> then shifts it to the box centre (see the render). The ring band is sized as if
 // inscribed in a RING_BOX square with a PAD margin — that's what fixes its radius. The actual
 // (transparent) canvas is larger (VIEW, below) so a popped wedge has room to grow without clipping.
-const RING_BOX = 192;
-const STROKE = 26;                          // ~26px band, leaving a roomy hole for the centred stat
+// A bigger ring gives every wedge a longer arc, so a small category isn't a hair-thin tap
+// target that takes two tries to hit.
+const RING_BOX = 240;
+const STROKE = 30;                          // band width — also the radial depth of a wedge's tap area
 const PAD = 11;
-const R = RING_BOX / 2 - PAD - STROKE / 2;  // 72 — mid-line radius of the ring band
+const R = RING_BOX / 2 - PAD - STROKE / 2;  // 94 — mid-line radius of the ring band
 const CIRC = 2 * Math.PI * R;
 // A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
 // angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
