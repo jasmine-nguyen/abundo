@@ -32,12 +32,12 @@ describe('activeSelection (pure)', () => {
 
 describe('SpendingDonut — selection clears when its category leaves the data', () => {
   // Fail-on-revert anchor for the real fix (activeId in the spring target + effect deps): with the
-  // bug, the effect never re-runs when the data changes, so Groceries stays dimmed at 0.22.
+  // bug, the effect never re-runs when the data changes, so Groceries stays dimmed at 0.4.
   it('un-dims the ring when the selected category drops out (no stuck all-dimmed ring)', () => {
     const { rerender } = render(<SpendingDonut slices={TWO} />);
 
     fireEvent.press(screen.getByTestId('donut-slice-c')); // select Coffee → Groceries dims
-    expect(opacityOf('g')).toBeCloseTo(0.22); // DIM
+    expect(opacityOf('g')).toBeCloseTo(0.4); // DIM
 
     rerender(<SpendingDonut slices={ONLY_G} />); // Coffee leaves the data
     expect(opacityOf('g')).toBeCloseTo(1); // un-dimmed, not stuck
