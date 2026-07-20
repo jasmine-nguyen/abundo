@@ -2078,6 +2078,19 @@ export function countUncategorized(s: TransactionListInput) {
   return s.transactions.filter((t) => contributesToBudget(t) && isUncategorized(s, t)).length;
 }
 
+// Whether a transaction matches the Transactions-tab search box. Matches the text the user
+// SEES on the row — the merchant label + raw description + the category label (Uncategorized /
+// Income / the category name) — plus the amount, so "coffee", "eating out" and "42" all work.
+// Case-insensitive substring; `$` and `,` are stripped from the query so "$42" / "1,234" match.
+// An empty query matches everything (the list is unfiltered). Pure over { category }.
+export function transactionMatchesSearch(s: Pick<TransactionListInput, 'category'>, t: Transaction, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === '') return true;
+  const categoryLabel = t.category === 'income' ? 'Income' : isUncategorized(s, t) ? 'Uncategorized' : (s.category(t.category)?.name ?? '');
+  const haystack = `${merchantLabel(t)} ${t.description} ${categoryLabel} ${Math.abs(t.amount).toFixed(2)}`.toLowerCase();
+  return haystack.includes(q) || haystack.includes(q.replace(/[$,]/g, ''));
+}
+
 // --- Accounts (WHIT-215): the Accounts tab + the per-account detail screen -----
 // Both derive ENTIRELY from the transaction list — every transaction already carries an
 // `account_id` + `account_name` from BankSync — so there is no separate accounts feed.

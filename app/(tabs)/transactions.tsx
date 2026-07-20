@@ -1,10 +1,10 @@
 import React, { useCallback, useState } from 'react';
-import { RefreshControl, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { RefreshControl, View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint, fmtBalance } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { transactionGroups, countUncategorized, accountSummaries, useAppContext } from '../../src/context';
+import { transactionGroups, transactionMatchesSearch, countUncategorized, accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -18,6 +18,7 @@ const ACCT_COLORS = ['#7FD49B', '#8AB4F8', '#F0B67F', '#C9B3F5', '#F08C8C'];
 
 export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
+  const [search, setSearch] = useState('');
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { openMultiPicker } = useAppContext();
@@ -50,7 +51,11 @@ export default function Transactions() {
 
   const view = { transactions, category };
   const uncategorizedCount = countUncategorized(view);
-  const groups = transactionGroups(view, tab === 'uncategorized' ? 'uncategorized' : 'all');
+  // Live search over the visible fields (merchant + category + amount). Filtered before grouping
+  // so the date sections only show matching rows. Empty query → the full list (no-op filter).
+  const query = search.trim();
+  const searched = query ? transactions.filter((t) => transactionMatchesSearch({ category }, t, query)) : transactions;
+  const groups = transactionGroups({ transactions: searched, category }, tab === 'uncategorized' ? 'uncategorized' : 'all');
   // WHIT-215: the Accounts tab is derived from the transactions themselves (one card per
   // account_id), not a hardcoded list — so names always match what's in the data.
   const accounts = accountSummaries(view);
@@ -73,7 +78,7 @@ export default function Transactions() {
       <Text style={styles.hdrBtnText}>Cancel</Text>
     </Pressable>
   ) : tab !== 'accounts' ? (
-    <Pressable onPress={() => setSelectionMode(true)} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
+    <Pressable onPress={() => { setSelectionMode(true); setSearch(''); }} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
       <Text style={styles.hdrBtnText}>Select</Text>
     </Pressable>
   ) : (
@@ -86,6 +91,7 @@ export default function Transactions() {
       title="Transactions"
       right={headerRight}
       contentContainerStyle={selectionMode ? styles.contentWithBar : undefined}
+      keyboardShouldPersistTaps="handled"
       refreshControl={(headerHeight) => (
         <RefreshControl
           // Spin only while refreshing data we ALREADY have — the inline spinner owns
@@ -107,7 +113,22 @@ export default function Transactions() {
         {tab !== 'accounts' && !selectionMode && (
           <View style={styles.search}>
             <Glyph name="search" size={18} color="#6e6e78" />
-            <Text style={styles.searchText}>Search transactions</Text>
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search transactions"
+              placeholderTextColor="#6e6e78"
+              style={styles.searchInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              accessibilityLabel="Search transactions"
+            />
+            {search.length > 0 && (
+              <Pressable onPress={() => setSearch('')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Clear search">
+                <Text style={styles.searchClear}>✕</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -150,6 +171,17 @@ export default function Transactions() {
             ))}
           </View>
         ))}
+
+        {/* Search returned nothing on this tab (the "all caught up" state below still owns the
+            genuinely-empty uncategorized case, so don't double up on it). */}
+        {tab !== 'accounts' && !showSpinner && !showError && query.length > 0 && groups.length === 0
+          && !(tab === 'uncategorized' && uncategorizedCount === 0) && (
+          <View testID="transactions-no-results" style={styles.empty}>
+            <View style={[styles.emptyIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="search" size={30} color={C.textDim} /></View>
+            <Text style={styles.emptyTitle}>No matches</Text>
+            <Text style={styles.emptySub}>No transactions match “{query}”.</Text>
+          </View>
+        )}
 
         {tab === 'uncategorized' && !showSpinner && !showError && uncategorizedCount === 0 && (
           <View style={styles.empty}>
@@ -251,8 +283,10 @@ const styles = StyleSheet.create({
   badge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center' },
   badgeText: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700' },
 
-  search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 11, paddingHorizontal: 14, marginTop: 8 },
-  searchText: { fontFamily: FONT.body, fontSize: 14, color: '#6e6e78' },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14, marginTop: 8 },
+  // The input carries its own vertical padding so the row height matches the old placeholder box.
+  searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },
+  searchClear: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#6e6e78', paddingHorizontal: 2 },
 
   hint: { flexDirection: 'row', gap: 11, alignItems: 'flex-start', backgroundColor: 'rgba(124,140,255,.1)', borderWidth: 1, borderColor: 'rgba(124,140,255,.22)', borderRadius: 16, padding: 13, paddingHorizontal: 14, marginTop: 10 },
   hintText: { flex: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.accentSofter, lineHeight: 18 },
