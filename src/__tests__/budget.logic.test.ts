@@ -225,6 +225,37 @@ describe('budgetDetail', () => {
     const noTx = budgetDetail(makeState({ categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7 }), 'coffee')!;
     expect(noTx.relEmpty).toBe(true);
   });
+
+  // The reported bug: a still-pending charge authorised the day BEFORE payday shows in the
+  // rolling feed but is (correctly) excluded from this cycle's spend total. The related list
+  // must be scoped to the cycle too, so it never shows a charge the total ignores.
+  // FAIL-ON-REVERT: without the `t.date >= cycleStart` filter, the pre-cycle row leaks in and
+  // both assertions flip.
+  it('excludes a pre-cycle charge from the related list (cross-cycle leak)', () => {
+    const bd = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 10,
+      cycleStart: '2026-07-16',
+      transactions: [
+        txn({ transaction_id: 'in', category: 'coffee', date: '2026-07-18', status: 'pending', amount: -4.3 }),
+        txn({ transaction_id: 'pre', category: 'coffee', date: '2026-07-15', status: 'pending', amount: -305.29 }),
+      ],
+    }), 'coffee')!;
+    const shownIds = bd.relGroups.flatMap((g) => g.items.map((t) => t.transaction_id));
+    expect(shownIds).toEqual(['in']);       // 18 Jul kept
+    expect(shownIds).not.toContain('pre');  // 15 Jul (pre-payday) dropped, matching the total
+  });
+
+  // The cycle start is INCLUSIVE (a charge dated exactly on payday lands in the fresh cycle),
+  // mirroring the server window's inclusive lower bound.
+  it('keeps a charge dated exactly on the cycle start', () => {
+    const bd = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 14,
+      cycleStart: '2026-07-16',
+      transactions: [txn({ transaction_id: 'payday', category: 'coffee', date: '2026-07-16' })],
+    }), 'coffee')!;
+    expect(bd.relEmpty).toBe(false);
+    expect(bd.relGroups.flatMap((g) => g.items.map((t) => t.transaction_id))).toEqual(['payday']);
+  });
 });
 
 describe('budgetViews sub-category tree + hero de-dup (WHIT-221)', () => {

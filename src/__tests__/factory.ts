@@ -75,6 +75,7 @@ interface StateOver {
   repayment?: Repayment;
   cycleLen?: number;
   daysLeft?: number;
+  cycleStart?: string;
 }
 
 // The Goal tab + milestone screen composite (WHIT-197). Typed off the REAL
@@ -115,6 +116,9 @@ export function makeState(over: StateOver = {}) {
     repayment: over.repayment ?? NO_REPAYMENT,
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
+    // Open lower bound by default so existing fixtures aren't cycle-filtered; a test that
+    // exercises the related-list window passes an explicit cycleStart.
+    cycleStart: over.cycleStart ?? '0000-01-01',
     category: (id: string | null) => categories.find((c) => c.id === id),
     cycleName: () => cycleName(cycleLen),
   };

@@ -38,7 +38,7 @@ beforeEach(() => {
   mockDeleteBudget.mockClear();
   mockBack.mockClear();
   mockDeleteBudget.mockResolvedValue(true);
-  mockState = { categories: CATS, budgets: BUDGETS, transactions: [], cycleLen: 30, daysLeft: 12, payCycleError: false };
+  mockState = { categories: CATS, budgets: BUDGETS, transactions: [], cycleLen: 30, daysLeft: 12, cycleStart: '0000-01-01', payCycleError: false };
 });
 
 it('pressing Delete budget removes this budget once and navigates back to the Budgets tab', async () => {

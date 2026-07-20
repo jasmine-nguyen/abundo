@@ -7,7 +7,7 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
 import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
-import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
+import { cycleClock, cycleName, cycleWindow, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -363,6 +363,7 @@ export interface BudgetDetailScreenData {
   transactions: Transaction[];
   cycleLen: number;
   daysLeft: number;
+  cycleStart: string; // current cycle start (ISO) — scopes the detail's related list to this cycle
   isLoading: boolean;
   isError: boolean;
   payCycleError: boolean; // WHIT-72: first-load pay-cycle failure → the pace/projection can't be trusted
@@ -374,6 +375,9 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClock(payCycle);
+  // The current cycle's start, mirroring the server spend window — the same helper the category
+  // drill-in uses (app/category/[id].tsx), so the related list reconciles with the spend total.
+  const { start: cycleStart } = cycleWindow(payCycle, 0);
 
   const budgetsQuery = useBudgetsQuery(cycleLen, authed); // parallel fetch, flat key (WHIT-72)
   const transactionsQuery = useTransactionsQuery(authed);
@@ -393,6 +397,7 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
     transactions: transactionsQuery.data ?? [],
     cycleLen,
     daysLeft,
+    cycleStart,
     payCycleError,
     ...status,
   };

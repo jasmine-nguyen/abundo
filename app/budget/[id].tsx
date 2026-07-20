@@ -97,7 +97,7 @@ export default function BudgetDetail() {
             {g.items.map((t) => <DetailTransactionRow key={t.transaction_id} t={t} category={d.category} />)}
           </View>
         ))}
-        {bd.relEmpty && <Text style={styles.empty}>No transactions in this category in the last 7 days.</Text>}
+        {bd.relEmpty && <Text style={styles.empty}>No transactions in this category this cycle.</Text>}
 
         <Pressable testID="budget-delete" onPress={onDelete} disabled={deleting} style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}>
           <Text style={styles.deleteText}>{deleting ? 'Removing…' : 'Delete budget'}</Text>

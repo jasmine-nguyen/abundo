@@ -34,7 +34,7 @@ const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon:
 const BUDGETS = [{ id: 'coffee', budget: 100, posted: 40, pending: 10 }];
 
 beforeEach(() => {
-  mockState = { categories: CATS, budgets: BUDGETS, transactions: [], cycleLen: 30, daysLeft: 12, payCycleError: false };
+  mockState = { categories: CATS, budgets: BUDGETS, transactions: [], cycleLen: 30, daysLeft: 12, cycleStart: '0000-01-01', payCycleError: false };
 });
 
 it('payCycleError=true → the screen blanks (Header only), no detail card and no Edit (never a wrong-cycle detail)', () => {
