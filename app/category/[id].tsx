@@ -18,7 +18,10 @@ export default function CategoryDetail() {
   const insets = useSafeAreaInsets();
   const { id, cycle } = useLocalSearchParams<{ id: string; cycle?: string }>();
   const { transactions, category, payCycle, isLoading, isError, payCycleError, refetch } = useCategoryTransactionsScreenData();
-  const cycleNum = Number(cycle) || 0; // 0 = this cycle, 1 = last (what Insights pushes)
+  // 0 = this cycle, 1 = last (the only values Insights pushes). Floor + clamp to the integer set
+  // {0,1} so a stale or hand-edited deep-link (?cycle=2, ?cycle=-1, ?cycle=0.5) can't render an
+  // older window or mislabel it — cycleNum is a discrete cycle index, so it must be whole (WHIT-309).
+  const cycleNum = Math.min(1, Math.max(0, Math.floor(Number(cycle) || 0)));
   // A first-load pay-cycle failure means the window is untrustworthy, so the filtered list
   // would cover the wrong dates — treat it as an error rather than showing a wrong list.
   const window = cycleWindow(payCycle, cycleNum);
