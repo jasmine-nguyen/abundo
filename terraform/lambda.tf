@@ -198,6 +198,35 @@ resource "aws_lambda_function" "transaction_age_out" {
   }
 }
 
+# One-time swipe-date backfill: re-anchors stored transaction `date`s to the swipe day
+# (authorized_date) for rows written before the webhook started doing so on ingest. Like
+# dedupe it reuses the webhook zip (../lambda already contains backfill_swipe_dates.py) and
+# the transaction_exec role (Query / BatchWriteItem already granted), so NO IAM change beyond
+# its own log group. Invoked manually; dry-run unless the event says {"dry_run": false}. No
+# event source/schedule/API, so nothing triggers it.
+resource "aws_lambda_function" "transaction_date_backfill" {
+  function_name    = "${var.project_name}-transaction-date-backfill"
+  role             = aws_iam_role.transaction_exec.arn
+  handler          = "backfill_swipe_dates.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 300
+  memory_size      = 128
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.transaction_date_backfill.name
+  }
+}
+
 # WHIT-186: 512 MB (was 128, the smallest tier). Lambda scales CPU with memory, so 128 MB
 # gives the least CPU -> slow cold starts; under the app's ~9-read launch burst that tipped a
 # transient 503 on the heaviest read. 512 MB ~= 4x the CPU for a few cents/month at single-user
@@ -381,6 +410,11 @@ resource "aws_cloudwatch_log_group" "transaction_dedupe" {
 
 resource "aws_cloudwatch_log_group" "transaction_age_out" {
   name              = "/aws/lambda/${var.project_name}-transaction-age-out"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "transaction_date_backfill" {
+  name              = "/aws/lambda/${var.project_name}-transaction-date-backfill"
   retention_in_days = 30
 }
 
