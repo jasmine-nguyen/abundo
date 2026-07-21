@@ -1,8 +1,8 @@
-// WHIT-275 — adversarial GAP tests for the note/tags editor. The implementer covers
-// note-commit-on-blur, add-on-submit, add-on-comma, dup-ignored, remove-via-✕. These add
-// the MISSING edges: a whitespace-only tag submit is a NO-OP (no empty tag persisted), and
-// navigating away (unmount) FLUSHES an unsaved-but-changed note (and does NOT flush an
-// unchanged one). Same partial-context mock pattern as transactionEdit.screen.test.tsx.
+// WHIT-275 — adversarial GAP tests for the note/tags editor. These cover the
+// MISSING edges: a whitespace-only tag submit is a NO-OP (no empty tag persisted); the note
+// now saves via an explicit Save button, so leaving the screen (unmount) DISCARDS an unsaved
+// edit rather than flushing it; and Save trims surrounding whitespace. Same partial-context
+// mock pattern as transactionEdit.screen.test.tsx.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -14,7 +14,7 @@ jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ applyTransactionEdit: mockEdit }) };
+  return { ...actual, useAppContext: () => ({ applyTransactionEdit: mockEdit, showToast: jest.fn() }) };
 });
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: 't1' }),
@@ -56,16 +56,24 @@ it('does NOT commit a bare-comma tag input', () => { // [A17]
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
-it('flushes a changed note when the screen unmounts (navigate away without blur)', () => { // [A18]
+it('DISCARDS an unsaved note edit on unmount — no auto-flush', () => { // [A18]
+  // Explicit-save model: typing then leaving WITHOUT tapping Save must write nothing,
+  // matching the budget/goal/category form screens.
   const view = render(<TransactionDetail />);
-  fireEvent.changeText(screen.getByTestId('note-input'), 'edited but not blurred');
-  expect(mockEdit).not.toHaveBeenCalled(); // nothing saved yet
+  fireEvent.changeText(screen.getByTestId('note-input'), 'edited but not saved');
   view.unmount();                          // leaving the screen
-  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'edited but not blurred' });
+  expect(mockEdit).not.toHaveBeenCalled();
 });
 
-it('does NOT flush on unmount when the note is unchanged', () => { // [A19]
+it('does NOT save on unmount when the note is unchanged', () => { // [A19]
   const view = render(<TransactionDetail />);
   view.unmount();
   expect(mockEdit).not.toHaveBeenCalled(); // no spurious save on plain navigation
+});
+
+it('Save trims surrounding whitespace before persisting', () => { // [A20]
+  render(<TransactionDetail />);
+  fireEvent.changeText(screen.getByTestId('note-input'), '  padded note  ');
+  fireEvent.press(screen.getByTestId('note-save'));
+  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'padded note' });
 });
