@@ -180,6 +180,30 @@ def test_posted_row_uses_merchant_name_column(lam):
     assert txn["description"] == "SQ *KKV INTERNATIONAL PTY Sunshine"
 
 
+# --- `date` is the swipe day, not the settlement day -------------------------
+# A charge is anchored to the day the user actually paid (authorizedDate), NOT the
+# day the bank books/settles it (date). Otherwise a charge shows on its swipe day
+# while pending, then jumps to the settlement day once it posts. `date` falls back
+# to the booking date only when the bank sent no authorizedDate, so it's never empty.
+
+
+def test_date_anchors_to_swipe_date_not_booking(lam):
+    # authorizedDate (swipe day) wins over the later booking date.
+    txn = _normalise(lam, date="2026-01-16", authorizedDate="2026-01-15")
+    assert txn["date"] == "2026-01-15"          # swipe day, not the booking "2026-01-16"
+    assert txn["authorized_date"] == "2026-01-15"
+
+
+def test_missing_authorized_date_falls_back_to_booking_date(lam):
+    # No authorizedDate → `date` falls back to the booking date so it's never empty
+    # (the budget window, the date-index GSI and the age-out sweep all rely on that).
+    row = _row(date="2026-06-18")
+    del row["authorizedDate"]
+    txn = lam.banksync.BankSyncClient.normalise(row)
+    assert txn["authorized_date"] == ""
+    assert txn["date"] == "2026-06-18"
+
+
 # --- WHIT-91: date-only enforcement on ingest --------------------------------
 # The budget window is a string range compare (Key("date").between(start, today))
 # and reconciliation exact-matches authorized_date; both assume bare YYYY-MM-DD.
@@ -187,23 +211,19 @@ def test_posted_row_uses_merchant_name_column(lam):
 # can't silently drop today's charge from the window.
 
 
-def test_date_kept_as_is_when_already_date_only(lam):
-    txn = _normalise(lam, date="2026-01-16", authorizedDate="2026-01-15")
-    assert txn["date"] == "2026-01-16"
-    assert txn["authorized_date"] == "2026-01-15"
-
-
-def test_datetime_date_is_truncated_to_date_only(lam):
+def test_swipe_datetime_is_truncated_to_date_only(lam):
+    # `date` sources from authorizedDate now, so the time component must be sliced there.
     txn = _normalise(lam, date="2026-01-16T10:00:00Z", authorizedDate="2026-01-15T23:30:00Z")
-    assert txn["date"] == "2026-01-16"
+    assert txn["date"] == "2026-01-15"
     assert txn["authorized_date"] == "2026-01-15"
 
 
-def test_missing_authorized_date_stays_empty(lam):
-    # normalise defaults a missing authorizedDate to "" — _date_only must leave it "".
-    row = _row()
+def test_booking_datetime_is_truncated_on_fallback(lam):
+    # No authorizedDate → `date` falls back to the booking date, still time-sliced.
+    row = _row(date="2026-01-16T10:00:00Z")
     del row["authorizedDate"]
     txn = lam.banksync.BankSyncClient.normalise(row)
+    assert txn["date"] == "2026-01-16"
     assert txn["authorized_date"] == ""
 
 
