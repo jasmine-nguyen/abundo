@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -163,23 +163,19 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
   const [noteText, setNoteText] = useState(savedNote);
   const [tagInput, setTagInput] = useState('');
 
-  // Track the latest text (for the unmount flush) and the last value we actually persisted,
-  // so a blur immediately followed by unmount (the "edit note → tap back" path) saves ONCE,
-  // not twice: onBlur fires commitNote, then the effect cleanup fires it again before the
-  // cache-driven re-render has re-derived savedNote. lastSavedNote short-circuits that.
-  const noteTextRef = useRef(noteText);
-  noteTextRef.current = noteText;
-  const lastSavedNote = useRef(savedNote);
+  // The note saves on an explicit Save tap (not auto-save on blur), so this screen
+  // has a Save button like every other edit screen. `noteDirty` gates the button — it's live
+  // only when the trimmed text differs from what's stored. Tags/category/exclude keep saving
+  // instantly (direct-manipulation chips/picker/toggle, nothing ambiguous to "save"). Like the
+  // form screens, leaving without tapping Save discards an unsaved note edit.
+  const noteDirty = noteText.trim() !== savedNote;
 
-  const commitNote = useCallback(() => {
-    const trimmed = noteTextRef.current.trim();
-    if (trimmed === lastSavedNote.current) return;
-    lastSavedNote.current = trimmed;
+  const saveNote = () => {
+    const trimmed = noteText.trim();
+    if (trimmed === savedNote) return;
     applyTransactionEdit(txId, { notes: trimmed });
-  }, [applyTransactionEdit, txId]);
-
-  // Flush an unsaved note edit if the user navigates away without blurring the field first.
-  useEffect(() => commitNote, [commitNote]);
+    showToast('Note saved');
+  };
 
   const commitTag = (candidate: string) => {
     const trimmed = candidate.trim();
@@ -217,12 +213,22 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
         style={styles.noteInput}
         value={noteText}
         onChangeText={setNoteText}
-        onBlur={commitNote}
         placeholder="What was this for?"
         placeholderTextColor={C.placeholder}
         multiline
         maxLength={NOTE_MAX_LEN}
       />
+      <Pressable
+        testID="note-save"
+        onPress={saveNote}
+        disabled={!noteDirty}
+        accessibilityRole="button"
+        accessibilityLabel="Save note"
+        accessibilityState={{ disabled: !noteDirty }}
+        style={[styles.noteSaveBtn, { backgroundColor: noteDirty ? C.accent : 'rgba(124,140,255,.25)' }]}
+      >
+        <Text style={[styles.noteSaveText, { color: noteDirty ? C.accentInk : '#6a6a90' }]}>Save note</Text>
+      </Pressable>
 
       <Text style={styles.sectionLabel}>TAGS</Text>
       <View style={styles.tagsWrap}>
@@ -315,6 +321,8 @@ const styles = StyleSheet.create({
 
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 8, marginHorizontal: 4 },
   noteInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 14, minHeight: 88, fontFamily: FONT.body, fontSize: 14.5, color: C.textBright, textAlignVertical: 'top' },
+  noteSaveBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  noteSaveText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700' },
   tagsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tagChip: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: C.cardAlt, borderWidth: 1, borderColor: C.hairlineStrong, borderRadius: 999, paddingVertical: 6, paddingLeft: 12, paddingRight: 9 },
   tagText: { fontFamily: FONT.body, fontSize: 13, color: C.textBright },

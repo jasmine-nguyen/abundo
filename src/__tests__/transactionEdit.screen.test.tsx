@@ -1,8 +1,8 @@
 // WHIT-275 — the note + tags editor on the transaction detail screen. Renders the REAL
 // screen with a seeded cached transaction (../queries mocked); ../context is partially
 // mocked (real selectors, stubbed useAppContext so the edit action is a spy); expo-router +
-// safe-area stubbed. Verifies the note commits on blur (only when changed), tags add on
-// submit/comma, duplicate tags are ignored, and a chip's ✕ removes it.
+// safe-area stubbed. Verifies the note saves via an explicit Save button — not on
+// blur/unmount — tags add on submit/comma, duplicate tags are ignored, and a chip's ✕ removes it.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -53,28 +53,43 @@ it('renders the existing note and tag chips', () => {
   expect(screen.getByText('work')).toBeTruthy();
 });
 
-it('commits an edited note on blur', () => {
+it('saves an edited note when Save note is tapped', () => {
+  render(<TransactionDetail />);
+  const note = screen.getByTestId('note-input');
+  fireEvent.changeText(note, 'new note');
+  fireEvent.press(screen.getByTestId('note-save'));
+  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'new note' });
+});
+
+it('does NOT save on blur — the note commits only via Save', () => {
   render(<TransactionDetail />);
   const note = screen.getByTestId('note-input');
   fireEvent.changeText(note, 'new note');
   fireEvent(note, 'blur');
-  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'new note' });
-});
-
-it('does NOT commit on blur when the note is unchanged', () => {
-  render(<TransactionDetail />);
-  fireEvent(screen.getByTestId('note-input'), 'blur');
   expect(mockEdit).not.toHaveBeenCalled();
 });
 
-it('saves the note only once on edit → blur → unmount (no double-save)', () => {
-  // onBlur commits; the unmount flush must see the just-committed value and short-circuit,
-  // so the "edit note → tap back" path issues exactly one PATCH, not two.
+it('Save note is disabled (a no-op) when the note is unchanged', () => {
+  render(<TransactionDetail />);
+  const save = screen.getByTestId('note-save');
+  expect(save.props.accessibilityState).toMatchObject({ disabled: true });
+  fireEvent.press(save);
+  expect(mockEdit).not.toHaveBeenCalled();
+});
+
+it('discards an unsaved note edit on unmount (leave-without-Save, like the form screens)', () => {
+  // No auto-save on blur/unmount anymore: typing then leaving WITHOUT tapping Save must
+  // write nothing — matching the budget/goal/category edit screens.
   const view = render(<TransactionDetail />);
-  const note = screen.getByTestId('note-input');
-  fireEvent.changeText(note, 'edited');
-  fireEvent(note, 'blur');
+  fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
   view.unmount();
+  expect(mockEdit).not.toHaveBeenCalled();
+});
+
+it('saves the note exactly once per Save tap', () => {
+  render(<TransactionDetail />);
+  fireEvent.changeText(screen.getByTestId('note-input'), 'edited');
+  fireEvent.press(screen.getByTestId('note-save'));
   expect(mockEdit).toHaveBeenCalledTimes(1);
   expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'edited' });
 });
