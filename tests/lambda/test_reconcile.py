@@ -66,6 +66,25 @@ def test_reconcile_carries_category_and_deletes_pending(lam, repo):
     assert len(store) == 1                                   # no duplicate
 
 
+def test_settled_charge_keeps_its_swipe_date_not_the_settlement_date(lam, repo):
+    # Fail-on-revert: a charge swiped a week ago that settles today must NOT
+    # jump to today's date. The pending and its posted twin share authorizedDate
+    # (2026-06-22, the swipe day); only the booking `date` moves to 2026-06-29 on
+    # settlement. After reconcile the surviving posted row must still read 2026-06-22.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-42.00"),
+                  authorized_date="2026-06-22", date="2026-06-22", pending=True, category="groceries")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-42.00"),
+                   authorized_date="2026-06-22", date="2026-06-29",  # booked/settled a week later
+                   pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["date"] == "2026-06-22"              # swipe day — does NOT jump to settlement day
+    assert row["authorized_date"] == "2026-06-22"
+    assert row["category"] == "groceries"           # category still carried across settlement
+
+
 def test_reconcile_carries_notes_and_tags_onto_posted(lam, repo):
     # WHIT-275: a note/tags on a pending charge must survive settlement, exactly as
     # category does. notes/tags aren't bank fields (normalise strips them), so inject

@@ -62,12 +62,24 @@ class BankSyncClient:
     def normalise(row: dict) -> Transaction:
         """Maps BankSync's specific fields to abundo's standard format"""
         internal_account_id = resolve_account_id(str(row["accountId"]))
+        # Swipe = spend: key a charge off the day the user actually paid
+        # (`authorizedDate`), NOT the day the bank settles it (`date`). BankSync's `date`
+        # is the booking/settlement date, so a charge would show on its swipe day while
+        # pending, then JUMP to the settlement day once it posts (a Costco run from a week
+        # ago surfacing as "yesterday"). authorized_date is preserved across settlement
+        # (both the pending and its posted twin carry the same value — reconciliation
+        # already matches on it), so anchoring `date` to it keeps the charge on one day
+        # for its whole life. Fall back to the booking `date` when the bank sent no
+        # authorizedDate, so `date` stays a required, non-empty "YYYY-MM-DD" (the budget
+        # window, the date-index GSI, and the age-out sweep all depend on that invariant).
+        swipe_date = _date_only(row.get("authorizedDate", ""), "authorizedDate")
+        booking_date = _date_only(row["date"])
         normalised: Transaction = {
             "transaction_id": str(row["id"]),
             # Date-only on write: the budget window (date range compare) and
             # reconciliation (exact authorized_date match) both assume YYYY-MM-DD.
-            "date": _date_only(row["date"]),
-            "authorized_date": _date_only(row.get("authorizedDate", ""), "authorizedDate"),
+            "date": swipe_date or booking_date,
+            "authorized_date": swipe_date,
             "description": row["description"],
             # description stays RAW (rules + audit rely on it); merchant_name is the
             # cleaned display name derived from it / merchantName (see merchant.py).
