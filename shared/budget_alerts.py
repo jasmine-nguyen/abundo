@@ -141,13 +141,19 @@ def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
         _, match = next(posted_matches, (None, None))  # defensive: over-run -> no-match (see repo)
         if match is not None:
             merged = webhook_repo._with_carried_category(txn, match)
+            webhook_repo._inherit_swipe_date(merged, txn, match)  # parity with the real write
             by_id[merged["transaction_id"]] = dict(merged)
             twin_id = match.get("transaction_id")
             if twin_id is not None and twin_id != merged["transaction_id"]:
                 by_id.pop(twin_id, None)
             continue
         existing = by_id.get(tid)
-        by_id[tid] = dict(webhook_repo._with_carried_category(txn, existing) if existing is not None else txn)
+        if existing is not None:
+            merged = webhook_repo._with_carried_category(txn, existing)
+            webhook_repo._inherit_swipe_date(merged, txn, existing)  # parity with the real write
+            by_id[tid] = dict(merged)
+        else:
+            by_id[tid] = dict(txn)
 
     # A just-inserted row dated outside the cycle window must not inflate the total.
     start, end = ctx["start"], ctx["end"]
