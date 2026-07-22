@@ -85,6 +85,106 @@ def test_settled_charge_keeps_its_swipe_date_not_the_settlement_date(lam, repo):
     assert row["category"] == "groceries"           # category still carried across settlement
 
 
+# --- blank authorized_date on settlement (ANZ) ------------------------------
+# Some ANZ settlements arrive with authorized_date BLANK. The exact/tip tiers key on it,
+# so without a fallback the pending twin is orphaned (a duplicate) AND the settled row
+# keeps its settlement date instead of the swipe day. A blank-auth tier matches on
+# amount + merchant-in-description + a date window, then inherits the swipe date.
+
+
+def test_blank_auth_settlement_reconciles_and_inherits_swipe_date(lam, repo):
+    # Fail-on-revert: swiped 07-17 (pending); settled 07-21 with NO authorized_date. Must
+    # still match the twin, carry category, inherit the swipe date, and delete the pending.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-17", date="2026-07-17", pending=True, category="eating out",
+                  description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
+                  merchant_name="ISAN THAI STREET FOOD")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"),
+                   authorized_date="", date="2026-07-21", pending=False, category="FOOD_AND_DRINK",
+                   description="ISAN THAI STREET FOOD     MELBOURNE", merchant_name="ISAN THAI STREET FOOD")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    row = store[(acc, "TXN#POST")]
+    assert row["date"] == "2026-07-17"              # swipe day, inherited from the twin
+    assert row["authorized_date"] == "2026-07-17"
+    assert row["category"] == "eating out"          # category still carried across settlement
+    assert (acc, "TXN#PEND") not in store            # pending twin removed — no duplicate
+    assert len(store) == 1
+
+
+def test_resync_does_not_regress_a_corrected_blank_auth_date(lam, repo):
+    # After the first reconcile fixed the row to 07-17, BankSync re-sends the same posted
+    # (still blank auth, booking date 07-21) within the feed window. The re-sync must KEEP
+    # 07-17, not clobber it back to the settlement day.
+    existing = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="2026-07-17",
+                     date="2026-07-17", pending=False, merchant_name="ISAN THAI STREET FOOD",
+                     description="ISAN THAI STREET FOOD MELBOURNE")
+    repo.insert_transactions([existing])
+
+    resent = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, merchant_name="ISAN THAI STREET FOOD",
+                   description="ISAN THAI STREET FOOD MELBOURNE")
+    repo.insert_or_reconcile([resent])
+
+    row = repo._table.store[(_acc(resent), "TXN#POST")]
+    assert row["date"] == "2026-07-17"              # corrected swipe day preserved
+    assert row["authorized_date"] == "2026-07-17"
+
+
+def test_blank_auth_does_not_merge_a_different_merchant(lam, repo):
+    # A coincidental same-amount pending for a DIFFERENT merchant must not be consumed.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-17", date="2026-07-17", pending=True,
+                  description="POS AUTHORISATION COLES SUPERMARKET MELBOURNE AU",
+                  merchant_name="COLES SUPERMARKET")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, description="ISAN THAI STREET FOOD MELBOURNE",
+                   merchant_name="ISAN THAI STREET FOOD")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") in store                # different merchant -> not merged
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-21"  # no twin -> no inherit
+    assert len(store) == 2
+
+
+def test_blank_auth_does_not_merge_outside_the_date_window(lam, repo):
+    # Same merchant + amount, but the pending is 20 days older than the settlement — well
+    # past the window — so it must not be swept in.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-01", date="2026-07-01", pending=True,
+                  description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
+                  merchant_name="ISAN THAI STREET FOOD")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, description="ISAN THAI STREET FOOD MELBOURNE",
+                   merchant_name="ISAN THAI STREET FOOD")
+
+    repo.insert_or_reconcile([posted])
+
+    assert (_acc(posted), "TXN#PEND") in repo._table.store   # outside window -> not merged
+    assert len(repo._table.store) == 2
+
+
+def test_blank_auth_single_word_merchant_does_not_reconcile(lam, repo):
+    # A one-word merchant is too weak to trust for a delete-a-pending merge (mirrors the
+    # tip tier), so a blank-auth posted with a single-word merchant falls through to insert.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-17", date="2026-07-17", pending=True,
+                  description="POS AUTHORISATION ISAN MELBOURNE AU", merchant_name="ISAN")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, description="ISAN MELBOURNE", merchant_name="ISAN")
+
+    repo.insert_or_reconcile([posted])
+
+    assert (_acc(posted), "TXN#PEND") in repo._table.store   # single-word merchant -> no merge
+    assert len(repo._table.store) == 2
+
+
 def test_reconcile_carries_notes_and_tags_onto_posted(lam, repo):
     # WHIT-275: a note/tags on a pending charge must survive settlement, exactly as
     # category does. notes/tags aren't bank fields (normalise strips them), so inject
@@ -328,8 +428,11 @@ def test_tip_tie_break_lowest_transaction_id(lam, repo):
     assert store[(acc, "TXN#B")]["category"] == "coffee"
 
 
-def test_empty_authorized_date_does_not_match(lam, repo):
-    # Missing authorizedDate is not a match key → no false-positive reconcile.
+def test_blank_auth_twin_reconciles_on_amount_and_merchant(lam, repo):
+    # Both legs blank-auth (some ANZ settlements) with matching amount + merchant + a close
+    # date now reconcile via the blank-auth tier — previously this pair was left as a
+    # duplicate. The false-positive guards (different merchant / outside window / one-word
+    # merchant) are covered by their own tests above.
     _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
                   authorized_date="", pending=True, category="coffee")
     posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
@@ -339,8 +442,9 @@ def test_empty_authorized_date_does_not_match(lam, repo):
 
     store = repo._table.store
     acc = _acc(posted)
-    assert (acc, "TXN#A") in store
-    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+    assert (acc, "TXN#A") not in store                   # pending twin consumed — no duplicate
+    assert store[(acc, "TXN#B")]["category"] == "coffee"  # category carried across settlement
+    assert len(store) == 1
 
 
 # --- same-day identical purchases (Jasmine's daily coffee) -------------------

@@ -1,5 +1,5 @@
 import boto3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import json
 import re
@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
 from models import Transaction
-from constants import DEAD_LETTER_TTL_SECONDS, PENDING_STATUS, TIP_HEADROOM
+from constants import DEAD_LETTER_TTL_SECONDS, FEED_WINDOW_DAYS, PENDING_STATUS, TIP_HEADROOM
 from repository_errors import DatabaseError
 
 REGION_NAME = "ap-southeast-2"
@@ -71,6 +71,22 @@ def _is_tip_adjusted(auth_amount: Decimal, settled_amount: Decimal) -> bool:
     auth_mag = -auth_amount
     settled_mag = -settled_amount
     return auth_mag <= settled_mag <= auth_mag * (Decimal(1) + TIP_HEADROOM)
+
+
+def _settles_after(pending_date: Optional[str], posted_date: Optional[str]) -> bool:
+    """Whether `pending_date` could be the swipe day of a charge that settled on
+    `posted_date`: same day or up to FEED_WINDOW_DAYS earlier. Used only by the
+    blank-authorized_date twin tier, where there is no exact date key to match on, so
+    a bounded window keeps a coincidental same-amount pending from being swept in. Both
+    are bare "YYYY-MM-DD"; an unparseable/missing value is treated as out-of-window."""
+    if not pending_date or not posted_date:
+        return False
+    try:
+        pd = date.fromisoformat(pending_date[:10])
+        qd = date.fromisoformat(posted_date[:10])
+    except ValueError:
+        return False
+    return 0 <= (qd - pd).days <= FEED_WINDOW_DAYS
 
 
 class TransactionRepository:
@@ -286,7 +302,9 @@ class TransactionRepository:
             # plain insert (no reconcile) instead of a StopIteration that 500s the webhook.
             _, match = next(posted_matches, (None, None))
             if match is not None:
-                to_insert.append(self._with_carried_category(txn, match))
+                merged = self._with_carried_category(txn, match)
+                self._inherit_swipe_date(merged, txn, match)  # blank-auth -> take swipe date from twin
+                to_insert.append(merged)
                 match_key = (match["pk"], match["sk"])
                 own_key = (_build_pk(txn["account_id"]), _build_sk(txn["transaction_id"]))
                 if match_key != own_key:
@@ -299,7 +317,9 @@ class TransactionRepository:
             own_sk = _build_sk(txn["transaction_id"])
             existing = self.get_transaction(own_pk, own_sk)
             if existing is not None:
-                to_insert.append(self._with_carried_category(txn, existing))
+                merged = self._with_carried_category(txn, existing)
+                self._inherit_swipe_date(merged, txn, existing)  # don't regress a corrected date
+                to_insert.append(merged)
             else:
                 to_insert.append(txn)
 
@@ -330,8 +350,18 @@ class TransactionRepository:
                 matches[i] = exact
             else:
                 unresolved.append(i)
+        # Pass 2 (tip) then pass 3 (blank-auth), each only on what the earlier passes
+        # left unmatched — so an exact/tip twin is always claimed before the loosest
+        # (blank-auth) tier can reach it, and each pending is still popped at most once.
+        still: list[int] = []
         for i in unresolved:
-            matches[i] = self._find_tip_twin(posted_txns[i], pending_pools)
+            tip = self._find_tip_twin(posted_txns[i], pending_pools)
+            if tip is not None:
+                matches[i] = tip
+            else:
+                still.append(i)
+        for i in still:
+            matches[i] = self._find_blank_auth_twin(posted_txns[i], pending_pools)
         return list(zip(posted_txns, matches))
 
     def _ensure_pool(
@@ -426,6 +456,55 @@ class TransactionRepository:
             return None
         best = min(tip, key=lambda i: pool[i].get("transaction_id", ""))
         return pool.pop(best)
+
+    def _find_blank_auth_twin(
+        self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
+    ) -> Optional[dict]:
+        """Return AND consume the pending twin of a posted row the bank sent WITHOUT an
+        authorized_date, or None. Some ANZ settlements blank that field, and both the
+        exact and tip tiers key on it — so without this tier the pending twin is orphaned
+        (a lingering duplicate) and the settled row keeps its settlement date instead of
+        the swipe date. Runs LAST (after every exact/tip twin is claimed), and ONLY for a
+        posted row that itself has no authorized_date. Match: EXACT amount + the posted
+        merchant appearing (word-for-word, >=2 words) in the pending's raw description +
+        the pending dated within FEED_WINDOW_DAYS on-or-before the posted. The exact-amount
+        + strong-merchant + date-window gates mirror the tip tier's caution — this DELETES a
+        pending, so it must not merge a coincidental same-amount charge."""
+        if posted_txn.get("authorized_date"):
+            return None  # has its own swipe date -> the exact/tip tiers handle it
+        amount = posted_txn.get("amount")
+        if amount is None:
+            return None
+        merchant = posted_txn.get("merchant_name") or ""
+        if len(_words(merchant)) < 2:
+            return None
+        posted_date = posted_txn.get("date")
+        pool = self._ensure_pool(posted_txn["account_id"], pending_pools)
+        candidates = [
+            i for i, item in enumerate(pool)
+            if item.get("amount") == amount
+            and _settles_after(item.get("date"), posted_date)
+            and _merchant_in_description(merchant, item.get("description") or "")
+        ]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
+        return pool.pop(best)
+
+    @staticmethod
+    def _inherit_swipe_date(merged: Transaction, posted_txn: Transaction, source_row: dict) -> None:
+        """Give a settled charge that arrived with authorized_date BLANK the swipe date
+        from its source row — its pending twin (dated at swipe) on first settlement, or,
+        on a re-sync, the already-corrected stored posted. Mutates `merged` in place.
+        No-op when the posted carries its own authorized_date (the normal case), so the
+        exact/tip reconcile stays byte-identical. This is what stops a blank-auth ANZ
+        charge from showing (or regressing to) its settlement day."""
+        if posted_txn.get("authorized_date"):
+            return
+        if source_row.get("date"):
+            merged["date"] = source_row["date"]
+        if source_row.get("authorized_date"):
+            merged["authorized_date"] = source_row["authorized_date"]
 
     @staticmethod
     def _with_carried_category(

@@ -108,6 +108,16 @@ class NoTwinRepo:
     def _with_carried_category(txn, src):
         return dict(txn)
 
+    @staticmethod
+    def _inherit_swipe_date(merged, posted_txn, source_row):
+        # Mirror the real repo's interface; no twins here, so nothing to inherit.
+        if posted_txn.get("authorized_date"):
+            return
+        if source_row.get("date"):
+            merged["date"] = source_row["date"]
+        if source_row.get("authorized_date"):
+            merged["authorized_date"] = source_row["authorized_date"]
+
 
 def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushToken[a]",),
          cats=None, webhook_repo=None, notify=None, paycycle=("2026-07-01", 14), send_ok=1):
