@@ -41,8 +41,10 @@ resource "aws_iam_role" "transaction_trigger_exec" {
 }
 
 # Execution role for the homeloan-request lambda. Reads the BankSync API key from
-# SSM, writes the single home-loan balance row to DynamoDB (PutItem only — it
-# never reads or mutates transactions), and writes its own logs.
+# SSM; reads + writes DynamoDB (the balance row it upserts, plus the milestone /
+# repayment notify markers, device tokens, loan facts, and push receipts the milestone
+# push and the WHIT-316 alarm check need — GetItem/PutItem/UpdateItem on the base table
+# only, no transactions/GSI); and writes its own logs.
 resource "aws_iam_role" "homeloan_request_exec" {
   name = "${var.project_name}-homeloan-request-exec"
   assume_role_policy = jsonencode({
@@ -258,9 +260,16 @@ resource "aws_iam_role_policy" "transaction_trigger_logs" {
   })
 }
 
-# Homeloan-request lambda: write ONLY the home-loan balance row. Scoped to PutItem
-# on the base table (the balance item is a single pk/sk row, never a GSI query),
-# deliberately narrower than the webhook lambda's full CRUD.
+# Homeloan-request lambda: read + write the home-loan balance row AND the notification
+# bookkeeping the daily poll performs — the prior balance (GetItem before upsert), the
+# milestone + repayment notify markers (WHIT-301 / WHIT-316), device tokens, loan facts,
+# and push-receipt stashes. GetItem/PutItem/UpdateItem on the base table only (single
+# pk/sk rows, never a GSI query), so still narrower than the webhook lambda's full CRUD
+# (no Query/DeleteItem/index). Mirrors the goal_nudge_dynamodb shape.
+#
+# Before this grant the role had PutItem only, so every GetItem/UpdateItem was denied at
+# runtime and swallowed best-effort — silently disabling the WHIT-301 milestone push and
+# leaving the WHIT-316 repayment-miss alarm dead-on-arrival (WHIT-318).
 resource "aws_iam_role_policy" "homeloan_request_dynamodb" {
   name = "${var.project_name}-homeloan-request-dynamodb"
   role = aws_iam_role.homeloan_request_exec.id
@@ -270,7 +279,9 @@ resource "aws_iam_role_policy" "homeloan_request_dynamodb" {
     Statement = [{
       Effect = "Allow"
       Action = [
-        "dynamodb:PutItem"
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem"
       ]
       Resource = [
         "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
