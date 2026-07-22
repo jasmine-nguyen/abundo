@@ -112,7 +112,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Bare module names whose imports must resolve fresh per test: lambda/'s own copies
 # (handler / repository / banksync) plus the folded modules now provided by shared/
 # (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
-_REIMPORT = ("handler", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "dedupe_cleanup", "age_out", "backfill_swipe_dates",
+_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "dedupe_cleanup", "age_out", "backfill_swipe_dates",
              "budget_alerts", "repayment_alerts", "spend", "push", "repository_base", "repository_transaction", "repository_budget",
              "repository_category", "repository_device", "repository_notify", "repository_paycycle")
 
@@ -143,6 +143,7 @@ def lam():
 
     import banksync
     import handler
+    import up_webhook
     import merchant
     import models
     import repository
@@ -158,6 +159,7 @@ def lam():
         merchant=merchant, reprocess=reprocess, dedupe_cleanup=dedupe_cleanup,
         age_out=age_out, backfill_swipe_dates=backfill_swipe_dates,
         budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,
+        up_webhook=up_webhook,
     )
     try:
         yield ns

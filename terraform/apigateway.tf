@@ -219,6 +219,31 @@ resource "aws_lambda_permission" "transaction_ingest_apigw_invoke" {
   source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
 }
 
+# Direct Up-bank webhook endpoint (WHIT-313). Public (no authorizer), like the
+# banksync webhook — Up authenticates itself with the X-Up-Authenticity-Signature
+# HMAC the lambda verifies. Its own integration (targets up_webhook, NOT the banksync
+# integration which targets transaction_ingest).
+resource "aws_apigatewayv2_integration" "up_webhook_integration" {
+  api_id                 = aws_apigatewayv2_api.api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.up_webhook.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "up_webhook_route" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "POST /webhook/up"
+  target    = "integrations/${aws_apigatewayv2_integration.up_webhook_integration.id}"
+}
+
+resource "aws_lambda_permission" "up_webhook_apigw_invoke" {
+  statement_id  = "AllowAPIGatewayInvokeUpWebhook"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.up_webhook.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.api.execution_arn}/*/*"
+}
+
 # WHIT-224: aws_lambda_permission label renames to match their target function.
 # statement_id (the deployed identifier) + all attributes are unchanged, so these
 # are pure state moves — no destroy/recreate, no invoke-permission gap. GC once applied.

@@ -55,6 +55,7 @@ __pycache__/
 # Lambda build dirs — ignore everything, allowlist only true source
 lambda/*
 !lambda/handler.py
+!lambda/up_webhook.py
 !lambda/banksync.py
 !lambda/merchant.py
 !lambda/reprocess.py

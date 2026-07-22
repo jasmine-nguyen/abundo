@@ -45,3 +45,27 @@ resource "aws_ssm_parameter" "expo_access_token" {
     ignore_changes = [value]
   }
 }
+
+# Direct Up-bank webhook secrets (WHIT-313), read by the up-webhook lambda.
+# up-personal-access-token: an Up Personal Access Token, used to fetch the full
+# transaction (the webhook event is thin). up-webhook-signing-secret: the secretKey
+# Up returns at webhook registration, used to verify each delivery's HMAC signature.
+# Terraform seeds placeholders; set the real values out-of-band (console/CLI) and
+# ignore_changes keeps applies from clobbering them.
+resource "aws_ssm_parameter" "up_personal_access_token" {
+  name  = "/${var.project_name}/up-personal-access-token"
+  type  = "SecureString"
+  value = "placeholder"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "up_webhook_signing_secret" {
+  name  = "/${var.project_name}/up-webhook-signing-secret"
+  type  = "SecureString"
+  value = "placeholder"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
