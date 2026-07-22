@@ -51,7 +51,7 @@ const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: nul
 const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
 
 // The breakdown query composite.
-function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; earned: number; isLoading: boolean; isError: boolean }>) {
+function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; earned: number; budgeted: { budgetedEarned: number; budgetedSpent: number }; isLoading: boolean; isError: boolean }>) {
   return { breakdown: {}, earned: 0, category, isLoading: false, isError: false, refetch, refetchStale, ...over };
 }
 
@@ -147,6 +147,25 @@ it('never draws the earned-vs-spent chart over an empty/loading/error state', ()
   mockInsights = insightsData({ breakdown: {}, earned: 3000, isError: true });
   rerender(<Insights />);
   expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
+});
+
+it('draws the budgeted overlay (surplus line) when the composite supplies budgeted totals', () => {
+  mockInsights = insightsData({
+    breakdown: { coffee: { posted: 20, pending: 5 } },
+    earned: 3000,
+    budgeted: { budgetedEarned: 3082, budgetedSpent: 2438 },
+  });
+  render(<Insights />);
+  expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
+  expect(screen.getByTestId('budgeted-surplus').props.children).toBe('$644 budgeted surplus');
+});
+
+it('shows the earned-vs-spent card at $0 activity when budgets are set (right after payday)', () => {
+  // No spend, no income yet, but budgets exist → the widened gate keeps the card so the plan shows.
+  mockInsights = insightsData({ breakdown: {}, earned: 0, budgeted: { budgetedEarned: 3082, budgetedSpent: 2438 } });
+  render(<Insights />);
+  expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
+  expect(screen.getByTestId('budgeted-surplus').props.children).toBe('$644 budgeted surplus');
 });
 
 it('refreshes breakdown (query) AND AI on focus', () => {

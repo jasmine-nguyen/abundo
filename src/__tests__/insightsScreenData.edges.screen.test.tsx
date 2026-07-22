@@ -16,10 +16,12 @@ jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => 
 const mockFetchBreakdown = jest.fn<(days: number, cycle?: number) => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
+const mockFetchBudgets = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchBreakdown: (...a: unknown[]) => mockFetchBreakdown(...(a as [number, number?])),
   fetchCategories: () => mockFetchCategories(),
   fetchPayCycle: () => mockFetchPayCycle(),
+  fetchBudgets: () => mockFetchBudgets(),
 }));
 
 import { useInsightsScreenData } from '../queries';
@@ -38,6 +40,7 @@ beforeEach(() => {
   mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
   mockFetchCategories.mockReset().mockResolvedValue(CATS);
   mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  mockFetchBudgets.mockReset().mockResolvedValue({}); // no budgets by default
 });
 
 it('a payCycle failure surfaces as isError and does NOT strand isLoading (payCycle IS in the Insights array)', async () => {
@@ -118,4 +121,86 @@ it('re-derives earned from the selected cycle (no stale carry-over on cycle swit
   rerender({ cycle: 1 });
   await waitFor(() => expect(result.current.earned).toBe(1000)); // last cycle: its OWN __earned__
   expect(result.current.breakdown.coffee).toEqual({ posted: 5, pending: 0 });
+});
+
+// WHIT-314: the budgeted overlay data — income vs spend targets, current cycle only.
+const BUDGET_CATS = [
+  { id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 },
+  { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#2ac3de', recent: 0 },
+];
+const BUDGET_ROLLUPS = {
+  coffee: { target: 400, posted: 0, pending: 0 },
+  salary: { target: 5000, posted: 0, pending: 0 },
+};
+
+it('derives the budgeted income/spend split on the current cycle', async () => {
+  mockFetchCategories.mockReset().mockResolvedValue(BUDGET_CATS);
+  mockFetchBudgets.mockReset().mockResolvedValue(BUDGET_ROLLUPS);
+  const { result } = renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
+
+  await waitFor(() => expect(result.current.budgeted).toEqual({ budgetedEarned: 5000, budgetedSpent: 400 }));
+});
+
+it('has NO budgeted overlay on a past cycle (budgets have no look-back)', async () => {
+  mockFetchCategories.mockReset().mockResolvedValue(BUDGET_CATS);
+  mockFetchBudgets.mockReset().mockResolvedValue(BUDGET_ROLLUPS);
+  const { result } = renderHook(() => useInsightsScreenData(1), { wrapper: wrapper(makeClient()) });
+
+  await waitFor(() => expect(result.current.breakdown.coffee).toBeTruthy());
+  expect(result.current.budgeted).toBeUndefined();
+});
+
+it('has NO budgeted overlay when no budgets are set (all-zero totals → undefined)', async () => {
+  const { result } = renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) }); // default budgets {}
+
+  await waitFor(() => expect(result.current.breakdown.coffee).toBeTruthy());
+  expect(result.current.budgeted).toBeUndefined();
+});
+
+// [G12] WHIT-314 GAP — cycle 0→1→0 must not strand a STALE budgeted overlay: it shows on the
+// current cycle, disappears on a past cycle (budgets have no look-back), and REAPPEARS when we
+// return to the current cycle. Fail-on-revert: a memo that dropped `cycle` from its deps would
+// keep the overlay on cycle 1 (or fail to bring it back), and this catches both.
+it('[G12] budgeted overlay drops on cycle 1 and reappears on returning to cycle 0 (no stale carry)', async () => {
+  mockFetchCategories.mockReset().mockResolvedValue(BUDGET_CATS);
+  mockFetchBudgets.mockReset().mockResolvedValue(BUDGET_ROLLUPS);
+  const { result, rerender } = renderHook((c: number) => useInsightsScreenData(c), {
+    wrapper: wrapper(makeClient()), initialProps: 0,
+  });
+
+  await waitFor(() => expect(result.current.budgeted).toEqual({ budgetedEarned: 5000, budgetedSpent: 400 }));
+  rerender(1);
+  await waitFor(() => expect(result.current.budgeted).toBeUndefined()); // past cycle → no overlay
+  rerender(0);
+  await waitFor(() => expect(result.current.budgeted).toEqual({ budgetedEarned: 5000, budgetedSpent: 400 })); // back
+});
+
+// [G13] WHIT-314 GAP — budgets can resolve AFTER the breakdown paints (secondary query). The
+// overlay must APPEAR when budgets land, with no earlier wrong value: `budgeted` is undefined
+// while budgets are still in flight (breakdown already resolved), then becomes the totals.
+it('[G13] budgeted appears when the (slower) budgets query resolves, undefined until then', async () => {
+  mockFetchCategories.mockReset().mockResolvedValue(BUDGET_CATS);
+  let resolveBudgets!: (v: unknown) => void;
+  mockFetchBudgets.mockReset().mockReturnValue(new Promise((res) => { resolveBudgets = res; }));
+  const { result } = renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
+
+  await waitFor(() => expect(result.current.breakdown.coffee).toBeTruthy()); // breakdown painted first
+  expect(result.current.budgeted).toBeUndefined();                          // budgets still in flight
+  await act(async () => { resolveBudgets(BUDGET_ROLLUPS); });
+  await waitFor(() => expect(result.current.budgeted).toEqual({ budgetedEarned: 5000, budgetedSpent: 400 }));
+});
+
+// [G14] WHIT-314 GAP — a budgets outage on the current cycle must NOT blank the hero: budgets
+// are deliberately OUT of the Insights status array, so isError stays false, breakdown+earned
+// still render, and the overlay simply goes absent (chart falls back to actuals-only). Fail-on-
+// revert: adding budgetsQuery to useCombineScreenQueries flips isError true and breaks this.
+it('[G14] a budgets read failure leaves budgeted undefined but keeps the chart + hero (no isError)', async () => {
+  mockFetchCategories.mockReset().mockResolvedValue(BUDGET_CATS);
+  mockFetchBudgets.mockReset().mockRejectedValue(new Error('API error: 500'));
+  const { result } = renderHook(() => useInsightsScreenData(0), { wrapper: wrapper(makeClient()) });
+
+  await waitFor(() => expect(result.current.breakdown.coffee).toBeTruthy());
+  expect(result.current.budgeted).toBeUndefined(); // overlay absent, not crashing
+  expect(result.current.isError).toBe(false);      // budgets outage never surfaces as a screen error
+  expect(result.current.earned).toBe(0);           // actuals still flow (BREAKDOWN has no __earned__)
 });

@@ -7,7 +7,7 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
 import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
-import { cycleClock, cycleName, cycleWindow, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { budgetViews, cycleClock, cycleName, cycleWindow, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -84,6 +84,17 @@ export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
   return Object.entries(rollups)
     .filter(([, rollup]) => rollup.target > 0) // skip target<=0 so budget math never divides by 0
     .map(([id, rollup]) => toBudget(id, rollup));
+}
+// Budgeted income vs spend targets for the Insights Earned-vs-Spent overlay (WHIT-314).
+// Derived THROUGH budgetViews so it reuses the same top-most-row de-dup as the Budgets hero
+// (a target on both a parent and child category isn't counted twice). cycleLen/daysLeft only
+// drive the per-row pace labels, which we discard here, so any finite non-zero pair is safe.
+export function selectBudgetedTotals(
+  budgets: Budget[],
+  category: (id: string) => Category | undefined,
+): { budgetedEarned: number; budgetedSpent: number } {
+  const views = budgetViews({ budgets, category, cycleLen: 1, daysLeft: 1 });
+  return { budgetedEarned: views.totEarnedBudget, budgetedSpent: views.totBudget };
 }
 // WHIT-233: the /goals payload is already the client GoalRecord shape (the server owns no
 // mapping), so this is a passthrough that only FAILS LOUDLY on a malformed shape — mirroring
@@ -410,6 +421,11 @@ export interface InsightsScreenData {
   // same window as spend, for the Earned-vs-Spent chart (WHIT-312). 0 when the response
   // carries no __earned__ bucket (no income, or an older server).
   earned: number;
+  // Budgeted income + spend targets for the current cycle, for the budgeted-vs-actual overlay
+  // (WHIT-314). Present only on the CURRENT cycle with budgets actually set — undefined on a
+  // past cycle (budgets have no look-back), when no budgets exist, or on a budgets read failure,
+  // in which case the chart falls back to the actuals-only render.
+  budgeted?: { budgetedEarned: number; budgetedSpent: number };
   category: (id: string) => Category | undefined;
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
@@ -441,6 +457,9 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   // WHIT-68: `cycle` (0 = current, n = nth prior) selects the historical breakdown window.
   const breakdownQuery = useBreakdownQuery(cycleLen, cycle, authed); // parallel fetch, cycle-keyed
   const categoriesQuery = useCategoriesQuery(authed);
+  // Budgets are secondary here (WHIT-314): kept OUT of useCombineScreenQueries so a budgets
+  // outage never blanks the hero — the overlay just goes absent and the chart shows actuals.
+  const budgetsQuery = useBudgetsQuery(cycleLen, authed);
 
   const categories = categoriesQuery.data ?? [];
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
@@ -457,7 +476,17 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   const earnedEntry = breakdownQuery.data?.[EARNED_KEY];
   const earned = earnedEntry ? earnedEntry.posted + earnedEntry.pending : 0;
 
-  return { breakdown: breakdownQuery.data ?? {}, earned, category, categoriesError, ...status };
+  // Budgeted overlay (WHIT-314): only on the CURRENT cycle (budgets have no look-back) and only
+  // when targets are actually set — an all-zero total means no budgets, so drop the overlay and
+  // let the chart render actuals-only.
+  const budgeted = useMemo(() => {
+    if (cycle !== 0 || !budgetsQuery.data) return undefined;
+    const totals = selectBudgetedTotals(budgetsQuery.data, category);
+    if (totals.budgetedEarned <= 0 && totals.budgetedSpent <= 0) return undefined;
+    return totals;
+  }, [cycle, budgetsQuery.data, category]);
+
+  return { breakdown: breakdownQuery.data ?? {}, earned, budgeted, category, categoriesError, ...status };
 }
 
 // --- the Transactions screen's composite view (WHIT-190a) --------------------
