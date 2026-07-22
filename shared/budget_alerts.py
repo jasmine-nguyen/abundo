@@ -233,8 +233,14 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     if not crossings:
         return
 
-    last_pay_date, length = ctx["last_pay_date"], ctx["length"]
-    fired = notify_repo.fired_markers(last_pay_date, length)
+    # Debounce markers key on the CURRENT cycle's start (ctx["start"], the rolled-forward
+    # payday that current_cycle_window computed for the spend read above), NOT the raw stored
+    # last_pay_date. Keying on last_pay_date meant the marker pk never changed once the user's
+    # saved payday went stale — so a threshold fired once and then stayed suppressed for the
+    # whole NOTIFY_TTL (60 days) across every later cycle, instead of re-arming each cycle. The
+    # spend window already rolls forward per payday; the marker must roll with it.
+    cycle_start, length = ctx["start"], ctx["length"]
+    fired = notify_repo.fired_markers(cycle_start, length)
 
     for cat_id, pct_to_send, newly in crossings:
         send_marker = f"{cat_id}#{pct_to_send}"
@@ -244,7 +250,7 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
             title, body = _COPY[pct_to_send]
             landed = send_push(title, body.format(name=names.get(cat_id, cat_id)), ctx["tokens"])["ok"] > 0
             if landed:
-                notify_repo.mark_fired(last_pay_date, length, send_marker)  # mark on landing
+                notify_repo.mark_fired(cycle_start, length, send_marker)  # mark on landing
         if not landed:
             continue  # send failed → mark nothing → the crossing can re-fire on re-ingest
         # The primary push went out (now or earlier): mark every other newly-crossed
@@ -253,4 +259,4 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
         for pct in newly:
             marker = f"{cat_id}#{pct}"
             if pct != pct_to_send and marker not in fired:
-                notify_repo.mark_fired(last_pay_date, length, marker)
+                notify_repo.mark_fired(cycle_start, length, marker)
