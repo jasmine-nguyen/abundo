@@ -140,7 +140,9 @@ resource "aws_iam_role_policy" "transaction_logs" {
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-reprocess:*",
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-dedupe:*",
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-age-out:*",
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-date-backfill:*"
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-transaction-date-backfill:*",
+        # up-webhook (WHIT-313) reuses this role too, so it needs its own log group.
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-up-webhook:*"
       ]
     }]
   })
@@ -205,6 +207,10 @@ resource "aws_iam_role_policy" "transaction_ssm" {
       Resource = [
         aws_ssm_parameter.banksync_webhook_secret.arn,
         aws_ssm_parameter.expo_access_token.arn,
+        # Direct Up webhook (WHIT-313): the up-webhook lambda runs on this same role,
+        # so it reads its signing secret + Up token from here.
+        aws_ssm_parameter.up_personal_access_token.arn,
+        aws_ssm_parameter.up_webhook_signing_secret.arn,
       ]
     }]
   })

@@ -110,6 +110,35 @@ resource "aws_lambda_function" "transaction_ingest" {
   }
 }
 
+# Direct Up-bank webhook (WHIT-313): notify-only. Receives Up's own webhook for the
+# home-loan account and sends the instant repayment push. Reuses the webhook zip
+# (../lambda already contains up_webhook.py) and the transaction_exec role — which
+# already grants the DynamoDB access the notify markers/device tokens need, plus (with
+# the SSM additions in iam.tf) the two Up secrets. Public, API-Gateway-triggered
+# (apigateway.tf); no schedule, no event source, writes no transactions.
+resource "aws_lambda_function" "up_webhook" {
+  function_name    = "${var.project_name}-up-webhook"
+  role             = aws_iam_role.transaction_exec.arn
+  handler          = "up_webhook.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 60
+  memory_size      = 128
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.up_webhook.name
+  }
+}
+
 # Manual recovery lambda (WHIT-55): re-drives dead-lettered FAILED# rows through
 # normalise + insert. Reuses the webhook zip (source_dir ../lambda already contains
 # reprocess.py) and the transaction_exec role — which already has Query / DeleteItem /
@@ -390,6 +419,11 @@ moved {
 
 resource "aws_cloudwatch_log_group" "transaction_ingest" {
   name              = "/aws/lambda/${var.project_name}-transaction-ingest"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "up_webhook" {
+  name              = "/aws/lambda/${var.project_name}-up-webhook"
   retention_in_days = 30
 }
 
