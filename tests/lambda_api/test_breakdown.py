@@ -235,6 +235,118 @@ def test_breakdown_empty_when_no_spend(handler):
     assert result == {}
 
 
+# --- earned bucket (total income for the Earned-vs-Spent chart, WHIT-312) -----
+
+
+def test_breakdown_earned_sums_all_income_categories(handler):
+    # Every Income-bucket category counts toward __earned__ (targeted or not — the
+    # chart wants what was actually earned). Income is stored POSITIVE; posted +
+    # pending are summed into one aggregate.
+    cats = FakeCategoryRepo([
+        _category("coffee", "Lifestyle"),
+        _category("salary", "Income"),
+        _category("dividends", "Income"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("coffee", -40, "posted"),
+        _transaction("salary", 2500, "posted"),
+        _transaction("salary", 300, "pending"),
+        _transaction("dividends", 75, "posted"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    # Spend row unaffected; earned is the total across both Income categories.
+    assert result["coffee"] == {"posted": Decimal("40"), "pending": Decimal("0")}
+    assert result["__earned__"] == {"posted": Decimal("2575"), "pending": Decimal("300")}
+
+
+def test_breakdown_no_earned_key_when_no_income(handler):
+    # Spend but no income -> no __earned__ key (response is what it always was).
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = FakeTransactionRepo([_transaction("coffee", -10, "posted")])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__earned__" not in result
+
+
+def test_breakdown_earned_net_reversal_clamps_and_omits_key(handler):
+    # A clawback bigger than the earnings drives the aggregate <= 0 -> clamp to 0,
+    # so no __earned__ key (never a negative earned bar).
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 100, "posted"),
+        _transaction("salary", -250, "posted"),  # clawback/reversal
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__earned__" not in result
+
+
+def test_breakdown_earned_excludes_excluded_and_uncounted_income(handler):
+    # budget_excluded / counts_to_budget=False income does not count, mirroring spend.
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 1000, "posted"),
+        {**_transaction("salary", 500, "posted"), "budget_excluded": True},
+        _transaction("salary", 400, "posted", counts=False),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__earned__"] == {"posted": Decimal("1000"), "pending": Decimal("0")}
+
+
+def test_breakdown_earned_counts_in_cycle_income_older_than_feed_window(handler, monkeypatch):
+    # The whole reason earned is server-side: a paycheck lands once a cycle, often
+    # >7 days ago. It must be counted over the FULL cycle window, not a 7-day feed.
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = _DateFilteringTransactionRepo([
+        {**_transaction("salary", 2500, "posted"), "date": "2024-01-03"},  # cycle_start, 13 days ago -> IN
+        {**_transaction("salary", 100, "posted"), "date": "2024-01-17"},   # tomorrow -> OUT
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__earned__"] == {"posted": Decimal("2500"), "pending": Decimal("0")}
+
+
+def test_breakdown_earned_uses_prior_cycle_window(handler, monkeypatch):
+    # cycle=1 earns over the prior FULL cycle: income in the current window is excluded.
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = _DateFilteringTransactionRepo([
+        {**_transaction("salary", 2000, "posted"), "date": "2023-12-20"},  # prior cycle -> IN for cycle=1
+        {**_transaction("salary", 2500, "posted"), "date": "2024-01-05"},  # current cycle -> OUT for cycle=1
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1)
+
+    assert result["__earned__"] == {"posted": Decimal("2000"), "pending": Decimal("0")}
+
+
+def test_breakdown_earned_coexists_with_spend_and_uncategorized(handler):
+    # One response can carry spend rows, __uncategorized__, AND __earned__ — none leaks
+    # into another. Income never appears as a spend/uncategorized row and vice-versa.
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("coffee", -40, "posted"),
+        _transaction("MEDICAL", -20, "posted"),  # raw enum -> uncategorized
+        _transaction("salary", 2500, "posted"),  # income -> earned
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["coffee"] == {"posted": Decimal("40"), "pending": Decimal("0")}
+    assert result["__uncategorized__"] == {"posted": Decimal("20"), "pending": Decimal("0")}
+    assert result["__earned__"] == {"posted": Decimal("2500"), "pending": Decimal("0")}
+
+
 # --- dispatch (through lambda_handler) ---------------------------------------
 
 
@@ -417,3 +529,55 @@ def test_parse_breakdown_cycle_defaults_and_validates(handler):
     assert handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": "2"}}) == (2, None)
     cycle, err = handler._parse_breakdown_cycle({"queryStringParameters": {"cycle": "-1"}})
     assert cycle == 0 and err["statusCode"] == 400
+
+
+# --- adversarial gaps (qa) — earned bucket, WHIT-312 --------------------------
+
+
+def test_breakdown_positive_amount_in_spend_category_is_not_earned(handler):
+    # [A16] A positive-amount txn filed under a SPEND-bucket category (a refund, or a mis-filed
+    # paycheck) must NOT count as earned — the income gate is by BUCKET, not by amount sign.
+    # Guards against a "positive amount == income" shortcut leaking spend-cat credits into
+    # the earned bar.
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = FakeTransactionRepo([_transaction("coffee", 500, "posted")])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__earned__" not in result
+
+
+def test_breakdown_renamed_income_category_still_earned_by_bucket(handler):
+    # [A17] A user-renamed Income category (custom name, non-"income" id) still counts — the
+    # gate is bucket == Income over the id set, not the name or the raw "income" sentinel.
+    cats = FakeCategoryRepo([_category("side_hustle", "Income", name="Etsy shop")])
+    txns = FakeTransactionRepo([_transaction("side_hustle", 640, "posted")])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__earned__"] == {"posted": Decimal("640"), "pending": Decimal("0")}
+
+
+def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler, monkeypatch):
+    # [A8] Through lambda_handler -> _json_response -> DecimalEncoder: the __earned__ bucket's
+    # Decimals (posted AND pending, incl. cents) must serialise as JSON numbers, not be
+    # dropped or stringified — the client reads posted + pending off this. The existing
+    # dispatch test carries no income, so this is the only end-to-end check of __earned__.
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("coffee", -12.50, "posted"),
+        _transaction("salary", 2500.25, "posted"),
+        _transaction("salary", 300.50, "pending"),
+    ])
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
+    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
+
+    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    resp = handler.lambda_handler(event, None)
+
+    import json
+    body = json.loads(resp["body"])
+    assert body["__earned__"] == {"posted": 2500.25, "pending": 300.5}
+    assert isinstance(body["__earned__"]["posted"], float)  # a JSON number, not "2500.25"
+    assert body["coffee"] == {"posted": 12.5, "pending": 0}

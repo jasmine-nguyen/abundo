@@ -38,8 +38,8 @@ const category = (id: string) => CATS.find((c) => c.id === id) as never;
 
 const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
-function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; isLoading: boolean; isError: boolean; categoriesError: boolean; category: (id: string) => unknown }>) {
-  return { breakdown: {}, category, isLoading: false, isError: false, categoriesError: false, refetch, refetchStale, ...over };
+function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; earned: number; isLoading: boolean; isError: boolean; categoriesError: boolean; category: (id: string) => unknown }>) {
+  return { breakdown: {}, earned: 0, category, isLoading: false, isError: false, categoriesError: false, refetch, refetchStale, ...over };
 }
 
 function state(over: Partial<AppContext>): AppContext {

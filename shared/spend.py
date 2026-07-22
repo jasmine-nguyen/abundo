@@ -225,6 +225,29 @@ def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str
     )
 
 
+def summarise_earned(transactions: list[dict], income_ids: set[str]) -> dict:
+    """Total posted vs pending EARNINGS over `transactions`, across ALL Income-bucket
+    categories — the "actual earned this cycle" figure for the Insights Earned-vs-Spent
+    chart (WHIT-312). The earnings counterpart of summarise_uncategorized: same single
+    aggregate + >= 0 clamp shape, but income (`sign=+1`, stored positive) rather than
+    spend, and gated on income_ids membership.
+
+    Unlike summarise_income (which gates on the ids that carry an earn-TARGET), this
+    counts every Income-bucket category, targeted or not — the chart wants what was
+    actually earned, not progress against a target. Aggregate-then-clamp: a net
+    reversal in one category can reduce the headline, but earned can't go negative.
+
+    Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate.
+    """
+    totals = _summarise(
+        transactions,
+        keep=lambda category: category in income_ids,
+        key=lambda category: "__all__",
+        sign=1,
+    )
+    return totals.get("__all__", {"posted": Decimal(0), "pending": Decimal(0)})
+
+
 def build_category_children(categories: list[dict]) -> dict[str, list[str]]:
     """A parent-id -> [child ids] map from the taxonomy (each category carries a
     `parent`, None for top-level). The inverse of the stored `parent` link, built

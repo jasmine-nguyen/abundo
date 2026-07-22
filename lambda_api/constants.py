@@ -143,6 +143,12 @@ BREAKDOWN_PATH = "/breakdown"
 # so no real category id can ever collide with this key.
 UNCATEGORIZED_KEY = "__uncategorized__"
 
+# Sentinel category id for the total EARNED (all Income-bucket categories) in the
+# breakdown response — powers the Insights Earned-vs-Spent chart (WHIT-312). Added only
+# when there is income, alongside the per-category spend and __uncategorized__. Like
+# UNCATEGORIZED_KEY, the '__' prefix can't collide with any real (slugified) category id.
+EARNED_KEY = "__earned__"
+
 # --- Loan facts (user-entered home-loan inputs) ----------------------------
 # API Gateway route path for the loan-facts endpoints (GET current, PUT to set).
 # The user enters facts no bank feed provides (original amount, property value,

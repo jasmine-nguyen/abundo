@@ -9,6 +9,7 @@ import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill } from '../../src/components/ui';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
 import { SpendingDonut } from '../../src/components/SpendingDonut';
+import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
@@ -17,7 +18,7 @@ export default function Insights() {
   // cycle, 1 = last (full) cycle. Only the breakdown reads move; the AI coach stays current.
   const [cycle, setCycle] = useState(0);
   // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
-  const { breakdown, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
+  const { breakdown, earned, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
   const { rows, total } = categoryBreakdown({ breakdown, category });
 
   // WHIT-226: parent categories are collapsed by default; tap to reveal their subs. A row
@@ -128,6 +129,13 @@ export default function Insights() {
             its own colour, sized by share of the total. The rows below are its legend. */}
         {!showSpinner && !showError && rows.length > 0 && (
           <SpendingDonut slices={donutSlices} testID="insights-donut" />
+        )}
+
+        {/* WHIT-312: earned vs spent for the cycle — shows whenever there's income OR spend,
+            so an income-only cycle (no spend rows) still gets the comparison. Both cycles,
+            unlike the AI coach card (current-cycle only). */}
+        {!showSpinner && !showError && (earned > 0 || rows.length > 0) && (
+          <EarnedVsSpent earned={earned} spent={total} testID="insights-earned-spent" />
         )}
 
         {/* Each row's bar is its share of total spend this cycle (matches the donut) — NOT

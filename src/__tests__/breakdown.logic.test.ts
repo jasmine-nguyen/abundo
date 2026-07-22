@@ -2,7 +2,7 @@
 // for the Insights tab. Pure over { breakdown, category }, so it runs headlessly via
 // makeState. This is the single testable unit driving the screen.
 import { describe, it, expect } from '@jest/globals';
-import { categoryBreakdown, UNCATEGORIZED_KEY } from '../context';
+import { categoryBreakdown, UNCATEGORIZED_KEY, EARNED_KEY } from '../context';
 import { C } from '../theme';
 import { makeState, cat, spend } from './factory';
 
@@ -252,5 +252,18 @@ describe('categoryBreakdown — parent rollup + drill-down', () => {
     const { rows, total } = categoryBreakdown(s);  // must not hang
     expect(rows.some((r) => r.id === 'a')).toBe(true);
     expect(total).toBeGreaterThan(0);
+  });
+
+  it('never renders the __earned__ bucket as a spend row nor adds it to the total (WHIT-312)', () => {
+    const s = makeState({
+      categories: cats,
+      breakdown: {
+        coffee: spend({ posted: 20, pending: 0 }),
+        [EARNED_KEY]: spend({ posted: 2500, pending: 300 }), // total earned rides here, not a spend row
+      },
+    });
+    const { rows, total } = categoryBreakdown(s);
+    expect(rows.map((r) => r.id)).toEqual(['coffee']); // earned bucket excluded
+    expect(total).toBe(20);                             // and never inflates spend
   });
 });

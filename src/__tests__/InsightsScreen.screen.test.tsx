@@ -51,8 +51,8 @@ const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: nul
 const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
 
 // The breakdown query composite.
-function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; isLoading: boolean; isError: boolean }>) {
-  return { breakdown: {}, category, isLoading: false, isError: false, refetch, refetchStale, ...over };
+function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; earned: number; isLoading: boolean; isError: boolean }>) {
+  return { breakdown: {}, earned: 0, category, isLoading: false, isError: false, refetch, refetchStale, ...over };
 }
 
 // The AI slice of the context store (+ loanFacts/homeLoan the goal-query mock reads).
@@ -116,6 +116,37 @@ it('draws the spending donut once there is spend, and never over an empty/loadin
   mockInsights = insightsData({ breakdown: {}, isError: true }); // error → no chart
   rerender(<Insights />);
   expect(screen.queryByTestId('insights-donut')).toBeNull();
+});
+
+it('draws the earned-vs-spent chart when there is spend, on BOTH cycle tabs', () => {
+  mockInsights = insightsData({ breakdown: { coffee: { posted: 20, pending: 5 }, groceries: { posted: 80, pending: 0 } }, earned: 3000 });
+  render(<Insights />);
+  expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
+  // Unlike the AI coach card (current-cycle only), it stays on "Last cycle" too.
+  fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+  expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
+});
+
+it('shows the earned-vs-spent chart on an income-only cycle (income, no spend rows)', () => {
+  mockInsights = insightsData({ breakdown: {}, earned: 3000 }); // earned but nothing spent
+  render(<Insights />);
+  expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
+});
+
+it('never draws the earned-vs-spent chart over an empty/loading/error state', () => {
+  mockInsights = insightsData({ breakdown: {}, earned: 0 }); // no income, no spend
+  const { rerender } = render(<Insights />);
+  expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
+
+  mockInsights = insightsData({ breakdown: {}, earned: 3000, isLoading: true }); // first load
+  rerender(<Insights />);
+  expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
+
+  // A sustained error with nothing cached (rows empty) → showError suppresses the chart
+  // even though earned is set.
+  mockInsights = insightsData({ breakdown: {}, earned: 3000, isError: true });
+  rerender(<Insights />);
+  expect(screen.queryByTestId('insights-earned-spent')).toBeNull();
 });
 
 it('refreshes breakdown (query) AND AI on focus', () => {
@@ -408,5 +439,31 @@ describe('AI re-analyse a11y — gap tests (WHIT-142)', () => {
 
     rerender(<Insights />); // same at-rest state → must stay at 1
     expect(announce).toHaveBeenCalledTimes(1);
+  });
+});
+
+// WHIT-312 (qa gaps) — the earned-vs-spent chart's interaction with the screen's other states.
+describe('earned-vs-spent chart — screen gaps (WHIT-312)', () => {
+  // [A9] income-only cycle: the chart shows AND the "No spending yet" empty text still shows
+  // (rows.length===0). Pins the CURRENT double-message behaviour so a future change to either
+  // gate is a conscious decision, not a silent regression. (Flagged in the critique.)
+  it('an income-only cycle shows BOTH the chart and the no-spending empty text', () => {
+    mockInsights = insightsData({ breakdown: {}, earned: 3000 });
+    render(<Insights />);
+    expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();
+    expect(screen.getByText('No spending yet this pay cycle.')).toBeTruthy();
+    // The card's own verdict tells the user nothing was spent, so the pairing reads coherently.
+    expect(screen.getByTestId('earned-vs-spent-verdict').props.children).toBe('Nothing spent yet');
+  });
+
+  // [A10] the chart's spent bar reads the SAME total as the hero — both come off categoryBreakdown,
+  // so they can't diverge. 20 + 5 + 80 = 105. Guards against the chart being fed a different spend.
+  it('feeds the chart the same spend total as the hero', () => {
+    mockInsights = insightsData({ breakdown: { coffee: { posted: 20, pending: 5 }, groceries: { posted: 80, pending: 0 } }, earned: 3000 });
+    render(<Insights />);
+    expect(screen.getByTestId('insights-hero-total').props.children).toBe('$105');
+    // The verdict is earned − spent = 3000 − 105: it can only read $2,895 if the chart was
+    // fed the SAME $105 spend total the hero shows. A different spend would change this string.
+    expect(screen.getByTestId('earned-vs-spent-verdict').props.children).toBe('You have $2,895 left over');
   });
 });
