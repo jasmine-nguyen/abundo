@@ -910,6 +910,40 @@ def test_current_cycle_window_boundaries_from_shared_spend(alerts):
     assert spend.current_cycle_window("2026-07-01", 14, today=date(2026, 7, 15)) == ("2026-07-15", "2026-07-15")
 
 
+# --- per-cycle marker re-arm: the debounce marker must key on the CURRENT cycle start,
+# not the raw stored payday, or a stale saved payday freezes the marker bucket and a
+# threshold stays suppressed for the whole 60-day TTL instead of re-arming each cycle.
+
+
+def test_marker_keys_on_current_cycle_start_not_stale_payday(alerts, monkeypatch):
+    # Saved payday 2026-06-04 rolls forward (today pinned 2026-07-14) to cycle start
+    # 2026-07-02. The marker must be written under the cycle START, not the stale payday.
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")   # 70 -> 85, crosses 80% of 100
+    sent, notify, ctx = _run(alerts, monkeypatch,
+                             budgets={"groceries": {"target": Decimal("100")}},
+                             before=before, normalised=[new], paycycle=("2026-06-04", 14))
+    assert len(sent) == 1
+    assert ctx["start"] == "2026-07-02"                            # rolled forward from stale payday
+    assert notify.fired_markers("2026-07-02", 14) == {"groceries#80"}  # keyed on the cycle start
+    assert notify.fired_markers("2026-06-04", 14) == set()            # NOT the stale payday
+
+
+def test_stale_prior_cycle_marker_does_not_suppress_this_cycle(alerts, monkeypatch):
+    # Fail-on-revert for the bug Jasmine hit: a marker left under the stale payday key from
+    # an earlier cycle must NOT suppress the same crossing in the current cycle. The old
+    # code keyed on the raw payday, so it read that stale marker and stayed silent.
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    notify = FakeNotifyRepo()
+    notify.mark_fired("2026-06-04", 14, "groceries#80")   # stale marker under the raw payday
+    sent, notify, ctx = _run(alerts, monkeypatch,
+                             budgets={"groceries": {"target": Decimal("100")}},
+                             before=before, normalised=[new], paycycle=("2026-06-04", 14), notify=notify)
+    assert len(sent) == 1                                          # fires — NOT suppressed by the stale marker
+    assert notify.fired_markers("2026-07-02", 14) == {"groceries#80"}
+
+
 def test_summarise_transactions_clamps_refund_and_splits_buckets(alerts):
     import spend
     txns = [

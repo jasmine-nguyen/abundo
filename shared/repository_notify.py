@@ -1,10 +1,15 @@
 """Debounce markers for the notification lambdas, stored as DynamoDB String Sets.
 
-Budget alerts (WHIT-22): one item per pay cycle at pk="NOTIFY#<last_pay_date>#<length>",
+Budget alerts (WHIT-22): one item per pay cycle at pk="NOTIFY#<cycle_start>#<length>",
 sk="FIRED", whose `fired` attribute is a String Set of "<catId>#<pct>" markers (e.g.
 "groceries#80"). A crossing fires at most once per (category, threshold) per cycle:
-before sending we check the set, after sending we ADD the marker. A new pay cycle
-has a new pk → an empty set → re-arms automatically.
+before sending we check the set, after sending we ADD the marker. `cycle_start` is the
+CURRENT cycle's start (the rolled-forward payday from current_cycle_window), so each new
+cycle gets a fresh pk → an empty set → re-arms automatically. (The key was previously the
+raw stored last_pay_date, which never rolled forward once the user's saved payday went
+stale, so a threshold stayed suppressed for the whole 60-day TTL — budget_alerts now passes
+the cycle start. NOTE: goal_nudge still passes the raw last_pay_date and has the same latent
+gap — tracked as follow-up.)
 
 Repayment pushes (WHIT-15): one shared item at pk="NOTIFY#REPAYMENT", sk="FIRED",
 whose `fired` attribute is a String Set of already-notified repayment transaction ids.
