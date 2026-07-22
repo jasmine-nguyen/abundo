@@ -24,7 +24,7 @@ being relevant instead of accumulating.
 """
 
 import time
-from typing import Any
+from typing import Any, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -95,17 +95,33 @@ class NotifyRepository:
         return set(item.get("fired", set()))
 
     def mark_repayment_fired(self, txn_id: str) -> None:
-        """Record that repayment `txn_id` has been notified, and refresh the item's
-        TTL. ADD to a String Set is idempotent, so re-marking is harmless."""
+        """Record that repayment `txn_id` has been notified, refresh the item's TTL, and
+        stamp `last_fired_at` (epoch seconds) so the balance poller's missed-repayment
+        check (WHIT-316) knows when a push last fired. ADD to a String Set is idempotent,
+        so re-marking is harmless."""
+        now = int(time.time())
         try:
             self._get_table().update_item(
                 Key=_REPAYMENT_KEY,
-                UpdateExpression="ADD #f :m SET #e = :exp",
-                ExpressionAttributeNames={"#f": "fired", "#e": "expires_at"},
-                ExpressionAttributeValues={":m": {txn_id}, ":exp": int(time.time()) + NOTIFY_TTL_SECONDS},
+                UpdateExpression="ADD #f :m SET #e = :exp, #lf = :now",
+                ExpressionAttributeNames={"#f": "fired", "#e": "expires_at", "#lf": "last_fired_at"},
+                ExpressionAttributeValues={":m": {txn_id}, ":exp": now + NOTIFY_TTL_SECONDS, ":now": now},
             )
         except ClientError as e:
             handle_database_error(e, "mark repayment notified")
+
+    def last_repayment_fired_at(self) -> Optional[int]:
+        """Epoch seconds of the most recent repayment push, or None if none is recorded
+        (no push since the marker item was created, or the item TTL'd away). Read by the
+        balance poller's missed-repayment alarm check (WHIT-316)."""
+        try:
+            item = self._get_table().get_item(Key=_REPAYMENT_KEY).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read repayment last-fired time")
+        if item is None:
+            return None
+        last_fired_at = item.get("last_fired_at")
+        return int(last_fired_at) if last_fired_at is not None else None
 
     def fired_milestones(self) -> set:
         """The set of payoff-milestone sprint numbers (as strings) already celebrated (WHIT-301)."""

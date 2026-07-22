@@ -76,6 +76,18 @@ POSTED_STATUS = "posted"
 # (a new cycle re-arms via a fresh pk, so the marker only needs to outlive its own).
 NOTIFY_TTL_SECONDS = 60 * 24 * 60 * 60
 
+# Missed-repayment alarm backstop (WHIT-316). The direct Up webhook is the sole home-loan
+# repayment notifier now, so the daily balance poll double-checks it: if the mortgage
+# balance dropped like a repayment landed but no push fired recently, it logs an alarmed
+# line. REPAYMENT_DROP_THRESHOLD — a one-poll drop this large means a repayment landed
+# (well below a monthly repayment, above fee/rounding noise). REPAYMENT_MISS_LOOKBACK_DAYS
+# — how recent the last push must be to count as healthy; sits between the max bank-feed
+# lag (a few days) and the ~monthly repayment gap. Used only by
+# lambda_balance_poller/handler.py (not a shared repository_* module), so the WHIT-136
+# lambda_api/constants.py mirror is not required.
+REPAYMENT_DROP_THRESHOLD = Decimal("3000")
+REPAYMENT_MISS_LOOKBACK_DAYS = 7
+
 # Maximum fraction by which a settled (posted) charge may exceed its pending
 # authorisation and still be reconciled as the SAME purchase — i.e. a tip added at
 # settlement (restaurants/delivery/rideshare). ONE-DIRECTIONAL: a tip only makes

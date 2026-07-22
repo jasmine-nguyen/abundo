@@ -139,11 +139,17 @@ def notify(transaction: dict) -> None:
 def lambda_handler(event, context) -> dict:
     headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
     signature_header = headers.get(SIGNATURE_HEADER.lower())
+    # UP_WEBHOOK_UNAUTHORISED is a fixed diagnostic breadcrumb (never the secret) — a
+    # greppable marker to tell a rotated-secret 401 apart from a silent wrong-account miss
+    # when investigating. Not alarmed: the route is public, so scanners make 401 noise; the
+    # missed-repayment balance check (WHIT-316) is what actually catches a rotated secret.
     if not signature_header:
+        logger.warning("UP_WEBHOOK_UNAUTHORISED missing signature header")
         return UNAUTHORISED_RESPONSE
 
     raw_body = extract_raw_body(event)
     if not verify_signature(raw_body, signature_header):
+        logger.warning("UP_WEBHOOK_UNAUTHORISED signature mismatch")
         return UNAUTHORISED_RESPONSE
 
     # Everything past the signature check runs under one guard so ANY failure — a

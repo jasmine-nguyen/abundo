@@ -20,8 +20,10 @@ Invoked only by EventBridge Scheduler, never by API Gateway. ``constants``,
 
 import json
 import logging
+import time
 import urllib.request
 from decimal import Decimal, InvalidOperation
+from typing import Optional
 
 from constants import (
     ACCOUNT_ID_MAP,
@@ -31,6 +33,8 @@ from constants import (
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_BALANCE_SOURCE,
     HOMELOAN_BALANCE_TIMEOUT_SECONDS,
+    REPAYMENT_DROP_THRESHOLD,
+    REPAYMENT_MISS_LOOKBACK_DAYS,
 )
 from milestones import notify_milestone_crossing
 from repository import (
@@ -165,6 +169,34 @@ def normalise_account_balance(payload: dict) -> dict:
     }
 
 
+def check_repayment_landed_but_no_push(
+    old_balance: Optional[Decimal], new_balance: Decimal, notify_repo
+) -> None:
+    """Alarm backstop (WHIT-316): if the mortgage balance dropped like a repayment landed
+    but no repayment push fired recently, log the line the CloudWatch alarm watches.
+
+    The direct Up webhook (lambda/up_webhook.py) is the sole repayment notifier now, and
+    its silent failure modes (re-linked account, deregistered webhook) leave no error. This
+    catches them via the balance, which comes from the bank feed — independent of the Up
+    webhook — so the drop is still seen when the webhook is broken. A repayment LOWERS the
+    outstanding balance; interest raises it and a redraw raises it, so neither false-fires.
+    """
+    if old_balance is None:
+        return
+    drop = old_balance - new_balance
+    if drop < REPAYMENT_DROP_THRESHOLD:
+        return
+    last_fired_at = notify_repo.last_repayment_fired_at()
+    cutoff = int(time.time()) - REPAYMENT_MISS_LOOKBACK_DAYS * 24 * 60 * 60
+    if last_fired_at is not None and last_fired_at >= cutoff:
+        return
+    logger.error(
+        "UP_WEBHOOK_REPAYMENT_MISSED mortgage balance dropped %s but no repayment push "
+        "fired in the last %s days (last_fired_at=%s)",
+        drop, REPAYMENT_MISS_LOOKBACK_DAYS, last_fired_at,
+    )
+
+
 def _poll_homeloan(api_key: str) -> bool:
     """Poll + upsert the mortgage's ABS outstanding-principal balance (WHIT-8, Goal
     screen). Best-effort: any failure is logged and swallowed, leaving the last-good row
@@ -198,6 +230,8 @@ def _poll_homeloan(api_key: str) -> bool:
         normalised["as_of"],
     )
 
+    notify_repo = NotifyRepository()
+
     # WHIT-301: celebrate crossing a payoff milestone. Best-effort — a push failure must
     # never flip the stored-balance result, so it's isolated in its own try/except.
     try:
@@ -206,10 +240,17 @@ def _poll_homeloan(api_key: str) -> bool:
             normalised["balance"],
             loanfacts_repo=LoanFactsRepository(),
             device_repo=DeviceRepository(),
-            notify_repo=NotifyRepository(),
+            notify_repo=notify_repo,
         )
     except Exception as e:
         logger.error("milestone push failed (balance still stored): %s", e)
+
+    # WHIT-316: alarm backstop — a repayment clearly landed (balance dropped) but no push
+    # fired. Best-effort, isolated so a check failure can't flip the stored-balance result.
+    try:
+        check_repayment_landed_but_no_push(old_balance, normalised["balance"], notify_repo)
+    except Exception as e:
+        logger.error("repayment-miss check failed (balance still stored): %s", e)
 
     return True
 
