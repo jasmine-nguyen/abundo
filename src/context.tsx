@@ -1787,6 +1787,11 @@ export function eligibleChildren(
 // or null). Mirrors UNCATEGORIZED_KEY in lambda_api/constants.py.
 export const UNCATEGORIZED_KEY = '__uncategorized__';
 
+// The sentinel key the /breakdown endpoint uses for the total EARNED this cycle (all
+// Income-bucket categories) — read by the Insights Earned-vs-Spent chart, never a spend
+// row. Mirrors EARNED_KEY in lambda_api/constants.py.
+export const EARNED_KEY = '__earned__';
+
 export interface CategoryBreakdownRow {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spent: number; posted: number; pending: number;
@@ -1825,6 +1830,7 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
   for (const [id, spend] of Object.entries(s.breakdown)) {
     if (spend.posted + spend.pending <= 0) continue;
     if (id === UNCATEGORIZED_KEY) { uncategorized = { posted: spend.posted, pending: spend.pending }; continue; }
+    if (id === EARNED_KEY) continue;  // the total-earned bucket is not a spend row (WHIT-312)
     if (!s.category(id)) continue;  // a real id the taxonomy doesn't know — skip defensively
     direct.set(id, { posted: spend.posted, pending: spend.pending });
   }

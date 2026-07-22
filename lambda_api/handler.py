@@ -10,6 +10,7 @@ from constants import (
     DEFAULT_RULE_FIELD,
     DEFAULT_RULE_OPERATOR,
     DEVICES_PATH,
+    EARNED_KEY,
     ENRICHMENTS_PATH,
     EXPO_TOKEN_MAX_LEN,
     FEED_WINDOW_DAYS,
@@ -71,6 +72,7 @@ from spend import (
     current_cycle_window,
     nth_prior_cycle_window,
     subtree_ids,
+    summarise_earned,
     summarise_income,
     summarise_transactions,
     summarise_uncategorized,
@@ -1032,8 +1034,11 @@ def list_category_breakdown(
     added only when it has spend, so a fully-categorised cycle shows no phantom row.
 
     Response: {"<category_id>": {"posted": Decimal, "pending": Decimal}, ...,
-    optionally "__uncategorized__": {...}}. Empty {} when nothing had spend (e.g. a past
-    window that predates first sync).
+    optionally "__uncategorized__": {...}, optionally "__earned__": {...}}. The
+    "__earned__" bucket is the TOTAL income (all Income-bucket categories) over the same
+    window, for the Insights Earned-vs-Spent chart (WHIT-312); added only when there's
+    income. Empty {} when nothing had spend or income (e.g. a past window that predates
+    first sync).
     """
     categories = category_repo.list_categories()
     pay_cycle = paycycle_repo.get_paycycle()
@@ -1046,12 +1051,21 @@ def list_category_breakdown(
 
     all_ids = {c["id"] for c in categories}
     spend_ids = {c["id"] for c in categories if c.get("bucket") in SPEND_BUCKETS}
+    income_ids = {c["id"] for c in categories if c.get("bucket") == INCOME_BUCKET}
 
     result = summarise_transactions(transactions, spend_ids)
 
     uncategorized = summarise_uncategorized(transactions, all_ids)
     if uncategorized["posted"] > 0 or uncategorized["pending"] > 0:
         result[UNCATEGORIZED_KEY] = uncategorized
+
+    # Total earned this cycle (all Income-bucket categories) over the SAME window as
+    # spend, so the Insights Earned-vs-Spent chart's two bars line up (WHIT-312). Added
+    # only when there's income, so a no-income cycle's response is byte-identical to
+    # before — old clients ignore the extra key, new clients read it as earned (else 0).
+    earned = summarise_earned(transactions, income_ids)
+    if earned["posted"] > 0 or earned["pending"] > 0:
+        result[EARNED_KEY] = earned
     return result
 
 

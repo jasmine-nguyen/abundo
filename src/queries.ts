@@ -7,7 +7,7 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
 import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
-import { cycleClock, cycleName, cycleWindow, loanFactsReady, toBudget, toCategory, toRule, EMPTY_LOAN_FACTS } from './context';
+import { cycleClock, cycleName, cycleWindow, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -406,6 +406,10 @@ export function useBudgetDetailScreenData(): BudgetDetailScreenData {
 // --- the Insights screen's composite view (WHIT-189) -------------------------
 export interface InsightsScreenData {
   breakdown: Record<string, CategorySpend>;
+  // Total earned this cycle (all Income-bucket categories), server-computed over the
+  // same window as spend, for the Earned-vs-Spent chart (WHIT-312). 0 when the response
+  // carries no __earned__ bucket (no income, or an older server).
+  earned: number;
   category: (id: string) => Category | undefined;
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
@@ -447,7 +451,13 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   // never succeeded, so there's no taxonomy to label real-category rows (cache-first preserved).
   const categoriesError = firstLoadError(categoriesQuery);
 
-  return { breakdown: breakdownQuery.data ?? {}, category, categoriesError, ...status };
+  // Earned rides in the breakdown response's __earned__ bucket (server-computed over the
+  // same window as spend). posted + pending, matching how the spend total combines both.
+  // Absent (no income, or an older server) ⇒ 0, so the chart falls back gracefully.
+  const earnedEntry = breakdownQuery.data?.[EARNED_KEY];
+  const earned = earnedEntry ? earnedEntry.posted + earnedEntry.pending : 0;
+
+  return { breakdown: breakdownQuery.data ?? {}, earned, category, categoriesError, ...status };
 }
 
 // --- the Transactions screen's composite view (WHIT-190a) --------------------

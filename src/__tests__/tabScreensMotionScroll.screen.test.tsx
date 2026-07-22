@@ -40,7 +40,7 @@ jest.mock('../queries', () => ({
     repayment: { amount: null, date: null, principal: null, interest: null },
     homeLoanError: false, repaymentError: false, refetchStale: jest.fn(),
   }),
-  useInsightsScreenData: () => ({ breakdown: {}, category, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
+  useInsightsScreenData: () => ({ breakdown: {}, earned: 0, category, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
   useSettingsScreenData: () => ({ categoriesCount: 12, loanReady: true, isLoading: false, refetchStale: jest.fn() }),
   useRulesScreenData: () => ({ rules: [], isLoading: false, isError: false, rulesError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
   usePayCycle: () => ({ payCycle: { length: 14, last_pay_date: '2024-01-03' }, cycleLen: 14, daysLeft: 7, cycleName: () => 'Fortnightly', isLoading: false, isError: false }),
