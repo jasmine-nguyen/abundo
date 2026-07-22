@@ -81,8 +81,13 @@ export async function registerForPushNotificationsAsync(): Promise<void> {
     if (!projectId) return;
 
     await fetchAndRegisterExpoToken(projectId);   // no device token → the one-shot path
-  } catch {
-    // Simulator / denied / offline / no token — stay silent, never crash launch.
+  } catch (err) {
+    // Simulator / denied / offline / no token — never crash launch. But LOG the reason
+    // rather than swallow it: a silent catch here hid a real getExpoPushTokenAsync
+    // failure (a renamed app whose build lacked push credentials) that made "no
+    // notifications" undiagnosable. A console.warn surfaces it in dev/logs without
+    // surfacing anything to the user.
+    console.warn('[push] registerForPushNotificationsAsync failed:', err);
   }
 }
 
@@ -114,8 +119,11 @@ export function registerPushTokenRotation(): Notifications.EventSubscription | u
           const projectId = Constants.expoConfig?.extra?.eas?.projectId;
           if (!projectId) return;
           await fetchAndRegisterExpoToken(projectId, token);
-        } catch {
-          // Offline / no token / permission gone — best-effort, never surface.
+        } catch (err) {
+          // Offline / no token / permission gone — best-effort, never crash; log the
+          // reason so a rotation re-register failure is diagnosable (the next launch
+          // re-registers anyway).
+          console.warn('[push] token-rotation re-register failed:', err);
         }
       })();
     });
