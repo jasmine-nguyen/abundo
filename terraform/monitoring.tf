@@ -229,3 +229,75 @@ resource "aws_cloudwatch_metric_alarm" "goal_nudge_errors" {
   alarm_description   = "The goal-nudge lambda errored at the infra level (import crash / timeout / OOM) — a failure it cannot swallow, so it never reaches the sweep-failure log line."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
+
+# --- Up-webhook health alarms (WHIT-316) ------------------------------------
+# WHIT-313 made the direct Up webhook the SOLE home-loan repayment notifier (the slow
+# BankSync-path push was removed), so a silent stop = a missed alert with no safety net.
+# These two alarms restore observability.
+
+# (1) Loud failures. One datapoint each time a validly-signed Up delivery fails to
+# fetch/push — the handler catches it, logs "up webhook: processing failed", and returns a
+# 500 dict (so AWS's built-in Lambda Errors metric never fires). Likely cause: a rotated Up
+# token. Quoted → exact-substring match (the line has spaces + a colon); keep this pattern
+# and up_webhook.py's log line in lockstep so this silent-failure monitor can't itself
+# silently never match. The 401 (rotated signing secret) path is deliberately NOT alarmed:
+# the route is public, so scanners make 401 noise — alarm (2) catches that case instead.
+resource "aws_cloudwatch_log_metric_filter" "up_webhook_errors" {
+  name           = "${var.project_name}-up-webhook-errors"
+  log_group_name = aws_cloudwatch_log_group.up_webhook.name
+  pattern        = "\"up webhook: processing failed\""
+
+  metric_transformation {
+    name          = "UpWebhookErrors"
+    namespace     = "${var.project_name}/UpWebhook"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "up_webhook_errors" {
+  alarm_name          = "${var.project_name}-up-webhook-errors"
+  namespace           = "${var.project_name}/UpWebhook"
+  metric_name         = "UpWebhookErrors"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "A validly-signed Up webhook delivery failed to fetch/push in the last hour (likely a rotated Up token) — the instant repayment push may be down. Up retries and SNS de-dupes, so a self-healing blip can page once."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+# (2) Silent failures — the real backstop. One datapoint when the daily balance poll sees
+# the mortgage balance drop like a repayment landed but no push fired within the lookback
+# window (handler.py logs "UP_WEBHOOK_REPAYMENT_MISSED ..."). This is the ONLY signal for
+# the silent modes: a re-linked account (wrong id → 200, no push) or a deregistered webhook
+# (never runs). The balance comes from the bank feed, independent of the Up webhook, so the
+# drop is still seen when the webhook is broken. Keep this pattern and handler.py in lockstep.
+resource "aws_cloudwatch_log_metric_filter" "up_webhook_repayment_missed" {
+  name           = "${var.project_name}-up-webhook-repayment-missed"
+  log_group_name = aws_cloudwatch_log_group.homeloan_request.name
+  pattern        = "UP_WEBHOOK_REPAYMENT_MISSED"
+
+  metric_transformation {
+    name          = "UpWebhookRepaymentMissed"
+    namespace     = "${var.project_name}/UpWebhook"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_missed" {
+  alarm_name          = "${var.project_name}-up-webhook-repayment-missed"
+  namespace           = "${var.project_name}/UpWebhook"
+  metric_name         = "UpWebhookRepaymentMissed"
+  statistic           = "Sum"
+  period              = 86400
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "The mortgage balance dropped like a repayment landed, but no instant repayment push fired around then — the push may be silently down (signing secret / Up token / re-linked account / deregistered webhook rotated or broken)."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}

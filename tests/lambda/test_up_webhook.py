@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 
 import pytest
 
@@ -225,6 +226,33 @@ def test_bad_signature_returns_401(wired):
     event["headers"][SIGNATURE_KEY] = "wrong-signature"
     assert wired.up.lambda_handler(event, None) == wired.up.UNAUTHORISED_RESPONSE
     assert wired.sent == []
+
+
+def test_missing_header_logs_unauthorised_marker(lam, caplog):
+    # WHIT-316: the greppable diagnostic breadcrumb on the reject path.
+    caplog.set_level(logging.WARNING)
+    lam.up_webhook.lambda_handler(_event(_webhook_payload(), header=False), None)
+    assert "UP_WEBHOOK_UNAUTHORISED" in caplog.text
+
+
+def test_bad_signature_logs_unauthorised_marker(lam, monkeypatch, caplog):
+    monkeypatch.setattr(lam.up_webhook, "get_signing_secret", lambda: MOCK_SECRET)
+    caplog.set_level(logging.WARNING)
+    event = _event(_webhook_payload())
+    event["headers"][SIGNATURE_KEY] = "wrong-signature"
+    lam.up_webhook.lambda_handler(event, None)
+    assert "UP_WEBHOOK_UNAUTHORISED" in caplog.text
+
+
+def test_processing_failure_logs_error_marker(lam, monkeypatch, caplog):
+    # The 500-path log line the CloudWatch alarm (WHIT-316) matches on.
+    monkeypatch.setattr(lam.up_webhook, "get_signing_secret", lambda: MOCK_SECRET)
+    caplog.set_level(logging.ERROR)
+    raw = b"not valid json"
+    event = {"body": raw.decode("utf-8"), "isBase64Encoded": False,
+             "headers": {SIGNATURE_KEY: _sign(raw)}}
+    lam.up_webhook.lambda_handler(event, None)
+    assert "up webhook: processing failed" in caplog.text
 
 
 def test_qualifying_repayment_sends_one_push_and_marks(wired):

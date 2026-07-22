@@ -21,14 +21,19 @@ class FakeNotifyTable:
         return {"Item": dict(item)} if item is not None else {}
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
-        assert UpdateExpression == "ADD #f :m SET #e = :exp", UpdateExpression
-        fired_attr = ExpressionAttributeNames["#f"]
-        exp_attr = ExpressionAttributeNames["#e"]
+        # "ADD #f :m SET <assign>[, <assign>...]" — budget markers set the TTL only;
+        # repayment markers also set last_fired_at (WHIT-316). Parse the SET clause
+        # generically so both shapes round-trip.
+        add_part, _, set_part = UpdateExpression.partition(" SET ")
+        assert add_part == "ADD #f :m", UpdateExpression
         member = ExpressionAttributeValues[":m"]
         assert isinstance(member, set), "String-Set ADD must pass a set"
         item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
+        fired_attr = ExpressionAttributeNames["#f"]
         item[fired_attr] = set(item.get(fired_attr, set())) | member
-        item[exp_attr] = ExpressionAttributeValues[":exp"]
+        for assignment in set_part.split(","):
+            name_alias, value_alias = (part.strip() for part in assignment.split("="))
+            item[ExpressionAttributeNames[name_alias]] = ExpressionAttributeValues[value_alias]
 
 
 def _repo(shared):
@@ -127,6 +132,25 @@ def test_mark_repayment_writes_a_ttl(shared):
     r.mark_repayment_fired("txn-1")
     item = r._table.store[("NOTIFY#REPAYMENT", "FIRED")]
     assert isinstance(item["expires_at"], int) and item["expires_at"] > 0
+
+
+def test_mark_repayment_stamps_last_fired_at(shared):
+    # WHIT-316: the balance-poller backstop reads this timestamp.
+    r = _repo(shared)
+    r.mark_repayment_fired("txn-1")
+    item = r._table.store[("NOTIFY#REPAYMENT", "FIRED")]
+    assert isinstance(item["last_fired_at"], int) and item["last_fired_at"] > 0
+
+
+def test_last_repayment_fired_at_round_trips(shared):
+    r = _repo(shared)
+    r.mark_repayment_fired("txn-1")
+    stamped = r._table.store[("NOTIFY#REPAYMENT", "FIRED")]["last_fired_at"]
+    assert r.last_repayment_fired_at() == stamped
+
+
+def test_last_repayment_fired_at_none_before_any_fire(shared):
+    assert _repo(shared).last_repayment_fired_at() is None
 
 
 def test_repayment_read_error_surfaces_as_database_error(shared, client_error, database_error):
