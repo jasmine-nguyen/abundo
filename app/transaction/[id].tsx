@@ -67,13 +67,15 @@ export default function TransactionDetail() {
                 {/* WHIT-287: the Category row is tappable — it re-opens the SAME categorize
                     picker the lists use (openPicker → PickerSheet → ConfirmSheet), so any
                     transaction can be re-filed, not just the Uncategorized ones a list row
-                    offers. `refileOnly` scopes the confirm step to THIS charge (no merchant-wide
-                    rule). The chevron marks it as the one editable field in this card. */}
+                    offers. WHIT-324: it now shows the SAME confirm as the lists — "All from this
+                    merchant" vs "Just this one" — instead of a redundant lone Save, so the two
+                    entry points behave identically. The chevron marks it as the one editable
+                    field in this card. */}
                 <Field
                   label="Category"
                   value={view.categoryLabel}
                   valueColor={view.categoryColor}
-                  onPress={() => openPicker(transaction.transaction_id, { refileOnly: true })}
+                  onPress={() => openPicker(transaction.transaction_id)}
                   actionLabel={`Change category, currently ${view.categoryLabel}`}
                 />
                 <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />

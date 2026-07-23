@@ -54,7 +54,7 @@ it('tapping the Category row opens the picker for this transaction', () => {
 
   fireEvent.press(row);
   expect(mockOpenPicker).toHaveBeenCalledTimes(1);
-  expect(mockOpenPicker).toHaveBeenCalledWith('t1', { refileOnly: true });
+  expect(mockOpenPicker).toHaveBeenCalledWith('t1');
 });
 
 // The top-level test above already covers the already-categorized (coffee) case; these cover
@@ -64,21 +64,21 @@ describe('re-categorize is offered regardless of the current category', () => {
     mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'income', amount: 2500 })] });
     render(<TransactionDetail />);
     fireEvent.press(screen.getByLabelText('Change category, currently Income'));
-    expect(mockOpenPicker).toHaveBeenCalledWith('t1', { refileOnly: true });
+    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
   });
 
   it('an uncategorized transaction is re-filable', () => {
     mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: null })] });
     render(<TransactionDetail />);
     fireEvent.press(screen.getByLabelText('Change category, currently Uncategorized'));
-    expect(mockOpenPicker).toHaveBeenCalledWith('t1', { refileOnly: true });
+    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
   });
 
   it('a pending transaction is re-filable', () => {
     mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', status: 'pending' })] });
     render(<TransactionDetail />);
     fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
-    expect(mockOpenPicker).toHaveBeenCalledWith('t1', { refileOnly: true });
+    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
   });
 });
 
@@ -87,5 +87,5 @@ it('the picker targets the routed transaction id (not a hardcoded one)', () => {
   mockTx = txData({ transactions: [txn({ transaction_id: 't2', category: 'coffee' })] });
   render(<TransactionDetail />);
   fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
-  expect(mockOpenPicker).toHaveBeenCalledWith('t2', { refileOnly: true });
+  expect(mockOpenPicker).toHaveBeenCalledWith('t2');
 });

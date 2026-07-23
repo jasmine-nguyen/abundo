@@ -99,6 +99,34 @@ it('applyCategory(all) rolls back ONLY the failed ids in the cache (partial)', a
   expect(cachedCategory('t2')).toBeNull(); // not saved → reverted (partial rollback)
 });
 
+// WHIT-324: the confirm's "All from this merchant" is now reachable from the detail screen too,
+// where the tapped charge can already be categorised. The sweep filters to UNCATEGORISED
+// same-merchant charges, so the tapped charge must be force-included or its category never
+// changes.
+it('applyCategory(all) re-files the tapped charge even when it is already categorised', async () => {
+  // t1 already sits under Dining; t2 is uncategorised. Re-filing "all" as Groceries must move
+  // BOTH — the tapped t1 (which the sweep filter would otherwise skip) and the swept t2.
+  const result = mount([{ ...txn('t1'), category: 'dining' }, txn('t2')]);
+  queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(cachedCategory('t1')).toBe('groceries'); // tapped charge re-filed despite prior category
+  expect(cachedCategory('t2')).toBe('groceries'); // swept in as before
+});
+
+it('applyCategory(all) reverts a failed tapped charge to its PREVIOUS category (not null)', async () => {
+  mockApi.setTransactionCategories.mockResolvedValue({ results: [] }); // every id fails to save
+  const result = mount([{ ...txn('t1'), category: 'dining' }]);
+  queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(cachedCategory('t1')).toBe('dining'); // failed re-file → back to its real prior category
+});
+
 // --- WHIT-291: applyCategoryToMany (multi-select batch re-file) ------------------------------
 
 it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + invalidates', async () => {

@@ -100,27 +100,28 @@ it('applyCategoryToMany reverts only the rejected chunk to its previous category
   expect(result.current.toast).toBe('Could not save some categories. Please try again.');
 });
 
-// [A-EMPTY] applyCategory('all') on an EMPTY sweep still ISSUES the rule and files it — the rule
-// is independent of whether any current charge was swept. Existing 'does NOT call the batch when
-// the sweep is empty' proves the batch is skipped; nothing proved the rule still fires. Fail-on-
-// revert: gate createEnrichment on sameMerchantIds.length > 0 and both assertions below go red.
-it("applyCategory('all') still creates the rule when the sweep is empty (no batch, rule filed)", async () => {
+// [A-EMPTY] applyCategory('all') with an EMPTY merchant sweep still ISSUES the rule AND files the
+// tapped charge — the rule is independent of the sweep, and the tapped charge is the user's
+// explicit pick (WHIT-324), so it's filed even when no OTHER charge qualifies. Fail-on-revert:
+// gate createEnrichment on sameMerchantIds.length > 0, or drop the tapped charge from the set, and
+// the assertions below go red.
+it("applyCategory('all') files the tapped charge and mints the rule when the sweep is empty", async () => {
   mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
-  // Origin doesn't count to a budget -> sameMerchantIds is empty -> no charge to file.
+  // Origin doesn't count to a budget -> no OTHER charge is swept; only the tapped charge is filed.
   seed([{ ...TXN, transaction_id: 't1', category: null, counts_to_budget: false }]);
   const result = mount();
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.setTransactionCategories).not.toHaveBeenCalled();          // empty sweep -> no batch call
+  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);                    // the tapped charge is filed
+  expect(mockApi.setTransactionCategories.mock.calls[0][0]).toEqual([{ id: 't1', category: 'groceries' }]);
   expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' }); // rule STILL fires
   // The optimistic rule was reconciled to the real BankSync id (not rolled back) and survives.
   expect(rules()).toHaveLength(1);
   expect(rules()[0].id).toBe('e1');
-  // WHIT-292: an empty sweep shows the rule-only toast (no count) — it must NOT claim charges
-  // filed when none did. A non-empty sweep names the count (see appProvider happy-path test).
-  expect(result.current.toast).toBe('Rule saved — future COLES charges file as Groceries.');
+  // WHIT-324: the tapped charge counts, so the toast names the one it just filed.
+  expect(result.current.toast).toBe('1 transaction filed — future COLES charges file as Groceries.');
 });
 
 // [A-DEDUPE] applyCategoryToMany collapses duplicate ids to ONE update before the helper — a
