@@ -105,39 +105,39 @@ export const BUCKET_COLOR: Record<Bucket, string> = {
 // hues (the old order clustered cyan/teal/sky). PALETTE[0] stays '#ff9e64' — the fallback default.
 export const PALETTE = ['#ff9e64', '#7aa2f7', '#f7768e', '#73daca', '#e0af68', '#bb9af7', '#ff75a0', '#2ac3de', '#9ece6a', '#b4a5f7'];
 
-// Tokyo Night category palette (theme re-skin). The old warm palette — tan, coral, yellow — clashed
-// with the Tokyo Night theme, so every legacy category colour maps to a Tokyo Night hue. Applied on
-// READ (toCategory) so existing categories — whose colour is stored server-side — recolour with no
-// data migration. A colour that isn't a known legacy value (already-Tokyo-Night, or a future custom
-// pick) passes through.
-//
-// The targets are deliberately SPREAD across the wheel so no two categories read as the same colour.
-// The four blue-greens the seed set used to share (groceries/shopping/fitness/travel) are pulled
-// apart: groceries → green, shopping → teal, travel → cyan, fitness → sky — a clear step from green
-// to blue rather than four near-identical teals.
-const CATEGORY_COLOR_MAP: Record<string, string> = {
-  '#e8a87c': '#ff9e64', // tan → orange
-  '#7fd49b': '#9ece6a', // green → green
-  '#f08c8c': '#f7768e', // coral → rose
-  '#8ab4f8': '#7aa2f7', // blue → blue
-  '#f2a0c9': '#ff75a0', // pink → pink
-  '#c7a8f0': '#bb9af7', // lavender → purple
-  '#f2c94c': '#e0af68', // yellow → gold
-  '#6fd0c9': '#73daca', // teal-green → teal
-  '#8fd46b': '#7dcfff', // green → sky
-  '#b0a8f0': '#b4a5f7', // light purple → periwinkle
-  '#f0b27a': '#cba6f7', // orange → mauve
-  '#6fb6d0': '#2ac3de', // blue → cyan
-  '#e59bd0': '#9d7cd8', // magenta → violet
-  '#7fa9f0': '#6a89f7', // blue → indigo
+// Category colours (WHIT-320). A category's display colour is a deterministic function of its id,
+// so it's stable across cycles and identical everywhere (pie slice, legend row, budgets, txns).
+// The 13 built-in categories have fixed Tokyo Night hues (CATEGORY_BASE) — these are the app's
+// CURRENT colours, unchanged. A category BEYOND the built-ins (a user-created one) gets a darker
+// "sibling" of one of those hues (OKLCH: lightness −15%, chroma −10%), chosen by hashing its id —
+// so extra categories stay on-palette and read as a distinct shade instead of repeating a base
+// colour. Design's scheme; extends the palette from 13 to a durable ~26 before anything folds to
+// the neutral "Other" grey the donut already uses.
+export const CATEGORY_BASE: Record<string, string> = {
+  coffee: '#ff9e64', groceries: '#9ece6a', eatingout: '#f7768e', transport: '#7aa2f7',
+  health: '#ff75a0', pets: '#bb9af7', utilities: '#e0af68', shopping: '#73daca',
+  fitness: '#7dcfff', subs: '#cba6f7', travel: '#2ac3de', gifts: '#9d7cd8', phonenet: '#b4a5f7',
 };
 
-// Translate a stored category colour to its Tokyo Night equivalent. Unknown colours (already
-// re-themed, or a custom value) pass through unchanged. Returns undefined for a null/blank input
-// so callers can fall back to the palette default.
-export function normalizeCategoryColor(hex: string | null | undefined): string | undefined {
-  if (!hex) return undefined;
-  return CATEGORY_COLOR_MAP[hex.toLowerCase()] ?? hex;
+// Darker sibling of each CATEGORY_BASE value, in the same order. Static tokens (no runtime colour
+// library); the OKLCH relationship to the base is pinned by a test so the two can't drift.
+export const CATEGORY_SIBLINGS = [
+  '#d17d4a', '#7da64f', '#ca5b70', '#5f81cb', '#d15980', '#977aca', '#b68c4d',
+  '#56b0a3', '#5fa7d0', '#a484ca', '#039db5', '#7e61b1', '#9083ca',
+];
+
+// A small stable string hash (djb2), so a non-seed category's sibling is deterministic from its id.
+function categoryColorHash(id: string): number {
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+// The display colour for a category id: a built-in's fixed base, else a deterministic darker
+// sibling. Null/blank id falls back to the palette default.
+export function colorForCategory(id: string | null | undefined): string {
+  if (!id) return PALETTE[0];
+  return CATEGORY_BASE[id] ?? CATEGORY_SIBLINGS[categoryColorHash(id) % CATEGORY_SIBLINGS.length];
 }
 
 // Max charges per batch category write. Mirrors the server's TRANSACTION_BATCH_MAX
@@ -461,7 +461,7 @@ export function toCategory(raw: any): Category {
     name: raw.name,
     bucket: raw.bucket,
     icon: raw.icon ?? 'coffee',
-    color: normalizeCategoryColor(raw.color) ?? PALETTE[0],
+    color: colorForCategory(raw.id),
     recent: typeof raw.recent === 'number' ? raw.recent : 0,
     parent: raw.parent ?? null,
   };
