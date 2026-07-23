@@ -26,7 +26,6 @@ from constants import (
     MAX_PAGE_SIZE,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
-    REPAYMENT_INCOMING_TYPE,
     REPAYMENT_PATH,
     RULE_FIELDS,
     RULE_OPERATORS,
@@ -56,6 +55,7 @@ from repository import (
     TransactionRepository,
     VersionConflictError,
 )
+from repayment_rules import is_repayment_credit
 from banksync_enrichments import (
     BankSyncError,
     create_rule,
@@ -1471,9 +1471,8 @@ def get_repayment(repo: TransactionRepository) -> dict:
 
     repayment = when = amount = None
     for r in rows:
-        amt = _num(r.get("amount"))
-        if r.get("type") == REPAYMENT_INCOMING_TYPE and amt is not None and amt > 0 and r.get("date"):
-            repayment, when, amount = r, r["date"], amt
+        if is_repayment_credit(r):
+            repayment, when, amount = r, r["date"], r["amount"]
             break
     if repayment is None:
         return dict(_REPAYMENT_NULL)

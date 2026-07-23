@@ -85,6 +85,15 @@ def test_ignores_negative_incoming_transfer(handler):
     assert handler.get_repayment(repo)["amount"] is None
 
 
+def test_returns_a_sub_ten_dollar_repayment(handler):
+    # The read API has NO $10 alert floor (that's the poller's concern). A small
+    # repayment must still be returned. Fail-on-revert guard: this breaks if anyone
+    # bakes MIN_REPAYMENT_NOTIFY into the shared is_repayment_credit rule.
+    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01", "5")]))
+    assert out["amount"] == Decimal("5")
+    assert out["date"] == "2026-07-01"
+
+
 # --- route -------------------------------------------------------------------
 
 
@@ -103,3 +112,37 @@ def test_route_get_repayment_null_sentinel(handler, monkeypatch):
     resp = handler.lambda_handler(event, None)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"amount": None, "date": None, "principal": None, "interest": None}
+
+
+# --- WHIT-325 GAP tests (adversarial; not duplicating the three seeded tests) -
+
+
+def test_skips_a_malformed_newest_leg_and_returns_the_next_valid_repayment(handler):
+    # WHIT-325 — [A30] the API-side analog of the poller's A26. The shared predicate
+    # must SKIP a garbled newest leg (non-numeric amount, then a None amount) and let
+    # the loop fall through to the next genuine repayment. Fail-on-revert: weaken the
+    # isinstance guard in is_repayment_credit and the garbled leg is no longer skipped —
+    # get_repayment then raises TypeError on 'oops' > 0, so this test goes red.
+    rows = [
+        {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN", "amount": "oops", "date": "2026-07-10"},
+        {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN", "amount": None, "date": "2026-07-08"},
+        _repayment("2026-07-01", "1440"),
+    ]
+    out = handler.get_repayment(FakeTransactionRepo(rows))
+    assert out["amount"] == Decimal("1440")
+    assert out["date"] == "2026-07-01"
+
+
+def test_small_repayment_with_larger_same_month_interest_is_total_only(handler):
+    # WHIT-325 — [A31] a sub-$10 repayment is selected by the shared predicate (no
+    # floor) and STILL flows through the interest-summing loop. When same-month
+    # interest exceeds the tiny repayment, the split is suppressed (total-only, never a
+    # negative principal). Fail-on-revert twice over: a floor in the shared rule drops
+    # the $5 leg (amount would be None); dropping the `interest < amount` guard yields a
+    # negative principal.
+    repo = FakeTransactionRepo([_repayment("2026-07-01", "5"), _interest("2026-07-05", "-8")])
+    out = handler.get_repayment(repo)
+    assert out["amount"] == Decimal("5")
+    assert out["date"] == "2026-07-01"
+    assert out["principal"] is None
+    assert out["interest"] is None

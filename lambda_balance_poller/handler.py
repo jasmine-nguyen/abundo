@@ -37,10 +37,10 @@ from constants import (
     MAX_PAGE_SIZE,
     MIN_REPAYMENT_NOTIFY,
     REPAYMENT_DROP_THRESHOLD,
-    REPAYMENT_INCOMING_TYPE,
     REPAYMENT_MISS_LOOKBACK_DAYS,
 )
 from milestones import notify_milestone_crossing
+from repayment_rules import is_repayment_credit
 from repository import (
     AccountBalanceRepository,
     DeviceRepository,
@@ -202,18 +202,6 @@ def check_repayment_landed_but_no_push(
     )
 
 
-def _is_repayment_credit(row: dict) -> bool:
-    """True for a stored home-loan repayment leg worth an alert: an incoming transfer
-    credit at or above the $10 notify floor (same predicate the webhook fires on). A
-    malformed row (missing amount/date) is skipped, never a crash."""
-    amount = row.get("amount")
-    if row.get("type") != REPAYMENT_INCOMING_TYPE or not row.get("date"):
-        return False
-    if amount is None or amount <= 0 or amount < MIN_REPAYMENT_NOTIFY:
-        return False
-    return True
-
-
 def check_ingested_repayment_without_push(notify_repo, transaction_repo, now: int) -> None:
     """Precise miss-detector (WHIT-317): alarm if a home-loan repayment was ingested in the
     last REPAYMENT_MISS_LOOKBACK_DAYS but no push alerted it.
@@ -238,7 +226,13 @@ def check_ingested_repayment_without_push(notify_repo, transaction_repo, now: in
     rows, _cursor = transaction_repo.get_transactions_by_date_range(
         HOMELOAN_ACCOUNT_ID, start_date, end_date, MAX_PAGE_SIZE
     )
-    repayment_cents = [int(round(row["amount"] * 100)) for row in rows if _is_repayment_credit(row)]
+    # The shared rule identifies a repayment leg; the $10 alert floor stays here, the
+    # poller's own "worth an alert" filter (the read API deliberately has no floor).
+    repayment_cents = [
+        int(round(row["amount"] * 100))
+        for row in rows
+        if is_repayment_credit(row) and row["amount"] >= MIN_REPAYMENT_NOTIFY
+    ]
     if not repayment_cents:
         return
 
