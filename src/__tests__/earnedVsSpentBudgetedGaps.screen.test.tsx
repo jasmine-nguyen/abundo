@@ -1,8 +1,9 @@
-// WHIT-314 GAPS (component) — the shared-scale edges the implementer's overlay suite doesn't
-// pin: sliver bars when a budget is the shared max, an actual EXACTLY on its budget (fill hugs
-// the target, no overflow), a very large budget (no NaN/overflow), and that the target track is
-// the FADED tint (not the solid hue). Reads the REAL earnedVsSpentBudgeted / EarnedVsSpent +
-// tint, so a regression in the shared max, the fill widths, or the faded track fails here.
+// WHIT-314 GAPS (component), updated for WHIT-319's per-side scale — the overlay edges the
+// implementer's suite doesn't pin: a tiny actual against its OWN large budget (a legitimate
+// sliver of that budget), an actual EXACTLY on its budget (fill hugs the target, no overflow), a
+// very large budget (no NaN/overflow), and that the target track is the FADED tint (not the solid
+// hue). Reads the REAL earnedVsSpentBudgeted / EarnedVsSpent + tint, so a regression in the
+// per-side max, the fill widths, or the faded track fails here.
 import { describe, it, expect } from '@jest/globals';
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
@@ -10,14 +11,14 @@ import { EarnedVsSpent, earnedVsSpentBudgeted } from '../components/EarnedVsSpen
 import { C, tint } from '../theme';
 
 describe('earnedVsSpentBudgeted — shared-scale edges (WHIT-314 gaps)', () => {
-  // [G7] budgetedSpent is the shared max and the actuals are tiny → every other bar is a sliver,
-  // measured against the 4000 budget. Pins the exact fractions so a max-over-the-wrong-set
-  // regression (e.g. per-pair max) is caught.
-  it('[G7] a large budgeted-spend max makes tiny actuals slivers on the SAME scale', () => {
+  // [G7] Per-side scale (WHIT-319): a $30 spend against a $4000 budget is a legitimate sliver of
+  // THAT budget, while the earned bar (no income budget) scales to its own actual and stays full.
+  // Guards against a regression back to a shared max (which would squish the earned bar too).
+  it('[G7] each bar scales to its OWN budget — a tiny spend is a sliver of ITS budget', () => {
     const r = earnedVsSpentBudgeted(50, 30, 0, 4000);
-    expect(r.budgetedSpentShare).toBe(1);           // 4000 = shared max
-    expect(r.earnedShare).toBe(50 / 4000);          // 0.0125
-    expect(r.spentShare).toBe(30 / 4000);           // 0.0075
+    expect(r.budgetedSpentShare).toBe(1);           // 4000 = the spent side's own max
+    expect(r.spentShare).toBe(30 / 4000);           // 0.0075 of its own budget (correctly small)
+    expect(r.earnedShare).toBe(1);                  // earned scales to its own actual (50), full bar
     expect(r.budgetedEarnedShare).toBe(0);          // no income budget
   });
 
