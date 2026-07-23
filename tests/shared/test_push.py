@@ -107,6 +107,28 @@ def test_builds_the_expo_request_and_counts_ok(shared, monkeypatch):
     assert out["pruned"] == []
 
 
+def test_data_payload_is_attached_to_every_message(shared, monkeypatch):
+    # WHIT-321: an optional `data` rides on every message (deep-links a tap to a screen).
+    # The no-data case above is the backward-compat guard: callers that pass none are
+    # unchanged; this one proves the key appears on each message when passed.
+    push = shared.push
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data)
+        return _FakeResponse(_tickets("ok", "ok"))
+
+    monkeypatch.setattr(push.urllib.request, "urlopen", fake_urlopen)
+    push.send_push(
+        "Nice one", "$3,573 toward the mortgage",
+        ["ExpoPushToken[a]", "ExpoPushToken[b]"],
+        data={"type": "repayment"}, access_token="k", device_repo=_RecordingRepo(),
+    )
+    assert [m.get("data") for m in captured["body"]] == [
+        {"type": "repayment"}, {"type": "repayment"}
+    ]
+
+
 def test_prunes_device_not_registered_tokens(shared, monkeypatch):
     push = shared.push
     repo = _RecordingRepo()

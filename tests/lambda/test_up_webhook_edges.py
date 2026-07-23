@@ -76,8 +76,8 @@ def wired(lam, monkeypatch):
     monkeypatch.setattr(up, "DeviceRepository", lambda: device)
     sent = []
 
-    def fake_send_push(title, body, tokens):
-        sent.append({"title": title, "body": body, "tokens": list(tokens)})
+    def fake_send_push(title, body, tokens, data=None):
+        sent.append({"title": title, "body": body, "tokens": list(tokens), "data": data})
         return {"sent": len(tokens), "ok": 1, "pruned": []}
 
     monkeypatch.setattr(up, "send_push", fake_send_push)

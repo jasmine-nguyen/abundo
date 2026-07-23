@@ -87,8 +87,8 @@ def wired(lam, monkeypatch):
 
     sent = []
 
-    def fake_send_push(title, body, tokens):
-        sent.append({"title": title, "body": body, "tokens": list(tokens)})
+    def fake_send_push(title, body, tokens, data=None):
+        sent.append({"title": title, "body": body, "tokens": list(tokens), "data": data})
         return {"sent": len(tokens), "ok": 1, "pruned": []}
 
     monkeypatch.setattr(up, "send_push", fake_send_push)
@@ -260,6 +260,8 @@ def test_qualifying_repayment_sends_one_push_and_marks(wired):
     assert result == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
     assert "$3,573 toward the mortgage" in wired.sent[0]["body"]
+    # WHIT-321: the push carries the deep-link destination so a tap opens /mortgage.
+    assert wired.sent[0]["data"] == {"type": "repayment"}
     assert wired.notify.marked == ["txn-1"]
 
 
@@ -312,7 +314,7 @@ def test_no_device_tokens_short_circuits(wired, monkeypatch):
 
 
 def test_send_push_not_accepted_returns_500_and_not_marked(wired, monkeypatch):
-    monkeypatch.setattr(wired.up, "send_push", lambda *a: {"sent": 1, "ok": 0, "pruned": []})
+    monkeypatch.setattr(wired.up, "send_push", lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
     result = wired.up.lambda_handler(_event(_webhook_payload()), None)
     assert result == wired.up.ERROR_RESPONSE
     assert wired.notify.marked == []

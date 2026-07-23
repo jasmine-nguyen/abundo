@@ -16,6 +16,7 @@ import { AppProvider } from '../src/context';
 import { Overlays } from '../src/components/Overlays';
 import { registerForPushNotificationsAsync, registerPushTokenRotation } from '../src/push';
 import { AuthGate } from '../src/AuthGate';
+import { NotificationRouter } from '../src/components/NotificationRouter';
 import { useReduceMotion } from '../src/motion/useReduceMotion';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -89,6 +90,9 @@ export default function RootLayout() {
         </Stack>
       </AuthGate>
       <Overlays />
+      {/* Deep-links a notification tap to its screen (WHIT-321). Inside the router tree
+          so useRouter/useRootNavigationState resolve; renders nothing. */}
+      <NotificationRouter />
     </View>
   );
 
