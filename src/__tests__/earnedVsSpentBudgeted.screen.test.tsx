@@ -10,13 +10,22 @@ import { EarnedVsSpent, earnedVsSpentBudgeted } from '../components/EarnedVsSpen
 const REF = { earned: 2975, spent: 2408, budgetedEarned: 3082, budgetedSpent: 2438 } as const;
 
 describe('earnedVsSpentBudgeted (pure)', () => {
-  it('shares are on ONE shared max across all four values', () => {
+  it('scales each bar to its OWN budget (per-side max), not a shared max', () => {
     const r = earnedVsSpentBudgeted(REF.earned, REF.spent, REF.budgetedEarned, REF.budgetedSpent);
-    // budgetedEarned (3082) is the largest → full width; everything else is a fraction of it.
-    expect(r.budgetedEarnedShare).toBe(1);
-    expect(r.earnedShare).toBeCloseTo(2975 / 3082);
-    expect(r.spentShare).toBeCloseTo(2408 / 3082);
-    expect(r.budgetedSpentShare).toBeCloseTo(2438 / 3082);
+    // Earned side scales to max(2975, 3082) = 3082; spent side to max(2408, 2438) = 2438.
+    expect(r.budgetedEarnedShare).toBe(1);          // the budget fills its own track…
+    expect(r.earnedShare).toBeCloseTo(2975 / 3082); // …and the actual is a fraction of THAT budget
+    expect(r.budgetedSpentShare).toBe(1);
+    expect(r.spentShare).toBeCloseTo(2408 / 2438);
+  });
+
+  it('WHIT-319: a small over-budget spend fills its bar regardless of a large income', () => {
+    // Real case: earned $6,389, spent $1,692 of a $910 budget. The old shared max squished spent
+    // to 1692/6389 ≈ 26% (illegible); per-side it's OVER its own budget → fills 100%.
+    const r = earnedVsSpentBudgeted(6389, 1692, 0, 910);
+    expect(r.spentShare).toBe(1);                    // over budget → full bar (was ~0.265)
+    expect(r.budgetedSpentShare).toBe(910 / 1692);   // target marker sits back at ~54%
+    expect(r.earnedShare).toBe(1);                   // earned scales to itself (no income budget)
   });
 
   it('budgeted surplus = budgeted income − budgeted spend, with surplus/shortfall/break-even copy', () => {
@@ -50,8 +59,8 @@ describe('EarnedVsSpent — budgeted overlay (render)', () => {
 
   it('draws both target tracks, the budgeted captions, and the surplus line', () => {
     render(<EarnedVsSpent earned={REF.earned} spent={REF.spent} budgeted={budgeted} testID="evs" />);
-    expect(screen.getByTestId('earned-bar-target').props.style.width).toBe('100%');        // 3082 = max
-    expect(screen.getByTestId('spent-bar-target').props.style.width).toBe(`${(2438 / 3082) * 100}%`);
+    expect(screen.getByTestId('earned-bar-target').props.style.width).toBe('100%');  // each budget fills its own track
+    expect(screen.getByTestId('spent-bar-target').props.style.width).toBe('100%');
     expect(screen.getByText('of $3,082 budgeted')).toBeTruthy();
     expect(screen.getByText('of $2,438 budgeted')).toBeTruthy();
     expect(screen.getByTestId('budgeted-surplus').props.children).toBe('$644 budgeted surplus');

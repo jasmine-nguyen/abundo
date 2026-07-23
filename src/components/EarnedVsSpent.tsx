@@ -42,10 +42,11 @@ export function earnedVsSpent(earned: number, spent: number): {
   return { leftover, overspent, even, earnedShare, spentShare, verdict };
 }
 
-// The budgeted-overlay math, pure + exported. ONE shared max across all four values (both
-// actuals AND both targets) so every bar and track is measured on the same scale: "actual of
-// budgeted" reads by relative length, and an actual OVER its budget draws past its target track
-// (the over-budget signal). Non-finite inputs coerce to 0.
+// The budgeted-overlay math, pure + exported. Each bar is scaled to its OWN budget (WHIT-319):
+// a side's fill and its target track share `max(actual, budget)` for that side, so "actual of
+// budget" reads truthfully — under budget the fill sits inside its full-width target, over budget
+// the fill reaches the end and the target sits back (the over-budget signal). A shared max across
+// both sides made a small spend bar an illegible sliver next to a large income. Non-finite → 0.
 export function earnedVsSpentBudgeted(
   earned: number, spent: number, budgetedEarned: number, budgetedSpent: number,
 ): {
@@ -57,8 +58,10 @@ export function earnedVsSpentBudgeted(
   const spentAmount = num(spent);
   const budgetedEarnedAmount = num(budgetedEarned);
   const budgetedSpentAmount = num(budgetedSpent);
-  const max = Math.max(earnedAmount, spentAmount, budgetedEarnedAmount, budgetedSpentAmount);
-  const share = (v: number): number => (max > 0 ? v / max : 0);
+  // Per-side scale: the bigger of the side's actual and its budget is that side's full width.
+  const earnedMax = Math.max(earnedAmount, budgetedEarnedAmount);
+  const spentMax = Math.max(spentAmount, budgetedSpentAmount);
+  const share = (v: number, scale: number): number => (scale > 0 ? v / scale : 0);
 
   const budgetedSurplus = budgetedEarnedAmount - budgetedSpentAmount;
   let surplusLabel: string;
@@ -67,8 +70,8 @@ export function earnedVsSpentBudgeted(
   else surplusLabel = 'Budgeted to break even';
 
   return {
-    earnedShare: share(earnedAmount), spentShare: share(spentAmount),
-    budgetedEarnedShare: share(budgetedEarnedAmount), budgetedSpentShare: share(budgetedSpentAmount),
+    earnedShare: share(earnedAmount, earnedMax), spentShare: share(spentAmount, spentMax),
+    budgetedEarnedShare: share(budgetedEarnedAmount, earnedMax), budgetedSpentShare: share(budgetedSpentAmount, spentMax),
     budgetedSurplus, surplusLabel,
   };
 }
