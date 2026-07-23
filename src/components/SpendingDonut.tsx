@@ -31,6 +31,54 @@ export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
   return kept;
 }
 
+// Classify a slice colour as warm (the red→orange→gold→pink arc), cool (green/teal/blue/purple),
+// or neutral (the low-saturation grey "Other"). Used only to arrange the ring — a category keeps
+// its own colour; this just decides where it sits. Hue in degrees off a quick HSL conversion.
+export type Temperature = 'warm' | 'cool' | 'neutral';
+export function temperature(hex: string): Temperature {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+  const light = (max + min) / 2;
+  const sat = delta === 0 ? 0 : delta / (1 - Math.abs(2 * light - 1));
+  if (sat < 0.25) return 'neutral'; // the grey "Other" slice — clashes with nothing
+  let hue = 0;
+  if (max === r) hue = ((g - b) / delta) % 6;
+  else if (max === g) hue = (b - r) / delta + 2;
+  else hue = (r - g) / delta + 4;
+  hue = hue * 60;
+  if (hue < 0) hue += 360;
+  // Warm = the red→gold arc (< 80°) plus pink/magenta (≥ 330°). Every current base + sibling clears
+  // this comfortably (health 341°, eatingout 351°); a NEW magenta added at 320–329° would fall on
+  // the cool side — if the palette ever grows one, widen this bound rather than let it sort cool.
+  return (hue < 80 || hue >= 330) ? 'warm' : 'cool';
+}
+
+// Reorder the painted slices so warm and cool alternate around the ring — so two similar-hued
+// categories (e.g. two warm pinks) are less likely to sit side by side (WHIT-323). Interleave
+// starting with the larger temperature group so the majority is spread out; a circle with a
+// lopsided mix (e.g. 4 warm, 2 cool) can't avoid every same-temperature neighbour, so this
+// minimises rather than guarantees. The neutral "Other" slice sits last (grey needs no spacing).
+// Pure + exported so a test pins the ordering. Every slice is preserved — this only reorders.
+export function arrangeByTemperature(slices: DonutSlice[]): DonutSlice[] {
+  const warm: DonutSlice[] = [], cool: DonutSlice[] = [], neutral: DonutSlice[] = [];
+  for (const slice of slices) {
+    const t = temperature(slice.color);
+    if (t === 'warm') warm.push(slice);
+    else if (t === 'cool') cool.push(slice);
+    else neutral.push(slice);
+  }
+  const [big, small] = warm.length >= cool.length ? [warm, cool] : [cool, warm];
+  const arranged: DonutSlice[] = [];
+  for (let i = 0; i < big.length; i++) {
+    arranged.push(big[i]);
+    if (i < small.length) arranged.push(small[i]);
+  }
+  return [...arranged, ...neutral];
+}
+
 // Where a wedge sits on the emphasis axis, given the current selection: +1 popped (this is the
 // tapped one), −1 dimmed (something else is tapped), 0 at rest (nothing tapped). Pure so a test
 // can pin it without reaching into the animation. The scale/opacity below are just this mapped.
@@ -120,7 +168,11 @@ function arcPath(startDeg: number, endDeg: number, r: number): string {
 // and read that category's name + total instead, and tap the hole to clear back to the total.
 // Renders nothing when there is no positive spend — the screen shows its own empty state instead.
 export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
-  const painted = reduceSlices(slices);
+  // `reduced` is largest-first (reduceSlices' sort); `painted` reorders it for warm/cool alternation
+  // (WHIT-323). The RING paints in `painted` order; the spoken a11y summary below reads `reduced`
+  // (largest-first), matching the category rows so a screen-reader hears categories by size.
+  const reduced = reduceSlices(slices);
+  const painted = arrangeByTemperature(reduced);
   const sum = painted.reduce((acc, s) => acc + s.value, 0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const reduceMotion = useReduceMotion();
@@ -240,7 +292,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   const selectedLayout = activeId ? layout.find((d) => d.s.id === activeId) : null;
   const topWedge = selectedLayout ? renderWedge(selectedLayout, false) : null;
 
-  const label = `Spending by category. ${painted
+  const label = `Spending by category. ${reduced
     .map((s) => `${s.name} ${pct(s.value)} percent`)
     .join(', ')}. Tap a slice for its total, or the centre for the total spent.`;
 
