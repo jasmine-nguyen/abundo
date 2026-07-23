@@ -168,6 +168,24 @@ def test_lump_sum_sends_furthest_and_marks_all(shared, recorder):
     assert notify.fired == {"0", "1", "2"}  # all three crossed are marked
 
 
+def test_lump_sum_push_carries_milestone_deeplink_data(shared, monkeypatch):
+    # WHIT-322 GAP — a lump-sum jump past SEVERAL milestones still sends exactly one push (the
+    # furthest), and it must ALSO carry data={"type": "milestone"}. The implementer only locked
+    # the single-crossing send; this guards the lump-sum branch of the same call site.
+    captured = []
+    monkeypatch.setattr(shared.milestones, "send_push",
+                        lambda title, body, tokens, **kw: captured.append(kw.get("data")) or
+                        {"sent": len(tokens), "ok": len(tokens), "pruned": []})
+    notify = FakeNotifyRepo()
+    sent = shared.milestones.notify_milestone_crossing(
+        Decimal("600000"), Decimal("290000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
+        notify_repo=notify)
+    assert sent == 1
+    assert captured == [{"type": "milestone"}]  # one push, carrying the deep-link tag
+    assert notify.fired == {"0", "1", "2"}       # all crossed still marked
+
+
 def test_already_fired_milestone_does_not_resend(shared, recorder):
     sent = _notify(shared, old="545000", new="544000", fired={"0"})
     assert sent == 0

@@ -178,6 +178,15 @@ class TestStaleNudge:
         assert rec.calls[0]["body"] == "Your Car savings balance is 71 days old — tap to update."
         assert "GOAL#m1#stale" in notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
 
+    def test_stale_push_carries_goal_deeplink_data(self, shared, monkeypatch):
+        # WHIT-322 GAP — the STALE nudge is a second, conceptually-distinct send site that also
+        # flows through send_and_mark, so it must ALSO carry data={"type": "goal"}. The
+        # implementer only locked the behind-pace push; a stale-only data regression would slip
+        # past that. _manual() defaults are stale-but-not-behind, so this is the pure stale path.
+        _, rec, *_ = _run(shared, monkeypatch, {"m1": _manual()})
+        assert rec.calls[0]["title"] == shared.goal_nudge._STALE_TITLE  # proves it's the stale push
+        assert rec.calls[0]["data"] == {"type": "goal"}
+
     def test_synced_goal_never_fires_stale(self, shared, monkeypatch):
         # Far deadline so behind can't fire either -> a synced goal produces no push at all.
         sent, rec, *_ = _run(shared, monkeypatch, {"g1": _grow(target_date="2026-12-01")},
