@@ -266,9 +266,10 @@ it('applyCategory(all) does NOT invalidate budgets/breakdown when the whole batc
   invalidate.mockRestore();
 });
 
-it('applyCategory(all) does NOT call the batch when the sweep is empty', async () => {
-  // Origin doesn't count to a budget -> excluded from sameMerchantIds -> empty set.
-  // A real server 400s on {updates:[]}; the client must not send it at all (E1 fix).
+it('applyCategory(all) files the tapped charge even when the sweep is empty (never an empty batch)', async () => {
+  // WHIT-324: the tapped charge doesn't count to a budget, so the merchant SWEEP is empty — but
+  // the charge the user explicitly picked is still filed. The batch therefore carries exactly
+  // that one id, and is never sent empty (a real server 400s on {updates:[]}; the E1 guard).
   mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed([{ ...TXN, transaction_id: 't1', category: null, counts_to_budget: false }]);
   const result = mount();
@@ -276,7 +277,8 @@ it('applyCategory(all) does NOT call the batch when the sweep is empty', async (
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.setTransactionCategories).not.toHaveBeenCalled();
+  expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
+  expect(mockApi.setTransactionCategories.mock.calls[0][0]).toEqual([{ id: 't1', category: 'groceries' }]);
 });
 
 it('applyCategory(all) splits a >100 sweep into chunks of 100 (WHIT-70 chunking)', async () => {

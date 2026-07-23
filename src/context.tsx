@@ -82,11 +82,11 @@ export interface Goal {
 // principal as a positive number, null until the balance poller's first run lands.
 export interface HomeLoanState { balance: number | null; asOf: string | null; }
 export type Sheet =
-  // WHIT-287: `refileOnly` marks a re-categorise opened from a transaction's detail screen —
-  // the confirm step then re-files ONLY this charge (applyCategory('one')) with no "all from
-  // this merchant" rule sweep. Absent/false on the list flow, which keeps both options.
-  | { mode: 'picker'; txId: string; refileOnly?: boolean }
-  | { mode: 'confirm'; txId: string; categoryId: string; refileOnly?: boolean }
+  // WHIT-324: the detail screen and the Transactions list share ONE categorize flow — picker →
+  // confirm offering "All from this merchant" vs "Just this one". (Pre-324 a detail re-file set a
+  // `refileOnly` flag to collapse the confirm to a single Save; that special case is gone.)
+  | { mode: 'picker'; txId: string }
+  | { mode: 'confirm'; txId: string; categoryId: string }
   // WHIT-291: multi-select re-categorise. `pickerMany`/`confirmMany` carry a captured SET of
   // transaction ids (from the Transactions selection mode) instead of one; the confirm re-files
   // them all at once via applyCategoryToMany (batch persist + partial rollback, no rule sweep).
@@ -166,7 +166,7 @@ export async function persistCategoryBatch(
   const savedIds = new Set<string>();
   for (const outcome of outcomes) {
     if (outcome.status !== 'fulfilled') continue;
-    for (const r of outcome.value.results ?? []) {
+    for (const r of outcome.value?.results ?? []) {
       if (r.status === 'updated') savedIds.add(r.id);
     }
   }
@@ -414,7 +414,7 @@ export interface AppContext {
   toggleAlerts: () => void;
   setPayCycleLength: (len: number) => void;
   setPayday: (last_pay_date: string) => void;
-  openPicker: (txId: string, opts?: { refileOnly?: boolean }) => void;
+  openPicker: (txId: string) => void;
   // WHIT-291: open the category picker for a captured SET of transactions (multi-select).
   openMultiPicker: (txIds: string[]) => void;
   openGoalBalance: (goalId: string) => void;
@@ -677,17 +677,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);
 
-  // WHIT-287: opts.refileOnly (set by the transaction detail screen) carries through to the
-  // confirm step, where it collapses to a single-charge re-file with no merchant-wide rule.
-  const openPicker = useCallback((txId: string, opts?: { refileOnly?: boolean }) => setSheet({ mode: 'picker', txId, refileOnly: opts?.refileOnly }), []);
+  const openPicker = useCallback((txId: string) => setSheet({ mode: 'picker', txId }), []);
   // WHIT-291: open the picker for a captured set of ids. A no-op on an empty set (nothing to file).
   const openMultiPicker = useCallback((txIds: string[]) => { if (txIds.length) setSheet({ mode: 'pickerMany', txIds }); }, []);
   const openGoalBalance = useCallback((goalId: string) => setSheet({ mode: 'goalbalance', goalId }), []);
   // Advance the picker to its confirm step, carrying whichever target the picker held: a single
-  // charge (with the refileOnly flag) or a multi-select set (WHIT-291).
+  // charge or a multi-select set (WHIT-291).
   const chooseCategory = useCallback(
     (categoryId: string) => setSheet((s) => {
-      if (s && s.mode === 'picker') return { mode: 'confirm', txId: s.txId, categoryId, refileOnly: s.refileOnly };
+      if (s && s.mode === 'picker') return { mode: 'confirm', txId: s.txId, categoryId };
       if (s && s.mode === 'pickerMany') return { mode: 'confirmMany', txIds: s.txIds, categoryId };
       return s;
     }),
@@ -744,12 +742,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // FOOD_AND_DRINK) that isn't a user category — a plain `category == null`
       // check silently skipped enum-tagged charges the user sees as Uncategorized.
       const ruleValue = rulePattern(transaction);
-      const sameMerchantIds = transactions
+      const sweepIds = transactions
         .filter((t) =>
           contributesToBudget(t) &&
           categoryIsUnmapped(t.category, (id) => categories.find((c) => c.id === id)) &&
           matchesRulePattern(t, ruleValue, transaction))
         .map((t) => t.transaction_id);
+      // WHIT-324: always re-file the TAPPED charge too. On the list flow it's uncategorised, so
+      // it's already in the sweep; but the detail screen can open this confirm on an
+      // already-categorised charge, which categoryIsUnmapped filters out of the sweep. The
+      // tapped charge is the user's explicit pick, so include it regardless of its current state.
+      const sameMerchantIds = sweepIds.includes(txId) ? sweepIds : [txId, ...sweepIds];
+      // Snapshot each affected charge's current category so a failed save reverts to what it
+      // ACTUALLY was, not a blanket Uncategorized — now that the tapped charge may already be
+      // categorised. Mirrors applyCategoryToMany's per-id rollback.
+      const previousById = new Map(
+        sameMerchantIds.map((id) => [id, transactions.find((t) => t.transaction_id === id)?.category ?? null]),
+      );
 
       // Optimistically file all of them under the chosen category (one state update).
       patchTransactions((prev) =>
@@ -765,10 +774,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
         ...prev,
       ]);
-      // WHIT-292: word the toast for what actually happened. The rule is created either way
-      // (it's forward-looking), so an EMPTY sweep — e.g. the tapped charge is budget-excluded,
-      // so nothing current qualifies — shows the rule-only copy instead of claiming charges
-      // filed. A non-empty sweep names the count it just filed alongside the future rule.
+      // WHIT-292: word the toast for what actually happened, naming the count it just filed
+      // alongside the future rule. WHIT-324: the tapped charge is always in the set now, so the
+      // count is ≥ 1; the rule-only copy stays only as a defensive fallback (the rule is created
+      // either way, so it's still the right thing to say if the set were ever somehow empty).
       const merchantWord = cleanName(transaction.description);
       const sweepCount = sameMerchantIds.length;
       let sweepToast = `Rule saved — future ${merchantWord} charges file as ${category.name}.`;
@@ -800,12 +809,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       }
       if (failedIds.length > 0) {
-        // Roll back only the ones whose save failed (back to uncategorised) — same
-        // partial set on BOTH stores.
+        // Roll back only the ones whose save failed — each to its OWN previous category
+        // (WHIT-324), so a failed re-file of an already-categorised charge doesn't wrongly
+        // blank it to Uncategorized.
         patchTransactions((prev) =>
           prev.map((existing) => {
             if (!failedIds.includes(existing.transaction_id)) return existing;
-            return { ...existing, category: null };
+            return { ...existing, category: previousById.get(existing.transaction_id) ?? null };
           }));
         if (epoch === sessionEpoch.current) showToast('Could not save some categories. Please try again.');
       } else if (ruleOutcome.status === 'rejected') {

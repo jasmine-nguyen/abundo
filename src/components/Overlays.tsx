@@ -382,40 +382,29 @@ function ConfirmSheet() {
   const tx = transactions.find((t) => t.transaction_id === sh.txId);
   const c = category(sh.categoryId);
   if (!tx || !c) return null;
-  // WHIT-287: a re-categorise opened from the detail screen (refileOnly) is about THIS one
-  // charge — offer a single re-file, no merchant-wide rule. applyCategory('one') already
-  // handles any origin (already-categorised, income, non-budget) and rolls back on failure.
-  // The list flow (refileOnly absent) keeps both the rule sweep and the single-file option.
-  const refileOnly = sh.refileOnly;
+  // WHIT-324: one confirm for BOTH entry points — the Transactions list and the detail screen.
+  // Always offer the merchant-wide rule ('all') alongside the single re-file ('one'), so a
+  // re-categorise from the detail screen behaves exactly like one from the list (no more
+  // redundant lone Save). applyCategory handles any origin (already-categorised, income,
+  // non-budget) and rolls back on failure under either scope.
   return (
     <View>
       <View style={[styles.confirmChip, { backgroundColor: tint(c.color, 0.16) }]}>
         <Icon name={c.icon} size={26} color={c.color} />
       </View>
       <Text style={styles.confirmTitle}>File as {c.name}</Text>
-      {refileOnly ? (
-        <>
-          <Text style={styles.confirmSub}>Re-file '{merchantLabel(tx)}' under {c.name}.</Text>
-          <Pressable onPress={() => s.applyCategory('one')} style={[styles.btn, styles.btnPrimary]}>
-            <Text style={styles.btnPrimaryText}>Save</Text>
-          </Pressable>
-        </>
-      ) : (
-        <>
-          <Text style={styles.confirmSub}>
-            Apply to just '{merchantLabel(tx)}', or set a rule so every charge from this merchant files itself?
-          </Text>
-          <Pressable onPress={() => s.applyCategory('all')} style={[styles.btn, styles.btnPrimary]}>
-            {/* Fixed label (not the interpolated merchant): the merchant is already named
-                in the sub-text above, and a raw/long descriptor made this button ugly and
-                wrap. Pairs with "Just this one" below. */}
-            <Text style={styles.btnPrimaryText}>All from this merchant</Text>
-          </Pressable>
-          <Pressable onPress={() => s.applyCategory('one')} style={[styles.btn, styles.btnGhost]}>
-            <Text style={styles.btnGhostText}>Just this one</Text>
-          </Pressable>
-        </>
-      )}
+      <Text style={styles.confirmSub}>
+        Apply to just '{merchantLabel(tx)}', or set a rule so every charge from this merchant files itself?
+      </Text>
+      <Pressable onPress={() => s.applyCategory('all')} style={[styles.btn, styles.btnPrimary]}>
+        {/* Fixed label (not the interpolated merchant): the merchant is already named
+            in the sub-text above, and a raw/long descriptor made this button ugly and
+            wrap. Pairs with "Just this one" below. */}
+        <Text style={styles.btnPrimaryText}>All from this merchant</Text>
+      </Pressable>
+      <Pressable onPress={() => s.applyCategory('one')} style={[styles.btn, styles.btnGhost]}>
+        <Text style={styles.btnGhostText}>Just this one</Text>
+      </Pressable>
     </View>
   );
 }
