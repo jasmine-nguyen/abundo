@@ -120,9 +120,14 @@ def get_receipts(ids, *, access_token=None) -> dict:
     return receipts
 
 
-def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=None,
+def send_push(title: str, body: str, tokens, *, data=None, access_token=None, device_repo=None,
               receipt_repo=None) -> dict:
     """Send {title, body} to every token via Expo Push. Best-effort: never raises.
+
+    ``data`` (optional) is attached to every message as Expo's custom ``data`` payload —
+    delivered to the app as ``notification.request.content.data`` and used to deep-link a
+    tap to a screen (WHIT-321). It's omitted entirely when falsy, so a caller that passes
+    none sends a byte-identical message to before.
 
     Batches into EXPO_PUSH_BATCH_MAX per request, prunes tokens Expo flags as
     ``DeviceNotRegistered`` (via ``device_repo``, or the real DeviceRepository when
@@ -156,6 +161,9 @@ def send_push(title: str, body: str, tokens, *, access_token=None, device_repo=N
     receipts: list = []  # (receipt_id, token) for each accepted push (WHIT-139)
     for batch in _chunk(tokens, EXPO_PUSH_BATCH_MAX):
         messages = [{"to": t, "title": title, "body": body} for t in batch]
+        if data:
+            for message in messages:
+                message["data"] = data
         try:
             tickets = _send_batch(messages, token)
         except Exception:  # transport / decode / anything — best-effort, keep going

@@ -56,6 +56,10 @@ jest.mock('../context', () => {
   return { AppProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children) };
 });
 jest.mock('../components/Overlays', () => ({ Overlays: () => null }));
+// WHIT-321: the layout mounts NotificationRouter (which imports expo-notifications, a
+// native module). This test is about the launch/registration effect, not deep-linking,
+// so stub it to a no-op — its behaviour is covered by notificationRouter.screen.test.tsx.
+jest.mock('../components/NotificationRouter', () => ({ NotificationRouter: () => null }));
 
 import { Platform } from 'react-native';
 import RootLayout from '../../app/_layout';

@@ -130,7 +130,9 @@ def notify(transaction: dict) -> None:
 
     amount = Decimal(int(transaction["attributes"]["amount"]["valueInBaseUnits"])) / 100
     title, body = build_repayment_push(amount)
-    if send_push(title, body, tokens)["ok"] > 0:
+    # data lets the app deep-link a tap straight to the mortgage screen (WHIT-321). The
+    # app owns the type->route map, so we send the domain type, not a route string.
+    if send_push(title, body, tokens, data={"type": "repayment"})["ok"] > 0:
         notify_repo.mark_repayment_fired(transaction_id)
         return
     raise RuntimeError(f"push not accepted by Expo for repayment {transaction_id}")
