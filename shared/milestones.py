@@ -121,7 +121,12 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
         return 0
 
     furthest = fresh[0]  # sorted asc by target → lowest balance = furthest paid down
-    send_push(_TITLE.format(label=furthest.label), _body(new_balance, loanfacts_repo), tokens)
+    send_push(
+        _TITLE.format(label=furthest.label),
+        _body(new_balance, loanfacts_repo),
+        tokens,
+        data={"type": "milestone"},  # deep-link a tap to the mortgage screen (WHIT-322)
+    )
     for milestone in fresh:  # mark regardless of send outcome (see docstring)
         notify_repo.mark_milestone_fired(str(milestone.sprint))
     return 1

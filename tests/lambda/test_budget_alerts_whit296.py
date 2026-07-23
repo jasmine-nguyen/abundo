@@ -104,7 +104,7 @@ def _fire(alerts, monkeypatch, *, budgets, before, normalised, webhook_repo,
     ba = alerts.budget_alerts
     sent = []
     monkeypatch.setattr(ba, "send_push",
-                        lambda title, body, toks: sent.append((title, body)) or
+                        lambda title, body, toks, data=None: sent.append((title, body)) or
                         {"sent": len(list(toks)), "ok": 1, "pruned": []})
     notify = FakeNotifyRepo()
     ctx = ba.capture_pre_write(

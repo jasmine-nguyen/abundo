@@ -124,7 +124,7 @@ def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushT
     ba = alerts.budget_alerts
     sent = []
 
-    def fake_send(title, body, toks):
+    def fake_send(title, body, toks, data=None):
         sent.append((title, body, list(toks)))
         # send_ok models Expo acceptance: >0 = it reached Expo (the WHIT-154
         # mark-on-landing signal), 0 = a swallowed transport failure.
@@ -162,6 +162,32 @@ def test_crossing_fires_via_delta_not_a_reread(alerts, monkeypatch):
     assert body == "Groceries is at 80% of its budget this cycle."
     assert toks == ["ExpoPushToken[a]"]
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
+
+
+def test_crossing_push_carries_budget_deeplink_data(alerts, monkeypatch):
+    # WHIT-322: the push carries data={"type": "budget", "category": <cat_id>} so a tap opens
+    # THAT category's budget screen (/budget/<cat_id>).
+    ba = alerts.budget_alerts
+    captured = []
+    monkeypatch.setattr(ba, "send_push",
+                        lambda title, body, toks, data=None: captured.append(data) or
+                        {"sent": len(list(toks)), "ok": 1, "pruned": []})
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    ctx = ba.capture_pre_write(
+        [new],
+        device_repo=FakeDeviceRepo(("ExpoPushToken[a]",)),
+        budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
+        paycycle_repo=FakePaycycleRepo("2026-07-01", 14),
+        window_repo=FakeWindowRepo(before),
+        webhook_repo=NoTwinRepo(),
+    )
+    ba.fire_if_crossed(
+        ctx, [new], webhook_repo=NoTwinRepo(),
+        category_repo=FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+        notify_repo=FakeNotifyRepo(),
+    )
+    assert captured == [{"type": "budget", "category": "groceries"}]
 
 
 def test_below_threshold_does_not_fire(alerts, monkeypatch):
@@ -427,7 +453,7 @@ def test_two_categories_one_send_lands_one_fails(alerts, monkeypatch):
     ba = alerts.budget_alerts
     sent = []
 
-    def fake_send(title, body, toks):
+    def fake_send(title, body, toks, data=None):
         sent.append((title, body, list(toks)))
         ok = 0 if "Dining" in body else 1   # dining's send fails; groceries lands
         return {"sent": len(list(toks)), "ok": ok, "pruned": []}
@@ -462,7 +488,7 @@ def test_budget_fully_pruned_ok_zero_leaves_unmarked(alerts, monkeypatch):
     ba = alerts.budget_alerts
     sent = []
 
-    def fake_send(title, body, toks):
+    def fake_send(title, body, toks, data=None):
         toks = list(toks)
         sent.append((title, body, toks))
         return {"sent": len(toks), "ok": 0, "pruned": toks}  # all dead tokens
@@ -502,7 +528,7 @@ def test_higher_send_fails_leaves_100_eligible_with_lower_fired(alerts, monkeypa
 def test_send_precedes_mark(alerts, monkeypatch):
     ba = alerts.budget_alerts
     order = []
-    monkeypatch.setattr(ba, "send_push", lambda *a: (order.append("send"), {"sent": 1, "ok": 1, "pruned": []})[1])
+    monkeypatch.setattr(ba, "send_push", lambda *a, **k: (order.append("send"), {"sent": 1, "ok": 1, "pruned": []})[1])
     notify = FakeNotifyRepo()
     orig_mark = notify.mark_fired
     notify.mark_fired = lambda *a: (order.append("mark"), orig_mark(*a))[1]
@@ -559,7 +585,7 @@ def test_no_budgets_skips_the_window_read(alerts, monkeypatch):
 
 def test_fire_if_crossed_ignores_a_none_context(alerts, monkeypatch):
     ba = alerts.budget_alerts
-    monkeypatch.setattr(ba, "send_push", lambda *a: (_ for _ in ()).throw(AssertionError("no send")))
+    monkeypatch.setattr(ba, "send_push", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no send")))
     ba.fire_if_crossed(None, [], webhook_repo=NoTwinRepo(),
                        category_repo=FakeCategoryRepo([]), notify_repo=FakeNotifyRepo())  # no raise
 
@@ -864,7 +890,7 @@ def test_window_read_accumulates_every_cursor_page(alerts, monkeypatch):
     ba = alerts.budget_alerts
     sent = []
     monkeypatch.setattr(ba, "send_push",
-                        lambda t, b, toks: (sent.append((t, b)), {"sent": len(list(toks)), "ok": len(list(toks)), "pruned": []})[1])
+                        lambda t, b, toks, data=None: (sent.append((t, b)), {"sent": len(list(toks)), "ok": len(list(toks)), "pruned": []})[1])
     # Two pre-write rows ($35 + $35 = $70) split across two pages; the new $15 pushes
     # the total to $85 -> crosses 80. If page 2 were dropped, before=$35 -> after=$50 ->
     # no crossing. So a passing send proves both pages were read.

@@ -80,8 +80,8 @@ class SendRecorder:
         self._ok = ok
         self.calls = []
 
-    def __call__(self, title, body, tokens):
-        self.calls.append({"title": title, "body": body, "tokens": list(tokens)})
+    def __call__(self, title, body, tokens, data=None):
+        self.calls.append({"title": title, "body": body, "tokens": list(tokens), "data": data})
         return {"sent": len(tokens), "ok": self._ok if tokens else 0, "pruned": 0}
 
 

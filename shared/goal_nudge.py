@@ -138,7 +138,7 @@ def notify_behind_goals(
     def send_and_mark(title: str, body: str, marker: str) -> int:
         """Send one push; mark the (goal, cycle) marker ONLY when it reached Expo (ok > 0) so an
         outage leaves it unmarked for the next sweep to retry. Returns 1 if sent, else 0."""
-        if send_push(title, body, tokens)["ok"] <= 0:
+        if send_push(title, body, tokens, data={"type": "goal"})["ok"] <= 0:  # deep-link a tap to the goals screen (WHIT-322)
             return 0
         notify_repo.mark_fired(last_pay_date, length, marker)
         fired.add(marker)
