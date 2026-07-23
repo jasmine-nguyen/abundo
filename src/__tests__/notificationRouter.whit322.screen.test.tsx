@@ -32,10 +32,10 @@ beforeEach(() => {
 });
 
 describe('NotificationRouter — new deep-link types (WHIT-322)', () => {
-  it('[A40] a milestone tap navigates to /mortgage', () => {
+  it('[A40] a milestone tap navigates to /milestone', () => {
     mockLastResponse = responseWith({ type: 'milestone' });
     render(<NotificationRouter />);
-    expect(mockPush).toHaveBeenCalledWith('/mortgage');
+    expect(mockPush).toHaveBeenCalledWith('/milestone');
     expect(mockPush).toHaveBeenCalledTimes(1);
   });
 

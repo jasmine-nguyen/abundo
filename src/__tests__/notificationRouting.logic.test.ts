@@ -6,8 +6,8 @@ describe('routeForNotificationData (WHIT-321, WHIT-322)', () => {
     expect(routeForNotificationData({ type: 'repayment' })).toBe('/mortgage');
   });
 
-  it('maps a milestone notification to the mortgage screen', () => {
-    expect(routeForNotificationData({ type: 'milestone' })).toBe('/mortgage');
+  it('maps a milestone notification to the milestone-plan screen', () => {
+    expect(routeForNotificationData({ type: 'milestone' })).toBe('/milestone');
   });
 
   it('maps a goal notification to the goals screen', () => {
@@ -26,7 +26,7 @@ describe('routeForNotificationData (WHIT-321, WHIT-322)', () => {
 
   it('has the expected static routes in the table', () => {
     expect(NOTIF_ROUTE.repayment).toBe('/mortgage');
-    expect(NOTIF_ROUTE.milestone).toBe('/mortgage');
+    expect(NOTIF_ROUTE.milestone).toBe('/milestone');
     expect(NOTIF_ROUTE.goal).toBe('/goals');
   });
 

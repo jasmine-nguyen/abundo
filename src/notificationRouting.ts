@@ -6,8 +6,8 @@
  * later is one line here.
  *
  * Two layers:
- *  - NOTIF_ROUTE          — a `type` → fixed route (repayment/milestone → the mortgage screen,
- *                           goal → the goals list).
+ *  - NOTIF_ROUTE          — a `type` → fixed route (repayment → the mortgage screen,
+ *                           milestone → the milestone-plan screen, goal → the goals list).
  *  - NOTIF_ROUTE_BUILDERS — a `type` → function that builds the route from the notification's
  *                           own fields, for a screen that needs an id (a budget push opens THAT
  *                           category's screen). A builder returning null → nowhere to open.
@@ -16,7 +16,7 @@
 
 export const NOTIF_ROUTE: Record<string, string> = {
   repayment: '/mortgage',
-  milestone: '/mortgage',
+  milestone: '/milestone',
   goal: '/goals',
 };
 
