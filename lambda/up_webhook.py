@@ -128,12 +128,16 @@ def notify(transaction: dict) -> None:
     if not tokens:
         return
 
-    amount = Decimal(int(transaction["attributes"]["amount"]["valueInBaseUnits"])) / 100
+    value_in_base_units = int(transaction["attributes"]["amount"]["valueInBaseUnits"])
+    amount = Decimal(value_in_base_units) / 100
     title, body = build_repayment_push(amount)
     # data lets the app deep-link a tap straight to the mortgage screen (WHIT-321). The
     # app owns the type->route map, so we send the domain type, not a route string.
     if send_push(title, body, tokens, data={"type": "repayment"})["ok"] > 0:
         notify_repo.mark_repayment_fired(transaction_id)
+        # Record the push (amount in cents, already what Up gives us) so the balance
+        # poller's precise miss-detector (WHIT-317) can match this repayment to its alert.
+        notify_repo.mark_repayment_push(value_in_base_units, transaction_id)
         return
     raise RuntimeError(f"push not accepted by Expo for repayment {transaction_id}")
 

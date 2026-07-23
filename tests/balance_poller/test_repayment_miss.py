@@ -110,3 +110,41 @@ def test_poll_swallows_a_check_failure(handler, monkeypatch):
     monkeypatch.setattr(handler, "check_repayment_landed_but_no_push", _raise)
     # The balance was still stored, so the poll succeeds despite the check failing.
     assert handler._poll_homeloan("key") is True
+
+
+# --- integration: the precise detector (WHIT-317) --------------------------
+
+def test_poll_runs_the_precise_detector(handler, monkeypatch):
+    _wire_successful_poll(handler, monkeypatch, prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
+    monkeypatch.setattr(handler, "check_repayment_landed_but_no_push", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(handler, "check_ingested_repayment_without_push",
+                        lambda notify_repo, txn_repo, now: calls.append(now))
+    assert handler._poll_homeloan("key") is True
+    assert len(calls) == 1  # ran once
+
+
+def test_poll_swallows_a_precise_detector_failure(handler, monkeypatch):
+    _wire_successful_poll(handler, monkeypatch, prior={"balance": Decimal("600000"), "as_of": "x", "currency": "AUD"})
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
+    monkeypatch.setattr(handler, "check_ingested_repayment_without_push", _raise_detector)
+    # The balance was still stored, so the poll succeeds despite the detector failing.
+    assert handler._poll_homeloan("key") is True
+
+
+def test_precise_detector_runs_even_when_balance_fetch_fails(handler, monkeypatch):
+    # The detector reads only DynamoDB, so a getBalance outage (poll returns False) must not
+    # blind it — it runs before the fetch.
+    monkeypatch.setattr(handler, "fetch_balance", _raise_detector)
+    monkeypatch.setattr(handler, "NotifyRepository", lambda: _FakeNotify())
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: object())
+    calls = []
+    monkeypatch.setattr(handler, "check_ingested_repayment_without_push",
+                        lambda notify_repo, txn_repo, now: calls.append(now))
+    assert handler._poll_homeloan("key") is False  # balance poll failed
+    assert len(calls) == 1  # but the detector still ran
+
+
+def _raise_detector(*a, **k):
+    raise RuntimeError("detector blew up")

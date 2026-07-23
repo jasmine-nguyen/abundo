@@ -18,6 +18,7 @@ Invoked only by EventBridge Scheduler, never by API Gateway. ``constants``,
 ``ssm``, and ``repository`` are provided by the shared Lambda layer.
 """
 
+import calendar
 import json
 import logging
 import time
@@ -33,7 +34,10 @@ from constants import (
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_BALANCE_SOURCE,
     HOMELOAN_BALANCE_TIMEOUT_SECONDS,
+    MAX_PAGE_SIZE,
+    MIN_REPAYMENT_NOTIFY,
     REPAYMENT_DROP_THRESHOLD,
+    REPAYMENT_INCOMING_TYPE,
     REPAYMENT_MISS_LOOKBACK_DAYS,
 )
 from milestones import notify_milestone_crossing
@@ -42,6 +46,7 @@ from repository import (
     DeviceRepository,
     HomeLoanBalanceRepository,
     LoanFactsRepository,
+    TransactionRepository,
 )
 from repository_notify import NotifyRepository
 from ssm import get_param
@@ -197,10 +202,72 @@ def check_repayment_landed_but_no_push(
     )
 
 
+def _is_repayment_credit(row: dict) -> bool:
+    """True for a stored home-loan repayment leg worth an alert: an incoming transfer
+    credit at or above the $10 notify floor (same predicate the webhook fires on). A
+    malformed row (missing amount/date) is skipped, never a crash."""
+    amount = row.get("amount")
+    if row.get("type") != REPAYMENT_INCOMING_TYPE or not row.get("date"):
+        return False
+    if amount is None or amount <= 0 or amount < MIN_REPAYMENT_NOTIFY:
+        return False
+    return True
+
+
+def check_ingested_repayment_without_push(notify_repo, transaction_repo, now: int) -> None:
+    """Precise miss-detector (WHIT-317): alarm if a home-loan repayment was ingested in the
+    last REPAYMENT_MISS_LOOKBACK_DAYS but no push alerted it.
+
+    Keys on the actual repayment TRANSACTION, not the net balance drop, so it survives the
+    edges that defeat check_repayment_landed_but_no_push: interest posting the same day, two
+    repayments in one window, a repayment split across polls, a pre-upsert balance-read
+    hiccup. Matches by amount in integer cents (the store keeps dollars, the push keeps cents
+    — both normalised here), consuming one push per repayment, so two same-amount repayments
+    need two pushes or one alarms. Reads only DynamoDB; best-effort, the caller swallows.
+
+    The store window is by UTC date (whole days), so the push cutoff is aligned to MIDNIGHT
+    of the oldest day — not `now - 7d` — making the push window at least as broad as the
+    store window. Otherwise a repayment pushed earlier on the boundary day would sit inside
+    the store window but outside a mid-day push cutoff and spuriously alarm.
+    """
+    window_start = now - REPAYMENT_MISS_LOOKBACK_DAYS * 24 * 60 * 60
+    start_date = time.strftime("%Y-%m-%d", time.gmtime(window_start))
+    end_date = time.strftime("%Y-%m-%d", time.gmtime(now))
+    cutoff = calendar.timegm(time.strptime(start_date, "%Y-%m-%d"))  # midnight of start_date
+
+    rows, _cursor = transaction_repo.get_transactions_by_date_range(
+        HOMELOAN_ACCOUNT_ID, start_date, end_date, MAX_PAGE_SIZE
+    )
+    repayment_cents = [int(round(row["amount"] * 100)) for row in rows if _is_repayment_credit(row)]
+    if not repayment_cents:
+        return
+
+    unmatched_pushes = notify_repo.repayment_push_amounts_since(cutoff)
+    for cents in repayment_cents:
+        if cents in unmatched_pushes:
+            unmatched_pushes.remove(cents)  # this repayment did alert — consume its push
+            continue
+        logger.error(
+            "UP_WEBHOOK_REPAYMENT_MISSED source=txn a repayment of %s cents was ingested in "
+            "the last %s days with no matching push",
+            cents, REPAYMENT_MISS_LOOKBACK_DAYS,
+        )
+
+
 def _poll_homeloan(api_key: str) -> bool:
     """Poll + upsert the mortgage's ABS outstanding-principal balance (WHIT-8, Goal
     screen). Best-effort: any failure is logged and swallowed, leaving the last-good row
     (never zeroes it). Returns whether a fresh reading was stored this run."""
+    # WHIT-317: precise repayment-miss detector. Reads only DynamoDB (transaction store +
+    # push markers), so it runs BEFORE the balance fetch — a getBalance outage must not blind
+    # this backstop. Best-effort, isolated so a check failure can't affect the balance poll.
+    try:
+        check_ingested_repayment_without_push(
+            NotifyRepository(), TransactionRepository(), int(time.time())
+        )
+    except Exception as e:
+        logger.error("precise repayment-miss check failed: %s", e)
+
     source = HOMELOAN_BALANCE_SOURCE
     try:
         payload = fetch_balance(source["bid"], source["aid"], api_key)

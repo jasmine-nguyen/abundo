@@ -54,6 +54,9 @@ class _FakeNotify:
         self.marked.append(transaction_id)
         self.fired.add(transaction_id)
 
+    def mark_repayment_push(self, amount_cents, txn_id, fired_at=None):
+        pass
+
 
 class _FakeDevice:
     def __init__(self, tokens):
