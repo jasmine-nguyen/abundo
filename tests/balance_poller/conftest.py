@@ -67,7 +67,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository", "repository_base",
     "repository_transaction", "repository_category", "repository_budget",
-    "repository_paycycle", "repository_balance",
+    "repository_paycycle", "repository_balance", "repayment_rules",
 )
 
 

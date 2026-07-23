@@ -2,7 +2,7 @@
 
 Complements tests/balance_poller/test_repayment_miss_precise.py — does NOT duplicate it.
 Focus on the boundaries + failure surfaces the implementer's suite leaves open:
-  - the $10 floor pinned exactly (and just below) at _is_repayment_credit's edge.
+  - the $10 floor pinned exactly (and just below) at the poller's call-site floor.
   - N repayments, some matched some not, in ONE call → alarm count == unmatched count.
   - odd-cent dollar→cent rounding matches an exact-cent marker.
   - the dropped pagination cursor: the detector reads ONE page (MAX_PAGE_SIZE) and
@@ -54,7 +54,7 @@ def _alarm_count(text):
     return text.count(MARKER)
 
 
-# --- [A22] the $10 floor pinned exactly at _is_repayment_credit's edge ------
+# --- [A22] the $10 floor pinned exactly at the poller's call-site edge ------
 
 def test_exactly_ten_dollars_is_a_qualifying_repayment(handler, caplog):
     # WHIT-317 — [A22] $10.00 == MIN_REPAYMENT_NOTIFY → NOT below the floor → alarms if
@@ -115,3 +115,16 @@ def test_detector_requests_max_page_size_and_ignores_the_cursor(handler, caplog)
     assert len(repo.calls) == 1  # cursor dropped: no second page fetched
     _account, _start, _end, limit = repo.calls[0]
     assert limit == handler.MAX_PAGE_SIZE
+
+
+# --- [A26] a malformed row is skipped, never crashing the scan (WHIT-325) ----
+
+def test_non_numeric_amount_row_is_skipped_not_crashing_the_scan(handler, caplog):
+    # WHIT-325 adopted the API's stricter isinstance guard in the shared rule: a row
+    # with a non-numeric amount is skipped, so one garbled row can't abort the whole
+    # miss-scan (the old `amount <= 0` would have raised TypeError). The valid
+    # repayment beside it still alarms.
+    garbled = {"type": "TRANSFER_INCOMING", "amount": "not-a-number", "date": "2026-07-04"}
+    text = _run(handler, caplog, rows=[garbled, _row("3573.00")], push_amounts=[])
+    assert _alarm_count(text) == 1
+    assert "357300 cents" in text
