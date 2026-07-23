@@ -22,6 +22,7 @@ export const C = {
 
   good: '#2ac3de',
   goodBright: '#42d4ec',
+  surplus: '#7ee0a0', // brighter green for the Earned-vs-Spent surplus headline (WHIT-324)
   warn: '#e0af68',
   warnAmber: '#e0af68',
   bad: '#f7768e',

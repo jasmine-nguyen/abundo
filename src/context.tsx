@@ -1547,14 +1547,9 @@ export interface BudgetViewsInput {
   daysLeft: number;
 }
 
-export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number; totEarnedBudget: number } {
+export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudget: number; totSpent: number; totRemain: number } {
   const elapsed = elapsedFrac(s);
   let totBudget = 0, totSpent = 0, totRemain = 0;
-  // Budgeted-income total (sum of earn-targets), kept separate from the spend totals — a
-  // floor is a different unit from a spend ceiling. Same top-most-row de-dup as totBudget so
-  // a target set on both a parent and child income category isn't counted twice. Powers the
-  // Insights Earned-vs-Spent budgeted overlay (WHIT-314); the Budgets hero ignores it.
-  let totEarnedBudget = 0;
 
   // Pass 1: which budgeted categories produce a row (everything but Savings, which is
   // skipped entirely). Needed up front so the tree walk below can tell whether a row's
@@ -1632,8 +1627,6 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = '#cfd2ff'; }
       else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = '#cfd2ff'; }
       else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
-      // De-dup like the spend total: count only the top-most budgeted income row per family.
-      if (depth === 0) totEarnedBudget += b.budget;
       // `actual` already includes pending, so the single "earned of budget" line counts it
       // without the separate "(… pending)" breakout.
       const spentLabel = `${fmt(actual)} earned of ${fmt(b.budget)}`;
@@ -1696,7 +1689,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
   for (const id of childrenByParent.get(null) ?? []) emit(id);
   for (const id of viewById.keys()) emit(id);
 
-  return { rows, totBudget, totSpent, totRemain, totEarnedBudget };
+  return { rows, totBudget, totSpent, totRemain };
 }
 
 // Which categories may be chosen as the parent of the category being edited (WHIT-221):

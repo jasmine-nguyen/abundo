@@ -18,7 +18,7 @@ export default function Insights() {
   // cycle, 1 = last (full) cycle. Only the breakdown reads move; the AI coach stays current.
   const [cycle, setCycle] = useState(0);
   // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
-  const { breakdown, earned, budgeted, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
+  const { breakdown, earned, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
   const { rows, total } = categoryBreakdown({ breakdown, category });
 
   // WHIT-226: parent categories are collapsed by default; tap to reveal their subs. A row
@@ -133,11 +133,10 @@ export default function Insights() {
 
         {/* WHIT-312: earned vs spent for the cycle — shows whenever there's income OR spend,
             so an income-only cycle (no spend rows) still gets the comparison. Both cycles,
-            unlike the AI coach card (current-cycle only). WHIT-314: `budgeted` (current cycle
-            only) adds the target overlay; it also lets the card show at $0 activity so the
-            budget targets are visible right after payday. */}
-        {!showSpinner && !showError && (earned > 0 || rows.length > 0 || budgeted) && (
-          <EarnedVsSpent earned={earned} spent={total} budgeted={budgeted} testID="insights-earned-spent" />
+            unlike the AI coach card (current-cycle only). WHIT-324: the card reads surplus vs
+            deficit only (no budget), so it hides when there was neither income nor spend. */}
+        {!showSpinner && !showError && (earned > 0 || rows.length > 0) && (
+          <EarnedVsSpent earned={earned} spent={total} testID="insights-earned-spent" />
         )}
 
         {/* Each row's bar is its share of total spend this cycle (matches the donut) — NOT
