@@ -248,7 +248,12 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
             landed = True  # already delivered in a prior ingest → repair secondary marks
         else:
             title, body = _COPY[pct_to_send]
-            landed = send_push(title, body.format(name=names.get(cat_id, cat_id)), ctx["tokens"])["ok"] > 0
+            landed = send_push(
+                title,
+                body.format(name=names.get(cat_id, cat_id)),
+                ctx["tokens"],
+                data={"type": "budget", "category": cat_id},  # deep-link a tap to this category (WHIT-322)
+            )["ok"] > 0
             if landed:
                 notify_repo.mark_fired(cycle_start, length, send_marker)  # mark on landing
         if not landed:

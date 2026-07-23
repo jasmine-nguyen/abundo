@@ -57,6 +57,12 @@ class TestNotifyBehindGoals:
         assert rec.calls[0]["body"] == "Your Holiday fund needs $6,000/payday to hit July."
         assert "GOAL#g1" in notify.fired_markers(CYCLE["last_pay_date"], CYCLE["length"])
 
+    def test_behind_push_carries_goal_deeplink_data(self, shared, monkeypatch):
+        # WHIT-322: the push carries data={"type": "goal"} so a tap opens the goals screen.
+        _, rec, *_ = _run(shared, monkeypatch, {"g1": _grow()},
+                          balances={"up-spending": Decimal(4000)})
+        assert rec.calls[0]["data"] == {"type": "goal"}
+
     def test_manual_behind_fires(self, shared, monkeypatch):
         goal = _grow(account_id=None, manual_balance=Decimal(4000))
         sent, rec, *_ = _run(shared, monkeypatch, {"m1": goal})

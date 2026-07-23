@@ -144,6 +144,19 @@ def test_single_crossing_sends_one_push_with_both_numbers(shared, recorder):
     assert notify.fired == {"0"}
 
 
+def test_crossing_push_carries_milestone_deeplink_data(shared, monkeypatch):
+    # WHIT-322: the push carries data={"type": "milestone"} so a tap opens the mortgage screen.
+    captured = []
+    monkeypatch.setattr(shared.milestones, "send_push",
+                        lambda title, body, tokens, **kw: captured.append(kw.get("data")) or
+                        {"sent": len(tokens), "ok": len(tokens), "pruned": []})
+    shared.milestones.notify_milestone_crossing(
+        Decimal("545000"), Decimal("544000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(["tok"]),
+        notify_repo=FakeNotifyRepo())
+    assert captured == [{"type": "milestone"}]
+
+
 def test_lump_sum_sends_furthest_and_marks_all(shared, recorder):
     notify = FakeNotifyRepo()
     sent = shared.milestones.notify_milestone_crossing(
