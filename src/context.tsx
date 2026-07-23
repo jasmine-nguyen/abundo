@@ -114,7 +114,7 @@ export const PALETTE = ['#ff9e64', '#7aa2f7', '#f7768e', '#73daca', '#e0af68', '
 // colour. Design's scheme; extends the palette from 13 to a durable ~26 before anything folds to
 // the neutral "Other" grey the donut already uses.
 export const CATEGORY_BASE: Record<string, string> = {
-  coffee: '#ff9e64', groceries: '#9ece6a', eatingout: '#f7768e', transport: '#7aa2f7',
+  coffee: '#ff9e64', groceries: '#9ece6a', eatingout: '#e5495f', transport: '#7aa2f7',
   health: '#ff75a0', pets: '#bb9af7', utilities: '#e0af68', shopping: '#73daca',
   fitness: '#7dcfff', subs: '#cba6f7', travel: '#2ac3de', gifts: '#9d7cd8', phonenet: '#b4a5f7',
 };
@@ -122,7 +122,7 @@ export const CATEGORY_BASE: Record<string, string> = {
 // Darker sibling of each CATEGORY_BASE value, in the same order. Static tokens (no runtime colour
 // library); the OKLCH relationship to the base is pinned by a test so the two can't drift.
 export const CATEGORY_SIBLINGS = [
-  '#d17d4a', '#7da64f', '#ca5b70', '#5f81cb', '#d15980', '#977aca', '#b68c4d',
+  '#d17d4a', '#7da64f', '#bc3349', '#5f81cb', '#d15980', '#977aca', '#b68c4d',
   '#56b0a3', '#5fa7d0', '#a484ca', '#039db5', '#7e61b1', '#9083ca',
 ];
 

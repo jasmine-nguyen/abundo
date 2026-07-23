@@ -73,6 +73,11 @@ describe('colorForCategory — built-in categories keep today\'s colours', () =>
     const c = toCategory({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C' });
     expect(c.color).toBe(CATEGORY_BASE.coffee); // '#ff9e64', not the server's '#E8A87C'
   });
+
+  it('WHIT-323: Eating Out is the deeper rose-red, distinct from Health (no more clumped pinks)', () => {
+    expect(colorForCategory('eatingout')).toBe('#e5495f'); // deepened from the old #f7768e
+    expect(colorForCategory('eatingout')).not.toBe(colorForCategory('health'));
+  });
 });
 
 describe('colorForCategory — overflow (user-created) categories get a sibling', () => {
