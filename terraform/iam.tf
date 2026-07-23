@@ -263,13 +263,16 @@ resource "aws_iam_role_policy" "transaction_trigger_logs" {
 # Homeloan-request lambda: read + write the home-loan balance row AND the notification
 # bookkeeping the daily poll performs — the prior balance (GetItem before upsert), the
 # milestone + repayment notify markers (WHIT-301 / WHIT-316), device tokens, loan facts,
-# and push-receipt stashes. GetItem/PutItem/UpdateItem on the base table only (single
-# pk/sk rows, never a GSI query), so still narrower than the webhook lambda's full CRUD
-# (no Query/DeleteItem/index). Mirrors the goal_nudge_dynamodb shape.
+# and push-receipt stashes. GetItem/PutItem/UpdateItem on the base table, plus Query on the
+# date-index GSI for the precise repayment-miss detector (WHIT-317), which lists the last
+# week's home-loan repayments via get_transactions_by_date_range. Still narrower than the
+# webhook lambda's full CRUD (no DeleteItem/BatchWrite).
 #
-# Before this grant the role had PutItem only, so every GetItem/UpdateItem was denied at
+# Before the first grant the role had PutItem only, so every GetItem/UpdateItem was denied at
 # runtime and swallowed best-effort — silently disabling the WHIT-301 milestone push and
-# leaving the WHIT-316 repayment-miss alarm dead-on-arrival (WHIT-318).
+# leaving the WHIT-316 repayment-miss alarm dead-on-arrival (WHIT-318). WHIT-317 then added
+# Query + index/* so the transaction-based detector can read the date-index (without it the
+# detector throws on every Query, gets swallowed, and silently never alarms — the same trap).
 resource "aws_iam_role_policy" "homeloan_request_dynamodb" {
   name = "${var.project_name}-homeloan-request-dynamodb"
   role = aws_iam_role.homeloan_request_exec.id
@@ -281,10 +284,12 @@ resource "aws_iam_role_policy" "homeloan_request_dynamodb" {
       Action = [
         "dynamodb:GetItem",
         "dynamodb:PutItem",
-        "dynamodb:UpdateItem"
+        "dynamodb:UpdateItem",
+        "dynamodb:Query"
       ]
       Resource = [
         "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"
       ]
     }]
   })

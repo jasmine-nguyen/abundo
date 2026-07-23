@@ -43,6 +43,13 @@ _REPAYMENT_KEY = {"pk": "NOTIFY#REPAYMENT", "sk": "FIRED"}
 # The single marker item holding every already-celebrated payoff-milestone sprint (WHIT-301).
 _MILESTONE_KEY = {"pk": "NOTIFY#MILESTONE", "sk": "FIRED"}
 
+# The single marker item for the precise repayment-miss detector (WHIT-317): a String Set
+# of "<fired_at>#<amount_cents>#<txn_id>" tokens, one per repayment push. Separate from
+# NOTIFY#REPAYMENT (which only dedups by txn id) because the detector needs the push AMOUNT
+# and TIME to match each ingested repayment against the push that alerted it. Like the
+# ~monthly NOTIFY#REPAYMENT set, this stays tiny under its TTL.
+_REPAYMENT_PUSH_KEY = {"pk": "NOTIFY#REPAYPUSH", "sk": "FIRED"}
+
 
 class NotifyRepository:
     """Per-cycle budget-alert debounce markers. `fired_markers` reads the set of
@@ -122,6 +129,43 @@ class NotifyRepository:
             return None
         last_fired_at = item.get("last_fired_at")
         return int(last_fired_at) if last_fired_at is not None else None
+
+    def mark_repayment_push(self, amount_cents: int, txn_id: str, fired_at: Optional[int] = None) -> None:
+        """Record that a repayment push of `amount_cents` fired at `fired_at` (epoch seconds,
+        default now), so the precise miss-detector (WHIT-317) can match an ingested repayment
+        against the push that alerted it. The token is "<fired_at>#<amount_cents>#<txn_id>" —
+        txn_id keeps two same-amount pushes distinct in the Set. ADD is idempotent and each
+        write refreshes the TTL."""
+        now = int(time.time())
+        stamped_at = now if fired_at is None else fired_at
+        token = f"{stamped_at}#{amount_cents}#{txn_id}"
+        try:
+            self._get_table().update_item(
+                Key=_REPAYMENT_PUSH_KEY,
+                UpdateExpression="ADD #f :m SET #e = :exp",
+                ExpressionAttributeNames={"#f": "pushes", "#e": "expires_at"},
+                ExpressionAttributeValues={":m": {token}, ":exp": now + NOTIFY_TTL_SECONDS},
+            )
+        except ClientError as e:
+            handle_database_error(e, "mark repayment push")
+
+    def repayment_push_amounts_since(self, cutoff: int) -> list:
+        """The amounts (integer cents) of every repayment push fired at or after `cutoff`
+        (epoch seconds), as a LIST so duplicates survive — two same-amount repayments need
+        two pushes to both count as alerted (WHIT-317). Tokens older than `cutoff` fall
+        outside the detector's window and are skipped."""
+        try:
+            item = self._get_table().get_item(Key=_REPAYMENT_PUSH_KEY).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read repayment pushes")
+        if item is None:
+            return []
+        amounts = []
+        for token in item.get("pushes", set()):
+            fired_at_str, amount_str, _txn_id = token.split("#", 2)
+            if int(fired_at_str) >= cutoff:
+                amounts.append(int(amount_str))
+        return amounts
 
     def fired_milestones(self) -> set:
         """The set of payoff-milestone sprint numbers (as strings) already celebrated (WHIT-301)."""

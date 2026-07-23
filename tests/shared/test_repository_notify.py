@@ -175,6 +175,71 @@ def test_repayment_mark_error_surfaces_as_database_error(shared, client_error, d
         r.mark_repayment_fired("txn-1")
 
 
+# --- repayment PUSH markers (WHIT-317): windowed amounts for the precise miss-detector ---
+
+
+def test_no_push_amounts_before_any_push(shared):
+    assert _repo(shared).repayment_push_amounts_since(0) == []
+
+
+def test_push_amount_within_window_round_trips(shared):
+    r = _repo(shared)
+    r.mark_repayment_push(300000, "txn-1", fired_at=1000)
+    assert r.repayment_push_amounts_since(500) == [300000]
+
+
+def test_push_older_than_cutoff_is_excluded(shared):
+    r = _repo(shared)
+    r.mark_repayment_push(300000, "txn-1", fired_at=1000)
+    assert r.repayment_push_amounts_since(2000) == []
+
+
+def test_two_same_amount_pushes_both_count(shared):
+    # Two distinct repayments of the same amount → two tokens (txn_id keeps them apart) →
+    # the reader returns the amount twice, so both can be consumed by the detector.
+    r = _repo(shared)
+    r.mark_repayment_push(300000, "txn-1", fired_at=1000)
+    r.mark_repayment_push(300000, "txn-2", fired_at=1001)
+    assert sorted(r.repayment_push_amounts_since(500)) == [300000, 300000]
+
+
+def test_push_marker_isolated_from_repayment_dedup(shared):
+    r = _repo(shared)
+    r.mark_repayment_fired("txn-1")
+    r.mark_repayment_push(300000, "txn-1", fired_at=1000)
+    assert r.fired_repayments() == {"txn-1"}
+    assert r.repayment_push_amounts_since(0) == [300000]
+
+
+def test_mark_push_writes_a_ttl(shared):
+    r = _repo(shared)
+    r.mark_repayment_push(300000, "txn-1", fired_at=1000)
+    item = r._table.store[("NOTIFY#REPAYPUSH", "FIRED")]
+    assert isinstance(item["expires_at"], int) and item["expires_at"] > 0
+
+
+def test_push_read_error_surfaces_as_database_error(shared, client_error, database_error):
+    r = _repo(shared)
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    r._table.get_item = boom
+    with pytest.raises(database_error):
+        r.repayment_push_amounts_since(0)
+
+
+def test_push_mark_error_surfaces_as_database_error(shared, client_error, database_error):
+    r = _repo(shared)
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    r._table.update_item = boom
+    with pytest.raises(database_error):
+        r.mark_repayment_push(300000, "txn-1")
+
+
 # --- milestone markers (WHIT-301): once-ever, NO TTL ------------------------------------
 
 class FakeMilestoneTable:

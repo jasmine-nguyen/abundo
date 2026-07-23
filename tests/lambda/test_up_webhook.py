@@ -54,6 +54,7 @@ class _FakeNotify:
     def __init__(self, fired=None):
         self.fired = set(fired or [])
         self.marked = []
+        self.pushes = []  # (amount_cents, txn_id) recorded for the WHIT-317 miss-detector
 
     def fired_repayments(self):
         return set(self.fired)
@@ -61,6 +62,9 @@ class _FakeNotify:
     def mark_repayment_fired(self, transaction_id):
         self.marked.append(transaction_id)
         self.fired.add(transaction_id)
+
+    def mark_repayment_push(self, amount_cents, txn_id, fired_at=None):
+        self.pushes.append((amount_cents, txn_id))
 
 
 class _FakeDevice:
@@ -289,6 +293,21 @@ def test_boundary_amount_pushes(wired, monkeypatch):
     monkeypatch.setattr(wired.up, "fetch_transaction", lambda _id: _up_transaction(cents=1000))
     assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
     assert len(wired.sent) == 1
+
+
+def test_qualifying_repayment_records_push_marker(wired):
+    # WHIT-317: a successful push records (amount_cents, txn_id) so the poller's precise
+    # miss-detector can match this repayment. Cents come straight from valueInBaseUnits.
+    assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.OK_RESPONSE
+    assert wired.notify.pushes == [(357300, "txn-1")]
+
+
+def test_failed_push_records_no_marker(wired, monkeypatch):
+    # Mark-on-landing: if Expo didn't accept the push, neither the dedup id nor the
+    # miss-detector marker is written (the 500 lets Up retry).
+    monkeypatch.setattr(wired.up, "send_push", lambda *a, **k: {"sent": 1, "ok": 0, "pruned": []})
+    assert wired.up.lambda_handler(_event(_webhook_payload()), None) == wired.up.ERROR_RESPONSE
+    assert wired.notify.pushes == []
 
 
 def test_already_fired_id_skips(lam, monkeypatch):

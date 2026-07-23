@@ -269,12 +269,14 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_errors" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
-# (2) Silent failures — the real backstop. One datapoint when the daily balance poll sees
-# the mortgage balance drop like a repayment landed but no push fired within the lookback
-# window (handler.py logs "UP_WEBHOOK_REPAYMENT_MISSED ..."). This is the ONLY signal for
-# the silent modes: a re-linked account (wrong id → 200, no push) or a deregistered webhook
-# (never runs). The balance comes from the bank feed, independent of the Up webhook, so the
-# drop is still seen when the webhook is broken. Keep this pattern and handler.py in lockstep.
+# (2) Silent failures — the real backstop. One datapoint when the daily poll finds a
+# repayment landed but no push fired within the lookback window (handler.py logs
+# "UP_WEBHOOK_REPAYMENT_MISSED ..."). TWO independent detectors log this token, so the
+# substring pattern catches both: the coarse balance-drop check (WHIT-316) and the precise
+# transaction-based check (WHIT-317, tagged "source=txn"). This is the ONLY signal for the
+# silent modes: a re-linked account (wrong id → 200, no push) or a deregistered webhook
+# (never runs). Both read from the bank feed, independent of the Up webhook, so the miss is
+# still seen when the webhook is broken. Keep this pattern and handler.py in lockstep.
 resource "aws_cloudwatch_log_metric_filter" "up_webhook_repayment_missed" {
   name           = "${var.project_name}-up-webhook-repayment-missed"
   log_group_name = aws_cloudwatch_log_group.homeloan_request.name
@@ -298,6 +300,6 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_missed" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_description   = "The mortgage balance dropped like a repayment landed, but no instant repayment push fired around then — the push may be silently down (signing secret / Up token / re-linked account / deregistered webhook rotated or broken)."
+  alarm_description   = "A home-loan repayment landed but no instant repayment push fired around then — caught either by the balance dropping (WHIT-316) or by the repayment transaction having no matching push (WHIT-317, source=txn). The push may be silently down (signing secret / Up token / re-linked account / deregistered webhook rotated or broken)."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
