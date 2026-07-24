@@ -125,3 +125,39 @@ describe('transactionGroups', () => {
     expect(groups).toHaveLength(2); // two distinct dates
   });
 });
+
+// WHIT-328 — the row's actionable "Uncategorized" state, the badge count, and the tab list
+// must agree for the SAME transaction. The bug was that the row shouted "Uncategorized" for a
+// not-in-budget transfer while the badge/tab silently dropped it. Fix: the row is only an
+// actionable to-do when the charge counts toward the budget — otherwise it's a quiet label.
+describe('WHIT-328 — row / badge / tab agree on the actionable Uncategorized state', () => {
+  const oneUncat = (over: Parameters<typeof txn>[0]) =>
+    makeState({ categories: [cat({ id: 'coffee' })], transactions: [txn({ transaction_id: 'x', category: null, ...over })] });
+
+  it('an IN-BUDGET uncategorized charge is actionable everywhere: tappable row, counted, listed', () => {
+    const s = oneUncat({ counts_to_budget: true });
+    expect(transactionView(s, s.transactions[0]).tappable).toBe(true);
+    expect(countUncategorized(s)).toBe(1);
+    expect(transactionGroups(s, 'uncategorized').flatMap((g) => g.items.map((t) => t.transaction_id))).toEqual(['x']);
+  });
+
+  it('a NOT-IN-BUDGET uncategorized transfer is quiet everywhere: labelled but not tappable, not counted, not listed', () => {
+    const s = oneUncat({ counts_to_budget: false });
+    const v = transactionView(s, s.transactions[0]);
+    expect(v.categoryLabel).toBe('Uncategorized'); // still labelled, so the detail screen reads right
+    expect(v.tappable).toBe(false);                 // but not a to-do on the list
+    expect(countUncategorized(s)).toBe(0);          // badge clears
+    expect(transactionGroups(s, 'uncategorized').flatMap((g) => g.items)).toEqual([]); // tab empty
+  });
+
+  it('a list of only not-in-budget uncategorized transfers keeps the badge at 0 (All caught up stays reachable)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'coffee' })],
+      transactions: [
+        txn({ transaction_id: 'a', category: null, counts_to_budget: false }),                        // bank transfer
+        txn({ transaction_id: 'b', category: null, counts_to_budget: true, budget_excluded: true }),  // user-excluded
+      ],
+    });
+    expect(countUncategorized(s)).toBe(0);
+  });
+});

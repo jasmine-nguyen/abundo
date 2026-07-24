@@ -37,12 +37,14 @@ it('shows the tag on an excluded income row', () => {
   expect(screen.getByText('Not in budget')).toBeTruthy();
 });
 
-// [A-uncat] an excluded uncategorized row keeps BOTH the tag and its tap-to-categorise behaviour.
-it('an excluded uncategorized row shows the tag and still opens the picker on tap', () => {
+// [A-uncat] WHIT-328 — a not-in-budget uncategorized row still LABELS itself Uncategorized
+// (with the tag) but is a QUIET, non-tappable row: filing a transfer does nothing, so a tap
+// must NOT open the categorize picker. Fail-on-revert: make the row tappable again → this fails.
+it('a not-in-budget uncategorized row shows the tag + label but does NOT open the picker on tap', () => {
   render(<TransactionRow t={txn({ transaction_id: 'txU', category: null, counts_to_budget: false })} category={mockState.category} />);
   expect(screen.getByText('Not in budget')).toBeTruthy();
   fireEvent.press(screen.getByText('Uncategorized'));
-  expect(openPicker).toHaveBeenCalledWith('txU');
+  expect(openPicker).not.toHaveBeenCalled();
 });
 
 // [A-pending] pending + excluded → both the Pending and Not-in-budget pills render on one row.

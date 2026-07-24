@@ -27,11 +27,13 @@ describe('transactionView.excluded — edge combinations (WHIT-298)', () => {
     expect(transactionView(s(), txn({ category: 'income', amount: 2500, counts_to_budget: true })).excluded).toBe(false);
   });
 
-  // [A-uncat] excluded + uncategorized are independent axes: the row is both tappable AND tagged.
-  it('an excluded UNCATEGORIZED row is still tappable and tagged excluded', () => {
+  // [A-uncat] WHIT-328: a not-in-budget uncategorized row still LABELS itself Uncategorized and
+  // is tagged excluded, but it is NOT an actionable to-do — filing a transfer does nothing, so it
+  // is not tappable. Fail-on-revert: gate the row's actionable state on isUncategorized alone → tappable flips true.
+  it('a not-in-budget UNCATEGORIZED row is tagged excluded, labelled Uncategorized, but NOT tappable', () => {
     const v = transactionView(s(), txn({ category: null, counts_to_budget: false }));
     expect(v.excluded).toBe(true);
-    expect(v.tappable).toBe(true);
+    expect(v.tappable).toBe(false);
     expect(v.categoryLabel).toBe('Uncategorized');
   });
 
