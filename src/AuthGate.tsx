@@ -64,10 +64,14 @@ function useAuthSession(): AuthStatus {
         getStatus() === "authed"
       ) {
         // A short absence (app kept in memory) resumes straight in; only an absence of
-        // RELOCK_GRACE_MS or more re-prompts. A null stamp can't occur on this branch (we
-        // only arrive from 'background', which stamps), but treat it as re-lock defensively.
-        const awayMs = backgroundedAt == null ? Infinity : Date.now() - backgroundedAt;
-        if (awayMs >= RELOCK_GRACE_MS) {
+        // RELOCK_GRACE_MS or more re-prompts. Fail CLOSED (re-lock) on any reading we can't
+        // trust: a null stamp (possible if the tree mounts already-backgrounded and resumes
+        // without an intervening 'background' event), or a NEGATIVE elapsed time from a
+        // backward wall-clock jump (NTP/manual/DST) — for a lock, an anomalous clock must
+        // never skip Face ID.
+        const elapsedMs = backgroundedAt == null ? null : Date.now() - backgroundedAt;
+        const reLock = elapsedMs == null || elapsedMs < 0 || elapsedMs >= RELOCK_GRACE_MS;
+        if (reLock) {
           lock();
           void unlock();
         }
