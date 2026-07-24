@@ -158,11 +158,10 @@ class TransactionRepository:
         """Retrieves a single record document. Returns None if it is missing."""
         try:
             response = self._get_table().get_item(Key={"pk": pk, "sk": sk})
-            item = response.get("Item")
-            if not item:
-                print(f"Transaction not found for PK: {pk}, SK: {sk}")
-                return None
-            return item
+            # Absent is a normal result — the reconcile paths read here to check for an
+            # existing row on every pending/posted re-send, so a miss is the common
+            # first-sight case, not something to log (WHIT-329).
+            return response.get("Item") or None
         except ClientError as e:
             handle_database_error(e, "read")
 
@@ -288,12 +287,23 @@ class TransactionRepository:
 
         for txn in transactions:
             if txn.get("status") == PENDING_STATUS:
-                # Pending rows just insert. NOTE: a posted twin arriving in this SAME
-                # payload won't see this pending (the pool is the DB scan), so both
-                # would insert -> a duplicate. Real settlements arrive in separate
-                # webhooks; a backfill payload containing both is an accepted edge,
-                # cleaned by the age-out follow-up.
-                to_insert.append(txn)
+                # A pending charge the bank re-sends under the same id (~7 days until it
+                # settles) must keep the fields the user set while it was pending. Read the
+                # stored row and carry category/notes/tags/budget_excluded before the
+                # full-item put_item overwrites them, mirroring the posted re-sync below
+                # (WHIT-329). No swipe-date inherit here: a pending re-send carries its own
+                # authorized_date, so the settled-path date guard doesn't apply.
+                # NOTE: a posted twin arriving in this SAME payload won't see this pending
+                # (the pool is the DB scan), so both would insert -> a duplicate. Real
+                # settlements arrive in separate webhooks; a backfill payload containing
+                # both is an accepted edge, cleaned by the age-out follow-up.
+                own_pk = _build_pk(txn["account_id"])
+                own_sk = _build_sk(txn["transaction_id"])
+                existing = self.get_transaction(own_pk, own_sk)
+                if existing is not None:
+                    to_insert.append(self._with_carried_category(txn, existing))
+                else:
+                    to_insert.append(txn)
                 continue
 
             # `posted_txns` and this branch share the same `status != PENDING_STATUS`

@@ -136,7 +136,14 @@ def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
     for txn in normalised:
         tid = txn["transaction_id"]
         if txn.get("status") == PENDING_STATUS:
-            by_id[tid] = dict(txn)
+            # Mirror the real write's pending re-sync carry (WHIT-329): keep the user's
+            # category/notes/tags/budget_excluded so the preview can't drift from the
+            # stored row and fire (or suppress) an alert on the wrong category.
+            existing = by_id.get(tid)
+            if existing is not None:
+                by_id[tid] = dict(webhook_repo._with_carried_category(txn, existing))
+            else:
+                by_id[tid] = dict(txn)
             continue
         _, match = next(posted_matches, (None, None))  # defensive: over-run -> no-match (see repo)
         if match is not None:

@@ -247,6 +247,86 @@ def test_same_id_resync_preserves_user_category(lam, repo):
     assert len(store) == 1                                             # not duplicated/deleted
 
 
+# --- WHIT-329: a still-pending re-send under the same id keeps the user's fields ------
+
+
+def test_pending_resync_preserves_user_category(lam, repo):
+    # The "Inner View Psych" bug: a charge categorised while still pending loses its
+    # category when the bank re-sends the same pending id (which it does for ~7 days).
+    # Fail-on-revert: drop the read-then-carry and the category reverts to the raw one.
+    seeded = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                           pending=True, category="health")
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([resent])
+
+    store = repo._table.store
+    row = store[(_acc(resent), "TXN#A")]
+    assert row["category"] == "health"            # user category kept, not the bank's raw one
+    assert row["status"] == seeded["status"]      # still pending
+    assert len(store) == 1                        # same row, no duplicate
+
+
+def test_pending_resync_preserves_notes_tags_and_budget_excluded(lam, repo):
+    # The same fields the settled path carries (WHIT-275/296) must survive a pending
+    # re-send too. These aren't bank fields, so inject them onto the stored pending row.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                            pending=True, category="health")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = "gap fee"
+    repo._table.store[(acc, "TXN#A")]["tags"] = ["health", "claimable"]
+    repo._table.store[(acc, "TXN#A")]["budget_excluded"] = True
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([resent])
+
+    row = repo._table.store[(acc, "TXN#A")]
+    assert row["category"] == "health"
+    assert row["notes"] == "gap fee"
+    assert row["tags"] == ["health", "claimable"]
+    assert row["budget_excluded"] is True
+
+
+def test_pending_resync_does_not_carry_a_cleared_field(lam, repo):
+    # Truthy carry guard: a cleared note on the stored pending must not resurrect.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                            pending=True, category="health")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = ""  # cleared
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([resent])
+
+    assert "notes" not in repo._table.store[(acc, "TXN#A")]
+
+
+def test_first_sight_of_pending_inserts_plainly(lam, repo):
+    # No stored row yet -> nothing to carry, plain insert with the bank category.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                    pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([pending])
+
+    store = repo._table.store
+    assert store[(_acc(pending), "TXN#A")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 1
+
+
+def test_first_sight_of_pending_does_not_log_not_found(lam, repo, capsys):
+    # The pending branch reads the stored row on every re-send, so a first-sight pending
+    # (the common case) must not spam "Transaction not found". Fail-on-revert: restore the
+    # debug print in get_transaction and this assertion fails.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"),
+                    pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([pending])
+
+    assert "Transaction not found" not in capsys.readouterr().out
+
+
 # --- accepted edges (documented behaviour) ----------------------------------
 
 
