@@ -95,6 +95,11 @@ it('renders the lock screen over the still-mounted app when a session is locked'
   expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
 });
 
+it('shows the Abundo logo above the lock title', () => {
+  renderGate();
+  expect(screen.getByTestId('lock-logo', { includeHiddenElements: true })).toBeTruthy();
+});
+
 it('reveals the app after a successful Unlock', () => {
   renderGate();
   fireEvent.press(screen.getByText('Unlock'));

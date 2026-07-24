@@ -11,7 +11,7 @@
 // until the biometric-guarded keychain read (the Face ID prompt) succeeds. Face ID
 // stays OPT-IN (the flag); login itself is not optional.
 import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, StyleSheet, AppState, Keyboard } from "react-native";
+import { View, Text, Pressable, StyleSheet, AppState, Keyboard, Image } from "react-native";
 import { Redirect, useSegments, useRootNavigationState } from "expo-router";
 import { C, FONT } from "./theme";
 import {
@@ -67,6 +67,13 @@ function useAuthSession(): AuthStatus {
 function LockScreen(): React.ReactElement {
   return (
     <View style={styles.lock}>
+      <Image
+        source={require("../assets/abundo-tree-mark.png")}
+        style={styles.lockLogo}
+        accessibilityIgnoresInvertColors
+        importantForAccessibility="no"
+        testID="lock-logo"
+      />
       <Text style={styles.lockTitle}>Abundo is locked</Text>
       <Text style={styles.lockSubtitle}>Unlock with Face ID to continue.</Text>
       <Pressable onPress={() => void unlock()} style={styles.unlockButton}>
@@ -164,6 +171,7 @@ const styles = StyleSheet.create({
   // so touches never reach the covered app.
   lockCover: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 60, backgroundColor: C.bg },
   lock: { flex: 1, backgroundColor: C.bg, alignItems: "center", justifyContent: "center", padding: 32, gap: 14 },
+  lockLogo: { width: 88, height: 88, marginBottom: 6 },
   lockTitle: { fontFamily: FONT.display, fontWeight: "800", fontSize: 24, color: "#fff" },
   lockSubtitle: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, marginBottom: 10 },
   unlockButton: { paddingVertical: 15, paddingHorizontal: 40, borderRadius: 15, backgroundColor: C.accent, alignItems: "center" },
