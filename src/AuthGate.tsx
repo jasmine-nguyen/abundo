@@ -11,7 +11,7 @@
 // until the biometric-guarded keychain read (the Face ID prompt) succeeds. Face ID
 // stays OPT-IN (the flag); login itself is not optional.
 import React, { useEffect, useState } from "react";
-import { View, Text, Pressable, StyleSheet, AppState, Keyboard } from "react-native";
+import { View, Text, Pressable, StyleSheet, AppState, Keyboard, Image } from "react-native";
 import { Redirect, useSegments, useRootNavigationState } from "expo-router";
 import { C, FONT } from "./theme";
 import {
@@ -26,6 +26,15 @@ import {
   signOut,
 } from "./auth";
 
+/**
+ * How long Abundo must sit in the background before a resume re-prompts Face ID. A
+ * briefer switch-away (flick to another app, glance at a notification, lock the phone
+ * for a moment) resumes straight in — mirrors iOS's "Require Passcode → After 10
+ * minutes". A full close (force-quit / cold launch) always re-locks via unlockOrRestore,
+ * independent of this window.
+ */
+export const RELOCK_GRACE_MS = 10 * 60 * 1000;
+
 /** Subscribe to auth status, run the launch unlock/restore, and re-lock on resume. */
 function useAuthSession(): AuthStatus {
   const [current, setCurrent] = useState<AuthStatus>(getStatus());
@@ -37,20 +46,31 @@ function useAuthSession(): AuthStatus {
     // Face ID stays opt-in via EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED (canBiometricLock).
     void unlockOrRestore();
 
-    // Resume re-lock: on a genuine background→active return, drop the in-memory
-    // token and re-prompt. The biometric sheet itself sends the app to 'inactive'
-    // (NOT 'background'), so keying on a tracked 'background' previous state avoids
-    // an unlock→sheet→active→unlock prompt loop.
+    // Resume re-lock: on a genuine background→active return, re-prompt Face ID ONLY if
+    // the app was away at least RELOCK_GRACE_MS; a briefer switch-away resumes straight
+    // in. The biometric sheet itself sends the app to 'inactive' (NOT 'background'), so
+    // keying on a tracked 'background' previous state avoids an unlock→sheet→active→unlock
+    // prompt loop.
     let previousState = AppState.currentState;
+    // Stamped each time we leave to the background, so the resume below can measure how
+    // long we were away and apply the grace window.
+    let backgroundedAt: number | null = null;
     const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "background") backgroundedAt = Date.now();
       if (
         previousState === "background" &&
         nextState === "active" &&
         canBiometricLock() &&
         getStatus() === "authed"
       ) {
-        lock();
-        void unlock();
+        // A short absence (app kept in memory) resumes straight in; only an absence of
+        // RELOCK_GRACE_MS or more re-prompts. A null stamp can't occur on this branch (we
+        // only arrive from 'background', which stamps), but treat it as re-lock defensively.
+        const awayMs = backgroundedAt == null ? Infinity : Date.now() - backgroundedAt;
+        if (awayMs >= RELOCK_GRACE_MS) {
+          lock();
+          void unlock();
+        }
       }
       previousState = nextState;
     });
@@ -67,6 +87,13 @@ function useAuthSession(): AuthStatus {
 function LockScreen(): React.ReactElement {
   return (
     <View style={styles.lock}>
+      <Image
+        source={require("../assets/abundo-tree-mark.png")}
+        style={styles.lockLogo}
+        accessibilityIgnoresInvertColors
+        importantForAccessibility="no"
+        testID="lock-logo"
+      />
       <Text style={styles.lockTitle}>Abundo is locked</Text>
       <Text style={styles.lockSubtitle}>Unlock with Face ID to continue.</Text>
       <Pressable onPress={() => void unlock()} style={styles.unlockButton}>
@@ -164,6 +191,7 @@ const styles = StyleSheet.create({
   // so touches never reach the covered app.
   lockCover: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 60, backgroundColor: C.bg },
   lock: { flex: 1, backgroundColor: C.bg, alignItems: "center", justifyContent: "center", padding: 32, gap: 14 },
+  lockLogo: { width: 88, height: 88, marginBottom: 6 },
   lockTitle: { fontFamily: FONT.display, fontWeight: "800", fontSize: 24, color: "#fff" },
   lockSubtitle: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, marginBottom: 10 },
   unlockButton: { paddingVertical: 15, paddingHorizontal: 40, borderRadius: 15, backgroundColor: C.accent, alignItems: "center" },
