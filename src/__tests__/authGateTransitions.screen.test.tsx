@@ -89,7 +89,7 @@ jest.mock('../auth', () => {
   };
 });
 
-import { AuthGate } from '../AuthGate';
+import { AuthGate, RELOCK_GRACE_MS } from '../AuthGate';
 
 // The device-confirmed Stack model (same as the loop suite), plus a MOUNT COUNTER:
 // a fresh mount resets navigation to the index route. `stackMounts` is the direct
@@ -212,6 +212,9 @@ it('[A9] background→Face-ID resume: app stays mounted under the lock cover, no
   mockRedirectSpy.mockClear();
   expect(stackMounts).toBe(1);
 
+  // Away past the grace window, so the resume re-locks (WHIT: timed re-lock).
+  const nowSpy = jest.spyOn(Date, 'now');
+  nowSpy.mockReturnValueOnce(1_000_000).mockReturnValueOnce(1_000_000 + RELOCK_GRACE_MS + 1);
   act(() => {
     appStateHandler('background');
     appStateHandler('active'); // the gate's listener runs lock() then void unlock()

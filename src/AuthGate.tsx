@@ -26,6 +26,15 @@ import {
   signOut,
 } from "./auth";
 
+/**
+ * How long Abundo must sit in the background before a resume re-prompts Face ID. A
+ * briefer switch-away (flick to another app, glance at a notification, lock the phone
+ * for a moment) resumes straight in — mirrors iOS's "Require Passcode → After 10
+ * minutes". A full close (force-quit / cold launch) always re-locks via unlockOrRestore,
+ * independent of this window.
+ */
+export const RELOCK_GRACE_MS = 10 * 60 * 1000;
+
 /** Subscribe to auth status, run the launch unlock/restore, and re-lock on resume. */
 function useAuthSession(): AuthStatus {
   const [current, setCurrent] = useState<AuthStatus>(getStatus());
@@ -37,20 +46,31 @@ function useAuthSession(): AuthStatus {
     // Face ID stays opt-in via EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED (canBiometricLock).
     void unlockOrRestore();
 
-    // Resume re-lock: on a genuine background→active return, drop the in-memory
-    // token and re-prompt. The biometric sheet itself sends the app to 'inactive'
-    // (NOT 'background'), so keying on a tracked 'background' previous state avoids
-    // an unlock→sheet→active→unlock prompt loop.
+    // Resume re-lock: on a genuine background→active return, re-prompt Face ID ONLY if
+    // the app was away at least RELOCK_GRACE_MS; a briefer switch-away resumes straight
+    // in. The biometric sheet itself sends the app to 'inactive' (NOT 'background'), so
+    // keying on a tracked 'background' previous state avoids an unlock→sheet→active→unlock
+    // prompt loop.
     let previousState = AppState.currentState;
+    // Stamped each time we leave to the background, so the resume below can measure how
+    // long we were away and apply the grace window.
+    let backgroundedAt: number | null = null;
     const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "background") backgroundedAt = Date.now();
       if (
         previousState === "background" &&
         nextState === "active" &&
         canBiometricLock() &&
         getStatus() === "authed"
       ) {
-        lock();
-        void unlock();
+        // A short absence (app kept in memory) resumes straight in; only an absence of
+        // RELOCK_GRACE_MS or more re-prompts. A null stamp can't occur on this branch (we
+        // only arrive from 'background', which stamps), but treat it as re-lock defensively.
+        const awayMs = backgroundedAt == null ? Infinity : Date.now() - backgroundedAt;
+        if (awayMs >= RELOCK_GRACE_MS) {
+          lock();
+          void unlock();
+        }
       }
       previousState = nextState;
     });

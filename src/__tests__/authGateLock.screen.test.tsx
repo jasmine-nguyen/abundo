@@ -48,7 +48,7 @@ jest.mock('../auth', () => {
   };
 });
 
-import { AuthGate } from '../AuthGate';
+import { AuthGate, RELOCK_GRACE_MS } from '../AuthGate';
 
 let appStateHandler: (s: string) => void;
 
@@ -123,14 +123,30 @@ it('Sign in again signs out (→ anon, gate redirects to login)', () => {
   expect(mockSignOut).toHaveBeenCalledTimes(1);
 });
 
-it('re-locks on a genuine background → active resume', () => {
+it('re-locks on a background → active resume after the grace window', () => {
   mockStatus = 'authed';
+  const nowSpy = jest.spyOn(Date, 'now');
   renderGate();
   expect(screen.getByTestId('child')).toBeTruthy();
+  // Away long enough (past RELOCK_GRACE_MS) → re-prompt Face ID on return.
+  nowSpy.mockReturnValueOnce(1_000_000)                        // stamp on background
+    .mockReturnValueOnce(1_000_000 + RELOCK_GRACE_MS + 1);     // read on resume
   appStateHandler('background');
   appStateHandler('active');
   expect(mockLock).toHaveBeenCalledTimes(1);
   expect(mockUnlock).toHaveBeenCalledTimes(1);
+});
+
+it('does NOT re-lock on a brief switch-away (within the grace window)', () => {
+  mockStatus = 'authed';
+  const nowSpy = jest.spyOn(Date, 'now');
+  renderGate();
+  // Back after 5s — a quick flick to another app must resume straight in, no Face ID.
+  nowSpy.mockReturnValueOnce(1_000_000).mockReturnValueOnce(1_000_000 + 5_000);
+  appStateHandler('background');
+  appStateHandler('active');
+  expect(mockLock).not.toHaveBeenCalled();
+  expect(mockUnlock).not.toHaveBeenCalled();
 });
 
 it('does NOT re-lock on inactive → active (the Face ID sheet loop guard)', () => {
