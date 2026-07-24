@@ -37,7 +37,8 @@ beforeEach(() => { mockOpenMultiPicker.mockClear(); mockTx = txData({ transactio
 
 it('a not-in-budget uncategorized transfer is still bulk-selectable on the All tab and handed to the picker', () => {
   render(<Transactions />);
-  // It is NOT on the Uncategorized tab (badge gated on contributesToBudget) — start on All.
+  // WHIT-330: the transfer now also shows on the Uncategorized tab, but this test exercises the
+  // All-tab selection path specifically.
   fireEvent.press(screen.getByText('Select'));
   fireEvent.press(screen.getByLabelText('Select Internal Transfer'));
   expect(screen.getByText('1 selected')).toBeTruthy();

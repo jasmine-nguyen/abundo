@@ -28,28 +28,29 @@ describe('isUncategorized', () => {
 });
 
 describe('countUncategorized', () => {
-  it('counts only budget-counting transactions that are uncategorized', () => {
+  it('counts every uncategorized transaction, transfers included (WHIT-330)', () => {
     const s = makeState({
       categories: [cat({ id: 'coffee' })],
       transactions: [
         txn({ transaction_id: '1', category: null, counts_to_budget: true }),   // counts
         txn({ transaction_id: '2', category: 'coffee', counts_to_budget: true }), // categorized → no
-        txn({ transaction_id: '3', category: null, counts_to_budget: false }),   // excluded (transfer/income) → no
-        txn({ transaction_id: '4', category: 'unknown', counts_to_budget: true }), // counts
+        txn({ transaction_id: '3', category: null, counts_to_budget: false }),   // not-in-budget transfer → still counts
+        txn({ transaction_id: '4', category: 'unknown', counts_to_budget: true }), // unmapped id → counts
       ],
     });
-    expect(countUncategorized(s)).toBe(2);
+    expect(countUncategorized(s)).toBe(3);
   });
 
-  it('drops a user-excluded (budget_excluded) uncategorized charge (WHIT-296)', () => {
+  it('counts a user-excluded (budget_excluded) uncategorized charge (WHIT-330)', () => {
+    // WHIT-296 used to drop this; WHIT-330 counts it so the badge matches the row label.
     const s = makeState({
       categories: [cat({ id: 'coffee' })],
       transactions: [
         txn({ transaction_id: '1', category: null, counts_to_budget: true }),                        // counts
-        txn({ transaction_id: '2', category: null, counts_to_budget: true, budget_excluded: true }), // excluded → no
+        txn({ transaction_id: '2', category: null, counts_to_budget: true, budget_excluded: true }), // still uncategorized → counts
       ],
     });
-    expect(countUncategorized(s)).toBe(1);
+    expect(countUncategorized(s)).toBe(2);
   });
 });
 
@@ -87,7 +88,7 @@ describe('transactionView', () => {
 });
 
 describe('transactionGroups', () => {
-  it('the uncategorized tab lists only budget-counting uncategorized rows', () => {
+  it('the uncategorized tab lists unmapped rows and drops categorized ones', () => {
     const s = makeState({
       categories: [cat({ id: 'coffee' })],
       transactions: [
@@ -100,7 +101,8 @@ describe('transactionGroups', () => {
     expect(ids).toEqual(['1']);
   });
 
-  it('the uncategorized tab drops a user-excluded charge (WHIT-296)', () => {
+  it('the uncategorized tab KEEPS a user-excluded uncategorized charge (WHIT-330)', () => {
+    // WHIT-296 dropped it here; WHIT-330 lists it so the tab matches the badge + row label.
     const s = makeState({
       categories: [cat({ id: 'coffee' })],
       transactions: [
@@ -110,7 +112,7 @@ describe('transactionGroups', () => {
     });
     const groups = transactionGroups(s, 'uncategorized');
     const ids = groups.flatMap((g) => g.items.map((t) => t.transaction_id));
-    expect(ids).toEqual(['1']); // the excluded charge is gone; the all-tab still keeps it
+    expect(ids).toEqual(['1', '2']); // both are uncategorized; the excluded one is still listed
   });
 
   it('the all tab keeps every transaction, grouped by date', () => {
@@ -126,31 +128,30 @@ describe('transactionGroups', () => {
   });
 });
 
-// WHIT-328 — the row's actionable "Uncategorized" state, the badge count, and the tab list
-// must agree for the SAME transaction. The bug was that the row shouted "Uncategorized" for a
-// not-in-budget transfer while the badge/tab silently dropped it. Fix: the row is only an
-// actionable to-do when the charge counts toward the budget — otherwise it's a quiet label.
-describe('WHIT-328 — row / badge / tab agree on the actionable Uncategorized state', () => {
+// WHIT-330 — the row's "Uncategorized" label, the badge count, and the tab list agree for
+// EVERY uncategorized charge, transfers included. (A not-in-budget transfer keeps its quiet,
+// non-tappable look from WHIT-328, but it is still labelled, counted, and listed.)
+describe('WHIT-330 — badge/tab count every uncategorized charge, transfers included', () => {
   const oneUncat = (over: Parameters<typeof txn>[0]) =>
     makeState({ categories: [cat({ id: 'coffee' })], transactions: [txn({ transaction_id: 'x', category: null, ...over })] });
 
-  it('an IN-BUDGET uncategorized charge is actionable everywhere: tappable row, counted, listed', () => {
+  it('an IN-BUDGET uncategorized charge is actionable: tappable row, counted, listed', () => {
     const s = oneUncat({ counts_to_budget: true });
     expect(transactionView(s, s.transactions[0]).tappable).toBe(true);
     expect(countUncategorized(s)).toBe(1);
     expect(transactionGroups(s, 'uncategorized').flatMap((g) => g.items.map((t) => t.transaction_id))).toEqual(['x']);
   });
 
-  it('a NOT-IN-BUDGET uncategorized transfer is quiet everywhere: labelled but not tappable, not counted, not listed', () => {
+  it('a NOT-IN-BUDGET uncategorized transfer is actionable everywhere: tappable, counted, listed', () => {
     const s = oneUncat({ counts_to_budget: false });
     const v = transactionView(s, s.transactions[0]);
-    expect(v.categoryLabel).toBe('Uncategorized'); // still labelled, so the detail screen reads right
-    expect(v.tappable).toBe(false);                 // but not a to-do on the list
-    expect(countUncategorized(s)).toBe(0);          // badge clears
-    expect(transactionGroups(s, 'uncategorized').flatMap((g) => g.items)).toEqual([]); // tab empty
+    expect(v.categoryLabel).toBe('Uncategorized');
+    expect(v.tappable).toBe(true);                  // purple, tap-to-file (WHIT-330 option A)
+    expect(countUncategorized(s)).toBe(1);          // counted
+    expect(transactionGroups(s, 'uncategorized').flatMap((g) => g.items.map((t) => t.transaction_id))).toEqual(['x']); // and listed
   });
 
-  it('a list of only not-in-budget uncategorized transfers keeps the badge at 0 (All caught up stays reachable)', () => {
+  it('a list of only not-in-budget uncategorized transfers is fully counted (WHIT-330)', () => {
     const s = makeState({
       categories: [cat({ id: 'coffee' })],
       transactions: [
@@ -158,6 +159,6 @@ describe('WHIT-328 — row / badge / tab agree on the actionable Uncategorized s
         txn({ transaction_id: 'b', category: null, counts_to_budget: true, budget_excluded: true }),  // user-excluded
       ],
     });
-    expect(countUncategorized(s)).toBe(0);
+    expect(countUncategorized(s)).toBe(2);
   });
 });

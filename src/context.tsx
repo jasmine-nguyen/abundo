@@ -2023,9 +2023,6 @@ export interface TransactionView {
   id: string; merchant: string; amountLabel: string; amountColor: string;
   isPending: boolean; icon: string; iconColor: string; chipBg: string;
   categoryLabel: string; categoryColor: string; categoryWeight: '500' | '700'; tappable: boolean;
-  // WHIT-298: this charge doesn't count toward budgets — either the bank flagged it (a
-  // transfer / card payment) or the user excluded it. Drives the row's "Not in budget" tag.
-  excluded: boolean;
 }
 
 // The taxonomy test behind isUncategorized, taking the raw category id + a lookup,
@@ -2075,30 +2072,20 @@ export function contributesToBudget(t: Transaction): boolean {
 export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Transaction): TransactionView {
   const uncategorized = isUncategorized(s, t);
   const isIncome = t.category === 'income';
-  const inBudget = contributesToBudget(t);
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const base = {
     id: t.transaction_id, merchant: merchantLabel(t), amountLabel: amtStr,
     amountColor: t.amount > 0 ? C.good : C.textBright,
-    isPending: t.status === 'pending', excluded: !inBudget,
+    isPending: t.status === 'pending',
   };
 
-  // An uncategorized charge is an actionable "Uncategorized" to-do — purple label,
-  // tap-to-file — only when it counts toward the budget. A not-in-budget transfer
-  // (e.g. an internal repayment) is uncategorized too, but filing it changes nothing,
-  // so it renders quietly (neutral colour, not tappable) like every other "Not in
-  // budget" row and never nags via the row, the Uncategorized tab, or its badge (WHIT-328).
+  // Every uncategorized charge is the actionable purple "Uncategorized" to-do — tap to file —
+  // regardless of budget status. Transfers are uncategorized too, so they're counted, listed,
+  // and tappable like any other unfiled charge (WHIT-330).
   if (uncategorized) {
-    const actionable = inBudget;
-    const accent = actionable ? C.purple : C.textMid;
     return {
-      ...base, icon: 'q',
-      iconColor: accent,
-      chipBg: actionable ? 'rgba(160,130,240,.16)' : 'rgba(255,255,255,.06)',
-      categoryLabel: 'Uncategorized',
-      categoryColor: accent,
-      categoryWeight: actionable ? '700' : '500',
-      tappable: actionable,
+      ...base, icon: 'q', iconColor: C.purple, chipBg: 'rgba(160,130,240,.16)',
+      categoryLabel: 'Uncategorized', categoryColor: C.purple, categoryWeight: '700', tappable: true,
     };
   }
   if (isIncome) {
@@ -2115,7 +2102,9 @@ export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Tr
 }
 
 export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncategorized') {
-  const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? contributesToBudget(t) && isUncategorized(s, t) : true);
+  // WHIT-330: the Uncategorized tab lists every unmapped charge, transfers included, so it
+  // matches the badge and the row's "Uncategorized" label. Budget math still drops transfers.
+  const tabFilter = (t: Transaction) => (tab === 'uncategorized' ? isUncategorized(s, t) : true);
   const seen = new Map<string, Transaction[]>();
   const order: string[] = [];
   for (const t of s.transactions.filter(tabFilter)) {
@@ -2127,7 +2116,9 @@ export function transactionGroups(s: TransactionListInput, tab: 'all' | 'uncateg
 }
 
 export function countUncategorized(s: TransactionListInput) {
-  return s.transactions.filter((t) => contributesToBudget(t) && isUncategorized(s, t)).length;
+  // WHIT-330: the badge counts every unmapped charge (transfers included) so it always
+  // matches the row's "Uncategorized" label and the tab list.
+  return s.transactions.filter((t) => isUncategorized(s, t)).length;
 }
 
 // Whether a transaction matches the Transactions-tab search box. Matches the text the user

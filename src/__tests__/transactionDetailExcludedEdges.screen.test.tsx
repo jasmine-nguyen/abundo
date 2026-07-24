@@ -46,11 +46,11 @@ it('shows the read-only note and NO toggle when bank-excluded AND user-excluded'
   expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
 });
 
-// [A-detail-undef] CONSISTENCY (WHIT-298 F1 fix): when the server omits counts_to_budget, the
-// list row is tagged "Not in budget" (transactionView.excluded === true). The detail screen
-// gates on the same falsy-counts_to_budget test, so it agrees — it shows the read-only note and
-// hides the toggle, rather than a contradictory OFF switch. Fails if the gate reverts to a strict
-// `=== false` (which would fall through to the toggle for undefined).
+// [A-detail-undef] CONSISTENCY: when the server omits counts_to_budget, the detail screen shows
+// the read-only "Excluded (transfer)" note and hides the toggle (it gates on the falsy
+// counts_to_budget test), rather than a contradictory OFF switch. Fails if the gate reverts to a
+// strict `=== false` (which would fall through to the toggle for undefined). (The list row's
+// "Not in budget" tag was removed in WHIT-330, so this is now purely a detail-screen guard.)
 it('shows the read-only note (not the toggle) when counts_to_budget is undefined — matching the list tag', () => {
   mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: undefined })] });
   render(<TransactionDetail />);
