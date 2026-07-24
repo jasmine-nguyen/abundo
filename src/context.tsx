@@ -2043,9 +2043,11 @@ export function categoryIsUnmapped(
 
 // A transaction is uncategorized when it has no resolvable Abundo category: its
 // category is null, or it points at an id not in the taxonomy (e.g. a raw BankSync
-// category not yet mapped). 'income' is a category, not uncategorized. Single
-// source of truth so the row label, the tab list, the badge — and the "apply to
-// all" sweep — always agree.
+// category not yet mapped). 'income' is a category, not uncategorized. Single source
+// of truth for the taxonomy test. Whether an uncategorized charge is an ACTIONABLE
+// to-do (purple row label, the tab list, the badge, the "apply to all" sweep) is a
+// second gate — contributesToBudget — so a not-in-budget transfer is uncategorized
+// but not something we nag to file (WHIT-328).
 // The exact slice the transaction-list selectors read — a narrow input (not the whole
 // AppContext) so the migrated Transactions screen can feed it query data type-checked,
 // not cast (WHIT-190a, mirrors BudgetViewsInput). AppContext satisfies it structurally,
@@ -2061,27 +2063,54 @@ export function isUncategorized(s: Pick<TransactionListInput, 'category'>, t: Tr
 
 // Whether a transaction counts toward budgets on the client: the bank said it
 // counts AND the user hasn't manually excluded it ("mark as transfer", WHIT-296).
-// Single source of truth so the uncategorized tab, its count, and the "apply to
-// every {merchant}" sweep all drop an excluded transfer the same way the server does.
+// Single source of truth so the uncategorized tab, its count, the row's actionable
+// "Uncategorized" state, and the "apply to every {merchant}" sweep all drop an
+// excluded transfer the same way the server does.
 export function contributesToBudget(t: Transaction): boolean {
-  return t.counts_to_budget && !t.budget_excluded;
+  // `!!` so an omitted counts_to_budget (undefined off the wire) returns a real `false`, not
+  // `undefined` — otherwise it leaks through to transactionView.tappable, whose type is boolean.
+  return !!t.counts_to_budget && !t.budget_excluded;
 }
 
 export function transactionView(s: Pick<TransactionListInput, 'category'>, t: Transaction): TransactionView {
-  const c = t.category == null || t.category === 'income' ? undefined : s.category(t.category);
   const uncategorized = isUncategorized(s, t);
   const isIncome = t.category === 'income';
-  const key = uncategorized ? 'q' : isIncome ? 'home' : c!.icon;
+  const inBudget = contributesToBudget(t);
   const amtStr = (t.amount < 0 ? '-' : '+') + '$' + Math.abs(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const base = {
+    id: t.transaction_id, merchant: merchantLabel(t), amountLabel: amtStr,
+    amountColor: t.amount > 0 ? C.good : C.textBright,
+    isPending: t.status === 'pending', excluded: !inBudget,
+  };
+
+  // An uncategorized charge is an actionable "Uncategorized" to-do — purple label,
+  // tap-to-file — only when it counts toward the budget. A not-in-budget transfer
+  // (e.g. an internal repayment) is uncategorized too, but filing it changes nothing,
+  // so it renders quietly (neutral colour, not tappable) like every other "Not in
+  // budget" row and never nags via the row, the Uncategorized tab, or its badge (WHIT-328).
+  if (uncategorized) {
+    const actionable = inBudget;
+    const accent = actionable ? C.purple : C.textMid;
+    return {
+      ...base, icon: 'q',
+      iconColor: accent,
+      chipBg: actionable ? 'rgba(160,130,240,.16)' : 'rgba(255,255,255,.06)',
+      categoryLabel: 'Uncategorized',
+      categoryColor: accent,
+      categoryWeight: actionable ? '700' : '500',
+      tappable: actionable,
+    };
+  }
+  if (isIncome) {
+    return {
+      ...base, icon: 'home', iconColor: '#9aa2b5', chipBg: 'rgba(154,162,181,.14)',
+      categoryLabel: 'Income', categoryColor: '#9aa2b5', categoryWeight: '500', tappable: false,
+    };
+  }
+  const c = s.category(t.category)!;
   return {
-    id: t.transaction_id, merchant: merchantLabel(t), amountLabel: amtStr, amountColor: t.amount > 0 ? C.good : C.textBright,
-    isPending: t.status === 'pending', icon: key,
-    iconColor: uncategorized ? C.purple : isIncome ? '#9aa2b5' : c!.color,
-    chipBg: uncategorized ? 'rgba(160,130,240,.16)' : isIncome ? 'rgba(154,162,181,.14)' : tint(c!.color, 0.15),
-    categoryLabel: uncategorized ? 'Uncategorized' : isIncome ? 'Income' : c!.name,
-    categoryColor: uncategorized ? C.purple : isIncome ? '#9aa2b5' : C.textMid,
-    categoryWeight: uncategorized ? '700' : '500', tappable: uncategorized,
-    excluded: !contributesToBudget(t),
+    ...base, icon: c.icon, iconColor: c.color, chipBg: tint(c.color, 0.15),
+    categoryLabel: c.name, categoryColor: C.textMid, categoryWeight: '500', tappable: false,
   };
 }
 

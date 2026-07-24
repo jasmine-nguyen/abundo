@@ -29,4 +29,11 @@ describe('contributesToBudget', () => {
     expect(contributesToBudget(txn({ counts_to_budget: false }))).toBe(false);
     expect(contributesToBudget(txn({ counts_to_budget: false, budget_excluded: false }))).toBe(false);
   });
+
+  // WHIT-328: an omitted counts_to_budget (undefined off the wire) must return a real `false`,
+  // not `undefined` — the result flows into transactionView.tappable, which is typed boolean.
+  // Fail-on-revert: drop the `!!` and this is `undefined`, so toBe(false) fails (strict).
+  it('returns a strict boolean false when counts_to_budget is undefined', () => {
+    expect(contributesToBudget(txn({ counts_to_budget: undefined }))).toBe(false);
+  });
 });
