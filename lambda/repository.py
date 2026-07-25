@@ -75,16 +75,16 @@ def _merchant_in_description(merchant: str, description: str) -> bool:
 
 
 # An ANZ PENDING descriptor: the "POS AUTHORISATION" column, then padding before the
-# merchant column. `\s{2,}` matches whatever padding the bank actually sent rather than
+# merchant column. The padding group matches whatever the bank actually sent rather than
 # pinning today's nine spaces — the slice below is taken RELATIVE to where this match
 # ends, so a padding change shifts the cut with it instead of misaligning it.
-_ANZ_PENDING_PREFIX = re.compile(r"^POS AUTHORISATION\s{2,}", re.IGNORECASE)
+_ANZ_PENDING_PREFIX = re.compile(r"^POS AUTHORISATION(?P<pad>\s{2,})", re.IGNORECASE)
 # Width of ANZ's fixed-width merchant column on a PENDING description, measured against
 # live data (every pending in the table reconstructs as: 25-wide merchant, 13-wide
-# suburb, then "AU"). NOT the same as the POSTED `merchantName` field, which is 26 wide —
-# so a merchant whose name is exactly 26 characters is cut differently on the two sides
-# and simply will not match. That is the safe direction (a duplicate the age-out sweep
-# reaps), never a wrong merge.
+# suburb, then "AU"). NOT the same as the POSTED `merchantName` field, which is 26 wide,
+# so ANY merchant whose name runs to 26 characters or more is cut at a different point on
+# the two sides and can never match. That is the safe direction (a leftover duplicate the
+# age-out sweep reaps), never a wrong merge.
 _MERCHANT_COLUMN_WIDTH = 25
 
 
@@ -103,6 +103,12 @@ def _pending_merchant_column(description: Optional[str]) -> Optional[str]:
     text = description or ""
     prefix = _ANZ_PENDING_PREFIX.match(text)
     if prefix is None:
+        return None
+    # A blank merchant column is indistinguishable from padding, so the greedy match runs
+    # straight through it and the slice would start at the SUBURB — handing back a suburb
+    # as if it were a merchant, which is the direction that deletes a row. Padding as wide
+    # as the column itself is that case, and there is no merchant to read.
+    if len(prefix.group("pad")) >= _MERCHANT_COLUMN_WIDTH:
         return None
     column = text[prefix.end():prefix.end() + _MERCHANT_COLUMN_WIDTH]
     return column if column.strip() else None
@@ -135,16 +141,19 @@ def _skew_merchant_matches(merchant: str, pending_merchant: str, description: st
     existed only for ANZ's column fusion, which a positional slice now removes at the
     source, and it was itself over-matching on name prefixes.
 
-    Non-ANZ descriptions (Up rows, legacy rows) have no such column, so they keep the
-    gate they have always had, unchanged — two-or-more words matched against the raw
-    description, and a lone word additionally requiring the pending's own cleaned name to
-    be that same word. Do NOT tighten this fallback to name equality: 108 live pairs
-    reconcile through the multi-word branch today with no usable stored name.
+    Non-ANZ descriptions (Up rows, legacy rows) have no such column and keep the shape of
+    the gate they had — two-or-more words matched against the raw description, a lone word
+    additionally requiring the pending's own cleaned name to be that same word. The
+    multi-word branch does lose WHIT-331's prefix tolerance along with everything else,
+    which costs nothing: column fusion only happens on ANZ rows, and the loss is a miss.
+    Do NOT tighten this fallback to name equality — on the live table (queried 2026-07-25)
+    75 rows carry an empty merchant_name, none of them ANZ-shaped, and 108 pairs that
+    reconcile today would silently stop.
 
     Known accepted miss: two descriptors for one merchant ("PET INSURANCE" /
-    "PET INSURANCE PAYMENT", both live) do not match. Recurring direct debits rarely
-    raise a card pending, and the failure direction is a leftover duplicate that the
-    age-out sweep reaps — never a wrong merge.
+    "PET INSURANCE PAYMENT", both live on 2026-07-25) do not match. Recurring direct
+    debits rarely raise a card pending, and the failure direction is a leftover duplicate
+    that the age-out sweep reaps — never a wrong merge.
 
     Deliberately NOT the fuzzy scorer the client uses for "apply to all"
     (src/context.tsx matchesRulePattern): that is tuned for recall, and on short names
@@ -658,15 +667,22 @@ class TransactionRepository:
             # The amount and the one-day skew lined up but the names did not. The merge
             # log below only fires on success, so without this a broken gate is
             # indistinguishable from nothing to reconcile. Logged for EVERY rejection,
-            # not just single-word ones: the gate now reads a fixed-width column by
-            # position, so if ANZ ever shifts that padding, multi-word merchants stop
-            # reconciling too — and this line is the only place that would show it.
+            # not just single-word ones: the gate now reads a fixed-width column, so a
+            # change to the COLUMN WIDTH or to the "POS AUTHORISATION" literal (padding
+            # drift the relative slice already absorbs) would stop multi-word merchants
+            # reconciling too, and this line is the only place that would show it.
+            # `pending_column` is what the gate actually compared on an ANZ row — the
+            # stored name is printed alongside it precisely because they disagree in the
+            # fused case this exists to diagnose.
             for i in dated_alike:
+                column = _pending_merchant_column(pool[i].get("description") or "")
                 logger.info(
                     "skewed-date twin rejected on merchant: account=%s "
-                    "merchant=%r pending_merchant=%r pending=%s",
+                    "merchant=%r pending_merchant=%r pending_column=%r pending=%s",
                     posted_txn["account_id"], merchant,
-                    pool[i].get("merchant_name"), pool[i].get("transaction_id"),
+                    pool[i].get("merchant_name"),
+                    clean_merchant(column) if column is not None else None,
+                    pool[i].get("transaction_id"),
                 )
             return None
         best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
