@@ -77,7 +77,11 @@ def _merchant_in_description(merchant: str, description: str) -> bool:
 # An ANZ PENDING descriptor: the "POS AUTHORISATION" column, then padding before the
 # merchant column. The padding group matches whatever the bank actually sent rather than
 # pinning today's nine spaces — the slice below is taken RELATIVE to where this match
-# ends, so a padding change shifts the cut with it instead of misaligning it.
+# ends, so a padding change shifts the cut with it instead of misaligning it, up to the
+# column width (past that a run of padding is indistinguishable from a blank column, and
+# the guard below stops reading rather than guess).
+# The `{2,}` is load-bearing SAFETY, not parsing convenience: one space is not column
+# padding, and treating it as such would route a real ANZ row to the looser gate below.
 _ANZ_PENDING_PREFIX = re.compile(r"^POS AUTHORISATION(?P<pad>\s{2,})", re.IGNORECASE)
 # Width of ANZ's fixed-width merchant column on a PENDING description, measured against
 # live data (every pending in the table reconstructs as: 25-wide merchant, 13-wide
@@ -127,8 +131,14 @@ def _same_cleaned_merchant(posted_merchant: str, pending_merchant: str) -> bool:
     return bool(posted_words) and posted_words == _words(pending_merchant)
 
 
-def _skew_merchant_matches(merchant: str, pending_merchant: str, description: str) -> bool:
-    """The skewed-date tier's merchant gate (WHIT-336).
+def _merchant_matches_pending(merchant: str, pending_merchant: str, description: str) -> bool:
+    """Whether a posted merchant names the same shop as a pending row (WHIT-336).
+
+    Shared by every heuristic tier that matches on a merchant — tip, skewed-date and
+    blank-auth. They MUST share it. The tiers run tightest-first so a tighter tier always
+    claims its twin before a looser one can reach it, and that ordering silently inverts
+    if one tier can recognise a merchant the tiers above it cannot: the loosest tier then
+    wins by default and deletes the wrong pending.
 
     An ANZ pending carries its merchant in a fixed-width column, so for those rows we
     read that column by position and require the two CLEANED names to be EQUAL. Equality,
@@ -159,9 +169,13 @@ def _skew_merchant_matches(merchant: str, pending_merchant: str, description: st
     (src/context.tsx matchesRulePattern): that is tuned for recall, and on short names
     it scores COLES/MOLES at 0.80 — over its own threshold. Mis-sweeping a category is
     undoable; deleting a pending is not. Do not unify the two."""
-    column = _pending_merchant_column(description)
-    if column is not None:
-        return _same_cleaned_merchant(merchant, clean_merchant(column))
+    if _ANZ_PENDING_PREFIX.match(description or ""):
+        column = _pending_merchant_column(description)
+        # An ANZ row with no readable column has nothing to compare, so it must REFUSE.
+        # Falling through to the gates below would hand the row to a containment search
+        # over the whole description — suburb included — and a merchant named after a
+        # place would match it. "Unreadable" is not "not ANZ".
+        return column is not None and _same_cleaned_merchant(merchant, clean_merchant(column))
     if len(_words(merchant)) >= 2:
         return _merchant_in_description(merchant, description)
     return (_same_cleaned_merchant(merchant, pending_merchant)
@@ -600,7 +614,8 @@ class TransactionRepository:
             if item.get("authorized_date") == authorized_date
             and item.get("amount") is not None
             and _is_tip_adjusted(item["amount"], amount)
-            and _merchant_in_description(merchant, item.get("description") or "")
+            and _merchant_matches_pending(merchant, item.get("merchant_name") or "",
+                                          item.get("description") or "")
         ]
         if not tip:
             return None
@@ -621,7 +636,7 @@ class TransactionRepository:
 
         This tier DELETES a pending, so the gates stay strict: an exact amount (no tip
         headroom — skewed AND tipped is a compound rarity not worth the extra surface),
-        a merchant match (see _skew_merchant_matches), and a skew of exactly one day in
+        a merchant match (see _merchant_matches_pending), and a skew of exactly one day in
         the one direction the clocks can produce.
 
         Two genuine same-amount purchases on consecutive days are indistinguishable from
@@ -660,7 +675,7 @@ class TransactionRepository:
         ]
         candidates = [
             i for i in dated_alike
-            if _skew_merchant_matches(merchant, pool[i].get("merchant_name") or "",
+            if _merchant_matches_pending(merchant, pool[i].get("merchant_name") or "",
                                       pool[i].get("description") or "")
         ]
         if not candidates:
@@ -731,7 +746,8 @@ class TransactionRepository:
             i for i, item in enumerate(pool)
             if item.get("amount") == amount
             and _settles_after(item.get("date"), posted_date)
-            and _merchant_in_description(merchant, item.get("description") or "")
+            and _merchant_matches_pending(merchant, item.get("merchant_name") or "",
+                                          item.get("description") or "")
         ]
         if not candidates:
             return None

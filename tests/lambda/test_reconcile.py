@@ -1667,7 +1667,7 @@ def test_linked_twin_one_day_ahead_also_wins_the_melbourne_day(lam, repo):
 def test_skew_gate_index_boundaries(lam):
     # The fused matcher's index-boundary guard, carried over to the gate that replaced
     # it: ragged inputs must return False, never raise.
-    g = lam.repository._skew_merchant_matches
+    g = lam.repository._merchant_matches_pending
     # merchant LONGER than the whole description
     assert g("KKV INTERNATIONAL PTY LTD AUSTRALIA", "KKV INTERNATIONAL",
              "kkv international") is False
@@ -1873,8 +1873,8 @@ def test_same_cleaned_merchant_edges(lam):
     assert f("COLES", "") is False
 
 
-def test_skew_merchant_matches_branches(lam):
-    g = lam.repository._skew_merchant_matches
+def test_merchant_matches_pending_branches(lam):
+    g = lam.repository._merchant_matches_pending
     # ANZ rows take the COLUMN branch (both of these), where the stored name is never
     # consulted — the name is read straight out of the fixed-width column
     assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) is True
@@ -2012,7 +2012,7 @@ def test_full_column_merchant_reconciles_and_near_names_still_miss(lam):
     # negatives below are what stops that from becoming a substring search — every pair
     # is two names that BOTH exist in the live table, and each is a DIFFERENT store, so
     # merging one would delete a real transaction.
-    g = lam.repository._skew_merchant_matches
+    g = lam.repository._merchant_matches_pending
     # the fix: a full column no longer defeats the match
     assert g("WOOLWORTHS/330 MILLERS RD", "WOOLWORTHS/330 MILLERS RDMELBOURNE",
              _pend_col("WOOLWORTHS/330 MILLERS RD")) is True
