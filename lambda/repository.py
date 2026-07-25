@@ -8,6 +8,7 @@ import uuid
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
+from merchant import clean_merchant
 from models import Transaction
 from constants import (
     AUTH_DATE_SKEW_DAYS,
@@ -73,46 +74,38 @@ def _merchant_in_description(merchant: str, description: str) -> bool:
     return any(d[i:i + len(m)] == m for i in range(len(d) - len(m) + 1))
 
 
-# Shortest final merchant word that may match as a PREFIX in a fused description (see
-# _merchant_in_fused_description). A 2-letter token like "SA" prefixes far too many
-# unrelated words ("sales", "salvation") to justify deleting a pending on it.
-_FUSED_PREFIX_MIN_LEN = 3
+# An ANZ PENDING descriptor: the "POS AUTHORISATION" column, then padding before the
+# merchant column. `\s{2,}` matches whatever padding the bank actually sent rather than
+# pinning today's nine spaces — the slice below is taken RELATIVE to where this match
+# ends, so a padding change shifts the cut with it instead of misaligning it.
+_ANZ_PENDING_PREFIX = re.compile(r"^POS AUTHORISATION\s{2,}", re.IGNORECASE)
+# Width of ANZ's fixed-width merchant column on a PENDING description, measured against
+# live data (every pending in the table reconstructs as: 25-wide merchant, 13-wide
+# suburb, then "AU"). NOT the same as the POSTED `merchantName` field, which is 26 wide —
+# so a merchant whose name is exactly 26 characters is cut differently on the two sides
+# and simply will not match. That is the safe direction (a duplicate the age-out sweep
+# reaps), never a wrong merge.
+_MERCHANT_COLUMN_WIDTH = 25
 
 
-def _merchant_in_fused_description(merchant: str, description: str) -> bool:
-    """Like _merchant_in_description, but tolerant of ANZ's fixed-width column fusion
-    (WHIT-331). A pending's raw description packs the merchant into a 25-character
-    column; a merchant that exactly fills it runs straight into the suburb with no
-    separator, so "SQ *KKV INTERNATIONAL PTY" + "Sunshine" arrives as the single word
-    "PTYSunshine" and every word of the merchant can no longer match.
+def _pending_merchant_column(description: Optional[str]) -> Optional[str]:
+    """ANZ's fixed-width merchant column, sliced out of a PENDING description by
+    POSITION — the whole point being that position survives what whitespace cannot.
 
-    Only the LAST merchant word may match as a prefix, and only when it is at least
-    _FUSED_PREFIX_MIN_LEN characters — fusion can only ever affect the trailing word,
-    and a short one would over-match. Every earlier word must still match exactly, so
-    this stays strictly narrower than a substring search. A short final word falls back
-    to whole-word matching (today's behaviour: a leftover duplicate, never a wrong
-    merge)."""
-    merchant_words = _words(merchant)
-    if not merchant_words:
-        return False
-    head, last = merchant_words[:-1], merchant_words[-1]
-    # `_words` keeps only [a-z0-9], so an accented or punctuated token arrives here as a
-    # STUMP ("ROSÉ" -> "ros") that would pass the length guard and then prefix-match an
-    # unrelated word ("Rossini"). Only tolerate a prefix when the trailing token survived
-    # that stripping intact — i.e. it is a real word, not a fragment.
-    raw_words = merchant.split()
-    last_is_whole_word = bool(raw_words) and raw_words[-1].lower() == last
-    # Nothing to fuse onto either: a lone word has no earlier word anchoring it, so a
-    # prefix rule would degrade to "any description word starts with this" — strictly
-    # looser than whole-word matching, in the direction that deletes a pending.
-    if not head or not last_is_whole_word or len(last) < _FUSED_PREFIX_MIN_LEN:
-        return _merchant_in_description(merchant, description)
-    description_words = _words(description)
-    return any(
-        description_words[i:i + len(head)] == head
-        and description_words[i + len(head)].startswith(last)
-        for i in range(len(description_words) - len(merchant_words) + 1)
-    )
+    `clean_merchant` reads the same column by splitting on runs of 2+ spaces, which
+    fails exactly when the merchant FILLS the column: it then runs into the suburb with
+    no separator ("SQ *KKV INTERNATIONAL PTY" + "Sunshine" -> "PTYSunshine"), and the
+    stored merchant name is corrupt. A positional slice is immune to that.
+
+    None when the description is not an ANZ pending descriptor (an Up row, or a legacy
+    row) or when the column is blank — both must fall through to the name-based gate,
+    never merge on nothing."""
+    text = description or ""
+    prefix = _ANZ_PENDING_PREFIX.match(text)
+    if prefix is None:
+        return None
+    column = text[prefix.end():prefix.end() + _MERCHANT_COLUMN_WIDTH]
+    return column if column.strip() else None
 
 
 def _same_cleaned_merchant(posted_merchant: str, pending_merchant: str) -> bool:
@@ -129,29 +122,39 @@ def _same_cleaned_merchant(posted_merchant: str, pending_merchant: str) -> bool:
 
 
 def _skew_merchant_matches(merchant: str, pending_merchant: str, description: str) -> bool:
-    """The skewed-date tier's merchant gate. Two branches, and the single-word one is
-    the STRICTER of the two:
+    """The skewed-date tier's merchant gate (WHIT-336).
 
-    - Two or more words: the merchant must appear in the pending's raw description,
-      tolerating ANZ's fixed-width column fusion.
-    - Exactly one word: clean_merchant routinely reduces a real shop to one word by
-      stripping its store number or processor prefix ("COLES 0602", "OFFICEWORKS 0355",
-      "PAYSTAY 1093482", "AMAZON RETA* AMAZON AU"), and a lone word inside a
-      description is far too weak to
-      delete a row on — "COLES" is a whole word of "COLES EXPRESS". So instead of
-      searching the description, require the pending's OWN cleaned merchant to be that
-      same single word. Both sides are written by clean_merchant from the same
-      fixed-width column (banksync.normalise), so a real twin matches exactly while a
-      neighbouring brand does not. The description check that follows is a cheap
-      invariant — a pending's merchant is derived from its own description today — kept
-      so that an ANZ change to populate merchantName on pendings fails toward no match.
+    An ANZ pending carries its merchant in a fixed-width column, so for those rows we
+    read that column by position and require the two CLEANED names to be EQUAL. Equality,
+    not containment: "CHEMIST WAREHOUSE" is contained in "CHEMIST WAREHOUSE DARLING", and
+    those are two different stores — merging them would delete a real transaction. The
+    same trap catches "McDonalds" inside "MCDONALDS SYD DOMEST" and "WOOLWORTHS" inside
+    "WOOLWORTHS/330 MILLERS RD"; all three pairs are live in the table.
+
+    Equality also replaces the prefix-tolerant matcher this used to need. That tolerance
+    existed only for ANZ's column fusion, which a positional slice now removes at the
+    source, and it was itself over-matching on name prefixes.
+
+    Non-ANZ descriptions (Up rows, legacy rows) have no such column, so they keep the
+    gate they have always had, unchanged — two-or-more words matched against the raw
+    description, and a lone word additionally requiring the pending's own cleaned name to
+    be that same word. Do NOT tighten this fallback to name equality: 108 live pairs
+    reconcile through the multi-word branch today with no usable stored name.
+
+    Known accepted miss: two descriptors for one merchant ("PET INSURANCE" /
+    "PET INSURANCE PAYMENT", both live) do not match. Recurring direct debits rarely
+    raise a card pending, and the failure direction is a leftover duplicate that the
+    age-out sweep reaps — never a wrong merge.
 
     Deliberately NOT the fuzzy scorer the client uses for "apply to all"
     (src/context.tsx matchesRulePattern): that is tuned for recall, and on short names
     it scores COLES/MOLES at 0.80 — over its own threshold. Mis-sweeping a category is
     undoable; deleting a pending is not. Do not unify the two."""
+    column = _pending_merchant_column(description)
+    if column is not None:
+        return _same_cleaned_merchant(merchant, clean_merchant(column))
     if len(_words(merchant)) >= 2:
-        return _merchant_in_fused_description(merchant, description)
+        return _merchant_in_description(merchant, description)
     return (_same_cleaned_merchant(merchant, pending_merchant)
             and _merchant_in_description(merchant, description))
 
@@ -652,28 +655,34 @@ class TransactionRepository:
                                       pool[i].get("description") or "")
         ]
         if not candidates:
-            if single_word:
-                # The amount and the one-day skew lined up but the names did not. The
-                # merge log below only fires on success, so without this a broken
-                # single-word gate is indistinguishable from nothing to reconcile.
-                for i in dated_alike:
-                    logger.info(
-                        "skewed-date single-word twin rejected on merchant: account=%s "
-                        "merchant=%r pending_merchant=%r pending=%s",
-                        posted_txn["account_id"], merchant,
-                        pool[i].get("merchant_name"), pool[i].get("transaction_id"),
-                    )
+            # The amount and the one-day skew lined up but the names did not. The merge
+            # log below only fires on success, so without this a broken gate is
+            # indistinguishable from nothing to reconcile. Logged for EVERY rejection,
+            # not just single-word ones: the gate now reads a fixed-width column by
+            # position, so if ANZ ever shifts that padding, multi-word merchants stop
+            # reconciling too — and this line is the only place that would show it.
+            for i in dated_alike:
+                logger.info(
+                    "skewed-date twin rejected on merchant: account=%s "
+                    "merchant=%r pending_merchant=%r pending=%s",
+                    posted_txn["account_id"], merchant,
+                    pool[i].get("merchant_name"), pool[i].get("transaction_id"),
+                )
             return None
         best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
         twin = pool.pop(best)
         # The only way this tier is measurable: a successful reconcile DELETES the
         # pending, so without a log line the skew leaves no trace either way. `gate`
-        # separates the two branches so the newer single-word one can be counted.
+        # names the branch that actually matched, so a column-geometry drift shows up as
+        # "column" merges falling to zero rather than as silence.
+        if _pending_merchant_column(twin.get("description") or "") is not None:
+            gate = "column"
+        else:
+            gate = "name" if single_word else "description"
         logger.info(
             "skewed-date twin merged: account=%s merchant=%r amount=%s gate=%s "
             "posted=%s (auth %s) pending=%s (auth %s)",
-            posted_txn["account_id"], merchant, amount,
-            "single-word" if single_word else "fused",
+            posted_txn["account_id"], merchant, amount, gate,
             posted_txn.get("transaction_id"), authorized_date,
             twin.get("transaction_id"), twin.get("authorized_date"),
         )

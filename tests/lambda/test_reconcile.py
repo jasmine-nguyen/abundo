@@ -1469,26 +1469,27 @@ def test_is_skewed_next_day_edges(lam):
     assert f("not-a-date", "2026-07-21") is False
 
 
-def test_merchant_in_fused_description_edges(lam):
-    g = lam.repository._merchant_in_fused_description
-    # the real fusion: the 25-char column runs the suburb onto the merchant's last word
-    assert g("KKV INTERNATIONAL PTY", _SKEW_PEND_DESC.lower()) is True
-    # an ordinary (unfused) description still matches
-    assert g("DHP SA PTY LTD", "pos authorisation dhp sa pty ltd st albans au") is True
-    # only the LAST word may match as a prefix — a fused leading word is not enough
-    assert g("KKV INTERNATIONAL PTY", "pos kkvinternational pty sunshine") is False
-    # a short final word must match exactly, so it can't prefix an unrelated one
-    assert g("DHP SA", "pos authorisation dhp sasalvation army au") is False
-    assert g("DHP SA", "pos authorisation dhp sa st albans au") is True
-    # a different merchant never matches
-    assert g("COLES SUPERMARKET", _SKEW_PEND_DESC.lower()) is False
-    assert g("", "anything at all") is False
-    # An accented or punctuated trailing token is stripped to a STUMP ("ROSÉ" -> "ros")
-    # that would clear the 3-character guard and then prefix-match an unrelated shop.
-    # Only a token that survives stripping intact may match as a prefix.
-    assert g("CAFE ROSE", "pos authorisation cafe rosewood bar au") is True  # real word, fusible
-    assert g("CAFÉ ROSÉ", "pos authorisation café rosewood bar au") is False  # stump, must not
-    assert g("CAFÉ ROSÉ", "pos authorisation café rosé bar au") is True      # exact still works
+def test_pending_merchant_column_slices_by_position(lam):
+    # WHIT-336 replaced the prefix-tolerant fused matcher with a positional slice of
+    # ANZ's fixed-width merchant column. These are the slice's own edges.
+    g = lam.repository._pending_merchant_column
+    # the real fusion: a full 25-char column runs straight into the suburb, and the
+    # positional cut separates them again where a whitespace split cannot
+    assert g(_SKEW_PEND_DESC) == "SQ *KKV INTERNATIONAL PTY"
+    # a short column comes back padded (clean_merchant strips that)
+    assert g(_COLES_PEND_DESC).strip() == "COLES 0602"
+    # the cut follows the padding rather than a hard-coded offset, so a bank-side
+    # padding change shifts it instead of misaligning it (8 and 11 spaces, same shop)
+    for pad in (2, 8, 9, 11, 14):
+        desc = "POS AUTHORISATION" + " " * pad + "COLES 0602".ljust(25) + "MELBOURNE"
+        assert g(desc).strip() == "COLES 0602", f"padding {pad} misaligned the cut"
+    # not an ANZ pending descriptor -> no column, fall through to the name gate
+    assert g("COLES 0602 MELBOURNE") is None
+    assert g("POS AUTHORISATION COLES") is None      # single space is not column padding
+    assert g("") is None
+    assert g(None) is None
+    # a blank column must never be treated as a match on nothing
+    assert g("POS AUTHORISATION" + " " * 40) is None
 
 
 # --- WHIT-331 QA gaps (adversarial) -----------------------------------------
@@ -1658,19 +1659,21 @@ def test_linked_twin_one_day_ahead_also_wins_the_melbourne_day(lam, repo):
 # not the ends of the word list, where the i + len(head) lookup could run off).
 
 
-def test_merchant_in_fused_description_index_boundaries(lam):
-    g = lam.repository._merchant_in_fused_description
-    # merchant LONGER than the whole description -> no candidate window, never an IndexError
-    assert g("KKV INTERNATIONAL PTY LTD AUSTRALIA", "kkv international") is False
+def test_skew_gate_index_boundaries(lam):
+    # The fused matcher's index-boundary guard, carried over to the gate that replaced
+    # it: ragged inputs must return False, never raise.
+    g = lam.repository._skew_merchant_matches
+    # merchant LONGER than the whole description
+    assert g("KKV INTERNATIONAL PTY LTD AUSTRALIA", "KKV INTERNATIONAL",
+             "kkv international") is False
     # description exactly one word short of the merchant
-    assert g("KKV INTERNATIONAL PTY", "kkv international") is False
-    # the fused word is the very LAST word of the description (the highest legal index)
-    assert g("KKV INTERNATIONAL PTY", "pos kkv international ptysunshine") is True
-    # and the very FIRST word run, with nothing before it
-    assert g("KKV INTERNATIONAL PTY", "kkv international ptysunshine au") is True
+    assert g("KKV INTERNATIONAL PTY", "KKV INTERNATIONAL", "kkv international") is False
     # empty / whitespace-only inputs on either side
-    assert g("KKV INTERNATIONAL PTY", "") is False
-    assert g("   ", _SKEW_PEND_DESC.lower()) is False
+    assert g("KKV INTERNATIONAL PTY", "", "") is False
+    assert g("   ", "KKV INTERNATIONAL PTY", _SKEW_PEND_DESC) is False
+    assert g("", "", "") is False
+    # a truncated column is NOT a prefix match any more — the whole point of WHIT-336
+    assert g("KKV INTERNATIONAL PTY LTD", "", _SKEW_PEND_DESC) is False
 
 
 # [A18] the pending pool is per account: an identical skew-eligible pending on another
@@ -1754,10 +1757,23 @@ def test_one_word_merchant_skewed_pair_reconciles_and_keeps_the_melbourne_day(la
     assert store[(acc, "TXN#POST")]["category"] == "groceries"
 
 
-def test_one_word_merchant_needs_the_pending_to_carry_a_merchant_name(lam, repo):
-    # A row written before clean_merchant existed has no merchant_name. The gate has
-    # nothing to compare, so it must fail toward leaving the pending alone, not crash.
+def test_missing_merchant_name_is_recovered_from_the_anz_column(lam, repo):
+    # A row written before clean_merchant existed has no merchant_name. Since WHIT-336
+    # an ANZ pending no longer depends on that field — the name is read straight out of
+    # the row's own fixed-width column — so this reconciles rather than duplicating.
     pending = _coles_pending(repo, lam)
+    del repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"]
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 1
+
+
+def test_missing_merchant_name_on_a_non_anz_row_still_never_merges(lam, repo):
+    # The other half of the control above: with no column to read and no stored name,
+    # there is nothing to compare, so a single-word merchant must fail toward leaving
+    # the pending alone rather than merging on the description alone.
+    pending = _coles_pending(repo, lam, description="COLES 0602 MELBOURNE")
     del repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"]
 
     repo.insert_or_reconcile([_coles_posted(lam)])
@@ -1871,7 +1887,9 @@ def test_one_word_near_miss_logs_the_rejected_pending(lam, repo, caplog):
 
 
 def test_merge_log_names_which_gate_matched(lam, repo, caplog):
-    # `gate` is how the newer, riskier single-word branch gets counted in production.
+    # `gate` is the only production signal for which branch matched. It matters most for
+    # "column": that branch reads a fixed-width offset, so if ANZ ever shifts its padding
+    # the symptom is column merges falling to zero rather than silence.
     caplog.set_level("INFO", logger="repository")
     _coles_pending(repo, lam)
     repo.insert_or_reconcile([_coles_posted(lam)])
@@ -1880,8 +1898,9 @@ def test_merge_log_names_which_gate_matched(lam, repo, caplog):
 
     merges = [r.getMessage() for r in caplog.records if "twin merged" in r.getMessage()]
     assert len(merges) == 2
-    assert "gate=single-word" in merges[0]
-    assert "gate=fused" in merges[1]
+    # both are ANZ fixed-width pendings, so both match on the column
+    assert "gate=column" in merges[0]
+    assert "gate=column" in merges[1]
 
 
 def test_one_word_merchant_name_must_also_appear_in_the_description(lam, repo):
@@ -1948,32 +1967,61 @@ def test_one_word_skew_merges_for_every_named_single_word_shop(lam, repo, label,
     assert store[(acc, "TXN#POST")]["category"] == "groceries"
 
 
-def test_muji_and_woolworths_real_shapes_are_not_one_word_and_still_miss(lam):
-    # Their LIVE descriptors are several words, so they never reach the single-word
-    # branch and still duplicate. Pinned with a positive control so this fails both
-    # ways — if the gate is reverted the control reds, if it is ever loosened to a
-    # substring search the two misses red.
+def test_full_column_merchant_reconciles_and_near_names_still_miss(lam):
+    # WHIT-336. WOOLWORTHS/330 MILLERS RD exactly fills the 25-char column, so it fused
+    # onto the suburb and never reconciled. The positional slice recovers it. The
+    # negatives below are what stops that from becoming a substring search — every pair
+    # is two names that BOTH exist in the live table, and each is a DIFFERENT store, so
+    # merging one would delete a real transaction.
     g = lam.repository._skew_merchant_matches
-    muji_desc = _pend_col("MUJI RETAIL AUSTRALIA")
-    assert g("MUJI RETAIL (AUSTRAL", "MUJI RETAIL AUSTRALIA", muji_desc) is False
-    woolies_desc = _pend_col("WOOLWORTHS/330 MILLERS RD")
+    # the fix: a full column no longer defeats the match
     assert g("WOOLWORTHS/330 MILLERS RD", "WOOLWORTHS/330 MILLERS RDMELBOURNE",
-             woolies_desc) is False
-    # the SHORT forms of the same two brands do reconcile
+             _pend_col("WOOLWORTHS/330 MILLERS RD")) is True
+    # real different-store pairs — a containment test merges all three, this must not
+    assert g("CHEMIST WAREHOUSE", "", _pend_col("CHEMIST WAREHOUSE DARLING")) is False
+    assert g("McDonalds", "", _pend_col("MCDONALDS SYD DOMEST")) is False
+    assert g("WOOLWORTHS", "", _pend_col("WOOLWORTHS/330 MILLERS RD")) is False
+    # a name truncated on ONE side only stays a miss (fail-safe: a leftover duplicate)
+    assert g("MUJI RETAIL (AUSTRAL", "MUJI RETAIL AUSTRALIA",
+             _pend_col("MUJI RETAIL AUSTRALIA")) is False
+    assert g("KKV INTERNATIONAL PTY LTD", "", _pend_col("SQ *KKV INTERNATIONAL PTY")) is False
+    # positive controls, so a reverted gate reds here too
     assert g("MUJI", "MUJI", _pend_col("MUJI 1102")) is True
     assert g("WOOLWORTHS", "WOOLWORTHS", _pend_col("WOOLWORTHS 1234")) is True
+    assert g("KKV INTERNATIONAL PTY", "", _pend_col("SQ *KKV INTERNATIONAL PTY")) is True
 
 
-def test_one_word_skew_ignores_a_pending_whose_merchant_name_is_empty(lam, repo):
+def test_empty_merchant_name_is_recovered_from_the_anz_column(lam, repo):
     # clean_merchant can return "", and sanitise_transaction only strips None, so ""
-    # persists. The description still names COLES, so a description-only gate would
-    # have merged this; only the name equality keeps the pending alive.
+    # persists. On an ANZ row the column is authoritative and the empty field is simply
+    # not consulted, so the pair still collapses to one row.
     pending = _coles_pending(repo, lam)
     repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"] = ""
 
     repo.insert_or_reconcile([_coles_posted(lam)])
 
-    assert len(repo._table.store) == 2
+    assert len(repo._table.store) == 1
+
+
+def test_multi_word_non_anz_pending_with_no_stored_name_still_reconciles(lam, repo):
+    # 75 live rows carry an empty merchant_name and NONE of them is an ANZ shape, so the
+    # non-ANZ fallback must keep matching on the description alone. Tightening it to name
+    # equality silently stops 108 live pairs reconciling — this is the fail-on-revert
+    # anchor for that. Shape and name are verbatim from the live table.
+    pending = _seed_pending(
+        repo, lam, txn_id="PEND", amount=Decimal("-42.00"), authorized_date="2026-07-22",
+        date="2026-07-22", pending=True, category="shopping", merchant_name="",
+        description="SQ *HARERUYA PANTRY       Carlton",
+    )
+    repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"] = ""
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-42.00"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="FOOD_AND_DRINK",
+                   description="SQ *HARERUYA PANTRY       Carlton",
+                   merchant_name="SQ *HARERUYA PANTRY       ")
+
+    repo.insert_or_reconcile([posted])
+
+    assert len(repo._table.store) == 1
 
 
 def test_one_word_posted_resend_does_not_consume_a_later_genuine_pending(lam, repo):
@@ -2073,19 +2121,22 @@ def test_near_miss_is_not_logged_on_a_successful_one_word_merge(lam, repo, caplo
 
     repo.insert_or_reconcile([_coles_posted(lam)])
 
-    assert [r for r in caplog.records if "single-word twin rejected" in r.getMessage()] == []
+    assert [r for r in caplog.records if "twin rejected" in r.getMessage()] == []
 
 
-def test_near_miss_is_not_logged_for_a_multi_word_merchant(lam, repo, caplog):
-    # The fused branch is unchanged and has no near-miss line, so the new counter only
-    # ever measures the new branch.
+def test_near_miss_is_logged_for_a_multi_word_merchant(lam, repo, caplog):
+    # WHIT-336 widened the near-miss line to EVERY rejection, not just single-word ones.
+    # Multi-word merchants now match on a positional column slice, so they are just as
+    # exposed to a padding drift and need the same trace.
     caplog.set_level("INFO", logger="repository")
     _skew_pending(repo, lam, txn_id="PEND", description=_ISAN_PEND_DESC)
 
     repo.insert_or_reconcile([_skew_posted(lam)])
 
-    assert len(repo._table.store) == 2
-    assert [r for r in caplog.records if "single-word twin rejected" in r.getMessage()] == []
+    assert len(repo._table.store) == 2                       # KKV posted vs ISAN pending
+    rejected = [r.getMessage() for r in caplog.records if "twin rejected" in r.getMessage()]
+    assert len(rejected) == 1
+    assert "pending=PEND" in rejected[0]
 
 
 def test_near_miss_logs_only_the_amount_and_date_matched_pendings(lam, repo, caplog):
@@ -2101,6 +2152,6 @@ def test_near_miss_logs_only_the_amount_and_date_matched_pendings(lam, repo, cap
     repo.insert_or_reconcile([_coles_posted(lam)])
 
     near = [r.getMessage() for r in caplog.records
-            if "single-word twin rejected on merchant" in r.getMessage()]
+            if "twin rejected on merchant" in r.getMessage()]
     assert len(near) == 2
     assert {m.rsplit("pending=", 1)[1] for m in near} == {"P1", "P2"}
