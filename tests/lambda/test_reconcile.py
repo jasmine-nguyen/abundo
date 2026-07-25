@@ -1863,6 +1863,69 @@ def test_merchant_matches_pending_branches(lam):
     assert g("HARERUYA PANTRY", "", "SQ *HARERUYA PANTRY       Carlton") is True
 
 
+def test_merchant_gate_returns_the_matched_branch_name(lam):
+    # WHIT-338: the gate names WHICH branch matched, and the skewed-date merge log's
+    # gate= label is read straight from this — so this is the single source both the
+    # match and the label depend on. A branch-order or predicate change that mislabels
+    # the log reds here.
+    g = lam.repository._merchant_gate
+    assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) == "column"
+    # a single-word merchant on an ANZ column is still "column" — the column branch is
+    # checked first, so it never falls to the name branch (the QUEENVICTORIAMARKETSKIDAT case)
+    assert g("COLES", "", _COLES_PEND_DESC.lower()) == "column"
+    # non-ANZ, one word -> the name-equality branch
+    assert g("COLES", "COLES", "COLES 0602 MELBOURNE") == "name"
+    # non-ANZ, two-plus words -> the description branch
+    assert g("HARERUYA PANTRY", "", "SQ *HARERUYA PANTRY       Carlton") == "description"
+    # no match -> None (a neighbouring brand in the same ANZ column)
+    assert g("COLES", "COLES", _pend_col("COLES EXPRESS 1157", "FOOTSCRAY")) is None
+    assert g("COLES", "COLES EXPRESS", "coles express 1157 footscray au") is None
+
+
+def test_gate_and_bool_agree_on_the_anz_shape_boundaries(lam):
+    # WHIT-338 — the label and the bool now BOTH hinge on is_anz_pending vs
+    # pending_merchant_column. Pin the two boundaries where an is_anz/column split would
+    # silently flip a label from "column" to "name" (or admit a merge on nothing).
+    g = lam.repository._merchant_gate
+    m = lam.repository._merchant_matches_pending
+    # ANZ-shaped but the merchant column is BLANK (padding >= column width): the gate must
+    # REFUSE, never fall through to a name/description containment search over the suburb.
+    anz_blank = "POS AUTHORISATION" + " " * 30 + "AU"
+    assert g("COLES", "COLES", anz_blank) is None
+    assert m("COLES", "COLES", anz_blank) is False
+    # a SINGLE space after the prefix is NOT column padding -> not ANZ -> the name branch.
+    one_space = "POS AUTHORISATION COLES 0602 MELBOURNE"
+    assert g("COLES", "COLES", one_space) == "name"
+    assert m("COLES", "COLES", one_space) is True
+
+
+def test_gate_name_branch_is_logged_end_to_end(lam, repo, caplog):
+    # WHIT-338 — gate=name is the ONE label branch no full reconcile in the suite
+    # exercises (column and description are; name was only pinned at the unit level). It
+    # is the branch the deleted `single_word` local used to produce, so this anchors that
+    # removing the local did not change the log. A single-word merchant on a NON-ANZ
+    # pending is the only path to "name": "LEAPTEL 1234" cleans to the one word "LEAPTEL",
+    # the row is not ANZ-shaped, so the name-equality branch carries it.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-30.00"),
+                  authorized_date="2026-07-22", date="2026-07-22", pending=True,
+                  category="internet", description="LEAPTEL 1234",
+                  merchant_name="LEAPTEL 1234")
+    caplog.set_level("INFO", logger="repository")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-30.00"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="GENERAL_SERVICES",
+                   description="LEAPTEL 1234", merchant_name="LEAPTEL 1234")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") not in store          # twin reconciled — no double count
+    assert len(store) == 1
+    merges = [r.getMessage() for r in caplog.records if "twin merged" in r.getMessage()]
+    assert len(merges) == 1
+    assert "gate=name" in merges[0]                # NOT column, NOT description
+
+
 def test_near_miss_log_shows_the_column_the_gate_actually_compared(lam, repo, caplog):
     # On an ANZ row the gate compares the COLUMN, not the stored name, so the line has to
     # print the column — otherwise the fused case this exists to diagnose reads as an

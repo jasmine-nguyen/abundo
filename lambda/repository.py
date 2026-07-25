@@ -87,8 +87,12 @@ def _same_cleaned_merchant(posted_merchant: str, pending_merchant: str) -> bool:
     return bool(posted_words) and posted_words == _words(pending_merchant)
 
 
-def _merchant_matches_pending(merchant: str, pending_merchant: str, description: str) -> bool:
-    """Whether a posted merchant names the same shop as a pending row (WHIT-336).
+def _merchant_gate(merchant: str, pending_merchant: str, description: str) -> Optional[str]:
+    """Which branch matches a posted merchant to a pending row (WHIT-336) — "column",
+    "description", "name", or None when nothing matches. The SINGLE source for both the
+    match decision (`_merchant_matches_pending` is a thin bool view of this) and the
+    skewed-date merge log's gate= label; deriving both from this one return value is why
+    they cannot drift (WHIT-338).
 
     Shared by every heuristic tier that matches on a merchant — tip, skewed-date and
     blank-auth. They MUST share it. The tiers run tightest-first so a tighter tier always
@@ -131,11 +135,22 @@ def _merchant_matches_pending(merchant: str, pending_merchant: str, description:
         # Falling through to the gates below would hand the row to a containment search
         # over the whole description — suburb included — and a merchant named after a
         # place would match it. "Unreadable" is not "not ANZ".
-        return column is not None and _same_cleaned_merchant(merchant, clean_merchant(column))
+        if column is not None and _same_cleaned_merchant(merchant, clean_merchant(column)):
+            return "column"
+        return None
     if len(_words(merchant)) >= 2:
-        return _merchant_in_description(merchant, description)
-    return (_same_cleaned_merchant(merchant, pending_merchant)
-            and _merchant_in_description(merchant, description))
+        return "description" if _merchant_in_description(merchant, description) else None
+    if (_same_cleaned_merchant(merchant, pending_merchant)
+            and _merchant_in_description(merchant, description)):
+        return "name"
+    return None
+
+
+def _merchant_matches_pending(merchant: str, pending_merchant: str, description: str) -> bool:
+    """Whether a posted merchant names the same shop as a pending row — the bool view of
+    `_merchant_gate` (which branch matched). Shared by the tip, skewed-date and blank-auth
+    tiers; see `_merchant_gate` for the full rationale."""
+    return _merchant_gate(merchant, pending_merchant, description) is not None
 
 
 def _is_skewed_next_day(pending_date: Optional[str], posted_date: Optional[str]) -> bool:
@@ -623,7 +638,6 @@ class TransactionRepository:
         merchant_words = _words(merchant)
         if not merchant_words:
             return None  # no derivable merchant -> never enough to delete a row on
-        single_word = len(merchant_words) == 1
         dated_alike = [
             i for i, item in enumerate(pool)
             if item.get("amount") == amount
@@ -660,12 +674,11 @@ class TransactionRepository:
         twin = pool.pop(best)
         # The only way this tier is measurable: a successful reconcile DELETES the
         # pending, so without a log line the skew leaves no trace either way. `gate`
-        # names the branch that actually matched, so a column-geometry drift shows up as
-        # "column" merges falling to zero rather than as silence.
-        if pending_merchant_column(twin.get("description") or "") is not None:
-            gate = "column"
-        else:
-            gate = "name" if single_word else "description"
+        # names the branch that actually matched, read from the SAME gate that matched
+        # the twin (not re-derived), so a column-geometry drift shows up as "column"
+        # merges falling to zero rather than as a stale label.
+        gate = _merchant_gate(merchant, twin.get("merchant_name") or "",
+                              twin.get("description") or "")
         logger.info(
             "skewed-date twin merged: account=%s merchant=%r amount=%s gate=%s "
             "posted=%s (auth %s) pending=%s (auth %s)",
