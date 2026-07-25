@@ -69,6 +69,7 @@ from spend import (
     _melbourne_today,
     _spend_contribution,
     build_category_children,
+    contributes_to_budget,
     current_cycle_window,
     nth_prior_cycle_window,
     subtree_ids,
@@ -135,6 +136,15 @@ def lambda_handler(event, context):
                 list_budgets(
                     BudgetRepository(), TransactionRepository(), PayCycleRepository(),
                     CategoryRepository()))
+
+        # The transactions behind one budget's total (the whole cycle + subtree),
+        # so the budget-detail list reconciles with the header. An EXACT "/transactions"
+        # suffix on a budget id, so it can't collide with the PUT/DELETE item routes.
+        if (path.startswith(f"{BUDGET_PATH}/") and path.endswith("/transactions")
+                and method == "GET"):
+            return get_budget_transactions(
+                event, TransactionRepository(), PayCycleRepository(),
+                CategoryRepository())
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
             return set_budget(event, BudgetRepository(), CategoryRepository())
@@ -916,6 +926,15 @@ def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: s
     return transactions
 
 
+def _cycle_window_for(paycycle_repo: PayCycleRepository) -> tuple[str, str]:
+    """The current pay-cycle [start, today] window from the stored pay cycle — the
+    single window source shared by the /budgets rollup and the budget-detail
+    transaction list, so the list can never scope to a different window than the total.
+    """
+    cycle = paycycle_repo.get_paycycle()
+    return current_cycle_window(cycle["last_pay_date"], cycle["length"])
+
+
 def list_budgets(
     budget_repo: BudgetRepository,
     transaction_repo: TransactionRepository,
@@ -950,8 +969,7 @@ def list_budgets(
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     if not targets:
         return {}
-    cycle = paycycle_repo.get_paycycle()
-    start, end = current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    start, end = _cycle_window_for(paycycle_repo)
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
 
     categories = category_repo.list_categories()
@@ -985,6 +1003,44 @@ def list_budgets(
                 pending += id_rollup["pending"]
         result[cat_id] = {"target": entry["target"], "posted": posted, "pending": pending}
     return result
+
+
+def get_budget_transactions(
+    event: dict,
+    transaction_repo: TransactionRepository,
+    paycycle_repo: PayCycleRepository,
+    category_repo: CategoryRepository,
+) -> dict:
+    """GET /budgets/{category}/transactions — the charges behind a budget's
+    posted+pending total: every contributing transaction in the current pay cycle,
+    across the category's whole subtree, newest first.
+
+    Built from the SAME window (_cycle_window_for), subtree (subtree_ids) and
+    contribution rule (contributes_to_budget) as list_budgets, so the rows sum to the
+    budget header. This replaces the client's old rolling 7-day feed slice, which
+    under-counted any cycle longer than the feed window and dropped sub-category spend
+    (the /budgets total already counts both). A bare newest-first array like the
+    /transactions feed; the client shows the first rows and reveals the rest on Load More.
+    """
+    category_id = (event.get("pathParameters") or {}).get("category")
+    if not category_id:
+        return _json_response(404, {"error": "budget not found"})
+
+    start, end = _cycle_window_for(paycycle_repo)
+    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+
+    categories = category_repo.list_categories()
+    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
+    children = build_category_children(categories)
+    target_ids = subtree_ids(category_id, children, bucket_by_id)
+
+    rows = [transaction for transaction in transactions
+            if transaction.get("category") in target_ids and contributes_to_budget(transaction)]
+    for transaction in rows:
+        transaction.pop("pk", None)
+        transaction.pop("sk", None)
+    rows.sort(key=lambda transaction: transaction["date"], reverse=True)
+    return _json_response(200, rows)
 
 
 def _parse_breakdown_cycle(event: dict) -> tuple[int, dict | None]:

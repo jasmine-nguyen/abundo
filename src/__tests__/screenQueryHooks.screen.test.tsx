@@ -14,11 +14,13 @@ const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
 const mockFetchBudgets = jest.fn<() => Promise<unknown>>();
 const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
+const mockFetchBudgetTransactions = jest.fn<(id: string) => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchCategories: () => mockFetchCategories(),
   fetchPayCycle: () => mockFetchPayCycle(),
   fetchBudgets: () => mockFetchBudgets(),
   fetchTransactions: () => mockFetchTransactions(),
+  fetchBudgetTransactions: (id: string) => mockFetchBudgetTransactions(id),
 }));
 
 import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData } from '../queries';
@@ -37,6 +39,7 @@ beforeEach(() => {
   mockFetchPayCycle.mockReset().mockResolvedValue({ length: 30, last_pay_date: '2024-01-03' });
   mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 40, pending: 10 } });
   mockFetchTransactions.mockReset().mockResolvedValue([]);
+  mockFetchBudgetTransactions.mockReset().mockResolvedValue([]);
 });
 
 it('useCategories maps the list + a null-tolerant lookup, and does not fetch before login', async () => {
@@ -59,34 +62,37 @@ it('usePayCycle derives the cycle name from the fetched length', async () => {
   expect(result.current.cycleName()).toBe('Monthly');
 });
 
-it('useBudgetDetailScreenData assembles transactions + budgets + categories + the cycle window', async () => {
-  const { result } = renderHook(() => useBudgetDetailScreenData(), { wrapper: wrapper(makeClient()) });
+it('useBudgetDetailScreenData assembles the budget list + budgets + categories for the given id', async () => {
+  mockFetchBudgetTransactions.mockReset().mockResolvedValue([{ transaction_id: 'x', category: 'coffee', date: '2026-07-18' }]);
+  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(result.current.cycleLen).toBe(30);
   expect(result.current.category('coffee')?.name).toBe('Coffee');
   expect(result.current.budgets).toEqual([{ id: 'coffee', budget: 100, posted: 40, pending: 10 }]);
+  expect(mockFetchBudgetTransactions).toHaveBeenCalledWith('coffee'); // the list is fetched per-budget
+  expect(result.current.transactions).toHaveLength(1);
   expect(result.current.isError).toBe(false);
 });
 
 // WHIT-204: the composite routes its status through the shared useCombineScreenQueries helper.
-// These two lock that the TRANSACTIONS query is actually in that array (the array-transcription
-// risk the plan-critic flagged for the 7th composite) — a transactions failure must surface as
-// isError, and refetchStale must re-fire the transactions read.
-it('useBudgetDetailScreenData surfaces a transactions read failure as isError (not a stranded spinner)', async () => {
-  mockFetchTransactions.mockReset().mockRejectedValue(new Error('API error: 500'));
-  const { result } = renderHook(() => useBudgetDetailScreenData(), { wrapper: wrapper(makeClient()) });
-  await waitFor(() => expect(result.current.isError).toBe(true)); // transactionsQuery IS in the OR
+// These two lock that the budget-transactions query is actually in that array (the array-
+// transcription risk the plan-critic flagged) — a list failure must surface as isError, and
+// refetchStale must re-fire the list read.
+it('useBudgetDetailScreenData surfaces a budget-transactions read failure as isError (not a stranded spinner)', async () => {
+  mockFetchBudgetTransactions.mockReset().mockRejectedValue(new Error('API error: 500'));
+  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
+  await waitFor(() => expect(result.current.isError).toBe(true)); // budgetTransactionsQuery IS in the OR
   expect(result.current.isLoading).toBe(false);                   // errored dependency → not an endless spinner
 });
 
-it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly once (incl. transactions)', async () => {
-  const { result } = renderHook(() => useBudgetDetailScreenData(), { wrapper: wrapper(makeClient(0)) });
+it('useBudgetDetailScreenData refetchStale re-fires every stale read exactly once (incl. the list)', async () => {
+  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient(0)) });
   await waitFor(() => expect(result.current.isLoading).toBe(false));
-  await waitFor(() => expect(mockFetchTransactions).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(mockFetchBudgetTransactions).toHaveBeenCalledTimes(1));
 
   await act(async () => { result.current.refetchStale(); });
-  // staleTime 0 → immediately stale → each read (transactions included) refires once.
-  await waitFor(() => expect(mockFetchTransactions).toHaveBeenCalledTimes(2)); // transactionsQuery IS in refetchStale
+  // staleTime 0 → immediately stale → each read (the budget list included) refires once.
+  await waitFor(() => expect(mockFetchBudgetTransactions).toHaveBeenCalledTimes(2)); // budgetTransactionsQuery IS in refetchStale
   expect(mockFetchBudgets).toHaveBeenCalledTimes(2);
   expect(mockFetchCategories).toHaveBeenCalledTimes(2);
 });
@@ -108,7 +114,7 @@ it('useBudgetsScreenData: a payCycle failure does NOT strand isLoading', async (
 // stranded spinner. (WHIT-72: budgets fetch in parallel here too; see the note above.)
 it('useBudgetDetailScreenData: a payCycle failure surfaces as isError, not a stranded spinner', async () => {
   mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
-  const { result } = renderHook(() => useBudgetDetailScreenData(), { wrapper: wrapper(makeClient()) });
+  const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true)); // payCycleQuery IS in the OR
   expect(result.current.isLoading).toBe(false);
 });

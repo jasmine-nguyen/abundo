@@ -382,6 +382,20 @@ function dateLabel(isoDate: string): string {
   return `${DAY[date.getDay()]} ${d} ${MONTHS[m - 1]}`;
 }
 
+// Group transactions under date headings ("Today", "Tue 21 Jul"), preserving the input
+// order (the budget-detail list arrives newest-first). Used by the detail screen to render
+// a paged slice of the related-transactions list.
+export function groupTransactionsByDate(items: Transaction[]): { label: string; items: Transaction[] }[] {
+  const seen = new Map<string, Transaction[]>();
+  const order: string[] = [];
+  for (const transaction of items) {
+    const label = dateLabel(transaction.date);
+    if (!seen.has(label)) { seen.set(label, []); order.push(label); }
+    seen.get(label)!.push(transaction);
+  }
+  return order.map((label) => ({ label, items: seen.get(label)! }));
+}
+
 const REPAY_LINES = [
   '−$1,440 just hit the mortgage. $1,208 of it murdered actual principal. The beast shrinks. 🪓',
   "Repayment landed: $1,440. That's another brick out of the wall. Future-you is doing a little dance. 💃",
@@ -728,6 +742,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      // Re-tagging a charge changes which budget's cycle list it belongs to; refresh the
+      // budget-detail lists (flat prefix → every cached budget's list).
+      queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
     };
 
     if (scope === 'all') {
@@ -896,6 +913,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
     }
   }, [showToast, patchTransactions]);
 
@@ -926,6 +944,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         await apiSetTransactionFields(txId, patch);
         queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        // Excluding/including a charge changes the budget total AND its cycle list — refresh
+        // both together so the detail header and its rows stay reconciled (a note/tag edit
+        // touches neither, so only do this for a budget_excluded change).
+        if ('budget_excluded' in patch) {
+          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          queryClient.invalidateQueries({ queryKey: ['breakdown'] });
+          queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
+        }
       } catch {
         patchTransactions((prev) =>
           prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...previous } : existing)));
@@ -2237,16 +2263,13 @@ export function categoryTransactions(
 export interface BudgetDetailInput {
   category: (id: string) => Category | undefined;
   budgets: Budget[];
+  // The transactions behind this budget's total: the current cycle's whole subtree,
+  // already filtered server-side to the contributing rows (/budgets/{id}/transactions),
+  // newest-first. So the list sums to the header instead of the old rolling 7-day feed
+  // slice, which under-counted a cycle longer than the feed and dropped sub-category spend.
   transactions: Transaction[];
   cycleLen: number;
   daysLeft: number;
-  // The current pay cycle's start (ISO YYYY-MM-DD) — the client twin of the server's
-  // current_cycle_window start (via cycleWindow(payCycle, 0)). The related list is filtered
-  // to it so it can only show transactions the spend total (a per-cycle server rollup) counts.
-  // Without it the list was a rolling 7-day feed and could show a charge from BEFORE this cycle
-  // — e.g. a still-pending purchase authorised the day before payday — sitting under a total
-  // that (correctly) excludes it, reading as a broken budget.
-  cycleStart: string;
 }
 export interface BudgetEditInput {
   category: (id: string) => Category | undefined;
@@ -2267,21 +2290,13 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // Income category this is positive EARNINGS toward an earn-target, not spend.
   const pending = b.pending, posted = b.posted, actual = posted + pending;
   const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
-  const relSeen = new Map<string, Transaction[]>();
-  const relOrder: string[] = [];
-  // Scope the list to the current cycle (t.date >= cycleStart) so it shows only what the spend
-  // total counts. The feed's upper bound is already today (the cycle's end), so a lower bound is
-  // the whole window. A charge dated before this cycle — even if still pending — belongs to the
-  // prior cycle's budget and must not appear under this cycle's total (WHIT: cross-cycle leak).
-  for (const t of s.transactions.filter((t) => t.category === b.id && t.date >= s.cycleStart)) {
-    const label = dateLabel(t.date);
-    if (!relSeen.has(label)) { relSeen.set(label, []); relOrder.push(label); }
-    relSeen.get(label)!.push(t);
-  }
-  const relGroups = relOrder.map((label) => ({ label, items: relSeen.get(label)! }));
+  // The list is already the cycle's whole subtree, contributing rows only, newest-first
+  // (server-filtered), so it sums to the header. No client-side filtering — the screen
+  // groups a paged slice of relItems by date for display.
+  const relItems = s.transactions;
   const daysLeftLabel = `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`;
   const targetPct = Math.round(elapsed * 100);
-  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relGroups, relEmpty: relGroups.length === 0 };
+  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relItems, relEmpty: relItems.length === 0 };
 
   if (isIncome) {
     // Earn-target (floor): over-is-good, so the status is never red. Under target

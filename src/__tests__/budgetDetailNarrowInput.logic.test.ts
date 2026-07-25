@@ -15,10 +15,10 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
     const input: BudgetDetailInput = {
       category: (id: string) => (id === 'coffee' ? cat({ id: 'coffee', bucket: 'Lifestyle' }) : undefined),
       budgets: [budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 })],
+      // The list is the server-filtered cycle list — budgetDetail no longer filters it.
       transactions: [txn({ transaction_id: 'x1', category: 'coffee' })],
       cycleLen: 14,
       daysLeft: 7,
-      cycleStart: '0000-01-01',
     };
     const bd = budgetDetail(input, 'coffee');
     expect(bd).not.toBeNull();
@@ -28,7 +28,7 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
     expect(bd!.statusLabel).toBe('On target — keep it up');
     expect(bd!.statusColor).toBe(C.good);
     expect(bd!.relEmpty).toBe(false);
-    expect(bd!.relGroups).toHaveLength(1);
+    expect(bd!.relItems).toHaveLength(1);
   });
 
   it('returns null on a cold cache (category lookup empty, no budget) — the screen shows the empty Header', () => {
@@ -38,7 +38,6 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
       transactions: [],
       cycleLen: 14,
       daysLeft: 7,
-      cycleStart: '0000-01-01',
     };
     expect(budgetDetail(cold, 'coffee')).toBeNull();
   });
@@ -50,7 +49,6 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
       transactions: [],
       cycleLen: 14,
       daysLeft: 7,
-      cycleStart: '0000-01-01',
     };
     expect(budgetDetail(partial, 'coffee')).toBeNull();
   });
