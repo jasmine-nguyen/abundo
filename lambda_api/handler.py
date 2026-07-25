@@ -122,6 +122,14 @@ def lambda_handler(event, context):
         if path == CATEGORY_PATH and method == "POST":
             return create_category(event, CategoryRepository(), BudgetRepository())
 
+        # The transactions behind one /breakdown row (whole cycle, exact category or the
+        # uncategorized bucket), so the drill-in list reconciles with the Insights card.
+        if (path.startswith(f"{CATEGORY_PATH}/") and path.endswith("/transactions")
+                and method == "GET"):
+            return get_category_transactions(
+                event, TransactionRepository(), PayCycleRepository(),
+                CategoryRepository())
+
         if path.startswith(f"{CATEGORY_PATH}/") and method == "PATCH":
             return update_category(event, CategoryRepository(), BudgetRepository())
 
@@ -926,13 +934,25 @@ def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: s
     return transactions
 
 
-def _cycle_window_for(paycycle_repo: PayCycleRepository) -> tuple[str, str]:
-    """The current pay-cycle [start, today] window from the stored pay cycle — the
-    single window source shared by the /budgets rollup and the budget-detail
-    transaction list, so the list can never scope to a different window than the total.
+def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) -> tuple[str, str]:
+    """The [start, end] window for a pay cycle: cycle 0 = the current cycle
+    [cycle_start, today], cycle n >= 1 = the nth FULL cycle before it. The single
+    window source shared by /breakdown and the category drill-in list, so the two can
+    never scope to different dates.
     """
-    cycle = paycycle_repo.get_paycycle()
-    return current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    pay_cycle = paycycle_repo.get_paycycle()
+    cycle_start, cycle_end = current_cycle_window(pay_cycle["last_pay_date"], pay_cycle["length"])
+    if cycle >= 1:
+        return nth_prior_cycle_window(cycle_start, pay_cycle["length"], cycle)
+    return cycle_start, cycle_end
+
+
+def _cycle_window_for(paycycle_repo: PayCycleRepository) -> tuple[str, str]:
+    """The current pay-cycle [start, today] window — the single window source shared by
+    the /budgets rollup and the budget-detail transaction list, so the list can never
+    scope to a different window than the total.
+    """
+    return _cycle_window_for_lookback(paycycle_repo, 0)
 
 
 def list_budgets(
@@ -1097,12 +1117,7 @@ def list_category_breakdown(
     first sync).
     """
     categories = category_repo.list_categories()
-    pay_cycle = paycycle_repo.get_paycycle()
-    cycle_start, cycle_end = current_cycle_window(pay_cycle["last_pay_date"], pay_cycle["length"])
-    if cycle >= 1:
-        start, end = nth_prior_cycle_window(cycle_start, pay_cycle["length"], cycle)
-    else:
-        start, end = cycle_start, cycle_end
+    start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
 
     all_ids = {c["id"] for c in categories}
@@ -1123,6 +1138,55 @@ def list_category_breakdown(
     if earned["posted"] > 0 or earned["pending"] > 0:
         result[EARNED_KEY] = earned
     return result
+
+
+def get_category_transactions(
+    event: dict,
+    transaction_repo: TransactionRepository,
+    paycycle_repo: PayCycleRepository,
+    category_repo: CategoryRepository,
+) -> dict:
+    """GET /categories/{id}/transactions — the transactions behind one /breakdown row:
+    every charge filed on a single category (or the uncategorized bucket) over the
+    selected pay cycle, newest-first.
+
+    Same window as /breakdown (_cycle_window_for_lookback, so ?cycle= look-back matches),
+    but returns the rows, not an aggregate. This replaces the drill-in's old 7-day feed
+    slice, which under-counted a cycle longer than the feed and returned nothing at all
+    for last cycle (whose window sits entirely outside the feed).
+
+    Selection mirrors /breakdown's two row groups:
+      * a named category: EXACT match (no subtree — /breakdown rows are per-category), and
+        NO contributes_to_budget filter, so the list shows refunds/excluded rows too (the
+        client recomputes the contributing total for the header).
+      * UNCATEGORIZED_KEY: the summarise_uncategorized rule — contributes to budget, not
+        income, and not in the taxonomy.
+    """
+    cycle, cycle_error = _parse_breakdown_cycle(event)
+    if cycle_error is not None:
+        return cycle_error
+    category_id = (event.get("pathParameters") or {}).get("id")
+    if not category_id:
+        return _json_response(404, {"error": "category not found"})
+
+    start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
+    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+
+    if category_id == UNCATEGORIZED_KEY:
+        taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+        rows = [transaction for transaction in transactions
+                if contributes_to_budget(transaction)
+                and transaction.get("category") != "income"
+                and transaction.get("category") not in taxonomy_ids]
+    else:
+        rows = [transaction for transaction in transactions
+                if transaction.get("category") == category_id]
+
+    for transaction in rows:
+        transaction.pop("pk", None)
+        transaction.pop("sk", None)
+    rows.sort(key=lambda transaction: transaction["date"], reverse=True)
+    return _json_response(200, rows)
 
 
 def _window_category_spend(transactions: list[dict], categories: list[dict],

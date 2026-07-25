@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt } from './theme';
-import { MONTHS, parseISODate, toISODate, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
+import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
@@ -742,9 +742,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      // Re-tagging a charge changes which budget's cycle list it belongs to; refresh the
-      // budget-detail lists (flat prefix → every cached budget's list).
+      // Re-tagging a charge changes which budget's + category's cycle list it belongs to;
+      // refresh the budget-detail and category drill-in lists (flat prefix → every cached list).
       queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
     };
 
     if (scope === 'all') {
@@ -914,6 +915,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
     }
   }, [showToast, patchTransactions]);
 
@@ -951,6 +953,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ['budgets'] });
           queryClient.invalidateQueries({ queryKey: ['breakdown'] });
           queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
+          queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
         }
       } catch {
         patchTransactions((prev) =>
@@ -1351,41 +1354,8 @@ export function cycleClock(
 
 export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
 
-// The inclusive [start, end] ISO date window for a pay cycle — the client twin of the
-// server's current_cycle_window / nth_prior_cycle_window (shared/spend.py). `cycle` 0 is
-// the CURRENT cycle [most recent payday, today]; `cycle` n>=1 is the nth prior FULL cycle.
-// Used to filter the un-windowed transaction list down to what the Insights breakdown card
-// summed, so a category drill-in reconciles with the number on the card (WHIT-308).
-//
-// The bounds are computed on the DEVICE-LOCAL calendar date (parseISODate / toISODate read
-// local Y/M/D), NOT UTC: the server windows on Melbourne-local today, so a UTC "today" would
-// read the previous day for the ~10h after local midnight and make the drilled list trail the
-// card by a day. `today` is injectable for deterministic tests. The count of elapsed cycles
-// uses the same UTC whole-day math as cycleClock (every UTC day is exactly 24h, so a
-// daylight-saving change can't miscount), then the start/end dates are stepped on the local
-// calendar. Both bounds are inclusive (matching the server's DynamoDB `between` query).
-export function cycleWindow(
-  payCycle: { length: number; last_pay_date: string },
-  cycle = 0,
-  today?: Date,
-): { start: string; end: string } {
-  const length = payCycle.length;
-  const end = toISODate(today ?? new Date());              // LOCAL today
-  const elapsedDays = wholeDaysBetween(isoToUtcDayMs(payCycle.last_pay_date), isoToUtcDayMs(end));
-  const cyclesElapsed = Math.max(0, Math.floor(elapsedDays / length));
-  // current cycle start = the most recent payday on/before today, stepped on the local calendar.
-  const startDate = parseISODate(payCycle.last_pay_date);
-  startDate.setDate(startDate.getDate() + cyclesElapsed * length);
-  let currentStart = toISODate(startDate);
-  if (currentStart > end) currentStart = end;              // future last_pay_date → collapse to [today, today]
-  if (cycle < 1) return { start: currentStart, end };
-  // nth prior FULL cycle: a length-day span abutting the current start with no overlap or gap.
-  const priorStart = parseISODate(currentStart);
-  priorStart.setDate(priorStart.getDate() - cycle * length);
-  const priorEnd = parseISODate(currentStart);
-  priorEnd.setDate(priorEnd.getDate() - ((cycle - 1) * length + 1));
-  return { start: toISODate(priorStart), end: toISODate(priorEnd) };
-}
+// (cycleWindow was removed in WHIT-342: the category drill-in now fetches its window
+// server-side, and it was the last caller — the server owns the cycle window.)
 
 // --- Goals: balance-target progress + pace (WHIT-232) ----------------------
 // The pure math behind a goal card: how full the thermometer is (progress) and how much
@@ -2215,28 +2185,22 @@ export function accountDetail(s: TransactionListInput, accountId: string) {
   };
 }
 
-// WHIT-308: the category drill-in — the transactions behind an Insights spend row, for the
-// selected cycle. `drillId` is a real category id, or UNCATEGORIZED_KEY for the "?" bucket.
-// `window` is the cycle's inclusive [start, end] (from cycleWindow), so the list covers the
-// same dates the /breakdown card summed. Returns null when nothing matches (a stale deep-link
-// or an empty cycle → the screen's empty state, not a spinner — mirrors accountDetail).
+// WHIT-308/WHIT-342: the category drill-in — the transactions behind an Insights spend row.
+// `drillId` is a real category id, or UNCATEGORIZED_KEY for the "?" bucket. The rows arrive
+// already scoped server-side to this drill (one category, or the uncategorized bucket) over the
+// selected cycle's window (/categories/{id}/transactions), so there's no client-side filtering
+// — just group + total them. Returns null when the cycle is empty (a stale deep-link or an
+// empty cycle → the screen's empty state, not a spinner — mirrors accountDetail).
 //
-// The LIST shows every transaction filed on the category in-window (refunds and budget-excluded
-// ones included, like accountDetail shows every account row); the Uncategorized list is the one
-// exception — it lists only budget-contributing unmapped spend, matching the Uncategorized tab.
-// The TOTAL mirrors the server exactly (shared/spend.py _summarise): bucket the signed spend
-// (-amount) by status into posted/pending, clamp EACH at >= 0, then sum — so a refund-heavy
-// category can't drive the total below the card's number.
-export function categoryTransactions(
-  s: TransactionListInput,
-  drillId: string,
-  window: { start: string; end: string },
-) {
-  const isUncat = drillId === UNCATEGORIZED_KEY;
-  const inWindow = (t: Transaction) => t.date >= window.start && t.date <= window.end;
-  const txns = s.transactions.filter((t) => inWindow(t)
-    && (isUncat ? contributesToBudget(t) && isUncategorized(s, t) : t.category === drillId));
+// The LIST shows every row the server returned (a named category's includes refunds and
+// budget-excluded ones, like accountDetail; the Uncategorized bucket is already contributing-
+// only, server-side). The TOTAL mirrors the server exactly (shared/spend.py _summarise): bucket
+// the signed spend (-amount) by status into posted/pending, clamp EACH at >= 0, then sum — so a
+// refund-heavy category can't drive the total below the card's number.
+export function categoryTransactions(s: TransactionListInput, drillId: string) {
+  const txns = s.transactions;
   if (txns.length === 0) return null;
+  const isUncat = drillId === UNCATEGORIZED_KEY;
 
   let posted = 0, pending = 0;
   for (const t of txns) {

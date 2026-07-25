@@ -5,7 +5,7 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
 import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
@@ -37,6 +37,9 @@ export const budgetsKey = ['budgets'] as const;
 // each budget caches independently; the categorise writes invalidate the flat prefix so
 // re-tagging a charge refreshes every cached budget's list.
 export const budgetTransactionsKey = ['budgetTransactions'] as const;
+// The transactions behind one /breakdown row (the category drill-in list). Keyed per
+// category AND cycle so each look-back caches independently, like the breakdown query.
+export const categoryTransactionsKey = ['categoryTransactions'] as const;
 // Breakdown (spend-by-category, the Insights tab) is the same — server-derived window, so
 // a flat key: parallel fetch, single invalidate on a length change (WHIT-72).
 export const breakdownKey = ['breakdown'] as const;
@@ -141,6 +144,18 @@ export function useBudgetTransactionsQuery(categoryId: string, enabled: boolean)
   return useQuery({
     queryKey: [...budgetTransactionsKey, categoryId],
     queryFn: () => fetchBudgetTransactions(categoryId),
+    enabled: enabled && !!categoryId,
+  });
+}
+
+// The transactions behind one /breakdown row, for the category drill-in — the whole
+// selected cycle, server-scoped to one category (or the uncategorized bucket), so the
+// list reconciles with the Insights card (the old 7-day feed under-counted / went empty
+// for last cycle). Keyed per category AND cycle, like useBreakdownQuery.
+export function useCategoryCycleTransactionsQuery(categoryId: string, cycle: number, enabled: boolean) {
+  return useQuery({
+    queryKey: [...categoryTransactionsKey, categoryId, cycle],
+    queryFn: () => fetchCategoryTransactions(categoryId, cycle),
     enabled: enabled && !!categoryId,
   });
 }
@@ -517,44 +532,34 @@ export function useTransactionsScreenData(): TransactionsScreenData {
   };
 }
 
-// --- the category drill-in screen's composite view (WHIT-308) ----------------
-// app/category/[id].tsx feeds categoryTransactions(s, drillId, cycleWindow(payCycle, cycle)):
-// the transaction list + taxonomy filtered to one category, over the selected cycle's window.
-// The transaction list is the SAME cached ['transactions'] query the tabs use — no new fetch.
-// Unlike useTransactionsScreenData this also carries the pay cycle (the window needs it) and
-// surfaces payCycleError: a first-load pay-cycle failure would build the window from the
-// DEFAULT cycle, so the drilled list would silently cover the wrong dates — force the error
-// card instead (mirrors the budget-detail composite, WHIT-72). No balances query (no balance
-// card on this screen).
+// --- the category drill-in screen's composite view (WHIT-308, WHIT-342) -------
+// app/category/[id].tsx feeds categoryTransactions(s, drillId): one category's (or the
+// uncategorized bucket's) transactions for the selected cycle, fetched server-side over the
+// SAME window as the /breakdown card (useCategoryCycleTransactionsQuery) — not the 7-day feed,
+// which under-counted a longer cycle and returned nothing for last cycle (WHIT-342). The
+// server owns the window now, so no pay-cycle query / payCycleError here. No balances query.
 export interface CategoryTransactionsScreenData {
   transactions: Transaction[];
   category: (id: string | null) => Category | undefined;
-  payCycle: PayCycle;
   isLoading: boolean;
   isError: boolean;
-  payCycleError: boolean;
   refetch: () => void;
   refetchStale: () => void;
 }
-export function useCategoryTransactionsScreenData(): CategoryTransactionsScreenData {
+export function useCategoryTransactionsScreenData(categoryId: string, cycle: number): CategoryTransactionsScreenData {
   const authed = useIsAuthed();
-  const payCycleQuery = usePayCycleQuery(authed);
-  const transactionsQuery = useTransactionsQuery(authed);
+  const categoryTransactionsQuery = useCategoryCycleTransactionsQuery(categoryId, cycle, authed);
   const categoriesQuery = useCategoriesQuery(authed);
 
-  const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const categories = categoriesQuery.data ?? [];
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
 
-  const status = useCombineScreenQueries([payCycleQuery, transactionsQuery, categoriesQuery]);
-  const payCycleError = firstLoadError(payCycleQuery);
+  const status = useCombineScreenQueries([categoryTransactionsQuery, categoriesQuery]);
 
   return {
-    transactions: transactionsQuery.data ?? [],
+    transactions: categoryTransactionsQuery.data ?? [],
     category,
-    payCycle,
-    payCycleError,
     ...status,
   };
 }
