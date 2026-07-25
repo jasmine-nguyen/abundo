@@ -1345,13 +1345,18 @@ def test_skew_different_merchant_does_not_merge(lam, repo):
     assert len(repo._table.store) == 2
 
 
-def test_skew_single_word_merchant_does_not_merge(lam, repo):
-    # A lone common word is a whole word in many unrelated descriptions; this tier
-    # deletes a pending, so it needs a merchant strong enough to trust.
-    _skew_pending(repo, lam, description="POS AUTHORISATION  COLES  MELBOURNE AU")
+def test_skew_single_word_merchant_does_not_merge_a_neighbouring_brand(lam, repo):
+    # Was `test_skew_single_word_merchant_does_not_merge`, which asserted that a
+    # one-word merchant never reconciles at all — that WAS the bug. The protection it
+    # was reaching for still stands, but it now rests on the two cleaned names being
+    # equal rather than on the word appearing in the description: "COLES" IS a whole
+    # word of "COLES EXPRESS 1157", so the old description search would have merged
+    # these two different brands and deleted a real pending.
+    _skew_pending(repo, lam,
+                  description="POS AUTHORISATION         COLES EXPRESS 1157       FOOTSCRAY    AU")
 
-    repo.insert_or_reconcile([_skew_posted(lam, description="COLES 0643 CHADSTONE",
-                                          merchant_name="COLES")])
+    repo.insert_or_reconcile([_skew_posted(lam, description="COLES 0602 MELBOURNE",
+                                          merchant_name="COLES 0602               ")])
 
     assert len(repo._table.store) == 2
 
@@ -1703,3 +1708,399 @@ def test_skew_merge_logs_both_transaction_ids_at_info(lam, repo, caplog):
     message = merged[0].getMessage()
     assert "posted=POST (auth 2026-07-21)" in message
     assert "pending=PEND (auth 2026-07-22)" in message
+
+
+# --- Single-word merchants across the Melbourne/UTC split ---------------------
+# clean_merchant strips trailing store numbers and processor prefixes, so plenty of
+# real shops reduce to ONE word (COLES, MUJI, EASYPARK). Those were skipped by the
+# skewed-date tier entirely, so an early-morning purchase at one of them duplicated
+# until the age-out sweep. Strings below are the verbatim live shapes from
+# tests/lambda/test_merchant.py — fixed-width columns, real store numbers.
+
+_COLES_PEND_DESC = "POS AUTHORISATION         COLES 0602               MELBOURNE    AU"
+_COLES_POST_DESC = "COLES 0602 MELBOURNE"
+_COLES_POST_MERCHANT = "COLES 0602               "
+
+
+def _coles_pending(repo, lam, txn_id="PEND", amount=Decimal("-63.40"),
+                   authorized_date="2026-07-22", category="groceries",
+                   description=_COLES_PEND_DESC):
+    return _seed_pending(repo, lam, txn_id=txn_id, amount=amount,
+                         authorized_date=authorized_date, date=authorized_date,
+                         pending=True, category=category,
+                         description=description, merchant_name="")
+
+
+def _coles_posted(lam, txn_id="POST", amount=Decimal("-63.40"), authorized_date="2026-07-21",
+                  date="2026-07-24", merchant_name=_COLES_POST_MERCHANT):
+    return _norm(lam, txn_id=txn_id, amount=amount, authorized_date=authorized_date,
+                 date=date, pending=False, category="FOOD_AND_DRINK",
+                 description=_COLES_POST_DESC, merchant_name=merchant_name)
+
+
+def test_one_word_merchant_skewed_pair_reconciles_and_keeps_the_melbourne_day(lam, repo):
+    # The whole point of the card, on the real ANZ row shape: both sides clean to
+    # "COLES", so the pair collapses to one row on the day it was actually swiped.
+    _coles_pending(repo, lam)
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 1
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["authorized_date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["category"] == "groceries"
+
+
+def test_one_word_merchant_needs_the_pending_to_carry_a_merchant_name(lam, repo):
+    # A row written before clean_merchant existed has no merchant_name. The gate has
+    # nothing to compare, so it must fail toward leaving the pending alone, not crash.
+    pending = _coles_pending(repo, lam)
+    del repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"]
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+def test_one_word_merchant_skew_still_requires_the_exact_amount(lam, repo):
+    _coles_pending(repo, lam, amount=Decimal("-63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, amount=Decimal("-64.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_one_word_exact_same_day_twin_still_wins_over_the_skew_candidate(lam, repo):
+    # Two real COLES purchases on consecutive days. The exact tier must claim the
+    # same-day pending first, leaving the next day's genuine purchase alone.
+    _coles_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _coles_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_coles_posted(lam, authorized_date="2026-07-21")])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#PEND21") not in store
+    assert (acc, "TXN#PEND22") in store
+
+
+def test_one_word_pair_survives_settlement_of_both_days(lam, repo):
+    _coles_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _coles_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST21", authorized_date="2026-07-21")])
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
+
+    store = repo._table.store
+    assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}
+
+
+def test_one_word_merchant_merges_across_branches_of_a_chain(lam, repo):
+    # Documented, not desired: clean_merchant strips store numbers, so COLES 1157
+    # (Footscray) and COLES 0602 (Melbourne) are both "COLES" and this tier cannot
+    # tell them apart. Pinned so the behaviour is discovered here, not in production.
+    _coles_pending(repo, lam,
+                   description="POS AUTHORISATION         COLES 1157               FOOTSCRAY    AU")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 1
+
+
+def test_one_word_merchant_still_does_not_tip_reconcile(lam, repo):
+    # The tip tier keeps its own >=2-word rule: same day, tip-sized gap, one word.
+    _coles_pending(repo, lam, authorized_date="2026-07-21", amount=Decimal("-63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, authorized_date="2026-07-21",
+                                            amount=Decimal("-70.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_one_word_merchant_still_does_not_blank_auth_reconcile(lam, repo):
+    # The blank-auth tier keeps its own >=2-word rule too.
+    _coles_pending(repo, lam, authorized_date="2026-07-20")
+
+    repo.insert_or_reconcile([_coles_posted(lam, authorized_date="", date="2026-07-22")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_same_cleaned_merchant_edges(lam):
+    f = lam.repository._same_cleaned_merchant
+    # Both sides arrive already cleaned (banksync.normalise writes merchant_name through
+    # clean_merchant on pending and posted alike), so this only has to absorb padding
+    # and casing — not raw store numbers, which never reach it.
+    assert f("COLES ", " COLES") is True            # fixed-width padding is irrelevant
+    assert f("coles", "COLES") is True              # casing is irrelevant
+    assert f("COLES 0602", "COLES") is False        # an UNcleaned name must not match
+    assert f("COLES", "COLES EXPRESS") is False     # a different brand
+    assert f("COLES EXPRESS", "COLES") is False     # and the reverse
+    assert f("", "COLES") is False                  # underivable name never matches
+    assert f("COLES", "") is False
+
+
+def test_skew_merchant_matches_branches(lam):
+    g = lam.repository._skew_merchant_matches
+    # >=2 words: searches the description, and never consults the pending's merchant
+    assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) is True
+    # 1 word: the cleaned names must be equal, description search alone is not enough
+    assert g("COLES", "COLES", _COLES_PEND_DESC.lower()) is True
+    assert g("COLES", "COLES EXPRESS",
+             "pos authorisation coles express 1157 footscray au") is False
+
+
+def test_one_word_near_miss_logs_the_rejected_pending(lam, repo, caplog):
+    # The merge log only fires on success, so this line is the only signal that the
+    # single-word gate ran and said no. Without it a broken gate looks like a quiet week.
+    _coles_pending(repo, lam,
+                   description="POS AUTHORISATION         COLES EXPRESS 1157       FOOTSCRAY    AU")
+    caplog.set_level("INFO", logger="repository")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    rejected = [r for r in caplog.records if "rejected on merchant" in r.getMessage()]
+    assert len(rejected) == 1
+    message = rejected[0].getMessage()
+    assert "merchant='COLES'" in message
+    assert "pending_merchant='COLES EXPRESS'" in message
+    assert "pending=PEND" in message
+
+
+def test_merge_log_names_which_gate_matched(lam, repo, caplog):
+    # `gate` is how the newer, riskier single-word branch gets counted in production.
+    caplog.set_level("INFO", logger="repository")
+    _coles_pending(repo, lam)
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    _skew_pending(repo, lam, txn_id="KKVPEND")
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="KKVPOST")])
+
+    merges = [r.getMessage() for r in caplog.records if "twin merged" in r.getMessage()]
+    assert len(merges) == 2
+    assert "gate=single-word" in merges[0]
+    assert "gate=fused" in merges[1]
+
+
+def test_one_word_merchant_name_must_also_appear_in_the_description(lam, repo):
+    # The pending's merchant_name is derived from its own description today, so this
+    # conjunct is belt-and-braces. Pinned so it stays honest if ANZ ever populates
+    # merchantName on pendings from another source: names agreeing is not enough.
+    pending = _coles_pending(repo, lam, description=_ISAN_PEND_DESC)
+    repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"] = "COLES"
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+# --- Single-word merchants: adversarial gaps (QA) ----------------------------
+# The section above exercises COLES only. These cover the other named shops, the two
+# whose real live shapes still miss, the wrong-pending ordering hazard the widened gate
+# makes routine, the tie-break, refunds, the re-send guard, and the two log lines.
+
+
+def _pend_col(merchant_col: str, suburb: str = "MELBOURNE") -> str:
+    """A verbatim-shaped ANZ pending description: "POS AUTHORISATION" + padding, the
+    25-character merchant column, then the suburb column and the country. Built rather
+    than hand-spaced so a column width is never accidentally off by one."""
+    return "POS AUTHORISATION" + " " * 9 + merchant_col.ljust(25) + suburb.ljust(13) + "AU"
+
+
+def _posted_col(merchant_col: str) -> str:
+    """A posted row's `merchantName`: the same merchant column, space-padded."""
+    return merchant_col.ljust(25) + " "
+
+
+@pytest.mark.parametrize("label, pending_col, posted_col", [
+    ("woolworths", "WOOLWORTHS 1234", "WOOLWORTHS 1234"),
+    ("mcdonalds", "McDonalds 951152", "McDonalds 951152"),
+    ("officeworks", "OFFICEWORKS 0355", "OFFICEWORKS 0355"),
+    ("easypark", "EASYPARK AU", "EASYPARK AU"),
+    ("paystay", "PAYSTAY 1093482", "PAYSTAY 1093482"),
+    ("leaptel", "LEAPTEL", "LEAPTEL"),
+    ("amazon", "AMAZON RETA* AMAZON AU", "AMAZON RETA* AMAZON AU"),
+    ("tesla", "TESLA", "TESLA"),
+    ("parkable", "PARKABLE", "PARKABLE"),
+    ("muji", "MUJI 1102", "MUJI 1102"),
+])
+def test_one_word_skew_merges_for_every_named_single_word_shop(lam, repo, label,
+                                                               pending_col, posted_col):
+    # COLES is the only shop the section above proves; without this the fix could be
+    # silently COLES-shaped and deliver nothing for the rest.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-8.25"),
+                  authorized_date="2026-07-22", date="2026-07-22", pending=True,
+                  category="groceries", merchant_name="",
+                  description=_pend_col(pending_col))
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-8.25"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="FOOD_AND_DRINK",
+                   description=f"{posted_col} MELBOURNE", merchant_name=_posted_col(posted_col))
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") not in store, f"{label}: pending twin left behind"
+    assert len(store) == 1, f"{label}: duplicated"
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["category"] == "groceries"
+
+
+def test_muji_and_woolworths_real_shapes_are_not_one_word_and_still_miss(lam):
+    # Their LIVE descriptors are several words, so they never reach the single-word
+    # branch and still duplicate. Pinned with a positive control so this fails both
+    # ways — if the gate is reverted the control reds, if it is ever loosened to a
+    # substring search the two misses red.
+    g = lam.repository._skew_merchant_matches
+    muji_desc = _pend_col("MUJI RETAIL AUSTRALIA")
+    assert g("MUJI RETAIL (AUSTRAL", "MUJI RETAIL AUSTRALIA", muji_desc) is False
+    woolies_desc = _pend_col("WOOLWORTHS/330 MILLERS RD")
+    assert g("WOOLWORTHS/330 MILLERS RD", "WOOLWORTHS/330 MILLERS RDMELBOURNE",
+             woolies_desc) is False
+    # the SHORT forms of the same two brands do reconcile
+    assert g("MUJI", "MUJI", _pend_col("MUJI 1102")) is True
+    assert g("WOOLWORTHS", "WOOLWORTHS", _pend_col("WOOLWORTHS 1234")) is True
+
+
+def test_one_word_skew_ignores_a_pending_whose_merchant_name_is_empty(lam, repo):
+    # clean_merchant can return "", and sanitise_transaction only strips None, so ""
+    # persists. The description still names COLES, so a description-only gate would
+    # have merged this; only the name equality keeps the pending alive.
+    pending = _coles_pending(repo, lam)
+    repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"] = ""
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+def test_one_word_posted_resend_does_not_consume_a_later_genuine_pending(lam, repo):
+    # The re-send guard, on the single-word path: a settled row already stored under its
+    # own id must not re-enter the twin search and eat the next day's real purchase.
+    _coles_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    _coles_pending(repo, lam, txn_id="LATER", authorized_date="2026-07-23", category="lunch")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])   # verbatim re-send
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#LATER") in store
+    assert store[(acc, "TXN#POST")]["category"] == "groceries"
+    assert len(store) == 2
+
+
+def test_one_word_merged_row_keeps_the_melbourne_day_across_resends(lam, repo):
+    _coles_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    acc = _acc(_coles_posted(lam))
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    row = repo._table.store[(acc, "TXN#POST")]
+    assert row["date"] == "2026-07-22"
+    assert row["authorized_date"] == "2026-07-22"
+
+
+def test_one_word_settlement_takes_the_wrong_pending_when_only_the_later_one_is_open(lam, repo):
+    # The accepted cost of the widened gate, pinned as it actually behaves. Day 1's
+    # settlement arrives when only day 2's pending is open; nothing distinguishes them,
+    # so day 1's charge takes day 2's DAY and CATEGORY. The total stays right.
+    _coles_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22", category="lunch")
+
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST21", authorized_date="2026-07-21")])
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}   # count right
+    assert store[(acc, "TXN#POST21")]["date"] == "2026-07-22"      # but wrong day
+    assert store[(acc, "TXN#POST21")]["category"] == "lunch"       # and wrong label
+    assert store[(acc, "TXN#POST22")]["category"] == "FOOD_AND_DRINK"
+
+
+def test_one_word_tie_break_takes_the_lowest_id_and_carries_only_its_fields(lam, repo):
+    first = _norm(lam, txn_id="AAA", amount=Decimal("-63.40"), authorized_date="2026-07-22",
+                  date="2026-07-22", pending=True, category="groceries",
+                  description=_COLES_PEND_DESC, merchant_name="")
+    first["notes"] = "milk run"
+    first["tags"] = ["weekly"]
+    second = _norm(lam, txn_id="ZZZ", amount=Decimal("-63.40"), authorized_date="2026-07-22",
+                   date="2026-07-22", pending=True, category="lunch",
+                   description=_COLES_PEND_DESC, merchant_name="")
+    second["notes"] = "birthday cake"
+    repo.insert_transactions([first, second])
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#AAA") not in store            # lowest id, deterministically
+    assert store[(acc, "TXN#ZZZ")]["notes"] == "birthday cake"
+    row = store[(acc, "TXN#POST")]
+    assert row["category"] == "groceries"           # only the consumed row's fields ride
+    assert row["notes"] == "milk run"
+    assert row["tags"] == ["weekly"]
+
+
+def test_one_word_skew_reconciles_a_refund_pair(lam, repo):
+    _coles_pending(repo, lam, amount=Decimal("63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, amount=Decimal("63.40"))])
+
+    assert len(repo._table.store) == 1
+
+
+def test_one_word_skew_never_takes_a_refund_pending_for_a_purchase(lam, repo):
+    # The refund sorts FIRST by id; only exact amount equality (not magnitude) saves it.
+    _coles_pending(repo, lam, txn_id="AAA_REFUND", amount=Decimal("63.40"))
+    _coles_pending(repo, lam, txn_id="ZZZ_SPEND", amount=Decimal("-63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, amount=Decimal("-63.40"))])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#ZZZ_SPEND") not in store
+    assert (acc, "TXN#AAA_REFUND") in store
+
+
+def test_near_miss_is_not_logged_on_a_successful_one_word_merge(lam, repo, caplog):
+    caplog.set_level("INFO", logger="repository")
+    _coles_pending(repo, lam)
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert [r for r in caplog.records if "single-word twin rejected" in r.getMessage()] == []
+
+
+def test_near_miss_is_not_logged_for_a_multi_word_merchant(lam, repo, caplog):
+    # The fused branch is unchanged and has no near-miss line, so the new counter only
+    # ever measures the new branch.
+    caplog.set_level("INFO", logger="repository")
+    _skew_pending(repo, lam, txn_id="PEND", description=_ISAN_PEND_DESC)
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    assert len(repo._table.store) == 2
+    assert [r for r in caplog.records if "single-word twin rejected" in r.getMessage()] == []
+
+
+def test_near_miss_logs_only_the_amount_and_date_matched_pendings(lam, repo, caplog):
+    # One webhook must not emit a line per open pending — the loop runs over the
+    # amount + one-day-skew subset, not the whole pool.
+    caplog.set_level("INFO", logger="repository")
+    other = "POS AUTHORISATION         COLES EXPRESS 1157       FOOTSCRAY    AU"
+    _coles_pending(repo, lam, txn_id="P1", description=other)
+    _coles_pending(repo, lam, txn_id="P2", description=other)
+    _coles_pending(repo, lam, txn_id="P3", description=other, amount=Decimal("-9"))
+    _coles_pending(repo, lam, txn_id="P4", description=other, authorized_date="2026-07-25")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    near = [r.getMessage() for r in caplog.records
+            if "single-word twin rejected on merchant" in r.getMessage()]
+    assert len(near) == 2
+    assert {m.rsplit("pending=", 1)[1] for m in near} == {"P1", "P2"}
