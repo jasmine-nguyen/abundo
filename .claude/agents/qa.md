@@ -67,6 +67,7 @@ in a memory-tight box — run heavy work as targeted single suites
 Import test globals from `@jest/globals` (jest 30). Match the existing files' style.
 
 **Determinism / anti-flake (non-negotiable):**
+
 - The runner pins `TZ=Australia/Melbourne`. For any date/pay-cycle test, pin the
   input date explicitly and reason in that TZ — never rely on "now".
 - No real time or randomness: `jest.useFakeTimers()` and an injected/fixed clock;
@@ -115,15 +116,18 @@ can lift it verbatim.
   spec, Part 2 is the implementation.
 
 **Prioritise — this checklist is a cost; Jasmine ticks every box by hand.**
+
 - Tag each check `P0` / `P1` / `P2`. P0 = if this fails, the feature ships broken.
 - Order P0 first within each area. Keep the P2 tail clearly separated, not padded.
 
 **Traceability — link each Automatable check to its test.**
+
 - Give every Automatable check a short ID: `- [ ] [A3] (P0) tap X → expect value Y`.
 - The matching test in Part 2 carries `// [A3]` in a comment. This lets anyone see
   at a glance which checks are actually automated vs silently dropped.
 
 Within each section:
+
 - Group by flow/area (e.g. "Change pay cycle", "Reload persistence", "Budget bars").
 - Each item = ONE atomic, observable check:
   `- [ ] [id] (P0) <do exactly this> → <expect exactly this>`
@@ -150,6 +154,7 @@ client/UI, pytest for server/Lambda; a change can need both.
 **Divide work with the implementer — don't duplicate.** They already wrote the
 happy-path + acceptance tests (in the diff). Your job is the INDEPENDENT,
 adversarial half:
+
 - Read their tests first. If they lock a case well, write "already covered by
   `<test name>`" and move on — do NOT rewrite it.
 - Add only the gaps: boundaries, error/offline, persistence/reload,
@@ -158,6 +163,7 @@ adversarial half:
   rather than silently shipping a stronger duplicate.
 
 Every test you write MUST:
+
 - Meet the Fail-on-revert bar (above).
 - Reuse existing fixtures/helpers (`factory.ts`, the per-suite pytest `conftest`
   fakes) and the established mock patterns.
@@ -167,6 +173,7 @@ Every test you write MUST:
   testable, state it as a PREREQUISITE for the orchestrator — don't hack around it.
 
 **Then run them — this is where you earn the fail-on-revert claim:**
+
 1. Run the suite you wrote into (`npm test` / `jest --selectProjects logic`, or
    `pytest tests/<suite>`) → confirm your new tests pass **green**. Paste the result.
 2. Red-green proof: for at least the key assertions, break the production value the
@@ -203,8 +210,6 @@ Rank findings worst-first; label each **real bug** vs **acceptable-for-scope**.
 
 ## Output order
 
-1. The checklist (fenced, ready to paste, `## Manual (UI)` + `## Automatable (UI)`,
-   with IDs and P0/P1/P2).
 2. The automated test files (paste-ready code) + the run results and red-green proof.
 3. The ranked edge-case findings.
 

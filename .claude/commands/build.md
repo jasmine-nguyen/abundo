@@ -141,8 +141,7 @@ Target card (optional): $ARGUMENTS
      rather than looping forever.
    - **Deferred craft / acceptable-for-scope** → collect the proposed tech-debt
      CARD blocks and qa's deferred risks; you'll offer to file them at the
-     Implementation Sign-off. Do
-     NOT file them yet.
+     Implementation Sign-off. Do NOT file them yet.
    - **Commit qa's automated tests into the suite** — write the test files qa
      authored into `src/__tests__/` (client) or `tests/` (server), doing any
      production extraction it flagged as a prerequisite first, and **drop any that
@@ -166,8 +165,7 @@ Target card (optional): $ARGUMENTS
     do NOT use `npm run test:all -- --coverage`, the un-sharded coverage run OOMs/hangs
     on the heavy `screen` suites, which is why WHIT-243 moved the floor to the merge
     step). Plain `npm test` runs only the fast `logic` project and does NOT gate
-    coverage. Server `python -m pytest --cov …
---cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
+    coverage. Server `python -m pytest --cov … --cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
     backstop, not a quality signal — the real quality gate is fail-on-revert, which
     code-critic checks). ALL tests green, coverage floor met, typecheck clean is the
     precondition for the Implementation Sign-off. If anything is red, you are not done — fix it (or take it
@@ -186,13 +184,7 @@ Target card (optional): $ARGUMENTS
 12. **On go — apply side effects (only now):**
     - Commit and push the branch, then open the PR (per AGENTS.md, every meaningful
       unit of work gets a PR). The suite is already green from step 10, so CI's
-      `Client tests` workflow should pass on the PR.
-    - Write the `qa` test-case checklist to a NEW Notion page (one per card) under
-      the **"Test Cases" folder** (page id `391ca73e-1d24-81be-aa6e-feea559067b2`,
-      under "Budget Tracker App"). Title the page `<CARD-ID> · <short card name>`
-      (e.g. `WHIT-9 · Pay cycle + payday window`). Keep the qa agent's
-      `## Manual (UI)` / `## Automatable (UI)` split intact, and link the automated
-      test files that now cover the automatable checks. Link the page from the card.
+      `Client tests` workflow should pass on the PR..
     - File the approved tech-debt cards to the board (`notion-create-pages`). Once
       the board assigns each a number, put it in the title per AGENTS.md "Filing
       cards": `<TICKET> <icon> <title>`, so the card is searchable by number.

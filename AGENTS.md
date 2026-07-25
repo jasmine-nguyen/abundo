@@ -2,12 +2,12 @@
 
 Read the exact versioned docs at https://docs.expo.dev/versions/v56.0.0/ before writing any code.
 
-# Build state
+# Must always run /build command when asked to implement a feature or fix a bug
 
-Current state, decisions, and open work live in the Notion **Build Note**
-(page "Build Note" under "Budget Tracker App") and the **Board**
-(`collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`). At the start of a build
-session, read the latest Session Log in the Build Note before acting.
+When asked to look into an issue, or implement a feature, no matter how small, you must always run the `/build` command first.
+This ensures you go through the process with critics criticising the changes at multiple stages.
+
+Do not ever build or make changes without a critics reviewing your plan or changes.
 
 # Pull request workflow
 

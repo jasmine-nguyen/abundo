@@ -64,6 +64,7 @@ not a vibe:
 - **MINOR** — a line correction, a stale citation, a small omission.
 
 Then:
+
 - any **BLOCKER** → `NEEDS REWORK`
 - no blocker, only **MINOR**/line-fixes → `SOLID WITH TWEAKS` (and each tweak must be
   concrete enough for the orchestrator to fold in WITHOUT another review round)
@@ -96,6 +97,8 @@ Findings ordered worst-first, each labelled `[BLOCKER]` / `[MAJOR]` / `[MINOR]`:
 - **Issue:** what is wrong or missed.
 - **Evidence:** specific codebase evidence (`path:line`, snippet, or execution logic).
 - **Fix:** a concrete, actionable counter-proposal.
+
+You must write these in plain English, not code. If you need to illustrate a fix, use ASCII or mermaid diagrams.
 
 _(If none, state "None identified." — and the verdict must then be SOLID.)_
 

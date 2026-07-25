@@ -38,6 +38,8 @@ Rules:
   discover it at build time.
 - Prefer the smallest change that fully satisfies the card. Call out anything
   the card implies but does not state.
+- Always aim for a long term solution, do not ever rush to a quick fix that can leads to bugs or
+  technical debt. If the card is a quick fix, propose a long term solution if available.
 - **Check isolation with a real method** — don't guess at "in-progress work". List
   the files the change touches, then: `git branch -a` + recent `git log` for other
   branches touching the same files, and `gh pr list` for open PRs over them. Flag
