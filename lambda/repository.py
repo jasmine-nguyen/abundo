@@ -2,18 +2,30 @@ import boto3
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import json
+import logging
 import re
 import uuid
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
 from models import Transaction
-from constants import DEAD_LETTER_TTL_SECONDS, FEED_WINDOW_DAYS, PENDING_STATUS, TIP_HEADROOM
+from constants import (
+    AUTH_DATE_SKEW_DAYS,
+    DEAD_LETTER_TTL_SECONDS,
+    FEED_WINDOW_DAYS,
+    PENDING_STATUS,
+    TIP_HEADROOM,
+)
 from repository_errors import DatabaseError
 
 REGION_NAME = "ap-southeast-2"
 RESOURCE_NAME = "dynamodb"
 TABLE_NAME = "abundo-dynamodb-table"
+
+logger = logging.getLogger(__name__)
+# The Text-format Lambda runtime leaves the root logger at WARNING, so INFO logs are
+# dropped unless we opt in — matching lambda/handler.py.
+logger.setLevel(logging.INFO)
 
 
 def handle_database_error(e: ClientError, action: str) -> NoReturn:
@@ -59,6 +71,69 @@ def _merchant_in_description(merchant: str, description: str) -> bool:
         return False
     d = _words(description)
     return any(d[i:i + len(m)] == m for i in range(len(d) - len(m) + 1))
+
+
+# Shortest final merchant word that may match as a PREFIX in a fused description (see
+# _merchant_in_fused_description). A 2-letter token like "SA" prefixes far too many
+# unrelated words ("sales", "salvation") to justify deleting a pending on it.
+_FUSED_PREFIX_MIN_LEN = 3
+
+
+def _merchant_in_fused_description(merchant: str, description: str) -> bool:
+    """Like _merchant_in_description, but tolerant of ANZ's fixed-width column fusion
+    (WHIT-331). A pending's raw description packs the merchant into a 25-character
+    column; a merchant that exactly fills it runs straight into the suburb with no
+    separator, so "SQ *KKV INTERNATIONAL PTY" + "Sunshine" arrives as the single word
+    "PTYSunshine" and every word of the merchant can no longer match.
+
+    Only the LAST merchant word may match as a prefix, and only when it is at least
+    _FUSED_PREFIX_MIN_LEN characters — fusion can only ever affect the trailing word,
+    and a short one would over-match. Every earlier word must still match exactly, so
+    this stays strictly narrower than a substring search. A short final word falls back
+    to whole-word matching (today's behaviour: a leftover duplicate, never a wrong
+    merge)."""
+    merchant_words = _words(merchant)
+    if not merchant_words:
+        return False
+    head, last = merchant_words[:-1], merchant_words[-1]
+    # `_words` keeps only [a-z0-9], so an accented or punctuated token arrives here as a
+    # STUMP ("ROSÉ" -> "ros") that would pass the length guard and then prefix-match an
+    # unrelated word ("Rossini"). Only tolerate a prefix when the trailing token survived
+    # that stripping intact — i.e. it is a real word, not a fragment.
+    raw_words = merchant.split()
+    last_is_whole_word = bool(raw_words) and raw_words[-1].lower() == last
+    # Nothing to fuse onto either: a lone word has no earlier word anchoring it, so a
+    # prefix rule would degrade to "any description word starts with this" — strictly
+    # looser than whole-word matching, in the direction that deletes a pending.
+    if not head or not last_is_whole_word or len(last) < _FUSED_PREFIX_MIN_LEN:
+        return _merchant_in_description(merchant, description)
+    description_words = _words(description)
+    return any(
+        description_words[i:i + len(head)] == head
+        and description_words[i + len(head)].startswith(last)
+        for i in range(len(description_words) - len(merchant_words) + 1)
+    )
+
+
+def _is_skewed_next_day(pending_date: Optional[str], posted_date: Optional[str]) -> bool:
+    """Whether `pending_date` sits exactly AUTH_DATE_SKEW_DAYS after `posted_date` — the
+    signature of one purchase reported off two clocks (WHIT-331): ANZ dates the pending
+    record in Melbourne-local time and the settled one in UTC, so a purchase swiped
+    before 10:00 local reads a day earlier once settled.
+
+    One-directional on purpose. Melbourne is UTC+10/+11, so the local day is always the
+    same as, or one AHEAD of, the UTC day — never behind. Accepting a pending dated
+    earlier than its posting would admit a whole extra class of false match for a skew
+    the clocks cannot produce. Both are bare "YYYY-MM-DD"; missing or unparseable is
+    never a skew."""
+    if not pending_date or not posted_date:
+        return False
+    try:
+        pending_day = date.fromisoformat(pending_date[:10])
+        posted_day = date.fromisoformat(posted_date[:10])
+    except ValueError:
+        return False
+    return (pending_day - posted_day).days == AUTH_DATE_SKEW_DAYS
 
 
 def _is_tip_adjusted(auth_amount: Decimal, settled_amount: Decimal) -> bool:
@@ -258,16 +333,19 @@ class TransactionRepository:
         blind insert would leave two rows — a categorized pending + an uncategorized
         posted. Instead, for each POSTED transaction we find its pending twin, carry
         the pending row's `category` onto the posted row, and delete the stale
-        pending. Match order per posting (see _find_exact_twin / _find_tip_twin):
-        exact `pending_transaction_id` link (forward-compat), else same
-        authorized_date + EXACT amount, else a tip-adjusted match (same day +
-        merchant + amount within TIP_HEADROOM above the auth), else a same-id re-sync
-        of an already-stored posted row. No match -> a plain insert. A missing/racey
-        match never raises: it degrades to insert.
+        pending. Match order per posting (see the _find_*_twin tiers): exact
+        `pending_transaction_id` link (forward-compat), else same authorized_date +
+        EXACT amount, else a tip-adjusted match (same day + merchant + amount within
+        TIP_HEADROOM above the auth), else a skewed-date match (WHIT-331: pending dated
+        exactly one day later + exact amount + merchant, for a pair ANZ split across the
+        Melbourne/UTC day boundary), else a blank-authorized_date match, else a same-id
+        re-sync of an already-stored posted row. No match -> a plain insert. A
+        missing/racey match never raises: it degrades to insert.
 
-        WHIT-117: across a MULTI-ROW batch the twin search is two-pass (all exact
-        matches resolved before any tip match — see _reconcile_matches) so an exact
-        twin is never starved by a tip-eligible sibling posting processed first.
+        WHIT-117: across a MULTI-ROW batch the twin search runs a pass per tier (all
+        exact matches resolved before any looser tier — see _reconcile_matches) so an
+        exact twin is never starved by a tip- or skew-eligible sibling posting processed
+        first.
 
         Pending rows are inserted as-is. All inserts are batched at the end; stale
         pendings are deleted after.
@@ -279,11 +357,26 @@ class TransactionRepository:
         to_insert: list[Transaction] = []
         stale_pending_keys: list[tuple[str, str]] = []
 
-        # WHIT-117: resolve twins for the whole batch up front, exact-before-tip across
-        # rows. `posted_matches` is aligned to the posted rows in their original order;
-        # replaying it below keeps `to_insert` ordering and the resync fallback unchanged.
-        posted_txns = [t for t in transactions if t.get("status") != PENDING_STATUS]
-        posted_matches = iter(self._reconcile_matches(posted_txns, pending_pools))
+        # A posted row already stored under its OWN id is a re-send, not a settlement:
+        # BankSync repeats a settled transaction for FEED_WINDOW_DAYS, and it claimed its
+        # twin the first time. Letting it back into the twin search lets it consume a
+        # LATER, genuinely different pending — its stored date is one day behind a charge
+        # swiped the next day, which is exactly what the skewed-date tier looks for. So
+        # resolve re-sends here and keep them out of the search entirely (WHIT-331).
+        resync_rows: dict[str, dict] = {}
+        to_match: list[Transaction] = []
+        for posted_txn in (t for t in transactions if t.get("status") != PENDING_STATUS):
+            stored = self.get_transaction(_build_pk(posted_txn["account_id"]),
+                                          _build_sk(posted_txn["transaction_id"]))
+            if stored is None:
+                to_match.append(posted_txn)
+            else:
+                resync_rows[posted_txn["transaction_id"]] = stored
+
+        # WHIT-117: resolve twins for the whole batch up front, tightest tier first across
+        # rows. `posted_matches` is aligned to `to_match` in order; the loop below pulls one
+        # entry per NON-re-send posted row, so the alignment holds.
+        posted_matches = iter(self._reconcile_matches(to_match, pending_pools))
 
         for txn in transactions:
             if txn.get("status") == PENDING_STATUS:
@@ -306,30 +399,28 @@ class TransactionRepository:
                     to_insert.append(txn)
                 continue
 
-            # `posted_txns` and this branch share the same `status != PENDING_STATUS`
-            # predicate, so the iterator has exactly one entry per posted row. The
+            # A re-send: carry the user's fields off the stored row and keep its corrected
+            # date. It never enters the twin search, so it can't consume a fresh pending.
+            existing = resync_rows.get(txn["transaction_id"])
+            if existing is not None:
+                merged = self._with_carried_category(txn, existing)
+                self._inherit_swipe_date(merged, txn, existing)  # don't regress a corrected date
+                to_insert.append(merged)
+                continue
+
+            # A first-time settlement. `to_match` and this branch share the same predicate
+            # (posted, not a re-send), so the iterator has exactly one entry per row. The
             # default is a defensive guard: a should-never-happen over-run degrades to a
             # plain insert (no reconcile) instead of a StopIteration that 500s the webhook.
             _, match = next(posted_matches, (None, None))
             if match is not None:
                 merged = self._with_carried_category(txn, match)
-                self._inherit_swipe_date(merged, txn, match)  # blank-auth -> take swipe date from twin
+                self._inherit_swipe_date(merged, txn, match)  # take the twin's swipe date
                 to_insert.append(merged)
                 match_key = (match["pk"], match["sk"])
                 own_key = (_build_pk(txn["account_id"]), _build_sk(txn["transaction_id"]))
                 if match_key != own_key:
                     stale_pending_keys.append(match_key)
-                continue
-
-            # No pending twin, but a posted row may already exist under this same id
-            # (a re-sync). Preserve any user category on it (read-then-carry).
-            own_pk = _build_pk(txn["account_id"])
-            own_sk = _build_sk(txn["transaction_id"])
-            existing = self.get_transaction(own_pk, own_sk)
-            if existing is not None:
-                merged = self._with_carried_category(txn, existing)
-                self._inherit_swipe_date(merged, txn, existing)  # don't regress a corrected date
-                to_insert.append(merged)
             else:
                 to_insert.append(txn)
 
@@ -340,38 +431,31 @@ class TransactionRepository:
     def _reconcile_matches(
         self, posted_txns: list[Transaction], pending_pools: dict[str, list[dict]]
     ) -> list[tuple[Transaction, Optional[dict]]]:
-        """Match every posted row in a batch to its pending twin, EXACT-before-TIP
+        """Match every posted row in a batch to its pending twin, tightest tier first
         across the whole batch (WHIT-117). Returns (posted_txn, match_or_None) in the
         original order of `posted_txns`.
 
-        Two passes over the SHARED pools: pass 1 resolves the exact twin (link /
-        exact-amount) of every posting; pass 2 runs the tip tier only on the postings
-        that pass 1 left unmatched. Because both passes pop from the same pool, an
-        exact twin is claimed before any tip match can reach it — so a pending that is
-        the exact twin of one posting is never starved by a tip-eligible sibling
-        posting that merely happens to be earlier in the batch. Each pending is still
-        popped at most once (money-safety), regardless of batch order.
+        One pass per tier over the SHARED pools, in the order below, each pass running
+        only on the postings the earlier ones left unmatched. Because every pass pops
+        from the same pool, a tighter tier always claims its twin before a looser one
+        can reach it — so a pending that is the exact twin of one posting is never
+        starved by a tip- or skew-eligible sibling that merely happens to be earlier in
+        the batch. Each pending is still popped at most once (money-safety), regardless
+        of batch order.
         """
         matches: list[Optional[dict]] = [None] * len(posted_txns)
-        unresolved: list[int] = []
-        for i, posted_txn in enumerate(posted_txns):
-            exact = self._find_exact_twin(posted_txn, pending_pools)
-            if exact is not None:
-                matches[i] = exact
-            else:
-                unresolved.append(i)
-        # Pass 2 (tip) then pass 3 (blank-auth), each only on what the earlier passes
-        # left unmatched — so an exact/tip twin is always claimed before the loosest
-        # (blank-auth) tier can reach it, and each pending is still popped at most once.
-        still: list[int] = []
-        for i in unresolved:
-            tip = self._find_tip_twin(posted_txns[i], pending_pools)
-            if tip is not None:
-                matches[i] = tip
-            else:
-                still.append(i)
-        for i in still:
-            matches[i] = self._find_blank_auth_twin(posted_txns[i], pending_pools)
+        unmatched = list(range(len(posted_txns)))
+        # Tightest gate first: exact date+amount, then a tip on the same day, then a
+        # date split one day by the Melbourne/UTC clocks, then the loosest (no swipe
+        # date at all, matched within a FEED_WINDOW_DAYS window).
+        for find_twin in (self._find_exact_twin, self._find_tip_twin,
+                          self._find_skewed_auth_twin, self._find_blank_auth_twin):
+            still: list[int] = []
+            for i in unmatched:
+                matches[i] = find_twin(posted_txns[i], pending_pools)
+                if matches[i] is None:
+                    still.append(i)
+            unmatched = still
         return list(zip(posted_txns, matches))
 
     def _ensure_pool(
@@ -407,8 +491,11 @@ class TransactionRepository:
 
         # 2. Heuristic: same authorized_date + EXACT amount (account already scoped by
         #    the pool). Skip when authorized_date is missing — matching on amount alone
-        #    is too loose. authorized_date is preserved across settlement, so it
-        #    discriminates identical daily purchases.
+        #    is too loose. authorized_date is USUALLY preserved across settlement, so it
+        #    discriminates identical daily purchases. When it isn't — ANZ dates the
+        #    pending in Melbourne-local time and the settled row in UTC, so a pre-10:00
+        #    swipe splits across the day boundary — this tier misses and the skewed-date
+        #    tier picks it up (WHIT-331).
         authorized_date = posted_txn.get("authorized_date")
         if not authorized_date:
             return None
@@ -467,6 +554,58 @@ class TransactionRepository:
         best = min(tip, key=lambda i: pool[i].get("transaction_id", ""))
         return pool.pop(best)
 
+    def _find_skewed_auth_twin(
+        self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
+    ) -> Optional[dict]:
+        """Return AND consume the pending twin whose authorized_date sits exactly one day
+        AFTER `posted_txn`'s because the two records were dated off different clocks
+        (WHIT-331), or None. Runs after the exact and tip tiers, so it only ever sees
+        pendings no equal-date tier wanted. Consumed rows are popped from the pool.
+
+        The exact and tip tiers both key on an EQUAL authorized_date, so an ANZ pair
+        split across the Melbourne/UTC day boundary matches neither and both rows
+        survive — the purchase is then counted twice for as long as the pending lives.
+
+        This tier DELETES a pending, so every gate the tip tier uses stays in force —
+        exact amount (no tip headroom: skewed AND tipped is a compound rarity not worth
+        the extra surface), a >=2-word merchant, and that merchant appearing in the
+        pending's raw description — plus the skew itself must be exactly one day in the
+        one direction the clocks can produce. Two genuine same-amount purchases on
+        consecutive days are indistinguishable from a skewed pair, which is why
+        _reconcile_matches claims every EXACT twin in the batch first: the same-day
+        pending is always taken by the exact tier before this one can reach it."""
+        pool = self._ensure_pool(posted_txn["account_id"], pending_pools)
+
+        authorized_date = posted_txn.get("authorized_date")
+        if not authorized_date:
+            return None  # no swipe date of its own -> the blank-auth tier owns it
+        amount = posted_txn.get("amount")
+        if amount is None:
+            return None
+        merchant = posted_txn.get("merchant_name") or ""
+        if len(_words(merchant)) < 2:
+            return None
+        candidates = [
+            i for i, item in enumerate(pool)
+            if item.get("amount") == amount
+            and _is_skewed_next_day(item.get("authorized_date"), authorized_date)
+            and _merchant_in_fused_description(merchant, item.get("description") or "")
+        ]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
+        twin = pool.pop(best)
+        # The only way this tier is measurable: a successful reconcile DELETES the
+        # pending, so without a log line the skew leaves no trace either way.
+        logger.info(
+            "skewed-date twin merged: account=%s merchant=%r amount=%s "
+            "posted=%s (auth %s) pending=%s (auth %s)",
+            posted_txn["account_id"], merchant, amount,
+            posted_txn.get("transaction_id"), authorized_date,
+            twin.get("transaction_id"), twin.get("authorized_date"),
+        )
+        return twin
+
     def _find_blank_auth_twin(
         self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
     ) -> Optional[dict]:
@@ -503,18 +642,40 @@ class TransactionRepository:
 
     @staticmethod
     def _inherit_swipe_date(merged: Transaction, posted_txn: Transaction, source_row: dict) -> None:
-        """Give a settled charge that arrived with authorized_date BLANK the swipe date
-        from its source row — its pending twin (dated at swipe) on first settlement, or,
-        on a re-sync, the already-corrected stored posted. Mutates `merged` in place.
-        No-op when the posted carries its own authorized_date (the normal case), so the
-        exact/tip reconcile stays byte-identical. This is what stops a blank-auth ANZ
-        charge from showing (or regressing to) its settlement day."""
-        if posted_txn.get("authorized_date"):
+        """Give a settled charge the swipe date of its source row — its pending twin
+        (dated at swipe) on first settlement, or, on a re-sync, the already-corrected
+        stored posted. Mutates `merged` in place. Two cases, both about a settled row
+        whose own date can't be trusted as the swipe day:
+
+        1. authorized_date BLANK — some ANZ settlements omit it entirely, so without the
+           twin's date the charge would show (or regress to) its settlement day.
+        2. authorized_date exactly one day BEFORE the source's (WHIT-331) — the pair was
+           dated off two clocks and the source holds the Melbourne-local day, which is
+           the day the user actually swiped. Melbourne wins.
+
+        Deliberately gated on the skew SHAPE rather than "the dates differ": a stored
+        date must never clobber a genuine upstream correction, only the known one-day
+        clock split. An exact or tip merge has equal dates on both sides, so this stays
+        a no-op there and those tiers remain byte-identical.
+
+        Case 2 covers the re-sync as well as the first merge. BankSync keeps re-sending a
+        settled transaction for FEED_WINDOW_DAYS, each time carrying the UTC date again;
+        by then the pending twin is deleted, so the row falls to the re-sync path with the
+        corrected stored row as its source. Without this the Melbourne date would be
+        overwritten within hours, and the charge would flip days on every sync."""
+        if not posted_txn.get("authorized_date"):
+            if source_row.get("date"):
+                merged["date"] = source_row["date"]
+            if source_row.get("authorized_date"):
+                merged["authorized_date"] = source_row["authorized_date"]
             return
-        if source_row.get("date"):
-            merged["date"] = source_row["date"]
-        if source_row.get("authorized_date"):
-            merged["authorized_date"] = source_row["authorized_date"]
+        if _is_skewed_next_day(source_row.get("authorized_date"), posted_txn["authorized_date"]):
+            # Both guarded the same way: a source row missing `date` (a legacy or partial
+            # write) must not leave the row claiming a swipe day its `date` disagrees with,
+            # since the budget window keys on `date`.
+            if source_row.get("date"):
+                merged["date"] = source_row["date"]
+                merged["authorized_date"] = source_row["authorized_date"]
 
     @staticmethod
     def _with_carried_category(

@@ -96,6 +96,17 @@ REPAYMENT_MISS_LOOKBACK_DAYS = 7
 # +25% = a generous but bounded tip.
 TIP_HEADROOM = Decimal("0.25")
 
+# Days by which ANZ's PENDING record post-dates its own settled twin's swipe date
+# (WHIT-331). The two records are rendered off different clocks: the pending carries the
+# Melbourne-local day, the settled one the UTC day. Melbourne is UTC+10/+11, so a purchase
+# swiped before 10:00 local falls on the PREVIOUS day in UTC and the two dates disagree by
+# exactly one — always in that direction, never the reverse. The reconciler's exact and tip
+# tiers both key on an equal authorized_date, so without a skew-tolerant tier the twins
+# never match and the purchase is counted twice. Used only by lambda/repository.py (a
+# webhook-lambda module, not a shared repository_* module), so the WHIT-136 sync guard does
+# not require a lambda_api/constants.py mirror.
+AUTH_DATE_SKEW_DAYS = 1
+
 # Seed pay cycle used by PayCycleRepository until the user sets their real payday:
 # a fixed past date (a Wednesday, the app's original default last_pay_date) + a
 # fortnightly length. Mirrored in lambda_api/constants.py, which shadows this at

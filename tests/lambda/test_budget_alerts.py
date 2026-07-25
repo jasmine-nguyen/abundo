@@ -94,6 +94,13 @@ class FakeNotifyRepo:
         self.order.append(marker)
 
 
+def _real_inherit_swipe_date(merged, posted_txn, source_row):
+    """The production implementation, resolved lazily (the webhook modules are only
+    importable once the `lam` fixture has put the lambda dirs on sys.path)."""
+    import repository
+    return repository.TransactionRepository._inherit_swipe_date(merged, posted_txn, source_row)
+
+
 class NoTwinRepo:
     """webhook_repo stand-in: no pending twins, carries no category."""
 
@@ -108,15 +115,10 @@ class NoTwinRepo:
     def _with_carried_category(txn, src):
         return dict(txn)
 
-    @staticmethod
-    def _inherit_swipe_date(merged, posted_txn, source_row):
-        # Mirror the real repo's interface; no twins here, so nothing to inherit.
-        if posted_txn.get("authorized_date"):
-            return
-        if source_row.get("date"):
-            merged["date"] = source_row["date"]
-        if source_row.get("authorized_date"):
-            merged["authorized_date"] = source_row["authorized_date"]
+    # Delegated, never re-implemented: a hand-copied version silently goes stale (it
+    # missed the WHIT-331 skew branch entirely), so every alert test using this stand-in
+    # would assert against the copy instead of production.
+    _inherit_swipe_date = staticmethod(_real_inherit_swipe_date)
 
 
 def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushToken[a]",),
@@ -1388,3 +1390,93 @@ def test_same_bucket_child_fires_while_cross_bucket_sibling_neither_adds_nor_sup
     assert len(sent) == 1
     assert sent[0][1] == "Car is at 80% of its budget this cycle."
     assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_skewed_date_settlement_counts_the_purchase_once(alerts, repo, monkeypatch):
+    # WHIT-331: the real false-alert scenario. ANZ dated the pending 07-11 (Melbourne)
+    # and its settled twin 07-10 (UTC), so the equal-date tiers miss and BOTH rows count.
+    # Correct Δ: the skewed tier removes the twin -> combined stays 70 (< 80) -> silent.
+    # Without the tier the pending survives -> 140 -> a FALSE 80% AND 100% push, which is
+    # exactly what fired on the live coffee budget.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries",
+          date="2026-07-11", authorized_date="2026-07-11", merchant_name="",
+          description="POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU")
+    before = list(repo._table.store.values())
+    # NOTE the posted carries the budgeted id itself: with a raw "GROCERIES" the unmerged
+    # row wouldn't count toward the budget at all, and the test would pass either way.
+    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-70"), pending=False,
+                        category="groceries", date="2026-07-14", authorized_date="2026-07-10",
+                        description="SQ *KKV INTERNATIONAL PTY Sunshine",
+                        merchant_name="SQ *KKV INTERNATIONAL PTY ")
+
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[posted], webhook_repo=repo)
+
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+# --- WHIT-331 QA gap: the false push must stay silent for the WHOLE feed window ---
+
+
+def test_skewed_pair_stays_silent_on_every_resend_of_the_settled_row(alerts, repo, monkeypatch):
+    # QA gap: the implementer's test covers only the FIRST settlement. BankSync re-sends a
+    # settled row for FEED_WINDOW_DAYS (7 days), and each re-send re-runs the whole alert
+    # path against a fresh window read. The live symptom was a push, so "silent once" is
+    # not enough — it must stay silent every day of that window, and never record a marker
+    # that would then suppress a genuine later crossing.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="groceries",
+          date="2026-07-11", authorized_date="2026-07-11", merchant_name="",
+          description="POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU")
+    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-70"), pending=False,
+                        category="groceries", date="2026-07-14", authorized_date="2026-07-10",
+                        description="SQ *KKV INTERNATIONAL PTY Sunshine",
+                        merchant_name="SQ *KKV INTERNATIONAL PTY ")
+    notify = FakeNotifyRepo()
+    budgets = {"groceries": {"target": Decimal("100")}}
+
+    all_sent = []
+    for _ in range(3):  # first settlement, then two verbatim BankSync re-sends
+        before = list(repo._table.store.values())
+        sent, notify, _ = _run(alerts, monkeypatch, budgets=budgets, before=before,
+                               normalised=[posted], webhook_repo=repo, notify=notify)
+        all_sent.extend(sent)
+        repo.insert_or_reconcile([posted])   # the real write the alert path straddles
+
+    assert all_sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+    # and the ledger still holds exactly ONE row, on the Melbourne day
+    rows = list(repo._table.store.values())
+    assert len(rows) == 1
+    assert rows[0]["date"] == "2026-07-11"
+
+
+def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_resend(alerts, repo):
+    # WHIT-331: the alert preview replays the batch in payload order, but the real write
+    # inserts everything and deletes the stale pendings AFTERWARDS. With the settlement
+    # listed before its pending's re-send, popping the twin inline let the re-send re-add
+    # itself — the preview counted the charge twice and fired the very "you've spent your
+    # whole budget" push this card exists to stop, while the ledger held one row.
+    _seed(repo, alerts, txn_id="PEND", amount=Decimal("-70"), pending=True, category="groceries",
+          date="2026-07-11", authorized_date="2026-07-11", merchant_name="",
+          description="POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU")
+    before = list(repo._table.store.values())
+    account = before[0]["account_id"]
+    resend = _norm_real(alerts, txn_id="PEND", amount=Decimal("-70"), pending=True,
+                        category="FOOD_AND_DRINK", date="2026-07-11", authorized_date="2026-07-11",
+                        merchant_name="",
+                        description="POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU")
+    posted = _norm_real(alerts, txn_id="POST", amount=Decimal("-70"), pending=False,
+                        category="groceries", date="2026-07-14", authorized_date="2026-07-10",
+                        description="SQ *KKV INTERNATIONAL PTY Sunshine",
+                        merchant_name="SQ *KKV INTERNATIONAL PTY ")
+    ctx = {"before_rows": before,
+           "pending_pools": {account: list(repo.get_pending_transactions_for_account(account))},
+           "start": "2026-07-01", "end": "2026-07-14"}
+
+    simulated = alerts.budget_alerts._simulate_after(ctx, [posted, resend], repo)  # posted FIRST
+    repo.insert_or_reconcile([posted, resend])
+
+    stored = list(repo._table.store.values())
+    assert sorted(r["transaction_id"] for r in simulated) == sorted(r["transaction_id"] for r in stored)
+    assert [r["transaction_id"] for r in stored] == ["POST"]
