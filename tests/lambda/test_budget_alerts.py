@@ -1480,3 +1480,62 @@ def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_r
     stored = list(repo._table.store.values())
     assert sorted(r["transaction_id"] for r in simulated) == sorted(r["transaction_id"] for r in stored)
     assert [r["transaction_id"] for r in stored] == ["POST"]
+
+# --- Single-word merchants in the alert preview (QA) --------------------------
+# Asserting only "no push fired" passes for the wrong reason if the preview and the
+# real write BOTH stop counting the charge. These compare the preview to the ledger.
+
+_COLES_ALERT_PEND_DESC = "POS AUTHORISATION         COLES 0602               MELBOURNE    AU"
+
+
+def _coles_alert_rows(*, pend_date="2026-07-11", post_auth="2026-07-10",
+                      post_date="2026-07-14", amount=Decimal("-70")):
+    pending = _bank("PEND", amount, pending=True, category="groceries", date=pend_date,
+                    authorized_date=pend_date, merchant_name="",
+                    description=_COLES_ALERT_PEND_DESC)
+    posted = _bank("POST", amount, pending=False, category="groceries",
+                   date=post_date, authorized_date=post_auth,
+                   description="COLES 0602 MELBOURNE",
+                   merchant_name="COLES 0602               ")
+    return pending, posted
+
+
+def test_one_word_skew_simulation_matches_the_real_write(alerts, repo):
+    pending_row, posted_row = _coles_alert_rows()
+    repo.insert_transactions([alerts.banksync.BankSyncClient.normalise(pending_row)])
+    before = list(repo._table.store.values())
+    account = before[0]["account_id"]
+    posted = alerts.banksync.BankSyncClient.normalise(posted_row)
+    ctx = {"before_rows": before,
+           "pending_pools": {account: list(repo.get_pending_transactions_for_account(account))},
+           "start": "2026-07-01", "end": "2026-07-14"}
+
+    simulated = alerts.budget_alerts._simulate_after(ctx, [posted], repo)
+    repo.insert_or_reconcile([posted])
+
+    stored = list(repo._table.store.values())
+    assert sorted(r["transaction_id"] for r in simulated) == sorted(r["transaction_id"] for r in stored)
+    assert [r["transaction_id"] for r in stored] == ["POST"]
+    # The preview must agree on the DATE too — the cycle window filters on it.
+    assert [r["date"] for r in simulated] == ["2026-07-11"]
+    assert stored[0]["date"] == "2026-07-11"
+
+
+def test_one_word_skew_across_the_cycle_boundary_counts_once_inside_the_window(alerts, repo, monkeypatch):
+    # Pending on the first day of the cycle, its twin's UTC date on the last day of the
+    # previous one. A preview that kept the UTC date would drop the charge out of the
+    # window entirely and under-count.
+    pending_row, posted_row = _coles_alert_rows(pend_date="2026-07-01",
+                                                post_auth="2026-06-30", post_date="2026-07-03")
+    repo.insert_transactions([alerts.banksync.BankSyncClient.normalise(pending_row)])
+    before = list(repo._table.store.values())
+    posted = alerts.banksync.BankSyncClient.normalise(posted_row)
+
+    sent, notify, ctx = _run(alerts, monkeypatch,
+                             budgets={"groceries": {"target": Decimal("100")}},
+                             before=before, normalised=[posted], webhook_repo=repo)
+    rows = alerts.budget_alerts._simulate_after(ctx, [posted], repo)
+
+    assert [(r["transaction_id"], r["date"]) for r in rows] == [("POST", "2026-07-01")]
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()

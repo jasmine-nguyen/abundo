@@ -115,6 +115,47 @@ def _merchant_in_fused_description(merchant: str, description: str) -> bool:
     )
 
 
+def _same_cleaned_merchant(posted_merchant: str, pending_merchant: str) -> bool:
+    """Whether two ALREADY-cleaned merchant names refer to the same merchant. Inputs
+    must have been through `clean_merchant` — banksync.normalise writes both sides that
+    way — because this does NOT clean them: "COLES 0602" and "COLES" do NOT match. Only
+    padding and casing are absorbed. An empty name on either side never matches.
+
+    NOTE this is chain-wide, not storefront-wide: clean_merchant strips trailing store
+    numbers and processor prefixes, so COLES 0602 and COLES 1157 are both "COLES", and
+    "AMAZON RETA* AMAZON AU" and "AMAZON AU" are both "AMAZON"."""
+    posted_words = _words(posted_merchant)
+    return bool(posted_words) and posted_words == _words(pending_merchant)
+
+
+def _skew_merchant_matches(merchant: str, pending_merchant: str, description: str) -> bool:
+    """The skewed-date tier's merchant gate. Two branches, and the single-word one is
+    the STRICTER of the two:
+
+    - Two or more words: the merchant must appear in the pending's raw description,
+      tolerating ANZ's fixed-width column fusion.
+    - Exactly one word: clean_merchant routinely reduces a real shop to one word by
+      stripping its store number or processor prefix ("COLES 0602", "OFFICEWORKS 0355",
+      "PAYSTAY 1093482", "AMAZON RETA* AMAZON AU"), and a lone word inside a
+      description is far too weak to
+      delete a row on — "COLES" is a whole word of "COLES EXPRESS". So instead of
+      searching the description, require the pending's OWN cleaned merchant to be that
+      same single word. Both sides are written by clean_merchant from the same
+      fixed-width column (banksync.normalise), so a real twin matches exactly while a
+      neighbouring brand does not. The description check that follows is a cheap
+      invariant — a pending's merchant is derived from its own description today — kept
+      so that an ANZ change to populate merchantName on pendings fails toward no match.
+
+    Deliberately NOT the fuzzy scorer the client uses for "apply to all"
+    (src/context.tsx matchesRulePattern): that is tuned for recall, and on short names
+    it scores COLES/MOLES at 0.80 — over its own threshold. Mis-sweeping a category is
+    undoable; deleting a pending is not. Do not unify the two."""
+    if len(_words(merchant)) >= 2:
+        return _merchant_in_fused_description(merchant, description)
+    return (_same_cleaned_merchant(merchant, pending_merchant)
+            and _merchant_in_description(merchant, description))
+
+
 def _is_skewed_next_day(pending_date: Optional[str], posted_date: Optional[str]) -> bool:
     """Whether `pending_date` sits exactly AUTH_DATE_SKEW_DAYS after `posted_date` — the
     signature of one purchase reported off two clocks (WHIT-331): ANZ dates the pending
@@ -566,14 +607,27 @@ class TransactionRepository:
         split across the Melbourne/UTC day boundary matches neither and both rows
         survive — the purchase is then counted twice for as long as the pending lives.
 
-        This tier DELETES a pending, so every gate the tip tier uses stays in force —
-        exact amount (no tip headroom: skewed AND tipped is a compound rarity not worth
-        the extra surface), a >=2-word merchant, and that merchant appearing in the
-        pending's raw description — plus the skew itself must be exactly one day in the
-        one direction the clocks can produce. Two genuine same-amount purchases on
-        consecutive days are indistinguishable from a skewed pair, which is why
-        _reconcile_matches claims every EXACT twin in the batch first: the same-day
-        pending is always taken by the exact tier before this one can reach it."""
+        This tier DELETES a pending, so the gates stay strict: an exact amount (no tip
+        headroom — skewed AND tipped is a compound rarity not worth the extra surface),
+        a merchant match (see _skew_merchant_matches), and a skew of exactly one day in
+        the one direction the clocks can produce.
+
+        Two genuine same-amount purchases on consecutive days are indistinguishable from
+        a skewed pair, which is why _reconcile_matches claims every EXACT twin in the
+        batch first: the same-day pending is always taken by the exact tier before this
+        one can reach it. What is left is a same-amount pair at the same merchant on
+        consecutive days — for a single-word merchant that means anywhere in a CHAIN,
+        since clean_merchant strips store numbers, so this is a routine week (two Coles
+        runs) rather than a rarity.
+
+        Picking the wrong one of those keeps the TOTAL right — the other charge inserts
+        plainly when its own settlement lands — but it is not free: the settled row takes
+        the consumed pending's day (via _inherit_swipe_date) and its category, notes and
+        tags. So one charge can show on a day the user did not swipe, wearing the other
+        charge's label. Accepted because the alternative is leaving every early-morning
+        chain purchase duplicated for the whole age-out window, which is worse and
+        certain rather than occasional. Pinned by
+        test_one_word_settlement_takes_the_wrong_pending_when_only_the_later_one_is_open."""
         pool = self._ensure_pool(posted_txn["account_id"], pending_pools)
 
         authorized_date = posted_txn.get("authorized_date")
@@ -583,24 +637,43 @@ class TransactionRepository:
         if amount is None:
             return None
         merchant = posted_txn.get("merchant_name") or ""
-        if len(_words(merchant)) < 2:
-            return None
-        candidates = [
+        merchant_words = _words(merchant)
+        if not merchant_words:
+            return None  # no derivable merchant -> never enough to delete a row on
+        single_word = len(merchant_words) == 1
+        dated_alike = [
             i for i, item in enumerate(pool)
             if item.get("amount") == amount
             and _is_skewed_next_day(item.get("authorized_date"), authorized_date)
-            and _merchant_in_fused_description(merchant, item.get("description") or "")
+        ]
+        candidates = [
+            i for i in dated_alike
+            if _skew_merchant_matches(merchant, pool[i].get("merchant_name") or "",
+                                      pool[i].get("description") or "")
         ]
         if not candidates:
+            if single_word:
+                # The amount and the one-day skew lined up but the names did not. The
+                # merge log below only fires on success, so without this a broken
+                # single-word gate is indistinguishable from nothing to reconcile.
+                for i in dated_alike:
+                    logger.info(
+                        "skewed-date single-word twin rejected on merchant: account=%s "
+                        "merchant=%r pending_merchant=%r pending=%s",
+                        posted_txn["account_id"], merchant,
+                        pool[i].get("merchant_name"), pool[i].get("transaction_id"),
+                    )
             return None
         best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
         twin = pool.pop(best)
         # The only way this tier is measurable: a successful reconcile DELETES the
-        # pending, so without a log line the skew leaves no trace either way.
+        # pending, so without a log line the skew leaves no trace either way. `gate`
+        # separates the two branches so the newer single-word one can be counted.
         logger.info(
-            "skewed-date twin merged: account=%s merchant=%r amount=%s "
+            "skewed-date twin merged: account=%s merchant=%r amount=%s gate=%s "
             "posted=%s (auth %s) pending=%s (auth %s)",
             posted_txn["account_id"], merchant, amount,
+            "single-word" if single_word else "fused",
             posted_txn.get("transaction_id"), authorized_date,
             twin.get("transaction_id"), twin.get("authorized_date"),
         )
