@@ -36,6 +36,7 @@ locals {
     "PATCH /transactions",
     "GET /categories",
     "POST /categories",
+    "GET /categories/{id}/transactions",
     "PATCH /categories/{id}",
     "DELETE /categories/{id}",
     "GET /budgets",

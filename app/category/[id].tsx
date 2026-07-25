@@ -3,29 +3,26 @@ import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmt } from '../../src/theme';
-import { categoryTransactions, cycleWindow } from '../../src/context';
+import { categoryTransactions } from '../../src/context';
 import { useCategoryTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
 
-// WHIT-308: the category drill-in. Reached by tapping a spend row on the Insights tab; `id` is
-// the category id (or UNCATEGORIZED_KEY for the "?" bucket) and `cycle` is which pay cycle the
-// row was showing (0 = this, 1 = last). Transactions come from the SAME cached list the tabs
-// use (no new endpoint) — we filter to this category over the cycle's window so the header
-// total reconciles with the number on the Insights card.
+// WHIT-308/WHIT-342: the category drill-in. Reached by tapping a spend row on the Insights tab;
+// `id` is the category id (or UNCATEGORIZED_KEY for the "?" bucket) and `cycle` is which pay
+// cycle the row was showing (0 = this, 1 = last). The transactions are fetched server-side for
+// that category + cycle (/categories/{id}/transactions), over the SAME window as the Insights
+// card, so the header total reconciles with it.
 export default function CategoryDetail() {
   const insets = useSafeAreaInsets();
   const { id, cycle } = useLocalSearchParams<{ id: string; cycle?: string }>();
-  const { transactions, category, payCycle, isLoading, isError, payCycleError, refetch } = useCategoryTransactionsScreenData();
   // 0 = this cycle, 1 = last (the only values Insights pushes). Floor + clamp to the integer set
-  // {0,1} so a stale or hand-edited deep-link (?cycle=2, ?cycle=-1, ?cycle=0.5) can't render an
+  // {0,1} so a stale or hand-edited deep-link (?cycle=2, ?cycle=-1, ?cycle=0.5) can't request an
   // older window or mislabel it — cycleNum is a discrete cycle index, so it must be whole (WHIT-309).
   const cycleNum = Math.min(1, Math.max(0, Math.floor(Number(cycle) || 0)));
-  // A first-load pay-cycle failure means the window is untrustworthy, so the filtered list
-  // would cover the wrong dates — treat it as an error rather than showing a wrong list.
-  const window = cycleWindow(payCycle, cycleNum);
-  const detail = payCycleError ? null : categoryTransactions({ transactions, category }, id, window);
+  const { transactions, category, isLoading, isError, refetch } = useCategoryTransactionsScreenData(id, cycleNum);
+  const detail = categoryTransactions({ transactions, category }, id);
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -36,8 +33,8 @@ export default function CategoryDetail() {
       >
         <DetailStates
           isLoading={isLoading}
-          isError={isError || payCycleError}
-          hasCache={transactions.length > 0 && !payCycleError}
+          isError={isError}
+          hasCache={transactions.length > 0}
           idPrefix="category"
           errorText="Couldn't load your transactions."
           retryLabel="Retry loading this category"

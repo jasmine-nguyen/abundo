@@ -36,11 +36,10 @@ const ROW = {
   account_name: 'Everyday', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
 };
 
-function screenData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean; payCycleError: boolean; refetch: () => void }> = {}) {
+function screenData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean; refetch: () => void }> = {}) {
   return {
     transactions: [ROW], category: (_id: string | null) => undefined,
-    payCycle: { length: 14, last_pay_date: '2026-06-06' },
-    isLoading: false, isError: false, payCycleError: false, refetch: jest.fn(), refetchStale: jest.fn(),
+    isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn(),
     ...over,
   };
 }

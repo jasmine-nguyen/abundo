@@ -1,9 +1,10 @@
-// WHIT-308 — the category drill-in screen (app/category/[id].tsx): the total card + grouped
-// transaction list, the empty state, and the two error paths (a hard read failure with nothing
-// cached, and a first-load pay-cycle failure whose window can't be trusted). The query composite
-// (../queries) is mocked; ../context is PARTIALLY mocked (real selectors, a stubbed
-// categoryTransactions for determinism + a stubbed useAppContext for TransactionRow); expo-router
-// + safe-area are stubbed. The cycleWindow/categoryTransactions MATH is covered by the logic tests.
+// WHIT-308/WHIT-342 — the category drill-in screen (app/category/[id].tsx): the total card +
+// grouped transaction list, the empty state, and the error paths (a hard read failure with
+// nothing cached; a background refetch over cached rows stays quiet). The query composite
+// (../queries) is mocked and CAPTURES the (id, cycle) it's called with, so WHIT-309 can assert
+// the cycle param was clamped to {0,1} before the fetch. ../context is partially mocked (real
+// selectors, a stubbed categoryTransactions for determinism). The categoryTransactions MATH is
+// covered by the logic tests. Post-WHIT-342 the window is server-owned — no payCycle here.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -11,18 +12,19 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 let mockData: ReturnType<typeof screenData>;
 let mockDetail: unknown;
 let mockParams: { id: string; cycle?: string };
-// The window the screen passed into categoryTransactions — captured so WHIT-309 can assert the
-// cycle param was clamped BEFORE it reached the (real) cycleWindow. cycleWindow stays real
-// (`...actual`), so a different clamped cycle yields a genuinely different window here.
-let mockCapturedWindow: unknown;
-jest.mock('../queries', () => ({ useCategoryTransactionsScreenData: () => mockData }));
+// The (id, cycle) the screen passed into the composite — captured so WHIT-309 can assert the
+// cycle was clamped to the integer set {0,1} before it reached the fetch.
+let mockCapturedCycle: number | undefined;
+jest.mock('../queries', () => ({
+  useCategoryTransactionsScreenData: (_id: string, cycle: number) => { mockCapturedCycle = cycle; return mockData; },
+}));
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
     ...actual,
     useAppContext: () => ({ openPicker: jest.fn(), category: () => undefined }),
-    categoryTransactions: (_s: unknown, _id: unknown, window: unknown) => { mockCapturedWindow = window; return mockDetail; },
+    categoryTransactions: (_s: unknown, _id: unknown) => mockDetail,
   };
 });
 
@@ -46,11 +48,10 @@ const DETAIL = {
   count: 1, total: 8.5, posted: 8.5, pending: 0,
 };
 
-function screenData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean; payCycleError: boolean; refetch: () => void }> = {}) {
+function screenData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean; refetch: () => void }> = {}) {
   return {
     transactions: [ROW], category: (_id: string | null) => undefined,
-    payCycle: { length: 14, last_pay_date: '2026-06-06' },
-    isLoading: false, isError: false, payCycleError: false, refetch: jest.fn(), refetchStale: jest.fn(),
+    isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn(),
     ...over,
   };
 }
@@ -58,8 +59,7 @@ function screenData(over: Partial<{ transactions: unknown[]; isLoading: boolean;
 beforeEach(() => { mockData = screenData(); mockDetail = DETAIL; mockParams = { id: 'coffee', cycle: '0' }; });
 
 // The total-card label must reflect WHICH cycle was drilled (matching the Insights hero's
-// "THIS / LAST PAY CYCLE"), not hard-code "this cycle" — otherwise a Last-cycle drill lies
-// about the window its number covers.
+// "THIS / LAST PAY CYCLE"), not hard-code "this cycle".
 it('labels the total "this cycle" for cycle 0 and "last cycle" for cycle 1', () => {
   mockParams = { id: 'coffee', cycle: '0' };
   const { unmount } = render(<CategoryDetail />);
@@ -73,77 +73,48 @@ it('labels the total "this cycle" for cycle 0 and "last cycle" for cycle 1', () 
   expect(screen.queryByText('Spent this cycle')).toBeNull();
 });
 
-// WHIT-309 — a stale/hand-edited ?cycle=2+ deep-link is clamped to 1, so it can't render an
-// older pay cycle's window. Upper-bound fail-on-revert: the window the screen builds for cycle
-// '2' must equal the window it builds for cycle '1' (both go through the REAL cycleWindow with a
-// clamped cycleNum). Relative comparison, so it's deterministic regardless of "today".
-it('clamps an out-of-range cycle down to 1 (same window as last cycle)', () => {
-  mockParams = { id: 'coffee', cycle: '1' };
-  const { unmount } = render(<CategoryDetail />);
-  const lastCycleWindow = mockCapturedWindow;
-  unmount();
-
+// WHIT-309 — a stale/hand-edited ?cycle=2+ deep-link is clamped to 1, so the fetch can't request
+// an older cycle. The cycle reaching the composite (→ the endpoint's ?cycle=) is what's clamped.
+// Fail-on-revert: reverting the Math.min(1, …) clamp sends cycle 2 to the server.
+it('clamps an out-of-range cycle down to 1 before the fetch', () => {
   mockParams = { id: 'coffee', cycle: '2' };
   render(<CategoryDetail />);
-  expect(mockCapturedWindow).toEqual(lastCycleWindow); // reverting the clamp → 2nd-prior window ≠ last
+  expect(mockCapturedCycle).toBe(1);
 });
 
-// WHIT-309 — lower bound: a negative cycle is clamped to 0, so the window is the current cycle
-// AND the label agrees ("this cycle"). Without the clamp, cycleNum = -1 is non-zero, so the label
-// would read "last cycle" over a current-cycle window — the mismatch the clamp closes.
-it('clamps a negative cycle up to 0 (label reads "this cycle")', () => {
+// WHIT-309 — lower bound: a negative cycle clamps to 0, and the label agrees ("this cycle").
+it('clamps a negative cycle up to 0 (fetch cycle 0, label "this cycle")', () => {
   mockParams = { id: 'coffee', cycle: '-1' };
   render(<CategoryDetail />);
+  expect(mockCapturedCycle).toBe(0);
   expect(screen.getByText('Spent this cycle')).toBeTruthy();
-  expect(screen.queryByText('Spent last cycle')).toBeNull();
 });
 
-// WHIT-309 — a fractional cycle in (0,1) floors to 0, so it shows the CURRENT window AND the
-// label agrees. Without Math.floor, 0.5 survives the clamp; it hits cycleWindow's cycle<1 branch
-// (current window) but `cycleNum === 0` is false → the label would wrongly read "last cycle".
-it('floors a fractional cycle (0.5) to 0 (current window, label "this cycle")', () => {
-  mockParams = { id: 'coffee', cycle: '0' };
-  const { unmount } = render(<CategoryDetail />);
-  const currentWindow = mockCapturedWindow;
-  unmount();
-
+// WHIT-309 — a fractional cycle in (0,1) floors to 0, so the fetch + label are the current cycle.
+it('floors a fractional cycle (0.5) to 0', () => {
   mockParams = { id: 'coffee', cycle: '0.5' };
   render(<CategoryDetail />);
-  expect(mockCapturedWindow).toEqual(currentWindow);
+  expect(mockCapturedCycle).toBe(0);
   expect(screen.getByText('Spent this cycle')).toBeTruthy();
-  expect(screen.queryByText('Spent last cycle')).toBeNull();
 });
 
 // WHIT-309 (qa gap) — non-numeric / empty / undefined ?cycle falls back to the CURRENT cycle.
-// The `|| 0` fallback is load-bearing under the clamp: a bare NaN would flow through Math.floor/
-// max/min unchanged into cycleWindow's prior-cycle branch (a garbage window) and mislabel "last".
-it('falls non-numeric / empty / undefined ?cycle back to the current cycle (window + label)', () => {
-  mockParams = { id: 'coffee', cycle: '0' };
-  const { unmount } = render(<CategoryDetail />);
-  const currentWindow = mockCapturedWindow;
-  unmount();
-
+// Fail-on-revert: reverting the `|| 0` sends NaN through the clamp into the fetch.
+it('falls non-numeric / empty / undefined ?cycle back to the current cycle', () => {
   for (const bad of ['abc', '', undefined, '  '] as (string | undefined)[]) {
     mockParams = { id: 'coffee', cycle: bad };
-    const { unmount: u } = render(<CategoryDetail />);
-    expect(mockCapturedWindow).toEqual(currentWindow); // revert `|| 0` → NaN → prior/garbage window ≠ this
+    const { unmount } = render(<CategoryDetail />);
+    expect(mockCapturedCycle).toBe(0);
     expect(screen.getByText('Spent this cycle')).toBeTruthy();
-    expect(screen.queryByText('Spent last cycle')).toBeNull();
-    u();
+    unmount();
   }
 });
 
-// WHIT-309 (qa gap) — a huge finite cycle ('1e9') clamps to the SAME window as cycle '1' (the
-// upper bound holds far beyond the 2→1 case).
-it('clamps a huge finite cycle (1e9) to the last-cycle window', () => {
-  mockParams = { id: 'coffee', cycle: '1' };
-  const { unmount } = render(<CategoryDetail />);
-  const lastWindow = mockCapturedWindow;
-  unmount();
-
+// WHIT-309 (qa gap) — a huge finite cycle ('1e9') clamps to 1 (the upper bound holds far beyond 2).
+it('clamps a huge finite cycle (1e9) down to 1', () => {
   mockParams = { id: 'coffee', cycle: '1e9' };
   render(<CategoryDetail />);
-  expect(mockCapturedWindow).toEqual(lastWindow);
+  expect(mockCapturedCycle).toBe(1);
   expect(screen.getByText('Spent last cycle')).toBeTruthy();
 });
 
@@ -185,13 +156,4 @@ it('does NOT show the error when a background refetch fails over cached rows (ca
   mockData = screenData({ transactions: [ROW], isError: true });
   render(<CategoryDetail />);
   expect(screen.queryByTestId('category-error')).toBeNull();
-});
-
-// A first-load pay-cycle failure makes the window untrustworthy → force the error card even
-// though the transaction list itself is cached (the drilled dates would otherwise be wrong).
-it('forces the error state on a first-load pay-cycle failure, even with cached transactions', () => {
-  mockData = screenData({ transactions: [ROW], payCycleError: true });
-  render(<CategoryDetail />);
-  expect(screen.getByTestId('category-error')).toBeTruthy();
-  expect(screen.queryByTestId('category-total')).toBeNull();
 });

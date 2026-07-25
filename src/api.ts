@@ -230,6 +230,27 @@ export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<st
 }
 
 /**
+ * Fetch the transactions behind one /breakdown row: every charge filed on a single
+ * category (or the "__uncategorized__" bucket) over the selected pay cycle, newest
+ * first. Backs the category drill-in so its list + total reconcile with the Insights
+ * card (the old 7-day feed under-counted a longer cycle and showed nothing for last
+ * cycle).
+ *
+ * @param categoryId - The category id, or the UNCATEGORIZED_KEY sentinel.
+ * @param cycle - Which cycle: 0 = current (default), n >= 1 = the nth prior cycle. Only
+ *   sent when > 0, so the default request stays minimal.
+ * @returns The cycle's transactions for that category, newest first.
+ * @throws If the response status is not OK.
+ */
+export async function fetchCategoryTransactions(categoryId: string, cycle = 0): Promise<Transaction[]> {
+  const cycleParam = cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : '';
+  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(categoryId)}/transactions${cycleParam}`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * Set (persist) a single transaction's category. Thin wrapper over
  * setTransactionFields (WHIT-278): the route/headers/body/error-guard live there, so
  * the single-transaction category and note/tags writes can't drift apart.
