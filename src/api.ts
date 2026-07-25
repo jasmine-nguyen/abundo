@@ -184,6 +184,24 @@ export async function fetchBudgets(days: number): Promise<Record<string, BudgetR
   return response.json();
 }
 
+/**
+ * Fetch the transactions behind a budget's total: every contributing charge in the
+ * current pay cycle across the category's whole subtree, newest first. Backs the
+ * budget-detail "Related transactions" list so it reconciles with the header total
+ * (the old rolling 7-day feed under-counted a cycle longer than the feed window and
+ * dropped sub-category spend).
+ *
+ * @param categoryId - The budgeted category id.
+ * @returns The cycle's transactions for that budget, newest first.
+ * @throws If the response status is not OK.
+ */
+export async function fetchBudgetTransactions(categoryId: string): Promise<Transaction[]> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/transactions`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
 /** A category's computed spend for the current pay cycle. */
 export interface CategorySpend {
   posted: number;   // settled (posted) spend

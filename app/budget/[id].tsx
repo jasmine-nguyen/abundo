@@ -4,22 +4,27 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { budgetDetail, transactionView, Transaction, Category, useAppContext } from '../../src/context';
+import { budgetDetail, groupTransactionsByDate, transactionView, Transaction, Category, useAppContext } from '../../src/context';
 import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { WhittleBar } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
+// How many related-transaction rows to show before the "Load More" button.
+const BUDGET_TX_PAGE = 7;
+
 export default function BudgetDetail() {
-  // WHIT-203: the rollup + this category's transactions now come from the cached query
-  // layer (fed to budgetDetail as a narrow input) instead of the eager store.
-  const d = useBudgetDetailScreenData();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  // WHIT-203: the rollup comes from the cached query layer. The related list is now this
+  // budget's whole-cycle subtree, fetched server-side so it sums to the header total.
+  const d = useBudgetDetailScreenData(id);
   const s = useAppContext(); // deleteBudget writer stays on the store
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id: string }>();
   const bd = budgetDetail(d, id);
   const [deleting, setDeleting] = useState(false);
+  // How many related rows are revealed; "Load More" reveals the next page.
+  const [visibleCount, setVisibleCount] = useState(BUDGET_TX_PAGE);
   // WHIT-241: same-frame double-tap guard on Delete (declared with the other hooks, above the
   // early returns below, to satisfy the rules of hooks).
   const runDelete = useInFlightGuard();
@@ -91,13 +96,18 @@ export default function BudgetDetail() {
         </View>
 
         <Text style={styles.sectionLabel}>RELATED TRANSACTIONS</Text>
-        {bd.relGroups.map((g) => (
+        {groupTransactionsByDate(bd.relItems.slice(0, visibleCount)).map((g) => (
           <View key={g.label} style={{ marginTop: 6 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
             {g.items.map((t) => <DetailTransactionRow key={t.transaction_id} t={t} category={d.category} />)}
           </View>
         ))}
-        {bd.relEmpty && <Text style={styles.empty}>No transactions in this category this cycle.</Text>}
+        {bd.relItems.length > visibleCount && (
+          <Pressable testID="budget-load-more" onPress={() => setVisibleCount((n) => n + BUDGET_TX_PAGE)} style={styles.loadMore}>
+            <Text style={styles.loadMoreText}>Load More</Text>
+          </Pressable>
+        )}
+        {bd.relEmpty && !d.isLoading && <Text style={styles.empty}>No transactions in this category this cycle.</Text>}
 
         <Pressable testID="budget-delete" onPress={onDelete} disabled={deleting} style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}>
           <Text style={styles.deleteText}>{deleting ? 'Removing…' : 'Delete budget'}</Text>
@@ -111,7 +121,7 @@ function DetailTransactionRow({ t, category }: { t: Transaction; category: (id: 
   const v = transactionView({ category }, t);
   const c = category(t.category);
   return (
-    <View style={styles.txRow}>
+    <View testID="budget-tx-row" style={styles.txRow}>
       <View style={[styles.txChip, { backgroundColor: v.chipBg }]}><Icon name={v.icon} size={22} color={v.iconColor} /></View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.txMerchant} numberOfLines={1}>{v.merchant}</Text>
@@ -155,6 +165,8 @@ const styles = StyleSheet.create({
   txAmount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
   txBucket: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim, marginTop: 2 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },
+  loadMore: { marginTop: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
+  loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
   deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
   deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
 });

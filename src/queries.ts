@@ -5,9 +5,9 @@
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
-import { fetchBudgets, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
-import { cycleClock, cycleName, cycleWindow, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -33,6 +33,10 @@ export const payCycleKey = ['payCycle'] as const;
 // a cycle-length change (the explicit invalidateQueries(['budgets']) in persistPayCycle),
 // rather than a length change shifting the key AND the invalidate firing two fetches.
 export const budgetsKey = ['budgets'] as const;
+// The transactions behind one budget's total (the budget-detail list). A per-id key so
+// each budget caches independently; the categorise writes invalidate the flat prefix so
+// re-tagging a charge refreshes every cached budget's list.
+export const budgetTransactionsKey = ['budgetTransactions'] as const;
 // Breakdown (spend-by-category, the Insights tab) is the same — server-derived window, so
 // a flat key: parallel fetch, single invalidate on a length change (WHIT-72).
 export const breakdownKey = ['breakdown'] as const;
@@ -127,6 +131,17 @@ export function useBudgetsQuery(cycleLen: number, enabled: boolean) {
     queryFn: () => fetchBudgets(cycleLen),
     enabled,
     select: selectBudgets,
+  });
+}
+
+// The transactions behind one budget's total — the current cycle's whole subtree,
+// server-filtered to the contributing rows and newest-first, so the budget-detail list
+// sums to the header (the old 7-day feed under-counted a longer cycle). Per-id key.
+export function useBudgetTransactionsQuery(categoryId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...budgetTransactionsKey, categoryId],
+    queryFn: () => fetchBudgetTransactions(categoryId),
+    enabled: enabled && !!categoryId,
   });
 }
 
@@ -363,41 +378,37 @@ export interface BudgetDetailScreenData {
   transactions: Transaction[];
   cycleLen: number;
   daysLeft: number;
-  cycleStart: string; // current cycle start (ISO) — scopes the detail's related list to this cycle
   isLoading: boolean;
   isError: boolean;
   payCycleError: boolean; // WHIT-72: first-load pay-cycle failure → the pace/projection can't be trusted
   refetch: () => void;
   refetchStale: () => void;
 }
-export function useBudgetDetailScreenData(): BudgetDetailScreenData {
+export function useBudgetDetailScreenData(categoryId: string): BudgetDetailScreenData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClock(payCycle);
-  // The current cycle's start, mirroring the server spend window — the same helper the category
-  // drill-in uses (app/category/[id].tsx), so the related list reconciles with the spend total.
-  const { start: cycleStart } = cycleWindow(payCycle, 0);
 
   const budgetsQuery = useBudgetsQuery(cycleLen, authed); // parallel fetch, flat key (WHIT-72)
-  const transactionsQuery = useTransactionsQuery(authed);
+  // The list is the whole cycle's subtree, computed server-side from the SAME window as
+  // the header total, so the rows sum to the number — not the old rolling 7-day feed.
+  const budgetTransactionsQuery = useBudgetTransactionsQuery(categoryId, authed);
   const categoriesQuery = useCategoriesQuery(authed);
 
   const categories = categoriesQuery.data ?? [];
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
 
-  // WHIT-204: the 7th composite folded into the shared helper (same plumbing as the six).
-  const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, transactionsQuery, categoriesQuery]);
+  const status = useCombineScreenQueries([payCycleQuery, budgetsQuery, budgetTransactionsQuery, categoriesQuery]);
   const payCycleError = firstLoadError(payCycleQuery); // WHIT-72
 
   return {
     category,
     budgets: budgetsQuery.data ?? [],
-    transactions: transactionsQuery.data ?? [],
+    transactions: budgetTransactionsQuery.data ?? [],
     cycleLen,
     daysLeft,
-    cycleStart,
     payCycleError,
     ...status,
   };

@@ -18,11 +18,13 @@ const mockFetchBudgets = jest.fn<(days: number) => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
 const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
+const mockFetchBudgetTransactions = jest.fn<(id: string) => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchBudgets: (...a: unknown[]) => mockFetchBudgets(...(a as [number])),
   fetchCategories: () => mockFetchCategories(),
   fetchPayCycle: () => mockFetchPayCycle(),
   fetchTransactions: () => mockFetchTransactions(),
+  fetchBudgetTransactions: (id: string) => mockFetchBudgetTransactions(id),
 }));
 
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
@@ -42,6 +44,7 @@ beforeEach(() => {
   mockFetchCategories.mockReset().mockResolvedValue(CATS);
   mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
   mockFetchTransactions.mockReset().mockResolvedValue([]);
+  mockFetchBudgetTransactions.mockReset().mockResolvedValue([]);
 });
 
 describe('useBudgetsScreenData — payCycleError guard (WHIT-72)', () => {
@@ -86,7 +89,7 @@ describe('useBudgetsScreenData — payCycleError guard (WHIT-72)', () => {
 
 describe('useBudgetDetailScreenData — payCycleError guard (WHIT-72)', () => {
   it('BACKGROUND payCycle refetch failure over a cached cycle → payCycleError stays FALSE (cache-first, same guard as Budgets)', async () => {
-    const { result } = renderHook(() => useBudgetDetailScreenData(), { wrapper: wrapper(makeClient()) });
+    const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.budgets).toHaveLength(1));
     expect(result.current.cycleLen).toBe(30);
 
@@ -101,7 +104,7 @@ describe('useBudgetDetailScreenData — payCycleError guard (WHIT-72)', () => {
 
   it('first-load payCycle failure → payCycleError is TRUE (detail blanks on it)', async () => {
     mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
-    const { result } = renderHook(() => useBudgetDetailScreenData(), { wrapper: wrapper(makeClient()) });
+    const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.payCycleError).toBe(true);
   });

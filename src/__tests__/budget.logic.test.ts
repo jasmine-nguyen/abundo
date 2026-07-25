@@ -2,7 +2,7 @@
 // budgetDetail (the single-category screen). These drive every number and colour
 // on the budgets screens, so they're the highest-value regression lock.
 import { describe, it, expect } from '@jest/globals';
-import { elapsedFrac, budgetViews, budgetDetail } from '../context';
+import { elapsedFrac, budgetViews, budgetDetail, groupTransactionsByDate } from '../context';
 import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
 
@@ -215,46 +215,47 @@ describe('budgetDetail', () => {
     expect(over.statusLabel).toContain('Over budget');
   });
 
-  it('lists related transactions grouped, and flags empty', () => {
+  it('exposes the server-provided related transactions and flags empty', () => {
     const withTx = budgetDetail(makeState({
       categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7,
       transactions: [txn({ transaction_id: 'x', category: 'coffee', date: '2026-05-01' })],
     }), 'coffee')!;
     expect(withTx.relEmpty).toBe(false);
-    expect(withTx.relGroups.length).toBeGreaterThan(0);
+    expect(withTx.relItems.map((t) => t.transaction_id)).toEqual(['x']);
     const noTx = budgetDetail(makeState({ categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7 }), 'coffee')!;
     expect(noTx.relEmpty).toBe(true);
   });
 
-  // The reported bug: a still-pending charge authorised the day BEFORE payday shows in the
-  // rolling feed but is (correctly) excluded from this cycle's spend total. The related list
-  // must be scoped to the cycle too, so it never shows a charge the total ignores.
-  // FAIL-ON-REVERT: without the `t.date >= cycleStart` filter, the pre-cycle row leaks in and
-  // both assertions flip.
-  it('excludes a pre-cycle charge from the related list (cross-cycle leak)', () => {
+  // The cycle window + subtree filtering now lives on the server (/budgets/{id}/transactions),
+  // so budgetDetail must show the list VERBATIM — not re-filter it. Re-adding the old
+  // `t.category === b.id` filter would drop a sub-category row that the total (a subtree
+  // rollup) DOES count, re-opening the reconciliation gap.
+  // FAIL-ON-REVERT: a client-side `t.category === 'coffee'` filter drops 'sub'.
+  it('passes the server list through unfiltered (keeps a sub-category row)', () => {
     const bd = budgetDetail(makeState({
       categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 10,
-      cycleStart: '2026-07-16',
       transactions: [
-        txn({ transaction_id: 'in', category: 'coffee', date: '2026-07-18', status: 'pending', amount: -4.3 }),
-        txn({ transaction_id: 'pre', category: 'coffee', date: '2026-07-15', status: 'pending', amount: -305.29 }),
+        txn({ transaction_id: 'parent', category: 'coffee', date: '2026-07-19' }),
+        txn({ transaction_id: 'sub', category: 'coffee-beans', date: '2026-07-18' }),
       ],
     }), 'coffee')!;
-    const shownIds = bd.relGroups.flatMap((g) => g.items.map((t) => t.transaction_id));
-    expect(shownIds).toEqual(['in']);       // 18 Jul kept
-    expect(shownIds).not.toContain('pre');  // 15 Jul (pre-payday) dropped, matching the total
+    expect(bd.relItems.map((t) => t.transaction_id)).toEqual(['parent', 'sub']);
+  });
+});
+
+describe('groupTransactionsByDate', () => {
+  it('groups by date heading, preserving the input (newest-first) order', () => {
+    const groups = groupTransactionsByDate([
+      txn({ transaction_id: 'a', date: '2026-07-21' }),
+      txn({ transaction_id: 'b', date: '2026-07-21' }),
+      txn({ transaction_id: 'c', date: '2026-07-18' }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.items.map((t) => t.transaction_id))).toEqual([['a', 'b'], ['c']]);
   });
 
-  // The cycle start is INCLUSIVE (a charge dated exactly on payday lands in the fresh cycle),
-  // mirroring the server window's inclusive lower bound.
-  it('keeps a charge dated exactly on the cycle start', () => {
-    const bd = budgetDetail(makeState({
-      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 14,
-      cycleStart: '2026-07-16',
-      transactions: [txn({ transaction_id: 'payday', category: 'coffee', date: '2026-07-16' })],
-    }), 'coffee')!;
-    expect(bd.relEmpty).toBe(false);
-    expect(bd.relGroups.flatMap((g) => g.items.map((t) => t.transaction_id))).toEqual(['payday']);
+  it('returns an empty array for no transactions', () => {
+    expect(groupTransactionsByDate([])).toEqual([]);
   });
 });
 

@@ -94,15 +94,29 @@ def nth_prior_cycle_window(cycle_start: str, length: int, n: int) -> tuple[str, 
     return prior_start.isoformat(), prior_end.isoformat()
 
 
+def contributes_to_budget(transaction: dict) -> bool:
+    """Whether a transaction counts toward a budget summary: it's flagged to count
+    (`counts_to_budget`), the user hasn't manually excluded it (`budget_excluded`,
+    WHIT-296), and its `status` is a known pending/posted (unknown status is skipped,
+    never guessed).
+
+    The gate shared by the spend/income summarisers (via `_spend_contribution`) and the
+    budget-detail transaction list (`/budgets/{id}/transactions`), so the list can't
+    disagree with the total about which rows count.
+    """
+    if not transaction.get("counts_to_budget") or transaction.get("budget_excluded"):
+        return False
+    return transaction.get("status") in (PENDING_STATUS, POSTED_STATUS)
+
+
 def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal] | None:
     """The (bucket, amount) a transaction adds to a budget summary, or None if it
     doesn't count. Shared by summarise_transactions, summarise_uncategorized and
     summarise_income: they differ only in WHICH categories they roll up and the
     direction of the amount, not in how a contributing transaction maps to a bucket.
 
-    Contributes only if `counts_to_budget` is truthy, the user hasn't manually
-    excluded it (`budget_excluded`, WHIT-296), and `status` is a known
-    pending/posted (an unknown status is skipped, never guessed).
+    Contributes only if `contributes_to_budget` (counts_to_budget, not budget_excluded,
+    known pending/posted status).
 
     `sign` flips the stored amount into a positive contribution:
       * spend (default `sign=-1`): stored NEGATIVE, so `-amount` is positive spend —
@@ -111,15 +125,9 @@ def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal
         a reversal/clawback (negative amount) reduces it.
     Callers clamp each bucket at >= 0.
     """
-    if not transaction.get("counts_to_budget") or transaction.get("budget_excluded"):
+    if not contributes_to_budget(transaction):
         return None
-    status = transaction.get("status")
-    if status == PENDING_STATUS:
-        bucket = "pending"
-    elif status == POSTED_STATUS:
-        bucket = "posted"
-    else:
-        return None  # unknown status -> don't guess a bucket
+    bucket = "pending" if transaction.get("status") == PENDING_STATUS else "posted"
     return bucket, sign * Decimal(str(transaction.get("amount", 0)))
 
 
