@@ -127,11 +127,19 @@ def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
     by_id = {r["transaction_id"]: r for r in ctx["before_rows"] if r.get("transaction_id") is not None}
     pools = {a: list(rows) for a, rows in ctx["pending_pools"].items()}  # copy: the matcher pops
 
-    # Same two-pass as the real write: resolve twins for the whole batch up front, then
+    # Same tier passes as the real write: resolve twins for the whole batch up front, then
     # replay in `normalised` order so pending-inserts and the resync fallback keep their
-    # original interleaving (only the exact-vs-tip decision changed).
+    # original interleaving. A posted row already stored under its own id is a RE-SEND and
+    # is held out of the twin search, exactly as insert_or_reconcile holds it out — letting
+    # it match would consume a pending the real write leaves alone (WHIT-331).
     posted_txns = [t for t in normalised if t.get("status") != PENDING_STATUS]
-    posted_matches = iter(webhook_repo._reconcile_matches(posted_txns, pools))
+    posted_matches = iter(webhook_repo._reconcile_matches(
+        [t for t in posted_txns if t["transaction_id"] not in by_id], pools))
+
+    # The real write inserts everything, THEN deletes the stale pendings, so a pending
+    # re-send that arrives in the same payload as its own settlement does not survive.
+    # Popping twins inline would let that re-send re-add itself and double-count.
+    consumed_twin_ids: set[str] = set()
 
     for txn in normalised:
         tid = txn["transaction_id"]
@@ -145,6 +153,13 @@ def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
             else:
                 by_id[tid] = dict(txn)
             continue
+        existing = by_id.get(tid)
+        if existing is not None:
+            # A re-send: carry the user's fields off the stored row, never match a twin.
+            merged = webhook_repo._with_carried_category(txn, existing)
+            webhook_repo._inherit_swipe_date(merged, txn, existing)  # parity with the real write
+            by_id[tid] = dict(merged)
+            continue
         _, match = next(posted_matches, (None, None))  # defensive: over-run -> no-match (see repo)
         if match is not None:
             merged = webhook_repo._with_carried_category(txn, match)
@@ -152,15 +167,12 @@ def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
             by_id[merged["transaction_id"]] = dict(merged)
             twin_id = match.get("transaction_id")
             if twin_id is not None and twin_id != merged["transaction_id"]:
-                by_id.pop(twin_id, None)
-            continue
-        existing = by_id.get(tid)
-        if existing is not None:
-            merged = webhook_repo._with_carried_category(txn, existing)
-            webhook_repo._inherit_swipe_date(merged, txn, existing)  # parity with the real write
-            by_id[tid] = dict(merged)
+                consumed_twin_ids.add(twin_id)
         else:
             by_id[tid] = dict(txn)
+
+    for twin_id in consumed_twin_ids:
+        by_id.pop(twin_id, None)
 
     # A just-inserted row dated outside the cycle window must not inflate the total.
     start, end = ctx["start"], ctx["end"]

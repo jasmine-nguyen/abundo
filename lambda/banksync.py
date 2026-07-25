@@ -66,10 +66,13 @@ class BankSyncClient:
         # (`authorizedDate`), NOT the day the bank settles it (`date`). BankSync's `date`
         # is the booking/settlement date, so a charge would show on its swipe day while
         # pending, then JUMP to the settlement day once it posts (a Costco run from a week
-        # ago surfacing as "yesterday"). authorized_date is preserved across settlement
-        # (both the pending and its posted twin carry the same value — reconciliation
-        # already matches on it), so anchoring `date` to it keeps the charge on one day
-        # for its whole life. Fall back to the booking `date` when the bank sent no
+        # ago surfacing as "yesterday"). authorized_date is USUALLY preserved across
+        # settlement, so anchoring `date` to it keeps the charge on one day for its whole
+        # life. The exception (WHIT-331): ANZ renders the pending's authorizedDate in
+        # Melbourne-local time and the settled one in UTC, so a purchase swiped before
+        # 10:00 local carries two dates a day apart. The reconciler's skewed-date tier
+        # pairs those and keeps the Melbourne day, which is the day the user swiped.
+        # Fall back to the booking `date` when the bank sent no
         # authorizedDate, so `date` stays a required, non-empty "YYYY-MM-DD" (the budget
         # window, the date-index GSI, and the age-out sweep all depend on that invariant).
         swipe_date = _date_only(row.get("authorizedDate", ""), "authorizedDate")

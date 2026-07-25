@@ -10,6 +10,8 @@ so the stored shapes match production, and inject a FakeTable via `repo._table`.
 
 from decimal import Decimal
 
+import pytest
+
 # A real BankSync account id (resolves via ACCOUNT_ID_MAP to an internal id).
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 
@@ -1208,3 +1210,496 @@ def test_merchant_in_description_word_level(lam):
     # a legitimate single-word whole-word match (the >=2-word delete guard lives in the
     # caller, not this helper)
     assert g("coles", "coles express melbourne au") is True
+
+
+# --- WHIT-331: ANZ's Melbourne/UTC swipe-date skew --------------------------
+# ANZ dates a pending record in Melbourne-local time and its settled twin in UTC, so a
+# purchase swiped before 10:00 local carries two dates one day apart and the equal-date
+# tiers miss it. Verbatim shapes from the live table: the pending description is
+# fixed-width, and "SQ *KKV INTERNATIONAL PTY" exactly fills the 25-char merchant column
+# so the suburb fuses onto it ("PTYSunshine").
+
+_SKEW_PEND_DESC = "POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU"
+_SKEW_POST_DESC = "SQ *KKV INTERNATIONAL PTY Sunshine"
+_SKEW_POST_MERCHANT = "SQ *KKV INTERNATIONAL PTY "
+
+
+def _skew_pending(repo, lam, txn_id="PEND", amount=Decimal("-11.00"),
+                  authorized_date="2026-07-22", category="coffee", description=_SKEW_PEND_DESC):
+    # merchant_name="" mirrors production: ANZ pendings carry no merchantName column.
+    return _seed_pending(repo, lam, txn_id=txn_id, amount=amount,
+                         authorized_date=authorized_date, date=authorized_date,
+                         pending=True, category=category,
+                         description=description, merchant_name="")
+
+
+def _skew_posted(lam, txn_id="POST", amount=Decimal("-11.00"), authorized_date="2026-07-21",
+                 date="2026-07-24", description=_SKEW_POST_DESC,
+                 merchant_name=_SKEW_POST_MERCHANT):
+    return _norm(lam, txn_id=txn_id, amount=amount, authorized_date=authorized_date,
+                 date=date, pending=False, category="FOOD_AND_DRINK",
+                 description=description, merchant_name=merchant_name)
+
+
+def test_anz_skewed_date_pair_reconciles_and_keeps_the_melbourne_day(lam, repo):
+    # THE bug: one $11 coffee stored twice because the pending said 07-22 (Melbourne)
+    # and the settled row said 07-21 (UTC). Fail-on-revert anchor for the whole card.
+    _skew_pending(repo, lam)
+    posted = _skew_posted(lam)
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") not in store           # twin removed — no double count
+    assert len(store) == 1
+    row = store[(acc, "TXN#POST")]
+    assert row["date"] == "2026-07-22"              # Melbourne day, the day it was swiped
+    assert row["authorized_date"] == "2026-07-22"
+    assert row["category"] == "coffee"              # user's category survives settlement
+
+
+def test_resync_does_not_regress_a_skew_corrected_date(lam, repo):
+    # BankSync re-sends a settled row for FEED_WINDOW_DAYS, each time carrying the UTC
+    # date again. By then the pending is gone, so the row falls to the re-sync path — it
+    # must keep the corrected Melbourne day instead of flipping back every sync.
+    _skew_pending(repo, lam)
+    repo.insert_or_reconcile([_skew_posted(lam)])
+    assert repo._table.store[(_acc(_skew_posted(lam)), "TXN#POST")]["date"] == "2026-07-22"
+
+    repo.insert_or_reconcile([_skew_posted(lam)])   # verbatim re-send, UTC date again
+
+    row = repo._table.store[(_acc(_skew_posted(lam)), "TXN#POST")]
+    assert row["date"] == "2026-07-22"
+    assert row["authorized_date"] == "2026-07-22"
+
+
+def test_resync_after_skew_merge_does_not_consume_an_unrelated_pending(lam, repo):
+    # BankSync re-sends a settled row for FEED_WINDOW_DAYS. A SECOND genuine purchase at
+    # the same shop for the same amount, dated a day after the settled row, is exactly the
+    # shape the skew tier looks for — so without the re-send guard the re-send would eat
+    # it, deleting a real pending and grafting its category onto the older row.
+    _skew_pending(repo, lam)
+    repo.insert_or_reconcile([_skew_posted(lam)])
+    _skew_pending(repo, lam, txn_id="LATER", authorized_date="2026-07-22", category="lunch")
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    store = repo._table.store
+    assert (_acc(_skew_posted(lam)), "TXN#LATER") in store
+    assert store[(_acc(_skew_posted(lam)), "TXN#POST")]["category"] == "coffee"
+
+
+def test_two_genuine_consecutive_day_purchases_do_not_merge(lam, repo):
+    # Same coffee, same price, bought two days running. The exact tier must claim the
+    # same-day pending FIRST, leaving the next day's real purchase untouched.
+    _skew_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _skew_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-21")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND21") not in store         # exact same-day twin consumed
+    assert (acc, "TXN#PEND22") in store             # the OTHER real purchase survives
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-21"   # equal dates -> no carry
+
+
+def test_both_consecutive_day_purchases_settle_without_losing_a_row(lam, repo):
+    # Follow the pair all the way through settlement: two real purchases in, two out.
+    _skew_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _skew_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST21", authorized_date="2026-07-21")])
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}
+    assert len(store) == 2                          # nothing lost, nothing duplicated
+
+
+def test_pending_earlier_than_posted_does_not_merge(lam, repo):
+    # The clocks can only put the Melbourne day AHEAD. A pending dated earlier than its
+    # posting is not a skew, so it must not be swept in.
+    _skew_pending(repo, lam, authorized_date="2026-07-20")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-21")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_two_day_gap_does_not_merge(lam, repo):
+    _skew_pending(repo, lam, authorized_date="2026-07-23")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-21")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_different_merchant_does_not_merge(lam, repo):
+    _skew_pending(repo, lam, description="POS AUTHORISATION  COLES SUPERMARKET  MELBOURNE AU")
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_single_word_merchant_does_not_merge(lam, repo):
+    # A lone common word is a whole word in many unrelated descriptions; this tier
+    # deletes a pending, so it needs a merchant strong enough to trust.
+    _skew_pending(repo, lam, description="POS AUTHORISATION  COLES  MELBOURNE AU")
+
+    repo.insert_or_reconcile([_skew_posted(lam, description="COLES 0643 CHADSTONE",
+                                          merchant_name="COLES")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_tip_sized_amount_gap_does_not_merge(lam, repo):
+    # Skewed AND tipped is a compound rarity — this tier requires the exact amount.
+    _skew_pending(repo, lam, amount=Decimal("-11.00"))
+
+    repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("-12.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_short_final_merchant_word_needs_an_exact_match(lam, repo):
+    # "SA" prefixes far too many words to delete a pending on. A fused short final word
+    # falls back to whole-word matching -> a leftover duplicate, never a wrong merge.
+    _skew_pending(repo, lam, description="POS AUTHORISATION  DHP SASalvation  ST ALBANS AU")
+
+    repo.insert_or_reconcile([_skew_posted(lam, description="DHP SA St Albans",
+                                          merchant_name="DHP SA")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_exact_twin_beats_skew_candidate_across_the_batch(lam, repo):
+    # One pending is posting X's exact twin AND posting Y's skew candidate. Y comes
+    # first in the batch, but the exact pass must claim the pending for X regardless.
+    _skew_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    skew_first = _skew_posted(lam, txn_id="Y", authorized_date="2026-07-21")
+    exact_later = _skew_posted(lam, txn_id="X", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([skew_first, exact_later])
+
+    store = repo._table.store
+    acc = _acc(skew_first)
+    assert (acc, "TXN#PEND") not in store
+    assert store[(acc, "TXN#X")]["category"] == "coffee"   # exact twin won the pending
+    assert store[(acc, "TXN#Y")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_two_skew_postings_consume_one_pending_only_once(lam, repo):
+    # Money-safety: a single pending can never be claimed twice.
+    _skew_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    first = _skew_posted(lam, txn_id="AAA", authorized_date="2026-07-21")
+    second = _skew_posted(lam, txn_id="BBB", authorized_date="2026-07-21")
+
+    repo.insert_or_reconcile([first, second])
+
+    store = repo._table.store
+    acc = _acc(first)
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 2                          # both postings kept, one merge only
+    merged = [k for k in ("TXN#AAA", "TXN#BBB") if store[(acc, k)]["category"] == "coffee"]
+    assert merged == ["TXN#AAA"]                    # deterministic: lowest transaction_id
+
+
+def test_skew_merge_carries_every_user_owned_field(lam, repo):
+    # A pending the user categorised, noted, tagged and excluded must ride through.
+    pending = _norm(lam, txn_id="PEND", amount=Decimal("-11.00"), authorized_date="2026-07-22",
+                    date="2026-07-22", pending=True, category="coffee",
+                    description=_SKEW_PEND_DESC, merchant_name="")
+    pending["notes"] = "flat white x2"
+    pending["tags"] = ["treat"]
+    pending["budget_excluded"] = True
+    repo.insert_transactions([pending])
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    row = repo._table.store[(_acc(pending), "TXN#POST")]
+    assert row["category"] == "coffee"
+    assert row["notes"] == "flat white x2"
+    assert row["tags"] == ["treat"]
+    assert row["budget_excluded"] is True
+
+
+def test_skew_posting_wins_a_pending_contested_by_a_blank_auth_posting(lam, repo):
+    # Both postings want the SAME pending: one is a skew match (exactly one day, tight),
+    # the other a blank-auth match (anywhere in a 7-day window, loose). The tighter tier
+    # must win, and the loser must insert plainly rather than steal it — put the loose one
+    # first in the batch so a wrong tier order shows up.
+    _skew_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    loose = _skew_posted(lam, txn_id="LOOSE", authorized_date="", date="2026-07-24")
+    tight = _skew_posted(lam, txn_id="TIGHT", authorized_date="2026-07-21")
+
+    repo.insert_or_reconcile([loose, tight])
+
+    store = repo._table.store
+    acc = _acc(tight)
+    assert (acc, "TXN#PEND") not in store                      # claimed exactly once
+    assert store[(acc, "TXN#TIGHT")]["category"] == "coffee"   # tighter tier won it
+    assert store[(acc, "TXN#LOOSE")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_is_skewed_next_day_edges(lam):
+    f = lam.repository._is_skewed_next_day
+    # the real pair: pending (Melbourne) one day after the settled (UTC) day
+    assert f("2026-07-22", "2026-07-21") is True
+    assert f("2026-07-21", "2026-07-21") is False   # same day -> the exact tier's job
+    assert f("2026-07-20", "2026-07-21") is False   # the clocks can't skew backwards
+    assert f("2026-07-23", "2026-07-21") is False   # two days is not a clock split
+    assert f("2026-08-01", "2026-07-31") is True    # month boundary
+    assert f("2027-01-01", "2026-12-31") is True    # year boundary
+    # a full timestamp still yields its date, and junk is never a skew
+    assert f("2026-07-22T00:00:00+10:00", "2026-07-21") is True
+    assert f("", "2026-07-21") is False
+    assert f(None, "2026-07-21") is False
+    assert f("2026-07-22", None) is False
+    assert f("not-a-date", "2026-07-21") is False
+
+
+def test_merchant_in_fused_description_edges(lam):
+    g = lam.repository._merchant_in_fused_description
+    # the real fusion: the 25-char column runs the suburb onto the merchant's last word
+    assert g("KKV INTERNATIONAL PTY", _SKEW_PEND_DESC.lower()) is True
+    # an ordinary (unfused) description still matches
+    assert g("DHP SA PTY LTD", "pos authorisation dhp sa pty ltd st albans au") is True
+    # only the LAST word may match as a prefix — a fused leading word is not enough
+    assert g("KKV INTERNATIONAL PTY", "pos kkvinternational pty sunshine") is False
+    # a short final word must match exactly, so it can't prefix an unrelated one
+    assert g("DHP SA", "pos authorisation dhp sasalvation army au") is False
+    assert g("DHP SA", "pos authorisation dhp sa st albans au") is True
+    # a different merchant never matches
+    assert g("COLES SUPERMARKET", _SKEW_PEND_DESC.lower()) is False
+    assert g("", "anything at all") is False
+    # An accented or punctuated trailing token is stripped to a STUMP ("ROSÉ" -> "ros")
+    # that would clear the 3-character guard and then prefix-match an unrelated shop.
+    # Only a token that survives stripping intact may match as a prefix.
+    assert g("CAFE ROSE", "pos authorisation cafe rosewood bar au") is True  # real word, fusible
+    assert g("CAFÉ ROSÉ", "pos authorisation café rosewood bar au") is False  # stump, must not
+    assert g("CAFÉ ROSÉ", "pos authorisation café rosé bar au") is True      # exact still works
+
+
+# --- WHIT-331 QA gaps (adversarial) -----------------------------------------
+# Authored by QA on top of the implementer's WHIT-331 section above. These cover only
+# what that section leaves open: calendar boundaries end-to-end, the merchant gate vs
+# the lowest-id tie-break, sign/credit rows, the pending-re-send-in-the-same-payload
+# ordering, the date carry on the LINK tier (not just the skew tier), the fused
+# matcher's index boundaries, account scoping, and the merge log line.
+
+_UP_ACCOUNT_ID = "3zVQJ8Btz_IRmqp78VrQnQ"   # -> "up-spending"
+_ISAN_PEND_DESC = "POS AUTHORISATION         ISAN THAI STREET FOOD     MELBOURNE   AU"
+
+
+def _skew_posted_on_up(lam, **kw):
+    """The same skewed posting, but on the OTHER mapped account."""
+    row = _bank_row(**{"txn_id": "UPPOST", "amount": Decimal("-11.00"),
+                       "authorized_date": "2026-07-21", "date": "2026-07-24",
+                       "pending": False, "category": "FOOD_AND_DRINK",
+                       "description": _SKEW_POST_DESC,
+                       "merchant_name": _SKEW_POST_MERCHANT, **kw})
+    row["accountId"] = _UP_ACCOUNT_ID
+    row["accountName"] = "Up Spending"
+    return lam.banksync.BankSyncClient.normalise(row)
+
+
+def _seed_pending_on_up(repo, lam, **kw):
+    row = _bank_row(**{"txn_id": "UPPEND", "amount": Decimal("-11.00"),
+                       "authorized_date": "2026-07-22", "date": "2026-07-22",
+                       "pending": True, "category": "coffee",
+                       "description": _SKEW_PEND_DESC, "merchant_name": "", **kw})
+    row["accountId"] = _UP_ACCOUNT_ID
+    row["accountName"] = "Up Spending"
+    txn = lam.banksync.BankSyncClient.normalise(row)
+    repo.insert_transactions([txn])
+    return txn
+
+
+# [A10] / [A11] calendar boundaries, end to end (the unit test above only checks the
+# _is_skewed_next_day predicate, never the merge + date carry through the repository).
+
+
+def test_skew_merge_across_a_month_boundary_keeps_the_melbourne_day(lam, repo):
+    # Swiped 1 Aug just after midnight Melbourne -> settled row still reads 31 Jul (UTC).
+    _skew_pending(repo, lam, authorized_date="2026-08-01")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-31",
+                                           date="2026-08-03")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 1
+    assert store[(acc, "TXN#POST")]["date"] == "2026-08-01"      # August, not July
+    assert store[(acc, "TXN#POST")]["authorized_date"] == "2026-08-01"
+
+
+def test_skew_merge_across_a_leap_day_keeps_the_melbourne_day(lam, repo):
+    # 29 Feb 2028 (UTC) -> 1 Mar 2028 (Melbourne). A naive "+1 day" done on strings
+    # rather than dates would produce 2028-02-30 and never match.
+    _skew_pending(repo, lam, authorized_date="2028-03-01")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2028-02-29",
+                                           date="2028-03-02")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert store[(acc, "TXN#POST")]["date"] == "2028-03-01"
+
+
+# [A12] the merchant gate must beat the lowest-transaction_id tie-break.
+
+
+def test_skew_tier_picks_the_matching_merchant_not_the_lowest_id(lam, repo):
+    # Two pendings, both -$11 and both dated exactly one day after the posting, so ONLY
+    # the merchant gate separates them — and the WRONG one sorts first by id, which is
+    # what the deterministic min() tie-break would otherwise pick.
+    _seed_pending(repo, lam, txn_id="AAA", amount=Decimal("-11.00"),
+                  authorized_date="2026-07-22", date="2026-07-22", pending=True,
+                  category="thai", description=_ISAN_PEND_DESC, merchant_name="")
+    _skew_pending(repo, lam, txn_id="ZZZ", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#ZZZ") not in store            # the KKV pending was the twin
+    assert (acc, "TXN#AAA") in store                # the Thai pending is a real charge
+    assert store[(acc, "TXN#POST")]["category"] == "coffee"   # not "thai"
+
+
+# [A13] / [A14] sign: the tier keys on EXACT amount equality, so it is sign-agnostic.
+
+
+def test_skew_merge_reconciles_a_refund_pair(lam, repo):
+    # A credit (positive amount) is dated off the same two clocks, so its pending twin
+    # skews the same way and must still collapse to one row on the Melbourne day.
+    _skew_pending(repo, lam, amount=Decimal("11.00"))
+
+    repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("11.00"))])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 1
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+
+
+def test_skew_tier_never_takes_a_refund_pending_for_a_purchase(lam, repo):
+    # A +$11 refund and a -$11 purchase, same merchant, same skewed day. The refund
+    # sorts FIRST by transaction_id; only exact amount equality (not magnitude) keeps
+    # the purchase's posting off it.
+    _skew_pending(repo, lam, txn_id="AAA_REFUND", amount=Decimal("11.00"))
+    _skew_pending(repo, lam, txn_id="ZZZ_SPEND", amount=Decimal("-11.00"))
+
+    repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("-11.00"))])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#ZZZ_SPEND") not in store      # the purchase's twin was consumed
+    assert (acc, "TXN#AAA_REFUND") in store         # the refund is untouched
+
+
+# [A15] a pending re-send arriving in the SAME payload as its skewed settlement.
+
+
+def test_pending_resend_and_its_skewed_posting_in_one_payload_leave_one_row(lam, repo):
+    # BankSync re-sends an open pending under the same id until it settles. A catch-up
+    # payload can carry that re-send AND the settlement together, with the POSTED row
+    # first — the delete of the stale pending runs after the inserts, so the re-sent
+    # pending must not survive as a duplicate.
+    _skew_pending(repo, lam, txn_id="PEND", category="coffee")
+    resend = _norm(lam, txn_id="PEND", amount=Decimal("-11.00"), authorized_date="2026-07-22",
+                   date="2026-07-22", pending=True, category="FOOD_AND_DRINK",
+                   description=_SKEW_PEND_DESC, merchant_name="")
+
+    repo.insert_or_reconcile([_skew_posted(lam), resend])   # posted FIRST
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert set(store) == {(acc, "TXN#POST")}        # exactly one row, the settled one
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["category"] == "coffee"
+
+
+# [A16] the date carry is gated on the skew SHAPE, not on the tier — so a LINKED twin
+# that is one day ahead must move the settled row to the Melbourne day too.
+
+
+def test_linked_twin_one_day_ahead_also_wins_the_melbourne_day(lam, repo):
+    # pendingTransactionId is null in ANZ data today but the tier is live (forward-compat).
+    # If the link resolves to a twin dated one day later, the same clock split applies.
+    _skew_pending(repo, lam, txn_id="LINK", authorized_date="2026-07-22")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-11.00"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="FOOD_AND_DRINK",
+                   description=_SKEW_POST_DESC, merchant_name=_SKEW_POST_MERCHANT,
+                   pending_transaction_id="LINK")
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#POST")]
+    assert row["date"] == "2026-07-22"
+    assert row["authorized_date"] == "2026-07-22"
+
+
+# [A17] index boundaries of the fused matcher (the existing edge test covers semantics,
+# not the ends of the word list, where the i + len(head) lookup could run off).
+
+
+def test_merchant_in_fused_description_index_boundaries(lam):
+    g = lam.repository._merchant_in_fused_description
+    # merchant LONGER than the whole description -> no candidate window, never an IndexError
+    assert g("KKV INTERNATIONAL PTY LTD AUSTRALIA", "kkv international") is False
+    # description exactly one word short of the merchant
+    assert g("KKV INTERNATIONAL PTY", "kkv international") is False
+    # the fused word is the very LAST word of the description (the highest legal index)
+    assert g("KKV INTERNATIONAL PTY", "pos kkv international ptysunshine") is True
+    # and the very FIRST word run, with nothing before it
+    assert g("KKV INTERNATIONAL PTY", "kkv international ptysunshine au") is True
+    # empty / whitespace-only inputs on either side
+    assert g("KKV INTERNATIONAL PTY", "") is False
+    assert g("   ", _SKEW_PEND_DESC.lower()) is False
+
+
+# [A18] the pending pool is per account: an identical skew-eligible pending on another
+# card must not be consumed by this account's settlement.
+
+
+def test_skew_merge_does_not_reach_across_accounts(lam, repo):
+    # The other account's pending is IDENTICAL (same amount, same merchant, same skewed
+    # day) and sorts FIRST by transaction_id, so an unscoped pool would consume it
+    # instead of this card's own pending.
+    _seed_pending_on_up(repo, lam, txn_id="AAA_UPPEND")     # a different account
+    _skew_pending(repo, lam, txn_id="ZZZ_PEND")             # the ANZ card's own twin
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    store = repo._table.store
+    assert (_acc(_skew_posted(lam)), "TXN#ZZZ_PEND") not in store    # merged on ANZ
+    assert ("ACCOUNT#up-spending", "TXN#AAA_UPPEND") in store        # untouched elsewhere
+    assert store[(_acc(_skew_posted(lam)), "TXN#POST")]["category"] == "coffee"
+    assert len(store) == 2
+
+
+# [A19] the merge is otherwise invisible (it DELETES a row), so the INFO log is the only
+# operational trace — lock it.
+
+
+def test_skew_merge_logs_both_transaction_ids_at_info(lam, repo, caplog):
+    _skew_pending(repo, lam, txn_id="PEND")
+    caplog.set_level("INFO", logger="repository")
+
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST")])
+
+    merged = [r for r in caplog.records if "skewed-date twin merged" in r.getMessage()]
+    assert len(merged) == 1
+    message = merged[0].getMessage()
+    assert "posted=POST (auth 2026-07-21)" in message
+    assert "pending=PEND (auth 2026-07-22)" in message
