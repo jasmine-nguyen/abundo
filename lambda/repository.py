@@ -8,7 +8,7 @@ import uuid
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, NoReturn, Optional
-from merchant import clean_merchant
+from merchant import clean_merchant, is_anz_pending, pending_merchant_column
 from models import Transaction
 from constants import (
     AUTH_DATE_SKEW_DAYS,
@@ -74,50 +74,6 @@ def _merchant_in_description(merchant: str, description: str) -> bool:
     return any(d[i:i + len(m)] == m for i in range(len(d) - len(m) + 1))
 
 
-# An ANZ PENDING descriptor: the "POS AUTHORISATION" column, then padding before the
-# merchant column. The padding group matches whatever the bank actually sent rather than
-# pinning today's nine spaces — the slice below is taken RELATIVE to where this match
-# ends, so a padding change shifts the cut with it instead of misaligning it, up to the
-# column width (past that a run of padding is indistinguishable from a blank column, and
-# the guard below stops reading rather than guess).
-# The `{2,}` is load-bearing SAFETY, not parsing convenience: one space is not column
-# padding, and treating it as such would route a real ANZ row to the looser gate below.
-_ANZ_PENDING_PREFIX = re.compile(r"^POS AUTHORISATION(?P<pad>\s{2,})", re.IGNORECASE)
-# Width of ANZ's fixed-width merchant column on a PENDING description, measured against
-# live data (every pending in the table reconstructs as: 25-wide merchant, 13-wide
-# suburb, then "AU"). NOT the same as the POSTED `merchantName` field, which is 26 wide,
-# so ANY merchant whose name runs to 26 characters or more is cut at a different point on
-# the two sides and can never match. That is the safe direction (a leftover duplicate the
-# age-out sweep reaps), never a wrong merge.
-_MERCHANT_COLUMN_WIDTH = 25
-
-
-def _pending_merchant_column(description: Optional[str]) -> Optional[str]:
-    """ANZ's fixed-width merchant column, sliced out of a PENDING description by
-    POSITION — the whole point being that position survives what whitespace cannot.
-
-    `clean_merchant` reads the same column by splitting on runs of 2+ spaces, which
-    fails exactly when the merchant FILLS the column: it then runs into the suburb with
-    no separator ("SQ *KKV INTERNATIONAL PTY" + "Sunshine" -> "PTYSunshine"), and the
-    stored merchant name is corrupt. A positional slice is immune to that.
-
-    None when the description is not an ANZ pending descriptor (an Up row, or a legacy
-    row) or when the column is blank — both must fall through to the name-based gate,
-    never merge on nothing."""
-    text = description or ""
-    prefix = _ANZ_PENDING_PREFIX.match(text)
-    if prefix is None:
-        return None
-    # A blank merchant column is indistinguishable from padding, so the greedy match runs
-    # straight through it and the slice would start at the SUBURB — handing back a suburb
-    # as if it were a merchant, which is the direction that deletes a row. Padding as wide
-    # as the column itself is that case, and there is no merchant to read.
-    if len(prefix.group("pad")) >= _MERCHANT_COLUMN_WIDTH:
-        return None
-    column = text[prefix.end():prefix.end() + _MERCHANT_COLUMN_WIDTH]
-    return column if column.strip() else None
-
-
 def _same_cleaned_merchant(posted_merchant: str, pending_merchant: str) -> bool:
     """Whether two ALREADY-cleaned merchant names refer to the same merchant. Inputs
     must have been through `clean_merchant` — banksync.normalise writes both sides that
@@ -169,8 +125,8 @@ def _merchant_matches_pending(merchant: str, pending_merchant: str, description:
     (src/context.tsx matchesRulePattern): that is tuned for recall, and on short names
     it scores COLES/MOLES at 0.80 — over its own threshold. Mis-sweeping a category is
     undoable; deleting a pending is not. Do not unify the two."""
-    if _ANZ_PENDING_PREFIX.match(description or ""):
-        column = _pending_merchant_column(description)
+    if is_anz_pending(description):
+        column = pending_merchant_column(description)
         # An ANZ row with no readable column has nothing to compare, so it must REFUSE.
         # Falling through to the gates below would hand the row to a containment search
         # over the whole description — suburb included — and a merchant named after a
@@ -690,7 +646,7 @@ class TransactionRepository:
             # stored name is printed alongside it precisely because they disagree in the
             # fused case this exists to diagnose.
             for i in dated_alike:
-                column = _pending_merchant_column(pool[i].get("description") or "")
+                column = pending_merchant_column(pool[i].get("description") or "")
                 logger.info(
                     "skewed-date twin rejected on merchant: account=%s "
                     "merchant=%r pending_merchant=%r pending_column=%r pending=%s",
@@ -706,7 +662,7 @@ class TransactionRepository:
         # pending, so without a log line the skew leaves no trace either way. `gate`
         # names the branch that actually matched, so a column-geometry drift shows up as
         # "column" merges falling to zero rather than as silence.
-        if _pending_merchant_column(twin.get("description") or "") is not None:
+        if pending_merchant_column(twin.get("description") or "") is not None:
             gate = "column"
         else:
             gate = "name" if single_word else "description"

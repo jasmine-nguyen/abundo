@@ -1471,32 +1471,6 @@ def test_is_skewed_next_day_edges(lam):
     assert f("not-a-date", "2026-07-21") is False
 
 
-def test_pending_merchant_column_slices_by_position(lam):
-    # WHIT-336 replaced the prefix-tolerant fused matcher with a positional slice of
-    # ANZ's fixed-width merchant column. These are the slice's own edges.
-    g = lam.repository._pending_merchant_column
-    # the real fusion: a full 25-char column runs straight into the suburb, and the
-    # positional cut separates them again where a whitespace split cannot
-    assert g(_SKEW_PEND_DESC) == "SQ *KKV INTERNATIONAL PTY"
-    # a short column comes back padded (clean_merchant strips that)
-    assert g(_COLES_PEND_DESC).strip() == "COLES 0602"
-    # the cut follows the padding rather than a hard-coded offset, so a bank-side
-    # padding change shifts it instead of misaligning it — same shop at every width
-    for pad in (2, 8, 9, 11, 14):
-        desc = "POS AUTHORISATION" + " " * pad + "COLES 0602".ljust(25) + "MELBOURNE"
-        assert g(desc).strip() == "COLES 0602", f"padding {pad} misaligned the cut"
-    # not an ANZ pending descriptor -> no column, fall through to the name gate
-    assert g("COLES 0602 MELBOURNE") is None
-    assert g("POS AUTHORISATION COLES") is None      # single space is not column padding
-    assert g("") is None
-    assert g(None) is None
-    # a blank column must never be treated as a match on nothing. The padding run and
-    # an empty column are indistinguishable, so without a guard the cut lands on the
-    # SUBURB and hands it back as if it were a merchant.
-    assert g("POS AUTHORISATION" + " " * 40) is None
-    assert g("POS AUTHORISATION" + " " * 9 + " " * 25 + "MELBOURNE".ljust(13) + "AU") is None
-
-
 # --- WHIT-331 QA gaps (adversarial) -----------------------------------------
 # Authored by QA on top of the implementer's WHIT-331 section above. These cover only
 # what that section leaves open: calendar boundaries end-to-end, the merchant gate vs

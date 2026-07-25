@@ -1,7 +1,7 @@
 """WHIT-336 QA gaps (adversarial) — the skewed-date tier's merchant gate after the
 prefix-tolerant matcher was replaced by a POSITIONAL slice of ANZ's fixed-width
 merchant column plus CLEANED-NAME EQUALITY (lambda/repository.py
-`_pending_merchant_column` / `_merchant_matches_pending`).
+`merchant.pending_merchant_column` / `repository._merchant_matches_pending`).
 
 Written on top of the implementer's WHIT-336 section in test_reconcile.py. That
 section already pins: the exhaustive live-name cross, padding drift on a full column,
@@ -502,7 +502,7 @@ def test_column_slice_survives_tab_newline_and_nbsp_padding(lam):
     # [A13] The prefix regex matches `\s{2,}`, which in Python 3 covers tabs, newlines
     # AND U+00A0. A bank-side whitespace substitution must still land the cut on the
     # merchant, not shift it into the suburb.
-    g = lam.repository._pending_merchant_column
+    g = lam.merchant.pending_merchant_column
     body = "COLES 0602".ljust(25) + "MELBOURNE".ljust(13) + "AU"
     for pad in ("\t\t", " \t \t ", "\n\n", "\xa0" * 9, " \xa0" * 5):
         assert g("POS AUTHORISATION" + pad + body).strip() == "COLES 0602", repr(pad)
@@ -512,7 +512,7 @@ def test_descriptions_shorter_than_the_column_never_raise(lam):
     # [A14] Ragged/truncated descriptors: exactly the prefix, prefix + padding only,
     # a one-character column, a column shorter than 25. None may raise; a real (short)
     # column must still come back.
-    g = lam.repository._pending_merchant_column
+    g = lam.merchant.pending_merchant_column
     assert g("POS AUTHORISATION") is None                 # no padding -> not the shape
     assert g("POS AUTHORISATION  ") is None               # padding only -> blank column
     assert g("POS AUTHORISATION  C") == "C"               # a 1-char column is still a column
@@ -538,7 +538,7 @@ def test_a_blank_merchant_column_is_never_read_as_the_suburb(lam):
     # as if it were a merchant. The guard is `len(pad) >= _MERCHANT_COLUMN_WIDTH`.
     # The implementer's own edge test only covers an all-blank tail
     # (`"POS AUTHORISATION" + " " * 40`), which never reaches this.
-    g = lam.repository._pending_merchant_column
+    g = lam.merchant.pending_merchant_column
     assert g("POS AUTHORISATION" + " " * 9 + " " * 25 + "ALTONA NORTH " + "AU") is None
     assert g("POS AUTHORISATION" + " " * 9 + " " * 25 + "MELBOURNE    AU") is None
     # and the guard must not eat a REAL column behind wide padding drift
@@ -553,7 +553,7 @@ def test_a_blank_merchant_column_refuses_instead_of_falling_through(lam):
     # so an unreadable column refuses rather than falling through to something looser.
     g = lam.repository._merchant_matches_pending
     blank_column = "POS AUTHORISATION" + " " * 9 + " " * 25 + "ALTONA NORTH " + "AU"
-    assert lam.repository._pending_merchant_column(blank_column) is None
+    assert lam.merchant.pending_merchant_column(blank_column) is None
     assert g("ALTONA NORTH", "", blank_column) is False
     # a readable column on the same shape still matches, so this is the guard and not a
     # blanket refusal of everything ANZ-shaped. ("COLES", not "COLES 0602" — the gate
@@ -566,7 +566,7 @@ def test_padding_drift_tolerance_now_stops_at_the_column_width(lam):
     # [A17b] The [A16] guard caps how much padding drift the relative slice absorbs at
     # 24 characters. Past that the row silently stops being treated as ANZ and drops to
     # containment — the safe direction, but pin the boundary so it is a decision.
-    g = lam.repository._pending_merchant_column
+    g = lam.merchant.pending_merchant_column
     body = "COLES 0602".ljust(25) + "MELBOURNE"
     assert g("POS AUTHORISATION" + " " * 24 + body).strip() == "COLES 0602"
     assert g("POS AUTHORISATION" + " " * 25 + body) is None
@@ -598,7 +598,7 @@ def test_single_space_padding_is_not_an_anz_column_and_falls_to_containment(lam)
     # space" tweak reds here.
     g = lam.repository._merchant_matches_pending
     one_space = "POS AUTHORISATION CHEMIST WAREHOUSE DARLING ALTONA NORTH AU"
-    assert lam.repository._pending_merchant_column(one_space) is None
+    assert lam.merchant.pending_merchant_column(one_space) is None
     assert g("CHEMIST WAREHOUSE", "", one_space) is True
 
 
