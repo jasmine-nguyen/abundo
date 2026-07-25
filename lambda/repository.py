@@ -7,7 +7,7 @@ import re
 import uuid
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
-from typing import Any, NoReturn, Optional
+from typing import Any, Callable, NoReturn, Optional
 from merchant import clean_merchant, is_anz_pending, pending_merchant_column
 from models import Transaction
 from constants import (
@@ -492,6 +492,27 @@ class TransactionRepository:
             pending_pools[account_id] = pool
         return pool
 
+    def _pop_lowest_id(self, pool: list[dict], indices: list[int]) -> dict:
+        """Consume ONE pending row: pop the lowest-transaction_id row among `indices`
+        from `pool`. The money-safety core every tier shares — it pops at most one row,
+        chosen deterministically (two identical same-day charges resolve the same way
+        every run, so behaviour is stable and testable), and only ever a row already in
+        the pool. `indices` must be non-empty."""
+        best = min(indices, key=lambda i: pool[i].get("transaction_id", ""))
+        return pool.pop(best)
+
+    def _select_twin(
+        self, pool: list[dict], predicate: Callable[[dict], bool]
+    ) -> Optional[dict]:
+        """Return AND consume the one pending row `predicate` accepts, or None. The shared
+        tail of every tier whose whole candidate set is a single predicate (exact, tip,
+        blank-auth). The skewed tier pre-filters for its own reject logging, so it calls
+        _pop_lowest_id directly rather than going through here."""
+        candidates = [i for i, item in enumerate(pool) if predicate(item)]
+        if not candidates:
+            return None
+        return self._pop_lowest_id(pool, candidates)
+
     def _find_exact_twin(
         self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
     ) -> Optional[dict]:
@@ -523,16 +544,11 @@ class TransactionRepository:
         if not authorized_date:
             return None
         amount = posted_txn.get("amount")
-        exact = [
-            i for i, item in enumerate(pool)
-            if item.get("authorized_date") == authorized_date and item.get("amount") == amount
-        ]
-        if exact:
-            # Two identical same-day charges are indistinguishable; pick deterministically
-            # (lowest transaction_id) so behaviour is stable and testable.
-            best = min(exact, key=lambda i: pool[i].get("transaction_id", ""))
-            return pool.pop(best)
-        return None
+        return self._select_twin(
+            pool,
+            lambda item: item.get("authorized_date") == authorized_date
+            and item.get("amount") == amount,
+        )
 
     def _find_tip_twin(
         self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
@@ -565,18 +581,14 @@ class TransactionRepository:
         merchant = posted_txn.get("merchant_name") or ""
         if len(_words(merchant)) < 2:
             return None
-        tip = [
-            i for i, item in enumerate(pool)
-            if item.get("authorized_date") == authorized_date
+        return self._select_twin(
+            pool,
+            lambda item: item.get("authorized_date") == authorized_date
             and item.get("amount") is not None
             and _is_tip_adjusted(item["amount"], amount)
             and _merchant_matches_pending(merchant, item.get("merchant_name") or "",
-                                          item.get("description") or "")
-        ]
-        if not tip:
-            return None
-        best = min(tip, key=lambda i: pool[i].get("transaction_id", ""))
-        return pool.pop(best)
+                                          item.get("description") or ""),
+        )
 
     def _find_skewed_auth_twin(
         self, posted_txn: Transaction, pending_pools: dict[str, list[dict]]
@@ -656,8 +668,7 @@ class TransactionRepository:
                     pool[i].get("transaction_id"),
                 )
             return None
-        best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
-        twin = pool.pop(best)
+        twin = self._pop_lowest_id(pool, candidates)
         # The only way this tier is measurable: a successful reconcile DELETES the
         # pending, so without a log line the skew leaves no trace either way. `gate`
         # names the branch that actually matched, so a column-geometry drift shows up as
@@ -698,17 +709,13 @@ class TransactionRepository:
             return None
         posted_date = posted_txn.get("date")
         pool = self._ensure_pool(posted_txn["account_id"], pending_pools)
-        candidates = [
-            i for i, item in enumerate(pool)
-            if item.get("amount") == amount
+        return self._select_twin(
+            pool,
+            lambda item: item.get("amount") == amount
             and _settles_after(item.get("date"), posted_date)
             and _merchant_matches_pending(merchant, item.get("merchant_name") or "",
-                                          item.get("description") or "")
-        ]
-        if not candidates:
-            return None
-        best = min(candidates, key=lambda i: pool[i].get("transaction_id", ""))
-        return pool.pop(best)
+                                          item.get("description") or ""),
+        )
 
     @staticmethod
     def _inherit_swipe_date(merged: Transaction, posted_txn: Transaction, source_row: dict) -> None:
