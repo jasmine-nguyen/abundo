@@ -581,3 +581,362 @@ def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler,
     assert body["__earned__"] == {"posted": 2500.25, "pending": 300.5}
     assert isinstance(body["__earned__"]["posted"], float)  # a JSON number, not "2500.25"
     assert body["coffee"] == {"posted": 12.5, "pending": 0}
+
+
+# --- WHIT-349 slice 2: server-owned netted parent rollup (__rollup__) ---------
+
+
+def _child(cat_id, bucket, parent):
+    return {**_category(cat_id, bucket), "parent": parent}
+
+
+class _FakeBudgetRepo:
+    """Minimal BudgetRepository stand-in for the /budgets parity cross-check."""
+
+    def __init__(self, budgets):
+        self._budgets = budgets
+
+    def list_budgets(self):
+        return {k: dict(v) for k, v in self._budgets.items()}
+
+
+def test_breakdown_rollup_nets_refunded_sub_and_leaves_flat_keys_untouched(handler):
+    # WHIT-349 slice 2: __rollup__ gives the netted parent total (aggregate-then-clamp,
+    # like /budgets) so the donut stops summing floored leaves on the client. Car =
+    # petrol 60 + tolls (50 - 80 refund = -30) = 30. The FLAT per-category keys stay
+    # FLOORED and byte-identical (the pie slices + the category drill-in reconcile to
+    # them): tolls floors to {0,0}, petrol {60,0}, and `car` (no direct spend) is absent.
+    # Fail-on-revert: rolling the client's floored leaves gives 60, not 30.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -50, "posted"),
+        _transaction("tolls", 80, "posted"),       # refund bigger than tolls' own spend
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["petrol"] == {"posted": Decimal("60"), "pending": Decimal("0")}
+    assert result["tolls"] == {"posted": Decimal("0"), "pending": Decimal("0")}   # floored, unchanged
+    assert "car" not in result                                                    # no direct spend
+    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("30"), "pending": Decimal("0")}
+
+
+def test_breakdown_rollup_clamps_posted_and_pending_independently(handler):
+    # The netted parent floors posted and pending SEPARATELY (mirroring /budgets), so a
+    # subtree whose POSTED nets negative but PENDING is positive reads {0, 50} — not a
+    # combined floor of 40. Fail-on-revert: a combined floor would give posted 0 pending 40.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -10, "posted"),
+        _transaction("petrol", 20, "posted"),       # posted nets to -10
+        _transaction("petrol", -50, "pending"),      # pending +50
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("0"), "pending": Decimal("50")}
+
+
+def test_breakdown_no_rollup_key_for_flat_taxonomy(handler):
+    # No nested parents -> no __rollup__ at all, so a flat-taxonomy response is byte-
+    # identical to pre-WHIT-349 (the client's fallback handles flat data, which nets
+    # the same). Guards against emitting a spurious/empty rollup.
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("groceries", "Living")])
+    txns = FakeTransactionRepo([_transaction("coffee", -50), _transaction("groceries", -30)])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__rollup__" not in result
+
+
+def test_breakdown_rollup_omits_parent_whose_subtree_nets_to_zero(handler):
+    # A parent whose whole subtree nets to $0 (refunds cancel spend) is omitted from
+    # __rollup__.nodes — a $0 parent has no donut slice. Fail-on-revert of the >0 guard:
+    # it would emit {0,0}.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -40, "posted"),
+        _transaction("petrol", 40, "posted"),        # net 0
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__rollup__" not in result
+
+
+def test_breakdown_rollup_parent_total_equals_list_budgets(handler):
+    # The core invariant of the whole epic: the donut's netted parent (__rollup__) MUST
+    # equal the Budgets bar for the same data. Drive both handlers on one refunded-sub
+    # fixture and assert they agree. Fail-on-revert: the old client floored-leaf roll gives
+    # 60 while /budgets gives 30, so this pins them together.
+    cats = [
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ]
+    txns = [
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -50, "posted"),
+        _transaction("tolls", 80, "posted"),
+    ]
+
+    breakdown = handler.list_category_breakdown(
+        FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+    budgets = handler.list_budgets(
+        _FakeBudgetRepo({"car": {"target": Decimal("300")}}),
+        FakeTransactionRepo(txns), FakePayCycleRepo(), FakeCategoryRepo(cats))
+
+    assert breakdown["__rollup__"]["nodes"]["car"] == {
+        "posted": budgets["car"]["posted"], "pending": budgets["car"]["pending"]}
+
+
+# --- WHIT-349 slice 2: ADVERSARIAL GAP tests (QA, not the implementer's) ------
+# Cover what the 5 implementer tests above do NOT: multi-LEVEL netting, the cross-
+# bucket same-bucket guard (both directions), a parent with its own direct spend,
+# nested parents each getting a node, __uncategorized__/__earned__ isolation, the
+# ?cycle= look-back, and Income/Savings-parent exclusion. Each is designed to go RED
+# if the fold reverts to per-id-floored OR the same-bucket subtree filter is dropped.
+
+
+def test_breakdown_rollup_nets_grandchild_refund_two_levels_into_top_parent(handler):
+    # WHIT-349 — [A6] multi-LEVEL netting: a refund on a GRANDCHILD (tolls, under the
+    # mid-parent travel, under the top parent car) must net UP two levels into car's node,
+    # and the mid-parent whose own subtree nets negative is omitted. car = petrol 60 +
+    # (tolls 50 - 80 refund = -30) = 30. And it must equal /budgets for the same target.
+    # Fail-on-revert: per-id-floored leaves give tolls 0 -> car 60 (the exact bug this
+    # slice fixes), and a 1-level fold would miss the grandchild entirely.
+    cats = [
+        _category("car", "Living"),
+        _child("travel", "Living", "car"),      # mid-parent (itself a parent)
+        _child("tolls", "Living", "travel"),    # grandchild leaf
+        _child("petrol", "Living", "car"),
+    ]
+    txns = [
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -50, "posted"),
+        _transaction("tolls", 80, "posted"),    # refund > the grandchild's own spend
+    ]
+
+    result = handler.list_category_breakdown(
+        FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+    budgets = handler.list_budgets(
+        _FakeBudgetRepo({"car": {"target": Decimal("300")}}),
+        FakeTransactionRepo(txns), FakePayCycleRepo(), FakeCategoryRepo(cats))
+
+    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("30"), "pending": Decimal("0")}
+    assert "travel" not in result["__rollup__"]["nodes"]           # mid-subtree nets < 0
+    # The whole point of the epic: the donut node MUST equal the Budgets bar, at depth 2.
+    assert result["__rollup__"]["nodes"]["car"] == {
+        "posted": budgets["car"]["posted"], "pending": budgets["car"]["pending"]}
+
+
+def test_breakdown_rollup_excludes_cross_bucket_child_mis_parented_under_spend_parent(handler):
+    # WHIT-349 — [A7] the same-bucket guard (matches /budgets, WHIT-229): a Lifestyle
+    # child mis-filed under a Living parent must NOT net into it. shop(Living) = groceries
+    # 40; the mis-parented coffee(Lifestyle) +100 refund must be ignored, not drag shop to 0.
+    # Fail-on-revert: drop the bucket filter and coffee's -100 nets in -> 40 folds to 0 ->
+    # shop vanishes from nodes. Cross-checked against /budgets, which applies the same guard.
+    cats = [
+        _category("shop", "Living"),
+        _child("groceries", "Living", "shop"),
+        _child("coffee", "Lifestyle", "shop"),   # WRONG bucket for this parent
+    ]
+    txns = [
+        _transaction("groceries", -40, "posted"),
+        _transaction("coffee", 100, "posted"),    # big refund that would zero shop if it counted
+    ]
+
+    result = handler.list_category_breakdown(
+        FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+    budgets = handler.list_budgets(
+        _FakeBudgetRepo({"shop": {"target": Decimal("300")}}),
+        FakeTransactionRepo(txns), FakePayCycleRepo(), FakeCategoryRepo(cats))
+
+    assert result["__rollup__"]["nodes"]["shop"] == {"posted": Decimal("40"), "pending": Decimal("0")}
+    assert result["__rollup__"]["nodes"]["shop"] == {
+        "posted": budgets["shop"]["posted"], "pending": budgets["shop"]["pending"]}
+
+
+def test_breakdown_rollup_keeps_same_bucket_grandchild_under_cross_bucket_intermediate(handler):
+    # WHIT-349 — [A8] the OTHER half of the guard: the walk descends THROUGH a cross-bucket
+    # intermediate so a SAME-bucket grandchild beneath it still nets into the top parent
+    # (matching the client's nearest-same-bucket-ancestor rule). living_top(Living) has a
+    # Lifestyle mid, which has a Living leaf: the leaf's 30 rolls up to living_top; the
+    # Lifestyle mid's own 50 does NOT. The mid, being a parent, gets its OWN node = 50.
+    # Fail-on-revert: if the filter pruned descent (not just membership), the leaf is
+    # dropped and living_top has no node.
+    cats = [
+        _category("living_top", "Living"),
+        _child("lifestyle_mid", "Lifestyle", "living_top"),   # cross-bucket intermediate
+        _child("living_leaf", "Living", "lifestyle_mid"),      # same bucket as the TOP, under the mid
+    ]
+    txns = [
+        _transaction("living_leaf", -30, "posted"),
+        _transaction("lifestyle_mid", -50, "posted"),
+    ]
+
+    result = handler.list_category_breakdown(
+        FakeCategoryRepo(cats), FakeTransactionRepo(txns), FakePayCycleRepo())
+    nodes = result["__rollup__"]["nodes"]
+
+    assert nodes["living_top"] == {"posted": Decimal("30"), "pending": Decimal("0")}      # grandchild kept
+    assert nodes["lifestyle_mid"] == {"posted": Decimal("50"), "pending": Decimal("0")}   # its own node, own bucket only
+
+
+def test_breakdown_rollup_parent_node_includes_parents_own_direct_spend(handler):
+    # WHIT-349 — [A9] subtree_ids includes the ROOT, so a transaction tagged directly onto
+    # the parent (the picker allows it) counts in the parent's node ALONGSIDE its children:
+    # car = own 25 + petrol 60 = 85. The FLAT car key stays the parent's own floored direct
+    # spend (25). Fail-on-revert: a root-excluding subtree gives 60, not 85.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("car", -25, "posted"),      # tagged directly on the PARENT
+        _transaction("petrol", -60, "posted"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["car"] == {"posted": Decimal("25"), "pending": Decimal("0")}            # flat = own direct spend
+    assert result["petrol"] == {"posted": Decimal("60"), "pending": Decimal("0")}
+    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("85"), "pending": Decimal("0")}
+
+
+def test_breakdown_rollup_gives_each_nested_parent_its_own_node(handler):
+    # WHIT-349 — [A10] a mid-tree node that is ITSELF a parent gets its own node too, and
+    # it is correct (its subtree, not the whole tree). car (top) = petrol 60 + travel-direct
+    # 5 + tolls 20 = 85; travel (mid) = its own 5 + tolls 20 = 25. Both must appear.
+    # Fail-on-revert: excluding the root from a subtree drops travel's own 5 -> travel 20.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("travel", "Living", "car"),
+        _child("tolls", "Living", "travel"),
+        _child("petrol", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -20, "posted"),
+        _transaction("travel", -5, "posted"),    # direct on the mid-parent
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    nodes = result["__rollup__"]["nodes"]
+
+    assert nodes["car"] == {"posted": Decimal("85"), "pending": Decimal("0")}
+    assert nodes["travel"] == {"posted": Decimal("25"), "pending": Decimal("0")}
+
+
+def test_breakdown_rollup_never_contains_uncategorized_or_earned(handler):
+    # WHIT-349 — [A11] __rollup__ lives ALONGSIDE __uncategorized__ and __earned__ but
+    # never folds them: nodes holds spend parents only. A raw-enum charge (MEDICAL) still
+    # lands in __uncategorized__, income still lands in __earned__, and neither leaks into
+    # nodes; nor does the leaf (petrol) appear as a node. Regression guard on key isolation.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _category("salary", "Income"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("MEDICAL", -20, "posted"),   # raw bank enum -> __uncategorized__
+        _transaction("salary", 2000, "posted"),    # income -> __earned__
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__rollup__"]["nodes"] == {"car": {"posted": Decimal("60"), "pending": Decimal("0")}}
+    assert "__uncategorized__" in result and "__earned__" in result
+    for leaked in ("__uncategorized__", "__earned__", "salary"):
+        assert leaked not in result["__rollup__"]["nodes"]
+
+
+def test_breakdown_rollup_correct_over_prior_cycle_lookback(handler, monkeypatch):
+    # WHIT-349 — [A12] the ?cycle= look-back still produces a correct NETTED rollup: only
+    # the prior window's transactions count. cycle=1 window is [2023-12-20, 2024-01-02];
+    # car = petrol 60 + (tolls 50 - 80 refund) = 30, and the current-cycle petrol -99 is
+    # excluded. Fail-on-revert: ignore the window and the -99 changes car; floor per-id and
+    # tolls -> 0 -> car 60.
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ])
+    txns = _DateFilteringTransactionRepo([
+        _dated("petrol", -60, "2023-12-25"),   # prior window
+        _dated("tolls", -50, "2023-12-25"),    # prior window
+        _dated("tolls", 80, "2023-12-26"),     # prior window refund
+        _dated("petrol", -99, "2024-01-10"),   # CURRENT window -> excluded for cycle=1
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1)
+
+    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("30"), "pending": Decimal("0")}
+
+
+def test_breakdown_rollup_excludes_income_and_savings_parents(handler):
+    # WHIT-349 — [A13] nodes are SPEND_BUCKETS only: an Income parent and a Savings parent —
+    # each with children and activity — must never appear (income would clamp to $0 spend
+    # rows; savings isn't a spend view). Only the Living parent gets a node.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _category("pay", "Income"),
+        _child("bonus", "Income", "pay"),
+        _category("save", "Savings"),
+        _child("emergency", "Savings", "save"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("bonus", 2000, "posted"),     # income
+        _transaction("emergency", -500, "posted"),  # savings movement
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__rollup__"]["nodes"] == {"car": {"posted": Decimal("60"), "pending": Decimal("0")}}
+    assert "pay" not in result["__rollup__"]["nodes"]
+    assert "save" not in result["__rollup__"]["nodes"]
+
+
+def test_get_breakdown_dispatches_and_serialises_rollup_as_nested_json_numbers(handler, monkeypatch):
+    # WHIT-349 — [A14] end-to-end through lambda_handler -> _json_response -> DecimalEncoder:
+    # __rollup__ is one level DEEPER than __earned__ ({"nodes": {id: {posted, pending}}}),
+    # so this proves the encoder recurses and the netted parent's Decimals (incl. cents)
+    # reach the client as JSON numbers, not strings or dropped keys. Nets a refunded sub so
+    # the serialised number is the netted 47.50, not a floored-leaf 60.00.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60.00, "posted"),
+        _transaction("tolls", -12.50, "posted"),   # petrol 60 + tolls 12.50 = 72.50 ...
+        _transaction("tolls", 25.00, "posted"),      # ... minus a 25 refund -> net 47.50
+    ])
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
+    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
+
+    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    resp = handler.lambda_handler(event, None)
+
+    import json
+    body = json.loads(resp["body"])
+    assert body["__rollup__"] == {"nodes": {"car": {"posted": 47.5, "pending": 0}}}
+    assert isinstance(body["__rollup__"]["nodes"]["car"]["posted"], float)  # JSON number, not "47.50"
