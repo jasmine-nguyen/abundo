@@ -945,6 +945,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       patchTransactions((prev) =>
         prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...patch } : existing)));
 
+      // WHIT-344: excluding a charge also drops it from every budget's cycle list. Optimistically
+      // remove it from each cached ['budgetTransactions', *] entry so the budget-detail list
+      // updates before the refetch lands, snapshotting them for rollback (mirrors deleteBudget).
+      // Removal only: re-including (budget_excluded: false) adds a row back, which needs the
+      // server's window + newest-first sort, so that stays on the invalidate below.
+      const budgetTxSnapshots =
+        patch.budget_excluded === true
+          ? queryClient.getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] })
+          : [];
+      budgetTxSnapshots.forEach(([key, data]) => {
+        if (!data) return;
+        const next = data.filter((t) => t.transaction_id !== txId);
+        if (next.length !== data.length) queryClient.setQueryData<Transaction[]>(key, next);
+      });
+
       // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate the late
       // failure toast on the epoch so a save settling after sign-out doesn't toast the next session.
       const epoch = sessionEpoch.current;
@@ -963,7 +978,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch {
         patchTransactions((prev) =>
           prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...previous } : existing)));
-        if (epoch === sessionEpoch.current) showToast('Could not save. Please try again.');
+        // WHIT-344/WHIT-271: the budget-list restore is a raw setQueryData (it recreates the
+        // entry), so — unlike guarded patchTransactions — it must be epoch-gated, or a save
+        // failing after sign-out would re-seat the previous account's rows into the cleared cache.
+        if (epoch === sessionEpoch.current) {
+          budgetTxSnapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
+          showToast('Could not save. Please try again.');
+        }
       }
     },
     [patchTransactions, showToast],
