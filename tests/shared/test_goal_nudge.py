@@ -1,7 +1,7 @@
 """WHIT-236 — behind-pace nudge detection + send/dedupe (shared/goal_nudge.py).
 
 Fakes for every repo (no DynamoDB); ``send_push`` is stubbed to capture pushes, mirroring
-tests/lambda/test_repayment_alerts.py. Locks: the "behind" definition (option A — imminent
+tests/lambda/test_budget_alerts.py. Locks: the "behind" definition (option A — imminent
 deadline, still short, not lapsed), the per-(goal, cycle) dedupe + re-arm, mark-on-landing,
 the short-circuits, the synced-not-polled skip, and the SIGNED-balance path for a paydown
 goal (a positive/abs balance would read as met and never fire — the critic's MAJOR fix).
