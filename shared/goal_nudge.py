@@ -4,7 +4,7 @@ When a dated goal's deadline is effectively here and it isn't met yet, send ONE 
 per (goal, pay-cycle) telling the user what it'd take per payday to still hit the date.
 Covers synced goals (live balance from the poller) and manual goals (their manual_balance).
 
-Shaped like ``repayment_alerts.notify_repayments``: short-circuit before any I/O when there
+Shaped like ``budget_alerts``: short-circuit before any I/O when there
 are no goals or no devices, dedupe per (goal, cycle) via ``NotifyRepository``, and mark on
 landing (only when the send reached Expo) so an outage re-nudges next sweep rather than
 silently dropping.
