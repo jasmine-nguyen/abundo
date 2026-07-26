@@ -53,6 +53,9 @@ it('usePayCycle observer reflects setPayCycleLength immediately (read-your-write
   await waitFor(() => expect(queryClient.getQueryData(['payCycle'])).toBeTruthy());
   expect(result.current.pc.cycleName()).toBe('Fortnightly'); // fetched length 14
 
+  // persistPayCycle now invalidates ['payCycle'] (WHIT-341: refetch the server days_left), so
+  // the refetch must reflect the just-saved length — mirror the server persisting the write.
+  mockApi.fetchPayCycle.mockResolvedValue({ length: 30, last_pay_date: '2024-01-03' });
   await act(async () => { result.current.ctx.setPayCycleLength(30); });
 
   await waitFor(() => expect(result.current.pc.cycleName()).toBe('Monthly'));

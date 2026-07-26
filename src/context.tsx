@@ -630,18 +630,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const prev = queryClient.getQueryData<{ length: number; last_pay_date: string }>(['payCycle']);
       if (!prev) return;
       const next = mutate(prev);
-      queryClient.setQueryData(['payCycle'], next);
+      // Drop any stale server days_left from the optimistic write — the new length/payday
+      // changes it, so let cycleClockView fall back to the local cycleClock until the
+      // invalidate below refetches the authoritative value (WHIT-341).
+      const optimistic = { length: next.length, last_pay_date: next.last_pay_date };
+      queryClient.setQueryData(['payCycle'], optimistic);
       // WHIT-271: if the user signs out during the round-trip, clearSession() wipes the cache
       // and bumps the epoch — a late success/failure here must NOT re-seat the old cycle or
       // toast into the next session. (The forward write above is pre-await, so clear() covers it.)
       const epoch = sessionEpoch.current;
       try {
-        await apiSetPayCycle(next);
+        await apiSetPayCycle(optimistic);
         if (epoch !== sessionEpoch.current) return; // signed out mid-flight
         // The window (length and/or payday) changed, so the server rollups move — refetch
-        // the migrated Budgets/Insights reads. With the flat ['budgets']/['breakdown'] keys
-        // (WHIT-72) this invalidate is the SINGLE refresh: the setQueryData(['payCycle'])
-        // above no longer shifts a windowed key, so there is no second, redundant refetch.
+        // the migrated Budgets/Insights reads. Also refetch ['payCycle'] so the server's
+        // authoritative days_left is recomputed for the new settings (WHIT-341); the flat
+        // ['budgets']/['breakdown'] keys make each of these a single refresh (WHIT-72).
+        queryClient.invalidateQueries({ queryKey: ['payCycle'] });
         queryClient.invalidateQueries({ queryKey: ['budgets'] });
         queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       } catch {
@@ -1350,6 +1355,18 @@ export function cycleClock(
   const daysIntoCycle = elapsedDays - cyclesElapsed * length;
   const daysLeft = Math.max(0, Math.min(length, length - daysIntoCycle));
   return { cycleLen: length, daysLeft };
+}
+
+// The cycle clock the screens read: prefer the server's authoritative `days_left` (one clock,
+// no UTC/Melbourne drift on the countdown — WHIT-341), falling back to the client cycleClock
+// only for an older server / cold cache where the field is absent.
+export function cycleClockView(
+  payCycle: { length: number; last_pay_date: string; days_left?: number },
+): { cycleLen: number; daysLeft: number } {
+  // Clamp to [0, length] like cycleClock does — the server path bypasses cycleClock's own
+  // clamp, so a corrupt/older cache value can't drive elapsedFrac out of [0,1] (negative bars).
+  const daysLeft = payCycle.days_left ?? cycleClock(payCycle).daysLeft;
+  return { cycleLen: payCycle.length, daysLeft: Math.max(0, Math.min(payCycle.length, daysLeft)) };
 }
 
 export function elapsedFrac(s: { cycleLen: number; daysLeft: number }) { return (s.cycleLen - s.daysLeft) / s.cycleLen; }
