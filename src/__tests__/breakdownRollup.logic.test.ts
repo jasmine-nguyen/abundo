@@ -116,6 +116,28 @@ describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
     expect(rows.find((r) => r.isRefund)!.pct).toBe(0);   // no bar share
   });
 
+  it('a flat taxonomy under an empty __rollup__ renders every leaf via the server path (WHIT-358)', () => {
+    // Slice 5a: a new server ALWAYS emits __rollup__, so a flat setup (no parents) arrives as
+    // {nodes: {}} — not an absent key. The selector takes the rollup path (structureSeed = the
+    // present ids), and each flat leaf reads its own floored value. Result must match what the
+    // fallback produced for the same data: every leaf a depth-0 row, total = their floored sum.
+    const s = makeState({
+      categories: [
+        cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', parent: null }),
+        cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: null }),
+      ],
+      breakdown: withRollup(
+        { coffee: spend({ posted: 50, pending: 0 }), groceries: spend({ posted: 30, pending: 0 }) },
+        { nodes: {} },
+      ),
+    });
+    const { rows, total } = categoryBreakdown(s);
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(byId['coffee']).toMatchObject({ spent: 50, depth: 0, hasChildren: false });
+    expect(byId['groceries']).toMatchObject({ spent: 30, depth: 0, hasChildren: false });
+    expect(total).toBe(80);
+  });
+
   it('does not turn the __rollup__ sentinel into a phantom spend row', () => {
     const s = makeState({
       categories: CAR_TREE,

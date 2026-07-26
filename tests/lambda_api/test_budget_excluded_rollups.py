@@ -112,7 +112,7 @@ def test_breakdown_drops_an_excluded_categorised_charge(handler):
 
     result = handler.list_category_breakdown(cats, txns, _PayCycleRepo())
 
-    assert result == {"coffee": {"posted": Decimal("50"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("50"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
 
 
 def test_breakdown_excluded_uncategorized_charge_does_not_inflate_the_uncategorized_bucket(handler):
@@ -123,7 +123,7 @@ def test_breakdown_excluded_uncategorized_charge_does_not_inflate_the_uncategori
 
     result = handler.list_category_breakdown(cats, txns, _PayCycleRepo())
 
-    assert result == {}  # nothing counts -> no coffee row and no __uncategorized__
+    assert result == {"__rollup__": {"nodes": {}}}  # nothing counts -> no coffee row and no __uncategorized__
 
 
 # --- POST /insights/ai (model input) -----------------------------------------
