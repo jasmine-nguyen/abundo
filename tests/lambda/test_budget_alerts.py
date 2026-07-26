@@ -856,9 +856,9 @@ def test_negative_target_budget_never_fires(alerts, monkeypatch):
 
 
 def test_budgeted_category_with_no_spend_is_not_a_crossing(alerts, monkeypatch):
-    # Two budgets; only groceries crosses. `coffee` has zero spend anywhere — _combined
-    # must treat its absent summary as $0 (not KeyError) and not fire. Locks _combined's
-    # None-entry fallback for a budgeted-but-untouched category.
+    # Two budgets; only groceries crosses. `coffee` has zero spend anywhere — _combined_target
+    # must treat its absent summary as $0 (not KeyError) and not fire, via its `if cid in spend`
+    # skip. Locks the absent-id-contributes-0 behaviour for a budgeted-but-untouched category.
     budgets = {"groceries": {"target": Decimal("100")}, "coffee": {"target": Decimal("50")}}
     before = [_txn("g", "groceries", -70, "posted")]
     new = _txn("g2", "groceries", -15, "posted")
@@ -1192,24 +1192,39 @@ def test_parent_refund_on_sibling_leaf_cancels_crossing_no_fire(alerts, monkeypa
     assert control[0][1] == "Car is at 80% of its budget this cycle."
 
 
-def test_parent_fold_uses_per_leaf_clamp_not_a_parent_level_clamp(alerts, monkeypatch):
-    # The per-leaf >=0 clamp must apply BEFORE the parent fold: a refund OVERSHOOT on
-    # one leaf clamps that leaf to 0 and cannot bleed a negative into a sibling leaf's
-    # spend. fuel: -50 then +100 refund -> net -50 -> clamped to 0. parking: -75 -> 75.
-    # car before = 0 + 75 = 75 (<80). new parking -10 -> parking 85 -> car 85 -> FIRES.
-    # If the clamp were applied to the parent TOTAL instead (raw fuel -50 + parking 75
-    # = 25 -> 35 after), the parent would sit at 35 and never cross -> this goes silent.
+def test_parent_fold_aggregates_then_clamps_refund_offsets_sibling(alerts, monkeypatch):
+    # WHIT-343 (aggregate-then-clamp): a refund OVERSHOOT on one leaf now NETS against a
+    # sibling's spend across the subtree BEFORE the floor, matching the /budgets screen so an
+    # alert can't fire on a number the screen doesn't show. fuel: -50 then +100 refund -> net
+    # -50 (unclamped). parking: -75 -> 75. car before = -50 + 75 = 25. new parking -10 ->
+    # parking 85, car after = -50 + 85 = 35 (< 80) -> SILENT. Fail-on-revert (per-leaf clamp
+    # restored): fuel floors to 0 -> car after = 85 -> FIRES at 80%.
     before = [
         _txn("f1", "fuel", -50, "posted"),
         _txn("f2", "fuel", 100, "posted"),     # refund overshoot on fuel -> net negative
         _txn("p1", "parking", -75, "posted"),
     ]
-    new = _txn("p2", "parking", -10, "posted")             # parking 85 -> car 85
+    new = _txn("p2", "parking", -10, "posted")             # parking 85; car nets to 35
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
                            before=before, normalised=[new], cats=_CAR_TREE)
-    assert len(sent) == 1
-    assert sent[0][1] == "Car is at 80% of its budget this cycle."
-    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+    assert sent == []                                      # the refund nets the crossing away
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_combined_target_clamps_each_bucket_after_aggregating(alerts):
+    # WHIT-343 invariant lock for the alert path: _combined_target sums the subtree UNCLAMPED
+    # then floors each bucket ONCE, so a refund-heavy subtree nets before the floor and the
+    # alert reads the SAME figure /budgets shows (max(0, sum)). petrol +40 spend, tolls +100
+    # refund -> posted nets 40 - 100 = -60 -> clamp once -> 0. Fail-on-revert: the old
+    # sum-of-per-id-combined returns -60; a restored per-id clamp (clamp ignored) returns 40.
+    import spend, budget_alerts
+    txns = [
+        _txn("a", "petrol", -40, "posted"),
+        _txn("b", "tolls", 100, "posted"),     # refund larger than the subtree's own spend
+    ]
+    ids = {"car", "petrol", "tolls"}
+    per_id = spend.summarise_transactions(txns, ids, clamp=False)
+    assert budget_alerts._combined_target(per_id, ids) == Decimal("0")
 
 
 # --- parent leaves spanning MULTIPLE accounts -------------------------------
@@ -1539,3 +1554,103 @@ def test_one_word_skew_across_the_cycle_boundary_counts_once_inside_the_window(a
     assert [(r["transaction_id"], r["date"]) for r in rows] == [("POST", "2026-07-01")]
     assert sent == []
     assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+# ===========================================================================
+# WHIT-343 QA GAP tests (aggregate-then-clamp on the ALERT path) — edges beyond
+# the implementer's test_parent_fold_aggregates_then_clamps_refund_offsets_sibling
+# and test_combined_target_clamps_each_bucket_after_aggregating. Every WHIT-343
+# assertion goes RED if the per-id clamp is restored; the bucket-guard assertion
+# goes RED if the same-bucket filter is dropped.
+# ===========================================================================
+
+
+def test_wh343_gap_refund_suppresses_crossing_regardless_of_batch_order(alerts, monkeypatch):
+    # WHIT-343 x ordering. A refund and a charge on two leaves of the same parent, in the
+    # SAME write, must net the parent the SAME way no matter their order — no refund-then-
+    # charge sequencing can slip a crossing. before empty. Batch parking -90 (would be 90%)
+    # + fuel +30 refund -> car 60 < 80 -> SILENT in BOTH orders. Fail-on-revert (per-id
+    # clamp): fuel floors to 0 -> car 90 -> FIRES. Control (no refund) crosses, proving the
+    # setup genuinely would fire.
+    for batch in (
+        [_txn("c", "parking", -90, "posted"), _txn("r", "fuel", 30, "posted")],
+        [_txn("r", "fuel", 30, "posted"), _txn("c", "parking", -90, "posted")],  # reversed
+    ):
+        sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                               before=[], normalised=batch, cats=_CAR_TREE)
+        assert sent == []
+        assert notify.fired_markers("2026-07-01", 14) == set()
+
+    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                         before=[], normalised=[_txn("c", "parking", -90, "posted")], cats=_CAR_TREE)
+    assert len(control) == 1 and control[0][1] == "Car is at 80% of its budget this cycle."
+
+
+def test_wh343_gap_grandchild_refund_nets_across_deep_fold_suppresses(alerts, monkeypatch):
+    # WHIT-343 x depth on the alert path. car -> daily -> {petrol, tolls}; only car budgeted.
+    # before petrol -75 (car 75). Batch: petrol -20 (would push car to 95, crossing 80) +
+    # tolls +30 refund on the sibling GRANDCHILD -> car 95 - 30 = 65 < 80 -> SILENT.
+    # Fail-on-revert (per-id clamp): tolls +30 floors to 0 -> car 95 -> FIRES at 80.
+    cats = [
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "daily", "name": "Daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "daily"},
+        {"id": "tolls", "name": "Tolls", "bucket": "Living", "parent": "daily"},
+    ]
+    before = [_txn("old", "petrol", -75, "posted")]
+    batch = [_txn("p", "petrol", -20, "posted"), _txn("r", "tolls", 30, "posted")]
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=batch, cats=cats)
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                         before=before, normalised=[_txn("p", "petrol", -20, "posted")], cats=cats)
+    assert len(control) == 1 and control[0][1] == "Car is at 80% of its budget this cycle."
+
+
+def test_wh343_gap_cross_bucket_refund_sibling_does_not_suppress_real_crossing(alerts, monkeypatch):
+    # WHIT-343 x the same-bucket guard. A REFUND on a cross-bucket sibling must NOT net a
+    # genuine same-bucket crossing away: the guard drops it from the parent's subtree BEFORE
+    # the unclamped fold, so it can't offset. petrol -85 (85% of Car) crosses 80; a +50
+    # refund on a Lifestyle child would net Car to 35 and SILENCE it IF it leaked. Correct:
+    # excluded -> Car 85 -> FIRES. Fail-on-revert (drop bucket_by_id): Car 35 -> silent.
+    cats = [
+        {"id": "car", "name": "Car", "bucket": "Living", "parent": None},
+        {"id": "petrol", "name": "Petrol", "bucket": "Living", "parent": "car"},
+        {"id": "odd", "name": "Odd", "bucket": "Lifestyle", "parent": "car"},
+    ]
+    batch = [_txn("p", "petrol", -85, "posted"), _txn("r", "odd", 50, "posted")]  # cross-bucket refund
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=[], normalised=batch, cats=cats)
+    assert len(sent) == 1
+    assert sent[0][1] == "Car is at 80% of its budget this cycle."
+    assert notify.fired_markers("2026-07-01", 14) == {"car#80"}
+
+
+def test_wh343_gap_tip_settlement_crossing_cancelled_by_sibling_refund(alerts, repo, monkeypatch):
+    # WHIT-343 x reconcile. A pending leaf settles with a TIP that alone crosses the parent,
+    # while a refund on a sibling leaf in the SAME write nets it back below — the settlement
+    # Delta (real reconcile) AND the aggregate-then-clamp both have to be right. Pending
+    # parking -70 (car 70). Batch: posted -85 tip settlement carrying "parking" (twin removed,
+    # car -> 85, crosses 80) + fuel +30 refund -> car 85 - 30 = 55 < 80 -> SILENT.
+    # Fail-on-revert (per-id clamp): fuel +30 floors to 0 -> car 85 -> a false car#80.
+    _seed(repo, alerts, txn_id="A", amount=Decimal("-70"), pending=True, category="parking")
+    before = list(repo._table.store.values())
+    posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="parking",
+                        merchant_name="SQ *KKV INTERNATIONAL PTY", description="SQ *KKV INTERNATIONAL PTY")
+    refund = _norm_real(alerts, txn_id="R", amount=Decimal("30"), pending=False, category="fuel",
+                        merchant_name="REFUNDCO PTY", description="REFUNDCO PTY")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                           before=before, normalised=[posted, refund], webhook_repo=repo, cats=_CAR_TREE)
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+    # Control: WITHOUT the refund, the tip settlement genuinely crosses 80 -> proves the
+    # setup would fire and that the refund (not a broken settlement) is what silences it.
+    ctrl_posted = _norm_real(alerts, txn_id="B", amount=Decimal("-85"), pending=False, category="parking",
+                             merchant_name="SQ *KKV INTERNATIONAL PTY", description="SQ *KKV INTERNATIONAL PTY")
+    control, _, _ = _run(alerts, monkeypatch, budgets={"car": {"target": Decimal("100")}},
+                         before=list(repo._table.store.values()), normalised=[ctrl_posted],
+                         webhook_repo=repo, cats=_CAR_TREE)
+    assert len(control) == 1 and control[0][1] == "Car is at 80% of its budget this cycle."

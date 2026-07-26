@@ -1034,12 +1034,14 @@ def list_budgets(
 
     # Split by each id's own bucket (the same-bucket rule keeps a subtree single-
     # bucket, so a parent and its descendants all land on one side). Sum every needed
-    # id once, then fold per target.
+    # id once (UNCLAMPED), fold per target, then clamp the target total once — so a
+    # net-negative sibling nets against the rest before the floor, and the header can't
+    # read higher than its own signed transaction list (aggregate-then-clamp, WHIT-343).
     income_ids = {cid for cid in needed_ids if bucket_by_id.get(cid) == INCOME_BUCKET}
     spend_ids = needed_ids - income_ids
 
-    per_id = summarise_transactions(transactions, spend_ids)
-    per_id.update(summarise_income(transactions, income_ids))
+    per_id = summarise_transactions(transactions, spend_ids, clamp=False)
+    per_id.update(summarise_income(transactions, income_ids, clamp=False))
 
     result = {}
     for cat_id, entry in targets.items():
@@ -1050,7 +1052,11 @@ def list_budgets(
             if id_rollup:
                 posted += id_rollup["posted"]
                 pending += id_rollup["pending"]
-        result[cat_id] = {"target": entry["target"], "posted": posted, "pending": pending}
+        result[cat_id] = {
+            "target": entry["target"],
+            "posted": max(Decimal(0), posted),
+            "pending": max(Decimal(0), pending),
+        }
     return result
 
 
@@ -1263,11 +1269,13 @@ def _budgeted_parent_rollup(transactions: list[dict], parents: list[str],
     for the current cycle; prior cycles omit `budget` (it's constant across cycles),
     matching the per-leaf convention. Sorted by (name, id) so the hash is deterministic."""
     needed_ids = set().union(*ids_by_parent.values()) if ids_by_parent else set()
-    rollup = summarise_transactions(transactions, needed_ids)
+    # Unclamped per id, then clamp each parent's total once — same aggregate-then-clamp
+    # as /budgets, so the AI's parent spend can't disagree with the Budgets screen (WHIT-343).
+    rollup = summarise_transactions(transactions, needed_ids, clamp=False)
     rows = []
     for cid in parents:
-        posted = sum((rollup[sid]["posted"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0))
-        pending = sum((rollup[sid]["pending"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0))
+        posted = max(Decimal(0), sum((rollup[sid]["posted"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0)))
+        pending = max(Decimal(0), sum((rollup[sid]["pending"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0)))
         row = {"name": names.get(cid, cid), "posted": float(posted), "pending": float(pending)}
         if targets and cid in targets:
             row["budget"] = float(targets[cid]["target"])
