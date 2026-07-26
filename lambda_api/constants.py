@@ -149,6 +149,15 @@ UNCATEGORIZED_KEY = "__uncategorized__"
 # UNCATEGORIZED_KEY, the '__' prefix can't collide with any real (slugified) category id.
 EARNED_KEY = "__earned__"
 
+# Sentinel key for the server-owned parent roll-up in the breakdown response (WHIT-349):
+# {"nodes": {parent_id: {"posted", "pending"}}} — each budgeted-or-not parent's netted
+# subtree spend (aggregate-then-clamp, same fold as /budgets), so the Insights donut reads
+# the parent total from here instead of summing per-id-floored leaves on the client (which
+# disagreed with /budgets on a net-refunded sub). Added only when a parent has spend. Like
+# UNCATEGORIZED_KEY/EARNED_KEY, the '__' prefix can't collide with a real category id, and
+# old clients ignore the extra key.
+ROLLUP_KEY = "__rollup__"
+
 # --- Loan facts (user-entered home-loan inputs) ----------------------------
 # API Gateway route path for the loan-facts endpoints (GET current, PUT to set).
 # The user enters facts no bank feed provides (original amount, property value,

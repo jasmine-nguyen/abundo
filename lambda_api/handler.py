@@ -11,6 +11,7 @@ from constants import (
     DEFAULT_RULE_OPERATOR,
     DEVICES_PATH,
     EARNED_KEY,
+    ROLLUP_KEY,
     ENRICHMENTS_PATH,
     EXPO_TOKEN_MAX_LEN,
     FEED_WINDOW_DAYS,
@@ -1165,6 +1166,29 @@ def list_category_breakdown(
     earned = summarise_earned(transactions, income_ids)
     if earned["posted"] > 0 or earned["pending"] > 0:
         result[EARNED_KEY] = earned
+
+    # __rollup__ (WHIT-349): server-owned netted parent totals, so the Insights donut reads
+    # a parent's spend from here instead of summing per-id-FLOORED leaves on the client —
+    # which under-counted a refund and disagreed with /budgets on a net-refunded sub. Same
+    # aggregate-then-clamp fold as /budgets (fold_subtree over the same-bucket subtree), so a
+    # parent's donut total equals its Budgets bar. Additive: the flat per-category keys above
+    # are untouched (the pie slices + the category drill-in still reconcile to them), and old
+    # clients ignore the key. Only parents (ids with children) need it — a leaf's netted
+    # subtree is just its own already-floored flat value.
+    children = build_category_children(categories)
+    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
+    per_id_signed = summarise_transactions(transactions, spend_ids, clamp=False)
+    nodes = {}
+    for parent_id in children:
+        # Spend parents only (a fast-path; a non-spend parent would fold to 0 anyway —
+        # its subtree is bucket-filtered and per_id_signed covers only spend ids).
+        if parent_id not in spend_ids:
+            continue
+        folded = fold_subtree(per_id_signed, subtree_ids(parent_id, children, bucket_by_id))
+        if folded["posted"] > 0 or folded["pending"] > 0:
+            nodes[parent_id] = folded
+    if nodes:
+        result[ROLLUP_KEY] = {"nodes": nodes}
     return result
 
 
