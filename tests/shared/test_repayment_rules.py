@@ -67,3 +67,75 @@ def test_sub_ten_dollar_credit_is_still_a_repayment(shared):
     # The rule carries NO $10 alert floor — that lives at the poller's call site.
     # This is the single source of truth that keeps the read API showing small repayments.
     assert shared.repayment_rules.is_repayment_credit(_row(amount=Decimal("5"))) is True
+
+
+# --- WHIT-327: direct unit tests for the extracted is_number predicate ---------
+# The suite above only reaches is_number THROUGH is_repayment_credit's `> 0` wrapper.
+# is_number is now a public shared export called by BOTH is_repayment_credit and
+# get_repayment's interest loop, so lock its contract in isolation. [fail-on-revert]
+# breaking is_number to `return True` reddens the reject cases; to `return False`
+# reddens the accept cases — independent of the `> 0` / `< 0` call-site checks.
+
+
+def test_is_number_accepts_int_float_decimal(shared):
+    # The three numeric types the repayment/interest legs are ever stored as.
+    is_number = shared.repayment_rules.is_number
+    assert is_number(100) is True
+    assert is_number(100.5) is True
+    assert is_number(Decimal("3667.50")) is True
+
+
+def test_is_number_zero_and_negative_are_numbers(shared):
+    # is_number is a TYPE check, not a sign/value check — 0 and negatives are numbers.
+    # This is why get_repayment layers its own `< 0` (interest) and is_repayment_credit
+    # its own `> 0` on top; is_number must not silently reject them.
+    is_number = shared.repayment_rules.is_number
+    assert is_number(0) is True
+    assert is_number(Decimal("0")) is True
+    assert is_number(-232) is True
+    assert is_number(Decimal("-232")) is True
+
+
+def test_is_number_rejects_non_numeric(shared):
+    # Anything the interest loop's `amount_leg < 0` would crash on (str/None/list/…)
+    # must be screened out here — the whole point of the guard.
+    is_number = shared.repayment_rules.is_number
+    assert is_number(None) is False
+    assert is_number("-232") is False
+    assert is_number("") is False
+    assert is_number([]) is False
+    assert is_number({}) is False
+    assert is_number(b"1") is False
+
+
+def test_is_number_treats_bool_as_number_characterization(shared):
+    # WHIT-327 (documented in the docstring): Python treats bool as int, so is_number
+    # accepts True/False, matching the prior inline/_num checks. This is DELIBERATELY not
+    # tightened. Locks that behaviour: if someone "fixes" is_number to exclude bool, this
+    # reddens and forces a conscious decision (bool amounts never occur in real Up data).
+    is_number = shared.repayment_rules.is_number
+    assert is_number(True) is True
+    assert is_number(False) is True
+
+
+def test_is_number_rejects_non_finite(shared):
+    # WHIT-327 hardening: NaN / Infinity are rejected. A Decimal('NaN') amount would
+    # otherwise raise InvalidOperation on the call sites' `> 0` / `< 0` comparison and
+    # 500 the repayment card; a float NaN/inf would silently mis-sort. is_number screens
+    # both, so a non-finite amount is treated as malformed and skipped. [fail-on-revert]
+    # dropping the finiteness branches makes these pass-as-True → red.
+    is_number = shared.repayment_rules.is_number
+    assert is_number(float("nan")) is False
+    assert is_number(float("inf")) is False
+    assert is_number(float("-inf")) is False
+    assert is_number(Decimal("NaN")) is False
+    assert is_number(Decimal("Infinity")) is False
+
+
+def test_bool_amount_above_zero_is_accepted_as_repayment_credit_characterization(shared):
+    # The bool-as-number quirk, end-to-end through the rule: amount=True is numeric AND
+    # True > 0, so a row with a boolean `True` amount is treated as a repayment credit
+    # (behaviour preserved from before WHIT-327; not a target to fix here). amount=False
+    # is numeric but not > 0, so it is rejected like a zero.
+    assert shared.repayment_rules.is_repayment_credit(_row(amount=True)) is True
+    assert shared.repayment_rules.is_repayment_credit(_row(amount=False)) is False

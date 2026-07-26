@@ -139,6 +139,35 @@ def test_interest_row_with_no_amount_falls_back_to_total_only(handler):
     assert out["principal"] is None and out["interest"] is None   # total-only, no crash
 
 
+def test_string_interest_amount_is_skipped_not_summed(handler):
+    # WHIT-327: a non-numeric (string) interest amount is skipped by the shared is_number
+    # guard, exactly as the old local _num did — total-only, never a `str < 0` crash.
+    string_interest = {"category": "BANK_FEES", "amount": "-232", "date": "2026-07-05"}
+    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), string_interest]))
+    assert out["amount"] == Decimal("1440")
+    assert out["principal"] is None and out["interest"] is None   # skipped → total-only
+
+
+def test_decimal_nan_interest_amount_is_skipped_not_fatal(handler):
+    # WHIT-327 hardening: a stored Decimal('NaN') interest amount would raise
+    # InvalidOperation on `amount_leg < 0` and 500 the card — is_number now rejects
+    # non-finite values, so the leg is skipped → total-only, no crash.
+    nan_interest = {"category": "BANK_FEES", "amount": Decimal("NaN"), "date": "2026-07-05"}
+    out = handler.get_repayment(FakeTransactionRepo([_repayment("2026-07-01"), nan_interest]))
+    assert out["amount"] == Decimal("1440")
+    assert out["principal"] is None and out["interest"] is None
+
+
+def test_decimal_nan_repayment_amount_is_skipped_not_fatal(handler):
+    # WHIT-327 hardening: a Decimal('NaN') repayment amount would raise on `amount > 0`
+    # in is_repayment_credit — is_number rejects it, so the leg is skipped and the scan
+    # falls through to the next valid repayment instead of crashing.
+    nan_repayment = {"type": "TRANSFER_INCOMING", "category": "TRANSFER_IN",
+                     "amount": Decimal("NaN"), "date": "2026-07-02"}
+    out = handler.get_repayment(FakeTransactionRepo([nan_repayment, _repayment("2026-07-01")]))
+    assert out["amount"] == Decimal("1440")   # falls through to the valid repayment
+
+
 # --- correctness: never a negative or reversal-poisoned split (R4–R5) ---------
 
 
