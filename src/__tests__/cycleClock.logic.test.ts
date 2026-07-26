@@ -1,7 +1,7 @@
 // WHIT-9: the "days until next payday" clock. Runs under TZ=Australia/Melbourne
 // (see the test script) so the daylight-saving-immunity is genuinely exercised.
 import { describe, it, expect } from '@jest/globals';
-import { cycleClock } from '../context';
+import { cycleClock, cycleClockView } from '../context';
 
 // Build a local-calendar Date for a given Y-M-D (month is 1-based here for clarity).
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);
@@ -45,5 +45,32 @@ describe('cycleClock', () => {
     // straddles it must still count 14 whole days, not 13 or 15.
     expect(cycleClock(cycle(14, '2026-09-27'), day(2026, 10, 11)).daysLeft).toBe(14); // exactly 14 days later
     expect(cycleClock(cycle(14, '2026-09-27'), day(2026, 10, 4)).daysLeft).toBe(7);   // 7 days in, spans the change
+  });
+});
+
+// WHIT-341: the screens read cycleClockView, which prefers the server's authoritative
+// days_left (one clock, no UTC/Melbourne drift) and falls back to cycleClock when absent.
+describe('cycleClockView', () => {
+  it('prefers the server days_left when present (regardless of the local clock)', () => {
+    // A deliberately "wrong" local clock would give a different daysLeft; the server value wins.
+    const view = cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: 9 });
+    expect(view).toEqual({ cycleLen: 14, daysLeft: 9 });
+  });
+
+  it('falls back to the client cycleClock when days_left is absent (older server / cold cache)', () => {
+    // No days_left → same result the raw cycleClock gives for "today". cycleLen always = length.
+    const payCycle = { length: 14, last_pay_date: '2026-06-06' };
+    expect(cycleClockView(payCycle)).toEqual({ cycleLen: 14, daysLeft: cycleClock(payCycle).daysLeft });
+  });
+
+  it('takes days_left === 0 from the server (not the fallback)', () => {
+    // 0 is a real value, not "absent" — the ?? must not treat it as missing.
+    expect(cycleClockView({ length: 30, last_pay_date: '2026-06-06', days_left: 0 }).daysLeft).toBe(0);
+  });
+
+  it('clamps a server days_left outside [0, length] (keeps the progress bar in range)', () => {
+    // A corrupt/older-cache value can't drive elapsedFrac out of [0,1] → no negative bars.
+    expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: 21 }).daysLeft).toBe(14);
+    expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: -3 }).daysLeft).toBe(0);
   });
 });

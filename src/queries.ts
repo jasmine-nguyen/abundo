@@ -7,7 +7,7 @@ import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
-import { cycleClock, cycleName, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -284,7 +284,7 @@ export function usePayCycle(): PayCycleData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen, daysLeft } = cycleClock(payCycle);
+  const { cycleLen, daysLeft } = cycleClockView(payCycle);
   return { payCycle, cycleLen, daysLeft, cycleName: () => cycleName(cycleLen), isLoading: payCycleQuery.isLoading, isError: payCycleQuery.isError };
 }
 
@@ -359,7 +359,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen, daysLeft } = cycleClock(payCycle);
+  const { cycleLen, daysLeft } = cycleClockView(payCycle);
 
   const budgetsQuery = useBudgetsQuery(cycleLen, authed);
   const categoriesQuery = useCategoriesQuery(authed);
@@ -403,7 +403,7 @@ export function useBudgetDetailScreenData(categoryId: string): BudgetDetailScree
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen, daysLeft } = cycleClock(payCycle);
+  const { cycleLen, daysLeft } = cycleClockView(payCycle);
 
   const budgetsQuery = useBudgetsQuery(cycleLen, authed); // parallel fetch, flat key (WHIT-72)
   // The list is the whole cycle's subtree, computed server-side from the SAME window as
@@ -462,7 +462,7 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   const authed = useIsAuthed();
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
-  const { cycleLen } = cycleClock(payCycle);
+  const { cycleLen } = cycleClockView(payCycle);
 
   // WHIT-68: `cycle` (0 = current, n = nth prior) selects the historical breakdown window.
   const breakdownQuery = useBreakdownQuery(cycleLen, cycle, authed); // parallel fetch, cycle-keyed
