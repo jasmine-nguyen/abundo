@@ -938,5 +938,127 @@ def test_get_breakdown_dispatches_and_serialises_rollup_as_nested_json_numbers(h
 
     import json
     body = json.loads(resp["body"])
-    assert body["__rollup__"] == {"nodes": {"car": {"posted": 47.5, "pending": 0}}}
+    # nodes AND refunds both serialise (WHIT-349 slice 3+4): the netted parent 47.50 and the
+    # tolls refund -12.50 reach the client as JSON numbers, not strings or dropped keys.
+    assert body["__rollup__"] == {
+        "nodes": {"car": {"posted": 47.5, "pending": 0}},
+        "refunds": {"car": [{"id": "tolls", "amount": -12.5}]},
+    }
     assert isinstance(body["__rollup__"]["nodes"]["car"]["posted"], float)  # JSON number, not "47.50"
+    assert isinstance(body["__rollup__"]["refunds"]["car"][0]["amount"], float)
+
+
+# --- WHIT-349 slice 3+4: __rollup__.refunds (per-parent refund detail) --------
+
+
+def test_breakdown_rollup_refunds_single_level_reconciles_to_node(handler):
+    # WHIT-349 slice 3+4: a net-refunded direct child (tolls) is hidden from the flat rows
+    # (floored to 0) but reported under refunds so the client can show a "refund" line. car =
+    # petrol 60 + (tolls -30) = 30; refunds["car"] = [{tolls, -30}] and the shown child
+    # (petrol 60) + the refund (-30) reconcile to nodes["car"] (30).
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -50, "posted"),
+        _transaction("tolls", 80, "posted"),       # refund > tolls' own spend
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    rollup = result["__rollup__"]
+
+    assert rollup["refunds"] == {"car": [{"id": "tolls", "amount": Decimal("-30")}]}
+    node = rollup["nodes"]["car"]
+    shown_child = result["petrol"]["posted"] + result["petrol"]["pending"]          # 60 (floored, shown)
+    refund_sum = sum(r["amount"] for r in rollup["refunds"]["car"])                  # -30
+    assert shown_child + refund_sum == node["posted"] + node["pending"]             # 60 - 30 == 30
+
+
+def test_breakdown_rollup_refunds_name_collapsed_mid_parent_not_the_leaf(handler):
+    # WHIT-349 slice 3+4 (Decision 1A): when the refunded leaf sits under a collapsed mid-parent
+    # (car > travel > tolls), the refund line names the DIRECT child (travel) with its whole
+    # subtree's net, so no client re-homing is needed. car = petrol 60 + travel-subtree(-30) = 30.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("travel", "Living", "car"),      # mid-parent, collapses (subtree nets < 0)
+        _child("tolls", "Living", "travel"),
+        _child("petrol", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -50, "posted"),
+        _transaction("tolls", 80, "posted"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    rollup = result["__rollup__"]
+
+    assert rollup["refunds"] == {"car": [{"id": "travel", "amount": Decimal("-30")}]}
+    assert "travel" not in rollup["nodes"]      # collapsed, no node
+
+
+def test_breakdown_rollup_refund_on_parents_own_direct_spend(handler):
+    # WHIT-349 slice 3+4: a refund tagged DIRECTLY on the parent (net negative) is reported
+    # under the parent's own id. car own = -20 (net refund), petrol +60 -> node 40; refunds
+    # names car itself.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("car", -30, "posted"),
+        _transaction("car", 50, "posted"),         # net -20 on the parent's own id
+        _transaction("petrol", -60, "posted"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    rollup = result["__rollup__"]
+
+    assert rollup["nodes"]["car"] == {"posted": Decimal("40"), "pending": Decimal("0")}
+    assert rollup["refunds"] == {"car": [{"id": "car", "amount": Decimal("-20")}]}
+
+
+def test_breakdown_rollup_no_refunds_key_when_no_refund(handler):
+    # A cycle with no net-refunded member has NO "refunds" key -> byte-identical to slice 2.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -20, "posted"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "refunds" not in result["__rollup__"]
+    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("80"), "pending": Decimal("0")}
+
+
+def test_breakdown_rollup_no_refund_line_for_a_still_shown_member(handler):
+    # WHIT-349 (Bug B fix): a member with a settled refund AND a new pending charge floors to
+    # {0, +x} -> it still shows as a flat row, so it must NOT also get a refund line (no double-
+    # render). tolls: posted -50 (settled refund) + pending 30 (new charge) -> flat {0, 30}.
+    # petrol 60 -> car node posted max(0,60-50)=10, pending 30 -> {10,30}. No refunds key for car.
+    # Fail-on-revert (drop the _hidden guard): tolls (combined net -20) would emit a refund line
+    # AND still render as the $30 row.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", 50, "posted"),        # a settled refund on tolls
+        _transaction("tolls", -30, "pending"),        # a new pending charge on tolls
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["tolls"] == {"posted": Decimal("0"), "pending": Decimal("30")}   # still a flat row
+    assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("10"), "pending": Decimal("30")}
+    assert "refunds" not in result["__rollup__"]                                   # tolls not double-rendered

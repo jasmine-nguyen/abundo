@@ -35,7 +35,7 @@ export default function Insights() {
     if (r.parentId === null || (shown.has(r.parentId) && expanded.has(r.parentId))) shown.add(r.id);
   }
   const visibleRows = rows.filter((r) => shown.has(r.id));
-  const topLevelRows = rows.filter((r) => r.depth === 0);
+  const topLevelRows = rows.filter((r) => r.depth === 0 && !r.isRefund);  // refund lines are never top-level (WHIT-349)
   const topLevelCount = topLevelRows.length;  // hero "N categories"
   // Donut slices: one per top-level category (its combined spend), painted in its own colour
   // so the ring and the rows below read as one legend. Sums to the hero total (every txn rolls
@@ -150,6 +150,26 @@ export default function Insights() {
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
             taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
         {!showError && visibleRows.map((r) => {
+          // WHIT-349: a refund line is a display-only credit under an expanded parent — a muted
+          // row with no bar, showing the amount back in green, tappable into that sub's charges.
+          if (r.isRefund) {
+            return (
+              <View key={r.id} style={[styles.row, { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
+                <Pressable
+                  onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+                  accessibilityRole="button"
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}
+                >
+                  <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={[styles.rowName, { color: C.textDim }]} numberOfLines={1}>{r.name}</Text>
+                    <Text style={styles.rowSub}>{r.spentLabel}</Text>
+                  </View>
+                  <Text style={[styles.rowAmount, { color: C.good }]}>{fmt(r.spent)}</Text>
+                </Pressable>
+              </View>
+            );
+          }
           // Bar width is the row's share of the cycle total; within it, split posted
           // vs pending so the pending portion reads distinctly.
           // Clamp the bar at 100% so it can never overflow its track (a corrupt parent
