@@ -127,6 +127,47 @@ it('applyCategory(all) reverts a failed tapped charge to its PREVIOUS category (
   expect(cachedCategory('t1')).toBe('dining'); // failed re-file → back to its real prior category
 });
 
+// --- WHIT-355: the "apply to all" tap must not mint a duplicate/clashing rule ---------------
+
+const existingRule = (categoryId: string) => [{ id: 'existing', pattern: 'COLES', categoryId, isNew: false }];
+
+it('[WHIT-355] applyCategory(all) does NOT create a second rule when an identical one exists (duplicate), but still files charges', async () => {
+  const result = mount();
+  queryClient.setQueryData(['rules'], existingRule('groceries')); // same pattern + same category
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.createEnrichment).not.toHaveBeenCalled(); // no duplicate rule minted
+  expect(cachedCategory('t1')).toBe('groceries'); // charges still filed
+  expect(cachedCategory('t2')).toBe('groceries');
+});
+
+it('[WHIT-355] applyCategory(all) neither creates nor changes a rule on a clash, and leaves the existing rule alone', async () => {
+  const result = mount();
+  queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
+  queryClient.setQueryData(['rules'], existingRule('dining')); // same pattern, DIFFERENT category
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.createEnrichment).not.toHaveBeenCalled();  // no second, fighting rule
+  expect(mockApi.updateEnrichment).not.toHaveBeenCalled();  // existing rule never silently changed
+  expect((queryClient.getQueryData(['rules']) as { categoryId: string }[])[0].categoryId).toBe('dining'); // untouched
+  expect(cachedCategory('t1')).toBe('groceries'); // the tapped charges still file where the user chose
+  expect(cachedCategory('t2')).toBe('groceries');
+});
+
+it('[WHIT-355] applyCategory(all) STILL creates a rule when no same-pattern rule exists (happy path preserved)', async () => {
+  const result = mount();
+  queryClient.setQueryData(['rules'], [{ id: 'other', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }]); // unrelated
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+});
+
 // --- WHIT-291: applyCategoryToMany (multi-select batch re-file) ------------------------------
 
 it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + invalidates', async () => {

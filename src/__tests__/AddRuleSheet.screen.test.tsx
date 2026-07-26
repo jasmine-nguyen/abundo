@@ -121,3 +121,101 @@ it('[WHIT-284] re-picking a real category after a dead one re-enables save', () 
   fireEvent.press(screen.getByText('Update rule'));
   expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'groceries');
 });
+
+// WHIT-355 — conflict/duplicate detection in the add-rule sheet.
+const NETFLIX_SUBS = { id: 'b1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false };
+
+it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', () => {
+  mockState = ruleState({ rules: [NETFLIX_SUBS] });
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  fireEvent.press(screen.getByText('Groceries')); // different category → conflict
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(screen.getByTestId('rule-conflict')).toBeTruthy();
+  expect(fns.saveManualRule).not.toHaveBeenCalled(); // nothing minted yet
+
+  fireEvent.press(screen.getByTestId('rule-conflict-replace'));
+  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries'); // retarget the surviving rule
+  expect(fns.saveManualRule).not.toHaveBeenCalled();                          // no second row
+});
+
+it('[WHIT-355] Cancel on a create conflict writes nothing and restores the submit button', () => {
+  mockState = ruleState({ rules: [NETFLIX_SUBS] });
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  fireEvent.press(screen.getByText('Groceries'));
+  fireEvent.press(screen.getByText('Add rule'));
+  fireEvent.press(screen.getByTestId('rule-conflict-cancel'));
+  expect(fns.updateRule).not.toHaveBeenCalled();
+  expect(fns.saveManualRule).not.toHaveBeenCalled();
+  expect(screen.getByTestId('rule-submit')).toBeTruthy(); // back to the normal form
+});
+
+it('[WHIT-355] an exact DUPLICATE on create no-ops (no rule minted) and closes on OK', () => {
+  mockState = ruleState({ rules: [NETFLIX_SUBS] });
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  fireEvent.press(screen.getByText('Subscriptions')); // same category → duplicate
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(screen.getByText('You already have a rule for “NETFLIX”.')).toBeTruthy();
+  expect(fns.saveManualRule).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByTestId('rule-conflict-ok'));
+  expect(fns.setSheet).toHaveBeenCalledWith(null);
+});
+
+it('[WHIT-355] creating a NON-clashing rule still saves (happy path preserved)', () => {
+  mockState = ruleState({ rules: [NETFLIX_SUBS] });
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'SPOTIFY');
+  fireEvent.press(screen.getByText('Subscriptions'));
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.saveManualRule).toHaveBeenCalledWith('SPOTIFY', 'subs');
+  expect(screen.queryByTestId('rule-conflict')).toBeNull();
+});
+
+it('[WHIT-355] editing a rule INTO a clash warns with no Replace and writes nothing', () => {
+  mockState = {
+    ...editState(),
+    rules: [
+      { id: 'e1', pattern: 'OLD', categoryId: 'subs', isNew: false },
+      { id: 'b1', pattern: 'NETFLIX', categoryId: 'groceries', isNew: false },
+    ],
+    sheet: { mode: 'addrule', ruleId: 'e1' },
+  } as AppContext;
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByDisplayValue('OLD'), 'NETFLIX'); // edit e1's pattern onto b1
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(screen.getByTestId('rule-conflict')).toBeTruthy();
+  expect(screen.queryByTestId('rule-conflict-replace')).toBeNull(); // edit path: warn only, no Replace
+  expect(fns.updateRule).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByTestId('rule-conflict-ok'));
+  expect(fns.updateRule).not.toHaveBeenCalled();
+});
+
+it('[WHIT-355] editing the pattern after a warning clears it and restores the submit button', () => {
+  mockState = ruleState({ rules: [NETFLIX_SUBS] });
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  fireEvent.press(screen.getByText('Groceries'));
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(screen.getByTestId('rule-conflict')).toBeTruthy();
+  // Change the pattern to something unique → the stale warning must clear, no Replace lingering.
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'SPOTIFY');
+  expect(screen.queryByTestId('rule-conflict')).toBeNull();
+  expect(screen.getByTestId('rule-submit')).toBeTruthy();
+  // And submitting now saves the new rule, never touching the existing NETFLIX one.
+  fireEvent.press(screen.getByText('Add rule'));
+  expect(fns.saveManualRule).toHaveBeenCalledWith('SPOTIFY', 'groceries');
+  expect(fns.updateRule).not.toHaveBeenCalled();
+});
+
+it('[WHIT-355] Replace overwrites the surviving rule with the newly-typed raw pattern', () => {
+  // Existing rule stored lowercase; user types upper-case + a different category.
+  mockState = ruleState({ rules: [{ id: 'b1', pattern: 'netflix', categoryId: 'subs', isNew: false }] });
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'NETFLIX');
+  fireEvent.press(screen.getByText('Groceries'));
+  fireEvent.press(screen.getByText('Add rule'));
+  fireEvent.press(screen.getByTestId('rule-conflict-replace'));
+  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries'); // raw NEW pattern, not 'netflix'
+});

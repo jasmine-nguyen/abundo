@@ -285,6 +285,40 @@ export function matchesRulePattern(t: Transaction, pattern: string, origin: Tran
   return t.description.toLowerCase().includes(pattern.toLowerCase());
 }
 
+// Two rule patterns are the "same rule" when they'd match the same charges. A rule matches a
+// raw `description contains value` (BankSync stores `value` verbatim), so identity PRESERVES
+// spaces — unlike normaliseMatch, which strips them for transaction sweep-variant collapse.
+// We fold only case + surrounding/internal whitespace, so `NETFLIX` == ` netflix ` and
+// `KKV  INTL` == `KKV INTL`, but `WELLBEING SERVICES` != `WELLBEINGSERVICES` (they catch
+// different descriptions, so they are NOT the same rule). Collapsing internal runs treats an
+// accidental double-space as the same rule — a deliberate convenience; the raw matcher wouldn't,
+// so at worst this over-merges a rare double-spaced variant, never a genuinely different merchant.
+function normaliseRuleIdentity(pattern: string): string {
+  return (pattern ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// A new/edited rule pattern that clashes with one the user already has.
+export type RuleConflict = { kind: 'duplicate' | 'conflict'; existing: Rule };
+
+// The first existing rule whose pattern is identity-equal to `pattern`, or null if none.
+// `duplicate` = same category (a no-op re-add); `conflict` = a different category (the two
+// would fight, order-deciding which wins). `editingId` excludes the rule being edited so a
+// rule never conflicts with itself. Pure + exported so the add-rule sheet and tests share it.
+// Deliberately exact (identity) not fuzzy: a false positive would BLOCK a legitimate new rule,
+// so near-duplicates (e.g. `KKV` vs `KKV INTERNATIONAL`) are left uncaught by design.
+export function ruleConflict(
+  rules: Rule[], pattern: string, categoryId: string, editingId?: string,
+): RuleConflict | null {
+  const target = normaliseRuleIdentity(pattern);
+  if (!target) return null;
+  for (const rule of rules) {
+    if (rule.id === editingId) continue;
+    if (normaliseRuleIdentity(rule.pattern) !== target) continue;
+    return { kind: rule.categoryId === categoryId ? 'duplicate' : 'conflict', existing: rule };
+  }
+  return null;
+}
+
 // The pay-cycle length -> its human name. Pure + exported so the provider and the
 // tests share one source of truth (rather than each reimplementing the mapping).
 export function cycleName(length: number): 'Weekly' | 'Fortnightly' | 'Monthly' {
@@ -790,26 +824,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return { ...existing, category: categoryId };
         }));
 
-      // Optimistically add the rule; a durable BankSync rule is created below.
-      // Keep its temp id so we can swap in the server id or roll it back.
-      const tempRuleId = 'tmp-' + Date.now();
-      patchRules((prev) => [
-        { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
-        ...prev,
-      ]);
-      // WHIT-292: word the toast for what actually happened, naming the count it just filed
-      // alongside the future rule. WHIT-324: the tapped charge is always in the set now, so the
-      // count is ≥ 1; the rule-only copy stays only as a defensive fallback (the rule is created
-      // either way, so it's still the right thing to say if the set were ever somehow empty).
+      // WHIT-355: don't mint a second rule when one already matches this pattern. Only CREATE a
+      // new rule when there's no existing same-pattern rule. A same-category one already does the
+      // job (duplicate) and a different-category one is a conflict we SURFACE but never silently
+      // change — this tap has no Replace/Cancel dialog, so the user resolves it in the Rules
+      // screen (mirrors the sheet, which only retargets a rule on an explicit Replace).
+      const existingRules = queryClient.getQueryData<Rule[]>(['rules']) ?? [];
+      const existingConflict = ruleConflict(existingRules, ruleValue, categoryId);
+      const makeRule = existingConflict === null;
+
+      // WHIT-292: word the toast for what actually happened, naming the count it just filed.
+      // WHIT-324: the tapped charge is always in the set now, so the count is ≥ 1; the rule-only
+      // copy stays only as a defensive fallback for a somehow-empty set.
       const merchantWord = cleanName(transaction.description);
       const sweepCount = sameMerchantIds.length;
-      let sweepToast = `Rule saved — future ${merchantWord} charges file as ${category.name}.`;
-      if (sweepCount > 0) {
-        const countWord = sweepCount === 1 ? 'transaction' : 'transactions';
+      const countWord = sweepCount === 1 ? 'transaction' : 'transactions';
+      let sweepToast: string;
+      if (existingConflict?.kind === 'conflict') {
+        // A rule already files this merchant elsewhere — file the tapped charges, but tell the
+        // user about the clash instead of adding a second, fighting rule (WHIT-355).
+        const otherName = categories.find((c) => c.id === existingConflict.existing.categoryId)?.name ?? 'another category';
+        sweepToast = sweepCount > 0
+          ? `${sweepCount} ${countWord} filed. You already have a rule filing ${merchantWord} as ${otherName} — edit it in Rules to change it.`
+          : `You already have a rule filing ${merchantWord} as ${otherName} — edit it in Rules to change it.`;
+      } else if (sweepCount > 0) {
         sweepToast = `${sweepCount} ${countWord} filed — future ${merchantWord} charges file as ${category.name}.`;
+      } else {
+        sweepToast = `Rule saved — future ${merchantWord} charges file as ${category.name}.`;
       }
       showToast(sweepToast);
       setSheet(null); // close the confirm sheet
+
+      // Optimistically add the rule ONLY when minting a new one (skip on duplicate/conflict).
+      // Keep its temp id so we can swap in the server id or roll it back.
+      const tempRuleId = 'tmp-' + Date.now();
+      if (makeRule) {
+        patchRules((prev) => [
+          { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
+          ...prev,
+        ]);
+      }
 
       // Persist the rule AND all the categorisations CONCURRENTLY. The rule hits BankSync;
       // the charges go through persistCategoryBatch (the batch endpoint, WHIT-70, chunked
@@ -818,17 +872,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // handler synchronously, so a rule failure can never float as an unhandled rejection
       // while the batch is in flight; issuing it first preserves the prior rule-before-charges
       // call order.
-      const ruleSettled = Promise.allSettled([createEnrichment({ value: ruleValue, categoryId })]);
+      const ruleSettled = makeRule
+        ? Promise.allSettled([createEnrichment({ value: ruleValue, categoryId })])
+        : null;
       const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId);
-      const [ruleOutcome] = await ruleSettled;
+      const ruleOutcome = ruleSettled ? (await ruleSettled)[0] : null;
 
-      // Reconcile the optimistic rule: swap in the real BankSync id on success (so
-      // a later delete targets the real rule), or remove it on failure.
-      if (ruleOutcome.status === 'fulfilled') {
+      // Reconcile the optimistic rule (only present when we minted one): swap in the real
+      // BankSync id on success (so a later delete targets the real rule), or remove it on failure.
+      if (ruleOutcome?.status === 'fulfilled') {
         // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
         // false for the load path, where rules genuinely aren't new).
         patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(ruleOutcome.value), isNew: true } : r)));
-      } else {
+      } else if (ruleOutcome?.status === 'rejected') {
         patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       }
       if (failedIds.length > 0) {
@@ -841,7 +897,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             return { ...existing, category: previousById.get(existing.transaction_id) ?? null };
           }));
         if (epoch === sessionEpoch.current) showToast('Could not save some categories. Please try again.');
-      } else if (ruleOutcome.status === 'rejected') {
+      } else if (ruleOutcome?.status === 'rejected') {
         // Transactions filed fine; only the future-rule failed to persist.
         if (epoch === sessionEpoch.current) showToast('Filed, but could not save the rule for future charges.');
       }

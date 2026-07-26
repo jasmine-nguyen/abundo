@@ -60,7 +60,9 @@ it("applyCategory('all') writes the minted rule into the cache with isNew:true",
   // count to budget so no batch call fires — the test is only about the minted RULE write.
   const tx = { transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01', description: 'NETFLIX', merchant_name: 'Netflix', amount: -15, account_id: 'a1', account_name: 'Everyday', category: null, status: 'posted', type: 'purchase', counts_to_budget: false } as unknown as Transaction;
   mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' });
-  seedCache({ transactions: [tx] });
+  // WHIT-355: seed a NON-matching existing rule. A same-pattern rule would now (correctly)
+  // suppress the mint as a duplicate; here the flow still mints, which is what this test locks.
+  seedCache({ transactions: [tx], rules: [{ id: 'other', pattern: 'SPOTIFY', categoryId: 'subs', isNew: false }] });
   const result = mount();
 
   act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'subs' }); });

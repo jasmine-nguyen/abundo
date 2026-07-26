@@ -4,7 +4,8 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, merchantLabel, categoryTreeRows } from '../context';
+import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict } from '../context';
+import type { RuleConflict } from '../context';
 import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
@@ -463,10 +464,64 @@ function AddRuleSheet() {
   // the selector can't resolve any id, so save stays disabled until the list arrives; the effect above
   // still keeps a valid restored id selected so it re-enables the moment the list loads).
   const canSave = pattern.trim().length > 0 && !!category(categoryId);
-  const submit = () => {
-    if (!canSave) return;
+  // WHIT-355: a pending clash with an existing rule. Local (not persisted via useSheetDraft):
+  // it's re-derived on submit, so a Face-ID lock that drops it just re-shows on the next submit.
+  const [conflict, setConflict] = useState<RuleConflict | null>(null);
+  // Editing either field invalidates a pending conflict decision: clear it so the warning can't
+  // show a stale pattern, and so its Replace button can't clobber a rule the user has moved off.
+  // Doesn't fire after submit (submit sets `conflict` without changing pattern/categoryId).
+  useEffect(() => { if (conflict) setConflict(null); }, [pattern, categoryId]);
+  const write = () => {
     if (editing) s.updateRule(editing.id, pattern, categoryId!);
     else s.saveManualRule(pattern, categoryId!);
+  };
+  const submit = () => {
+    if (!canSave) return;
+    // Stop a silent duplicate/clashing rule (WHIT-355): warn instead of minting a second row.
+    const found = ruleConflict(rules, pattern, categoryId!, editing?.id);
+    if (found) { setConflict(found); return; }
+    write();
+  };
+  // Replace is only offered when CREATING (editing is undefined): retarget the existing rule to
+  // the new pattern + category, so exactly one row survives. On the edit path a "replace" would
+  // change the OTHER rule and strand the one being edited, so edit clashes are warn + cancel only.
+  const replace = () => { if (conflict) s.updateRule(conflict.existing.id, pattern, categoryId!); };
+  const existingName = conflict ? (category(conflict.existing.categoryId)?.name ?? 'another category') : '';
+  const conflictBlock = () => {
+    if (!conflict) return null;
+    if (editing) {
+      return (
+        <View style={styles.ruleConflict} testID="rule-conflict">
+          <Text style={styles.ruleConflictText}>Another rule already matches “{pattern.trim()}”. Edit or delete that rule instead.</Text>
+          <Pressable testID="rule-conflict-ok" onPress={() => setConflict(null)} style={[styles.btn, styles.btnGhost, { marginTop: 12 }]}>
+            <Text style={styles.btnGhostText}>OK</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    if (conflict.kind === 'duplicate') {
+      return (
+        <View style={styles.ruleConflict} testID="rule-conflict">
+          <Text style={styles.ruleConflictText}>You already have a rule for “{pattern.trim()}”.</Text>
+          <Pressable testID="rule-conflict-ok" onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnGhost, { marginTop: 12 }]}>
+            <Text style={styles.btnGhostText}>OK</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.ruleConflict} testID="rule-conflict">
+        <Text style={styles.ruleConflictText}>“{pattern.trim()}” already files as {existingName}.</Text>
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+          <Pressable testID="rule-conflict-replace" onPress={replace} style={[styles.btn, { flex: 1, backgroundColor: C.accent }]}>
+            <Text style={[styles.btnPrimaryText, { color: C.accentInk }]}>Replace</Text>
+          </Pressable>
+          <Pressable testID="rule-conflict-cancel" onPress={() => setConflict(null)} style={[styles.btn, styles.btnGhost, { flex: 1 }]}>
+            <Text style={styles.btnGhostText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
   };
   return (
     <View>
@@ -498,12 +553,15 @@ function AddRuleSheet() {
           })}
         </View>
       </ScrollView>
-      <Pressable
-        onPress={submit}
-        style={[styles.btn, { marginTop: 16, backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}
-      >
-        <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{editing ? 'Update rule' : 'Add rule'}</Text>
-      </Pressable>
+      {conflict ? conflictBlock() : (
+        <Pressable
+          onPress={submit}
+          testID="rule-submit"
+          style={[styles.btn, { marginTop: 16, backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}
+        >
+          <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{editing ? 'Update rule' : 'Add rule'}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -760,6 +818,8 @@ const styles = StyleSheet.create({
   ruleCatWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   ruleCatPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1 },
   ruleCatText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600' },
+  ruleConflict: { marginTop: 16, backgroundColor: tint('#F2C94C', 0.1), borderWidth: 1, borderColor: 'rgba(242,201,76,.4)', borderRadius: 14, padding: 14 },
+  ruleConflictText: { fontFamily: FONT.body, fontSize: 13.5, color: C.textBright, lineHeight: 19 },
   cycleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 15, paddingHorizontal: 16, borderRadius: 14, borderWidth: 1 },
   cycleText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600' },
   cycleSectionLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginTop: 20, letterSpacing: 0.2 },
