@@ -615,8 +615,9 @@ export interface RulesScreenData {
 
 /**
  * The Rules screen's data — just the categorisation rules. The category taxonomy that
- * labels each rule stays on the old store (s.category) until the WHIT-192 cleanup, so a
- * categories outage degrades a rule's label to "—" rather than erroring the whole screen.
+ * labels and groups each rule is read separately via useCategories(), so a categories
+ * outage/cold-load degrades gracefully (rules collapse under one "Uncategorized" header
+ * until the taxonomy loads) rather than erroring the whole screen.
  */
 export function useRulesScreenData(): RulesScreenData {
   const authed = useIsAuthed();

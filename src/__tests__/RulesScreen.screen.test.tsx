@@ -14,7 +14,8 @@ import type { RulesScreenData } from '../queries';
 type RulesState = Pick<AppContext, 'setSheet' | 'deleteRule'> & { category: (id: string | null) => Category | undefined };
 
 let mockRules: RulesScreenData;
-jest.mock('../queries', () => ({ useRulesScreenData: () => mockRules, useCategories: () => ({ categories: [], category: mockState.category, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }) }));
+let mockCategories: Category[];
+jest.mock('../queries', () => ({ useRulesScreenData: () => mockRules, useCategories: () => ({ categories: mockCategories, category: mockState.category, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }) }));
 
 let mockState: RulesState;
 jest.mock('../context', () => {
@@ -48,10 +49,12 @@ function rulesData(over: Partial<RulesScreenData> = {}): RulesScreenData {
   };
 }
 
+const SUBS: Category = { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 };
+const COFFEE: Category = { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#e8a87c', bucket: 'Lifestyle', recent: 0 };
+
 function state(over: Partial<RulesState> = {}): RulesState {
   return {
-    category: (id: string | null) =>
-      id === 'subs' ? { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 } : undefined,
+    category: (id: string | null) => (id === 'subs' ? SUBS : id === 'coffee' ? COFFEE : undefined),
     setSheet: fns.setSheet as AppContext['setSheet'],
     deleteRule: fns.deleteRule as AppContext['deleteRule'],
     ...over,
@@ -65,6 +68,7 @@ beforeEach(() => {
   fns.refetchStale.mockClear();
   mockState = state();
   mockRules = rulesData();
+  mockCategories = [SUBS, COFFEE];
 });
 
 it('shows a loading state while rules load (nothing cached yet)', () => {
@@ -107,4 +111,72 @@ it('renders the NEW badge on a freshly-created rule (isNew survives the cache mi
   mockRules = rulesData({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: true }] as Rule[] });
   render(<Rules />);
   expect(screen.getByText('NEW')).toBeTruthy();
+});
+
+const TWO_RULES = [
+  { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false },
+  { id: 'e2', pattern: 'STARBUCKS', categoryId: 'coffee', isNew: false },
+] as Rule[];
+
+it('groups rules under their category headers', () => {
+  mockRules = rulesData({ rules: TWO_RULES });
+  render(<Rules />);
+  expect(screen.getByText('Subscriptions')).toBeTruthy();
+  expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
+  expect(screen.getByText('NETFLIX')).toBeTruthy();
+  expect(screen.getByText('STARBUCKS')).toBeTruthy();
+});
+
+it('typing in the search box filters rows and hides the emptied group', () => {
+  mockRules = rulesData({ rules: TWO_RULES });
+  render(<Rules />);
+  fireEvent.changeText(screen.getByLabelText('Search rules'), 'netflix');
+  expect(screen.getByText('NETFLIX')).toBeTruthy();
+  expect(screen.getByText('Subscriptions')).toBeTruthy();
+  // The coffee group and its rule are gone.
+  expect(screen.queryByText('STARBUCKS')).toBeNull();
+  expect(screen.queryByText('Cafes & Coffee')).toBeNull();
+});
+
+it('search matches a category name, keeping a rule whose pattern does not match', () => {
+  mockRules = rulesData({ rules: TWO_RULES });
+  render(<Rules />);
+  fireEvent.changeText(screen.getByLabelText('Search rules'), 'coffee');
+  // STARBUCKS's pattern has no "coffee", but its category "Cafes & Coffee" does.
+  expect(screen.getByText('STARBUCKS')).toBeTruthy();
+  expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
+  expect(screen.queryByText('NETFLIX')).toBeNull();
+});
+
+it('clearing the search restores the full grouped list', () => {
+  mockRules = rulesData({ rules: TWO_RULES });
+  render(<Rules />);
+  const box = screen.getByLabelText('Search rules');
+  fireEvent.changeText(box, 'netflix');
+  expect(screen.queryByText('STARBUCKS')).toBeNull();
+  fireEvent.press(screen.getByLabelText('Clear search'));
+  expect(screen.getByText('STARBUCKS')).toBeTruthy();
+  expect(screen.getByText('NETFLIX')).toBeTruthy();
+});
+
+it('shows a no-match state when the search matches nothing', () => {
+  mockRules = rulesData({ rules: TWO_RULES });
+  render(<Rules />);
+  fireEvent.changeText(screen.getByLabelText('Search rules'), 'zzznope');
+  expect(screen.getByText('No rules match “zzznope”.')).toBeTruthy();
+  expect(screen.queryByText('NETFLIX')).toBeNull();
+  expect(screen.queryByText('STARBUCKS')).toBeNull();
+});
+
+it('degrades gracefully when the taxonomy is cold: rules list under Uncategorized and stay actionable', () => {
+  mockCategories = []; // categories outage / cold-load
+  mockRules = rulesData({ rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }] as Rule[] });
+  render(<Rules />);
+  expect(screen.getByText('Uncategorized')).toBeTruthy();
+  expect(screen.getByText('NETFLIX')).toBeTruthy();
+  // still editable + deletable
+  fireEvent.press(screen.getByTestId('edit-rule-e1'));
+  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addrule', ruleId: 'e1' });
+  fireEvent.press(screen.getByTestId('delete-rule-e1'));
+  expect(fns.deleteRule).toHaveBeenCalledWith('e1');
 });

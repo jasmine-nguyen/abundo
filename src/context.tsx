@@ -2053,6 +2053,56 @@ export function categoryTreeRows(categories: Category[]): CategoryTreeRow[] {
   return rows;
 }
 
+// Header label for rules whose category no longer exists (deleted category, or the
+// taxonomy still cold-loading). Such rules are kept and grouped here, never dropped.
+export const UNCATEGORIZED_RULE_GROUP = 'Uncategorized';
+
+// One category's rules on the Rules screen. `category` is null for the orphan group
+// (rules whose categoryId matches no known category).
+export interface RuleGroup { category: Category | null; rules: Rule[]; }
+
+// Group the Rules screen's flat rule list under one header per category, filtered by an
+// optional search query. A rule is kept when the query is empty, or appears (case-
+// insensitive) in its own pattern OR its category's name. Groups with no surviving rule
+// are omitted, so an empty search collapses to nothing rather than a wall of blank
+// headers. Real categories sort A–Z by name; the orphan "Uncategorized" group is pinned
+// last. Rules keep their incoming order within a group. Pure + exported so the fast logic
+// suite tests it directly and the screen stays a thin renderer.
+export function groupRulesByCategory(
+  rules: Rule[],
+  categories: Category[],
+  query = '',
+): RuleGroup[] {
+  const byId = new Map(categories.map((category) => [category.id, category]));
+  const q = query.trim().toLowerCase();
+
+  // Preserve first-seen category order while collecting, so a stable A–Z sort below is the
+  // only ordering that matters (not Map insertion quirks).
+  const groupsByKey = new Map<string, RuleGroup>();
+  for (const rule of rules) {
+    const category = byId.get(rule.categoryId) ?? null;
+    const label = category?.name ?? UNCATEGORIZED_RULE_GROUP;
+    const matches =
+      q === '' ||
+      rule.pattern.toLowerCase().includes(q) ||
+      label.toLowerCase().includes(q);
+    if (!matches) continue;
+
+    // Orphans share one bucket keyed on null; real categories key on their id.
+    const key = category ? category.id : '\0orphan';
+    const existing = groupsByKey.get(key);
+    if (existing) existing.rules.push(rule);
+    else groupsByKey.set(key, { category, rules: [rule] });
+  }
+
+  return [...groupsByKey.values()].sort((a, b) => {
+    // Orphan group last; otherwise A–Z by category name.
+    if (a.category === null) return 1;
+    if (b.category === null) return -1;
+    return a.category.name.localeCompare(b.category.name);
+  });
+}
+
 export interface TransactionView {
   id: string; merchant: string; amountLabel: string; amountColor: string;
   isPending: boolean; icon: string; iconColor: string; chipBg: string;
