@@ -5,7 +5,7 @@
 // Pure over { transactions, category }, so it runs headlessly via makeState.
 import { describe, it, expect } from '@jest/globals';
 import { categoryTransactions, categoryBreakdown, UNCATEGORIZED_KEY } from '../context';
-import { makeState, cat, txn, spend } from './factory';
+import { makeState, cat, txn, spend, withRollup } from './factory';
 
 const cats = [
   cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' }),
@@ -90,11 +90,14 @@ describe('categoryTransactions', () => {
       cat({ id: 'food', name: 'Food', bucket: 'Living' }),
       cat({ id: 'coffee', name: 'Coffee', bucket: 'Living', parent: 'food' }),
     ];
-    const breakdown = {
-      food: spend({ posted: 30, pending: 0 }),
-      coffee: spend({ posted: 20, pending: 5 }),
-      [UNCATEGORIZED_KEY]: spend({ posted: 14, pending: 0 }),
-    };
+    const breakdown = withRollup(
+      {
+        food: spend({ posted: 30, pending: 0 }),
+        coffee: spend({ posted: 20, pending: 5 }),
+        [UNCATEGORIZED_KEY]: spend({ posted: 14, pending: 0 }),
+      },
+      { nodes: { food: { posted: 50, pending: 5 } } },  // direct 30 + coffee 25
+    );
     // The rows the server returns per drill: exact category id, or the uncategorized bucket.
     const serverRows: Record<string, ReturnType<typeof txn>[]> = {
       food: [txn({ transaction_id: 'f1', category: 'food', amount: -30, status: 'posted', date: '2026-06-10' })],
@@ -128,11 +131,14 @@ describe('categoryBreakdown drillId', () => {
       cat({ id: 'food', name: 'Food', bucket: 'Living' }),
       cat({ id: 'coffee', name: 'Coffee', bucket: 'Living', parent: 'food' }),
     ];
-    const breakdown = {
-      food: spend({ posted: 30, pending: 0 }),   // direct-in-parent → forces a __direct row
-      coffee: spend({ posted: 20, pending: 0 }),
-      [UNCATEGORIZED_KEY]: spend({ posted: 14, pending: 0 }),
-    };
+    const breakdown = withRollup(
+      {
+        food: spend({ posted: 30, pending: 0 }),   // direct-in-parent → forces a __direct row
+        coffee: spend({ posted: 20, pending: 0 }),
+        [UNCATEGORIZED_KEY]: spend({ posted: 14, pending: 0 }),
+      },
+      { nodes: { food: { posted: 50, pending: 0 } } },  // direct 30 + coffee 20
+    );
     const s = makeState({ categories: treeCats, breakdown });
     const rows = categoryBreakdown({ breakdown, category: s.category }).rows;
     expect(rows.find((r) => r.id === 'coffee')!.drillId).toBe('coffee');

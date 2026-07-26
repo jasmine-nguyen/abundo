@@ -1,18 +1,9 @@
 // WHIT-349 slice 3+4: categoryBreakdown reads the server's __rollup__ (netted parent totals +
-// refund detail) instead of tallying floored leaves on-device. When __rollup__ is ABSENT the
-// selector falls back to the on-device tally — covered by breakdown.logic.test.ts (no rollup),
-// which must stay byte-identical. This file covers the rollup-present path.
+// refund detail) to size each parent, rather than tallying floored leaves on-device. Since the
+// server always emits __rollup__ (WHIT-358), this is the only path; this file covers it.
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown } from '../context';
-import type { BreakdownRollup, CategorySpend } from '../api';
-import { makeState, cat, spend } from './factory';
-
-// Attach the runtime __rollup__ sentinel to a breakdown map (it rides in the same object the
-// server returns; the factory types `breakdown` as Record<string, CategorySpend>, so cast).
-function withRollup(bd: Record<string, CategorySpend>, rollup: BreakdownRollup): Record<string, CategorySpend> {
-  (bd as Record<string, unknown>).__rollup__ = rollup;
-  return bd;
-}
+import { makeState, cat, spend, withRollup } from './factory';
 
 const CAR_TREE = [
   cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
@@ -23,7 +14,7 @@ const CAR_TREE = [
 describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
   it('reads a parent total from the netted server node (== its Budgets bar), not floored leaves', () => {
     // petrol 60, tolls net -30 (floored to 0, dropped from the flat rows). Server node = 30.
-    // Fail-on-revert: computeCombined over floored leaves gives 60.
+    // Fail-on-revert: reading the floored leaf sum instead of the node gives 60.
     const s = makeState({
       categories: CAR_TREE,
       breakdown: withRollup(
@@ -83,7 +74,7 @@ describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
   it('a fully-refunded parent (no node) shows 0 and drops — never the floored leaf sum', () => {
     // shoes +100, clothes net -150 -> shopping subtree nets -50 -> server emits NO node for it.
     // A positive floored leaf (shoes) still pulls shopping into the tree. It must read 0 and drop
-    // (matches Budgets), not computeCombined's floored 100. Fail-on-revert: without the parent-vs-
+    // (matches Budgets), not the floored leaf sum of 100. Fail-on-revert: without the parent-vs-
     // leaf branch, shopping renders as 100.
     const s = makeState({
       categories: [
@@ -118,9 +109,8 @@ describe('categoryBreakdown — server __rollup__ (WHIT-349)', () => {
 
   it('a flat taxonomy under an empty __rollup__ renders every leaf via the server path (WHIT-358)', () => {
     // Slice 5a: a new server ALWAYS emits __rollup__, so a flat setup (no parents) arrives as
-    // {nodes: {}} — not an absent key. The selector takes the rollup path (structureSeed = the
-    // present ids), and each flat leaf reads its own floored value. Result must match what the
-    // fallback produced for the same data: every leaf a depth-0 row, total = their floored sum.
+    // {nodes: {}} — not an absent key. Each flat leaf reads its own floored value: every leaf a
+    // depth-0 row, total = their floored sum.
     const s = makeState({
       categories: [
         cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', parent: null }),

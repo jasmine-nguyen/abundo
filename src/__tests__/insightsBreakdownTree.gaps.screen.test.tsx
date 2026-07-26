@@ -61,6 +61,13 @@ const BREAKDOWN = {
   groceries: { posted: 80, pending: 0 },
   restaurants: { posted: 40, pending: 20 },
   petrol: { posted: 90, pending: 0 },
+  __rollup__: {
+    nodes: {
+      food: { posted: 120, pending: 20 },   // groceries 80 + restaurants 60
+      car: { posted: 90, pending: 0 },       // rolls up the grandchild
+      daily: { posted: 90, pending: 0 },
+    },
+  },
 };
 
 function makeClient() {

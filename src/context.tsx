@@ -1843,8 +1843,8 @@ export const EARNED_KEY = '__earned__';
 // screen test doesn't have to stub it — same as the two sentinels above.
 export const ROLLUP_KEY = '__rollup__';
 
-/** Read the __rollup__ roll-up out of a /breakdown response (undefined from an older server /
- * flat-taxonomy response / cold cache). */
+/** Read the __rollup__ roll-up out of a /breakdown response. Since WHIT-358 the server always
+ * emits it, so `undefined` means only a pre-WHIT-358 server or a cold `{}` cache before first fetch. */
 export function readRollup(breakdown: Record<string, CategorySpend>): BreakdownRollup | undefined {
   return (breakdown as Record<string, unknown>)[ROLLUP_KEY] as BreakdownRollup | undefined;
 }
@@ -1884,12 +1884,13 @@ export interface CategoryBreakdownInput {
 // A flat taxonomy (no parents) is byte-identical to the old per-leaf list: every row is
 // depth 0 with no children, sorted highest-first.
 export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBreakdownRow[]; total: number } {
-  // The server-owned netted parent roll-up (WHIT-349), when present: `nodes[id]` is a parent's
-  // netted subtree spend (== its /budgets bar), `refunds[parent]` the hidden net-refunded members.
-  // Absent from an older server / a flat-taxonomy response / a cold cache -> fall back to the
-  // on-device tally below (which nets identically for flat data; removed in a later slice).
-  const rollup = readRollup(s.breakdown);
-  const nodes = rollup?.nodes;
+  // The server-owned netted parent roll-up: `nodes[id]` is a parent's netted subtree spend
+  // (== its /budgets bar), `refunds[parent]` the hidden net-refunded members. Since WHIT-358 the
+  // server ALWAYS emits __rollup__ (empty `{nodes:{}}` for a flat taxonomy or a no-spend window),
+  // so a missing key now means only a cold `{}` cache before first fetch — defaulted to empty nodes
+  // so it still renders flat (leaves read their floored flat value; total = the depth-0 sum).
+  const rollup: BreakdownRollup = readRollup(s.breakdown) ?? { nodes: {} };
+  const nodes = rollup.nodes;
   const ZERO = { posted: 0, pending: 0 };
   // Direct (own) spend per resolved id, from the server's per-category breakdown. `present` is
   // every real-category id in the breakdown INCLUDING net-refunded ones floored to {0,0} — under
@@ -1909,12 +1910,11 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     if (spend.posted + spend.pending > 0) direct.set(id, { posted: spend.posted, pending: spend.pending });
   }
 
-  // Row set: the tree-shape ids PLUS every taxonomy ancestor. Under the roll-up, seed from `present`
-  // (so a refund-only {0,0} sub still marks its parent as a parent); without it, seed from `direct`
-  // for a byte-identical fallback. Cycle-guarded.
-  const structureSeed = rollup ? present : new Set(direct.keys());
-  const inRow = new Set<string>(structureSeed);
-  for (const id of structureSeed) {
+  // Row set: the tree-shape ids PLUS every taxonomy ancestor. Seed from `present` — every real
+  // breakdown id, INCLUDING a net-refunded {0,0} sub — so a parent whose only sub was refund-only
+  // this cycle is still recognised as a parent (reads its node, not its own floored spend). Cycle-guarded.
+  const inRow = new Set<string>(present);
+  for (const id of present) {
     const seen = new Set<string>();
     let pid = s.category(id)?.parent ?? null;
     while (pid && !seen.has(pid) && s.category(pid)) {
@@ -1944,23 +1944,6 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     if (nearest !== null) { const k = childIds.get(nearest); if (k) k.push(id); else childIds.set(nearest, [id]); }
   }
 
-  // Combined (own + all descendants) posted/pending, memoised over the tree.
-  const combined = new Map<string, { posted: number; pending: number }>();
-  const computeCombined = (id: string): { posted: number; pending: number } => {
-    const memo = combined.get(id);
-    if (memo) return memo;
-    const own = direct.get(id) ?? { posted: 0, pending: 0 };
-    let posted = own.posted, pending = own.pending;
-    combined.set(id, { posted, pending });  // seed first: guards a corrupt cycle from recursing forever
-    for (const child of childIds.get(id) ?? []) {
-      const cc = computeCombined(child);
-      posted += cc.posted; pending += cc.pending;
-    }
-    const res = { posted, pending };
-    combined.set(id, res);
-    return res;
-  };
-
   const mk = (id: string, name: string, color: string, icon: string, chipBg: string,
               posted: number, pending: number, depth: number, parentId: string | null,
               hasChildren: boolean, uncat: boolean, drillId: string): CategoryBreakdownRow => {
@@ -1970,11 +1953,11 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
       pct: 0, uncategorized: uncat, depth, parentId, hasChildren, drillId };
   };
 
-  // Build every row (a parent carries its netted node total under the server roll-up, else its
-  // combined tally), plus a synthetic "Directly in <name>" leaf under any parent that ALSO holds
-  // its own directly-tagged spend. With the roll-up, an expanded subtree reconciles to the parent
-  // node as: floored children + "Directly in X" + refund line(s) == node (WHIT-349); the refund
-  // lines are appended after this loop.
+  // Build every row (a parent carries its netted server node total; an absent node -> ZERO ->
+  // dropped below), plus a synthetic "Directly in <name>" leaf under any parent that ALSO holds
+  // its own directly-tagged spend. An expanded subtree reconciles to the parent node as: floored
+  // children + "Directly in X" + refund line(s) == node (WHIT-349); the refund lines are appended
+  // after this loop.
   const rowById = new Map<string, CategoryBreakdownRow>();
   const emitChildren = new Map<string | null, string[]>();
   const pushEmit = (p: string | null, id: string) => {
@@ -1987,12 +1970,9 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     const isParent = (childIds.get(id)?.length ?? 0) > 0;
     // WHIT-349: a PARENT reads its NETTED server node (== its /budgets bar); an absent node means
     // the subtree netted <= 0, so ZERO -> dropped below (matches Budgets), never the floored leaf
-    // sum. A LEAF has no node -> its own floored spend. `nodes![id]` is a RUNTIME-missing guard
-    // (noUncheckedIndexedAccess is off, so it types as present), hence `?? ZERO`. When the server
-    // sent no rollup, fall back to the on-device combined tally (byte-identical to pre-WHIT-349).
-    const comb = rollup
-      ? (isParent ? (nodes![id] ?? ZERO) : (direct.get(id) ?? ZERO))
-      : computeCombined(id);
+    // sum. A LEAF has no node -> its own floored spend. `nodes[id]` is a RUNTIME-missing guard
+    // (noUncheckedIndexedAccess is off, so it types as present), hence `?? ZERO`.
+    const comb = isParent ? (nodes[id] ?? ZERO) : (direct.get(id) ?? ZERO);
     // Drop a zero-combined row: an ancestor pulled in only to be skipped by the same-bucket
     // guard (a corrupt cross-bucket link), or a fully-refunded parent whose node is <= 0 (WHIT-349),
     // would otherwise render as a phantom $0 parent. A dropped parent's own positive floored child
@@ -2021,7 +2001,7 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
   // WHIT-349: a display-only "refund" line under each surviving parent for its hidden net-
   // refunded members, so an expanded parent's visible rows (floored children + "Directly in X"
   // + refund lines) sum to its netted node. `spent` is negative; excluded from the donut + hero.
-  if (rollup?.refunds) {
+  if (rollup.refunds) {
     for (const [parentId, lines] of Object.entries(rollup.refunds)) {
       if (!rowById.has(parentId)) continue;  // parent didn't render — nothing to attach to
       const parentDepth = rowById.get(parentId)!.depth;
@@ -2040,18 +2020,12 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     }
   }
 
-  // Total = the netted cycle spend. With the server roll-up, sum each depth-0 NON-refund row's
-  // `spent` — a parent node already includes its whole subtree, so summing every node (or a node
-  // plus its flat leaves) would double-count; refund lines are display-only. Without a roll-up,
-  // keep the pre-WHIT-349 per-leaf sum (each transaction lands on exactly one id). pct is each
-  // (non-refund) row's share of that grand total.
+  // Total = the netted cycle spend: sum each depth-0 NON-refund row's `spent`. A parent node already
+  // includes its whole subtree, so summing every node (or a node plus its flat leaves) would double-
+  // count; refund lines are display-only. Uncategorized is itself a depth-0 row, so it's counted here.
+  // pct is each (non-refund) row's share of that grand total.
   let total = 0;
-  if (rollup) {
-    for (const row of rowById.values()) if (row.depth === 0 && !row.isRefund) total += row.spent;
-  } else {
-    for (const v of direct.values()) total += v.posted + v.pending;
-    if (uncategorized) total += uncategorized.posted + uncategorized.pending;
-  }
+  for (const row of rowById.values()) if (row.depth === 0 && !row.isRefund) total += row.spent;
   for (const row of rowById.values()) row.pct = total > 0 && !row.isRefund ? (row.spent / total) * 100 : 0;
 
   // Emit depth-first, siblings sorted by spent desc; an emitted-guard + trailing sweep

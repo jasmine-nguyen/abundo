@@ -2,9 +2,9 @@
 // The selectors (budgetViews, transactionView, budgetDetail, ...) only read a
 // handful of AppContext fields, so we build just those and cast — no provider,
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
-import { cycleName } from '../context';
+import { cycleName, ROLLUP_KEY } from '../context';
 import type { Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
-import type { AiGoalSignal, CategorySpend, LoanFacts, Repayment } from '../api';
+import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
 
 // Narrow an AiGoalSignal to the payoff arm (partial/flat/ahead), so payoff-arm tests
@@ -45,6 +45,15 @@ export function budget(over: Partial<Budget> = {}): Budget {
 
 export function spend(over: Partial<CategorySpend> = {}): CategorySpend {
   return { posted: 40, pending: 10, ...over };
+}
+
+// Attach the server's __rollup__ sentinel to a breakdown map (it rides in the same object
+// the server returns; the map is typed Record<string, CategorySpend>, so cast). Since WHIT-358
+// the server always sends this, so a fixture exercising categoryBreakdown's parent path supplies
+// the netted parent nodes here rather than relying on any on-device tally.
+export function withRollup(breakdown: Record<string, CategorySpend>, rollup: BreakdownRollup): Record<string, CategorySpend> {
+  (breakdown as Record<string, unknown>)[ROLLUP_KEY] = rollup;
+  return breakdown;
 }
 
 const GOAL: Goal = {

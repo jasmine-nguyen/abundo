@@ -4,7 +4,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown, UNCATEGORIZED_KEY, EARNED_KEY } from '../context';
 import { C } from '../theme';
-import { makeState, cat, spend } from './factory';
+import { makeState, cat, spend, withRollup } from './factory';
 
 const cats = [
   cat({ id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C' }),
@@ -169,10 +169,13 @@ describe('categoryBreakdown — parent rollup + drill-down', () => {
   it('rolls a parent up over its children and de-dups the total', () => {
     const s = makeState({
       categories: tree,
-      breakdown: {
-        groceries: spend({ posted: 80, pending: 0 }),   // 80
-        restaurants: spend({ posted: 40, pending: 20 }), // 60
-      },
+      breakdown: withRollup(
+        {
+          groceries: spend({ posted: 80, pending: 0 }),   // 80
+          restaurants: spend({ posted: 40, pending: 20 }), // 60
+        },
+        { nodes: { food: { posted: 120, pending: 20 } } },  // netted parent = 140
+      ),
     });
     const { rows, total } = categoryBreakdown(s);
     const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
@@ -196,10 +199,13 @@ describe('categoryBreakdown — parent rollup + drill-down', () => {
         cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
         cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' }),
       ],
-      breakdown: {
-        car: spend({ posted: 40, pending: 0 }),      // tagged directly to the parent
-        parking: spend({ posted: 60, pending: 0 }),
-      },
+      breakdown: withRollup(
+        {
+          car: spend({ posted: 40, pending: 0 }),      // tagged directly to the parent
+          parking: spend({ posted: 60, pending: 0 }),
+        },
+        { nodes: { car: { posted: 100, pending: 0 } } },  // netted parent = direct 40 + parking 60
+      ),
     });
     const { rows, total } = categoryBreakdown(s);
     const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
@@ -217,7 +223,10 @@ describe('categoryBreakdown — parent rollup + drill-down', () => {
         cat({ id: 'daily', name: 'Daily', bucket: 'Living', parent: 'car' }),
         cat({ id: 'petrol', name: 'Petrol', bucket: 'Living', parent: 'daily' }),
       ],
-      breakdown: { petrol: spend({ posted: 90, pending: 0 }) },
+      breakdown: withRollup(
+        { petrol: spend({ posted: 90, pending: 0 }) },
+        { nodes: { car: { posted: 90, pending: 0 }, daily: { posted: 90, pending: 0 } } },
+      ),
     });
     const { rows, total } = categoryBreakdown(s);
     expect(rows.map((r) => [r.id, r.depth])).toEqual([['car', 0], ['daily', 1], ['petrol', 2]]);
@@ -247,11 +256,13 @@ describe('categoryBreakdown — parent rollup + drill-down', () => {
         cat({ id: 'a', name: 'A', bucket: 'Living', parent: 'b' }),
         cat({ id: 'b', name: 'B', bucket: 'Living', parent: 'a' }),
       ],
-      breakdown: { a: spend({ posted: 25, pending: 0 }) },
+      breakdown: withRollup(
+        { a: spend({ posted: 25, pending: 0 }) },
+        { nodes: { a: { posted: 25, pending: 0 } } },
+      ),
     });
-    const { rows, total } = categoryBreakdown(s);  // must not hang
-    expect(rows.some((r) => r.id === 'a')).toBe(true);
-    expect(total).toBeGreaterThan(0);
+    const { rows } = categoryBreakdown(s);  // must not hang
+    expect(rows.some((r) => r.id === 'a' && r.spent === 25)).toBe(true);
   });
 
   it('never renders the __earned__ bucket as a spend row nor adds it to the total (WHIT-312)', () => {

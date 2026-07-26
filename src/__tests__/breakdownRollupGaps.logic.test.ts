@@ -183,21 +183,4 @@ describe('categoryBreakdown — WHIT-349 refund GAPs', () => {
     expect(byId['tolls__refund']).toMatchObject({ isRefund: true, spent: -30 });
     expect(total).toBe(55);                            // 30 (car node) + 25 (uncat); refund excluded
   });
-
-  it('[G6] fallback (no __rollup__) is byte-identical to the pre-WHIT-349 on-device tally', () => {
-    // The SAME refunded-sub fixture through the OLD path (no __rollup__): the parent reads its
-    // combined floored-leaf tally (petrol 60 + tolls 0 = 60, NOT the netted 30), and NO refund
-    // line is emitted. This guards the fallback branch. Fail-on-revert: break the `: computeCombined`
-    // arm and the parent no longer reads 60.
-    const s = makeState({
-      categories: CAR_TREE,
-      breakdown: { petrol: spend({ posted: 60, pending: 0 }), tolls: spend({ posted: 0, pending: 0 }) },
-    });
-    const { rows, total } = categoryBreakdown(s);
-    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-    expect(byId['car']).toMatchObject({ spent: 60, depth: 0 });   // floored-leaf combined, pre-change
-    expect(byId['petrol']).toMatchObject({ spent: 60, depth: 1 });
-    expect(rows.find((r) => r.isRefund)).toBeUndefined();          // no refund lines without a rollup
-    expect(total).toBe(60);                                        // per-leaf sum, unchanged
-  });
 });
