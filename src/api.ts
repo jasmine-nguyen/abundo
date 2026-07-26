@@ -208,6 +208,25 @@ export interface CategorySpend {
   pending: number;  // not-yet-settled (pending) spend
 }
 
+/** One hidden net-refunded member under a parent — `amount` is negative (WHIT-349). */
+export interface RefundLine {
+  id: string;       // the refunded member's category id (a tap drills into its transactions)
+  amount: number;   // its combined signed net, < 0
+}
+
+/**
+ * The server-owned Insights parent roll-up carried under the __rollup__ key in a /breakdown
+ * response (WHIT-349). `nodes[id]` is a parent's NETTED subtree spend (aggregate-then-clamp;
+ * equals its /budgets bar). `refunds[parentId]` lists the members whose net is negative and
+ * hidden from the flat rows, so the client can render a "refund" line and an expanded parent
+ * still sums to its node. `refunds` absent when none. Read via `readRollup` in context.ts (the
+ * ROLLUP_KEY sentinel lives there alongside UNCATEGORIZED_KEY/EARNED_KEY).
+ */
+export interface BreakdownRollup {
+  nodes: Record<string, CategorySpend>;
+  refunds?: Record<string, RefundLine[]>;
+}
+
 /**
  * Fetch spend by category for the current pay cycle (WHIT-23) — every category
  * with spend this cycle, plus the special "__uncategorized__" bucket for spend

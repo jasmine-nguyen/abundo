@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -1836,6 +1836,19 @@ export const UNCATEGORIZED_KEY = '__uncategorized__';
 // row. Mirrors EARNED_KEY in lambda_api/constants.py.
 export const EARNED_KEY = '__earned__';
 
+// The sentinel key the /breakdown endpoint uses for the server-owned parent roll-up (WHIT-349):
+// netted parent totals + refund detail. It rides in the same map as the per-category spend but
+// has a different shape, so it's read via `readRollup`, not the index type. Mirrors ROLLUP_KEY
+// in lambda_api/constants.py. Defined here (not imported from ./api) so mocking ./api in a
+// screen test doesn't have to stub it — same as the two sentinels above.
+export const ROLLUP_KEY = '__rollup__';
+
+/** Read the __rollup__ roll-up out of a /breakdown response (undefined from an older server /
+ * flat-taxonomy response / cold cache). */
+export function readRollup(breakdown: Record<string, CategorySpend>): BreakdownRollup | undefined {
+  return (breakdown as Record<string, unknown>)[ROLLUP_KEY] as BreakdownRollup | undefined;
+}
+
 export interface CategoryBreakdownRow {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spent: number; posted: number; pending: number;
@@ -1850,6 +1863,9 @@ export interface CategoryBreakdownRow {
   // whose direct spend the row shows), so the drill filter is a clean `t.category === drillId`
   // with no id string-parsing. Unused on parent rows (they expand, they don't drill).
   drillId: string;
+  // WHIT-349: a display-only "refund" line under an expanded parent for a net-refunded member
+  // hidden from the flat rows. `spent` is NEGATIVE; never a donut slice, never in the hero total.
+  isRefund?: boolean;
 }
 
 // The exact slice categoryBreakdown reads. A narrow input (not the whole AppContext) so
@@ -1868,21 +1884,37 @@ export interface CategoryBreakdownInput {
 // A flat taxonomy (no parents) is byte-identical to the old per-leaf list: every row is
 // depth 0 with no children, sorted highest-first.
 export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBreakdownRow[]; total: number } {
-  // Direct (own) spend per resolved id, from the server's per-category breakdown.
+  // The server-owned netted parent roll-up (WHIT-349), when present: `nodes[id]` is a parent's
+  // netted subtree spend (== its /budgets bar), `refunds[parent]` the hidden net-refunded members.
+  // Absent from an older server / a flat-taxonomy response / a cold cache -> fall back to the
+  // on-device tally below (which nets identically for flat data; removed in a later slice).
+  const rollup = readRollup(s.breakdown);
+  const nodes = rollup?.nodes;
+  const ZERO = { posted: 0, pending: 0 };
+  // Direct (own) spend per resolved id, from the server's per-category breakdown. `present` is
+  // every real-category id in the breakdown INCLUDING net-refunded ones floored to {0,0} — under
+  // the roll-up those still define the tree shape, so a parent whose only sub was refund-only this
+  // cycle is still recognised as a parent (and reads its node, not its own floored spend — WHIT-349).
   const direct = new Map<string, { posted: number; pending: number }>();
+  const present = new Set<string>();
   let uncategorized: { posted: number; pending: number } | null = null;
   for (const [id, spend] of Object.entries(s.breakdown)) {
-    if (spend.posted + spend.pending <= 0) continue;
-    if (id === UNCATEGORIZED_KEY) { uncategorized = { posted: spend.posted, pending: spend.pending }; continue; }
-    if (id === EARNED_KEY) continue;  // the total-earned bucket is not a spend row (WHIT-312)
+    if (id === ROLLUP_KEY || id === EARNED_KEY) continue;  // sentinels, not spend rows (WHIT-312/349)
+    if (id === UNCATEGORIZED_KEY) {
+      if (spend.posted + spend.pending > 0) uncategorized = { posted: spend.posted, pending: spend.pending };
+      continue;
+    }
     if (!s.category(id)) continue;  // a real id the taxonomy doesn't know — skip defensively
-    direct.set(id, { posted: spend.posted, pending: spend.pending });
+    present.add(id);
+    if (spend.posted + spend.pending > 0) direct.set(id, { posted: spend.posted, pending: spend.pending });
   }
 
-  // Row set: every id with direct spend PLUS every taxonomy ancestor of those ids, so a
-  // parent with no direct spend but a spending child still gets a row. Cycle-guarded.
-  const inRow = new Set<string>(direct.keys());
-  for (const id of direct.keys()) {
+  // Row set: the tree-shape ids PLUS every taxonomy ancestor. Under the roll-up, seed from `present`
+  // (so a refund-only {0,0} sub still marks its parent as a parent); without it, seed from `direct`
+  // for a byte-identical fallback. Cycle-guarded.
+  const structureSeed = rollup ? present : new Set(direct.keys());
+  const inRow = new Set<string>(structureSeed);
+  for (const id of structureSeed) {
     const seen = new Set<string>();
     let pid = s.category(id)?.parent ?? null;
     while (pid && !seen.has(pid) && s.category(pid)) {
@@ -1938,9 +1970,11 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
       pct: 0, uncategorized: uncat, depth, parentId, hasChildren, drillId };
   };
 
-  // Build every row (parents carry combined totals), plus a synthetic "Directly in <name>"
-  // leaf under any parent that ALSO holds its own directly-tagged spend, so an expanded
-  // subtree always reconciles to the parent bar (a txn can be filed onto a parent).
+  // Build every row (a parent carries its netted node total under the server roll-up, else its
+  // combined tally), plus a synthetic "Directly in <name>" leaf under any parent that ALSO holds
+  // its own directly-tagged spend. With the roll-up, an expanded subtree reconciles to the parent
+  // node as: floored children + "Directly in X" + refund line(s) == node (WHIT-349); the refund
+  // lines are appended after this loop.
   const rowById = new Map<string, CategoryBreakdownRow>();
   const emitChildren = new Map<string | null, string[]>();
   const pushEmit = (p: string | null, id: string) => {
@@ -1950,9 +1984,20 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     const c = s.category(id)!;
     const parentId = parentOf.get(id) ?? null;
     const depth = depthOf.get(id)!;
-    const comb = computeCombined(id);
+    const isParent = (childIds.get(id)?.length ?? 0) > 0;
+    // WHIT-349: a PARENT reads its NETTED server node (== its /budgets bar); an absent node means
+    // the subtree netted <= 0, so ZERO -> dropped below (matches Budgets), never the floored leaf
+    // sum. A LEAF has no node -> its own floored spend. `nodes![id]` is a RUNTIME-missing guard
+    // (noUncheckedIndexedAccess is off, so it types as present), hence `?? ZERO`. When the server
+    // sent no rollup, fall back to the on-device combined tally (byte-identical to pre-WHIT-349).
+    const comb = rollup
+      ? (isParent ? (nodes![id] ?? ZERO) : (direct.get(id) ?? ZERO))
+      : computeCombined(id);
     // Drop a zero-combined row: an ancestor pulled in only to be skipped by the same-bucket
-    // guard (a corrupt cross-bucket link) would otherwise render as a phantom $0 parent.
+    // guard (a corrupt cross-bucket link), or a fully-refunded parent whose node is <= 0 (WHIT-349),
+    // would otherwise render as a phantom $0 parent. A dropped parent's own positive floored child
+    // then becomes a depth>=1 orphan (its parentId points at the absent parent): the screen never
+    // reveals a child whose parent isn't shown, and the hero sums depth-0 only, so it stays hidden.
     if (comb.posted + comb.pending <= 0) continue;
     const kids = childIds.get(id) ?? [];
     const own = direct.get(id) ?? { posted: 0, pending: 0 };
@@ -1973,13 +2018,41 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     pushEmit(null, UNCATEGORIZED_KEY);
   }
 
-  // Total de-dup: sum the DIRECT (per-leaf) spend + uncategorized — each transaction lands
-  // on exactly one id, so this counts every one once, whatever the tree shape (immune to a
-  // corrupt cycle that would leave no root). pct is each row's share of that grand total.
+  // WHIT-349: a display-only "refund" line under each surviving parent for its hidden net-
+  // refunded members, so an expanded parent's visible rows (floored children + "Directly in X"
+  // + refund lines) sum to its netted node. `spent` is negative; excluded from the donut + hero.
+  if (rollup?.refunds) {
+    for (const [parentId, lines] of Object.entries(rollup.refunds)) {
+      if (!rowById.has(parentId)) continue;  // parent didn't render — nothing to attach to
+      const parentDepth = rowById.get(parentId)!.depth;
+      for (const line of lines) {
+        const rc = s.category(line.id);
+        const color = rc?.color ?? C.purple;
+        const rId = `${line.id}__refund`;
+        rowById.set(rId, {
+          id: rId, name: rc?.name ?? 'Refund', color, icon: rc?.icon ?? 'q', chipBg: tint(color, 0.15),
+          spent: line.amount, posted: line.amount, pending: 0,
+          spentLabel: `refund ${fmt(line.amount)}`, pct: 0, uncategorized: false,
+          depth: parentDepth + 1, parentId, hasChildren: false, drillId: line.id, isRefund: true,
+        });
+        pushEmit(parentId, rId);
+      }
+    }
+  }
+
+  // Total = the netted cycle spend. With the server roll-up, sum each depth-0 NON-refund row's
+  // `spent` — a parent node already includes its whole subtree, so summing every node (or a node
+  // plus its flat leaves) would double-count; refund lines are display-only. Without a roll-up,
+  // keep the pre-WHIT-349 per-leaf sum (each transaction lands on exactly one id). pct is each
+  // (non-refund) row's share of that grand total.
   let total = 0;
-  for (const v of direct.values()) total += v.posted + v.pending;
-  if (uncategorized) total += uncategorized.posted + uncategorized.pending;
-  for (const row of rowById.values()) row.pct = total > 0 ? (row.spent / total) * 100 : 0;
+  if (rollup) {
+    for (const row of rowById.values()) if (row.depth === 0 && !row.isRefund) total += row.spent;
+  } else {
+    for (const v of direct.values()) total += v.posted + v.pending;
+    if (uncategorized) total += uncategorized.posted + uncategorized.pending;
+  }
+  for (const row of rowById.values()) row.pct = total > 0 && !row.isRefund ? (row.spent / total) * 100 : 0;
 
   // Emit depth-first, siblings sorted by spent desc; an emitted-guard + trailing sweep
   // keep a corrupt cycle from dropping or duplicating a row.

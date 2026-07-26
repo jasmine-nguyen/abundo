@@ -1188,7 +1188,45 @@ def list_category_breakdown(
         if folded["posted"] > 0 or folded["pending"] > 0:
             nodes[parent_id] = folded
     if nodes:
-        result[ROLLUP_KEY] = {"nodes": nodes}
+        rollup = {"nodes": nodes}
+        # Per-parent refund detail (WHIT-349): the members whose signed net is negative and are
+        # therefore HIDDEN from the flat rows (floored to 0), so the client can show a "refund"
+        # line and an expanded parent's rows still sum to its netted node. A member is either the
+        # parent's OWN direct spend, or a same-bucket direct child whose whole subtree nets < 0
+        # (it collapses — no node, dropped on the client). `amount` is the single negative combined
+        # net, keyed under the direct child (or the parent itself). Additive; absent when empty.
+        # A member gets a refund line only if it is FULLY HIDDEN — its own per-id floored value is
+        # {0,0} (posted <= 0 AND pending <= 0). A member still shown as a flat row (e.g. a settled
+        # refund in `posted` alongside a new `pending` charge -> floored {0, +x}) must NOT also get a
+        # refund line, or it would appear twice. (The rare posted-vs-pending sign split then can't
+        # fully reconcile the expanded list — the node clamps each bucket independently — but the
+        # donut/bar total is always exactly the node; tracked as a follow-up.)
+        def _hidden(sig):
+            return sig is None or (sig["posted"] <= 0 and sig["pending"] <= 0)
+
+        refunds = {}
+        for parent_id in nodes:
+            lines = []
+            own = per_id_signed.get(parent_id)
+            if own is not None and _hidden(own) and own["posted"] + own["pending"] < 0:
+                lines.append({"id": parent_id, "amount": own["posted"] + own["pending"]})
+            for child_id in children.get(parent_id, []):
+                if bucket_by_id.get(child_id) != bucket_by_id.get(parent_id):
+                    continue  # cross-bucket child isn't part of this parent's subtree
+                if not _hidden(per_id_signed.get(child_id)):
+                    continue  # the child still shows as its own flat row — not also a refund line
+                child_net = sum(
+                    (per_id_signed[cid]["posted"] + per_id_signed[cid]["pending"]
+                     for cid in subtree_ids(child_id, children, bucket_by_id) if cid in per_id_signed),
+                    Decimal(0),
+                )
+                if child_net < 0:  # net-positive/zero children show as their own rows, not refunds
+                    lines.append({"id": child_id, "amount": child_net})
+            if lines:
+                refunds[parent_id] = lines
+        if refunds:
+            rollup["refunds"] = refunds
+        result[ROLLUP_KEY] = rollup
     return result
 
 
