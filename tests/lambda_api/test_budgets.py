@@ -1313,14 +1313,17 @@ def test_pending_posted_mix_folds_across_leaves(handler):
     assert result == {"car": {"target": Decimal("300"), "posted": Decimal("75"), "pending": Decimal("25")}}
 
 
-def test_income_clawback_on_one_leaf_clamps_at_zero(handler):
-    # [A22] a clawback netting ONE income leaf negative clamps that leaf at 0 without
-    # dragging down a sibling leaf's positive earnings; parent stays >= 0.
+def test_income_clawback_on_one_leaf_nets_into_parent(handler):
+    # WHIT-343 (aggregate-then-clamp, income side): a clawback netting ONE income leaf
+    # negative now nets against a sibling's earnings across the subtree before the floor,
+    # so the earn-target reads the TRUE net earned — matching the /budgets screen. salary
+    # 4000 + side (250 - 1000 = -750) = 3250 -> clamp once -> 3250 (still never negative).
+    # Fail-on-revert (per-id clamp): side floors to 0 -> 4000.
     budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("salary", 4000, "posted"),
         _transaction("side", 250, "posted"),
-        _transaction("side", -1000, "posted"),  # net -750 on `side` -> clamp 0
+        _transaction("side", -1000, "posted"),  # net -750 on `side`
     ])
     category_repo = FakeCategoryRepo(categories=[
         {"id": "income", "bucket": "Income", "parent": None},
@@ -1330,8 +1333,8 @@ def test_income_clawback_on_one_leaf_clamps_at_zero(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    # salary 4000 + side clamped to 0 = 4000 (never 3250, never negative).
-    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("0")}}
+    # salary 4000 + side net -750 = 3250 (nets across the subtree, then clamped once).
+    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("3250"), "pending": Decimal("0")}}
 
 
 def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
@@ -1461,12 +1464,13 @@ def test_corrupt_cross_bucket_income_child_excluded_from_spend_parent(handler):
 # ===========================================================================
 
 
-def test_list_budgets_parent_direct_refund_clamps_at_parent_id_not_sibling(handler):
-    # A refund (POSITIVE amount) tagged DIRECTLY onto the parent `car` must clamp at
-    # car's OWN id (>=0) and must NOT bleed a negative into a sibling leaf's spend.
-    # parking -60 (leaf) + car +100 refund (direct). Correct: car-id clamps to 0 -> fold
-    # = 60. WHIT-228 is the first time the parent id itself is summarised, so its per-id
-    # clamp is newly load-bearing. Fail-on-revert of the clamp in _summarise -> car -40.
+def test_list_budgets_parent_direct_refund_reduces_whole_budget(handler):
+    # WHIT-343 (aggregate-then-clamp): a refund (POSITIVE amount) tagged DIRECTLY onto the
+    # parent `car` now nets against the whole subtree BEFORE the floor, so it reduces the
+    # budget's total (it no longer clamps at car's own id and spare the sibling's spend).
+    # parking -60 (leaf, +60) + car +100 refund (direct, -100): fold = 60 + (-100) = -40 ->
+    # clamp once -> 0. Fail-on-revert (per-id clamp restored): car clamps to 0 pre-fold ->
+    # 60 + 0 = 60, so this asserts 0 only under aggregate-then-clamp.
     budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -60, "posted"),
@@ -1479,7 +1483,65 @@ def test_list_budgets_parent_direct_refund_clamps_at_parent_id_not_sibling(handl
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("60"), "pending": Decimal("0")}}
+    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("0"), "pending": Decimal("0")}}
+
+
+def test_list_budgets_net_positive_subtree_header_matches_signed_rows(handler):
+    # WHIT-343 headline: a net-NEGATIVE sibling inside a net-POSITIVE subtree. Before, each
+    # id floored at 0 pre-fold, so the header summed parking 50 + fuel 0 = 50 while the
+    # transaction list (signed) summed 30 -> the header read HIGHER than its own rows.
+    # Aggregate-then-clamp folds 50 + (-20) = 30, clamped once -> 30 = the signed row sum.
+    # Fail-on-revert (per-id clamp): fuel's refund floors to 0 -> header 50 != 30.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    txns = [
+        _transaction("parking", -50, "posted"),   # a $50 charge
+        _transaction("fuel", 20, "posted"),        # a $20 refund on a sibling leaf
+    ]
+    txn_repo = FakeTransactionRepo(transactions=txns)
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "fuel", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["car"] == {"target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")}
+    # The card's promise: the header equals the signed spend of the rows the list shows
+    # (spend is -amount), i.e. the number a user eyeballs from the transaction list.
+    signed_row_total = sum((Decimal(str(-t["amount"])) for t in txns), Decimal(0))
+    assert result["car"]["posted"] + result["car"]["pending"] == signed_row_total
+
+
+def test_budget_rollup_agrees_across_screen_and_ai_paths(handler):
+    # WHIT-343 invariant: /budgets (the screen) and _budgeted_parent_rollup (the AI summary)
+    # MUST report the same subtree spend for the same data, so an insight/alert can never
+    # disagree with the screen. Car = petrol 60 + tolls (50 - 80 refund = -30) = 30 under
+    # aggregate-then-clamp. Fail-on-revert (per-id clamp): tolls floors to 0 -> both read 60.
+    txns = [
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", -50, "posted"),
+        _transaction("tolls", 80, "posted"),      # refund larger than tolls' own spend
+    ]
+    categories = [
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "petrol", "bucket": "Living", "parent": "car"},
+        {"id": "tolls", "bucket": "Living", "parent": "car"},
+    ]
+
+    screen = handler.list_budgets(
+        FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}}),
+        FakeTransactionRepo(transactions=txns), FakePayCycleRepo(),
+        FakeCategoryRepo(categories=categories),
+    )["car"]
+
+    children = handler.build_category_children(categories)
+    bucket_by_id = {c["id"]: c["bucket"] for c in categories}
+    ids_by_parent = {"car": handler.subtree_ids("car", children, bucket_by_id)}
+    ai_row = handler._budgeted_parent_rollup(txns, ["car"], ids_by_parent, {"car": "Car"})[0]
+
+    assert screen["posted"] + screen["pending"] == Decimal("30")
+    assert Decimal(str(ai_row["posted"])) + Decimal(str(ai_row["pending"])) == Decimal("30")
 
 
 def test_list_budgets_parent_direct_mixed_posted_and_pending_no_leaf_spend(handler):
@@ -1587,3 +1649,148 @@ def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("0")}}
+
+
+# ===========================================================================
+# WHIT-343 QA GAP tests (aggregate-then-clamp) — adversarial edges the
+# implementer's set does NOT cover. Every WHIT-343 assertion here goes RED if the
+# per-id clamp is restored (clamp=False dropped); the regression guards go RED if
+# the single-category default clamp is flipped. Not duplicates of the 7 tests in
+# the diff.
+# ===========================================================================
+
+
+def test_wh343_gap_posted_negative_pending_positive_independent_bucket_clamp(handler):
+    # WHIT-343 x the posted/pending seam. A subtree whose POSTED bucket nets NEGATIVE
+    # (parking +50 charge, fuel +80 refund -> posted -30) but whose PENDING bucket is
+    # positive (garage +40). Aggregate-then-clamp floors each BUCKET once & independently:
+    # posted -> 0, pending -> 40. Fail-on-revert (per-id clamp): fuel's -80 floors at its
+    # own id -> posted 50, so posted==0 only holds under aggregate-then-clamp.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txns = [
+        _transaction("parking", -50, "posted"),   # +50 posted spend
+        _transaction("fuel", 80, "posted"),         # +80 refund on a sibling -> posted nets -30
+        _transaction("garage", -40, "pending"),     # +40 pending spend on a third sibling
+    ]
+    txn_repo = FakeTransactionRepo(transactions=txns)
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "fuel", "bucket": "Living", "parent": "car"},
+        {"id": "garage", "bucket": "Living", "parent": "car"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("40")}
+    # DOCUMENTED SEAM (see critique): the combined header (0+40=40) is > the TRUE signed
+    # net of the rows (-30 posted + 40 pending = 10). The posted/pending buckets floor
+    # independently, so a refund stranded in the posted bucket can't offset positive
+    # pending. This is unchanged by WHIT-343 (both buckets always floored separately).
+    combined_header = result["car"]["posted"] + result["car"]["pending"]
+    signed_net = sum((Decimal(str(-t["amount"])) for t in txns), Decimal(0))
+    assert combined_header == Decimal("40") and signed_net == Decimal("10")
+    assert combined_header > signed_net  # the seam the aggregate-then-clamp does NOT close
+
+
+def test_wh343_gap_grandchild_net_negative_nets_across_deep_subtree(handler):
+    # WHIT-343 x depth. car -> daily -> {petrol, tolls}; only car budgeted. A GRANDCHILD
+    # leaf (tolls) nets NEGATIVE from a refund and must net against the rest across the
+    # two-level fold. petrol 90 + daily-direct 20 + tolls (net -100) = 10. Fail-on-revert
+    # (per-id clamp): tolls floors to 0 -> 90 + 20 + 0 = 110.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("petrol", -90, "posted"),
+        _transaction("daily", -20, "posted"),      # spend tagged on the intermediate node
+        _transaction("tolls", 100, "posted"),        # refund overshooting the grandchild
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "daily", "bucket": "Living", "parent": "car"},
+        {"id": "petrol", "bucket": "Living", "parent": "daily"},
+        {"id": "tolls", "bucket": "Living", "parent": "daily"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("10"), "pending": Decimal("0")}
+
+
+def test_wh343_gap_cross_bucket_net_negative_sibling_not_netted_into_parent(handler):
+    # WHIT-343 x the same-bucket guard. A refund filed on a DIFFERENT-bucket child of a
+    # spend parent must NOT net the parent down: subtree_ids drops it, and the income/spend
+    # split keeps it out of the spend fold entirely. parking 60; a +90 refund on a Lifestyle
+    # sibling would net car to -30 -> 0 IF it leaked. Correct: it's excluded -> car 60.
+    # Fail-on-revert (drop the bucket guard so the refund folds in): car -> 0.
+    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("parking", -60, "posted"),
+        _transaction("stray", 90, "posted"),         # refund on a cross-bucket child
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "car", "bucket": "Living", "parent": None},
+        {"id": "parking", "bucket": "Living", "parent": "car"},
+        {"id": "stray", "bucket": "Lifestyle", "parent": "car"},  # WRONG bucket for car
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("0")}
+
+
+def test_wh343_gap_income_whole_subtree_net_negative_floors_to_zero(handler):
+    # WHIT-343 x income boundary. The income earn-target counterpart of the whole-budget
+    # net-negative floor: a clawback bigger than the WHOLE subtree's earnings must still
+    # floor the earn-target at 0 (never negative). salary 250 + side (-1000) = -750 -> 0.
+    # Fail-on-revert (per-id clamp): salary 250 survives, side floors -> 250, not 0.
+    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    txn_repo = FakeTransactionRepo(transactions=[
+        _transaction("salary", 250, "posted"),
+        _transaction("side", -1000, "posted"),   # clawback > the whole subtree's earnings
+    ])
+    category_repo = FakeCategoryRepo(categories=[
+        {"id": "income", "bucket": "Income", "parent": None},
+        {"id": "salary", "bucket": "Income", "parent": "income"},
+        {"id": "side", "bucket": "Income", "parent": "income"},
+    ])
+
+    result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
+
+    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("0"), "pending": Decimal("0")}}
+
+
+def test_wh343_gap_single_category_default_clamp_still_true(handler):
+    # REGRESSION guard: the default clamp=True is the floor EVERY single-category caller
+    # relies on (/budgets/{id}/transactions header, per-leaf breakdown rows). A lone leaf
+    # netting negative on its own id must still floor at 0 by DEFAULT (no clamp arg).
+    # Fail-on-revert: flipping the default to clamp=False makes this -30.
+    txns = [_transaction("tolls", -50, "posted"), _transaction("tolls", 80, "posted")]
+
+    assert handler.summarise_transactions(txns, {"tolls"}) == {"tolls": {"posted": Decimal("0"), "pending": Decimal("0")}}
+    # And income's default likewise floors a lone clawback-heavy earn id.
+    inc = [_transaction("side", 250, "posted"), _transaction("side", -1000, "posted")]
+    assert handler.summarise_income(inc, {"side"}) == {"side": {"posted": Decimal("0"), "pending": Decimal("0")}}
+
+
+def test_wh343_gap_breakdown_flat_leaf_and_uncategorized_earned_still_clamp(handler):
+    # REGRESSION guard: /breakdown's FLAT per-leaf list, uncategorized, and earned were NOT
+    # switched to aggregate-then-clamp — each is a single-bucket floor and must stay per-id
+    # clamped. A net-negative leaf shows 0.0 in the flat list (not a negative bar), and the
+    # uncategorized/earned aggregates floor at 0. Fail-on-revert: a clamp=False regression
+    # in any of these three paths would surface a negative number.
+    cats = [
+        {"id": "tolls", "name": "Tolls", "bucket": "Living", "parent": None},
+    ]
+    txns = [_transaction("tolls", -50, "posted"), _transaction("tolls", 80, "posted")]  # net -30
+    flat = handler._window_category_spend(txns, cats)
+    assert {r["name"]: r["posted"] for r in flat} == {"Tolls": 0.0}
+
+    # uncategorized: a raw-enum spend refunded past its own charge floors at 0.
+    unc = handler.summarise_uncategorized(
+        [_transaction("MEDICAL", -20, "posted"), _transaction("MEDICAL", 90, "posted")], set())
+    assert unc == {"posted": Decimal("0"), "pending": Decimal("0")}
+
+    # earned: a reversal bigger than the earnings floors the headline at 0.
+    earned = handler.summarise_earned(
+        [_transaction("salary", 100, "posted"), _transaction("salary", -400, "posted")], {"salary"})
+    assert earned == {"posted": Decimal("0"), "pending": Decimal("0")}

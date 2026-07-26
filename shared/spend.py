@@ -137,16 +137,22 @@ def _summarise(
     keep: Callable[[str | None], bool],
     key: Callable[[str | None], str],
     sign: int = -1,
+    clamp: bool = True,
 ) -> dict[str, dict]:
     """The one summing loop shared by the three public summarisers (WHIT-167).
 
     For each transaction: gate on `keep(category)`, map it to a result bucket via
     `key(category)`, turn it into a posted/pending contribution via
-    `_spend_contribution(transaction, sign=sign)`, accumulate, then clamp every
-    bucket at >= 0 (a net refund/reversal can't drive a bar negative). The three
-    public functions differ ONLY in `keep` (which categories count), `key` (per-id
+    `_spend_contribution(transaction, sign=sign)`, accumulate, then (when `clamp`)
+    clamp every bucket at >= 0 (a net refund/reversal can't drive a bar negative). The
+    three public functions differ ONLY in `keep` (which categories count), `key` (per-id
     vs a single aggregate bucket), and `sign` (spend is -amount, income is +amount);
     the clamp + accumulation rule lives here so a change to it can't drift between them.
+
+    `clamp` defaults True — the per-id floor every single-category caller relies on. A
+    SUBTREE rollup passes `clamp=False` to get the raw signed net per id, so the caller
+    can sum across the subtree and clamp the total ONCE (aggregate-then-clamp, WHIT-343);
+    clamping per id first would floor a net-negative sibling to 0 and inflate the sum.
 
     Returns {key(category): {"posted": Decimal, "pending": Decimal}} for keys that had
     at least one contributing transaction. Insertion order follows first contribution.
@@ -162,21 +168,25 @@ def _summarise(
         bucket, amount = contribution
         entry = totals.setdefault(key(category), {"posted": Decimal(0), "pending": Decimal(0)})
         entry[bucket] += amount
-    for entry in totals.values():
-        entry["posted"] = max(Decimal(0), entry["posted"])
-        entry["pending"] = max(Decimal(0), entry["pending"])
+    if clamp:
+        for entry in totals.values():
+            entry["posted"] = max(Decimal(0), entry["posted"])
+            entry["pending"] = max(Decimal(0), entry["pending"])
     return totals
 
 
-def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> dict[str, dict]:
+def summarise_transactions(transactions: list[dict], target_ids: set[str], clamp: bool = True) -> dict[str, dict]:
     """Sum posted vs pending spend per budgeted category over `transactions`.
 
     A transaction contributes only if it counts toward a budget (see
     `_spend_contribution`) AND its `category` is a real budgeted id (not None, not
-    "income", and present in `target_ids`). Each bucket is clamped at >= 0 so a net
-    refund can't drive a bar negative. Pending vs posted is decided by the
-    transaction's own `status`, so a pending->posted settlement needs no special
-    handling: the next call just re-reads the current status.
+    "income", and present in `target_ids`). Each bucket is clamped at >= 0 (unless
+    `clamp=False`) so a net refund can't drive a bar negative. Pending vs posted is
+    decided by the transaction's own `status`, so a pending->posted settlement needs no
+    special handling: the next call just re-reads the current status.
+
+    Pass `clamp=False` when folding a subtree so a net-negative sibling nets against the
+    rest before the caller clamps the total once (aggregate-then-clamp, WHIT-343).
 
     Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
     that had at least one contributing transaction.
@@ -185,6 +195,7 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str]) -> di
         transactions,
         keep=lambda category: category is not None and category != "income" and category in target_ids,
         key=lambda category: category,
+        clamp=clamp,
     )
 
 
@@ -207,7 +218,7 @@ def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) ->
     return totals.get("__all__", {"posted": Decimal(0), "pending": Decimal(0)})
 
 
-def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str, dict]:
+def summarise_income(transactions: list[dict], income_ids: set[str], clamp: bool = True) -> dict[str, dict]:
     """Sum posted vs pending EARNINGS per income-target category over `transactions`
     — the earn-target counterpart of summarise_transactions (WHIT-69).
 
@@ -218,7 +229,8 @@ def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str
     summariser it does NOT special-case the raw "income" sentinel: income *categories*
     have their own ids (never the sentinel), and gating purely on `income_ids`
     membership is the correct filter (a user category that happens to slug to "income"
-    is a real target and must count). Each bucket is clamped at >= 0 so a reversal
+    is a real target and must count). Each bucket is clamped at >= 0 (unless
+    `clamp=False`, for a subtree rollup that clamps the folded total once) so a reversal
     can't drive an earnings bar negative.
 
     Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
@@ -230,6 +242,7 @@ def summarise_income(transactions: list[dict], income_ids: set[str]) -> dict[str
         keep=lambda category: category in income_ids,
         key=lambda category: category,
         sign=1,
+        clamp=clamp,
     )
 
 
@@ -280,8 +293,11 @@ def subtree_ids(root_id: str, children: dict[str, list[str]],
     transaction can be tagged onto ANY node: a leaf, an intermediate sub, or the
     parent itself (the categorize picker offers all of them). Counting the entire
     subtree — not just the leaves — is what keeps /budgets, the over-budget alerts
-    and the AI roll-up in agreement with the /breakdown screen (WHIT-228): each of
-    them sums a parent's spend over this set.
+    and the AI roll-up in agreement with each other (WHIT-228): each sums a parent's
+    spend over this set. NOTE (WHIT-343): those three now fold the subtree UNCLAMPED
+    then clamp the total once; /breakdown stays per-category (its parent roll-up is
+    client-side over per-id-floored leaves), so a net-refunded sub can read differently
+    there — a known follow-up, not aligned here.
 
     When `bucket_by_id` is given, the result is restricted to ids in the SAME bucket
     as `root_id` (the root is always kept). This matches the client's roll-up, which

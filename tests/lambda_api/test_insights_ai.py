@@ -1059,12 +1059,12 @@ def test_orphan_and_uncategorized_targets_do_not_enter_block(handler):
     assert model_input["uncategorized"] == {"posted": 25.0, "pending": 0.0}
 
 
-def test_leaf_refund_clamps_into_parent_total(handler):
-    # WHIT-225 — [A10] a refund overshooting one leaf (Tolls net +30) clamps that leaf to
-    # $0 (per-leaf >=0 clamp in summarise_transactions); the parent total is the sum of
-    # the clamped leaves -> Car = Petrol 60 + Tolls 0 = 60, never negative and never
-    # offsetting the sibling. Fail-on-revert: summing unclamped leaf amounts would yield
-    # 60 - 30 = 30.
+def test_leaf_refund_nets_into_parent_total(handler):
+    # WHIT-343 (aggregate-then-clamp) — a refund overshooting one leaf (Tolls net -30 after
+    # a +80 refund) now NETS against the parent's other spend before the floor, matching the
+    # /budgets screen and the alert path so the AI can't quote a number the screen doesn't
+    # show. Car = Petrol 60 + Tolls (50 - 80) = 30. Fail-on-revert (per-leaf clamp restored):
+    # Tolls floors to 0 -> Car = 60.
     start, end = _cur_window(handler)
     txn_repo = _FakeTxnRepo({(start, end): [
         _txn("petrol", -60), _txn("tolls", -50), _txn("tolls", 80),
@@ -1074,7 +1074,7 @@ def test_leaf_refund_clamps_into_parent_total(handler):
         txn_repo, _FakePayCycleRepo())
 
     bp = {row["name"]: row for row in model_input["budgeted_parents"]}
-    assert bp["Car"]["posted"] == 60.0
+    assert bp["Car"]["posted"] == 30.0
 
 
 def test_no_parent_user_model_input_is_byte_identical_no_block(handler):

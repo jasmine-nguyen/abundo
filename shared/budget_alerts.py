@@ -179,17 +179,17 @@ def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
     return [r for r in by_id.values() if start <= (r.get("date") or "") <= end]
 
 
-def _combined(spend: dict, cat_id: str) -> Decimal:
-    entry = spend.get(cat_id)
-    return entry["posted"] + entry["pending"] if entry else Decimal(0)
-
-
 def _combined_target(spend: dict, ids: set[str]) -> Decimal:
-    """A budgeted target's combined spend: the sum over its whole subtree (the target
-    itself plus every descendant). A leaf or orphan target maps to just itself, so this
-    reduces to `_combined` for a leaf-only budget — byte-identical to the pre-rollup
-    behaviour. Seed Decimal(0) so an empty set (a corrupt cycle) yields Decimal, not int."""
-    return sum((_combined(spend, cid) for cid in ids), Decimal(0))
+    """A budgeted target's combined spend: the signed net over its whole subtree (the
+    target itself plus every descendant), posted and pending summed UNCLAMPED across the
+    subtree and each clamped once. `spend` is the per-id summary from a `clamp=False`
+    call, so a net-negative sibling nets against the rest before the floor — matching
+    /budgets' aggregate-then-clamp so an alert can't disagree with the screen (WHIT-343).
+    A leaf or orphan target maps to just itself. Seed Decimal(0) so an empty set (a
+    corrupt cycle) yields Decimal, not int; an id absent from `spend` contributes 0."""
+    posted = sum((spend[cid]["posted"] for cid in ids if cid in spend), Decimal(0))
+    pending = sum((spend[cid]["pending"] for cid in ids if cid in spend), Decimal(0))
+    return max(Decimal(0), posted) + max(Decimal(0), pending)
 
 
 def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
@@ -234,8 +234,10 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     children = build_category_children(categories)
     ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in target_ids}
     needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
-    before = summarise_transactions(ctx["before_rows"], needed_ids)
-    after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), needed_ids)
+    # Unclamped per id (clamp=False) so _combined_target can net a refunded sibling
+    # across the subtree before clamping the total — aggregate-then-clamp, WHIT-343.
+    before = summarise_transactions(ctx["before_rows"], needed_ids, clamp=False)
+    after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), needed_ids, clamp=False)
 
     # (cat_id, pct_to_send, [all newly-crossed pcts]) — pct_to_send is the highest.
     crossings = []
