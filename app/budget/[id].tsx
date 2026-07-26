@@ -4,9 +4,10 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { budgetDetail, groupTransactionsByDate, transactionView, Transaction, Category, useAppContext } from '../../src/context';
+import { budgetDetail, groupTransactionsByDate, useAppContext } from '../../src/context';
 import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
+import { TransactionRow } from '../../src/components/TransactionRow';
 import { WhittleBar } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
@@ -99,7 +100,7 @@ export default function BudgetDetail() {
         {groupTransactionsByDate(bd.relItems.slice(0, visibleCount)).map((g) => (
           <View key={g.label} style={{ marginTop: 6 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
-            {g.items.map((t) => <DetailTransactionRow key={t.transaction_id} t={t} category={d.category} />)}
+            {g.items.map((t) => <TransactionRow key={t.transaction_id} t={t} category={d.category} />)}
           </View>
         ))}
         {bd.relItems.length > visibleCount && (
@@ -113,30 +114,6 @@ export default function BudgetDetail() {
           <Text style={styles.deleteText}>{deleting ? 'Removing…' : 'Delete budget'}</Text>
         </Pressable>
       </ScrollView>
-    </View>
-  );
-}
-
-function DetailTransactionRow({ t, category }: { t: Transaction; category: (id: string | null) => Category | undefined }) {
-  const v = transactionView({ category }, t);
-  const c = category(t.category);
-  return (
-    <View testID="budget-tx-row" style={styles.txRow}>
-      <View style={[styles.txChip, { backgroundColor: v.chipBg }]}><Icon name={v.icon} size={22} color={v.iconColor} /></View>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.txMerchant} numberOfLines={1}>{v.merchant}</Text>
-        <View style={styles.txStatus}>
-          {v.isPending ? (
-            <><Glyph name="clock" size={12} color="#8b8b95" /><Text style={styles.txStatusText}>Pending</Text></>
-          ) : (
-            <><Glyph name="check" size={12} color="#8b8b95" /><Text style={styles.txStatusText}>Posted</Text></>
-          )}
-        </View>
-      </View>
-      <View style={{ alignItems: 'flex-end' }}>
-        <Text style={[styles.txAmount, { color: v.amountColor }]}>{v.amountLabel}</Text>
-        <Text style={styles.txBucket}>{c ? c.bucket : 'Uncategorized'}</Text>
-      </View>
     </View>
   );
 }
@@ -157,13 +134,6 @@ const styles = StyleSheet.create({
   dailyText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.accentSofter },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 4, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginHorizontal: 4, marginBottom: 2, marginTop: 8 },
-  txRow: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.hairline },
-  txChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  txMerchant: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
-  txStatus: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  txStatusText: { fontFamily: FONT.body, fontSize: 12, color: '#8b8b95' },
-  txAmount: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
-  txBucket: { fontFamily: FONT.body, fontSize: 11.5, color: C.textDim, marginTop: 2 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },
   loadMore: { marginTop: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
   loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },

@@ -13,7 +13,7 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn(), openPicker: jest.fn() }) };
 });
 
 jest.mock('expo-router', () => ({
@@ -43,12 +43,12 @@ beforeEach(() => {
 it('shows the first 7 rows with a Load More button, then reveals the rest on press', () => {
   render(<BudgetDetail />);
 
-  expect(screen.getAllByTestId('budget-tx-row')).toHaveLength(7);
+  expect(screen.getAllByLabelText('View transaction details')).toHaveLength(7);
   const loadMore = screen.getByTestId('budget-load-more');
 
   fireEvent.press(loadMore);
 
-  expect(screen.getAllByTestId('budget-tx-row')).toHaveLength(9);
+  expect(screen.getAllByLabelText('View transaction details')).toHaveLength(9);
   // All revealed → the button is gone.
   expect(screen.queryByTestId('budget-load-more')).toBeNull();
 });
@@ -57,7 +57,7 @@ it('shows no Load More button when the cycle has 7 or fewer charges', () => {
   mockState = { ...mockState, transactions: nCharges(7) };
   render(<BudgetDetail />);
 
-  expect(screen.getAllByTestId('budget-tx-row')).toHaveLength(7);
+  expect(screen.getAllByLabelText('View transaction details')).toHaveLength(7);
   expect(screen.queryByTestId('budget-load-more')).toBeNull();
 });
 
@@ -65,6 +65,6 @@ it('shows the empty copy when the budget has no charges this cycle', () => {
   mockState = { ...mockState, transactions: [] };
   render(<BudgetDetail />);
 
-  expect(screen.queryByTestId('budget-tx-row')).toBeNull();
+  expect(screen.queryByLabelText('View transaction details')).toBeNull();
   expect(screen.getByText('No transactions in this category this cycle.')).toBeTruthy();
 });

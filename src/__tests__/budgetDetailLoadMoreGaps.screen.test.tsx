@@ -14,7 +14,7 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({ deleteBudget: jest.fn(), openPicker: jest.fn() }) };
 });
 
 jest.mock('expo-router', () => ({
@@ -53,7 +53,7 @@ beforeEach(() => {
 it('pages rows (not groups): the first page shows a PARTIAL second date-group', () => {
   render(<BudgetDetail />);
 
-  expect(screen.getAllByTestId('budget-tx-row')).toHaveLength(7);
+  expect(screen.getAllByLabelText('View transaction details')).toHaveLength(7);
   expect(screen.getByText('Cafe 4')).toBeTruthy();   // last of day A
   expect(screen.getByText('Cafe 7')).toBeTruthy();   // day B, within the first page
   expect(screen.queryByText('Cafe 8')).toBeNull();   // day B, but past the 7-row cut → hidden
@@ -66,7 +66,7 @@ it('Load More reveals the rest of the split date-group, then hides the button', 
   render(<BudgetDetail />);
   fireEvent.press(screen.getByTestId('budget-load-more'));
 
-  expect(screen.getAllByTestId('budget-tx-row')).toHaveLength(10);
+  expect(screen.getAllByLabelText('View transaction details')).toHaveLength(10);
   expect(screen.getByText('Cafe 8')).toBeTruthy();
   expect(screen.getByText('Cafe 10')).toBeTruthy();
   expect(screen.queryByTestId('budget-load-more')).toBeNull();
