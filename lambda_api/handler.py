@@ -36,6 +36,7 @@ from constants import (
     TRANSACTIONS_RANGE_PATH,
     UNCATEGORIZED_KEY,
 )
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from repository import (
@@ -955,6 +956,22 @@ def _cycle_window_for(paycycle_repo: PayCycleRepository) -> tuple[str, str]:
     return _cycle_window_for_lookback(paycycle_repo, 0)
 
 
+def _windowed_rows_response(transactions: list[dict], predicate: Callable[[dict], bool]) -> dict:
+    """Filter windowed transactions by `predicate`, strip the storage keys, sort
+    newest-first, and wrap as a 200 array — the shared tail of the cycle-scoped
+    drill-in endpoints (/budgets/{category}/transactions and
+    /categories/{id}/transactions). Each endpoint supplies only its predicate; the
+    window + fetch differ (budget = current cycle, category = ?cycle= look-back), so
+    those stay in the callers.
+    """
+    rows = [transaction for transaction in transactions if predicate(transaction)]
+    for transaction in rows:
+        transaction.pop("pk", None)
+        transaction.pop("sk", None)
+    rows.sort(key=lambda transaction: transaction["date"], reverse=True)
+    return _json_response(200, rows)
+
+
 def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
     """GET /paycycle — the stored pay cycle plus `days_left`: the days from today to the
     next payday, computed fresh from the payday + length using the SAME window math the
@@ -1066,13 +1083,11 @@ def get_budget_transactions(
     children = build_category_children(categories)
     target_ids = subtree_ids(category_id, children, bucket_by_id)
 
-    rows = [transaction for transaction in transactions
-            if transaction.get("category") in target_ids and contributes_to_budget(transaction)]
-    for transaction in rows:
-        transaction.pop("pk", None)
-        transaction.pop("sk", None)
-    rows.sort(key=lambda transaction: transaction["date"], reverse=True)
-    return _json_response(200, rows)
+    return _windowed_rows_response(
+        transactions,
+        lambda transaction: transaction.get("category") in target_ids
+        and contributes_to_budget(transaction),
+    )
 
 
 def _parse_breakdown_cycle(event: dict) -> tuple[int, dict | None]:
@@ -1186,19 +1201,16 @@ def get_category_transactions(
 
     if category_id == UNCATEGORIZED_KEY:
         taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-        rows = [transaction for transaction in transactions
-                if contributes_to_budget(transaction)
-                and transaction.get("category") != "income"
-                and transaction.get("category") not in taxonomy_ids]
-    else:
-        rows = [transaction for transaction in transactions
-                if transaction.get("category") == category_id]
 
-    for transaction in rows:
-        transaction.pop("pk", None)
-        transaction.pop("sk", None)
-    rows.sort(key=lambda transaction: transaction["date"], reverse=True)
-    return _json_response(200, rows)
+        def predicate(transaction: dict) -> bool:
+            return (contributes_to_budget(transaction)
+                    and transaction.get("category") != "income"
+                    and transaction.get("category") not in taxonomy_ids)
+    else:
+        def predicate(transaction: dict) -> bool:
+            return transaction.get("category") == category_id
+
+    return _windowed_rows_response(transactions, predicate)
 
 
 def _window_category_spend(transactions: list[dict], categories: list[dict],
