@@ -56,7 +56,7 @@ from repository import (
     TransactionRepository,
     VersionConflictError,
 )
-from repayment_rules import is_repayment_credit
+from repayment_rules import is_repayment_credit, is_number
 from banksync_enrichments import (
     BankSyncError,
     create_rule,
@@ -1616,11 +1616,6 @@ def get_repayment(repo: TransactionRepository) -> dict:
     rows, _cursor = repo.get_transactions_by_date_range(
         HOMELOAN_ACCOUNT_ID, None, None, MAX_PAGE_SIZE)
 
-    # A single malformed row (null/missing amount or date) must not 500 the card —
-    # skip anything we can't read rather than trusting the row shape.
-    def _num(value):
-        return value if isinstance(value, (int, float, Decimal)) else None
-
     repayment = when = amount = None
     for r in rows:
         if is_repayment_credit(r):
@@ -1640,10 +1635,12 @@ def get_repayment(repo: TransactionRepository) -> dict:
     month = str(when)[:7]
     interest = None
     for r in rows:
+        # A single malformed interest row (null/missing/non-numeric amount) must not 500
+        # the card — skip anything we can't read rather than trusting the row shape.
         if r.get("category") == INTEREST_CATEGORY and str(r.get("date", ""))[:7] == month:
-            amt = _num(r.get("amount"))
-            if amt is not None and amt < 0:
-                interest = (interest or 0) + abs(amt)   # stored negative; accumulate magnitudes
+            amount_leg = r.get("amount")
+            if is_number(amount_leg) and amount_leg < 0:
+                interest = (interest or 0) + abs(amount_leg)   # stored negative; accumulate magnitudes
 
     # Only show a split when it's sensible: interest present and strictly less than
     # the repayment. Otherwise total-only (never a negative or fabricated principal).

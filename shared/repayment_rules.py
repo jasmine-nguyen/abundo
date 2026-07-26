@@ -11,9 +11,25 @@ returns sub-$10 repayments. A malformed row (missing/non-numeric amount, no date
 skipped, never a crash.
 """
 
+import math
 from decimal import Decimal
 
 from constants import REPAYMENT_INCOMING_TYPE
+
+
+def is_number(value) -> bool:
+    """True if value is a FINITE numeric amount (int, float or Decimal) — the single
+    definition of "valid numeric amount" for the repayment/interest legs. Rejects
+    NaN/Infinity: both call sites compare the amount with 0 (repayment `> 0`, interest
+    `< 0`), where a Decimal('NaN') raises InvalidOperation (→ 500) and an Infinity would
+    be wrongly accepted (`Infinity > 0` is True). So a non-finite amount is treated as
+    malformed and skipped, never crashed on or counted (WHIT-327). Python treats bool as
+    int, so True/False still count as numbers — deliberately not tightened here."""
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return isinstance(value, int)
 
 
 def is_repayment_credit(row: dict) -> bool:
@@ -22,6 +38,6 @@ def is_repayment_credit(row: dict) -> bool:
     if row.get("type") != REPAYMENT_INCOMING_TYPE or not row.get("date"):
         return False
     amount = row.get("amount")
-    if not isinstance(amount, (int, float, Decimal)):
+    if not is_number(amount):
         return False
     return amount > 0
