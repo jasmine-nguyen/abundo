@@ -90,6 +90,7 @@ def test_breakdown_splits_posted_and_pending_per_category(handler):
     assert result == {
         "coffee": {"posted": Decimal("50"), "pending": Decimal("12")},
         "groceries": {"posted": Decimal("30"), "pending": Decimal("0")},
+        "__rollup__": {"nodes": {}},
     }
 
 
@@ -100,7 +101,7 @@ def test_breakdown_no_uncategorized_key_when_clean(handler):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
     assert "__uncategorized__" not in result
 
 
@@ -172,7 +173,7 @@ def test_breakdown_excludes_income_and_savings_buckets(handler):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert result == {"coffee": {"posted": Decimal("40"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("40"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
 
 
 # --- refund clamping ---------------------------------------------------------
@@ -223,16 +224,18 @@ def test_breakdown_applies_current_cycle_window(handler, monkeypatch):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert result == {"coffee": {"posted": Decimal("20"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("20"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
     assert txns.calls[0][2] == "2024-01-16"  # queried end bound is today, not today+1
 
 
-def test_breakdown_empty_when_no_spend(handler):
+def test_breakdown_no_spend_still_emits_empty_rollup(handler):
+    # No spend at all -> no flat keys, but __rollup__ is ALWAYS present (WHIT-358) with
+    # empty nodes. Fail-on-revert of the always-emit branch: dropping it makes this {}.
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
 
     result = handler.list_category_breakdown(cats, FakeTransactionRepo([]), FakePayCycleRepo())
 
-    assert result == {}
+    assert result == {"__rollup__": {"nodes": {}}}
 
 
 # --- earned bucket (total income for the Earned-vs-Spent chart, WHIT-312) -----
@@ -362,7 +365,7 @@ def test_get_breakdown_dispatches_and_runs_real_body(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     import json
-    assert json.loads(resp["body"]) == {"coffee": {"posted": 42, "pending": 0}}
+    assert json.loads(resp["body"]) == {"coffee": {"posted": 42, "pending": 0}, "__rollup__": {"nodes": {}}}
 
 
 # --- adversarial gaps (qa) ---------------------------------------------------
@@ -381,7 +384,7 @@ def test_breakdown_ignores_non_budget_counting_spend(handler):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
     assert "__uncategorized__" not in result
 
 
@@ -411,7 +414,7 @@ def test_breakdown_only_uncategorized_bucket(handler):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert result == {"__uncategorized__": {"posted": Decimal("12"), "pending": Decimal("8")}}
+    assert result == {"__uncategorized__": {"posted": Decimal("12"), "pending": Decimal("8")}, "__rollup__": {"nodes": {}}}
 
 
 def test_breakdown_fractional_amounts_survive_decimal_encoder(handler, monkeypatch):
@@ -433,7 +436,7 @@ def test_breakdown_fractional_amounts_survive_decimal_encoder(handler, monkeypat
 
     import json
     body = json.loads(resp["body"])
-    assert body == {"coffee": {"posted": 12.75, "pending": 0.5}}
+    assert body == {"coffee": {"posted": 12.75, "pending": 0.5}, "__rollup__": {"nodes": {}}}
     assert isinstance(body["coffee"]["posted"], float)  # number, not "12.75"
 
 
@@ -459,7 +462,7 @@ def test_breakdown_cycle_1_reads_the_prior_window(handler, monkeypatch):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1)
 
-    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
     assert txns.calls[0][1] == "2023-12-20"  # queried start = prior window start
     assert txns.calls[0][2] == "2024-01-02"  # queried end   = day before current start
 
@@ -475,7 +478,7 @@ def test_breakdown_cycle_0_is_byte_identical_to_the_default(handler, monkeypatch
     default = handler.list_category_breakdown(cats(), _DateFilteringTransactionRepo(list(pool)), FakePayCycleRepo())
     zero = handler.list_category_breakdown(cats(), _DateFilteringTransactionRepo(list(pool)), FakePayCycleRepo(), cycle=0)
 
-    assert zero == default == {"coffee": {"posted": Decimal("20"), "pending": Decimal("0")}}
+    assert zero == default == {"coffee": {"posted": Decimal("20"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
 
 
 def test_breakdown_past_window_predating_history_is_empty(handler, monkeypatch):
@@ -486,7 +489,7 @@ def test_breakdown_past_window_predating_history_is_empty(handler, monkeypatch):
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([_dated("coffee", -20, "2024-01-10")])  # all current-cycle
 
-    assert handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1) == {}
+    assert handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=1) == {"__rollup__": {"nodes": {}}}
 
 
 def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
@@ -507,7 +510,7 @@ def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     import json
-    assert json.loads(resp["body"]) == {"coffee": {"posted": 10, "pending": 0}}
+    assert json.loads(resp["body"]) == {"coffee": {"posted": 10, "pending": 0}, "__rollup__": {"nodes": {}}}
 
 
 @pytest.mark.parametrize("bad", ["-1", "abc", "1.5", "13", "999"])
@@ -645,16 +648,17 @@ def test_breakdown_rollup_clamps_posted_and_pending_independently(handler):
     assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("0"), "pending": Decimal("50")}
 
 
-def test_breakdown_no_rollup_key_for_flat_taxonomy(handler):
-    # No nested parents -> no __rollup__ at all, so a flat-taxonomy response is byte-
-    # identical to pre-WHIT-349 (the client's fallback handles flat data, which nets
-    # the same). Guards against emitting a spurious/empty rollup.
+def test_breakdown_flat_taxonomy_emits_empty_rollup(handler):
+    # No nested parents -> __rollup__ is ALWAYS present (WHIT-358) but its nodes is {} —
+    # a flat leaf reads its own floored flat value, so there is nothing to roll up. The
+    # key being present (not absent) is the point: "no __rollup__" now means ONLY "old
+    # server", which lets the client's fallback be a pure rollout shim (deletable in 5b).
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle"), _category("groceries", "Living")])
     txns = FakeTransactionRepo([_transaction("coffee", -50), _transaction("groceries", -30)])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert "__rollup__" not in result
+    assert result["__rollup__"] == {"nodes": {}}
 
 
 def test_breakdown_rollup_omits_parent_whose_subtree_nets_to_zero(handler):
@@ -672,7 +676,7 @@ def test_breakdown_rollup_omits_parent_whose_subtree_nets_to_zero(handler):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert "__rollup__" not in result
+    assert result["__rollup__"]["nodes"] == {}
 
 
 def test_breakdown_rollup_parent_total_equals_list_budgets(handler):

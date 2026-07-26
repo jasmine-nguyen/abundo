@@ -1139,11 +1139,15 @@ def list_category_breakdown(
     added only when it has spend, so a fully-categorised cycle shows no phantom row.
 
     Response: {"<category_id>": {"posted": Decimal, "pending": Decimal}, ...,
-    optionally "__uncategorized__": {...}, optionally "__earned__": {...}}. The
-    "__earned__" bucket is the TOTAL income (all Income-bucket categories) over the same
-    window, for the Insights Earned-vs-Spent chart (WHIT-312); added only when there's
-    income. Empty {} when nothing had spend or income (e.g. a past window that predates
-    first sync).
+    optionally "__uncategorized__": {...}, optionally "__earned__": {...},
+    "__rollup__": {...}}. The "__earned__" bucket is the TOTAL income (all Income-bucket
+    categories) over the same window, for the Insights Earned-vs-Spent chart (WHIT-312);
+    added only when there's income. "__rollup__" (server-owned netted parent totals) is
+    ALWAYS present (WHIT-358), even for a flat taxonomy with no parents (then its "nodes"
+    is {}) or a window with no spend — so the ONLY meaning of a missing "__rollup__" is
+    "an old server", which lets the client's fallback be a pure rollout shim. The flat
+    per-category keys may still be empty (e.g. a past window that predates first sync); in
+    that case the response is just {"__rollup__": {"nodes": {}}}.
     """
     categories = category_repo.list_categories()
     start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
@@ -1227,6 +1231,13 @@ def list_category_breakdown(
         if refunds:
             rollup["refunds"] = refunds
         result[ROLLUP_KEY] = rollup
+    else:
+        # WHIT-358 (slice 5a): always emit __rollup__, even with no parents, so a new client
+        # renders a flat taxonomy via the server path (leaves read their floored flat value; the
+        # total is the depth-0 sum) and "no __rollup__" means ONLY "old server". That makes the
+        # client's computeCombined fallback a pure rollout shim, deletable in 5b (WHIT-353) once
+        # this is deployed everywhere. Additive: old clients ignore the key.
+        result[ROLLUP_KEY] = {"nodes": {}}
     return result
 
 

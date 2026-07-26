@@ -88,7 +88,7 @@ def test_breakdown_cycle_2_reads_the_second_prior_window_end_to_end(handler, mon
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo(), cycle=2)
 
-    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("10"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
     assert txns.calls[0][1] == "2023-12-06"  # queried start = 2nd-prior window start
     assert txns.calls[0][2] == "2023-12-19"  # queried end   = 2nd-prior window end
 
@@ -111,7 +111,7 @@ def test_breakdown_cap_boundary_cycle_12_is_served_not_rejected(handler, monkeyp
 
     assert resp["statusCode"] == 200
     import json
-    assert json.loads(resp["body"]) == {}
+    assert json.loads(resp["body"]) == {"__rollup__": {"nodes": {}}}
 
 
 def test_parse_breakdown_cycle_cap_is_inclusive_at_12_exclusive_at_13(handler):
@@ -158,7 +158,7 @@ def test_breakdown_prior_window_weekly_length_7_end_to_end(handler, monkeypatch)
     result = handler.list_category_breakdown(
         cats, txns, FakePayCycleRepo(length=7, last_pay_date="2024-01-01"), cycle=1)
 
-    assert result == {"coffee": {"posted": Decimal("5"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("5"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
     assert txns.calls[0][1] == "2024-01-08"
     assert txns.calls[0][2] == "2024-01-14"
 
@@ -178,6 +178,6 @@ def test_breakdown_prior_window_monthly_length_30_end_to_end(handler, monkeypatc
     result = handler.list_category_breakdown(
         cats, txns, FakePayCycleRepo(length=30, last_pay_date="2024-01-01"), cycle=1)
 
-    assert result == {"coffee": {"posted": Decimal("11"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"posted": Decimal("11"), "pending": Decimal("0")}, "__rollup__": {"nodes": {}}}
     assert txns.calls[0][1] == "2023-12-02"
     assert txns.calls[0][2] == "2023-12-31"
