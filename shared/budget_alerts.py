@@ -47,7 +47,7 @@ from decimal import Decimal
 
 from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
 from push import send_push
-from spend import build_category_children, current_cycle_window, subtree_ids, summarise_transactions
+from spend import build_category_children, current_cycle_window, fold_subtree, subtree_ids, summarise_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,8 @@ def _combined_target(spend: dict, ids: set[str]) -> Decimal:
     /budgets' aggregate-then-clamp so an alert can't disagree with the screen (WHIT-343).
     A leaf or orphan target maps to just itself. Seed Decimal(0) so an empty set (a
     corrupt cycle) yields Decimal, not int; an id absent from `spend` contributes 0."""
-    posted = sum((spend[cid]["posted"] for cid in ids if cid in spend), Decimal(0))
-    pending = sum((spend[cid]["pending"] for cid in ids if cid in spend), Decimal(0))
-    return max(Decimal(0), posted) + max(Decimal(0), pending)
+    folded = fold_subtree(spend, ids)
+    return folded["posted"] + folded["pending"]
 
 
 def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:

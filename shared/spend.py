@@ -339,3 +339,19 @@ def subtree_ids(root_id: str, children: dict[str, list[str]],
     root_bucket = bucket_by_id.get(root_id)
     return {node for node in visited
             if node == root_id or bucket_by_id.get(node) == root_bucket}
+
+
+def fold_subtree(per_id: dict[str, dict], ids: set[str]) -> dict[str, Decimal]:
+    """Fold a clamp=False per-id spend summary across a subtree's ids: sum posted and
+    pending UNCLAMPED over every id in `ids` present in `per_id`, then floor posted and
+    pending INDEPENDENTLY at 0 (aggregate-then-clamp, WHIT-343). `per_id` is the output
+    of summarise_transactions/summarise_income with clamp=False — keyed by category id
+    with Decimal posted/pending. An id absent from `per_id` contributes 0; an empty
+    `ids` yields {"posted": 0, "pending": 0}. Always returns Decimals.
+
+    The single source for the /budgets fold, the AI parent roll-up and the budget-alert
+    combined target, so those three can never drift — they MUST agree (see subtree_ids).
+    """
+    posted = sum((per_id[cid]["posted"] for cid in ids if cid in per_id), Decimal(0))
+    pending = sum((per_id[cid]["pending"] for cid in ids if cid in per_id), Decimal(0))
+    return {"posted": max(Decimal(0), posted), "pending": max(Decimal(0), pending)}
