@@ -1,9 +1,9 @@
 // WHIT — Rules screen grouping/search: adversarial screen gaps not in
 // RulesScreen.screen.test.tsx. Search box show/hide as rules load, intro count staying
 // total while filtered, and the "Uncategorized" name collision rendering. [A24]-[A26]
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, Rule, Category } from '../context';
 import type { RulesScreenData } from '../queries';
 
@@ -41,11 +41,19 @@ function state(over: Partial<RulesState> = {}): RulesState {
   };
 }
 
+// WHIT-354: the filter is debounced (250ms); advance the fake clock after typing.
+const settle = () => act(() => { jest.advanceTimersByTime(250); });
+
 beforeEach(() => {
+  jest.useFakeTimers();
   fns.setSheet.mockClear(); fns.deleteRule.mockClear(); fns.refetch.mockClear(); fns.refetchStale.mockClear();
   mockState = state();
   mockRules = rulesData();
   mockCategories = [SUBS, COFFEE];
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 const TWO_RULES = [
@@ -73,6 +81,7 @@ it('[A25] intro count stays the total (2) even when the filter hides one rule', 
   expect(screen.getByText(/You have 2 active rules/)).toBeTruthy();
 
   fireEvent.changeText(screen.getByLabelText('Search rules'), 'netflix');
+  settle();
   expect(screen.queryByText('STARBUCKS')).toBeNull(); // list filtered to one
   expect(screen.getByText(/You have 2 active rules/)).toBeTruthy(); // count unchanged
 });

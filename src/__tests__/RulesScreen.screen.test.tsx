@@ -2,9 +2,9 @@
 // error+retry states and that a loaded rule renders + its trash button calls
 // deleteRule. WHIT-195: the rule list now comes from the cached ['rules'] query, so
 // useRulesScreenData is mocked; setSheet/deleteRule/category stay on the store.
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { AppContext, Rule, Category } from '../context';
 import type { RulesScreenData } from '../queries';
 
@@ -61,7 +61,12 @@ function state(over: Partial<RulesState> = {}): RulesState {
   };
 }
 
+// WHIT-354: the search filter is debounced (250ms), so a filter assertion after
+// changeText/clear must first advance the fake clock. settle() does exactly that.
+const settle = () => act(() => { jest.advanceTimersByTime(250); });
+
 beforeEach(() => {
+  jest.useFakeTimers();
   fns.setSheet.mockClear();
   fns.deleteRule.mockClear();
   fns.refetch.mockClear();
@@ -69,6 +74,10 @@ beforeEach(() => {
   mockState = state();
   mockRules = rulesData();
   mockCategories = [SUBS, COFFEE];
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 it('shows a loading state while rules load (nothing cached yet)', () => {
@@ -131,6 +140,7 @@ it('typing in the search box filters rows and hides the emptied group', () => {
   mockRules = rulesData({ rules: TWO_RULES });
   render(<Rules />);
   fireEvent.changeText(screen.getByLabelText('Search rules'), 'netflix');
+  settle();
   expect(screen.getByText('NETFLIX')).toBeTruthy();
   expect(screen.getByText('Subscriptions')).toBeTruthy();
   // The coffee group and its rule are gone.
@@ -142,6 +152,7 @@ it('search matches a category name, keeping a rule whose pattern does not match'
   mockRules = rulesData({ rules: TWO_RULES });
   render(<Rules />);
   fireEvent.changeText(screen.getByLabelText('Search rules'), 'coffee');
+  settle();
   // STARBUCKS's pattern has no "coffee", but its category "Cafes & Coffee" does.
   expect(screen.getByText('STARBUCKS')).toBeTruthy();
   expect(screen.getByText('Cafes & Coffee')).toBeTruthy();
@@ -153,8 +164,10 @@ it('clearing the search restores the full grouped list', () => {
   render(<Rules />);
   const box = screen.getByLabelText('Search rules');
   fireEvent.changeText(box, 'netflix');
+  settle();
   expect(screen.queryByText('STARBUCKS')).toBeNull();
   fireEvent.press(screen.getByLabelText('Clear search'));
+  settle();
   expect(screen.getByText('STARBUCKS')).toBeTruthy();
   expect(screen.getByText('NETFLIX')).toBeTruthy();
 });
@@ -163,10 +176,17 @@ it('shows a no-match state when the search matches nothing', () => {
   mockRules = rulesData({ rules: TWO_RULES });
   render(<Rules />);
   fireEvent.changeText(screen.getByLabelText('Search rules'), 'zzznope');
+  settle();
   expect(screen.getByText('No rules match “zzznope”.')).toBeTruthy();
   expect(screen.queryByText('NETFLIX')).toBeNull();
   expect(screen.queryByText('STARBUCKS')).toBeNull();
 });
+
+// The debounce TIMING contract is owned by useDebouncedValue.screen.test.tsx (a robust
+// fail-on-revert guard). A screen-level "still shown at 249ms" assertion is unreliable here:
+// under fake timers the SectionList batches its own cell updates, so a row's removal can lag
+// a tick regardless of the debounce — the screen can't distinguish the two. The filter tests
+// above (type → settle → filtered) cover the wiring; the hook test covers the delay.
 
 it('degrades gracefully when the taxonomy is cold: rules list under Uncategorized and stay actionable', () => {
   mockCategories = []; // categories outage / cold-load
