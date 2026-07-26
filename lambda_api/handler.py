@@ -201,7 +201,7 @@ def lambda_handler(event, context):
             return set_loanfacts(event, LoanFactsRepository())
 
         if path == PAYCYCLE_PATH and method == "GET":
-            return _json_response(200, PayCycleRepository().get_paycycle())
+            return _json_response(200, get_paycycle_view(PayCycleRepository()))
 
         if path == PAYCYCLE_PATH and method == "PUT":
             return set_paycycle(event, PayCycleRepository())
@@ -953,6 +953,18 @@ def _cycle_window_for(paycycle_repo: PayCycleRepository) -> tuple[str, str]:
     scope to a different window than the total.
     """
     return _cycle_window_for_lookback(paycycle_repo, 0)
+
+
+def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
+    """GET /paycycle — the stored pay cycle plus `days_left`: the days from today to the
+    next payday, computed fresh from the payday + length using the SAME window math the
+    /budgets total uses. The client reads this instead of computing its own countdown, so
+    app and server can't drift a day at the UTC/Melbourne seam (WHIT-341).
+    """
+    cycle = paycycle_repo.get_paycycle()
+    cycle_start, today = current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    next_payday = date.fromisoformat(cycle_start) + timedelta(days=cycle["length"])
+    return {**cycle, "days_left": (next_payday - date.fromisoformat(today)).days}
 
 
 def list_budgets(

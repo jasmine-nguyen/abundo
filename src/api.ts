@@ -562,6 +562,10 @@ export async function setLoanFacts(facts: LoanFactsInput): Promise<LoanFactsInpu
 export interface PayCycle {
   length: number;        // 7 | 14 | 30 (Weekly / Fortnightly / Monthly)
   last_pay_date: string;        // a real past payday, as an ISO "YYYY-MM-DD" date
+  // Days to the next payday, computed server-side over the Melbourne clock (WHIT-341). The
+  // client prefers this over its own cycleClock so the countdown can't drift a day at the
+  // UTC/Melbourne seam. Optional: absent from an older server / cold cache → cycleClock fallback.
+  days_left?: number;
 }
 
 /**

@@ -41,14 +41,21 @@ function mount() {
   return result;
 }
 
-it('persistPayCycle double-writes the [payCycle] cache (so the migrated sheet/Settings reflect it)', async () => {
+it('persistPayCycle writes [payCycle] optimistically AND invalidates payCycle/budgets/breakdown', async () => {
   mockApi.setPayCycle.mockResolvedValue({ length: 30, last_pay_date: '2024-01-03' });
+  mockApi.fetchPayCycle.mockResolvedValue({ length: 30, last_pay_date: '2024-01-03', days_left: 30 });
   const result = await mount();
-  queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2024-01-03' });
+  // Seed a stale server days_left; the optimistic write must NOT carry it forward.
+  queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2024-01-03', days_left: 5 });
+  const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { result.current.setPayCycleLength(30); });
 
   expect(queryClient.getQueryData<{ length: number }>(['payCycle'])?.length).toBe(30);
+  // WHIT-341: refetch ['payCycle'] for the server's fresh days_left, alongside budgets/breakdown.
+  const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+  expect(keys).toEqual(expect.arrayContaining(['payCycle', 'budgets', 'breakdown']));
+  invalidate.mockRestore();
 });
 
 it('saveCategory mirrors the new category into [categories] instantly AND invalidates to reconcile', async () => {
