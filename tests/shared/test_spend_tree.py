@@ -3,6 +3,8 @@ build_category_children and subtree_ids. Pure functions over the taxonomy (each
 category carries a `parent`), so they need no DynamoDB — just the `shared` fixture
 that puts shared/ on sys.path."""
 
+from decimal import Decimal
+
 
 def _cat(cat_id, parent=None):
     return {"id": cat_id, "bucket": "Living", "parent": parent}
@@ -151,3 +153,51 @@ def test_subtree_ids_none_bucket_descendant_excluded_but_root_none_keeps_none(sh
 
     none_root = {"car": None, "ghost": None}
     assert shared.spend.subtree_ids("car", children, none_root) == {"car", "ghost"}
+
+
+# --- WHIT-350: fold_subtree (the shared aggregate-then-clamp fold) -------------
+# The single source for the /budgets fold, the AI parent roll-up and the budget-alert
+# combined target. sum posted+pending UNCLAMPED across the ids present in per_id, then
+# floor each independently at 0. [fail-on-revert] breaking the fold reddens these.
+
+
+def test_fold_subtree_empty_ids_is_zero_decimals(shared):
+    # An empty subtree (e.g. a corrupt cycle) yields Decimal zeros, not int — matches
+    # the seeded Decimal(0) contract the callers relied on.
+    folded = shared.spend.fold_subtree({"a": {"posted": Decimal("5"), "pending": Decimal("2")}}, set())
+    assert folded == {"posted": Decimal(0), "pending": Decimal(0)}
+    assert isinstance(folded["posted"], Decimal) and isinstance(folded["pending"], Decimal)
+
+
+def test_fold_subtree_id_absent_from_per_id_contributes_zero(shared):
+    # An id in the subtree but with no spend this cycle (absent from per_id) contributes
+    # 0 — no KeyError — matching the callers' `if cid in per_id` / truthiness skip.
+    per_id = {"a": {"posted": Decimal("5"), "pending": Decimal("2")}}
+    folded = shared.spend.fold_subtree(per_id, {"a", "ghost"})
+    assert folded == {"posted": Decimal("5"), "pending": Decimal("2")}
+
+
+def test_fold_subtree_net_negative_subtree_floors_at_zero(shared):
+    # A net-refunded subtree floors the total at 0, never negative.
+    per_id = {"a": {"posted": Decimal("10"), "pending": Decimal(0)},
+              "b": {"posted": Decimal("-40"), "pending": Decimal(0)}}
+    folded = shared.spend.fold_subtree(per_id, {"a", "b"})
+    assert folded["posted"] == Decimal(0)   # 10 + (-40) = -30 → floored
+
+
+def test_fold_subtree_posted_floors_independently_of_pending(shared):
+    # posted and pending clamp SEPARATELY — a negative posted must not drag a positive
+    # pending to 0. [fail-on-revert] against any "clamp the combined sum" mistake.
+    per_id = {"a": {"posted": Decimal("-30"), "pending": Decimal("25")}}
+    folded = shared.spend.fold_subtree(per_id, {"a"})
+    assert folded == {"posted": Decimal(0), "pending": Decimal("25")}
+
+
+def test_fold_subtree_nets_siblings_before_the_floor(shared):
+    # The WHIT-343 headline: a net-negative sibling nets against a positive sibling
+    # BEFORE the floor (aggregate-then-clamp). Per-id clamp would drop the refund and
+    # give 100; netting-then-floor gives 40.
+    per_id = {"a": {"posted": Decimal("100"), "pending": Decimal(0)},
+              "b": {"posted": Decimal("-60"), "pending": Decimal(0)}}
+    folded = shared.spend.fold_subtree(per_id, {"a", "b"})
+    assert folded["posted"] == Decimal("40")

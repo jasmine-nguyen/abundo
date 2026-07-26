@@ -72,6 +72,7 @@ from spend import (
     build_category_children,
     contributes_to_budget,
     current_cycle_window,
+    fold_subtree,
     nth_prior_cycle_window,
     subtree_ids,
     summarise_earned,
@@ -1045,17 +1046,11 @@ def list_budgets(
 
     result = {}
     for cat_id, entry in targets.items():
-        posted = Decimal(0)
-        pending = Decimal(0)
-        for cid in ids_by_target[cat_id]:
-            id_rollup = per_id.get(cid)
-            if id_rollup:
-                posted += id_rollup["posted"]
-                pending += id_rollup["pending"]
+        folded = fold_subtree(per_id, ids_by_target[cat_id])
         result[cat_id] = {
             "target": entry["target"],
-            "posted": max(Decimal(0), posted),
-            "pending": max(Decimal(0), pending),
+            "posted": folded["posted"],
+            "pending": folded["pending"],
         }
     return result
 
@@ -1274,9 +1269,8 @@ def _budgeted_parent_rollup(transactions: list[dict], parents: list[str],
     rollup = summarise_transactions(transactions, needed_ids, clamp=False)
     rows = []
     for cid in parents:
-        posted = max(Decimal(0), sum((rollup[sid]["posted"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0)))
-        pending = max(Decimal(0), sum((rollup[sid]["pending"] for sid in ids_by_parent[cid] if sid in rollup), Decimal(0)))
-        row = {"name": names.get(cid, cid), "posted": float(posted), "pending": float(pending)}
+        folded = fold_subtree(rollup, ids_by_parent[cid])
+        row = {"name": names.get(cid, cid), "posted": float(folded["posted"]), "pending": float(folded["pending"])}
         if targets and cid in targets:
             row["budget"] = float(targets[cid]["target"])
         rows.append((row["name"], cid, row))
