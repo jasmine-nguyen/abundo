@@ -51,6 +51,7 @@ const BREAKDOWN = {
   food: { posted: 30, pending: 0 },
   coffee: { posted: 20, pending: 0 },
   __uncategorized__: { posted: 14, pending: 0 },
+  __rollup__: { nodes: { food: { posted: 50, pending: 0 } } },  // netted parent = direct 30 + coffee 20
 };
 
 function makeClient() {

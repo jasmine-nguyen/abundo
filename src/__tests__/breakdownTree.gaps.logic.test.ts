@@ -10,7 +10,7 @@
 //         total, and no row's pct exceeds 100 in a well-formed tree
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown } from '../context';
-import { makeState, cat, spend } from './factory';
+import { makeState, cat, spend, withRollup } from './factory';
 
 describe('categoryBreakdown — tree value edges (WHIT-226)', () => {
   // [A14] zero-spend subs must not fabricate an expandable parent or a $0 sub row.
@@ -21,11 +21,12 @@ describe('categoryBreakdown — tree value edges (WHIT-226)', () => {
         cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: 'food' }),
         cat({ id: 'restaurants', name: 'Restaurants', bucket: 'Living', parent: 'food' }),
       ],
-      breakdown: {
-        food: spend({ posted: 50, pending: 0 }),        // only the parent has spend
-        groceries: spend({ posted: 0, pending: 0 }),    // zero → filtered out
-        restaurants: spend({ posted: 0, pending: 0 }),  // zero → filtered out
-      },
+      // A WHIT-358 server drops flat keys for spend-free categories, so the subs are absent —
+      // Food has no present children and renders as a plain leaf reading its own flat value.
+      breakdown: withRollup(
+        { food: spend({ posted: 50, pending: 0 }) },
+        { nodes: { food: { posted: 50, pending: 0 } } },
+      ),
     });
     const { rows, total } = categoryBreakdown(s);
     expect(rows.map((r) => r.id)).toEqual(['food']);          // no sub rows, no synthetic
@@ -39,7 +40,10 @@ describe('categoryBreakdown — tree value edges (WHIT-226)', () => {
         cat({ id: 'food', name: 'Food', bucket: 'Living', parent: null }),
         cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: 'food' }),
       ],
-      breakdown: { groceries: spend({ posted: 0, pending: 0 }) },
+      breakdown: withRollup(
+        { groceries: spend({ posted: 0, pending: 0 }) },
+        { nodes: {} },   // subtree nets to 0 → server emits no Food node
+      ),
     });
     const { rows, total } = categoryBreakdown(s);
     expect(rows).toEqual([]);   // no phantom $0 Food parent
@@ -55,10 +59,13 @@ describe('categoryBreakdown — tree value edges (WHIT-226)', () => {
         cat({ id: 'groceries', name: 'Groceries', bucket: 'Living', parent: 'food' }),
         cat({ id: 'restaurants', name: 'Restaurants', bucket: 'Living', parent: 'food' }),
       ],
-      breakdown: {
-        groceries: spend({ posted: 80, pending: 0 }),
-        restaurants: spend({ posted: 40, pending: 20 }),
-      },
+      breakdown: withRollup(
+        {
+          groceries: spend({ posted: 80, pending: 0 }),
+          restaurants: spend({ posted: 40, pending: 20 }),
+        },
+        { nodes: { food: { posted: 120, pending: 20 } } },  // summed split rolls up
+      ),
     });
     const food = categoryBreakdown(s).rows.find((r) => r.id === 'food')!;
     expect(food.posted).toBe(120);      // 80 + 40
@@ -76,10 +83,13 @@ describe('categoryBreakdown — tree value edges (WHIT-226)', () => {
         cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
         cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' }),
       ],
-      breakdown: {
-        car: spend({ posted: 40, pending: 0 }),       // tagged straight on the parent
-        parking: spend({ posted: 60, pending: 0 }),
-      },
+      breakdown: withRollup(
+        {
+          car: spend({ posted: 40, pending: 0 }),       // tagged straight on the parent
+          parking: spend({ posted: 60, pending: 0 }),
+        },
+        { nodes: { car: { posted: 100, pending: 0 } } },  // direct 40 + parking 60
+      ),
     });
     const { rows, total } = categoryBreakdown(s);
     const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
