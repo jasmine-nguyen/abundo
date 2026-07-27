@@ -31,6 +31,20 @@ describe('budgetDetail — narrow BudgetDetailInput', () => {
     expect(bd!.relItems).toHaveLength(1);
   });
 
+  it('shows the exact spent total (cents) so the hero matches the rows it sums — 73.50, not a rounded $74', () => {
+    const input: BudgetDetailInput = {
+      category: (id: string) => (id === 'coffee' ? cat({ id: 'coffee', bucket: 'Lifestyle' }) : undefined),
+      // posted 62.50 + pending 11.00 = 73.50 spent of an $80 budget (the reported Cafes & Coffee case)
+      budgets: [budget({ id: 'coffee', budget: 80, posted: 62.5, pending: 11 })],
+      transactions: [txn({ transaction_id: 'x1', category: 'coffee' })],
+      cycleLen: 14,
+      daysLeft: 7,
+    };
+    const bd = budgetDetail(input, 'coffee');
+    expect(bd!.spentBig).toBe('$73.50');   // fail-on-revert: fmt(73.5) would render '$74'
+    expect(bd!.ofBudget).toBe('of $80');   // the target stays a whole-dollar summary
+  });
+
   it('returns null on a cold cache (category lookup empty, no budget) — the screen shows the empty Header', () => {
     const cold: BudgetDetailInput = {
       category: () => undefined,

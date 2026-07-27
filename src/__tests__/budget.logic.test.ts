@@ -68,6 +68,13 @@ describe('budgetViews', () => {
     const s = makeState({ categories: [cat({ id: 'coffee' })], budgets: [budget({ id: 'ghost', budget: 50, posted: 0, pending: 0 })], cycleLen: 14, daysLeft: 7 });
     expect(budgetViews(s).rows).toHaveLength(0);
   });
+
+  it('shows exact cents on a fractional spent + left so the list row matches the detail and reconciles to the budget', () => {
+    // posted 62.50 + pending 11.00 = 73.50 spent of $80 → 6.50 left (the Cafes & Coffee case).
+    const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 80, posted: 62.5, pending: 11 })], cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.spentLabel).toBe('$73.50 spent of $80'); // fail-on-revert: fmt(73.5) → '$74'
+    expect(row.remainAmount).toBe('$6.50');             // spent + left = the $80 budget
+  });
 });
 
 // WHIT-69: an Income-bucket category's budget is an earn-target (a floor). Over is

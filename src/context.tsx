@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { C, tint, fmt } from './theme';
+import { C, tint, fmt, fmtExact } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
 import * as Crypto from 'expo-crypto';
@@ -1753,17 +1753,17 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       let paceLabel: string, paceColor: string;
       // Same hierarchy as spend rows: the remaining amount is the cyan highlight, the pace
       // sub-label is the muted #cfd2ff.
-      if (met) { paceLabel = fmt(actual - b.budget) + ' over target'; paceColor = '#cfd2ff'; }
+      if (met) { paceLabel = fmtExact(actual - b.budget) + ' over target'; paceColor = '#cfd2ff'; }
       else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = '#cfd2ff'; }
       else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = '#cfd2ff'; }
       else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
       // `actual` already includes pending, so the single "earned of budget" line counts it
       // without the separate "(… pending)" breakout.
-      const spentLabel = `${fmt(actual)} earned of ${fmt(b.budget)}`;
+      const spentLabel = `${fmtExact(actual)} earned of ${fmt(b.budget)}`;
       viewById.set(b.id, {
         id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
         spentLabel,
-        remainAmount: fmt(met ? actual - b.budget : b.budget - actual),
+        remainAmount: fmtExact(met ? actual - b.budget : b.budget - actual),
         remainLabel: met ? 'over target' : 'to go',
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
@@ -1786,16 +1786,16 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     let paceLabel: string, paceColor: string;
     // The "left" amount is the row's cyan highlight; the pace sub-label is the muted #cfd2ff.
     // Warnings keep their own colour (over pace = amber, over budget = red).
-    if (over) { paceLabel = fmt(spent - b.budget) + ' over budget'; paceColor = C.bad; }
+    if (over) { paceLabel = fmtExact(spent - b.budget) + ' over budget'; paceColor = C.bad; }
     else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = '#cfd2ff'; }
     else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
     // `spent` (= posted + pending) already counts pending, so a single "spent of budget" line
     // is enough — no separate "(… pending)" breakout.
-    const spentLabel = `${fmt(spent)} spent of ${fmt(b.budget)}`;
+    const spentLabel = `${fmtExact(spent)} spent of ${fmt(b.budget)}`;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
-      spentLabel, remainAmount: fmt(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
+      spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : c.color,
       pendingTint: tint(over ? C.bad : c.color, 0.45), paceLabel, paceColor, over,
       depth, parentId,
@@ -2568,7 +2568,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     const perDay = toGo > 0 ? toGo / Math.max(1, s.daysLeft) : 0;
     return {
       ...common,
-      spentBig: fmt(actual), ofBudget: 'of ' + fmt(b.budget),
+      spentBig: fmtExact(actual), ofBudget: 'of ' + fmt(b.budget),
       statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
       statusColor: met ? C.good : '#cfd2ff',
       postedPct, pendingPct,
@@ -2585,7 +2585,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
   return {
     ...common,
-    spentBig: fmt(spent), ofBudget: 'of ' + fmt(b.budget),
+    spentBig: fmtExact(spent), ofBudget: 'of ' + fmt(b.budget),
     statusLabel: over ? 'Over budget — ease up' : 'On target — keep it up',
     statusColor: over ? C.bad : C.good,
     postedPct, pendingPct,
