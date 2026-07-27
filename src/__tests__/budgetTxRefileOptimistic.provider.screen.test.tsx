@@ -122,4 +122,31 @@ describe('WHIT-348 optimistic removal on re-file', () => {
 
     expect(foodList()).toEqual([txn('t2')]);                         // saved t1 stays removed; failed t2 restored
   });
+
+  it('[WHIT-360] a failed rollback restores ONLY the shrunk list, never an unrelated list refetched mid-save', async () => {
+    // food holds t1; shopping never held it. Re-file t1 OUT of food → only food shrinks. While the
+    // save is in flight, a background refetch replaces shopping's list with fresh data. When the save
+    // FAILS, the rollback must restore food (the shrunk list) but must NOT clobber shopping's fresh
+    // data with the stale pre-save snapshot. Fail-on-revert: restoring ALL snapshots (the old
+    // behaviour) stamps shopping back to [t9old].
+    let rejectSave: (e: unknown) => void = () => {};
+    mockApi.setTransactionCategory.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+    const result = mount([txn('t1')]);
+    queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
+    queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9old', { category: 'shopping' })]);
+
+    // setSheet in its own act so applyCategory's callback re-renders with the confirm sheet in scope.
+    act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'transport' }));
+    let pending: Promise<void> = Promise.resolve();
+    act(() => { pending = result.current.applyCategory('one'); });
+    expect(foodList()).toEqual([]); // food shrank optimistically; shopping was never touched
+
+    // A background refetch of the UNRELATED shopping list lands while the save is still pending.
+    act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('t9new', { category: 'shopping' })]); });
+
+    await act(async () => { rejectSave(new Error('boom')); await pending; });
+
+    expect(foodList()).toEqual([txn('t1')]);                                    // shrunk list correctly restored
+    expect(budgetList('shopping')).toEqual([txn('t9new', { category: 'shopping' })]); // fresh data NOT clobbered
+  });
 });
