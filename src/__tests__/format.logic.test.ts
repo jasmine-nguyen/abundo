@@ -3,7 +3,7 @@
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel, cycleName } from '../context';
-import { fmt, fmt2, fmtBalance, tint, agoLabel } from '../theme';
+import { fmt, fmt2, fmtBalance, fmtExact, tint, agoLabel } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -27,6 +27,32 @@ describe('fmt', () => {
     expect(fmt(1234.56)).toBe('$1,235');
     expect(fmt(0)).toBe('$0');
     expect(fmt(-50)).toBe('$50'); // absolute value
+  });
+});
+
+describe('fmtExact', () => {
+  it('stays whole-dollar when there are no cents', () => {
+    expect(fmtExact(80)).toBe('$80');
+    expect(fmtExact(0)).toBe('$0');
+    expect(fmtExact(1234)).toBe('$1,234');
+  });
+
+  it('shows cents (and the true amount) when the total has real cents', () => {
+    expect(fmtExact(73.5)).toBe('$73.50');   // the reported bug: 73.5 must NOT round to $74
+    expect(fmtExact(12.5)).toBe('$12.50');
+    expect(fmtExact(1234.5)).toBe('$1,234.50'); // thousands separator + cents
+  });
+
+  it('is unsigned (shows the magnitude, like fmt)', () => {
+    expect(fmtExact(-11)).toBe('$11');
+    expect(fmtExact(-6.5)).toBe('$6.50');
+  });
+
+  it('is stable across floating-point sums that land on a whole/half dollar', () => {
+    expect(fmtExact(62.5 + 11)).toBe('$73.50');   // posted + pending
+    expect(fmtExact(0.1 + 0.2)).toBe('$0.30');     // classic float error rounds clean
+    expect(fmtExact(79.999)).toBe('$80');          // rounds to a whole dollar → no ".00"
+    expect(fmtExact(73.499999)).toBe('$73.50');    // rounds up into cents
   });
 });
 

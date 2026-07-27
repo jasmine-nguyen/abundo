@@ -73,6 +73,19 @@ export function fmtBalance(n: number): string {
     Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// A money label that stays whole-dollar unless the amount has real cents, so a "spent"/"left"
+// figure matches the transaction rows it's summed from: $80 reads "$80", but $73.50 reads
+// "$73.50" instead of rounding up to "$74". Unsigned (abs) like fmt — the budget hero shows no
+// sign. Distinct from fmt (always whole) and fmt2 (always 2dp, always signed).
+export function fmtExact(n: number): string {
+  const abs = Math.abs(n);
+  const hasCents = Math.round(abs * 100) % 100 !== 0;
+  return '$' + abs.toLocaleString('en-US', {
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
+}
+
 // A short "when did this happen" label from an ISO timestamp (e.g. "just now",
 // "5m ago", "3h ago", "2d ago"). `now` is injectable so it can be unit-tested
 // deterministically. Returns '' for a null/blank/unparseable input so callers can
