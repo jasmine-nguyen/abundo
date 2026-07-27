@@ -128,7 +128,11 @@ def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal
     if not contributes_to_budget(transaction):
         return None
     bucket = "pending" if transaction.get("status") == PENDING_STATUS else "posted"
-    return bucket, sign * Decimal(str(transaction.get("amount", 0)))
+    # A missing/None amount counts as 0 rather than crashing the summary — the row still
+    # shows in /budgets/{id}/transactions, so treating it as 0 keeps the header and the
+    # list consistent (Decimal(str(None)) would otherwise raise and 500 the header).
+    amount = transaction.get("amount")
+    return bucket, sign * Decimal(str(amount if amount is not None else 0))
 
 
 def _summarise(
