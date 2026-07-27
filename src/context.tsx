@@ -823,6 +823,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (!sameMerchantIds.includes(existing.transaction_id)) return existing;
           return { ...existing, category: categoryId };
         }));
+      // WHIT-348: a re-file also drops the charges from any budget-detail list whose budget no
+      // longer owns the new category, so the old budget's list updates before the refetch lands.
+      const budgetTxSnaps = removeRefiledFromBudgetLists(categories, sameMerchantIds, categoryId);
 
       // WHIT-355: don't mint a second rule when one already matches this pattern. Only CREATE a
       // new rule when there's no existing same-pattern rule. A same-category one already does the
@@ -896,7 +899,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             if (!failedIds.includes(existing.transaction_id)) return existing;
             return { ...existing, category: previousById.get(existing.transaction_id) ?? null };
           }));
-        if (epoch === sessionEpoch.current) showToast('Could not save some categories. Please try again.');
+        // WHIT-348: restore the budget lists, then re-drop only the ids that DID save — so a
+        // failed re-file's row reappears while a saved one stays gone. Epoch-gated (raw
+        // setQueryData recreates a cleared entry after sign-out).
+        if (epoch === sessionEpoch.current) {
+          budgetTxSnaps.forEach(([key, data]) => queryClient.setQueryData(key, data));
+          const savedIds = sameMerchantIds.filter((id) => !failedIds.includes(id));
+          if (savedIds.length > 0) removeRefiledFromBudgetLists(categories, savedIds, categoryId);
+          showToast('Could not save some categories. Please try again.');
+        }
       } else if (ruleOutcome?.status === 'rejected') {
         // Transactions filed fine; only the future-rule failed to persist.
         if (epoch === sessionEpoch.current) showToast('Filed, but could not save the rule for future charges.');
@@ -915,6 +926,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (existing.transaction_id !== txId) return existing;
         return { ...existing, category: categoryId };
       }));
+    // WHIT-348: drop this charge from any budget-detail list whose budget no longer owns the new
+    // category, so the old budget's list updates before the refetch lands.
+    const budgetTxSnaps = removeRefiledFromBudgetLists(categories, [txId], categoryId);
     showToast(`This transaction filed under ${category.name}.`);
     setSheet(null); // close the confirm sheet
 
@@ -928,7 +942,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (existing.transaction_id !== txId) return existing;
           return { ...existing, category: previousCategory };
         }));
-      if (epoch === sessionEpoch.current) showToast('Could not save category. Please try again.');
+      // WHIT-348: restore the budget lists too (raw setQueryData → epoch-gated, mirrors WHIT-344).
+      if (epoch === sessionEpoch.current) {
+        budgetTxSnaps.forEach(([key, data]) => queryClient.setQueryData(key, data));
+        showToast('Could not save category. Please try again.');
+      }
     }
   }, [sheet, showToast, patchRules, patchTransactions]);
 
@@ -951,6 +969,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     patchTransactions((prev) =>
       prev.map((existing) => (ids.includes(existing.transaction_id) ? { ...existing, category: categoryId } : existing)));
+    // WHIT-348: drop the re-filed charges from any budget-detail list whose budget no longer owns
+    // the new category, so the old budget's list updates before the refetch lands.
+    const budgetTxSnaps = removeRefiledFromBudgetLists(categories, ids, categoryId);
     showToast(ids.length === 1
       ? `This transaction filed under ${category.name}.`
       : `${ids.length} transactions filed under ${category.name}.`);
@@ -968,7 +989,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         prev.map((existing) => (failedIds.includes(existing.transaction_id)
           ? { ...existing, category: previousById.get(existing.transaction_id) ?? null }
           : existing)));
-      if (epoch === sessionEpoch.current) showToast('Could not save some categories. Please try again.');
+      // WHIT-348: restore the budget lists, then re-drop only the ids that DID save (epoch-gated).
+      if (epoch === sessionEpoch.current) {
+        budgetTxSnaps.forEach(([key, data]) => queryClient.setQueryData(key, data));
+        const savedIds = ids.filter((id) => !failedIds.includes(id));
+        if (savedIds.length > 0) removeRefiledFromBudgetLists(categories, savedIds, categoryId);
+        showToast('Could not save some categories. Please try again.');
+      }
     }
     // Some categorisations persisted -> refresh the migrated Budgets/Insights/Transactions reads.
     if (failedIds.length < ids.length) {
@@ -1834,6 +1861,46 @@ function ancestorDepth(byId: Map<string, Category>, id: string | null): number {
 export function categoryDepth(categories: Category[], parentId: string | null): number {
   if (parentId === null) return 1;
   return ancestorDepth(new Map(categories.map((c) => [c.id, c])), parentId) + 1;
+}
+
+// Does the budget on `budgetId` own `categoryId`? — the client mirror of the server's
+// subtree_ids (shared/spend.py): a budget's spend is its own category id PLUS every descendant
+// in the SAME bucket. The descent passes THROUGH a cross-bucket intermediate to reach a
+// same-bucket descendant, so only the two ENDPOINTS' buckets matter, not the nodes between. In a
+// single-parent tree, walking UP the `parent` chain from categoryId and reaching budgetId proves
+// categoryId is a descendant; we then keep it iff it is the root itself or shares the root's
+// bucket (an absent category's bucket is `undefined`, mirroring the server's `None == None`).
+// Cycle-safe via `seen`. Pinned to the server rule by the shared-fixture parity test
+// (budgetSubtreeParity) so the two can't silently drift.
+export function budgetSubtreeContains(categories: Category[], budgetId: string, categoryId: string): boolean {
+  if (categoryId === budgetId) return true; // the root is always in its own subtree
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const seen = new Set<string>();
+  let cur = byId.get(categoryId)?.parent ?? null;
+  while (cur && !seen.has(cur)) {
+    if (cur === budgetId) return byId.get(categoryId)?.bucket === byId.get(budgetId)?.bucket;
+    seen.add(cur);
+    cur = byId.get(cur)?.parent ?? null;
+  }
+  return false; // categoryId is not a descendant of budgetId (an orphan/unknown id that isn't the root)
+}
+
+// WHIT-348: drop the given re-filed tx ids from every cached ['budgetTransactions', budgetId]
+// list whose budget no longer owns their NEW category, so a re-file disappears from the old
+// budget's detail list instantly (mirrors WHIT-344's exclude removal). Removal only — a charge
+// re-filed INTO a budget is added back by the invalidate refetch, which owns the window + sort.
+// Only rewrites a list that actually shrank (skips lists the id was never in). Returns the
+// per-list snapshots so a failed save can roll the removal back (epoch-gated at the call site).
+function removeRefiledFromBudgetLists(categories: Category[], ids: string[], newCategoryId: string) {
+  const snapshots = queryClient.getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] });
+  snapshots.forEach(([key, data]) => {
+    if (!data) return;
+    const budgetId = key[1] as string;
+    if (budgetSubtreeContains(categories, budgetId, newCategoryId)) return; // still owned by this budget
+    const next = data.filter((t) => !ids.includes(t.transaction_id));
+    if (next.length !== data.length) queryClient.setQueryData<Transaction[]>(key, next);
+  });
+  return snapshots;
 }
 
 // The tallest downward chain from `id` in LEVELS (1 for a leaf), cycle-safe. Mirrors the
