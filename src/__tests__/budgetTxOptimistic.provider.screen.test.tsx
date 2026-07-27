@@ -111,3 +111,28 @@ it('exclude no-ops when no budget list is cached', async () => {
 
   expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toBeUndefined();
 });
+
+// [WHIT-360] a failed exclude rollback restores ONLY the shrunk list, never an unrelated list that
+// was refetched mid-save. groceries holds t1; the 'food' list never held it, so excluding t1 shrinks
+// only groceries. While the save is pending a background refetch replaces food's list; on failure the
+// rollback must restore groceries but NOT clobber food's fresh data. FAIL-ON-REVERT: restoring ALL
+// snapshots (the old behaviour) stamps food back to its stale pre-save value.
+it('[WHIT-360] exclude rollback restores only the shrunk list, not an unrelated refetched list', async () => {
+  let rejectSave: (e: unknown) => void = () => {};
+  mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+  const result = mount();
+  queryClient.setQueryData(['budgetTransactions', 'groceries'], [txn()]);
+  queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9old' })]); // never holds t1
+
+  let pending: Promise<void> = Promise.resolve();
+  act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([]); // shrank; food untouched
+
+  // A background refetch of the unrelated 'food' list lands while the save is still pending.
+  act(() => { queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9new' })]); });
+
+  await act(async () => { rejectSave(new Error('network')); await pending; });
+
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn()]);                    // shrunk list restored
+  expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([txn({ transaction_id: 't9new' })]); // fresh data NOT clobbered
+});

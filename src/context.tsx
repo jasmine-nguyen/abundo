@@ -1033,14 +1033,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // updates before the refetch lands, snapshotting them for rollback (mirrors deleteBudget).
       // Removal only: re-including (budget_excluded: false) adds a row back, which needs the
       // server's window + newest-first sort, so that stays on the invalidate below.
+      // WHIT-360: snapshot ONLY the lists this exclusion actually removes the row from (the ones
+      // holding txId), so a failed-save rollback restores exactly those — restoring untouched lists
+      // would clobber a concurrent refetch of an unrelated budget.
       const budgetTxSnapshots =
         patch.budget_excluded === true
-          ? queryClient.getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] })
+          ? queryClient
+              .getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] })
+              .filter(([, data]) => data?.some((t) => t.transaction_id === txId))
           : [];
       budgetTxSnapshots.forEach(([key, data]) => {
-        if (!data) return;
-        const next = data.filter((t) => t.transaction_id !== txId);
-        if (next.length !== data.length) queryClient.setQueryData<Transaction[]>(key, next);
+        queryClient.setQueryData<Transaction[]>(key, data!.filter((t) => t.transaction_id !== txId));
       });
 
       // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate the late
@@ -1889,18 +1892,23 @@ export function budgetSubtreeContains(categories: Category[], budgetId: string, 
 // list whose budget no longer owns their NEW category, so a re-file disappears from the old
 // budget's detail list instantly (mirrors WHIT-344's exclude removal). Removal only — a charge
 // re-filed INTO a budget is added back by the invalidate refetch, which owns the window + sort.
-// Only rewrites a list that actually shrank (skips lists the id was never in). Returns the
-// per-list snapshots so a failed save can roll the removal back (epoch-gated at the call site).
+// Only rewrites a list that actually shrank (skips lists the id was never in). Returns the prior
+// snapshots of ONLY the lists it changed, so a failed save rolls back exactly those (WHIT-360) —
+// restoring untouched lists would clobber a concurrent refetch of an unrelated budget. Epoch-gated
+// at the call site.
 function removeRefiledFromBudgetLists(categories: Category[], ids: string[], newCategoryId: string) {
   const snapshots = queryClient.getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] });
+  const changed: typeof snapshots = [];
   snapshots.forEach(([key, data]) => {
     if (!data) return;
     const budgetId = key[1] as string;
     if (budgetSubtreeContains(categories, budgetId, newCategoryId)) return; // still owned by this budget
     const next = data.filter((t) => !ids.includes(t.transaction_id));
-    if (next.length !== data.length) queryClient.setQueryData<Transaction[]>(key, next);
+    if (next.length === data.length) return; // the id was never in this list — leave it untouched
+    changed.push([key, data]);
+    queryClient.setQueryData<Transaction[]>(key, next);
   });
-  return snapshots;
+  return changed;
 }
 
 // The tallest downward chain from `id` in LEVELS (1 for a leaf), cycle-safe. Mirrors the
