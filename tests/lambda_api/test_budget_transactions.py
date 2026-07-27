@@ -12,52 +12,15 @@ from decimal import Decimal
 
 import pytest
 
-
-# --- fakes (local; mirror the test_budgets.py stand-ins) ---------------------
-
-
-class _DateFilteringTransactionRepo:
-    """Honours the date bounds like DynamoDB `between` (inclusive both ends over
-    YYYY-MM-DD strings), so a test proves the endpoint pulls the WHOLE cycle — not a
-    7-day slice. Serves the pool once (then empty) so the per-account loop counts each
-    transaction a single time."""
-
-    def __init__(self, transactions):
-        self._txns = list(transactions)
-        self._served = False
-        self.calls = []
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        if self._served:
-            return [], None
-        self._served = True
-        page = [t for t in self._txns if start_date <= t["date"] <= end_date]
-        return page, None
-
-
-class _FakePayCycleRepo:
-    def __init__(self, length=30, last_pay_date="2026-07-01"):
-        self._cycle = {"length": length, "last_pay_date": last_pay_date}
-
-    def get_paycycle(self):
-        return dict(self._cycle)
-
-
-class _FakeCategoryRepo:
-    def __init__(self, categories):
-        self._categories = categories
-
-    def list_categories(self):
-        return [dict(c) for c in self._categories]
-
-
-class _FakeBudgetRepo:
-    def __init__(self, budgets):
-        self._budgets = budgets
-
-    def list_budgets(self):
-        return {k: dict(v) for k, v in self._budgets.items()}
+# Repo fakes + row/event builders, shared with the WHIT-362 gap file (tests/shared).
+from _budget_endpoint_fakes import (
+    _DateFilteringTransactionRepo,
+    _FakeBudgetRepo,
+    _FakeCategoryRepo,
+    _FakePayCycleRepo,
+    _event,
+    _txn,
+)
 
 
 # A parent Cafes-&-Coffee budget with a sub-category (both same bucket, so the sub
@@ -66,30 +29,6 @@ CATEGORIES = [
     {"id": "coffee", "bucket": "Lifestyle", "parent": None},
     {"id": "coffee-beans", "bucket": "Lifestyle", "parent": "coffee"},
 ]
-
-
-def _txn(txn_id, category, amount, date, status="posted", counts=True, excluded=False):
-    row = {
-        "transaction_id": txn_id,
-        "category": category,
-        "amount": Decimal(str(amount)),
-        "status": status,
-        "counts_to_budget": counts,
-        "date": date,
-        "pk": "ACCT#up-spending",
-        "sk": f"TXN#{txn_id}",
-    }
-    if excluded:
-        row["budget_excluded"] = True
-    return row
-
-
-def _event(category="coffee"):
-    return {
-        "rawPath": f"/budgets/{category}/transactions",
-        "requestContext": {"http": {"method": "GET"}},
-        "pathParameters": {"category": category},
-    }
 
 
 # The reported screenshot: cycle 01–25 Jul, total $52, but only the last-7-days rows
@@ -134,6 +73,100 @@ def test_list_reconciles_with_budget_total(handler, monkeypatch):
     # The window is the whole cycle [cycle_start, today] — NOT a 7-day feed.
     assert txn_repo.calls[0][1] == "2026-07-01"
     assert txn_repo.calls[0][2] == "2026-07-25"
+
+
+def test_refund_reconciles_across_endpoints(handler, monkeypatch):
+    # WHIT-362: a refund (positive amount) that does NOT drive a bucket negative still
+    # reconciles across both endpoints — the list shows the refund row and its signed sum
+    # equals the /budgets header, cent-for-cent, across posted + pending and the subtree.
+    # Reverting either endpoint's window/subtree/contributes filter (or dropping the
+    # refund row from the list) breaks the equality.
+    from datetime import date
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    transactions = [
+        _txn("spend", "coffee", -30, "2026-07-10"),          # $30 posted spend
+        _txn("refund", "coffee-beans", 10, "2026-07-11"),    # $10 posted refund (sub-category)
+        _txn("pending", "coffee", -5, "2026-07-12", status="pending"),  # $5 pending spend
+    ]
+
+    total = handler.list_budgets(
+        _FakeBudgetRepo({"coffee": {"target": Decimal("80")}}),
+        _DateFilteringTransactionRepo(transactions),
+        _FakePayCycleRepo(),
+        _FakeCategoryRepo(CATEGORIES),
+    )["coffee"]
+    header_spend = total["posted"] + total["pending"]  # 30 - 10 refund + 5 pending = 25
+
+    resp = handler.get_budget_transactions(
+        _event("coffee"), _DateFilteringTransactionRepo(transactions),
+        _FakePayCycleRepo(), _FakeCategoryRepo(CATEGORIES))
+    rows = json.loads(resp["body"])
+
+    assert "refund" in [r["transaction_id"] for r in rows]   # the list keeps the refund row
+    listed = sum(Decimal(str(-r["amount"])) for r in rows)   # refund's +10 subtracts here too
+    assert listed == header_spend == Decimal("25")
+
+
+def test_refund_that_clamps_the_header_still_bounds_the_list(handler, monkeypatch):
+    # WHIT-362: when refunds drive a status bucket net-negative, the header floors at 0
+    # (a bar can't go negative — the aggregate-then-clamp rule) while the list still shows
+    # every refund row. The invariant the user relies on: the header never reads BELOW the
+    # signed sum of the visible rows. Locks header >= listed and both buckets >= 0 — goes
+    # RED if the list ever drops refund rows (listed rises above the floored header) or the
+    # rollup stops clamping (a bucket goes negative).
+    from datetime import date
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    transactions = [
+        _txn("spend", "coffee", -10, "2026-07-10"),    # $10 posted spend
+        _txn("refund", "coffee", 30, "2026-07-11"),    # $30 posted refund → posted nets -20
+    ]
+
+    total = handler.list_budgets(
+        _FakeBudgetRepo({"coffee": {"target": Decimal("80")}}),
+        _DateFilteringTransactionRepo(transactions),
+        _FakePayCycleRepo(),
+        _FakeCategoryRepo(CATEGORIES),
+    )["coffee"]
+
+    resp = handler.get_budget_transactions(
+        _event("coffee"), _DateFilteringTransactionRepo(transactions),
+        _FakePayCycleRepo(), _FakeCategoryRepo(CATEGORIES))
+    rows = json.loads(resp["body"])
+
+    assert "refund" in [r["transaction_id"] for r in rows]   # refund row is still listed
+    listed = sum(Decimal(str(-r["amount"])) for r in rows)   # 10 - 30 = -20 (net refund)
+    assert total["posted"] >= 0 and total["pending"] >= 0    # clamp holds — no negative bar
+    assert total["posted"] == 0                              # -20 floored to 0
+    assert total["posted"] + total["pending"] >= listed      # header never reads below the rows
+
+
+def test_null_amount_row_does_not_break_the_header_and_stays_in_the_list(handler, monkeypatch):
+    # WHIT-362: a contributing row with a missing/None amount (malformed data) must not
+    # 500 the /budgets header — it counts as $0 — while /budgets/{id}/transactions still
+    # lists it. Fail-on-revert: reverting _spend_contribution to Decimal(str(amount)) makes
+    # list_budgets raise on Decimal("None"), so this test errors.
+    from datetime import date
+    import spend
+    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    null_row = {
+        "transaction_id": "null_amt", "category": "coffee", "amount": None,
+        "status": "posted", "counts_to_budget": True, "date": "2026-07-11",
+        "pk": "ACCT#up-spending", "sk": "TXN#null_amt",
+    }
+    transactions = [_txn("spend", "coffee", -10, "2026-07-10"), null_row]
+
+    total = handler.list_budgets(
+        _FakeBudgetRepo({"coffee": {"target": Decimal("80")}}),
+        _DateFilteringTransactionRepo(transactions),
+        _FakePayCycleRepo(), _FakeCategoryRepo(CATEGORIES))["coffee"]
+    assert total["posted"] == Decimal("10")   # the None row counts as $0, only the real $10 spend
+
+    resp = handler.get_budget_transactions(
+        _event("coffee"), _DateFilteringTransactionRepo(transactions),
+        _FakePayCycleRepo(), _FakeCategoryRepo(CATEGORIES))
+    assert "null_amt" in [r["transaction_id"] for r in json.loads(resp["body"])]
 
 
 def test_excludes_non_contributing_rows(handler, monkeypatch):
