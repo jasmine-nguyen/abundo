@@ -1922,6 +1922,10 @@ export interface CategoryBreakdownRow {
   // WHIT-349: a display-only "refund" line under an expanded parent for a net-refunded member
   // hidden from the flat rows. `spent` is NEGATIVE; never a donut slice, never in the hero total.
   isRefund?: boolean;
+  // WHIT-357: a synthetic "Other" line that plugs the residual between a parent's node and the
+  // sum of its visible children, so the expanded list always sums to the node. `spent` can be
+  // + or −; like a refund line it is never a donut slice, never in the hero, and not tappable.
+  isRemainder?: boolean;
 }
 
 // The exact slice categoryBreakdown reads. A narrow input (not the whole AppContext) so
@@ -2076,13 +2080,40 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     }
   }
 
+  // WHIT-357: guarantee the expanded child list always sums to its parent node. `fold_subtree`
+  // floors posted and pending INDEPENDENTLY, but a refund line reports a member's COMBINED signed
+  // net, so in a rare posted-vs-pending sign split the visible rows can under- or over-sum the node
+  // (the clamped remainder, or a dropped net-negative mid-parent). Plug the residual with one
+  // synthetic "Other" line per parent — display-only like a refund line: no donut slice, never in
+  // the hero, not tappable. Node values are fixed, so this reconciles level by level: each child
+  // (itself a parent or a leaf) contributes its own already-reconciled node.
+  for (const parentId of [...emitChildren.keys()]) {
+    if (parentId === null) continue;  // top level reconciles via the hero total, not a parent node
+    const parentRow = rowById.get(parentId);
+    if (!parentRow) continue;  // parent was dropped (node <= 0) — nothing to reconcile against
+    let childSum = 0;
+    for (const childId of emitChildren.get(parentId)!) childSum += rowById.get(childId)!.spent;
+    const remainder = parentRow.spent - childSum;
+    if (Math.abs(remainder) < 0.005) continue;  // already sums (one-cent epsilon guards float dust)
+    const remainderId = `${parentId}__remainder`;
+    rowById.set(remainderId, {
+      id: remainderId, name: 'Pending/refund adjustment', color: C.textDim, icon: 'sliders', chipBg: tint(C.textDim, 0.15),
+      spent: remainder, posted: remainder, pending: 0,
+      // `fmt` drops the sign, so the amount column renders a signed value (WHIT-357 R1); the sub-label
+      // explains the row rather than repeating an unsigned number.
+      spentLabel: 'keeps the list adding up', pct: 0, uncategorized: false,
+      depth: parentRow.depth + 1, parentId, hasChildren: false, drillId: parentId, isRemainder: true,
+    });
+    pushEmit(parentId, remainderId);
+  }
+
   // Total = the netted cycle spend: sum each depth-0 NON-refund row's `spent`. A parent node already
   // includes its whole subtree, so summing every node (or a node plus its flat leaves) would double-
-  // count; refund lines are display-only. Uncategorized is itself a depth-0 row, so it's counted here.
-  // pct is each (non-refund) row's share of that grand total.
+  // count; refund + remainder lines are display-only (and always depth >= 1). Uncategorized is itself
+  // a depth-0 row, so it's counted here. pct is each (non-refund, non-remainder) row's share of the total.
   let total = 0;
   for (const row of rowById.values()) if (row.depth === 0 && !row.isRefund) total += row.spent;
-  for (const row of rowById.values()) row.pct = total > 0 && !row.isRefund ? (row.spent / total) * 100 : 0;
+  for (const row of rowById.values()) row.pct = total > 0 && !row.isRefund && !row.isRemainder ? (row.spent / total) * 100 : 0;
 
   // Emit depth-first, siblings sorted by spent desc; an emitted-guard + trailing sweep
   // keep a corrupt cycle from dropping or duplicating a row.

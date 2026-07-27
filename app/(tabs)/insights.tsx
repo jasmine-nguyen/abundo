@@ -150,23 +150,36 @@ export default function Insights() {
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
             taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
         {!showError && visibleRows.map((r) => {
-          // WHIT-349: a refund line is a display-only credit under an expanded parent — a muted
-          // row with no bar, showing the amount back in green, tappable into that sub's charges.
-          if (r.isRefund) {
+          // WHIT-349/357: a muted display-only line under an expanded parent — no bar. A refund
+          // line shows a credit in green and taps into that sub's charges. A WHIT-357 "Other" line
+          // plugs the residual so the expanded rows sum to the node; it is neutral and NOT tappable
+          // (it isn't a real category, so there is nothing to drill into).
+          if (r.isRefund || r.isRemainder) {
+            const amountColor = r.isRefund ? C.good : C.textDim;
+            // A refund reads as a credit via its green colour, so `fmt` (unsigned) is fine. An "Other"
+            // plug can be negative (it removes a dropped/clamped amount) — `fmt` drops the sign, so a
+            // negative plug MUST show its minus or the rows look like they don't add up (WHIT-357 R1).
+            const amountText = r.isRemainder && r.spent < 0 ? `-${fmt(r.spent)}` : fmt(r.spent);
+            const body = (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
+                <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[styles.rowName, { color: C.textDim }]} numberOfLines={1}>{r.name}</Text>
+                  <Text style={styles.rowSub}>{r.spentLabel}</Text>
+                </View>
+                <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>
+              </View>
+            );
             return (
               <View key={r.id} style={[styles.row, { marginLeft: r.depth * 18, borderLeftWidth: 2, borderLeftColor: r.color }]}>
-                <Pressable
-                  onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
-                  accessibilityRole="button"
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}
-                >
-                  <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[styles.rowName, { color: C.textDim }]} numberOfLines={1}>{r.name}</Text>
-                    <Text style={styles.rowSub}>{r.spentLabel}</Text>
-                  </View>
-                  <Text style={[styles.rowAmount, { color: C.good }]}>{fmt(r.spent)}</Text>
-                </Pressable>
+                {r.isRefund ? (
+                  <Pressable
+                    onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+                    accessibilityRole="button"
+                  >
+                    {body}
+                  </Pressable>
+                ) : body}
               </View>
             );
           }

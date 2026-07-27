@@ -2,7 +2,9 @@
 // The implementer's breakdownRollup.logic.test.ts locks: netted parent == node, single-level
 // refund reconciliation, hero depth-0 no-double-count, fully-refunded parent -> 0/dropped,
 // refund excluded from total, sentinel not a row. These add the ADVERSARIAL edges:
-//   [G1] the independent posted/pending clamp gap (expanded list CANNOT reconcile),
+//   [G1] WHIT-357: the independent posted/pending clamp gap, now PLUGGED so the list reconciles,
+//   [G8] WHIT-357: a dropped net-negative mid-parent, plugged at its grandparent,
+//   [G9] WHIT-357: a subtree that already sums gets no plug (the fix is inert on the happy path),
 //   [G2] refunds keyed under a parent that never rendered -> the `!rowById.has(parent)` guard,
 //   [G3] a fully-refunded parent's positive floored leaf -> orphan, kept out of the hero,
 //   [G4] multi-level: a positive mid-parent with its OWN refund line + a shown sibling,
@@ -25,12 +27,12 @@ const CAR_TREE = [
 ];
 
 describe('categoryBreakdown — WHIT-349 refund GAPs', () => {
-  it('[G1] posted surplus + pending refund: the expanded list under-sums the netted parent', () => {
-    // The server node folds posted/pending independently (petrol +100 posted, tolls -30
-    // pending -> node = {100, 0} = 100) but the refund line reports tolls' COMBINED net (-30).
-    // So the visible rows (petrol 100 + refund -30 = 70) do NOT equal the parent (100). This
-    // PINS the plan's known minor: the expanded list can fail to reconcile by the clamped
-    // pending remainder. Fail-on-revert-of-nothing here — it documents current behaviour.
+  it('[G1] WHIT-357: posted surplus + pending refund is plugged so the expanded list sums to the node', () => {
+    // The server node folds posted/pending independently (petrol +100 posted, tolls -30 pending
+    // -> node = {100, 0} = 100) but the refund line reports tolls' COMBINED net (-30). Left alone,
+    // the visible rows (petrol 100 + refund -30 = 70) under-sum the parent (100). WHIT-357 plugs
+    // the +30 clamped remainder with a synthetic "Other" line so the expanded list reconciles.
+    // Fail-on-revert: drop the remainder loop and there is no car__remainder -> this test errors.
     const s = makeState({
       categories: CAR_TREE,
       breakdown: withRollup(
@@ -38,13 +40,84 @@ describe('categoryBreakdown — WHIT-349 refund GAPs', () => {
         { nodes: { car: { posted: 100, pending: 0 } }, refunds: { car: [{ id: 'tolls', amount: -30 }] } },
       ),
     });
-    const byId = Object.fromEntries(categoryBreakdown(s).rows.map((r) => [r.id, r]));
+    const { rows, total } = categoryBreakdown(s);
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
     expect(byId['car'].spent).toBe(100);                 // netted parent == its Budgets bar
     expect(byId['petrol'].spent).toBe(100);              // shown child
-    expect(byId['tolls__refund'].spent).toBe(-30);       // refund line
-    const reconciled = byId['petrol'].spent + byId['tolls__refund'].spent;
-    expect(reconciled).toBe(70);
-    expect(reconciled).not.toBe(byId['car'].spent);      // GAP: 70 != 100
+    expect(byId['tolls__refund'].spent).toBe(-30);       // refund line (combined net)
+    // The plug: a positive "Other" line closing the clamped-pending gap, muted (pct 0), under car.
+    expect(byId['car__remainder']).toMatchObject({
+      spent: 30, isRemainder: true, parentId: 'car', depth: 1, pct: 0, name: 'Pending/refund adjustment',
+    });
+    // Full reconciliation: petrol (100) + refund (-30) + Other (+30) == car node (100).
+    expect(byId['petrol'].spent + byId['tolls__refund'].spent + byId['car__remainder'].spent).toBe(100);
+    expect(total).toBe(100);                             // remainder is depth 1 -> never in the hero
+  });
+
+  it('[G8] WHIT-357: a dropped net-negative mid-parent is plugged so its grandparent still sums', () => {
+    // car own +100 -> travel own +20 -> flights -60. Node car folds to 60 ({posted 100+20-60}).
+    // Node travel folds to -40 -> floored -> absent -> travel (a parent reading an absent node) is
+    // dropped, taking its own +20 with it; flights drops too. No refund line is emitted (travel is
+    // not "hidden": it has its own +20). Left alone, the only visible child "Directly in Car" (100)
+    // over-sums the node (60). WHIT-357 plugs the -40 so the expanded list reconciles.
+    // Fail-on-revert: without the remainder loop car__direct (100) alone != car node (60).
+    const s = makeState({
+      categories: [
+        cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+        cat({ id: 'travel', name: 'Travel', bucket: 'Living', parent: 'car' }),
+        cat({ id: 'flights', name: 'Flights', bucket: 'Living', parent: 'travel' }),
+      ],
+      breakdown: withRollup(
+        {
+          car: spend({ posted: 100, pending: 0 }),
+          travel: spend({ posted: 20, pending: 0 }),
+          flights: spend({ posted: 0, pending: 0 }),   // -60 signed, floored to {0,0} in the flat summary
+        },
+        { nodes: { car: { posted: 60, pending: 0 } } },   // travel node folds to <=0 -> omitted
+      ),
+    });
+    const { rows, total } = categoryBreakdown(s);
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(byId['car'].spent).toBe(60);                  // the netted node (== Budgets bar)
+    expect(byId['car__direct'].spent).toBe(100);         // car's own directly-tagged spend
+    expect(byId['travel']).toBeUndefined();              // net-negative mid-parent dropped
+    expect(byId['flights']).toBeUndefined();
+    // The plug: a NEGATIVE "Other" line for the dropped subtree, muted, under car.
+    expect(byId['car__remainder']).toMatchObject({
+      spent: -40, isRemainder: true, parentId: 'car', depth: 1, pct: 0, name: 'Pending/refund adjustment',
+    });
+    // Full reconciliation: "Directly in Car" (100) + Other (-40) == car node (60).
+    expect(byId['car__direct'].spent + byId['car__remainder'].spent).toBe(60);
+    expect(total).toBe(60);
+  });
+
+  it('[G9] WHIT-357: a subtree that already reconciles gets NO "Other" line (the plug is inert)', () => {
+    // The [G4]-shaped tree already sums at every level (taxi 40 + refund -30 == travel 10; petrol
+    // 60 + travel 10 == car 70), so abs(remainder) < epsilon everywhere and no synthetic row is
+    // emitted. Proves the fix is inert on the happy path — it only fires on a real gap.
+    const s = makeState({
+      categories: [
+        cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+        cat({ id: 'petrol', name: 'Petrol', bucket: 'Living', parent: 'car' }),
+        cat({ id: 'travel', name: 'Travel', bucket: 'Living', parent: 'car' }),
+        cat({ id: 'taxi', name: 'Taxi', bucket: 'Living', parent: 'travel' }),
+        cat({ id: 'tolls', name: 'Tolls', bucket: 'Living', parent: 'travel' }),
+      ],
+      breakdown: withRollup(
+        {
+          petrol: spend({ posted: 60, pending: 0 }),
+          taxi: spend({ posted: 40, pending: 0 }),
+          tolls: spend({ posted: 0, pending: 0 }),
+        },
+        {
+          nodes: { car: { posted: 70, pending: 0 }, travel: { posted: 10, pending: 0 } },
+          refunds: { travel: [{ id: 'tolls', amount: -30 }] },
+        },
+      ),
+    });
+    const { rows, total } = categoryBreakdown(s);
+    expect(rows.some((r) => r.isRemainder)).toBe(false);   // no plug anywhere
+    expect(total).toBe(70);                                // hero unchanged by the (absent) plug
   });
 
   it('[G2] a refund keyed under a parent that never rendered is skipped, not crashed', () => {
