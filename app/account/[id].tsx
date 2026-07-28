@@ -4,19 +4,21 @@ import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, fmtBalance, fmt, agoLabel } from '../../src/theme';
 import { accountDetail } from '../../src/context';
-import { useTransactionsScreenData } from '../../src/queries';
+import { useRecentTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
 
 // WHIT-215: the per-account transaction list. Reached from the Accounts tab; the id in the
-// route is the account_id. Transactions come from the SAME cached query the list uses (no
-// new endpoint) — we filter to this account and group by date. WHIT-212: the live balance
-// comes from the account-balances query (poller-fed), keyed by the same account_id.
+// route is the account_id. Transactions come from the recent query — a seam that reads the
+// same cache as the Transactions tab today, and in the follow-up becomes a bounded fixed
+// window so this count can't drift as that tab pages back through history. We filter to this
+// account and group by date. WHIT-212: the live balance comes from the account-balances query
+// (poller-fed), keyed by the same account_id.
 export default function AccountDetail() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { transactions, category, balances, isLoading, isError, refetch } = useTransactionsScreenData();
+  const { transactions, category, balances, isLoading, isError, refetch } = useRecentTransactionsScreenData();
   const detail = accountDetail({ transactions, category }, id);
   const bal = balances.get(id);
   // Show "available credit" only for a credit card: you OWE (amount < 0) yet have credit

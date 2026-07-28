@@ -10,7 +10,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { C } from '../theme';
 
 let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({ useRecentTransactionsScreenData: () => mockTx }));
 
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');

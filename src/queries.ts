@@ -532,6 +532,15 @@ export function useTransactionsScreenData(): TransactionsScreenData {
   };
 }
 
+// The tab-bar uncategorized dot, the account-detail screen, and the goal-edit account picker
+// read a BOUNDED "recent" transaction list: it must stay a fixed window and must NOT grow or
+// drift as the Transactions tab pages back through full history (the upcoming feed "Load More").
+// This is the seam — an alias over the existing composite, so these three consumers move off
+// the tab's hook in one place with ZERO behaviour change (same ['transactions'] cache today).
+// The follow-up change gives this its own dedicated key + fetch so the growing feed can never
+// disturb these counts; the three call sites don't change again.
+export const useRecentTransactionsScreenData = useTransactionsScreenData;
+
 // --- the category drill-in screen's composite view (WHIT-308, WHIT-342) -------
 // app/category/[id].tsx feeds categoryTransactions(s, drillId): one category's (or the
 // uncategorized bucket's) transactions for the selected cycle, fetched server-side over the

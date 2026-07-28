@@ -46,7 +46,7 @@ let mockBalances: Map<string, AccountBalance>;
 jest.mock('../queries', () => ({
   useIsAuthed: () => true,
   useGoalsQuery: () => ({ data: mockGoals }),
-  useTransactionsScreenData: () => ({ transactions: [{ account_id: 'acc-1', account_name: 'Everyday' }], balances: mockBalances }),
+  useRecentTransactionsScreenData: () => ({ transactions: [{ account_id: 'acc-1', account_name: 'Everyday' }], balances: mockBalances }),
   useLoanFactsQuery: () => ({ data: undefined }), // → EMPTY_LOAN_FACTS: every field unset, payoff null
 }));
 

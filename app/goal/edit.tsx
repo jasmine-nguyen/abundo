@@ -5,7 +5,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Icon, ICON_KEYS } from '../../src/icons';
 import { useAppContext, accountSummaries } from '../../src/context';
-import { useGoalsQuery, useTransactionsScreenData, useIsAuthed } from '../../src/queries';
+import { useGoalsQuery, useRecentTransactionsScreenData, useIsAuthed } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { NativeDateField } from '../../src/components/NativeDateField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
@@ -68,8 +68,11 @@ export default function GoalEdit() {
 
   // The synced-account options: the linked accounts we actually hold a live balance for (the
   // true set of synced accounts — an account with a balance but no transactions still appears),
-  // named from the transaction feed (accountSummaries is the only source of account names).
-  const { transactions, balances } = useTransactionsScreenData();
+  // named from the recent transactions (accountSummaries is the only source of account names).
+  // The recent query is a seam reading the same cache as the Transactions tab today; the
+  // follow-up makes it a bounded fixed window so this picker stops depending on how far that
+  // tab has paged.
+  const { transactions, balances } = useRecentTransactionsScreenData();
   const nameById = new Map(accountSummaries({ transactions }).map((a) => [a.id, a.name]));
   const accountOptions: { id: string; name: string; amount: number | null }[] = [...balances.values()].map((b) => ({
     id: b.account_id,
