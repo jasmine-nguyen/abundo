@@ -19,6 +19,7 @@ jest.mock('../api');
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
 
@@ -51,7 +52,7 @@ afterEach(() => { queryClient.clear(); });
 
 describe('WHIT-348 re-file budget-list rollback settling after sign-out', () => {
   it('does NOT re-seat the old account budget list into the cleared cache', async () => {
-    queryClient.setQueryData(['transactions'], [txn()]);
+    seedTransactionsCache(queryClient, [txn()]);
     queryClient.setQueryData(['categories'], CATS);
     queryClient.setQueryData(['budgetTransactions', 'food'], [txn()]);
     const d = deferred<{ results: { id: string; status: 'updated' }[] }>();

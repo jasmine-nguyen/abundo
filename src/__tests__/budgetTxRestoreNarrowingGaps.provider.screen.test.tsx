@@ -17,6 +17,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category, Rule } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -56,7 +57,7 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); queryClient.clear(); }); // restore any spies even if an assertion threw; clear gcTime timers
 
 function mount(transactions: Transaction[]) {
-  queryClient.setQueryData(['transactions'], transactions);
+  seedTransactionsCache(queryClient, transactions);
   queryClient.setQueryData(['categories'], CATS);
   queryClient.setQueryData(['budgets', 14], {});
   queryClient.setQueryData<Rule[]>(['rules'], []);

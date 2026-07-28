@@ -11,6 +11,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { Category, Transaction, Rule } from '../context';
 import type { BudgetRollup } from '../api';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -85,7 +86,7 @@ it('applyCategory(all) no-ops on a cold cache — mints no rule, sends no batch'
 it('applyCategory no-ops when transactions are warm but the taxonomy is cold (partial cold)', async () => {
   // The tx exists, but the chosen category can't be resolved (['categories'] never loaded) →
   // the category lookup fails and the write must bail rather than file under an unknown id.
-  queryClient.setQueryData(['transactions'], [txn({ transaction_id: 't1' })]);
+  seedTransactionsCache(queryClient, [txn({ transaction_id: 't1' })]);
   mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
   const result = mount();
   act(() => { result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }); });

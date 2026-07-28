@@ -19,6 +19,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -46,7 +47,7 @@ beforeEach(() => {
 afterEach(() => { queryClient.clear(); });
 
 function mount(transactions: Transaction[] = [txn()]) {
-  queryClient.setQueryData(['transactions'], transactions);
+  seedTransactionsCache(queryClient, transactions);
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   queryClient.setQueryData(['budgets', 14], {});
   const { result } = renderHook(() => useAppContext(), { wrapper });

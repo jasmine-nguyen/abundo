@@ -14,6 +14,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category, Rule } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -29,7 +30,7 @@ const TXN = {
   account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
 } as const;
 
-const txns = () => queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+const txns = () => readTransactionsCache(queryClient);
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']) ?? [];
 
 beforeEach(() => {
@@ -42,7 +43,7 @@ beforeEach(() => {
 afterEach(() => { queryClient.clear(); });
 
 function seed(txnList: readonly Transaction[]) {
-  queryClient.setQueryData(['transactions'], txnList.map((t) => ({ ...t })));
+  seedTransactionsCache(queryClient, txnList.map((t) => ({ ...t })));
   queryClient.setQueryData(['categories'], [{ ...CAT } as Category]);
   queryClient.setQueryData(['budgets', 14], {});
   queryClient.setQueryData(['payCycle'], { length: 14, last_pay_date: '2024-01-03' });
@@ -78,7 +79,7 @@ it('applyCategoryToMany reverts only the rejected chunk to its previous category
   // Every charge starts filed under groceries; we re-file to dining. First chunk saves, second rejects.
   queryClient.clear();
   const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `m${i}`, category: 'groceries' }));
-  queryClient.setQueryData(['transactions'], many.map((t) => ({ ...t })));
+  seedTransactionsCache(queryClient, many.map((t) => ({ ...t })));
   queryClient.setQueryData(['categories'], [
     { ...CAT } as Category,
     { id: 'dining', name: 'Dining', bucket: 'Lifestyle', icon: 'utensils', color: '#f7768e', recent: 0 } as Category,

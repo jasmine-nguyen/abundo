@@ -9,7 +9,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 
 let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx, useRecentTransactionsScreenData: () => ({ transactions: [] }) }));
 
 const mockOpenPicker = jest.fn();
 jest.mock('../context', () => {

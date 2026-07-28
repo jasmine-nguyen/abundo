@@ -10,7 +10,7 @@ import { makeState, cat, txn } from './factory';
 
 const mockOpenPicker = jest.fn();
 let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx, useRecentTransactionsScreenData: () => ({ transactions: [] }) }));
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({ openPicker: mockOpenPicker, applyTransactionEdit: jest.fn(), showToast: jest.fn() }) };

@@ -4,9 +4,10 @@
 // other screens migrate in later cards, so the old context store stays intact until
 // the WHIT-192 cleanup.
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import { useQuery, replaceEqualDeep } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment } from './api';
+import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment, TransactionFeedPage } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
@@ -43,10 +44,15 @@ export const categoryTransactionsKey = ['categoryTransactions'] as const;
 // Breakdown (spend-by-category, the Insights tab) is the same — server-derived window, so
 // a flat key: parallel fetch, single invalidate on a length change (WHIT-72).
 export const breakdownKey = ['breakdown'] as const;
-// Transactions aren't windowed (fetchTransactions takes no args), so a flat key. Kept
-// in sync with the literal ['transactions'] the categorise write uses in context.tsx
-// (context imports queryClient directly, not this key, to avoid a circular import).
+// The Transactions tab's cursor-paged, all-accounts FEED (the "Load More" history). Held as
+// an infinite query under this flat key. Kept in sync with the literal ['transactions'] the
+// optimistic write path patches in context.tsx (context imports queryClient directly, not
+// this key, to avoid a circular import) — those writes map over the InfiniteData pages.
 export const transactionsKey = ['transactions'] as const;
+// The BOUNDED "recent" list (the server's rolling window) behind the tab-bar dot, the
+// account-detail screen, and the goal-edit picker. A SEPARATE key from the feed so those
+// counts stay fixed and can't drift as the tab pages back through full history.
+export const transactionsRecentKey = ['transactionsRecent'] as const;
 // Loan facts (the Settings "Loan details" row + the loan form). Un-windowed flat key,
 // kept in sync with the literal ['loanFacts'] the saveLoanFacts write uses in context.tsx.
 export const loanFactsKey = ['loanFacts'] as const;
@@ -173,9 +179,31 @@ export function useBreakdownQuery(cycleLen: number, cycle: number, enabled: bool
   });
 }
 
-// WHIT-190a: the full transaction list (un-windowed).
-export function useTransactionsQuery(enabled: boolean) {
-  return useQuery({ queryKey: transactionsKey, queryFn: fetchTransactions, enabled });
+// The Transactions tab's all-accounts feed as an infinite query: the first page is the
+// newest batch (no cursor), each "Load More" fetches the next (older) page via the prior
+// page's nextCursor, and hasNextPage goes false when the server returns nextCursor === null.
+export function useTransactionsFeedQuery(enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: transactionsKey,
+    queryFn: ({ pageParam }) => fetchTransactionsFeed(pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled,
+  });
+}
+
+// The bounded "recent" list (server rolling window) behind the dot, account detail, and the
+// goal-edit picker — its OWN key, so the feed's Load More can't grow or disturb it.
+export function useRecentTransactionsQuery(enabled: boolean) {
+  return useQuery({ queryKey: transactionsRecentKey, queryFn: fetchTransactions, enabled });
+}
+
+// The Picker/Confirm sheets resolve the tapped transaction from the FEED cache. The tab-bar dot
+// moved to the bounded recent query, so nothing else keeps the feed warm app-wide; the
+// always-mounted tab bar mounts the feed's first page here (as it used to for the badge), so a
+// sheet opened before the Transactions tab is ever visited still resolves the newest rows.
+export function useKeepTransactionsFeedWarm(): void {
+  useTransactionsFeedQuery(useIsAuthed());
 }
 
 // WHIT-191a: the user's home-loan facts (un-windowed).
@@ -487,7 +515,8 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
 }
 
 // --- the Transactions screen's composite view (WHIT-190a) --------------------
-export interface TransactionsScreenData {
+// The bounded "recent" shape (tab-bar dot, account detail, goal-edit picker). No Load More.
+export interface RecentTransactionsScreenData {
   transactions: Transaction[];
   category: (id: string | null) => Category | undefined;
   balances: Map<string, AccountBalance>; // account_id → live balance (WHIT-212); empty until polled
@@ -497,49 +526,106 @@ export interface TransactionsScreenData {
   refetch: () => void; // force refresh (inline Retry / pull)
   refetchStale: () => void; // focus refresh — only refetches stale queries
 }
+// The Transactions TAB adds cursor pagination ("Load More") on top of the recent shape.
+export interface TransactionsScreenData extends RecentTransactionsScreenData {
+  hasMore: boolean; // more (older) history to page in → show the Load More control
+  loadMore: () => void; // fetch the next (older) page
+  isLoadingMore: boolean; // the next page is in flight → Load More spinner (NOT the pull spinner)
+}
 
-/** Transactions + the category taxonomy for the row selectors, plus the live per-account
- *  balances (WHIT-212). No pay-cycle window. */
-export function useTransactionsScreenData(): TransactionsScreenData {
-  const authed = useIsAuthed();
-  const transactionsQuery = useTransactionsQuery(authed);
+// A single frozen empty list for the cold case, so `transactions` keeps a STABLE identity
+// across renders while a query is cold — otherwise every [transactions]-keyed memo/effect on
+// the tab, dot, and sheets re-fires on each redraw (the WHIT-244 trap).
+const EMPTY_TX: Transaction[] = [];
+
+// Shared plumbing both transaction composites need: the null-tolerant category lookup and the
+// live per-account balances map. Both take the already-computed `authed` flag so the composite
+// gates its queries once.
+function useCategoryLookup(authed: boolean) {
   const categoriesQuery = useCategoriesQuery(authed);
-  const balancesQuery = useAccountBalancesQuery(authed);
-
-  const categories = categoriesQuery.data ?? [];
+  const categories = categoriesQuery.data ?? EMPTY_CATEGORIES;
   const byId = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const category = useCallback((id: string | null) => (id == null ? undefined : byId.get(id)), [byId]);
-
-  // account_id → balance. Secondary data: a balances failure/empty just means the cards
-  // show "—", so it is NOT passed to useCombineScreenQueries (it must not blank the list).
-  const balances = useMemo(
+  return { categoriesQuery, category };
+}
+function useBalancesMap(authed: boolean) {
+  const balancesQuery = useAccountBalancesQuery(authed);
+  // Secondary data: a balances failure/empty just means the cards show "—", so it is NOT
+  // combined into isLoading/isError (it must not blank the list).
+  return useMemo(
     () => new Map((balancesQuery.data ?? []).map((b) => [b.account_id, b])),
     [balancesQuery.data],
   );
+}
 
-  const status = useCombineScreenQueries([transactionsQuery, categoriesQuery]);
-  // isFetching (not isLoading) drives pull-to-refresh: isLoading is false once data is
-  // cached, so a pull-refresh of an already-loaded list must spin on isFetching instead.
-  // Kept OUT of the shared helper — it's a Transactions-only extra.
-  const isFetching = transactionsQuery.isFetching || categoriesQuery.isFetching;
+/** The Transactions TAB: the all-accounts feed (with Load More), the category taxonomy for the
+ *  row selectors, and the live per-account balances (WHIT-212). No pay-cycle window. */
+export function useTransactionsScreenData(): TransactionsScreenData {
+  const authed = useIsAuthed();
+  const feedQuery = useTransactionsFeedQuery(authed);
+  const { categoriesQuery, category } = useCategoryLookup(authed);
+  const balances = useBalancesMap(authed);
+  const queryClient = useQueryClient();
 
+  // Flatten the loaded pages into one newest-first list, with a stable identity while cold.
+  const transactions = useMemo(
+    () => (feedQuery.data ? feedQuery.data.pages.flatMap((p) => p.transactions) : EMPTY_TX),
+    [feedQuery.data],
+  );
+
+  const isLoading = feedQuery.isLoading || categoriesQuery.isLoading;
+  const isError = feedQuery.isError || categoriesQuery.isError;
+  // Pull-to-refresh spins on the FIRST-page fetch only; a Load More (fetchNextPage) must NOT
+  // raise the pull spinner (WHIT-363), so exclude isFetchingNextPage.
+  const isFetching = (feedQuery.isFetching && !feedQuery.isFetchingNextPage) || categoriesQuery.isFetching;
+
+  const hasMore = feedQuery.hasNextPage;
+  const isLoadingMore = feedQuery.isFetchingNextPage;
+  const loadMore = useCallback(() => {
+    if (feedQuery.hasNextPage && !feedQuery.isFetchingNextPage) feedQuery.fetchNextPage();
+  }, [feedQuery]);
+
+  // Refresh — the approved "keep your place, re-check on return" behaviour:
+  //  • focus (refetchStale): re-check the loaded pages IN PLACE — refetch each by its own stable
+  //    cursor, so the newest batch refreshes and the user keeps their scroll position. staleTime
+  //    (45s) gates it, so rapid tab-switching doesn't refetch.
+  //  • manual pull / inline Retry (refetch): SNAP to newest — trim to the first page, then refetch
+  //    it fresh (+ the taxonomy). One round-trip, and it re-pages history cleanly from the top.
+  const refetch = useCallback(() => {
+    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(transactionsKey, (prev) =>
+      prev && prev.pages.length > 1
+        ? { pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
+        : prev);
+    feedQuery.refetch();
+    categoriesQuery.refetch();
+  }, [feedQuery, categoriesQuery, queryClient]);
+  const refetchStale = useCallback(() => {
+    if (categoriesQuery.isStale) categoriesQuery.refetch();
+    if (feedQuery.isStale) feedQuery.refetch(); // refetches every loaded page in place (keeps place)
+  }, [feedQuery, categoriesQuery]);
+
+  return { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, hasMore, loadMore, isLoadingMore };
+}
+
+/** The bounded "recent" reads (tab-bar dot, account detail, goal-edit picker): a fixed
+ *  server-window list on its OWN key, so it can't grow or drift as the tab's feed pages back
+ *  through history. Same composite shape the tab had before it moved to the feed. */
+export function useRecentTransactionsScreenData(): RecentTransactionsScreenData {
+  const authed = useIsAuthed();
+  const recentQuery = useRecentTransactionsQuery(authed);
+  const { categoriesQuery, category } = useCategoryLookup(authed);
+  const balances = useBalancesMap(authed);
+
+  const status = useCombineScreenQueries([recentQuery, categoriesQuery]);
+  const isFetching = recentQuery.isFetching || categoriesQuery.isFetching;
   return {
-    transactions: transactionsQuery.data ?? [],
+    transactions: recentQuery.data ?? EMPTY_TX,
     category,
     balances,
     isFetching,
     ...status,
   };
 }
-
-// The tab-bar uncategorized dot, the account-detail screen, and the goal-edit account picker
-// read a BOUNDED "recent" transaction list: it must stay a fixed window and must NOT grow or
-// drift as the Transactions tab pages back through full history (the upcoming feed "Load More").
-// This is the seam — an alias over the existing composite, so these three consumers move off
-// the tab's hook in one place with ZERO behaviour change (same ['transactions'] cache today).
-// The follow-up change gives this its own dedicated key + fetch so the growing feed can never
-// disturb these counts; the three call sites don't change again.
-export const useRecentTransactionsScreenData = useTransactionsScreenData;
 
 // --- the category drill-in screen's composite view (WHIT-308, WHIT-342) -------
 // app/category/[id].tsx feeds categoryTransactions(s, drillId): one category's (or the

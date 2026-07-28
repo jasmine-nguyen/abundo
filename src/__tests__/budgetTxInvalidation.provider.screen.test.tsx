@@ -1,15 +1,17 @@
 // QA GAP — the ['budgetTransactions'] cache invalidations that keep the budget-detail list
 // reconciled with its header after a write. Drives the REAL actions through AppProvider
 // (../api + ../auth mocked). The implementer's transactionEdit.provider / transactionsCategorize.
-// provider tests assert the ['transactions']/['budgets']/['breakdown'] keys but NOT the new
-// ['budgetTransactions'] key, and don't prove the budget_excluded GUARD (a note edit must NOT
-// invalidate the budget lists). These lock both.
+// provider tests assert the ['budgets']/['breakdown'] keys but NOT the new ['budgetTransactions']
+// key, and don't prove the budget_excluded GUARD (a note edit must NOT invalidate the budget
+// lists). These lock both. NB the ['transactions'] FEED is never invalidated by a write now (it
+// is patched in place) — these assert the budget-list keys, not the feed.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -39,7 +41,7 @@ beforeEach(() => {
 afterEach(() => { queryClient.clear(); }); // clear the singleton's gcTime timers
 
 function mount(transactions: Transaction[] = [txn()]) {
-  queryClient.setQueryData(['transactions'], transactions);
+  seedTransactionsCache(queryClient, transactions);
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   queryClient.setQueryData(['budgets', 14], {});
   const { result } = renderHook(() => useAppContext(), { wrapper });
@@ -56,15 +58,16 @@ it('applyTransactionEdit(budget_excluded) invalidates budgets/breakdown/budgetTr
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
-  expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['transactions', 'budgets', 'breakdown', 'budgetTransactions']));
+  expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions']));
+  expect(invalidatedKeys(spy)).not.toContain('transactions'); // feed patched in place, never invalidated
   spy.mockRestore();
 });
 
 // [A-inval-guard] a note edit changes NEITHER the total nor the cycle list, so it must NOT
-// invalidate the budget lists (that would refetch every open budget for a cosmetic note).
-// FAIL-ON-REVERT: hoisting the budget invalidations out of the `budget_excluded` guard makes a
-// note edit invalidate 'budgetTransactions' here.
-it('applyTransactionEdit(notes) invalidates ONLY transactions — not the budget lists', async () => {
+// invalidate the budget lists (that would refetch every open budget for a cosmetic note) — and
+// it must NOT invalidate the feed (patched in place). FAIL-ON-REVERT: hoisting the budget
+// invalidations out of the `budget_excluded` guard makes a note edit invalidate 'budgetTransactions'.
+it('applyTransactionEdit(notes) invalidates NOTHING — not the feed, not the budget lists', async () => {
   mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', notes: 'lunch' });
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -72,22 +75,24 @@ it('applyTransactionEdit(notes) invalidates ONLY transactions — not the budget
   await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch' }); });
 
   const keys = invalidatedKeys(spy);
-  expect(keys).toContain('transactions');
+  expect(keys).not.toContain('transactions');
   expect(keys).not.toContain('budgetTransactions');
   expect(keys).not.toContain('budgets');
+  expect(keys).toHaveLength(0); // a plain note edit invalidates no cache at all
   spy.mockRestore();
 });
 
 // [A-inval-categorise-one] re-tagging a charge moves it between budgets' cycle lists, so the
 // budget-detail lists must refresh. FAIL-ON-REVERT: dropping the ['budgetTransactions'] line in
 // invalidateAfterCategorise makes this key absent.
-it('applyCategory(one) invalidates budgetTransactions alongside budgets/breakdown/transactions', async () => {
+it('applyCategory(one) invalidates budgetTransactions alongside budgets/breakdown', async () => {
   const result = mount();
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.applyCategory('one'); });
 
-  expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'transactions', 'budgetTransactions']));
+  expect(invalidatedKeys(spy)).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'budgetTransactions']));
+  expect(invalidatedKeys(spy)).not.toContain('transactions'); // feed patched in place, never invalidated
   spy.mockRestore();
 });

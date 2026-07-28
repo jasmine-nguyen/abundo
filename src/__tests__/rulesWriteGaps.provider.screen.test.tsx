@@ -16,6 +16,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { Rule, Transaction } from '../context';
 import { useRulesScreenData } from '../queries';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -48,7 +49,7 @@ afterEach(() => { queryClient.clear(); });
 function seedCache(over: { rules?: Rule[]; transactions?: Transaction[] } = {}) {
   queryClient.setQueryData<Rule[]>(['rules'], over.rules ?? [RULE_E1]);
   queryClient.setQueryData(['categories'], [SUBS_CAT]);
-  queryClient.setQueryData(['transactions'], over.transactions ?? []);
+  seedTransactionsCache(queryClient, over.transactions ?? []);
 }
 function mount() {
   const { result } = renderHook(() => useAppContext(), { wrapper });

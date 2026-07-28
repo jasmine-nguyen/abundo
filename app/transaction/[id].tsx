@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { transactionView, useAppContext, Transaction } from '../../src/context';
 import { formatDayMonthYear } from '../../src/dateutil';
-import { useTransactionsScreenData } from '../../src/queries';
+import { useTransactionsScreenData, useRecentTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
@@ -27,7 +27,10 @@ export default function TransactionDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { openPicker } = useAppContext();
   const { transactions, category, isLoading, isError, refetch } = useTransactionsScreenData();
-  const transaction = transactions.find((t) => t.transaction_id === id);
+  // Resolve from the feed first, then the bounded recent cache — a charge tapped on the
+  // account-detail screen can sit within the recent window yet beyond the feed's loaded pages.
+  const { transactions: recentTransactions } = useRecentTransactionsScreenData();
+  const transaction = transactions.find((t) => t.transaction_id === id) ?? recentTransactions.find((t) => t.transaction_id === id);
   const view = transaction ? transactionView({ category }, transaction) : null;
 
   return (

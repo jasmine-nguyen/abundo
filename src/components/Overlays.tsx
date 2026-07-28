@@ -6,7 +6,7 @@ import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict } from '../context';
 import type { RuleConflict } from '../context';
-import { useTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
+import { useTransactionsScreenData, useRecentTransactionsScreenData, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
 // The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
@@ -194,8 +194,12 @@ function SheetHost() {
 function PickerSheet() {
   const s = useAppContext(); // sheet + chooseCategory + createCategoryInline (client-state)
   // WHIT-203: the transaction + category list come from the cached query layer (warm
-  // from the always-mounted tab bar), not the old store.
+  // from the always-mounted tab bar), not the old store. Resolve the tapped charge from the
+  // feed first, then the bounded recent cache — a row tapped on the account-detail screen can
+  // sit within the recent window yet beyond the feed's loaded pages, so fall back to it.
   const { transactions } = useTransactionsScreenData();
+  const { transactions: recentTransactions } = useRecentTransactionsScreenData();
+  const findTx = (id: string) => transactions.find((t) => t.transaction_id === id) ?? recentTransactions.find((t) => t.transaction_id === id);
   const { categories: cats } = useCategories();
   // WHIT-283: per-transaction draft keys, derived before the hooks so they're stable. The inline
   // new-category form + its "form is open" flag survive a Face ID lock (Overlays unmounts the whole
@@ -232,7 +236,7 @@ function PickerSheet() {
   const readCatDraft = useCallback(() => readSheetDraft(catDraftKey) as Partial<CategoryDraft> | undefined, [readSheetDraft, catDraftKey]);
   const writeCatDraft = useCallback((d: CategoryDraft) => writeSheetDraft(catDraftKey, d), [writeSheetDraft, catDraftKey]);
   if (sh?.mode !== 'picker' && sh?.mode !== 'pickerMany') return null;
-  const tx = txId ? transactions.find((t) => t.transaction_id === txId) : null;
+  const tx = txId ? findTx(txId) : null;
   if (sh.mode === 'picker' && !tx) return null;
   // Header label: a single charge shows its merchant + amount; a multi-select shows the count.
   const count = manyIds?.length ?? 0;
@@ -354,6 +358,7 @@ function PickerSheet() {
 function ConfirmSheet() {
   const s = useAppContext(); // sheet + applyCategory (client-state / writer)
   const { transactions } = useTransactionsScreenData();
+  const { transactions: recentTransactions } = useRecentTransactionsScreenData();
   const { category } = useCategories();
   const sh = s.sheet;
 
@@ -380,7 +385,7 @@ function ConfirmSheet() {
   }
 
   if (sh?.mode !== 'confirm') return null;
-  const tx = transactions.find((t) => t.transaction_id === sh.txId);
+  const tx = transactions.find((t) => t.transaction_id === sh.txId) ?? recentTransactions.find((t) => t.transaction_id === sh.txId);
   const c = category(sh.categoryId);
   if (!tx || !c) return null;
   // WHIT-324: one confirm for BOTH entry points — the Transactions list and the detail screen.

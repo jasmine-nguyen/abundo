@@ -22,8 +22,9 @@ export default function Transactions() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { openMultiPicker } = useAppContext();
-  // WHIT-190a: transactions now come from the cached, auth-gated query layer.
-  const { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale } = useTransactionsScreenData();
+  // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
+  // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
+  const { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
@@ -209,6 +210,27 @@ export default function Transactions() {
           </View>
         )}
 
+        {/* Load More: page older history in via the feed cursor. Hidden at end-of-history
+            (hasMore false) and while the cold-load spinner / error own the empty state. The
+            newest batch shows first; each tap appends the next, older batch. */}
+        {tab !== 'accounts' && !showSpinner && !showError && hasMore && (
+          isLoadingMore ? (
+            <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
+              <ActivityIndicator color={C.accent} />
+            </View>
+          ) : (
+            <Pressable
+              testID="transactions-load-more"
+              onPress={loadMore}
+              accessibilityRole="button"
+              accessibilityLabel="Load older transactions"
+              style={({ pressed }) => [styles.loadMore, pressed && styles.segPressed]}
+            >
+              <Text style={styles.loadMoreText}>Load More</Text>
+            </Pressable>
+          )
+        )}
+
         {tab === 'accounts' && !showSpinner && !showError && accounts.length === 0 && (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}><Glyph name="wallet" size={32} color={C.accentSoft} /></View>
@@ -325,6 +347,12 @@ const styles = StyleSheet.create({
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   acctBal: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
   acctBalPending: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', color: C.textFaint },
+
+  // Load More: same treatment as the budget-detail reveal button (app/budget/[id]), plus a
+  // matched-height spinner slot so the list doesn't jump when it swaps in while a page loads.
+  loadMore: { marginTop: 18, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
+  loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
+  loadMoreState: { marginTop: 18, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
 
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
   stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },

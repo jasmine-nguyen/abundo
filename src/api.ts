@@ -74,13 +74,44 @@ export interface EnrichmentRule {
 }
 
 /**
- * Fetch every transaction for the account.
+ * Fetch the recent transactions (the server's rolling window, newest first). Backs the
+ * bounded "recent" reads — the tab-bar uncategorized dot, the account-detail list, and the
+ * goal-edit account picker — which must stay a fixed window, NOT the Transactions tab's
+ * growing feed.
  *
- * @returns The full list of transactions from the API.
+ * @returns The recent-window transactions from the API.
  * @throws If the response status is not OK.
  */
 export async function fetchTransactions(): Promise<Transaction[]> {
   const response = await apiFetch(`${API_BASE}/transactions`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/** One page of the all-accounts transaction feed (the Transactions tab's "Load More"). */
+export interface TransactionFeedPage {
+  transactions: Transaction[];
+  nextCursor: string | null; // an opaque cursor for the next (older) page; null at end-of-history
+}
+
+/**
+ * Fetch one page of the all-accounts transaction feed, newest first — every account merged,
+ * cursor-paged back through the full history (no 7-day floor). Backs the Transactions tab's
+ * "Load More": pass the previous page's `nextCursor` to get the next, older batch. A null
+ * `nextCursor` in the response means there is no more history.
+ *
+ * @param cursor - The previous page's nextCursor, or undefined/absent for the newest page.
+ * @param limit - Optional page size; the server clamps to its own max and applies a default.
+ * @returns One page: its transactions plus the cursor for the next page (null at the end).
+ * @throws If the response status is not OK.
+ */
+export async function fetchTransactionsFeed(cursor?: string, limit?: number): Promise<TransactionFeedPage> {
+  const parts: string[] = [];
+  if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+  if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
+  const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
+  const response = await apiFetch(`${API_BASE}/transactions/feed${qs}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return response.json();

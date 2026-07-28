@@ -41,7 +41,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
     useCategories: () => ({ categories: cats(), category, ...status, isLoading: st().categoriesLoading ?? false, isError: st().categoriesError ?? false }),
     useBudgetsScreenData: () => ({ budgets: st().budgets ?? [], category, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
     useBudgetDetailScreenData: () => ({ category, budgets: st().budgets ?? [], transactions: st().transactions ?? [], cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
-    useTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, isFetching: false, ...status }),
+    useTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, isFetching: false, hasMore: false, loadMore: noop, isLoadingMore: false, ...status }),
     // The bounded recent list (tab dot, account detail, goal-edit picker). Same fixture as the
     // tab composite here — screens needing real per-account balances use an inline mock instead.
     useRecentTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, balances: new Map(), isFetching: false, ...status }),

@@ -1,14 +1,16 @@
 // WHIT-190a/192 — the categorise write's cache write + invalidation (the WHIT-193 closure).
 // Drives the REAL applyCategory through AppProvider (../api + ../auth mocked) and asserts it
-// updates the singleton ['transactions'] query cache, rolls it back on failure, and
-// invalidates ['budgets']/['breakdown']/['transactions'] so the migrated
-// Budgets/Insights/Transactions screens refresh. (Pre-192 it also wrote an old store; gone.)
+// updates the singleton ['transactions'] feed cache, rolls it back on failure, and invalidates
+// ['budgets']/['breakdown'] so the migrated Budgets/Insights screens refresh. The feed itself
+// is NOT invalidated (the optimistic patch already wrote it; an InfiniteData invalidate would
+// storm every loaded page) — the tests assert that too. (Pre-192 it also wrote an old store.)
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -24,7 +26,7 @@ const txn = (id: string): Transaction => ({
   description: 'COLES', merchant_name: 'Coles', amount: -12.5, account_id: 'a1',
   account_name: 'ANZ', category: null, status: 'posted', type: 'PAYMENT', counts_to_budget: true,
 });
-const cachedCategory = (id: string) => (queryClient.getQueryData<Transaction[]>(['transactions']) ?? []).find((t) => t.transaction_id === id)?.category;
+const cachedCategory = (id: string) => readTransactionsCache(queryClient).find((t) => t.transaction_id === id)?.category;
 
 beforeEach(() => {
   queryClient.clear();
@@ -41,7 +43,7 @@ afterEach(() => {
 // WHIT-192: seed the ['transactions'] + ['categories'] caches applyCategory reads (the
 // provider no longer eager-loads), then mount.
 function mount(transactions: Transaction[] = [txn('t1'), txn('t2')]) {
-  queryClient.setQueryData(['transactions'], transactions);
+  seedTransactionsCache(queryClient, transactions);
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   // ['budgets', cycleLen] caches the RAW Record<categoryId, BudgetRollup> (select maps it).
   queryClient.setQueryData(['budgets', 14], {});
@@ -49,7 +51,7 @@ function mount(transactions: Transaction[] = [txn('t1'), txn('t2')]) {
   return result;
 }
 
-it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown/transactions', async () => {
+it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown but NOT the feed', async () => {
   mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
   const result = mount();
 
@@ -59,7 +61,8 @@ it('applyCategory(one) writes the tx cache AND invalidates budgets/breakdown/tra
 
   expect(cachedCategory('t1')).toBe('groceries'); // query cache write
   const invalidatedKeys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
-  expect(invalidatedKeys).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'transactions'])); // WHIT-193 closure
+  expect(invalidatedKeys).toEqual(expect.arrayContaining(['budgets', 'breakdown'])); // WHIT-193 closure
+  expect(invalidatedKeys).not.toContain('transactions'); // the feed is patched, never invalidated (no page storm)
   invalidateSpy.mockRestore();
 });
 
@@ -83,7 +86,8 @@ it('applyCategory(all) writes every same-merchant charge into the cache + invali
   expect(cachedCategory('t1')).toBe('groceries');
   expect(cachedCategory('t2')).toBe('groceries'); // the whole same-merchant sweep hit the cache
   const invalidatedKeys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
-  expect(invalidatedKeys).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'transactions']));
+  expect(invalidatedKeys).toEqual(expect.arrayContaining(['budgets', 'breakdown']));
+  expect(invalidatedKeys).not.toContain('transactions'); // feed patched, not invalidated
   invalidateSpy.mockRestore();
 });
 
@@ -180,7 +184,8 @@ it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + inv
   expect(cachedCategory('t3')).toBe('groceries');
   expect(cachedCategory('t2')).toBeNull(); // not in the set → untouched
   const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
-  expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown', 'transactions']));
+  expect(keys).toEqual(expect.arrayContaining(['budgets', 'breakdown']));
+  expect(keys).not.toContain('transactions'); // feed patched, not invalidated
   invalidateSpy.mockRestore();
 });
 

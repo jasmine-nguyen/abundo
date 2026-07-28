@@ -33,6 +33,7 @@ jest.mock('../queries', () => ({
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
 
@@ -161,7 +162,7 @@ describe('WHIT-271 gaps — toast-only writers settling AFTER sign-out show no t
   });
 
   it('[A-ATE] applyTransactionEdit FAILURE after sign-out shows no toast and re-seats no transactions', async () => {
-    queryClient.setQueryData(['transactions'], [{ transaction_id: 't1', notes: 'old', tags: ['a'], category: null, counts_to_budget: true, description: 'X' }]);
+    seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'old', tags: ['a'], category: null, counts_to_budget: true, description: 'X' }]);
     const d = deferred<unknown>();
     mockApi.setTransactionFields.mockImplementation(() => d.promise as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
@@ -176,7 +177,7 @@ describe('WHIT-271 gaps — toast-only writers settling AFTER sign-out show no t
   });
 
   it('[A-ACALL] applyCategory("all") FAILURE after sign-out shows no toast (the :701 leak)', async () => {
-    queryClient.setQueryData(['transactions'], [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'COLES' }]);
+    seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'COLES' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     mockApi.createEnrichment.mockResolvedValue({ id: 'r1', value: 'COLES', categoryId: 'c1' } as never);
     const dBatch = deferred<unknown>();
@@ -226,14 +227,14 @@ describe('WHIT-271 gaps — in-session control: the guard does not break the hap
 
   it('[A-CTRL-ATE] applyTransactionEdit failure (no sign-out) toasts AND rolls the field back', async () => {
     jest.useFakeTimers();
-    queryClient.setQueryData(['transactions'], [{ transaction_id: 't1', notes: 'old', tags: ['a'], category: null, counts_to_budget: true, description: 'X' }]);
+    seedTransactionsCache(queryClient, [{ transaction_id: 't1', notes: 'old', tags: ['a'], category: null, counts_to_budget: true, description: 'X' }]);
     mockApi.setTransactionFields.mockRejectedValue(new Error('network') as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'new' }); await flush(); });
 
     expect(result.current.toast).toBe('Could not save. Please try again.');
-    const tx = queryClient.getQueryData<{ notes: string }[]>(['transactions'])?.[0];
+    const tx = readTransactionsCache(queryClient)[0];
     expect(tx?.notes).toBe('old'); // rolled back to the snapshot
   });
 });

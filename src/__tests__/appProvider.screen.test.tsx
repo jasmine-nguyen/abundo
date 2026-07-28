@@ -11,6 +11,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category, Rule, LoanFacts } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 // The writers guard the load-error banner on auth (retired), but auth still gates
@@ -29,7 +30,7 @@ const TXN = {
 } as const;
 
 // Read helpers over the query caches the writers now target.
-const txns = () => queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+const txns = () => readTransactionsCache(queryClient);
 const cats = () => queryClient.getQueryData<Category[]>(['categories']) ?? [];
 const rules = () => queryClient.getQueryData<Rule[]>(['rules']) ?? [];
 const loanFacts = () => queryClient.getQueryData<LoanFacts>(['loanFacts']);
@@ -50,7 +51,7 @@ afterEach(() => {
 // WHIT-192: seed the query caches the writers read (the provider no longer eager-loads).
 // `txnList` overrides the transactions the sweep tests operate on.
 function seed(txnList: readonly Transaction[] = [{ ...TXN }]) {
-  queryClient.setQueryData(['transactions'], txnList.map((t) => ({ ...t })));
+  seedTransactionsCache(queryClient, txnList.map((t) => ({ ...t })));
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   // The ['budgets', cycleLen] cache holds the RAW queryFn shape: a
   // Record<categoryId, BudgetRollup> keyed by id (useBudgetsQuery maps it via `select`).
