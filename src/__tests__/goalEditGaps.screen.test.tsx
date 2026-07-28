@@ -35,7 +35,7 @@ jest.mock('../context', () => {
 jest.mock('../queries', () => ({
   useIsAuthed: () => true,
   useGoalsQuery: () => ({ data: mockGoals }),
-  useTransactionsScreenData: () => ({ transactions: mockTransactions, balances: mockBalances }),
+  useRecentTransactionsScreenData: () => ({ transactions: mockTransactions, balances: mockBalances }),
 }));
 
 jest.mock('expo-router', () => ({

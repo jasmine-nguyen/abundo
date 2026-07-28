@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { countUncategorized } from '../../src/context';
-import { useTransactionsScreenData } from '../../src/queries';
+import { useRecentTransactionsScreenData } from '../../src/queries';
 import { NavBarsProvider, useNavBars } from '../../src/motion/NavBarsContext';
 import { NavBarsRouteReset } from '../../src/motion/NavBarsRouteReset';
 import { useReduceMotion } from '../../src/motion/useReduceMotion';
@@ -32,7 +32,9 @@ export function TabBar({ state, navigation }: TabBarShape) {
   // query for the uncategorized dot (the same keys the Transactions tab uses, so they
   // dedup — and this keeps them warm for the Picker/Confirm sheets too). Once the eager
   // store load is gone (WHIT-192) nothing else would keep the badge fed app-wide.
-  const { transactions, category } = useTransactionsScreenData();
+  // The dot reads the BOUNDED recent list (not the growing feed) so its count can't drift
+  // with how deep the Transactions tab has paged back through history.
+  const { transactions, category } = useRecentTransactionsScreenData();
   const hasUncategorized = countUncategorized({ transactions, category }) > 0;
   // Scroll-to-hide (WHIT-184): the bar floats (position:absolute, so the scene fills
   // full height and content scrolls under it), and slides straight down out of view

@@ -9,7 +9,7 @@ import { txn } from './factory';
 
 const uncategorized = (_id: string | null) => undefined; // rows resolve to no category → uncategorized
 let mockTx: { transactions: unknown[]; category: (id: string | null) => unknown };
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({ useRecentTransactionsScreenData: () => mockTx }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 // expo-router's Tabs pulls in native modules that can't load headlessly; the TabBar under
