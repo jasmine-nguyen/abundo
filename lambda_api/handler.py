@@ -14,6 +14,7 @@ from constants import (
     ROLLUP_KEY,
     ENRICHMENTS_PATH,
     EXPO_TOKEN_MAX_LEN,
+    FEED_PAGE_SIZE,
     FEED_WINDOW_DAYS,
     GOALS_PATH,
     HOMELOAN_ACCOUNT_ID,
@@ -34,6 +35,7 @@ from constants import (
     SPEND_BUCKETS,
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
+    TRANSACTIONS_FEED_PATH,
     TRANSACTIONS_RANGE_PATH,
     UNCATEGORIZED_KEY,
 )
@@ -110,6 +112,13 @@ def lambda_handler(event, context):
         # response shape ({transactions, nextCursor}), so it can't share the feed branch.
         if path == TRANSACTIONS_RANGE_PATH and method == "GET":
             return get_transactions_by_range(event, TransactionRepository())
+
+        # The all-accounts feed, paged back through full history (Load More). An EXACT
+        # path, disjoint from "/transactions", "/transactions/range", and the PATCH
+        # "/transactions/{id}" item route (a GET, so the startswith-PATCH branch never
+        # matches it). Returns {transactions, nextCursor}, so its own branch.
+        if path == TRANSACTIONS_FEED_PATH and method == "GET":
+            return get_transactions_feed(event, TransactionRepository())
 
         # Collection route (batch) BEFORE the item route. "/transactions" does not
         # start with "/transactions/", so the two are disjoint regardless of order.
@@ -317,6 +326,62 @@ def _decode_cursor(raw: str | None) -> dict | None:
     if not isinstance(cursor, dict) or set(cursor) != _CURSOR_KEY_SHAPE:
         raise _BadCursor("cursor has an unexpected shape")
     return cursor
+
+
+# The /transactions/feed cursor is COMPOSITE — it resumes every account at once, so it
+# can't reuse the single-key _encode_cursor/_decode_cursor above (which /range depends on
+# for its strict single-key shape check). It encodes a per-account resume map:
+#   {"v": 1, "a": {<account_id>: <date-index key | null>, ...}}
+# A key of null means "resume this account from its newest row" (it fetched rows last page
+# but none made the merged cut, so it re-competes from the same position). An account
+# ABSENT from the map is exhausted. An empty map encodes to no cursor at all (null).
+_FEED_CURSOR_VERSION = 1
+
+
+def _encode_feed_cursor(resume_keys: dict) -> str | None:
+    """Serialise the per-account resume map into an opaque feed cursor. An empty map
+    (every account exhausted) → None, so the response carries a literal null nextCursor."""
+    if not resume_keys:
+        return None
+    payload = {"v": _FEED_CURSOR_VERSION, "a": resume_keys}
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+
+def _decode_feed_cursor(raw: str | None) -> dict:
+    """Reverse _encode_feed_cursor. None/empty → {} (a first page: every account from
+    newest). Raises _BadCursor on anything that isn't base64 of a {v, a:{account_id: key}}
+    payload whose non-null keys have the date-index shape and match their account — so a
+    forged token is a clean 400, never a DynamoDB ValidationException 500 on the
+    ExclusiveStartKey."""
+    if not raw:
+        return {}
+    try:
+        decoded = base64.urlsafe_b64decode(raw.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+    except (json.JSONDecodeError, ValueError):
+        raise _BadCursor("malformed feed cursor")
+    if not isinstance(payload, dict) or payload.get("v") != _FEED_CURSOR_VERSION:
+        raise _BadCursor("feed cursor has an unexpected version")
+    resume_keys = payload.get("a")
+    if not isinstance(resume_keys, dict):
+        raise _BadCursor("feed cursor has an unexpected shape")
+    for account_id, key in resume_keys.items():
+        if key is None:
+            continue
+        if not isinstance(key, dict) or set(key) != _CURSOR_KEY_SHAPE:
+            raise _BadCursor("feed cursor has an unexpected key shape")
+        # The date-index key attrs are all strings. A forged key with the right NAMES but
+        # non-string values (e.g. date=1) would pass the shape check and reach DynamoDB as
+        # a bad ExclusiveStartKey (ValidationException → 500). Require string values so a
+        # forged token stays a clean 400, as the docstring promises.
+        if not all(isinstance(value, str) for value in key.values()):
+            raise _BadCursor("feed cursor has non-string key values")
+        # A resume key is bound to its account: the ExclusiveStartKey's partition value
+        # must equal the account it resumes, or DynamoDB rejects it (a 500). Reject a
+        # cross-account key as a 400, mirroring the /range cursor-account check.
+        if key.get("account_id") != account_id:
+            raise _BadCursor("feed cursor key does not match its account")
+    return resume_keys
 
 
 def register_device(event: dict, repo: DeviceRepository) -> dict:
@@ -613,6 +678,137 @@ def get_transactions_by_range(event: dict, repo: TransactionRepository) -> dict:
         "transactions": transactions,
         "nextCursor": _encode_cursor(next_key),
     })
+
+
+def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
+    """GET /transactions/feed — the all-accounts feed, newest-first, paged back through
+    FULL history (Load More).
+
+    Unlike GET /transactions (a fixed 7-day rolling window returning a bare array) and
+    /transactions/range (single account, requires `from`), this merges every account with
+    NO date floor and returns a cursor so the app can walk back to the start of history:
+
+        limit   (optional) — page size, clamped to [1, MAX_PAGE_SIZE] (default FEED_PAGE_SIZE)
+        cursor  (optional) — an opaque nextCursor from a previous page
+
+    Returns {"transactions": [...], "nextCursor": <opaque string|null>}. nextCursor is null
+    once every account is exhausted. Bad input → 400.
+    """
+    params = event.get("queryStringParameters") or {}
+
+    # `limit` is optional. Parse to int (non-numeric → 400) and clamp to [1, MAX_PAGE_SIZE],
+    # mirroring /range: a 0/negative Limit is a DynamoDB ValidationException.
+    raw_limit = params.get("limit")
+    limit = FEED_PAGE_SIZE
+    if raw_limit is not None:
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return _json_response(400, {"error": "invalid limit; expected an integer"})
+        limit = max(1, min(limit, MAX_PAGE_SIZE))
+
+    try:
+        resume_keys = _decode_feed_cursor(params.get("cursor"))
+    except _BadCursor:
+        return _json_response(400, {"error": "invalid cursor"})
+
+    page, next_resume_keys = _fetch_feed_page(repo, limit, resume_keys)
+
+    # Mirror the other transaction routes' row shaping: drop the DynamoDB keys, default
+    # sparse fields. The resume keys were already built from the raw rows inside
+    # _fetch_feed_page, so popping pk/sk here does not disturb the cursor.
+    for txn in page:
+        txn.pop("pk", None)
+        txn.pop("sk", None)
+        txn.setdefault("category", None)
+
+    return _json_response(200, {
+        "transactions": page,
+        "nextCursor": _encode_feed_cursor(next_resume_keys),
+    })
+
+
+def _fetch_feed_page(
+    repo: TransactionRepository, limit: int, resume_keys: dict
+) -> tuple[list[dict], dict]:
+    """One page of the merged all-accounts feed: the globally newest `limit` rows at or
+    after each account's resume position, plus the resume map for the next page.
+
+    Why it is gap-free and dupe-free:
+      - Fetch up to `limit` newest rows from each live account past its resume key. A
+        globally top-`limit` row has < limit rows newer than it globally, hence < limit
+        newer within its OWN account, so it always sits inside that account's own
+        top-`limit` — fetching `limit` per account can never miss one.
+      - Stable-merge all fetched rows by date descending (ties keep ACCOUNT_ID_MAP order,
+        and each account's own rows keep DynamoDB order) and take the top `limit`.
+      - Advance an account's resume key only PAST the OLDEST row it contributed to this
+        page (DynamoDB's ExclusiveStartKey resumes strictly after it, so no row repeats).
+        An account that contributed nothing keeps its PRIOR key, so its fetched-but-unshown
+        rows re-compete next page (no row is skipped).
+      - Drop an account from the next cursor once it has no unshown fetched rows AND
+        DynamoDB reports no more pages.
+
+    resume_keys is {} on the first page (every account from newest); otherwise it holds
+    only the still-live accounts, each mapped to a date-index key or None (from newest).
+    """
+    first_page = not resume_keys
+    if first_page:
+        live = {account_id: None for account_id in ACCOUNT_ID_MAP.values()}
+    else:
+        live = dict(resume_keys)
+
+    # One query per live account, in ACCOUNT_ID_MAP order (kept stable across pages so the
+    # equal-date merge tiebreak never flips a row across a page boundary).
+    fetched: dict[str, list[dict]] = {}
+    dynamo_has_more: dict[str, bool] = {}
+    for account_id, resume_key in live.items():
+        rows, next_key = repo.get_transactions_by_date_range(
+            account_id, None, None, limit=limit, cursor=resume_key
+        )
+        fetched[account_id] = rows
+        dynamo_has_more[account_id] = next_key is not None
+
+    # Stable-merge: insertion order is account-by-account in live order, so a stable sort
+    # on date-desc keeps equal-date rows in ACCOUNT_ID_MAP order and each account's rows in
+    # DynamoDB order — a single deterministic global order.
+    ordered = [
+        (row, account_id)
+        for account_id, rows in fetched.items()
+        for row in rows
+    ]
+    ordered.sort(key=lambda pair: pair[0]["date"], reverse=True)
+    page_pairs = ordered[:limit]
+    page = [row for row, _ in page_pairs]
+
+    # The page is newest-first, so the LAST time an account appears is the oldest row it
+    # contributed → its next resume key.
+    oldest_contributed: dict[str, dict] = {}
+    contributed_count: dict[str, int] = {}
+    for row, account_id in page_pairs:
+        oldest_contributed[account_id] = row
+        contributed_count[account_id] = contributed_count.get(account_id, 0) + 1
+
+    next_resume_keys: dict = {}
+    for account_id in live:
+        row = oldest_contributed.get(account_id)
+        if row is not None:
+            all_fetched_shown = contributed_count[account_id] == len(fetched[account_id])
+            exhausted = all_fetched_shown and not dynamo_has_more[account_id]
+            if not exhausted:
+                next_resume_keys[account_id] = {
+                    "account_id": account_id,
+                    "date": row["date"],
+                    "pk": row["pk"],
+                    "sk": row["sk"],
+                }
+            continue
+        # Contributed nothing this page. If it still has fetched-but-unshown rows (or
+        # DynamoDB has more), keep it live at its PRIOR position so those rows re-compete;
+        # otherwise it is exhausted and drops out of the cursor.
+        if fetched[account_id] or dynamo_has_more[account_id]:
+            next_resume_keys[account_id] = live[account_id]
+
+    return page, next_resume_keys
 
 
 def _slugify(name: str) -> str:

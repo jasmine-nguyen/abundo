@@ -32,6 +32,7 @@ locals {
   app_route_keys = toset([
     "GET /transactions",
     "GET /transactions/range",
+    "GET /transactions/feed",
     "PATCH /transactions/{id}",
     "PATCH /transactions",
     "GET /categories",

@@ -21,6 +21,18 @@ TRANSACTION_PATH = "/transactions"
 # consumes it (no shared repository_* imports it), so the WHIT-136 sync guard doesn't
 # require the shared mirror — kept equal in shared/constants.py for hygiene only.
 TRANSACTIONS_RANGE_PATH = "/transactions/range"
+# API Gateway route path for the all-accounts transactions feed (Load More over full
+# history). Unlike the /transactions feed (a fixed 7-day rolling window returning a bare
+# array) and /transactions/range (single-account, requires from), this merges EVERY
+# account newest-first with NO date floor and returns {transactions, nextCursor} so the
+# app can page back through all history. Only lambda_api/handler.py consumes it (no shared
+# repository_* imports it), so the WHIT-136 sync guard doesn't require the shared mirror —
+# kept equal in shared/constants.py for hygiene only, like TRANSACTIONS_RANGE_PATH.
+TRANSACTIONS_FEED_PATH = "/transactions/feed"
+# Default page size for the transactions feed when a request sends no ?limit=. Smaller
+# than MAX_PAGE_SIZE: the feed fans out one query PER account per page, so a modest page
+# keeps a "Load More" tap cheap while still filling a screen. Lambda_api-only.
+FEED_PAGE_SIZE = 30
 # Max items accepted by the batch PATCH /transactions endpoint (WHIT-70). The
 # route is open and the handler applies updates in a sequential per-item loop, so
 # this bounds the work one request can queue. Real sweeps are tiny (uncategorised
