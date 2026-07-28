@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshControl, View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -65,7 +65,23 @@ export default function Transactions() {
   // WHIT-192: pull-to-refresh re-fetches the visible transaction list. The other screens'
   // reads (budgets, loan, rules, pay-cycle) each refresh themselves on focus via their own
   // queries — pull no longer eagerly reloads the whole app off the retired store.
-  const onRefresh = useCallback(() => { refetch(); }, [refetch]);
+  // WHIT-363: the pull-to-refresh spinner must show ONLY for a real finger-pull. The on-focus
+  // background refetch (refetchStale, above) also flips isFetching, and driving the spinner off
+  // isFetching let a programmatic refresh raise a spinner that RN's RefreshControl then failed
+  // to dismiss — the spinner stuck below the title on return from a transaction. So a local
+  // `pulling` flag, set only here on a user pull, owns the spinner instead.
+  const [pulling, setPulling] = useState(false);
+  const onRefresh = useCallback(() => { setPulling(true); refetch(); }, [refetch]);
+  // Clear on the falling edge of isFetching (saw a fetch, now none). refetch() flips isFetching
+  // true synchronously-enough that we never clear before the pull's own fetch is in flight; a
+  // plain `!isFetching` would clear on the first render after setPulling(true), before it starts.
+  // Relies on isFetching staying continuously true across a pull-over-background refetch
+  // (TanStack refetch defaults to cancelRefetch, so the edge falls once, on the pull's completion).
+  const wasFetching = useRef(false);
+  useEffect(() => {
+    if (isFetching) wasFetching.current = true;
+    else if (wasFetching.current) { wasFetching.current = false; setPulling(false); }
+  }, [isFetching]);
 
   // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
   // wrapper (WHIT-199). The RefreshControl is a render-prop so this screen keeps its own
@@ -94,9 +110,11 @@ export default function Transactions() {
       keyboardShouldPersistTaps="handled"
       refreshControl={(headerHeight) => (
         <RefreshControl
-          // Spin only while refreshing data we ALREADY have — the inline spinner owns
-          // the cold-load state, so the two don't both spin at once (code-critic).
-          refreshing={isFetching && transactions.length > 0}
+          // WHIT-363: the pull spinner shows only for a user pull (`pulling`), cleared when that
+          // pull's fetch ends — so the silent on-focus/background refetch never raises it. The
+          // `length > 0` guard stops a pull during the cold-load window from double-spinning with
+          // the inline loading spinner (showSpinner), which owns the empty first-load state.
+          refreshing={pulling && transactions.length > 0}
           onRefresh={onRefresh}
           tintColor={C.accent}
           progressViewOffset={headerHeight}
