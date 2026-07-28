@@ -11,10 +11,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
 
-const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
+const mockFetchTransactionsFeed = jest.fn<() => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
-  fetchTransactions: () => mockFetchTransactions(),
+  fetchTransactionsFeed: () => mockFetchTransactionsFeed(),
   fetchCategories: () => mockFetchCategories(),
 }));
 
@@ -36,7 +36,7 @@ function wrapper(client: QueryClient) {
 }
 
 beforeEach(() => {
-  mockFetchTransactions.mockReset().mockResolvedValue(TXNS);
+  mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: TXNS, nextCursor: null });
   mockFetchCategories.mockReset().mockResolvedValue(CATS);
 });
 
@@ -44,22 +44,22 @@ it('refetchStale no-ops on a FRESH cache (instant-from-cache on revisit)', async
   const client = makeClient(Infinity); // never stale
   const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
   await waitFor(() => expect(result.current.transactions.length).toBe(1));
-  expect(mockFetchTransactions).toHaveBeenCalledTimes(1);
+  expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(1);
 
   act(() => { result.current.refetchStale(); });
   await act(async () => { await Promise.resolve(); }); // flush any (non-)refetch microtask
-  expect(mockFetchTransactions).toHaveBeenCalledTimes(1); // fresh → no refetch
+  expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(1); // fresh → no refetch
   expect(mockFetchCategories).toHaveBeenCalledTimes(1);
 });
 
-it('refetchStale REFETCHES a STALE cache (focus refresh)', async () => {
+it('refetchStale REFETCHES a STALE single-page cache (focus refresh re-checks the newest page)', async () => {
   const client = makeClient(0); // immediately stale
   const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
   await waitFor(() => expect(result.current.transactions.length).toBe(1));
-  expect(mockFetchTransactions).toHaveBeenCalledTimes(1);
+  expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(1);
 
   await act(async () => { result.current.refetchStale(); });
-  await waitFor(() => expect(mockFetchTransactions).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(2));
 });
 
 it('isError surfaces when ONLY the categories read fails (transactions still populated)', async () => {

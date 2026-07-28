@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -12,6 +12,7 @@ export type { LoanFacts, LoanFactsInput } from './api';
 // Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
 // a circular import — ./queries imports from this module.
 import { queryClient } from './queryClient';
+import type { InfiniteData } from '@tanstack/react-query';
 import { getStatus, subscribe } from './auth';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
@@ -532,6 +533,34 @@ export function toRule(raw: EnrichmentRule): Rule {
 
 const Ctx = createContext<AppContext | null>(null);
 
+// A charge can live in TWO caches: the Transactions tab's ['transactions'] FEED (an InfiniteData
+// of pages — the "Load More" history) and the bounded ['transactionsRecent'] window (the tab-bar
+// dot, account-detail, goal-edit). They overlap on the newest rows but each holds some the other
+// doesn't (deep history is feed-only; a recent charge beyond the feed's loaded pages is
+// recent-only). So the write path must READ the union (or a row tapped on account-detail is
+// "not found" and the write silently no-ops) and PATCH both (or the dot/account-detail keep stale
+// data after an edit). These helpers own that reconciliation for every writer.
+function readFeedRows(): Transaction[] {
+  const data = queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(['transactions']);
+  return data ? data.pages.flatMap((p) => p.transactions) : [];
+}
+// The union of both caches, de-duped by id (a charge in both appears once). Newest-first from the
+// feed, then any recent-only rows.
+function readTransactionsCache(): Transaction[] {
+  const feed = readFeedRows();
+  const recent = queryClient.getQueryData<Transaction[]>(['transactionsRecent']) ?? [];
+  const seen = new Set(feed.map((t) => t.transaction_id));
+  return [...feed, ...recent.filter((t) => !seen.has(t.transaction_id))];
+}
+// Map the caller's per-row transform over the feed pages (page boundaries + cursors preserved —
+// every caller is a .map() that adds/removes no rows) AND the flat recent array, so an optimistic
+// edit reflects on the tab list, the dot, account-detail, and goal-edit at once.
+function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): void {
+  queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(['transactions'], (prev) =>
+    prev ? { ...prev, pages: prev.pages.map((pg) => ({ ...pg, transactions: fn(pg.transactions) })) } : prev);
+  queryClient.setQueryData<Transaction[]>(['transactionsRecent'], (prev) => (prev ? fn(prev) : prev));
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [goal, setGoal] = useState<Goal>(SEED_GOAL);
   const [alerts, setAlerts] = useState(true);
@@ -745,12 +774,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  // WHIT-190a/WHIT-275: optimistic tx edits go straight into the ['transactions'] query
-  // cache the migrated list + tab badge + budget detail + detail screen read. Guard an
-  // evicted/absent cache (gcTime is finite). Lifted out of applyCategory so the note/tag
-  // edit action reuses the exact same cache-patch primitive.
+  // WHIT-190a/WHIT-275: optimistic tx edits go straight into the ['transactions'] feed cache
+  // the tab list + budget detail + detail screen read. Maps the row transform over each loaded
+  // feed page (patchTransactionsCache), so an edit to a row on any paged-in batch updates in
+  // place. Guards an evicted/absent cache (gcTime is finite). Lifted out of applyCategory so the
+  // note/tag edit action reuses the exact same cache-patch primitive.
   const patchTransactions = useCallback((fn: (prev: Transaction[]) => Transaction[]) => {
-    queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => (prev ? fn(prev) : prev));
+    patchTransactionsCache(fn);
   }, []);
 
   const applyCategory = useCallback(async (scope: 'one' | 'all'): Promise<void> => {
@@ -760,7 +790,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // WHIT-192: source the transactions + taxonomy from the query cache the screens read
     // (the eager store is gone). By the time the confirm sheet is open the Transactions
     // list + pickers have warmed both caches; an empty fallback just closes the sheet.
-    const transactions = queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+    const transactions = readTransactionsCache();
     const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
     const transaction = transactions.find((t) => t.transaction_id === txId);
     const category = categories.find((c) => c.id === categoryId);
@@ -774,13 +804,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // after sign-out must not toast into the next session.
     const epoch = sessionEpoch.current;
 
-    // After a categorisation persists, invalidate the query caches the migrated screens
-    // read. The ['budgets']/['breakdown']/['transactions'] invalidation is what closes the
-    // ≤45s staleness (WHIT-193).
+    // After a categorisation persists, invalidate the server-derived caches the migrated
+    // screens read. The ['budgets']/['breakdown'] invalidation is what closes the ≤45s
+    // staleness (WHIT-193). The ['transactions'] FEED is deliberately NOT invalidated: it is
+    // an InfiniteData of loaded pages, so invalidating would refetch every page sequentially
+    // (a storm once the user has paged back). The optimistic patchTransactions above already
+    // wrote the exact category change into the feed cache, and the tab reconciles the newest
+    // page on focus — so a blanket feed refetch here is both redundant and costly.
     const invalidateAfterCategorise = () => {
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
       // Re-tagging a charge changes which budget's + category's cycle list it belongs to;
       // refresh the budget-detail and category drill-in lists (flat prefix → every cached list).
       queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
@@ -956,7 +989,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // chunks under the server cap, then reconcile BY ID and roll back only the ones that failed to
   // their PREVIOUS category (never a blanket null — a re-filed charge may have been categorised).
   const applyCategoryToMany = useCallback(async (txIds: string[], categoryId: string): Promise<void> => {
-    const transactions = queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+    const transactions = readTransactionsCache();
     const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
     const category = categories.find((c) => c.id === categoryId);
     // Only touch ids that are actually in the cache; dedupe defensively.
@@ -997,11 +1030,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Could not save some categories. Please try again.');
       }
     }
-    // Some categorisations persisted -> refresh the migrated Budgets/Insights/Transactions reads.
+    // Some categorisations persisted -> refresh the server-derived Budgets/Insights reads. The
+    // ['transactions'] feed is NOT invalidated (the optimistic patch already wrote the change;
+    // an InfiniteData invalidate would storm every loaded page — see applyCategory above).
     if (failedIds.length < ids.length) {
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
       queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
     }
@@ -1014,7 +1048,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // (and vice-versa); a passed "" note / [] tags clears that field on the server.
   const applyTransactionEdit = useCallback(
     async (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }): Promise<void> => {
-      const transactions = queryClient.getQueryData<Transaction[]>(['transactions']) ?? [];
+      const transactions = readTransactionsCache();
       const transaction = transactions.find((t) => t.transaction_id === txId);
       if (!transaction) return; // cache evicted / unknown id — nothing to edit
 
@@ -1051,7 +1085,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const epoch = sessionEpoch.current;
       try {
         await apiSetTransactionFields(txId, patch);
-        queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        // The ['transactions'] feed is NOT invalidated: the optimistic patchTransactions above
+        // already wrote notes/tags/budget_excluded into the feed cache, and an InfiniteData
+        // invalidate would refetch every loaded page (a storm once paged back).
         // Excluding/including a charge changes the budget total AND its cycle list — refresh
         // both together so the detail header and its rows stay reconciled (a note/tag edit
         // touches neither, so only do this for a budget_excluded change).
@@ -1249,7 +1285,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return rest;
       });
       patchRules((prev) => prev.filter((r) => r.categoryId !== id));
-      queryClient.setQueryData<Transaction[]>(['transactions'], (prev) => prev?.map((t) => (t.category === id ? { ...t, category: null } : t)));
+      patchTransactionsCache((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
       // The deleted category's in-cycle spend now falls into Uncategorized on the
       // breakdown; invalidate so the Insights tab re-pulls and reflects that.
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });

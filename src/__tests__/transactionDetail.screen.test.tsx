@@ -9,7 +9,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 
 let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx, useRecentTransactionsScreenData: () => ({ transactions: [] }) }));
 
 // WHIT-275: the screen's note/tags editor reads applyTransactionEdit from the context; stub
 // it (real selectors kept) so these read-path tests render without an AppProvider.

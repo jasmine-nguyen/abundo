@@ -9,6 +9,7 @@ import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -29,7 +30,7 @@ beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
 function mount(transactions: Transaction[]) {
-  queryClient.setQueryData(['transactions'], transactions);
+  seedTransactionsCache(queryClient, transactions);
   queryClient.setQueryData(['categories'], [{ ...CAT }]);
   queryClient.setQueryData(['budgets', 14], {});
   const { result } = renderHook(() => useAppContext(), { wrapper });
@@ -94,7 +95,7 @@ it('exclude keeps the charge in the transactions cache, flagged excluded', async
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
-  const list = queryClient.getQueryData<Transaction[]>(['transactions'])!;
+  const list = readTransactionsCache(queryClient);
   const row = list.find((t) => t.transaction_id === 't1');
   expect(list).toHaveLength(2);            // NOT removed from the transactions list
   expect(row?.budget_excluded).toBe(true); // flagged for the detail screen

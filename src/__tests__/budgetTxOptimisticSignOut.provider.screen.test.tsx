@@ -21,6 +21,7 @@ jest.mock('../api');
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
 
@@ -45,7 +46,7 @@ afterEach(() => { queryClient.clear(); });
 
 describe('WHIT-344 exclude rollback settling after sign-out', () => {
   it('does NOT re-seat the old account budget list into the cleared cache', async () => {
-    queryClient.setQueryData(['transactions'], [txn()]);
+    seedTransactionsCache(queryClient, [txn()]);
     queryClient.setQueryData(['budgetTransactions', 'groceries'], [txn()]);
     const d = deferred<{ transaction_id: string; budget_excluded: boolean }>();
     mockApi.setTransactionFields.mockImplementation(() => d.promise as never);

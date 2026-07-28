@@ -13,6 +13,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { Category, Transaction } from '../context';
 import type { BudgetRollup } from '../api';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -80,7 +81,7 @@ it('deleteCategory MIRRORS the cascade into the caches without invalidating (no 
   // Seed the caches as a mounted screen would have (budgets in the real Record shape).
   queryClient.setQueryData<Category[]>(['categories'], [CAT, OTHER]);
   queryClient.setQueryData<Record<string, BudgetRollup>>(['budgets', 14], { ...BUDGET_ROLLUPS });
-  queryClient.setQueryData<Transaction[]>(['transactions'], [TXN]);
+  seedTransactionsCache(queryClient, [TXN]);
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.deleteCategory('coffee'); });
@@ -89,7 +90,7 @@ it('deleteCategory MIRRORS the cascade into the caches without invalidating (no 
   // the budgets Record (not filtered as an array, which would throw and abort the cascade).
   expect(queryClient.getQueryData<Category[]>(['categories'])).toEqual([OTHER]);
   expect(queryClient.getQueryData<Record<string, BudgetRollup>>(['budgets', 14])).toEqual({});
-  expect(queryClient.getQueryData<Transaction[]>(['transactions'])?.[0].category).toBeNull();
+  expect(readTransactionsCache(queryClient)[0].category).toBeNull();
   // ...via setQueryData, NOT invalidate — a refetch would resurrect them (server does no cascade).
   const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
   expect(keys).not.toContain('categories');

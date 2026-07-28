@@ -1,13 +1,15 @@
 // WHIT-275 — applyTransactionEdit's optimistic cache write + rollback. Drives the REAL
 // action through AppProvider (../api + ../auth mocked): it patches the singleton
-// ['transactions'] cache the detail screen reads, calls setTransactionFields with ONLY the
-// changed fields, invalidates ['transactions'] on success, and rolls back on failure.
+// ['transactions'] feed cache the detail screen reads, calls setTransactionFields with ONLY the
+// changed fields, and rolls back on failure. A note/tag edit invalidates NOTHING (the feed is
+// patched in place, never invalidated — an InfiniteData invalidate would storm every page).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import type { Transaction } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
 
 jest.mock('../api');
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
@@ -23,18 +25,18 @@ const txn = (over: Partial<Transaction> = {}): Transaction => ({
   ...over,
 });
 const cached = (id: string) =>
-  (queryClient.getQueryData<Transaction[]>(['transactions']) ?? []).find((t) => t.transaction_id === id);
+  readTransactionsCache(queryClient).find((t) => t.transaction_id === id);
 
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); }); // clear the singleton's gcTime timers so none leak past the suite
 
 function mount(transactions: Transaction[] = [txn()]) {
-  queryClient.setQueryData(['transactions'], transactions);
+  seedTransactionsCache(queryClient, transactions);
   const { result } = renderHook(() => useAppContext(), { wrapper });
   return result;
 }
 
-it('saves a note optimistically, calls the API with only that field, and invalidates transactions', async () => {
+it('saves a note optimistically, calls the API with only that field, and invalidates nothing', async () => {
   mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', notes: 'lunch' });
   const result = mount();
   const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
@@ -44,7 +46,8 @@ it('saves a note optimistically, calls the API with only that field, and invalid
   expect(cached('t1')?.notes).toBe('lunch'); // optimistic cache write
   expect(mockApi.setTransactionFields).toHaveBeenCalledWith('t1', { notes: 'lunch' });
   const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
-  expect(keys).toContain('transactions');
+  expect(keys).not.toContain('transactions'); // the feed is patched in place, never invalidated
+  expect(keys).toHaveLength(0); // a plain note edit touches no server-derived cache either
   invalidateSpy.mockRestore();
 });
 

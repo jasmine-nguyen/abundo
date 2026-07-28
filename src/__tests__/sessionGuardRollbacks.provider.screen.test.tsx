@@ -30,6 +30,7 @@ jest.mock('../queries', () => ({
 
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
+import { seedTransactionsCache } from './support/transactionsCache';
 import * as api from '../api';
 const mockApi = api as jest.Mocked<typeof api>;
 
@@ -162,7 +163,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
   });
 
   it('applyCategory failure after sign-out shows no toast', async () => {
-    queryClient.setQueryData(['transactions'], [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
+    seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'X' }]);
     queryClient.setQueryData(['categories'], [{ id: 'c1', name: 'Groceries', bucket: 'Living', icon: 'tag', color: '#fff', recent: 0 }]);
     const d = deferred<unknown>();
     mockApi.setTransactionCategory.mockImplementation(() => d.promise as never);

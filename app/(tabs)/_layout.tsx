@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { countUncategorized } from '../../src/context';
-import { useRecentTransactionsScreenData } from '../../src/queries';
+import { useRecentTransactionsScreenData, useKeepTransactionsFeedWarm } from '../../src/queries';
 import { NavBarsProvider, useNavBars } from '../../src/motion/NavBarsContext';
 import { NavBarsRouteReset } from '../../src/motion/NavBarsRouteReset';
 import { useReduceMotion } from '../../src/motion/useReduceMotion';
@@ -35,6 +35,9 @@ export function TabBar({ state, navigation }: TabBarShape) {
   // The dot reads the BOUNDED recent list (not the growing feed) so its count can't drift
   // with how deep the Transactions tab has paged back through history.
   const { transactions, category } = useRecentTransactionsScreenData();
+  // Keep the feed's first page warm app-wide (the dot no longer does) so the Picker/Confirm
+  // sheets resolve the tapped transaction even before the Transactions tab is visited.
+  useKeepTransactionsFeedWarm();
   const hasUncategorized = countUncategorized({ transactions, category }) > 0;
   // Scroll-to-hide (WHIT-184): the bar floats (position:absolute, so the scene fills
   // full height and content scrolls under it), and slides straight down out of view

@@ -23,10 +23,10 @@ function setAuth(next: string) {
   mockAuthListeners.forEach((l) => l());
 }
 
-const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
+const mockFetchTransactionsFeed = jest.fn<() => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
-  fetchTransactions: () => mockFetchTransactions(),
+  fetchTransactionsFeed: () => mockFetchTransactionsFeed(),
   fetchCategories: () => mockFetchCategories(),
 }));
 
@@ -62,14 +62,14 @@ function renderTransactions(client = makeClient()) {
 beforeEach(() => {
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  mockFetchTransactions.mockReset().mockResolvedValue(TXNS);
+  mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: TXNS, nextCursor: null });
   mockFetchCategories.mockReset().mockResolvedValue(CATS);
 });
 
 it('renders transaction rows from the query', async () => {
   renderTransactions();
   expect(await screen.findByText('-$42.00')).toBeTruthy(); // the query-fed row rendered
-  expect(mockFetchTransactions).toHaveBeenCalledTimes(1);
+  expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(1);
   expect(mockFetchCategories).toHaveBeenCalledTimes(1);
 });
 
@@ -80,15 +80,15 @@ it('shows a spinner first, then the rows (cache-first)', async () => {
 });
 
 it('a transient 5xx retries and self-heals — no error shown', async () => {
-  mockFetchTransactions.mockReset().mockRejectedValueOnce(new Error('API error: 503')).mockResolvedValue(TXNS);
+  mockFetchTransactionsFeed.mockReset().mockRejectedValueOnce(new Error('API error: 503')).mockResolvedValue({ transactions: TXNS, nextCursor: null });
   renderTransactions(makeClient(2));
   expect(await screen.findByText('-$42.00')).toBeTruthy();
   expect(screen.queryByTestId('transactions-error')).toBeNull();
-  expect(mockFetchTransactions).toHaveBeenCalledTimes(2);
+  expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(2);
 });
 
 it('a sustained failure shows the inline error, and Retry recovers', async () => {
-  mockFetchTransactions.mockReset().mockRejectedValue(new Error('API error: 503'));
+  mockFetchTransactionsFeed.mockReset().mockRejectedValue(new Error('API error: 503'));
   renderTransactions(makeClient(false));
   expect(await screen.findByTestId('transactions-error')).toBeTruthy();
 
@@ -99,7 +99,7 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
   expect(retry.props.accessibilityRole).toBe('button');
   expect(retry.props.accessibilityLabel).toBe('Retry loading your transactions');
 
-  mockFetchTransactions.mockReset().mockResolvedValue(TXNS);
+  mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: TXNS, nextCursor: null });
   fireEvent.press(retry);
   expect(await screen.findByText('-$42.00')).toBeTruthy();
 });
@@ -107,11 +107,11 @@ it('a sustained failure shows the inline error, and Retry recovers', async () =>
 it('does not fetch before login, then fires on auth flip to authed', async () => {
   mockAuthStatus = 'anon';
   renderTransactions();
-  expect(mockFetchTransactions).not.toHaveBeenCalled();
+  expect(mockFetchTransactionsFeed).not.toHaveBeenCalled();
 
   await act(async () => {
     setAuth('authed');
   });
   expect(await screen.findByText('-$42.00')).toBeTruthy();
-  expect(mockFetchTransactions).toHaveBeenCalled();
+  expect(mockFetchTransactionsFeed).toHaveBeenCalled();
 });
