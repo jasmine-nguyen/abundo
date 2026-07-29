@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-nati
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { balanceGoalView, useAppContext } from '../../src/context';
+import { balanceGoalView, goalView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
 import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
@@ -35,7 +35,21 @@ function balanceIsStale(manualAsOf: string | null | undefined): boolean {
 export default function Goals() {
   const router = useRouter();
   const s = useAppContext(); // openGoalBalance — the in-place manual-balance update sheet (WHIT-235)
-  const { goals, payCycle, balanceFor, homeLoan, mortgageError, isLoading, isError, refetch, refetchStale } = useGoalsScreenData();
+  const { goals, payCycle, balanceFor, loanFacts, homeLoan, mortgageError, isLoading, isError, refetch, refetchStale } = useGoalsScreenData();
+
+  // WHIT-296: the mortgage card mirrors the /mortgage hero's payoff detail (paid-down figure,
+  // % gone, progress bar, balance-to-go) — but only once there's genuine progress to show.
+  // A balance at or above the original (a fresh loan, or a redraw/refinance that grew it) has
+  // nothing honest to put in a "paid down" card, so it falls through to the plain "owing" line.
+  const mortgage = goalView({ loanFacts, homeLoan });
+  const paidDown = mortgage.paidOff ?? 0;
+  // Gate on the DISPLAYED whole-dollar figure (what fmt shows), not the raw feed float: a
+  // sub-dollar paydown rounds to "$0" and has no honest headline, so it stays on the plain line.
+  const mortgageRich = mortgage.factsReady && mortgage.balanceKnown && Math.round(paidDown) > 0;
+  // "% gone" reads 100 only when the balance rounds to $0 — matching the "$0 to go" the card
+  // shows; anything still owing rounds to at most 99, never a "100% gone" next to "$1,000 to go".
+  const balanceCleared = mortgage.balanceKnown && Math.round(homeLoan.balance!) === 0;
+  const paidPctLabel = balanceCleared ? 100 : Math.min(99, Math.round(mortgage.paidPct));
 
   // Load-on-focus, staleness-gated (like Budgets) so tab-hopping doesn't refetch every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
@@ -73,20 +87,50 @@ export default function Goals() {
               "no goals" while your biggest debt sits right in front of you. Taps into the payoff screen. */}
           <Text style={styles.sectionLabel}>YOUR GOALS</Text>
 
-          <Pressable testID="mortgage-link" onPress={() => router.push('/mortgage')} style={styles.mortgageCard}>
+          {/* One tap target / route for the card; the rich payoff layout and the plain "owing"
+              line are just different bodies + card style off mortgageRich. */}
+          <Pressable
+            testID="mortgage-link"
+            onPress={() => router.push('/mortgage')}
+            style={mortgageRich ? styles.mortgageCardRich : styles.mortgageCard}
+          >
             <HeroGradientFill />
-            <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.mortgageTitle}>The mortgage</Text>
-              <Text style={styles.mortgageSub}>
-                {homeLoan.balance != null
-                  ? `${fmt(homeLoan.balance)} owing`
-                  : mortgageError
-                    ? 'Tap to open your payoff plan'
-                    : 'Tap to see your payoff plan'}
-              </Text>
-            </View>
-            <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
+            {mortgageRich ? (
+              <>
+                <View style={styles.mortgageRichHead}>
+                  <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
+                  <Text style={[styles.mortgageTitle, { flex: 1 }]}>The mortgage</Text>
+                  <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
+                </View>
+                <Text style={styles.mortgageEyebrow}>PAID DOWN SO FAR</Text>
+                <View style={styles.mortgageFigureRow}>
+                  <Text style={styles.mortgageBig} numberOfLines={1}>{fmt(paidDown)}</Text>
+                  <Text style={styles.mortgagePct}>{paidPctLabel}% gone</Text>
+                </View>
+                <View style={{ marginTop: 12 }}>
+                  <Bar pct={mortgage.paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={11} />
+                </View>
+                <View style={styles.mortgageRichFoot}>
+                  <Text style={styles.mortgageRichFootL}>{mortgage.balanceLabel} to go</Text>
+                  <Text style={styles.mortgageRichFootR}>started at {fmt(mortgage.original!)}</Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mortgageTitle}>The mortgage</Text>
+                  <Text style={styles.mortgageSub}>
+                    {homeLoan.balance != null
+                      ? `${fmt(homeLoan.balance)} owing`
+                      : mortgageError
+                        ? 'Tap to open your payoff plan'
+                        : 'Tap to see your payoff plan'}
+                  </Text>
+                </View>
+                <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
+              </>
+            )}
           </Pressable>
 
           {goals.length === 0 ? (
@@ -178,6 +222,19 @@ const styles = StyleSheet.create({
   mortgageChip: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(21,18,58,.16)', alignItems: 'center', justifyContent: 'center' },
   mortgageTitle: { fontFamily: FONT.display, fontSize: 17, fontWeight: '800', color: C.heroInk, letterSpacing: -0.3 },
   mortgageSub: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInk2, marginTop: 2 },
+
+  // WHIT-296: the rich payoff variant — mirrors the /mortgage hero (eyebrow, big figure, %
+  // gone, bar, to-go row) but scaled to card size so it leads the list without swamping the
+  // goal cards below. Column layout (the plain variant above is a row).
+  mortgageCardRich: { position: 'relative', overflow: 'hidden', backgroundColor: C.accent, borderRadius: 20, padding: 18, marginBottom: 20 },
+  mortgageRichHead: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  mortgageEyebrow: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3, marginTop: 15 },
+  mortgageFigureRow: { flexDirection: 'row', alignItems: 'baseline', gap: 9, marginTop: 6 },
+  mortgageBig: { flexShrink: 1, fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.heroInk, letterSpacing: -1 },
+  mortgagePct: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk2 },
+  mortgageRichFoot: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
+  mortgageRichFootL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
+  mortgageRichFootR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
 
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textDim, letterSpacing: 0.5, marginBottom: 12, marginLeft: 2 },
 

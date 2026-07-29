@@ -43,6 +43,10 @@ import Goals from '../../app/(tabs)/goals';
 const PAY_CYCLE = { length: 14, last_pay_date: '2026-06-06' }; // paydays …Jul18, Aug1, Aug15
 const GROW = { id: 'g1', name: 'Emergency fund', icon: 'wallet', direction: 'grow', target_amount: 10000, target_date: '2026-08-15', account_id: 'up-spending' };
 const PAYDOWN = { id: 'g2', name: 'Car loan', icon: 'car', direction: 'paydown', target_amount: 0, target_date: '2026-08-15', baseline: 20000, manual_balance: 12000, manual_as_of: '2026-07-01', account_id: null };
+// WHIT-296: a fully-populated LoanFacts (all six numbers) so loanFactsReady is true and the
+// mortgage card takes its rich payoff branch. `original` sits well above the default balance
+// (596,642) so paid-down is a sensible positive figure.
+const READY_FACTS = { original: 800000, homeValue: 900000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null };
 
 function baseData(over: Record<string, unknown> = {}) {
   return {
@@ -127,6 +131,66 @@ describe('the mortgage card', () => {
     render(<Goals />);
     expect(within(screen.getByTestId('mortgage-link')).getByText('Tap to open your payoff plan')).toBeTruthy();
     expect(screen.getByTestId('goals-empty-hint')).toBeTruthy(); // hub still renders its goals section
+  });
+});
+
+// WHIT-296: once loan facts + balance are known the card mirrors the /mortgage hero. Real
+// goalView runs (the suite keeps the real selectors), so the payoff numbers are computed for
+// real and a selector revert reddens these.
+describe('the mortgage card — rich payoff state', () => {
+  it('shows the hero payoff detail: paid-down figure, % gone, to-go, and started-at', () => {
+    mockData = baseData({ loanFacts: READY_FACTS }); // original 800k, balance 596,642 → 25% gone
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('PAID DOWN SO FAR')).toBeTruthy();
+    expect(card.getByText('$203,358')).toBeTruthy();       // 800,000 − 596,642
+    expect(card.getByText('25% gone')).toBeTruthy();        // 203,358 / 800,000
+    expect(card.getByText('$596,642 to go')).toBeTruthy();
+    expect(card.getByText('started at $800,000')).toBeTruthy();
+    expect(card.queryByText(/owing/)).toBeNull();           // no longer the plain line
+  });
+
+  it('the rich card still routes into the full mortgage screen on tap', () => {
+    mockData = baseData({ loanFacts: READY_FACTS });
+    render(<Goals />);
+    fireEvent.press(screen.getByTestId('mortgage-link'));
+    expect(mockPush).toHaveBeenCalledWith('/mortgage');
+  });
+
+  it('a fully-paid loan (balance $0) reads "100% gone", never rounded down', () => {
+    mockData = baseData({ loanFacts: READY_FACTS, homeLoan: { balance: 0, asOf: '2026-07-04T00:00:00Z' } });
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('100% gone')).toBeTruthy();
+    expect(card.getByText('$800,000')).toBeTruthy(); // the whole original is paid down
+    expect(card.getByText('$0 to go')).toBeTruthy();
+  });
+
+  it('a tiny balance still owing never rounds up to "100% gone"', () => {
+    // 799,000 of 800,000 paid → 99.875%. Must read 99, not a "100% gone" beside "$1,000 to go".
+    mockData = baseData({ loanFacts: READY_FACTS, homeLoan: { balance: 1000, asOf: '2026-07-04T00:00:00Z' } });
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('99% gone')).toBeTruthy();
+    expect(card.getByText('$1,000 to go')).toBeTruthy();
+  });
+
+  it('a balance AT or ABOVE the original shows the plain "owing" line, not a nonsense $0 rich card', () => {
+    // original 500k below the 596,642 balance → no genuine paydown to show; the rich card would
+    // read "$0 paid" next to "owe more than you started", so it must fall through to the plain line.
+    mockData = baseData({ loanFacts: { ...READY_FACTS, original: 500000 } });
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('$596,642 owing')).toBeTruthy();
+    expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
+  });
+
+  it('facts ready but balance not loaded yet degrades to the plain "tap to see" line', () => {
+    mockData = baseData({ loanFacts: READY_FACTS, homeLoan: { balance: null, asOf: null } });
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('Tap to see your payoff plan')).toBeTruthy();
+    expect(card.queryByText('PAID DOWN SO FAR')).toBeNull(); // not the rich state
   });
 });
 
