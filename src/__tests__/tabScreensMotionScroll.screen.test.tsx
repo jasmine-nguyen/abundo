@@ -74,7 +74,6 @@ beforeEach(() => {
   mockStateRef = { current: 'shown' };
   mockState = {
     ...makeState(),
-    fireRepayment: jest.fn(),
     refreshAiInsights: jest.fn(),
     aiInsights: null,
     aiInsightsError: false,

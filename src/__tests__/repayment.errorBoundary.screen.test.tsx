@@ -16,11 +16,10 @@ import { makeGoalData, EMPTY_LOAN_FACTS } from './factory';
 import type { GoalScreenData } from '../queries';
 
 let mockGoal: GoalScreenData;
-let mockFireRepayment: () => void;
 jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ fireRepayment: mockFireRepayment }) };
+  return { ...actual, useAppContext: () => ({}) };
 });
 
 const mockPush = jest.fn();
@@ -33,7 +32,6 @@ import Mortgage from '../../app/mortgage';
 
 beforeEach(() => {
   mockPush.mockClear();
-  mockFireRepayment = jest.fn();
 });
 
 // WHIT-121 #3 — a SUCCESSFUL fetch (repaymentError:false) that returns a partial payload

@@ -30,9 +30,7 @@ function paycycleState(): AppContext {
   return {
     sheet: { mode: 'paycycle' },
     toast: null,
-    notif: null,
     payCycle: { length: 14, last_pay_date: '2026-06-06' },
-    dismissNotif: jest.fn(),
     setSheet: jest.fn(),
     setPayCycleLength: jest.fn(),
     setPayday: jest.fn(),

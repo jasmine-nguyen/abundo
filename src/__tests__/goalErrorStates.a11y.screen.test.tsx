@@ -15,11 +15,10 @@ import { makeGoalData, EMPTY_LOAN_FACTS, NO_REPAYMENT } from './factory';
 import type { GoalScreenData } from '../queries';
 
 let mockGoal: GoalScreenData;
-let mockFireRepayment: () => void;
 jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ fireRepayment: mockFireRepayment }) };
+  return { ...actual, useAppContext: () => ({}) };
 });
 
 const mockPush = jest.fn();
@@ -32,7 +31,6 @@ import Mortgage from '../../app/mortgage';
 
 beforeEach(() => {
   mockPush.mockClear();
-  mockFireRepayment = jest.fn();
 });
 
 // #4 — the hero balance-error Retry must be a labelled button and its copy a live region.

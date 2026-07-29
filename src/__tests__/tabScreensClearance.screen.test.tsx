@@ -84,7 +84,6 @@ import Settings from '../../app/(tabs)/settings';
 beforeEach(() => {
   mockState = {
     ...makeState(),
-    fireRepayment: jest.fn(),
     refreshAiInsights: jest.fn(),
     aiInsights: null,
     aiInsightsError: false,

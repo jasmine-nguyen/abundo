@@ -63,7 +63,7 @@ afterEach(() => {
 
 // --- sign-out hard-clears the overlay + AI state ---------------------------------
 
-it('flipping to anon clears sheet, toast, notif and the AI insights state (fail-on-revert for the anon subscription)', async () => {
+it('flipping to anon clears sheet, toast and the AI insights state (fail-on-revert for the anon subscription)', async () => {
   mockApi.generateAiInsights.mockResolvedValue({ summary: 'old account insights' } as never);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
@@ -80,7 +80,6 @@ it('flipping to anon clears sheet, toast, notif and the AI insights state (fail-
 
   expect(result.current.sheet).toBeNull();
   expect(result.current.toast).toBeNull();
-  expect(result.current.notif).toBeNull();
   expect(result.current.aiInsights).toBeNull();
   expect(result.current.aiInsightsError).toBe(false);
 });

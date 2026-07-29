@@ -17,12 +17,12 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 
 import { Overlays } from '../components/Overlays';
 
-const fns = { setSheet: jest.fn(), setPayCycleLength: jest.fn(), setPayday: jest.fn(), dismissNotif: jest.fn() };
+const fns = { setSheet: jest.fn(), setPayCycleLength: jest.fn(), setPayday: jest.fn() };
 beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
 
 function sheetState(): AppContext {
   return {
-    sheet: { mode: 'paycycle' }, toast: null, notif: null,
+    sheet: { mode: 'paycycle' }, toast: null,
     payCycle: { length: 14, last_pay_date: '2026-06-06' }, ...fns,
   } as unknown as AppContext;
 }

@@ -42,7 +42,7 @@ const fns = { saveGoal: jest.fn(async (_id: string, _body: unknown) => true), sh
 function sheetState(goalId = 'g2'): AppContext {
   return {
     sheet: { mode: 'goalbalance', goalId },
-    toast: null, notif: null, dismissNotif: jest.fn(),
+    toast: null,
     ...fns,
   } as unknown as AppContext;
 }

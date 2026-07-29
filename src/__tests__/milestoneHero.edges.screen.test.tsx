@@ -14,7 +14,7 @@ let mockGoal: GoalScreenData;
 jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ fireRepayment: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({}) };
 });
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn(), back: jest.fn() }), useFocusEffect: () => {} }));
 

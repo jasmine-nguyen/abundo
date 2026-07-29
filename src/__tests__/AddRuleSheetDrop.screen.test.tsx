@@ -28,13 +28,12 @@ const fns = {
   updateRule: jest.fn(),
   saveManualRule: jest.fn(),
   setSheet: jest.fn(),
-  dismissNotif: jest.fn(),
   writeSheetDraft: jest.fn(),
 };
 
 function ruleState(over: Partial<Record<string, unknown>>): AppContext {
   return {
-    sheet: { mode: 'addrule' }, toast: null, notif: null, rules: [],
+    sheet: { mode: 'addrule' }, toast: null, rules: [],
     categories: CATS, categoriesLoading: false,
     readSheetDraft: () => undefined,
     ...fns, ...over,

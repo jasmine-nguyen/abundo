@@ -20,7 +20,7 @@ const CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b'
 
 const fns = {
   chooseCategory: jest.fn(), applyCategoryToMany: jest.fn(), createCategoryInline: jest.fn(),
-  setSheet: jest.fn(), dismissNotif: jest.fn(), readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
+  setSheet: jest.fn(), readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
 };
 beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
 
@@ -28,7 +28,7 @@ describe('multi-select picker (WHIT-291)', () => {
   it('pickerMany shows the selection count and advances chooseCategory on a pick', () => {
     mockState = {
       sheet: { mode: 'pickerMany', txIds: ['t1', 't2', 't3'] },
-      transactions: [], categories: [CAT], toast: null, notif: null, ...fns,
+      transactions: [], categories: [CAT], toast: null, ...fns,
     } as unknown as AppContext;
     render(<Overlays />);
     expect(screen.getByText('3 transactions')).toBeTruthy(); // count header, not a merchant/amount
@@ -40,7 +40,7 @@ describe('multi-select picker (WHIT-291)', () => {
   it('confirmMany files the whole captured set via applyCategoryToMany', () => {
     mockState = {
       sheet: { mode: 'confirmMany', txIds: ['t1', 't2', 't3'], categoryId: 'groceries' },
-      transactions: [], categories: [CAT], toast: null, notif: null, ...fns,
+      transactions: [], categories: [CAT], toast: null, ...fns,
     } as unknown as AppContext;
     render(<Overlays />);
     expect(screen.getByText('File 3 transactions')).toBeTruthy();
@@ -53,7 +53,7 @@ describe('multi-select picker (WHIT-291)', () => {
   it('singular copy for a one-item selection', () => {
     mockState = {
       sheet: { mode: 'confirmMany', txIds: ['t1'], categoryId: 'groceries' },
-      transactions: [], categories: [CAT], toast: null, notif: null, ...fns,
+      transactions: [], categories: [CAT], toast: null, ...fns,
     } as unknown as AppContext;
     render(<Overlays />);
     expect(screen.getByText('File 1 transaction')).toBeTruthy(); // not "1 transactions"
