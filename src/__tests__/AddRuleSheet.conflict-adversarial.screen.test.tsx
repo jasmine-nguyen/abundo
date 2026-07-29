@@ -22,7 +22,6 @@ const fns = {
   setSheet: jest.fn(),
   readSheetDraft: () => undefined,
   writeSheetDraft: () => {},
-  dismissNotif: jest.fn(),
 };
 
 const CATS = [
@@ -32,7 +31,7 @@ const CATS = [
 ];
 
 function createState(rules: unknown[]): AppContext {
-  return { sheet: { mode: 'addrule' }, toast: null, notif: null, rules, categories: CATS, ...fns } as unknown as AppContext;
+  return { sheet: { mode: 'addrule' }, toast: null, rules, categories: CATS, ...fns } as unknown as AppContext;
 }
 
 const NETFLIX_SUBS = { id: 'b1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false };

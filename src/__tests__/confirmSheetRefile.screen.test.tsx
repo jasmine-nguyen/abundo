@@ -23,14 +23,14 @@ const TX = { transaction_id: 't1', amount: -12.5, description: 'COLES', merchant
 
 const fns = {
   applyCategory: jest.fn(), chooseCategory: jest.fn(), setSheet: jest.fn(),
-  dismissNotif: jest.fn(), readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
+  readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
 };
 beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
 
 function confirmState(): AppContext {
   return {
     sheet: { mode: 'confirm', txId: 't1', categoryId: 'groceries' },
-    transactions: [TX], categories: [CAT], toast: null, notif: null, ...fns,
+    transactions: [TX], categories: [CAT], toast: null, ...fns,
   } as unknown as AppContext;
 }
 

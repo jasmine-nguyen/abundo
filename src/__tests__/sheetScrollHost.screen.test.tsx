@@ -26,7 +26,7 @@ const CAT_B = { id: 'coffee', name: 'Coffee', icon: 'coffee', color: '#e0af68', 
 
 const fns = {
   chooseCategory: jest.fn(), createCategoryInline: jest.fn(), setSheet: jest.fn(),
-  dismissNotif: jest.fn(), readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
+  readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
 };
 beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
 
@@ -34,7 +34,7 @@ function pickerState(): AppContext {
   return {
     sheet: { mode: 'picker', txId: 't1' },
     transactions: [{ transaction_id: 't1', amount: -12.5, description: 'COLES', merchant_name: 'Coles' }],
-    categories: [CAT_A, CAT_B], toast: null, notif: null, ...fns,
+    categories: [CAT_A, CAT_B], toast: null, ...fns,
   } as unknown as AppContext;
 }
 

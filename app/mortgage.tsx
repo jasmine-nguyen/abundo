@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../src/theme';
 import { Glyph } from '../src/icons';
-import { useAppContext, goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
+import { goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
 import { Header } from '../src/components/Header';
@@ -15,7 +15,6 @@ import { Header } from '../src/components/Header';
 // <Header showBack /> + a plain ScrollView, the same detail-screen pattern as milestone.tsx /
 // loan.tsx. The content + the useGoalScreenData reads are otherwise unchanged.
 export default function Mortgage() {
-  const s = useAppContext(); // kept only for s.fireRepayment (the demo alert button — not server data)
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -218,10 +217,6 @@ export default function Mortgage() {
               </View>
             </View>
           )}
-          <Pressable onPress={s.fireRepayment} style={styles.repayBtn}>
-            <Glyph name="play" size={18} color={C.accentInk} />
-            <Text style={styles.repayBtnText}>Preview a repayment alert</Text>
-          </Pressable>
         </View>
 
         {/* investment property unlock — real usable equity once the property value
@@ -303,8 +298,6 @@ const styles = StyleSheet.create({
   repayTitle: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.textBright },
   repaySub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   repayAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.good },
-  repayBtn: { marginTop: 14, paddingVertical: 13, borderRadius: 14, backgroundColor: C.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  repayBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
   // WHIT-121: the repayment-error Retry chip. Sits inline on the dark card, so it uses an
   // accent tint (milestone's retryBtn is hero-ink, tuned for the light hero — wrong here).
   repayRetryBtn: { backgroundColor: 'rgba(124,140,255,.14)', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14 },

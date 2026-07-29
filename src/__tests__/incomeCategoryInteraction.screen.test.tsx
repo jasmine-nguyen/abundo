@@ -25,7 +25,7 @@ const SPEND_CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7
 
 const fns = {
   chooseCategory: jest.fn(), saveManualRule: jest.fn(), updateRule: jest.fn(),
-  setSheet: jest.fn(), dismissNotif: jest.fn(), readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
+  setSheet: jest.fn(), readSheetDraft: jest.fn(() => undefined), writeSheetDraft: jest.fn(),
 };
 beforeEach(() => { Object.values(fns).forEach((f) => f.mockClear()); });
 
@@ -34,7 +34,7 @@ describe('Categorize picker — income is pickable, not just visible (WHIT-158)'
     return {
       sheet: { mode: 'picker', txId: tx.transaction_id },
       transactions: [tx], categories: [INCOME_CAT, SPEND_CAT],
-      toast: null, notif: null, ...fns,
+      toast: null, ...fns,
     } as unknown as AppContext;
   }
 
@@ -55,7 +55,7 @@ describe('Categorize picker — income is pickable, not just visible (WHIT-158)'
 it('New-rule sheet: an income category can be selected AND saved (WHIT-158)', () => {
   mockState = {
     sheet: { mode: 'addrule' }, rules: [], categories: [INCOME_CAT, SPEND_CAT],
-    toast: null, notif: null, ...fns,
+    toast: null, ...fns,
   } as unknown as AppContext;
   render(<Overlays />);
   fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'PAYROLL');

@@ -30,13 +30,13 @@ const writeSheetDraft = jest.fn((key: string, value: unknown) => { store.set(key
 
 const fns = {
   updateRule: jest.fn(), saveManualRule: jest.fn(), setSheet: jest.fn(),
-  dismissNotif: jest.fn(), readSheetDraft, writeSheetDraft,
+  readSheetDraft, writeSheetDraft,
 };
 
 function newRuleState(): AppContext {
   return {
     sheet: { mode: 'addrule' }, // no ruleId → key `addrule:new`, no editing prefill
-    toast: null, notif: null,
+    toast: null,
     rules: [],
     categories: [
       { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },

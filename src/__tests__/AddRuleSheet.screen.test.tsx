@@ -20,14 +20,12 @@ const fns = {
   updateRule: jest.fn(),
   saveManualRule: jest.fn(),
   setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {},
-  dismissNotif: jest.fn(),
 };
 
 function editState(): AppContext {
   return {
     sheet: { mode: 'addrule', ruleId: 'e1' },
     toast: null,
-    notif: null,
     rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false }],
     categories: [
       { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
@@ -66,7 +64,7 @@ const CATS = [
   { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
 ];
 function ruleState(over: Partial<Record<string, unknown>>): AppContext {
-  return { sheet: { mode: 'addrule' }, toast: null, notif: null, rules: [], categories: CATS, ...fns, ...over } as unknown as AppContext;
+  return { sheet: { mode: 'addrule' }, toast: null, rules: [], categories: CATS, ...fns, ...over } as unknown as AppContext;
 }
 
 it('[WHIT-284] a DEAD prefilled categoryId (its category was deleted) keeps the save button disabled', () => {

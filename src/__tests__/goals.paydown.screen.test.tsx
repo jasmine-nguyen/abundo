@@ -15,12 +15,12 @@ import type { GoalScreenData } from '../queries';
 
 // WHIT-197: loanFacts/homeLoan/repayment now come from useGoalScreenData() (mocked);
 // the real paydownView selector still runs over the injected composite data, so these
-// fail if the selector reverts. fireRepayment stays on the store (useAppContext mock).
+// fail if the selector reverts. useAppContext is stubbed empty (the screen doesn't read it).
 let mockGoal: GoalScreenData;
 jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ fireRepayment: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({}) };
 });
 
 const mockPush = jest.fn();

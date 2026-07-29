@@ -2,8 +2,8 @@
 // WHIT-197: the live balance / loan facts / repayment now come from the cached query
 // layer via useGoalScreenData(), so that hook is mocked (the real milestoneView /
 // goalView selectors still run over the mocked composite data). ../context stays
-// partially mocked for the real selectors + the minimal useAppContext the mortgage screen
-// keeps for s.fireRepayment. expo-router's useRouter is mocked to capture navigation.
+// partially mocked so the real selectors run; useAppContext is stubbed empty (these
+// screens don't read it). expo-router's useRouter is mocked to capture navigation.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -17,10 +17,10 @@ import type { GoalScreenData } from '../queries';
 let mockGoal: GoalScreenData;
 jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 
-// useAppContext is now only read by the mortgage screen, for s.fireRepayment.
+// These screens don't read useAppContext; stub it empty so the real selectors still resolve.
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ fireRepayment: jest.fn() }) };
+  return { ...actual, useAppContext: () => ({}) };
 });
 
 const mockPush = jest.fn();

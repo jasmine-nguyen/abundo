@@ -23,7 +23,7 @@ const SPEND_CAT = { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7
 
 const sheetFns = {
   chooseCategory: jest.fn(), saveManualRule: jest.fn(), updateRule: jest.fn(),
-  setSheet: jest.fn(), dismissNotif: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {},
+  setSheet: jest.fn(), readSheetDraft: () => undefined, writeSheetDraft: () => {},
 };
 
 it('Categories list renders the Income group + its categories (WHIT-158)', () => {
@@ -53,7 +53,7 @@ function pickerState(tx: any): AppContext {
   return {
     sheet: { mode: 'picker', txId: tx.transaction_id },
     transactions: [tx], categories: [INCOME_CAT, SPEND_CAT],
-    toast: null, notif: null, category: (id: string) => [INCOME_CAT, SPEND_CAT].find((c) => c.id === id),
+    toast: null, category: (id: string) => [INCOME_CAT, SPEND_CAT].find((c) => c.id === id),
     ...sheetFns,
   } as unknown as AppContext;
 }
@@ -88,7 +88,7 @@ describe('Categorize picker (WHIT-158)', () => {
     mockState = {
       sheet: { mode: 'picker', txId: 't1' },
       transactions: [{ transaction_id: 't1', amount: -10, description: 'X' }],
-      categories: cats, toast: null, notif: null,
+      categories: cats, toast: null,
       category: (id: string) => cats.find((c) => c.id === id), ...sheetFns,
     } as unknown as AppContext;
     render(<Overlays />);
@@ -100,7 +100,7 @@ describe('Categorize picker (WHIT-158)', () => {
 it('the rule sheet also offers income categories (WHIT-158)', () => {
   mockState = {
     sheet: { mode: 'addrule' }, rules: [], categories: [INCOME_CAT, SPEND_CAT],
-    toast: null, notif: null, ...sheetFns,
+    toast: null, ...sheetFns,
   } as unknown as AppContext;
   render(<Overlays />);
   expect(screen.getByText('Salary')).toBeTruthy();

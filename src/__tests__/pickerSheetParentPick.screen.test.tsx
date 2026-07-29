@@ -24,14 +24,12 @@ const fns = {
   setSheet: jest.fn(),
   readSheetDraft: () => undefined,
   writeSheetDraft: () => {},
-  dismissNotif: jest.fn(),
 };
 
 function pickerState(): AppContext {
   return {
     sheet: { mode: 'picker', txId: 't1' },
     toast: null,
-    notif: null,
     transactions: [{ transaction_id: 't1', amount: -12, description: 'CAFE NERO', merchant_name: 'Cafe Nero' }],
     // One same-bucket (Lifestyle) category, so it is offered as an eligible parent in the picker.
     categories: [{ id: 'coffee', name: 'Coffee', icon: 'coffee', color: '#e8a87c', bucket: 'Lifestyle', recent: 0, parent: null }],

@@ -431,25 +431,19 @@ export function groupTransactionsByDate(items: Transaction[]): { label: string; 
   return order.map((label) => ({ label, items: seen.get(label)! }));
 }
 
-const REPAY_LINES = [
-  '−$1,440 just hit the mortgage. $1,208 of it murdered actual principal. The beast shrinks. 🪓',
-  "Repayment landed: $1,440. That's another brick out of the wall. Future-you is doing a little dance. 💃",
-  'Boom — $1,208 off the principal. The death-pledge dies a little more today. ⚰️',
-];
-
 // ---------------------------------------------------------------------------
 // AppContext
 // ---------------------------------------------------------------------------
 // WHIT-192: the eager server-data store is gone — every screen reads the TanStack
 // Query layer (src/queries) directly. AppContext now carries only what the query
-// layer can't: the demo goal + alerts toggle, ephemeral UI (sheet/toast/notif), the
+// layer can't: the demo goal + alerts toggle, ephemeral UI (sheet/toast), the
 // write actions (which source their reads from the query cache), and the AI-insights
 // slice (still store-held pending its own migration).
 export interface AppContext {
   // data (client-only demo/seed state — not server reads)
   goal: Goal; alerts: boolean;
   // ephemeral ui
-  sheet: Sheet; toast: string | null; notif: { body: string; time: string } | null;
+  sheet: Sheet; toast: string | null;
   // actions
   setSheet: (s: Sheet) => void;
   // WHIT-277: read/write a pop-up sheet's draft so it survives a Face ID lock (cleared on close + sign-out).
@@ -459,7 +453,6 @@ export interface AppContext {
   // await, so it bails on any session change (sign-out OR a different-account re-auth), not just anon.
   getSessionEpoch: () => number;
   showToast: (m: string) => void;
-  dismissNotif: () => void;
   toggleAlerts: () => void;
   setPayCycleLength: (len: number) => void;
   setPayday: (last_pay_date: string) => void;
@@ -483,7 +476,6 @@ export interface AppContext {
   saveGoal: (editId: string | null, body: GoalWriteBody) => Promise<boolean>;
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
-  fireRepayment: () => void;
 
 	// AI spending insights (WHIT-104) — the last slice still held on the store; its
 	// migration to a query + mutation is tracked separately.
@@ -562,11 +554,10 @@ function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): voi
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [goal, setGoal] = useState<Goal>(SEED_GOAL);
+  const [goal] = useState<Goal>(SEED_GOAL);
   const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [notif, setNotif] = useState<{ body: string; time: string } | null>(null);
   // WHIT-277: a half-typed pop-up sheet's draft must survive a Face ID lock. The sheet UNMOUNTS
   // while locked — Overlays' WHIT-268 privacy shield returns null (a native Modal would otherwise
   // float above the lock cover) — so its local useState is destroyed. Stash the draft here in the
@@ -639,14 +630,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	}, []);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const notifTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const repayIdx = useRef(0);
 
-  // Clear the toast/notif timers on unmount so they can't fire a setState after
-  // teardown (a leak that also kept the jest worker alive between tests).
+  // Clear the toast timer on unmount so it can't fire a setState after teardown (a leak
+  // that also kept the jest worker alive between tests).
   useEffect(() => () => {
     clearTimeout(toastTimer.current);
-    clearTimeout(notifTimer.current);
   }, []);
 
   // WHIT-268: overlays render OUTSIDE the auth gate in app/_layout.tsx, so the gate's
@@ -664,11 +652,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (getStatus() !== 'anon') return;
     sessionEpoch.current += 1;
     clearTimeout(toastTimer.current);
-    clearTimeout(notifTimer.current);
     setSheet(null);
     sheetDrafts.current.clear(); // WHIT-277: wipe any half-typed draft on sign-out (WHIT-268 parity)
     setToast(null);
-    setNotif(null);
     setAiInsights(null);
     setAiInsightsError(false);
     setAiInsightsLoading(false);
@@ -756,8 +742,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   }, [showToast]);
-
-  const dismissNotif = useCallback(() => { clearTimeout(notifTimer.current); setNotif(null); }, []);
 
   const openPicker = useCallback((txId: string) => setSheet({ mode: 'picker', txId }), []);
   // WHIT-291: open the picker for a captured set of ids. A no-op on an empty set (nothing to file).
@@ -1448,24 +1432,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [showToast]);
 
-  const fireRepayment = useCallback(() => {
-    const principal = 1208;
-    const body = REPAY_LINES[(repayIdx.current = (repayIdx.current + 1) % REPAY_LINES.length)];
-    setGoal((g) => ({ ...g, balance: Math.max(0, g.balance - principal), lastRepay: { ...g.lastRepay, date: 'Just now' } }));
-    setNotif({ body, time: 'now' });
-    clearTimeout(notifTimer.current);
-    notifTimer.current = setTimeout(() => setNotif(null), 5600);
-  }, []);
-
   const value = useMemo<AppContext>(() => ({
     goal, alerts,
-    sheet, toast, notif,
-    setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif,
+    sheet, toast,
+    setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, notif, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, dismissNotif, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, fireRepayment, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

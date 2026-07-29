@@ -23,7 +23,7 @@ export function Overlays() {
   // shield — a toast/sheet over the login screen ('anon') OR the Face ID lock screen
   // ('locked') is the leak this card closes, and unmounting is the only reliable hide
   // because SheetHost is a native Modal that portals ABOVE any parent styling. The
-  // context-held `sheet`/`toast`/`notif` values survive (AppProvider only clears them
+  // context-held `sheet`/`toast` values survive (AppProvider only clears them
   // on 'anon'), so a toast reappears after unlock — but a sheet's LOCAL form state
   // (half-typed rule/goal text) is lost on a lock, since unmounting destroys it.
   // Preserving in-progress input across a lock needs the app kept mounted under an
@@ -32,7 +32,6 @@ export function Overlays() {
   if (!isAuthed) return null;
   return (
     <>
-      <NotifBanner />
       <Toast />
       <SheetHost />
       {/* picker -> confirm reuse the same modal stack via store.sheet */}
@@ -49,30 +48,6 @@ function Toast() {
       <View style={styles.toast}>
         <Text style={styles.toastText}>{toast}</Text>
       </View>
-    </View>
-  );
-}
-
-function NotifBanner() {
-  const { notif, dismissNotif } = useAppContext();
-  const insets = useSafeAreaInsets();
-  if (!notif) return null;
-  return (
-    <View style={[styles.notifWrap, { top: insets.top + 8 }]}>
-      <Pressable onPress={dismissNotif} style={styles.notif}>
-        <View style={styles.notifIcon}>
-          <View style={styles.notifLogo}>
-            <Glyph name="check" size={16} color={C.heroInk} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-              <Text style={styles.notifApp}>ABUNDO</Text>
-              <Text style={styles.notifTime}>{notif.time}</Text>
-            </View>
-            <Text style={styles.notifBody}>{notif.body}</Text>
-          </View>
-        </View>
-      </Pressable>
     </View>
   );
 }
@@ -768,16 +743,6 @@ const styles = StyleSheet.create({
   toastWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 200 },
   toast: { maxWidth: '88%', backgroundColor: '#26262f', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', paddingVertical: 11, paddingHorizontal: 16, borderRadius: 14 },
   toastText: { fontFamily: FONT.body, color: C.textBright, fontSize: 13.5, textAlign: 'center' },
-  // load-error banner (read failures). Sits just under a notif's z so the rare notif
-  // wins if both are up at once.
-  // notif
-  notifWrap: { position: 'absolute', left: 12, right: 12, zIndex: 300 },
-  notif: { backgroundColor: 'rgba(34,34,40,.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', borderRadius: 20, padding: 14 },
-  notifIcon: { flexDirection: 'row', gap: 11, alignItems: 'flex-start' },
-  notifLogo: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.good, alignItems: 'center', justifyContent: 'center' },
-  notifApp: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700', color: '#cfd2ff', letterSpacing: 0.4 },
-  notifTime: { fontFamily: FONT.body, fontSize: 11, color: C.textDim },
-  notifBody: { fontFamily: FONT.body, fontSize: 13.5, color: '#e6e6ea', lineHeight: 19 },
   // sheet
   scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,.55)', justifyContent: 'flex-end', alignItems: 'center' },
   // Wraps the sheet so the spring transform (translateY) doesn't disturb its bottom-anchored,

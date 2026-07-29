@@ -1,8 +1,6 @@
 // WHIT-268 (QA gaps) — adversarial complements to overlaysAuthClear.screen.test.tsx.
 // That suite locks the anon hard-clear (sheet/toast/AI), the late-settling generate,
 // the toast-timer cancel, and the locked hide/reappear. This one covers what it left:
-//  [A6]  the notification banner (fireRepayment's notif) is actually SHOWN then cleared
-//        on anon — the sibling suite only asserts notif null without ever setting one;
 //  [A7]  refreshAiInsights (the FREE cache read, fired on every Insights focus) settling
 //        after sign-out is dropped, even when a NEW session is already live (the epoch
 //        semantic) — only the paid generate was covered;
@@ -69,26 +67,6 @@ beforeEach(() => {
 afterEach(() => {
   queryClient.clear();
   jest.useRealTimers();
-});
-
-// WHIT-268 — [A6] the notif banner is shown, then hard-cleared on sign-out.
-it('a visible notification banner is cleared (state AND render) when status flips to anon', () => {
-  let ctx!: ReturnType<typeof useAppContext>;
-  render(
-    <AppProvider>
-      <Probe grab={(c) => { ctx = c; }} />
-      <Overlays />
-    </AppProvider>,
-  );
-
-  act(() => ctx.fireRepayment()); // the only notif producer — seeds a real banner + 5.6s timer
-  expect(ctx.notif).not.toBeNull();
-  expect(screen.getByText('ABUNDO')).toBeTruthy(); // the banner is genuinely on screen
-
-  act(() => mockSetStatus('anon'));
-
-  expect(ctx.notif).toBeNull(); // hard-cleared by the anon subscription…
-  expect(screen.queryByText('ABUNDO')).toBeNull(); // …and gone from the tree
 });
 
 // WHIT-268 — [A7] the FREE insights cache read (fired on every Insights tab focus)
