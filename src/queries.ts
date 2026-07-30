@@ -6,8 +6,8 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment, TransactionFeedPage } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
@@ -73,6 +73,10 @@ export const rulesKey = ['rules'] as const;
 // sync with the literal ['goals'] the goal writes touch in context.tsx (context imports
 // queryClient directly, not this key, to avoid a circular import).
 export const goalsKey = ['goals'] as const;
+// The user's saved home-loan milestone plan (the milestone + mortgage screens) — WHIT-367.
+// Un-windowed flat key. No write path yet (the editor lands in WHIT-377); when it does, its
+// save must invalidate the literal ['milestones'] to keep this in sync, like goalsKey.
+export const milestonesKey = ['milestones'] as const;
 
 // --- pure selectors over the raw API payloads (unit-tested in the logic project) ---
 export function selectCategories(raw: unknown[]): Category[] {
@@ -107,6 +111,14 @@ export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {
 export function selectGoals(raw: unknown): GoalRecord[] {
   if (!Array.isArray(raw)) throw new Error(`selectGoals: expected an array from /goals, got ${typeof raw}`);
   return raw as GoalRecord[];
+}
+// WHIT-367: the /milestones payload is already the client MilestoneRecord shape (a passthrough),
+// so this only FAILS LOUDLY on a malformed shape — mirroring selectGoals. A non-array rejects the
+// query → the screen keeps its built-in default plan instead of a cryptic "milestones.map is not a
+// function". A genuinely empty (unset) plan is `[]`, which passes.
+export function selectMilestones(raw: unknown): MilestoneRecord[] {
+  if (!Array.isArray(raw)) throw new Error(`selectMilestones: expected an array from /milestones, got ${typeof raw}`);
+  return raw as MilestoneRecord[];
 }
 
 // Server default, mirrored from AppProvider's seed (src/context.tsx) — used for the
@@ -259,6 +271,13 @@ export function useAccountBalancesQuery(enabled: boolean) {
 // the shape so a malformed payload rejects the query rather than crashing a downstream .map.
 export function useGoalsQuery(enabled: boolean) {
   return useQuery({ queryKey: goalsKey, queryFn: fetchGoals, enabled, select: selectGoals });
+}
+
+// WHIT-367: the user's saved milestone plan. Empty [] until they save one — a normal success,
+// not an error (the screen falls back to the built-in default plan). selectMilestones guards the
+// shape so a malformed payload rejects the query rather than crashing a downstream .map.
+export function useMilestonesQuery(enabled: boolean) {
+  return useQuery({ queryKey: milestonesKey, queryFn: fetchMilestones, enabled, select: selectMilestones });
 }
 
 // WHIT-195: the categorisation rules. Mapped in the queryFn (not `select`) so the cache
@@ -833,11 +852,19 @@ export function useGoalsScreenData(): GoalsScreenData {
 // their "—"/"set this up"/empty states rather than crashing on undefined.
 const EMPTY_HOME_LOAN: HomeLoanState = { balance: null, asOf: null };
 const EMPTY_REPAYMENT: Repayment = { amount: null, date: null, principal: null, interest: null };
+// A frozen empty array for the not-yet-loaded / unset case, so `milestones` keeps a STABLE
+// identity across renders while the query is cold (the WHIT-244 trap). An empty list means
+// "no saved plan" — milestoneView falls back to the built-in default.
+const EMPTY_MILESTONES: MilestoneRecord[] = [];
 
 export interface GoalScreenData {
   loanFacts: LoanFacts;
   homeLoan: HomeLoanState;
   repayment: Repayment;
+  // The user's saved milestone plan (WHIT-367). SECONDARY data, deliberately kept OUT of the
+  // loading/error status below: a milestones read hiccup degrades to the built-in default plan
+  // rather than blanking or erroring the balance hero. Empty [] → milestoneView uses the default.
+  milestones: MilestoneRecord[];
   isLoading: boolean; // first load, nothing cached yet
   isError: boolean; // ANY of the three reads failed after retries
   // The home-loan balance read's OWN error, kept separate from the aggregate: the Goal +
@@ -876,13 +903,20 @@ export function useGoalScreenData(): GoalScreenData {
   const homeLoanQuery = useHomeLoanQuery(authed);
   const repaymentQuery = useRepaymentQuery(authed);
   const loanFactsQuery = useLoanFactsQuery(authed);
+  const milestonesQuery = useMilestonesQuery(authed);
 
+  // milestones is SECONDARY and stays OUT of the combined status (like accountBalances vs its
+  // composite): a milestones failure must never blank/spin the balance hero — milestoneView
+  // falls back to the built-in default plan. There is no writer yet (WHIT-377), so the plan is
+  // always the static default here; when the editor lands, its save invalidates ['milestones']
+  // to refresh, so leaving it out of refetch costs nothing now.
   const status = useCombineScreenQueries([homeLoanQuery, repaymentQuery, loanFactsQuery]);
 
   return {
     loanFacts: loanFactsQuery.data ?? EMPTY_LOAN_FACTS,
     homeLoan: homeLoanQuery.data ?? EMPTY_HOME_LOAN,
     repayment: repaymentQuery.data ?? EMPTY_REPAYMENT,
+    milestones: milestonesQuery.data ?? EMPTY_MILESTONES,
     // homeLoanError: the balance read's OWN error, kept separate from the aggregate so the
     // Goal + milestone "Couldn't load your balance" heroes key on it, not a repayment/facts
     // failure. firstLoadError (WHIT-121): a cached balance — real OR a legitimately-null "not
