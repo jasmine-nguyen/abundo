@@ -153,8 +153,6 @@ Target card (optional): $ARGUMENTS
      the FINAL code-critic pass (in the green gate below) must review them too, applying
      the fail-on-revert check (a test that still passes with the fix reverted is worthless).
      Never let an agent be the sole reviewer of its own tests.
-   - **Hold onto qa's test-case checklist** — it's part of what you present and
-     write to Notion at the Implementation Sign-off.
 
 ## Phase 4 — Finish (Implementation Sign-off)
 
@@ -178,8 +176,7 @@ Target card (optional): $ARGUMENTS
     summary, the `code-critic` verdict (should be SHIP), the `qa` edge-case
     findings, its test-case checklist, the new automated tests + their green run,
     typecheck results, and the list of proposed tech-debt cards. Then ask:
-    **"Approve this change? On go I'll commit, push, open the PR, write the QA
-    checklist to Notion, file the tech-debt cards, and move the card to Done."**
+    **"Approve this change? On go I'll commit, push, open the PR, file the tech-debt cards, and move the card to Done."**
 
 12. **On go — apply side effects (only now):**
     - Commit and push the branch, then open the PR (per AGENTS.md, every meaningful
