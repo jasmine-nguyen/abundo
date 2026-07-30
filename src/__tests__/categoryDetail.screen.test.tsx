@@ -48,9 +48,10 @@ const DETAIL = {
   count: 1, total: 8.5, posted: 8.5, pending: 0,
 };
 
-function screenData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean; refetch: () => void }> = {}) {
+function screenData(over: Partial<{ transactions: unknown[]; categoriesReady: boolean; isLoading: boolean; isError: boolean; refetch: () => void }> = {}) {
   return {
     transactions: [ROW], category: (_id: string | null) => undefined,
+    categoriesReady: true, // WHIT-374: taxonomy loaded by default; override to exercise the cold-taxonomy gate
     isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn(),
     ...over,
   };
@@ -81,6 +82,26 @@ it('labels the total "Earned" for an Income-bucket category', () => {
   render(<CategoryDetail />);
   expect(screen.getByText('Earned this cycle')).toBeTruthy();
   expect(screen.queryByText('Spent this cycle')).toBeNull();
+});
+
+// WHIT-374 — the cold-taxonomy gate. When transactions are cached but the category list hasn't
+// loaded yet, the detail must NOT render (it would read the income sign / labels off a cold
+// taxonomy and show "Spent $0" with grey rows). The screen shows the spinner until categories
+// load. FAIL-ON-REVERT: dropping `&& categoriesReady` from hasCache lets the detail render here.
+it('waits for the category taxonomy before rendering the detail (spinner, not a cold "$0")', () => {
+  mockData = screenData({ categoriesReady: false, isLoading: true });  // txns cached, categories in flight
+  render(<CategoryDetail />);
+  expect(screen.getByTestId('category-loading')).toBeTruthy();
+  expect(screen.queryByTestId('category-total')).toBeNull();  // the cold detail is NOT shown
+});
+
+// WHIT-374 regression — the gate must not break cache-first: once categories ARE loaded, a
+// background refetch (isLoading true over cached rows) keeps the detail visible, no spinner.
+it('keeps the detail visible during a background refetch once the taxonomy is loaded', () => {
+  mockData = screenData({ categoriesReady: true, isLoading: true });
+  render(<CategoryDetail />);
+  expect(screen.queryByTestId('category-loading')).toBeNull();
+  expect(screen.getByTestId('category-total')).toBeTruthy();
 });
 
 // WHIT-309 — a stale/hand-edited ?cycle=2+ deep-link is clamped to 1, so the fetch can't request

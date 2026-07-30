@@ -653,6 +653,12 @@ export function useRecentTransactionsScreenData(): RecentTransactionsScreenData 
 export interface CategoryTransactionsScreenData {
   transactions: Transaction[];
   category: (id: string | null) => Category | undefined;
+  // WHIT-374: has the category taxonomy loaded at least once? The drill-in renders labels, icons
+  // and the income-vs-spend sign off `category(id)`, so the screen must wait for this before
+  // showing the detail — otherwise a cold taxonomy (transactions in, categories still in flight)
+  // renders an income drill as "Spent $0" with grey rows until it warms. Stays true across a
+  // background refetch (TanStack retains last-good data), so it only gates the never-loaded case.
+  categoriesReady: boolean;
   isLoading: boolean;
   isError: boolean;
   refetch: () => void;
@@ -672,6 +678,7 @@ export function useCategoryTransactionsScreenData(categoryId: string, cycle: num
   return {
     transactions: categoryTransactionsQuery.data ?? [],
     category,
+    categoriesReady: categoriesQuery.data !== undefined,
     ...status,
   };
 }
