@@ -100,24 +100,26 @@ it('earned defaults to 0 when the response carries no __earned__ (older server /
   expect(result.current.earned).toBe(0);
 });
 
-// WHIT-366: `incomeSources` breaks the __earned__ total down per source — read from the
-// __income__ map, sorted biggest-first, with zero/net-reversed sources dropped so the drill
-// screen never shows a phantom $0 row.
-it('derives incomeSources from __income__, biggest-first, dropping zero-total sources', async () => {
+// WHIT-366/376: `incomeSources` breaks the __earned__ total down per source — read from the
+// __income__ map, sorted biggest-first. A net-reversed source now arrives SIGNED and is KEPT (the
+// drill screen shows it as a "−$X" reversal, sorted last); only an EXACT-$0-net source is dropped.
+it('derives incomeSources biggest-first, keeps a net-negative source, drops only an exact-$0 one', async () => {
   mockFetchBreakdown.mockReset().mockResolvedValue({
     coffee: { posted: 40, pending: 10 },
     __earned__: { posted: 5000, pending: 200 },
     __income__: {
-      side: { posted: 800, pending: 0 },       // smaller → second
-      salary: { posted: 4000, pending: 200 },  // biggest → first
-      clawed: { posted: 0, pending: 0 },        // fully reversed → dropped
+      side: { posted: 800, pending: 0 },        // positive → middle
+      salary: { posted: 4000, pending: 200 },   // biggest → first
+      bonus: { posted: -150, pending: 0 },       // net-reversed → KEPT, signed, sorts last
+      cancelled: { posted: 100, pending: -100 }, // exact $0 net → dropped
     },
   });
   const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
 
-  await waitFor(() => expect(result.current.incomeSources.length).toBe(2));
-  expect(result.current.incomeSources.map((s) => s.id)).toEqual(['salary', 'side']); // sorted desc, $0 dropped
+  await waitFor(() => expect(result.current.incomeSources.length).toBe(3)); // cancelled dropped
+  expect(result.current.incomeSources.map((s) => s.id)).toEqual(['salary', 'side', 'bonus']); // desc; negative last
   expect(result.current.incomeSources[0]).toEqual({ id: 'salary', posted: 4000, pending: 200, amount: 4200 });
+  expect(result.current.incomeSources[2]).toEqual({ id: 'bonus', posted: -150, pending: 0, amount: -150 });
   // The income map must not leak into the spend breakdown consumers keep reading.
   expect(result.current.breakdown.coffee).toEqual({ posted: 40, pending: 10 });
 });

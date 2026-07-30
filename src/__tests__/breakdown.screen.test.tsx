@@ -122,6 +122,160 @@ describe('Breakdown — Earned', () => {
     fireEvent.press(screen.getByText('Salary'));
     expect(mockPush).toHaveBeenCalledWith('/category/salary?cycle=1');
   });
+
+  // WHIT-376: a source clawed back this cycle (negative net) renders as a signed "−$150" reversal
+  // in the neutral mid tone (NOT a green credit, NOT bright), still tappable — and the rows sum to
+  // the headline (2000 − 150 = 1850) so NO adjustment plug appears. Fail-on-revert: drop the
+  // `isReversed` case and "−$150" becomes "$150" and the C.textMid colour assertion throws.
+  const REVERSAL_CATS = [
+    cat({ id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de' }),
+    cat({ id: 'bonus', name: 'Bonus', bucket: 'Income', icon: 'cash', color: '#9ece6a' }),
+  ];
+  it('renders a net-reversed source as a signed, neutral, still-tappable row (no plug when it reconciles)', () => {
+    mockData = screenData({
+      earned: 1850,
+      incomeSources: [
+        { id: 'salary', posted: 2000, pending: 0, amount: 2000 },
+        { id: 'bonus', posted: -150, pending: 0, amount: -150 },
+      ],
+      category: lookup(REVERSAL_CATS),
+    });
+    render(<Breakdown />);
+
+    expect(screen.getByText('$1,850')).toBeTruthy();       // headline unchanged (true net)
+    expect(screen.getByText('-$150')).toBeTruthy();         // signed reversal, not "$150"
+    expect(colorOf('-$150')).toBe(C.textMid);               // neutral tone
+    expect(colorOf('-$150')).not.toBe(C.good);              // not a green credit
+    expect(colorOf('-$150')).not.toBe(C.textBright);        // not a positive row
+    fireEvent.press(screen.getByText('Bonus'));             // still a real, tappable source
+    expect(mockPush).toHaveBeenCalledWith('/category/bonus?cycle=0');
+    expect(screen.queryByText('Pending/refund adjustment')).toBeNull(); // rows already sum -> no plug
+  });
+
+  // WHIT-376: the sign-split case (settled bucket negative, pending positive) leaves the sources
+  // summing BELOW the headline; one muted, non-tappable "adjustment" plug closes the gap so the
+  // visible rows sum to the unchanged headline. Fail-on-revert: remove the plug and the rows sum
+  // to $200 under a $300 headline.
+  it('appends one muted, non-tappable adjustment plug so the rows sum to the headline', () => {
+    mockData = screenData({
+      earned: 300,
+      // salary settled −100, pending +300 -> amount 200; headline clamps settled to 0 -> 300.
+      incomeSources: [{ id: 'salary', posted: -100, pending: 300, amount: 200 }],
+      category: lookup(REVERSAL_CATS),
+    });
+    render(<Breakdown />);
+
+    expect(screen.getByText('$300')).toBeTruthy();          // headline
+    expect(screen.getByText('1 income source')).toBeTruthy(); // the plug is NOT counted
+    const plug = screen.getByText('Pending/refund adjustment');
+    expect(colorOf('$100')).toBe(C.textDim);                // plug amount, dimmed (residual 300-200)
+    fireEvent.press(plug);
+    expect(mockPush).not.toHaveBeenCalled();                // display-only, not tappable
+  });
+
+  it('adds no adjustment plug on clean data (sources already sum to the headline)', () => {
+    // The default fixture (earned 5000, sources 4200 + 800) already reconciles.
+    render(<Breakdown />);
+    expect(screen.queryByText('Pending/refund adjustment')).toBeNull();
+  });
+});
+
+// WHIT-376 (QA gaps) — the reconciliation invariant the implementer's tests don't stress: MORE
+// THAN ONE reversal, a reversed row AND a plug at once (no double-count), a reversed source with a
+// NEGATIVE pending, and the old-server path (earned but no per-source __income__).
+describe('Breakdown — Earned (WHIT-376 QA gaps)', () => {
+  const CATS = [
+    cat({ id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de' }),
+    cat({ id: 'bonus', name: 'Bonus', bucket: 'Income', icon: 'cash', color: '#9ece6a' }),
+    cat({ id: 'gig', name: 'Gig', bucket: 'Income', icon: 'cash', color: '#e0af68' }),
+  ];
+
+  // [A-multi] TWO sources clawed back this cycle: BOTH render as signed neutral reversals, and the
+  // rows still sum to the headline (2000 − 100 − 50 = 1850) so NO plug appears. Fail-on-revert:
+  // drop the isReversed branch and "-$100"/"-$50" become "$100"/"$50" and the colour asserts throw.
+  it('renders MULTIPLE reversed sources signed + neutral, rows still reconcile (no plug)', () => {
+    mockData = screenData({
+      earned: 1850,
+      incomeSources: [
+        { id: 'salary', posted: 2000, pending: 0, amount: 2000 },
+        { id: 'bonus', posted: -100, pending: 0, amount: -100 },
+        { id: 'gig', posted: -50, pending: 0, amount: -50 },
+      ],
+      category: lookup(CATS),
+    });
+    render(<Breakdown />);
+
+    expect(screen.getByText('$1,850')).toBeTruthy();       // headline unchanged
+    expect(screen.getByText('3 income sources')).toBeTruthy();
+    expect(colorOf('-$100')).toBe(C.textMid);
+    expect(colorOf('-$50')).toBe(C.textMid);
+    expect(screen.queryByText('Pending/refund adjustment')).toBeNull(); // reconciles -> no plug
+  });
+
+  // [A-both] The hardest case: a reversed source AND a residual plug at ONCE. salary is sign-split
+  // (settled −100, pending +300 → net +200); gig is a clawback (net −50). The server clamps the
+  // negative settled bucket away, so headline = 300 while the visible source nets = 200 − 50 = 150.
+  // ONE plug (+150) closes the gap. The invariant: reversed row + plug must sum to the headline
+  // WITHOUT double-counting (200 − 50 + 150 = 300). Fail-on-revert: remove the plug → rows sum to
+  // 150 under a $300 headline; or drop isReversed → the −$50 flips sign and the total is wrong.
+  it('handles a reversed row AND a plug together — rows sum to the headline, no double-count', () => {
+    mockData = screenData({
+      earned: 300,
+      incomeSources: [
+        { id: 'salary', posted: -100, pending: 300, amount: 200 }, // sign-split, net +200 (positive row)
+        { id: 'gig', posted: -50, pending: 0, amount: -50 },        // clawback, net −50 (reversed row)
+      ],
+      category: lookup(CATS),
+    });
+    render(<Breakdown />);
+
+    expect(screen.getByText('$300')).toBeTruthy();          // headline unchanged
+    expect(screen.getByText('2 income sources')).toBeTruthy(); // plug NOT counted; both sources are
+    expect(screen.getByText('$200')).toBeTruthy();          // salary (positive net) — bright row
+    expect(colorOf('$200')).toBe(C.textBright);
+    expect(colorOf('-$50')).toBe(C.textMid);                // gig — reversed, neutral
+    const plug = screen.getByText('Pending/refund adjustment');
+    expect(colorOf('$150')).toBe(C.textDim);                // the plug amount (300 − 150), dimmed
+    fireEvent.press(screen.getByText('Gig'));               // reversed source still navigates
+    expect(mockPush).toHaveBeenCalledWith('/category/gig?cycle=0');
+    fireEvent.press(plug);                                  // ...the plug never does
+    expect(mockPush).toHaveBeenCalledTimes(1);
+  });
+
+  // [A-negpend] A reversed source with a NEGATIVE pending must never surface an unsigned "pending"
+  // figure anywhere: the row hides its pending sub-label (guard is `pending > 0`, not `!== 0`) and
+  // the headline shows no pending. Rows reconcile (2000 − 150 = 1850) so no plug. Fail-on-revert:
+  // weaken the row guard to `!== 0` and a misleading "$150 pending" sub-label appears -> this fails.
+  it('hides a reversed source’s negative pending — no unsigned "pending" figure surfaces', () => {
+    mockData = screenData({
+      earned: 1850,
+      incomeSources: [
+        { id: 'salary', posted: 2000, pending: 0, amount: 2000 },
+        { id: 'bonus', posted: 0, pending: -150, amount: -150 }, // clawback sits in the pending bucket
+      ],
+      category: lookup(CATS),
+    });
+    render(<Breakdown />);
+
+    expect(screen.getByText('-$150')).toBeTruthy();          // signed reversal row
+    expect(screen.queryByText('$150 pending')).toBeNull();   // no unsigned pending sub-label
+    expect(screen.queryByText('Pending/refund adjustment')).toBeNull(); // reconciles -> no plug
+    // The headline pending line (styles.totalPending) must not render a bogus figure either.
+    expect(screen.queryByText(/pending$/)).toBeNull();
+  });
+
+  // [A-oldserver] Old server: __earned__ present (earned > 0) but NO per-source __income__, so
+  // incomeSources is empty. The screen must show the empty state and must NOT synthesise a lone
+  // plug from the headline (the `items.length > 0` guard). Fail-on-revert: drop that guard and a
+  // single "$5,000" plug row appears -> items.length becomes 1 -> the empty state disappears.
+  it('old server (earned but no __income__): empty state, never a lone synthetic plug', () => {
+    mockData = screenData({ earned: 5000, incomeSources: [], category: lookup(CATS) });
+    render(<Breakdown />);
+
+    expect(screen.getByText('No income recorded for this cycle.')).toBeTruthy();
+    expect(screen.queryByText('Pending/refund adjustment')).toBeNull();
+    expect(screen.queryByTestId('breakdown-total')).toBeNull(); // no headline card, no plug row
+  });
 });
 
 describe('Breakdown — Spent', () => {

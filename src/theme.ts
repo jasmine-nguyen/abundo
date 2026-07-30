@@ -60,20 +60,22 @@ export function fmt(n: number): string {
   return '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 }
 
-// The refund / remainder-"Other" / normal row convention shared by the Insights category list
-// and the Earned/Spent breakdown screen (WHIT-375). A refund reads as an UNSIGNED green credit
-// (fmt drops the sign; the green carries "credit"); a remainder "Other" plug is dimmed and KEEPS
-// its sign when negative (it can be, and the rows must still add up — WHIT-357); both dim the
-// name; a normal row is a positive amount in the bright ink. `spent` is the row's signed amount
+// The refund / remainder-"Other" / reversed-source / normal row convention shared by the Insights
+// category list and the Earned/Spent breakdown screen (WHIT-375/376). A refund reads as an UNSIGNED
+// green credit (fmt drops the sign; the green carries "credit"); a remainder "Other" plug is dimmed
+// and KEEPS its sign when negative (it can be, and the rows must still add up — WHIT-357); a REVERSED
+// income source (WHIT-376) is a real, tappable category clawed back this cycle — it shows a signed
+// "−$X" in a neutral mid tone (a reduction, not a green gain) with a BRIGHT name (it's a real row);
+// a normal row is a positive amount in the bright ink. `spent` is the row's signed amount
 // (CategoryBreakdownRow.spent / the breakdown screen's item amount). One source of truth so the
-// two screens can't drift (the refund line already regressed to a signed "-$30" once).
+// screens can't drift (the refund line already regressed to a signed "-$30" once).
 export function breakdownLineStyle(
-  row: { isRefund?: boolean; isRemainder?: boolean; spent: number },
+  row: { isRefund?: boolean; isRemainder?: boolean; isReversed?: boolean; spent: number },
 ): { amountText: string; amountColor: string; nameColor: string } {
-  const { isRefund, isRemainder, spent } = row;
+  const { isRefund, isRemainder, isReversed, spent } = row;
   return {
-    amountText: isRemainder && spent < 0 ? `-${fmt(spent)}` : fmt(spent),
-    amountColor: isRefund ? C.good : isRemainder ? C.textDim : C.textBright,
+    amountText: (isRemainder || isReversed) && spent < 0 ? `-${fmt(spent)}` : fmt(spent),
+    amountColor: isRefund ? C.good : isRemainder ? C.textDim : isReversed ? C.textMid : C.textBright,
     nameColor: isRefund || isRemainder ? C.textDim : C.textBright,
   };
 }

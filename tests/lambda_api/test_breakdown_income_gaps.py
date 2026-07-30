@@ -1,6 +1,10 @@
-"""WHIT-366 (QA gaps) — the __income__ per-source breakdown edges the implementer's
+"""WHIT-366/376 (QA gaps) — the __income__ per-source breakdown edges the implementer's
 test_breakdown.py does NOT cover. Reuses that file's direct-call fakes (redeclared minimally
 here to keep the suite self-contained, matching its FakeCategoryRepo/FakeTransactionRepo style).
+
+WHIT-376 changed the contract: __income__ now carries the SIGNED per-source net (clamp=False), so
+a source clawed back this cycle SURVIVES as a negative row (the drill screen renders it "−$X" and
+reconciles the rows to __earned__), and only an exact-$0-net source is dropped.
 """
 
 from decimal import Decimal
@@ -38,16 +42,15 @@ def _transaction(category, amount, status="posted", counts=True):
     return {"category": category, "amount": Decimal(str(amount)), "status": status, "counts_to_budget": counts}
 
 
-# --- [S1] per-source posted/pending clamp is INDEPENDENT; drop-guard is on the SUM -------------
+# --- [S1] per-source net is SIGNED (clamp=False); only an exact-$0 source is dropped -----------
 
 
-def test_income_source_posted_reversal_kept_when_pending_positive(handler):
-    # summarise_income clamps posted and pending SEPARATELY per source (via _summarise), and the
-    # handler drops a source only when posted+pending <= 0. A source whose POSTED nets negative (a
-    # settled clawback bigger than the settled pay) but which also has a POSITIVE PENDING (a new pay
-    # run not yet settled) must SURVIVE with its posted floored to 0 — never dropped, never negative.
-    # Fail-on-revert: pass clamp=False to summarise_income and posted reads -100 (a negative leaks to
-    # the drill screen); a single aggregate clamp would instead zero the whole source and drop it.
+def test_income_source_keeps_signed_posted_when_pending_positive(handler):
+    # A source whose SETTLED bucket nets negative (a settled clawback bigger than the settled pay)
+    # but which also has a POSITIVE PENDING (a new pay run not yet settled) SURVIVES with its raw
+    # SIGNED buckets — posted -100, pending 300 (WHIT-376) — never floored, never dropped. This is
+    # the sign-split case whose client-side residual the "adjustment" plug fills.
+    # Fail-on-revert: revert summarise_income to clamp=True and posted floors to 0 -> {0,300}.
     cats = FakeCategoryRepo([_category("salary", "Income")])
     txns = FakeTransactionRepo([
         _transaction("salary", 100, "posted"),
@@ -57,24 +60,85 @@ def test_income_source_posted_reversal_kept_when_pending_positive(handler):
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert result["__income__"] == {"salary": {"posted": Decimal("0"), "pending": Decimal("300")}}
+    assert result["__income__"] == {"salary": {"posted": Decimal("-100"), "pending": Decimal("300")}}
 
 
-def test_income_source_dropped_only_when_both_buckets_clamp_to_zero(handler):
-    # The complement of the above: a source whose posted AND pending both net <= 0 (a full
-    # clawback across both) clamps to {0,0} and is dropped entirely — no phantom $0 source row —
-    # while a healthy sibling is unaffected. Fail-on-revert: drop the handler's `> 0` filter and
-    # __income__ gains a "clawed": {0,0} row.
+def test_income_source_kept_signed_even_when_net_negative(handler):
+    # A source whose posted AND pending both net negative (a full clawback across both) now SURVIVES
+    # as a signed negative row (net -340), so the drill screen can show it as a "−$340" reversal and
+    # the rows still reconcile to __earned__ — a healthy sibling keeps the aggregate positive so
+    # __earned__/__income__ are emitted. Fail-on-revert: revert to clamp=True + the `> 0` filter and
+    # "clawed" floors to {0,0} and is dropped.
     cats = FakeCategoryRepo([_category("salary", "Income"), _category("clawed", "Income")])
     txns = FakeTransactionRepo([
         _transaction("salary", 2000, "posted"),
         _transaction("clawed", 100, "posted"),
         _transaction("clawed", -400, "posted"),    # posted nets -300
         _transaction("clawed", 50, "pending"),
-        _transaction("clawed", -90, "pending"),      # pending nets -40 -> both buckets clamp to 0
+        _transaction("clawed", -90, "pending"),      # pending nets -40
     ])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
-    assert result["__income__"] == {"salary": {"posted": Decimal("2000"), "pending": Decimal("0")}}
-    assert "clawed" not in result["__income__"]
+    assert result["__income__"] == {
+        "salary": {"posted": Decimal("2000"), "pending": Decimal("0")},
+        "clawed": {"posted": Decimal("-300"), "pending": Decimal("-40")},  # kept, signed
+    }
+
+
+# --- [S2] the OTHER clamp bucket + multi-reversal reconciliation ------------------------------
+
+
+def test_income_source_keeps_signed_negative_pending_earned_clamps_that_bucket(handler):
+    # WHIT-376 gap: the existing sign-split test clamps the SETTLED bucket. The mirror case — a
+    # PENDING reversal (a pending pay run pulled back) larger than nothing, with settled positive —
+    # must keep the source's raw SIGNED pending (-100), while __earned__ (aggregate clamp) floors
+    # its pending bucket to 0. So __earned__ (2000) EXCEEDS the source net (1900) by the clamped-away
+    # pending reversal — the residual the client's "adjustment" plug fills in the pending direction.
+    # Fail-on-revert: revert summarise_income to clamp=True and pending floors to 0 -> {2000, 0}.
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2000, "posted"),
+        _transaction("salary", -100, "pending"),  # a pending clawback -> pending nets -100
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {"salary": {"posted": Decimal("2000"), "pending": Decimal("-100")}}
+    assert result["__earned__"] == {"posted": Decimal("2000"), "pending": Decimal("0")}  # pending clamped
+    earned_total = result["__earned__"]["posted"] + result["__earned__"]["pending"]  # 2000
+    source_total = result["__income__"]["salary"]["posted"] + result["__income__"]["salary"]["pending"]  # 1900
+    assert earned_total - source_total == Decimal("100")  # the residual, in the pending bucket
+
+
+def test_income_multiple_reversed_sources_all_survive_and_reconcile(handler):
+    # WHIT-376 invariant with MORE THAN ONE reversal: two distinct sources clawed back this cycle
+    # must BOTH survive as signed negative rows, and the per-source list must still reconcile to
+    # __earned__ (2000 - 100 - 50 == 1850). Guards against a per-source clamp reappearing that only
+    # shows up once several negatives exist. Fail-on-revert: revert to clamp=True + the `> 0` filter
+    # and both bonus rows drop, so the sources sum to 2000 (not 1850) and the __income__ map shrinks.
+    cats = FakeCategoryRepo([
+        _category("salary", "Income"),
+        _category("bonus_a", "Income"),
+        _category("bonus_b", "Income"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2000, "posted"),
+        _transaction("bonus_a", 40, "posted"),
+        _transaction("bonus_a", -140, "posted"),  # nets -100
+        _transaction("bonus_b", -50, "posted"),   # nets -50
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {
+        "salary": {"posted": Decimal("2000"), "pending": Decimal("0")},
+        "bonus_a": {"posted": Decimal("-100"), "pending": Decimal("0")},
+        "bonus_b": {"posted": Decimal("-50"), "pending": Decimal("0")},
+    }
+    assert result["__earned__"] == {"posted": Decimal("1850"), "pending": Decimal("0")}
+    total_sources = sum(
+        (v["posted"] + v["pending"] for v in result["__income__"].values()), Decimal("0")
+    )
+    earned = result["__earned__"]
+    assert total_sources == earned["posted"] + earned["pending"]  # rows reconcile to the headline

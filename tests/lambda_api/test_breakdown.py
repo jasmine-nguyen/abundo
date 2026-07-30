@@ -362,11 +362,11 @@ def test_breakdown_no_income_key_when_no_income(handler):
     assert "__income__" not in result
 
 
-def test_breakdown_income_source_net_reversal_dropped_can_diverge_from_earned(handler):
-    # summarise_income clamps EACH source; summarise_earned clamps the single aggregate. A source
-    # that net-reverses clamps to 0 and is DROPPED from __income__ (no phantom $0 row), while a
-    # positive source is unaffected. __earned__ (aggregate clamp) still nets the reversal in — so
-    # the sum of the shown sources can EXCEED the __earned__ headline. Documents the divergence.
+def test_breakdown_reversed_source_survives_signed_and_reconciles(handler):
+    # WHIT-376: a source clawed back this cycle survives as a SIGNED NEGATIVE row (clamp=False),
+    # instead of vanishing — so the per-source list reconciles to __earned__ (the client renders
+    # it as a "−$X" reversal, mirroring how Spend shows a net-refunded member). Both buckets stay
+    # non-negative here, so __earned__ (aggregate clamp) == the raw net == the sum of the sources.
     cats = FakeCategoryRepo([
         _category("salary", "Income"),
         _category("bonus", "Income"),
@@ -374,16 +374,96 @@ def test_breakdown_income_source_net_reversal_dropped_can_diverge_from_earned(ha
     txns = FakeTransactionRepo([
         _transaction("salary", 2000, "posted"),
         _transaction("bonus", 100, "posted"),
-        _transaction("bonus", -250, "posted"),  # clawback > bonus -> bonus source clamps to 0 -> dropped
+        _transaction("bonus", -250, "posted"),  # clawback > bonus -> bonus nets -150, KEPT signed
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {
+        "salary": {"posted": Decimal("2000"), "pending": Decimal("0")},
+        "bonus": {"posted": Decimal("-150"), "pending": Decimal("0")},  # kept, signed
+    }
+    assert result["__earned__"] == {"posted": Decimal("1850"), "pending": Decimal("0")}
+    # Reconciliation now holds: the sources sum to the __earned__ headline (2000 - 150 == 1850).
+    earned = result["__earned__"]
+    total_sources = sum(
+        (v["posted"] + v["pending"] for v in result["__income__"].values()), Decimal("0")
+    )
+    assert total_sources == earned["posted"] + earned["pending"]
+
+
+def test_breakdown_income_sign_split_leaves_a_client_residual_for_the_plug(handler):
+    # WHIT-376 edge: when the aggregate SETTLED bucket goes negative but PENDING keeps the total
+    # positive, __earned__ clamps the settled bucket to 0 while the source keeps its raw signed net.
+    # So the source net (100) is LESS than __earned__ (300) by the clamped-away settled reversal —
+    # the client closes that 200 gap with one "adjustment" plug so the rows still sum to 300.
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 100, "posted"),
+        _transaction("salary", -200, "posted"),  # settled bucket nets -100
+        _transaction("salary", 300, "pending"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {"salary": {"posted": Decimal("-100"), "pending": Decimal("300")}}
+    assert result["__earned__"] == {"posted": Decimal("0"), "pending": Decimal("300")}  # settled clamped to 0
+    earned_total = result["__earned__"]["posted"] + result["__earned__"]["pending"]  # 300
+    source_total = result["__income__"]["salary"]["posted"] + result["__income__"]["salary"]["pending"]  # 200
+    assert earned_total - source_total == Decimal("100")  # the residual the client plug fills
+
+
+def test_breakdown_all_reversed_emits_no_income_and_no_earned(handler):
+    # An all-reversed cycle nets <= 0 -> __earned__ absent. __income__ must ALSO be absent (gated on
+    # __earned__), so the client never shows a lone negative row under a $0 headline.
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 100, "posted"),
+        _transaction("salary", -300, "posted"),  # aggregate nets -200
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__earned__" not in result
+    assert "__income__" not in result
+
+
+def test_breakdown_income_gated_on_earned_across_multiple_nonzero_sources(handler):
+    # FAIL-ON-REVERT for the has_earned gate: TWO income sources that each net non-zero but whose
+    # AGGREGATE is <= 0. income_sources is NON-EMPTY (both survive the != 0 filter), so a bare
+    # `if income_sources:` emit would ship __income__ under an ABSENT __earned__ — a lone list with
+    # no headline. Gating on __earned__ suppresses BOTH. (The single-source all-reversed test also
+    # locks this gate; this case additionally proves a POSITIVE source present alongside a
+    # net-negative one still can't force emission once the aggregate is <= 0.)
+    cats = FakeCategoryRepo([_category("salary", "Income"), _category("bonus", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 500, "posted"),
+        _transaction("bonus", -600, "posted"),  # each source non-zero; aggregate nets -100
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__earned__" not in result   # aggregate <= 0
+    assert "__income__" not in result   # gated on __earned__, NOT on a non-empty source map
+
+
+def test_breakdown_net_zero_income_source_dropped(handler):
+    # A source whose net is EXACTLY $0 (a same-cycle reversal that cancels out) carries no
+    # information -> dropped from __income__ (no phantom $0 row), while a real source survives.
+    cats = FakeCategoryRepo([
+        _category("salary", "Income"),
+        _category("bonus", "Income"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2000, "posted"),
+        _transaction("bonus", 200, "posted"),
+        _transaction("bonus", -200, "posted"),  # nets exactly 0 -> dropped
     ])
 
     result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
 
     assert result["__income__"] == {"salary": {"posted": Decimal("2000"), "pending": Decimal("0")}}
     assert "bonus" not in result["__income__"]
-    # __earned__ aggregate: 2000 + 100 - 250 = 1850 (the reversal nets in, once). The shown source
-    # (salary 2000) therefore exceeds the headline by the clamped-away reversal — the known nuance.
-    assert result["__earned__"] == {"posted": Decimal("1850"), "pending": Decimal("0")}
 
 
 def test_breakdown_earned_uses_prior_cycle_window(handler, monkeypatch):

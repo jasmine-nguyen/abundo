@@ -31,6 +31,7 @@ type BreakdownItem = {
   onPress?: () => void;   // absent ⇒ not tappable (a synthetic "Other" plug)
   credit?: boolean;       // a refund line — amount reads as an unsigned credit in green
   muted?: boolean;        // a synthetic "Other" plug — dimmed, not a real category
+  reversed?: boolean;     // a real income source clawed back this cycle — signed "−$X", neutral tone (WHIT-376)
 };
 
 const INCOME_FALLBACK_ICON = 'briefcase';
@@ -66,12 +67,31 @@ export default function Breakdown() {
         chipBg: tint(color, 0.15),
         amount: source.amount,
         pending: source.pending,
+        // A source clawed back this cycle has a negative net — render it as a "−$X" reversal.
+        reversed: source.amount < 0,
         onPress: () => router.push(`/category/${encodeURIComponent(source.id)}?cycle=${cycleNum}`),
       };
     });
     title = 'Income';
-    headlineAmount = earned;   // the __earned__ headline the Insights card shows (rows sum to it on clean data)
-    countLabel = `${items.length} ${items.length === 1 ? 'income source' : 'income sources'}`;
+    headlineAmount = earned;   // the __earned__ headline the Insights card shows
+    // WHIT-376: guarantee the rows sum to the headline the way Spend does. `earned` clamps its
+    // settled and pending buckets separately, while the sources are raw signed nets, so the two
+    // can differ ONLY by a clamped-away negative bucket (residual >= 0). One muted "adjustment"
+    // plug (mirrors the spend remainder line) closes that gap; on the common clawback case the
+    // residual is 0 → no plug. Guard items.length > 0 so an old server (earned but no per-source
+    // __income__) never synthesises a lone plug.
+    const shownAmount = items.reduce((sum, i) => sum + i.amount, 0);
+    const residual = earned - shownAmount;
+    if (items.length > 0 && Math.abs(residual) >= 0.005) {
+      items.push({
+        key: '__earned_adjustment__', name: 'Pending/refund adjustment',
+        color: C.textDim, icon: 'sliders', chipBg: tint(C.textDim, 0.15),
+        amount: residual, pending: 0, muted: true,
+      });
+    }
+    // Count the real sources — the synthetic plug isn't one (mirrors the spend branch).
+    const sourceCount = items.filter((i) => !i.muted).length;
+    countLabel = `${sourceCount} ${sourceCount === 1 ? 'income source' : 'income sources'}`;
     emptyText = 'No income recorded for this cycle.';
   } else {
     const { rows, total } = categoryBreakdown({ breakdown, category });
@@ -106,7 +126,12 @@ export default function Breakdown() {
   }
 
   const headlineLabel = `${kind === 'earned' ? 'Earned' : 'Spent'} ${cycleNum === 0 ? 'this cycle' : 'last cycle'}`;
-  const headlinePending = items.reduce((sum, i) => (i.credit ? sum : sum + i.pending), 0);
+  // The "$X pending" sub-line sums the VISIBLE rows' pending (skipping refund/plug lines), clamped
+  // >= 0 so a net-negative pending bucket never shows a negative figure. This is the visible rows'
+  // pending, NOT necessarily __earned__'s pending bucket: a dropped exact-$0 source could carry a
+  // pending the server's separate-bucket clamp still counts. That only shifts this sub-label in a
+  // rare edge; the row AMOUNTS still reconcile to the headline (the invariant that matters).
+  const headlinePending = Math.max(0, items.reduce((sum, i) => (i.credit || i.muted ? sum : sum + i.pending), 0));
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -133,10 +158,10 @@ export default function Breakdown() {
               </View>
               <Text style={styles.count}>{countLabel}</Text>
               {items.map((item) => {
-                // WHIT-375: amount text + colours come from the one shared convention (see
+                // WHIT-375/376: amount text + colours come from the one shared convention (see
                 // breakdownLineStyle) — the same rule the Insights list uses. `credit`/`muted`/
-                // `amount` map to the helper's `isRefund`/`isRemainder`/`spent`.
-                const { amountText, amountColor, nameColor } = breakdownLineStyle({ isRefund: item.credit, isRemainder: item.muted, spent: item.amount });
+                // `reversed`/`amount` map to the helper's `isRefund`/`isRemainder`/`isReversed`/`spent`.
+                const { amountText, amountColor, nameColor } = breakdownLineStyle({ isRefund: item.credit, isRemainder: item.muted, isReversed: item.reversed, spent: item.amount });
                 const body = (
                   <View style={styles.rowBody}>
                     <View style={[styles.chip, { backgroundColor: item.chipBg }]}>
@@ -144,6 +169,8 @@ export default function Breakdown() {
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{item.name}</Text>
+                      {/* Only a POSITIVE pending shows a sub-label — a reversed source's negative
+                          pending would render as a misleading unsigned figure, so it's hidden. */}
                       {item.pending > 0 && <Text style={styles.rowSub}>{fmt(item.pending)} pending</Text>}
                     </View>
                     {item.onPress && <Icon name="chevron" size={18} color={C.textDim} />}

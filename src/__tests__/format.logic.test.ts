@@ -148,4 +148,14 @@ describe('breakdownLineStyle', () => {
       nameColor: C.textBright,
     });
   });
+
+  it('renders a REVERSED income source as a signed "−$150" in a neutral tone, bright name (WHIT-376)', () => {
+    // A clawed-back income source is a real, tappable category — it reads as a REDUCTION, so a real
+    // minus in the neutral mid tone (not green credit, not red overspend), and a bright name.
+    expect(breakdownLineStyle({ isReversed: true, spent: -150 })).toEqual({
+      amountText: '-$150',
+      amountColor: C.textMid,
+      nameColor: C.textBright,
+    });
+  });
 });
