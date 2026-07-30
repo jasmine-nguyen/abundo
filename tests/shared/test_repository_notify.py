@@ -254,12 +254,25 @@ class FakeMilestoneTable:
         return {"Item": dict(item)} if item is not None else {}
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
-        assert UpdateExpression == "ADD #f :m", UpdateExpression  # no TTL SET clause
+        # ADD #f :m (mark) or DELETE #f :m (reconcile, WHIT-385) — both on a String Set, both
+        # deliberately WITHOUT the `SET #e = :exp` TTL the budget/repayment markers carry.
+        assert UpdateExpression in ("ADD #f :m", "DELETE #f :m"), UpdateExpression
         assert "#e" not in ExpressionAttributeNames and ":exp" not in ExpressionAttributeValues
         member = ExpressionAttributeValues[":m"]
-        assert isinstance(member, set), "String-Set ADD must pass a set"
+        assert isinstance(member, set), "String-Set update must pass a set"
         item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
-        item[ExpressionAttributeNames["#f"]] = set(item.get(ExpressionAttributeNames["#f"], set())) | member
+        fired_attr = ExpressionAttributeNames["#f"]
+        current = set(item.get(fired_attr, set()))
+        if UpdateExpression == "ADD #f :m":
+            item[fired_attr] = current | member
+            return
+        # DELETE removes the members; emptying the set drops the attribute (DynamoDB behaviour),
+        # so fired_milestones() reads back set().
+        remaining = current - member
+        if remaining:
+            item[fired_attr] = remaining
+        else:
+            item.pop(fired_attr, None)
 
 
 def _milestone_repo(shared):
@@ -293,3 +306,58 @@ def test_milestone_mark_writes_no_ttl(shared):
     r.mark_milestone_fired("0")
     stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
     assert "expires_at" not in stored
+
+
+# --- reconcile: remove dead milestone markers (WHIT-385) --------------------------------
+
+def test_remove_milestone_markers_drops_given_keys(shared):
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:300000.00")
+    r.mark_milestone_fired("bal:280000.00")
+    r.mark_milestone_fired("0")
+    r.remove_milestone_markers({"bal:300000.00"})
+    assert r.fired_milestones() == {"bal:280000.00", "0"}
+
+
+def test_remove_last_marker_drops_attribute_and_reads_empty(shared):
+    # Deleting the last member drops the `fired` attribute entirely; the item survives and
+    # fired_milestones() reads back an empty set.
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:300000.00")
+    r.remove_milestone_markers({"bal:300000.00"})
+    stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
+    assert "fired" not in stored
+    assert r.fired_milestones() == set()
+
+
+def test_remove_milestone_markers_empty_is_a_noop(shared):
+    # An empty key set must not touch the table — DynamoDB rejects an empty String Set.
+    r = _milestone_repo(shared)
+
+    def boom(**kwargs):
+        raise AssertionError("update_item must not be called for an empty key set")
+
+    r._table.update_item = boom
+    r.remove_milestone_markers(set())  # no raise
+
+
+def test_remove_milestone_markers_writes_no_ttl(shared):
+    # The reconcile delete must preserve the no-TTL, once-ever contract (the fake asserts no
+    # #e/:exp on the update; also confirm the stored item never grows a TTL attribute).
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:300000.00")
+    r.mark_milestone_fired("bal:280000.00")
+    r.remove_milestone_markers({"bal:300000.00"})
+    stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
+    assert "expires_at" not in stored
+
+
+def test_remove_milestone_markers_error_surfaces_as_database_error(shared, client_error, database_error):
+    r = _milestone_repo(shared)
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    r._table.update_item = boom
+    with pytest.raises(database_error):
+        r.remove_milestone_markers({"bal:300000.00"})

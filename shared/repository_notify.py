@@ -190,3 +190,22 @@ class NotifyRepository:
             )
         except ClientError as e:
             handle_database_error(e, "mark milestone celebrated")
+
+    def remove_milestone_markers(self, keys: set) -> None:
+        """Drop dead milestone markers from the String Set (WHIT-385): a re-targeted custom
+        milestone's old "bal:<amount>" key must be removed so the set can't grow forever. DELETE
+        removes the given members; deleting the LAST member drops the `fired` attribute entirely,
+        so fired_milestones() then reads back set(). No TTL is written (same once-ever contract as
+        mark_milestone_fired). Guards on empty — DynamoDB rejects an empty String Set, so a no-op
+        call must not touch the table."""
+        if not keys:
+            return
+        try:
+            self._get_table().update_item(
+                Key=_MILESTONE_KEY,
+                UpdateExpression="DELETE #f :m",
+                ExpressionAttributeNames={"#f": "fired"},
+                ExpressionAttributeValues={":m": set(keys)},
+            )
+        except ClientError as e:
+            handle_database_error(e, "remove milestone markers")
