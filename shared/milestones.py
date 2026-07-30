@@ -25,6 +25,11 @@ from push import send_push
 
 logger = logging.getLogger(__name__)
 
+# Namespace for custom-plan milestone markers ("bal:<amount>"), keeping a $0–$4 custom
+# target from colliding with a built-in "0".."4" sprint marker. Single source of truth so
+# the key format and the reconcile filter (WHIT-385) can't drift apart.
+_CUSTOM_KEY_PREFIX = "bal:"
+
 
 @dataclass(frozen=True)
 class Milestone:
@@ -50,6 +55,36 @@ class PlanMilestone:
     key: str
 
 
+def _resolve_plan(milestone_repo=None):
+    """Return (plan, authoritative).
+
+    `plan` is the same list resolve_plan has always returned. `authoritative` is True ONLY when
+    the store returned a genuine saved list (populated OR a real empty []) — the sole case in
+    which it is safe to reconcile away dead "bal:" markers (WHIT-385). It is False for the three
+    fallback-to-default cases (None repo, UNSET plan, or a READ FAILURE): reconciling against the
+    built-in default in any of those would treat every custom "bal:" marker as dead and delete it,
+    so a transient store blip would wipe the once-ever "already celebrated" record."""
+    if milestone_repo is None:
+        return list(MILESTONES), False
+    try:
+        stored = milestone_repo.get_milestones_raw()
+    except Exception as e:
+        logger.warning("milestones read failed, using the default plan: %s", e)
+        return list(MILESTONES), False
+    if stored is None:
+        return list(MILESTONES), False
+    return [
+        PlanMilestone(
+            label=m["label"],
+            target_balance=m["targetBalance"],
+            # Quantize to cents so the marker is byte-stable across polls regardless of how the
+            # stored Decimal formats (480000 / 480000.0 / 480000.00 all → "bal:480000.00").
+            key=f"{_CUSTOM_KEY_PREFIX}{Decimal(m['targetBalance']).quantize(Decimal('0.01'))}",
+        )
+        for m in stored
+    ], True
+
+
 def resolve_plan(milestone_repo=None) -> list:
     """The plan the celebration push measures against: the user's SAVED milestone list when
     they have one, else the built-in default MILESTONES (WHIT-384). Falls back to the default
@@ -59,25 +94,7 @@ def resolve_plan(milestone_repo=None) -> list:
     to surface (fail-loud) rather than send a WRONG default celebration in its place, and an
     empty list is a genuinely empty plan — reachable only by a direct write, since the API
     rejects an empty save. A None repo (every pre-WHIT-384 caller) also gets the default."""
-    if milestone_repo is None:
-        return list(MILESTONES)
-    try:
-        stored = milestone_repo.get_milestones_raw()
-    except Exception as e:
-        logger.warning("milestones read failed, using the default plan: %s", e)
-        return list(MILESTONES)
-    if stored is None:
-        return list(MILESTONES)
-    return [
-        PlanMilestone(
-            label=m["label"],
-            target_balance=m["targetBalance"],
-            # Quantize to cents so the marker is byte-stable across polls regardless of how the
-            # stored Decimal formats (480000 / 480000.0 / 480000.00 all → "bal:480000.00").
-            key=f"bal:{Decimal(m['targetBalance']).quantize(Decimal('0.01'))}",
-        )
-        for m in stored
-    ]
+    return _resolve_plan(milestone_repo)[0]
 
 
 # The payoff plan, transcribed from the Notion "IP1 Equity Milestones" db and kept in
@@ -158,14 +175,42 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     marking REGARDLESS of send outcome, because the stored prior balance means a crossing is
     never re-detected, so "mark only on send" would lose the push forever on a transient
     failure. Short-circuits before any I/O when nothing new was crossed, and before sending
-    when no device is registered. Returns 1 if a push was sent, else 0. Best-effort: the caller
-    swallows."""
-    plan = resolve_plan(milestone_repo)
+    when no device is registered — EXCEPT that an authoritative custom plan first reads the marker
+    set to reconcile away dead "bal:" markers (WHIT-385), so that path does one read (and a write
+    only when there's a dead key) even on a no-crossing poll. Returns 1 if a push was sent, else 0.
+    Best-effort: the caller swallows."""
+    plan, authoritative = _resolve_plan(milestone_repo)
+
+    # WHIT-385: reconcile away dead custom markers so a re-targeted milestone's old "bal:<amount>"
+    # key can't accumulate forever. Runs BEFORE the "nothing crossed" short-circuit, since a
+    # re-target poll usually crosses nothing. Only on an AUTHORITATIVE plan (a genuine saved list,
+    # possibly empty) — never on a fallback default (None repo / unset / read failure), which would
+    # wipe live markers on a transient blip. Only "bal:"-prefixed keys are ever removed, so built-in
+    # sprint markers ("0".."4") are untouched. `fired` is reused for the dedup below without
+    # subtracting `stale`: every stale key is a target NOT in the plan and `crossed` ⊆ plan, so no
+    # fresh key can be stale — subtracting would be dead work.
+    fired = None
+    if authoritative:
+        # Best-effort: reconcile is bookkeeping, so a marker read/write blip must never suppress a
+        # genuine celebration (the crossing is never re-detected once the balance moves past it).
+        # On any error, skip the sweep this poll — the next poll retries. If the read succeeded but
+        # the delete failed, `fired` still holds the pre-delete set: the stale keys aren't in
+        # `crossed`, so dedup below is unaffected.
+        try:
+            fired = notify_repo.fired_milestones()
+            live = {milestone.key for milestone in plan}
+            stale = {k for k in fired if k.startswith(_CUSTOM_KEY_PREFIX) and k not in live}
+            if stale:
+                notify_repo.remove_milestone_markers(stale)
+        except Exception as e:
+            logger.warning("milestone marker reconcile failed, skipping the sweep: %s", e)
+
     crossed = crossed_milestones(old_balance, new_balance, plan)
     if not crossed:
         return 0
 
-    fired = notify_repo.fired_milestones()
+    if fired is None:  # non-authoritative path: keep the original no-I/O-until-crossing behaviour
+        fired = notify_repo.fired_milestones()
     fresh = [m for m in crossed if m.key not in fired]
     if not fresh:
         return 0
