@@ -62,19 +62,31 @@ class MilestoneRepository:
             self._table = self._dynamodb.Table(TABLE_NAME)
         return self._table
 
+    def _read_milestones(self, scope: str) -> Optional[list]:
+        """The shared read: the raw stored milestone list (targetBalance as Decimal), or None
+        when unset. One place for the get_item + error handling so the two public accessors
+        below can't drift (the WHIT-88 duplicated-read-path landmine)."""
+        try:
+            item = self._get_table().get_item(Key=_milestones_key(scope)).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read milestones")
+        return None if item is None else item["milestones"]
+
     def get_milestones(self, scope: str = _MILESTONE_SCOPE_SHARED) -> Optional[list]:
         """Return the stored milestone list, or None if the user hasn't saved one.
 
         Each milestone is {id, label, targetBalance, targetDate}; targetBalance is
         normalised to float so the handler serialises it as a JSON number.
         """
-        try:
-            item = self._get_table().get_item(Key=_milestones_key(scope)).get("Item")
-        except ClientError as e:
-            handle_database_error(e, "read milestones")
-        if item is None:
-            return None
-        return _to_client(item["milestones"])
+        raw = self._read_milestones(scope)
+        return None if raw is None else _to_client(raw)
+
+    def get_milestones_raw(self, scope: str = _MILESTONE_SCOPE_SHARED) -> Optional[list]:
+        """Return the stored milestone list with targetBalance as the raw Decimal (not
+        floated like get_milestones), or None if unset. The balance poller compares each
+        target against the Decimal balance exact-to-the-cent, so it must skip _to_client's
+        float() cast, which would fuzz a custom cent boundary (WHIT-384)."""
+        return self._read_milestones(scope)
 
     def set_milestones(self, milestones: list, scope: str = _MILESTONE_SCOPE_SHARED) -> list:
         """Overwrite the whole milestone list and return it (normalised to floats).

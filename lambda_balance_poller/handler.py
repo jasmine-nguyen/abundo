@@ -46,6 +46,7 @@ from repository import (
     DeviceRepository,
     HomeLoanBalanceRepository,
     LoanFactsRepository,
+    MilestoneRepository,
     TransactionRepository,
 )
 from repository_notify import NotifyRepository
@@ -302,6 +303,7 @@ def _poll_homeloan(api_key: str) -> bool:
             loanfacts_repo=LoanFactsRepository(),
             device_repo=DeviceRepository(),
             notify_repo=notify_repo,
+            milestone_repo=MilestoneRepository(),
         )
     except Exception as e:
         logger.error("milestone push failed (balance still stored): %s", e)
