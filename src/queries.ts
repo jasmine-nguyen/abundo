@@ -8,7 +8,7 @@ import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@t
 import type { InfiniteData } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment, TransactionFeedPage } from './api';
-import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -464,6 +464,11 @@ export interface InsightsScreenData {
   // same window as spend, for the Earned-vs-Spent chart (WHIT-312). 0 when the response
   // carries no __earned__ bucket (no income, or an older server).
   earned: number;
+  // The __earned__ total broken out PER SOURCE (WHIT-366): each Income-bucket category that
+  // earned this cycle, biggest-first, with zero/net-reversed sources dropped — what the
+  // "drill into Earned" screen lists. `amount` is posted + pending (matching `earned`). Empty
+  // when there's no income (or an older server with no __income__ key).
+  incomeSources: { id: string; posted: number; pending: number; amount: number }[];
   category: (id: string) => Category | undefined;
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
@@ -511,7 +516,19 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   const earnedEntry = breakdownQuery.data?.[EARNED_KEY];
   const earned = earnedEntry ? earnedEntry.posted + earnedEntry.pending : 0;
 
-  return { breakdown: breakdownQuery.data ?? {}, earned, category, categoriesError, ...status };
+  // Per-source income for the drill-into-Earned screen (WHIT-366). Drop sources that net to
+  // zero (a fully clawed-back income category still rides the __income__ map) so the screen
+  // never shows a phantom $0 row — mirrors the spend-row rule in categoryBreakdown. Sort
+  // biggest-first. The screen joins each id to the taxonomy for its name/icon/colour.
+  const incomeSources = useMemo(() => {
+    const sources = readIncomeSources(breakdownQuery.data ?? {}) ?? {};
+    return Object.entries(sources)
+      .map(([id, s]) => ({ id, posted: s.posted, pending: s.pending, amount: s.posted + s.pending }))
+      .filter((s) => s.amount > 0)
+      .sort((a, b) => b.amount - a.amount);
+  }, [breakdownQuery.data]);
+
+  return { breakdown: breakdownQuery.data ?? {}, earned, incomeSources, category, categoriesError, ...status };
 }
 
 // --- the Transactions screen's composite view (WHIT-190a) --------------------

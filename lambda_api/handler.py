@@ -11,6 +11,7 @@ from constants import (
     DEFAULT_RULE_OPERATOR,
     DEVICES_PATH,
     EARNED_KEY,
+    INCOME_KEY,
     ROLLUP_KEY,
     ENRICHMENTS_PATH,
     EXPO_TOKEN_MAX_LEN,
@@ -1336,9 +1337,11 @@ def list_category_breakdown(
 
     Response: {"<category_id>": {"posted": Decimal, "pending": Decimal}, ...,
     optionally "__uncategorized__": {...}, optionally "__earned__": {...},
-    "__rollup__": {...}}. The "__earned__" bucket is the TOTAL income (all Income-bucket
-    categories) over the same window, for the Insights Earned-vs-Spent chart (WHIT-312);
-    added only when there's income. "__rollup__" (server-owned netted parent totals) is
+    optionally "__income__": {...}, "__rollup__": {...}}. The "__earned__" bucket is the
+    TOTAL income (all Income-bucket categories) over the same window, for the Insights
+    Earned-vs-Spent chart (WHIT-312); "__income__" breaks that same total down PER SOURCE
+    ({income_category_id: {posted, pending}}) for the "drill into Earned" screen (WHIT-366);
+    both added only when there's income. "__rollup__" (server-owned netted parent totals) is
     ALWAYS present (WHIT-358), even for a flat taxonomy with no parents (then its "nodes"
     is {}) or a window with no spend — so the ONLY meaning of a missing "__rollup__" is
     "an old server", which lets the client's fallback be a pure rollout shim. The flat
@@ -1366,6 +1369,21 @@ def list_category_breakdown(
     earned = summarise_earned(transactions, income_ids)
     if earned["posted"] > 0 or earned["pending"] > 0:
         result[EARNED_KEY] = earned
+
+    # Per-source income (WHIT-366): the same earnings broken out by category, so the
+    # "drill into Earned" screen can list each source (Salary, side income, …) under the
+    # __earned__ total. summarise_income clamps PER source (vs summarise_earned's single
+    # aggregate clamp), so on clean all-positive income the sources sum to __earned__ exactly.
+    # Drop any source that clamped to 0 (a fully net-reversed income category) so __income__
+    # carries only real sources — no phantom $0 rows, and no key at all when there's no income
+    # (byte-identical to a pre-WHIT-366 response). Additive + old-client safe.
+    income_sources = {
+        category_id: amounts
+        for category_id, amounts in summarise_income(transactions, income_ids).items()
+        if amounts["posted"] + amounts["pending"] > 0
+    }
+    if income_sources:
+        result[INCOME_KEY] = income_sources
 
     # __rollup__ (WHIT-349): server-owned netted parent totals, so the Insights donut reads
     # a parent's spend from here instead of summing per-id-FLOORED leaves on the client —

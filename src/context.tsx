@@ -1978,6 +1978,13 @@ export const UNCATEGORIZED_KEY = '__uncategorized__';
 // row. Mirrors EARNED_KEY in lambda_api/constants.py.
 export const EARNED_KEY = '__earned__';
 
+// The sentinel key the /breakdown endpoint uses for the PER-SOURCE income breakdown (WHIT-366):
+// {income_category_id: CategorySpend} for each Income-bucket category that earned this cycle.
+// Rides in the same map as the per-category spend (same CategorySpend shape) but is income, not
+// a spend row — read via `readIncomeSources`, and skipped in `categoryBreakdown` so it never
+// counts as spend. Mirrors INCOME_KEY in lambda_api/constants.py.
+export const INCOME_KEY = '__income__';
+
 // The sentinel key the /breakdown endpoint uses for the server-owned parent roll-up (WHIT-349):
 // netted parent totals + refund detail. It rides in the same map as the per-category spend but
 // has a different shape, so it's read via `readRollup`, not the index type. Mirrors ROLLUP_KEY
@@ -1989,6 +1996,13 @@ export const ROLLUP_KEY = '__rollup__';
  * emits it, so `undefined` means only a pre-WHIT-358 server or a cold `{}` cache before first fetch. */
 export function readRollup(breakdown: Record<string, CategorySpend>): BreakdownRollup | undefined {
   return (breakdown as Record<string, unknown>)[ROLLUP_KEY] as BreakdownRollup | undefined;
+}
+
+/** Read the __income__ per-source income map out of a /breakdown response (WHIT-366). `undefined`
+ * means no income this cycle (or a pre-WHIT-366 server) — the drill-into-Earned screen shows its
+ * empty state. Shaping into a sorted, zero-dropped list lives in `useInsightsScreenData`. */
+export function readIncomeSources(breakdown: Record<string, CategorySpend>): Record<string, CategorySpend> | undefined {
+  return (breakdown as Record<string, unknown>)[INCOME_KEY] as Record<string, CategorySpend> | undefined;
 }
 
 export interface CategoryBreakdownRow {
@@ -2046,7 +2060,7 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
   const present = new Set<string>();
   let uncategorized: { posted: number; pending: number } | null = null;
   for (const [id, spend] of Object.entries(s.breakdown)) {
-    if (id === ROLLUP_KEY || id === EARNED_KEY) continue;  // sentinels, not spend rows (WHIT-312/349)
+    if (id === ROLLUP_KEY || id === EARNED_KEY || id === INCOME_KEY) continue;  // sentinels, not spend rows (WHIT-312/349/366)
     if (id === UNCATEGORIZED_KEY) {
       if (spend.posted + spend.pending > 0) uncategorized = { posted: spend.posted, pending: spend.pending };
       continue;
@@ -2509,12 +2523,17 @@ export function categoryTransactions(s: TransactionListInput, drillId: string) {
   const txns = s.transactions;
   if (txns.length === 0) return null;
   const isUncat = drillId === UNCATEGORIZED_KEY;
+  // Income is stored POSITIVE (shared/spend.py sign=+1); spend is negated. Match the server:
+  // sum +amount for an Income-bucket category, -amount for spend/Uncategorized, then clamp each
+  // bucket >= 0 — so an income drill totals to its positive earnings instead of clamping to $0.
+  const isIncome = s.category(drillId)?.bucket === 'Income';
+  const sign = isIncome ? 1 : -1;
 
   let posted = 0, pending = 0;
   for (const t of txns) {
     if (!contributesToBudget(t)) continue;
-    if (t.status === 'posted') posted += -t.amount;
-    else if (t.status === 'pending') pending += -t.amount;
+    if (t.status === 'posted') posted += sign * t.amount;
+    else if (t.status === 'pending') pending += sign * t.amount;
   }
   posted = Math.max(0, posted);
   pending = Math.max(0, pending);

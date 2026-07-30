@@ -23,6 +23,9 @@ export default function CategoryDetail() {
   const cycleNum = Math.min(1, Math.max(0, Math.floor(Number(cycle) || 0)));
   const { transactions, category, isLoading, isError, refetch } = useCategoryTransactionsScreenData(id, cycleNum);
   const detail = categoryTransactions({ transactions, category }, id);
+  // WHIT-366: an Income-bucket category reached from the Earned drill reads "Earned", not "Spent".
+  const isIncome = category(id)?.bucket === 'Income';
+  const verb = isIncome ? 'Earned' : 'Spent';
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -43,7 +46,7 @@ export default function CategoryDetail() {
           {detail ? (
             <>
               <View testID="category-total" style={styles.totalCard}>
-                <Text style={styles.totalLabel}>{cycleNum === 0 ? 'Spent this cycle' : 'Spent last cycle'}</Text>
+                <Text style={styles.totalLabel}>{verb} {cycleNum === 0 ? 'this cycle' : 'last cycle'}</Text>
                 <Text style={styles.totalAmount}>{fmt(detail.total)}</Text>
                 {detail.pending > 0 && <Text style={styles.totalPending}>{fmt(detail.pending)} pending</Text>}
               </View>

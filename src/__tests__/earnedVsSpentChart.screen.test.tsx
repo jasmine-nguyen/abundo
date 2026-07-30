@@ -3,10 +3,10 @@
 // widths read off the fill View's style and the headline/message read off their text nodes.
 // WHIT-324: the card shows surplus/deficit only (no budget); both bars share one ruler and the
 // smaller bar is floored so a tiny spend stays visible.
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { StyleSheet } from 'react-native';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 import { EarnedVsSpent, earnedVsSpent } from '../components/EarnedVsSpent';
 import { C } from '../theme';
 
@@ -147,5 +147,37 @@ describe('EarnedVsSpent (render)', () => {
     expect(screen.getByTestId('evs').props.accessibilityLabel).toBe(
       `Earned $6,389, spent $1,723. +$4,666 surplus — ${SURPLUS_MSG}`,
     );
+  });
+});
+
+// WHIT-366: each bar drills into its breakdown when a press handler is passed; without one the
+// bar stays presentational (exactly as before this change).
+describe('EarnedVsSpent (drill handlers)', () => {
+  it('taps Earned and Spent through their handlers when provided', () => {
+    const onEarnedPress = jest.fn();
+    const onSpentPress = jest.fn();
+    render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" onEarnedPress={onEarnedPress} onSpentPress={onSpentPress} />);
+
+    fireEvent.press(screen.getByTestId('earned-bar-press'));
+    expect(onEarnedPress).toHaveBeenCalledTimes(1);
+    fireEvent.press(screen.getByTestId('spent-bar-press'));
+    expect(onSpentPress).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByTestId('earned-bar-press').props.accessibilityLabel).toBe('See your income sources');
+    expect(screen.getByTestId('spent-bar-press').props.accessibilityLabel).toBe('See your spending breakdown');
+  });
+
+  it('renders bars as non-interactive when no handler is passed (no press targets)', () => {
+    render(<EarnedVsSpent earned={6389} spent={1723} testID="evs" />);
+    expect(screen.queryByTestId('earned-bar-press')).toBeNull();
+    expect(screen.queryByTestId('spent-bar-press')).toBeNull();
+    expect(screen.getByTestId('earned-bar')).toBeTruthy(); // the bar fill still renders
+  });
+
+  it('can make ONE bar tappable independently (a $0 side stays a non-interactive nub)', () => {
+    const onEarnedPress = jest.fn();
+    render(<EarnedVsSpent earned={2975} spent={0} testID="evs" onEarnedPress={onEarnedPress} />);
+    expect(screen.getByTestId('earned-bar-press')).toBeTruthy();
+    expect(screen.queryByTestId('spent-bar-press')).toBeNull(); // no onSpentPress → Spent not tappable
   });
 });
