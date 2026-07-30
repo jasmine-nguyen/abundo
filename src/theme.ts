@@ -60,6 +60,24 @@ export function fmt(n: number): string {
   return '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
 }
 
+// The refund / remainder-"Other" / normal row convention shared by the Insights category list
+// and the Earned/Spent breakdown screen (WHIT-375). A refund reads as an UNSIGNED green credit
+// (fmt drops the sign; the green carries "credit"); a remainder "Other" plug is dimmed and KEEPS
+// its sign when negative (it can be, and the rows must still add up — WHIT-357); both dim the
+// name; a normal row is a positive amount in the bright ink. `spent` is the row's signed amount
+// (CategoryBreakdownRow.spent / the breakdown screen's item amount). One source of truth so the
+// two screens can't drift (the refund line already regressed to a signed "-$30" once).
+export function breakdownLineStyle(
+  row: { isRefund?: boolean; isRemainder?: boolean; spent: number },
+): { amountText: string; amountColor: string; nameColor: string } {
+  const { isRefund, isRemainder, spent } = row;
+  return {
+    amountText: isRemainder && spent < 0 ? `-${fmt(spent)}` : fmt(spent),
+    amountColor: isRefund ? C.good : isRemainder ? C.textDim : C.textBright,
+    nameColor: isRefund || isRemainder ? C.textDim : C.textBright,
+  };
+}
+
 export function fmt2(n: number): string {
   return (n < 0 ? '-' : '+') + '$' +
     Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

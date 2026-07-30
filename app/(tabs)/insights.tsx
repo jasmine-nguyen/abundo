@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { C, FONT, fmt, tint } from '../../src/theme';
+import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, categoryBreakdown } from '../../src/context';
 import { useInsightsScreenData } from '../../src/queries';
@@ -164,16 +164,14 @@ export default function Insights() {
           // plugs the residual so the expanded rows sum to the node; it is neutral and NOT tappable
           // (it isn't a real category, so there is nothing to drill into).
           if (r.isRefund || r.isRemainder) {
-            const amountColor = r.isRefund ? C.good : C.textDim;
-            // A refund reads as a credit via its green colour, so `fmt` (unsigned) is fine. An "Other"
-            // plug can be negative (it removes a dropped/clamped amount) — `fmt` drops the sign, so a
-            // negative plug MUST show its minus or the rows look like they don't add up (WHIT-357 R1).
-            const amountText = r.isRemainder && r.spent < 0 ? `-${fmt(r.spent)}` : fmt(r.spent);
+            // WHIT-375: the refund/"Other" amount + colours come from the one shared convention
+            // (see breakdownLineStyle) so this can't drift from the breakdown screen again.
+            const { amountText, amountColor, nameColor } = breakdownLineStyle(r);
             const body = (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
                 <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={[styles.rowName, { color: C.textDim }]} numberOfLines={1}>{r.name}</Text>
+                  <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{r.name}</Text>
                   <Text style={styles.rowSub}>{r.spentLabel}</Text>
                 </View>
                 <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>

@@ -206,6 +206,32 @@ describe('Breakdown — Spent', () => {
     fireEvent.press(plug);
     expect(mockPush).not.toHaveBeenCalled(); // display-only — nothing to drill into
   });
+
+  // WHIT-375 — the refund line is the exact convention that once drifted (it showed "-$30").
+  // Lock it on THIS screen: a refund renders as an UNSIGNED green credit, never a signed minus.
+  // node 70 = petrol 100 + tolls refund(-30) exactly, so there is no "Other" plug — the "$30"
+  // is unambiguously the refund line. Fail-on-revert: if breakdown stops using breakdownLineStyle
+  // and re-signs the refund, "$30" disappears (becomes "-$30") and colorOf('$30') throws.
+  it('renders a refund member as an unsigned green credit (no minus sign)', () => {
+    const refundCats = [
+      cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+      cat({ id: 'petrol', name: 'Petrol', bucket: 'Living', parent: 'car' }),
+      cat({ id: 'tolls', name: 'Tolls', bucket: 'Living', parent: 'car' }),
+    ];
+    mockData = screenData({
+      breakdown: withRollup(
+        { petrol: spend({ posted: 100, pending: 0 }), tolls: spend({ posted: 0, pending: 0 }) },
+        { nodes: { car: { posted: 70, pending: 0 } }, refunds: { car: [{ id: 'tolls', amount: -30 }] } },
+      ) as Record<string, unknown>,
+      category: lookup(refundCats),
+    });
+    mockParams = { kind: 'spent', cycle: '0', parent: 'car' };
+    render(<Breakdown />);
+
+    expect(screen.getByText('Tolls')).toBeTruthy();
+    expect(colorOf('$30')).toBe(C.good);          // green credit
+    expect(screen.queryByText('-$30')).toBeNull(); // never a signed minus (the historical drift)
+  });
 });
 
 describe('Breakdown — loading & error', () => {

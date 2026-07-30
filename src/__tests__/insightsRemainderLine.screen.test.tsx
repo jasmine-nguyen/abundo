@@ -77,6 +77,16 @@ const amountColor = (card: ReactTestInstance) => {
   return (StyleSheet.flatten((amt.props as { style?: unknown }).style) as { color?: string }).color;
 };
 
+// The row NAME Text (styles.rowName: fontWeight '600') inside a card — its colour moved from a
+// hardcoded C.textDim to breakdownLineStyle's nameColor in WHIT-375, so lock it here.
+const nameColor = (card: ReactTestInstance) => {
+  const nm = card.findAll((n) => {
+    const st = StyleSheet.flatten((n.props as { style?: unknown }).style) as { fontWeight?: string } | undefined;
+    return !!st && st.fontWeight === '600';
+  })[0];
+  return (StyleSheet.flatten((nm.props as { style?: unknown }).style) as { color?: string }).color;
+};
+
 beforeEach(() => {
   mockPush.mockClear();
   mockInsights = insightsData();
@@ -126,6 +136,40 @@ it('the refund line under the SAME parent stays green + tappable — proving the
   // Positive control 2: a real spend row (Petrol) DOES carry a bar/track — so the plug's
   // "no track" assertion above is a real difference, not a query that never finds tracks.
   expect(tracksIn(rowCard(screen.getByText('Petrol')))).not.toHaveLength(0);
+});
+
+// WHIT-375 — [A1] gap symmetric to the breakdown refund test. insightsRemainderLine only locked
+// the refund COLOUR (green) + tappability, never that its AMOUNT is UNSIGNED. The refund's spent is
+// -30; the shared breakdownLineStyle must drop the sign so the line reads "$30", never "-$30" (the
+// historical drift the card guards). Fail-on-revert: sign the helper's amount and this flips to "-$30".
+it('renders the refund line amount UNSIGNED ("$30", never "-$30")', () => {
+  render(<Insights />);
+  fireEvent.press(screen.getByText('Car'));
+
+  const refundCard = rowCard(screen.getByText('Tolls'));
+  expect(within(refundCard).getByText('$30')).toBeTruthy();   // unsigned credit
+  expect(within(refundCard).queryByText('-$30')).toBeNull();  // never the signed drift
+});
+
+// WHIT-375 — [A2] the refund/remainder NAME colour moved from a hardcoded C.textDim to the helper's
+// nameColor. Prove it's unchanged on BOTH kinds of line: dimmed (C.textDim), NOT the bright category
+// ink (C.textBright). Fail-on-revert: if the helper returned textBright for a refund/remainder name,
+// these flip.
+it('keeps the refund AND remainder NAME dimmed (C.textDim, not the bright ink)', () => {
+  render(<Insights />);
+  fireEvent.press(screen.getByText('Car'));
+
+  const refundName = nameColor(rowCard(screen.getByText('Tolls')));
+  expect(refundName).toBe(C.textDim);
+  expect(refundName).not.toBe(C.textBright);
+
+  const plugName = nameColor(rowCard(screen.getByText('Pending/refund adjustment')));
+  expect(plugName).toBe(C.textDim);
+  expect(plugName).not.toBe(C.textBright);
+
+  // Control: a real spend row (Petrol) keeps the BRIGHT name — so "dimmed" is a real difference,
+  // not a colour every row happens to share.
+  expect(nameColor(rowCard(screen.getByText('Petrol')))).toBe(C.textBright);
 });
 
 it('a NEGATIVE "Other" plug renders its minus sign (WHIT-357 R1) so the rows visibly still add up', () => {
