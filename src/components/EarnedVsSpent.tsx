@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { C, FONT, fmt } from '../theme';
 
 // WHIT-312/324: an "earned vs spent" read for the selected pay cycle — two horizontal bars
@@ -59,28 +59,50 @@ export function earnedVsSpent(earned: number, spent: number): {
 }
 
 // One labelled bar: the amount, then a proportional fill on the shared ruler. A non-zero share is
-// floored to MIN_BAR_SHARE so a tiny bar never vanishes; a zero share stays empty.
-function Bar({ label, amount, share, color, testID }: {
+// floored to MIN_BAR_SHARE so a tiny bar never vanishes; a zero share stays empty. WHIT-366: when
+// `onPress` is given the whole block is a button that drills into that side's breakdown (a
+// trailing chevron signals it); without it the bar is presentational, exactly as before.
+function Bar({ label, amount, share, color, testID, onPress, drillLabel }: {
   label: string; amount: number; share: number; color: string; testID: string;
+  onPress?: () => void; drillLabel?: string;
 }) {
   const pct = share > 0 ? Math.max(share, MIN_BAR_SHARE) * 100 : 0;
-  return (
-    <View style={styles.barBlock}>
+  const body = (
+    <>
       <View style={styles.barHead}>
         <Text style={styles.barLabel}>{label}</Text>
-        <Text style={[styles.barAmount, { color }]}>{fmt(amount)}</Text>
+        <View style={styles.barAmountWrap}>
+          <Text style={[styles.barAmount, { color }]}>{fmt(amount)}</Text>
+          {onPress && <Text style={[styles.barChevron, { color }]}>{'›'}</Text>}
+        </View>
       </View>
       <View style={styles.track}>
         <View testID={testID} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${pct}%`, backgroundColor: color, borderRadius: 5 }} />
       </View>
-    </View>
+    </>
+  );
+  if (!onPress) return <View style={styles.barBlock}>{body}</View>;
+  return (
+    <Pressable
+      testID={`${testID}-press`}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={drillLabel}
+      style={({ pressed }) => [styles.barBlock, pressed && styles.barPressed]}
+    >
+      {body}
+    </Pressable>
   );
 }
 
 // The earned-vs-spent card: two bars on the shared ruler + a surplus/deficit line. Renders nothing
 // when there was neither income nor spend — the screen shows its own empty state instead.
-export function EarnedVsSpent({ earned, spent, testID }: {
+export function EarnedVsSpent({ earned, spent, testID, onEarnedPress, onSpentPress }: {
   earned: number; spent: number; testID?: string;
+  // WHIT-366: optional drill handlers — tap Earned to see income sources, tap Spent to see
+  // spending groups. Passed only when that side has something to drill into (amount > 0), so a
+  // $0 bar stays a non-interactive nub. Absent ⇒ the bar renders exactly as before.
+  onEarnedPress?: () => void; onSpentPress?: () => void;
 }) {
   const earnedAmount = num(earned);
   const spentAmount = num(spent);
@@ -90,8 +112,10 @@ export function EarnedVsSpent({ earned, spent, testID }: {
   const label = `Earned ${fmt(earnedAmount)}, spent ${fmt(spentAmount)}. ${amountLabel} — ${message}`;
   return (
     <View style={styles.card} testID={testID} accessibilityLabel={label}>
-      <Bar label="Earned" amount={earnedAmount} share={earnedShare} color={C.good} testID="earned-bar" />
-      <Bar label="Spent" amount={spentAmount} share={spentShare} color={C.bad} testID="spent-bar" />
+      <Bar label="Earned" amount={earnedAmount} share={earnedShare} color={C.good} testID="earned-bar"
+        onPress={onEarnedPress} drillLabel="See your income sources" />
+      <Bar label="Spent" amount={spentAmount} share={spentShare} color={C.bad} testID="spent-bar"
+        onPress={onSpentPress} drillLabel="See your spending breakdown" />
       <View style={styles.summary}>
         <Text style={styles.summaryLine}>
           <Text testID="earned-vs-spent-amount" style={[styles.summaryAmount, { color: TONE_COLOR[tone] }]}>{amountLabel}</Text>
@@ -105,9 +129,12 @@ export function EarnedVsSpent({ earned, spent, testID }: {
 const styles = StyleSheet.create({
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 20, padding: 18, marginBottom: 22 },
   barBlock: { marginBottom: 14 },
+  barPressed: { opacity: 0.6 },
   barHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 },
   barLabel: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
+  barAmountWrap: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
   barAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', letterSpacing: -0.4 },
+  barChevron: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', opacity: 0.7 },
   track: { height: 10, backgroundColor: 'rgba(255,255,255,.05)', borderRadius: 5, overflow: 'hidden' },
   summary: { marginTop: 4, paddingTop: 14, borderTopWidth: 1, borderTopColor: C.hairline },
   summaryLine: { textAlign: 'left' },

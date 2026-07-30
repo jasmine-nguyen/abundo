@@ -73,6 +73,16 @@ it('labels the total "this cycle" for cycle 0 and "last cycle" for cycle 1', () 
   expect(screen.queryByText('Spent this cycle')).toBeNull();
 });
 
+// WHIT-366 — an Income-bucket category reached from the Earned drill reads "Earned", not "Spent".
+// The verb comes from the drilled category's bucket; a spend/Uncategorized category stays "Spent".
+it('labels the total "Earned" for an Income-bucket category', () => {
+  mockData = screenData({ category: (id: string | null) => (id === 'salary' ? { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de', recent: 0 } : undefined) } as never);
+  mockParams = { id: 'salary', cycle: '0' };
+  render(<CategoryDetail />);
+  expect(screen.getByText('Earned this cycle')).toBeTruthy();
+  expect(screen.queryByText('Spent this cycle')).toBeNull();
+});
+
 // WHIT-309 — a stale/hand-edited ?cycle=2+ deep-link is clamped to 1, so the fetch can't request
 // an older cycle. The cycle reaching the composite (→ the endpoint's ?cycle=) is what's clamped.
 // Fail-on-revert: reverting the Math.min(1, …) clamp sends cycle 2 to the server.

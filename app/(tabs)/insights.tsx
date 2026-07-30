@@ -136,7 +136,16 @@ export default function Insights() {
             unlike the AI coach card (current-cycle only). WHIT-324: the card reads surplus vs
             deficit only (no budget), so it hides when there was neither income nor spend. */}
         {!showSpinner && !showError && (earned > 0 || rows.length > 0) && (
-          <EarnedVsSpent earned={earned} spent={total} testID="insights-earned-spent" />
+          <EarnedVsSpent
+            earned={earned}
+            spent={total}
+            testID="insights-earned-spent"
+            // WHIT-366: each bar drills into the shared breakdown screen for the selected cycle —
+            // Earned → income sources, Spent → spending groups. Only when that side has something
+            // to show, so a $0 bar isn't a dead tap.
+            onEarnedPress={earned > 0 ? () => router.push(`/breakdown?kind=earned&cycle=${cycle}`) : undefined}
+            onSpentPress={total > 0 ? () => router.push(`/breakdown?kind=spent&cycle=${cycle}`) : undefined}
+          />
         )}
 
         {/* Each row's bar is its share of total spend this cycle (matches the donut) — NOT

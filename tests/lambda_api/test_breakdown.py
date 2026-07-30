@@ -318,6 +318,74 @@ def test_breakdown_earned_counts_in_cycle_income_older_than_feed_window(handler,
     assert result["__earned__"] == {"posted": Decimal("2500"), "pending": Decimal("0")}
 
 
+# --- __income__: per-source income breakdown (WHIT-366) ----------------------
+
+
+def test_breakdown_income_sources_split_per_category(handler):
+    # __income__ carries one entry per Income-bucket category that earned, keyed by id with
+    # posted/pending — what the drill-into-Earned screen lists. On clean all-positive income the
+    # sources sum to __earned__ exactly (aggregate-clamp-once == sum of per-source clamps).
+    cats = FakeCategoryRepo([
+        _category("coffee", "Lifestyle"),
+        _category("salary", "Income"),
+        _category("dividends", "Income"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("coffee", -40, "posted"),
+        _transaction("salary", 2500, "posted"),
+        _transaction("salary", 300, "pending"),
+        _transaction("dividends", 75, "posted"),
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {
+        "salary": {"posted": Decimal("2500"), "pending": Decimal("300")},
+        "dividends": {"posted": Decimal("75"), "pending": Decimal("0")},
+    }
+    # Reconciliation: the sources sum to the __earned__ headline on clean data.
+    earned = result["__earned__"]
+    total_sources = sum(
+        (v["posted"] + v["pending"] for v in result["__income__"].values()), Decimal("0")
+    )
+    assert total_sources == earned["posted"] + earned["pending"]
+    assert result["coffee"] == {"posted": Decimal("40"), "pending": Decimal("0")}  # spend untouched
+
+
+def test_breakdown_no_income_key_when_no_income(handler):
+    # No income -> no __income__ key (response byte-identical to a pre-WHIT-366 server; old-client safe).
+    cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
+    txns = FakeTransactionRepo([_transaction("coffee", -10, "posted")])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert "__income__" not in result
+
+
+def test_breakdown_income_source_net_reversal_dropped_can_diverge_from_earned(handler):
+    # summarise_income clamps EACH source; summarise_earned clamps the single aggregate. A source
+    # that net-reverses clamps to 0 and is DROPPED from __income__ (no phantom $0 row), while a
+    # positive source is unaffected. __earned__ (aggregate clamp) still nets the reversal in — so
+    # the sum of the shown sources can EXCEED the __earned__ headline. Documents the divergence.
+    cats = FakeCategoryRepo([
+        _category("salary", "Income"),
+        _category("bonus", "Income"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2000, "posted"),
+        _transaction("bonus", 100, "posted"),
+        _transaction("bonus", -250, "posted"),  # clawback > bonus -> bonus source clamps to 0 -> dropped
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {"salary": {"posted": Decimal("2000"), "pending": Decimal("0")}}
+    assert "bonus" not in result["__income__"]
+    # __earned__ aggregate: 2000 + 100 - 250 = 1850 (the reversal nets in, once). The shown source
+    # (salary 2000) therefore exceeds the headline by the clamped-away reversal — the known nuance.
+    assert result["__earned__"] == {"posted": Decimal("1850"), "pending": Decimal("0")}
+
+
 def test_breakdown_earned_uses_prior_cycle_window(handler, monkeypatch):
     # cycle=1 earns over the prior FULL cycle: income in the current window is excluded.
     import spend
@@ -584,6 +652,31 @@ def test_get_breakdown_dispatches_and_serialises_earned_as_json_numbers(handler,
     assert body["__earned__"] == {"posted": 2500.25, "pending": 300.5}
     assert isinstance(body["__earned__"]["posted"], float)  # a JSON number, not "2500.25"
     assert body["coffee"] == {"posted": 12.5, "pending": 0}
+
+
+def test_get_breakdown_dispatches_and_serialises_income_sources_as_json_numbers(handler, monkeypatch):
+    # WHIT-366: the __income__ per-source Decimals (incl. cents) must serialise as JSON numbers
+    # through DecimalEncoder — the drill screen reads posted + pending off each source.
+    cats = FakeCategoryRepo([_category("salary", "Income"), _category("dividends", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2500.25, "posted"),
+        _transaction("salary", 300.50, "pending"),
+        _transaction("dividends", 75.10, "posted"),
+    ])
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
+    monkeypatch.setattr(handler, "TransactionRepository", lambda: txns)
+    monkeypatch.setattr(handler, "PayCycleRepository", FakePayCycleRepo)
+
+    event = {"rawPath": "/breakdown", "requestContext": {"http": {"method": "GET"}}}
+    resp = handler.lambda_handler(event, None)
+
+    import json
+    body = json.loads(resp["body"])
+    assert body["__income__"] == {
+        "salary": {"posted": 2500.25, "pending": 300.5},
+        "dividends": {"posted": 75.1, "pending": 0},
+    }
+    assert isinstance(body["__income__"]["salary"]["posted"], float)  # a JSON number, not "2500.25"
 
 
 # --- WHIT-349 slice 2: server-owned netted parent rollup (__rollup__) ---------

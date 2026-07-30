@@ -147,4 +147,37 @@ describe('categoryBreakdown drillId', () => {
     // the parent row itself is not a drill target (it expands)
     expect(rows.find((r) => r.id === 'food')!.hasChildren).toBe(true);
   });
+
+  // WHIT-366: income is stored POSITIVE (server sign=+1), spend is negated. An Income-bucket
+  // drill must sum +amount so it totals to its earnings — not clamp to $0 like a spend drill would.
+  // FAIL-ON-REVERT: drop the isIncome sign flip and this income total collapses to 0.
+  it('totals an Income-bucket category to its POSITIVE earnings (not clamped to $0)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'salary', name: 'Salary', bucket: 'Income' })],
+      transactions: [
+        txn({ transaction_id: 's1', category: 'salary', amount: 4000, status: 'posted', date: '2026-06-10' }),
+        txn({ transaction_id: 's2', category: 'salary', amount: 500, status: 'pending', date: '2026-06-24' }),
+      ],
+    });
+    const detail = categoryTransactions(s, 'salary')!;
+    expect(detail.name).toBe('Salary');
+    expect(detail.posted).toBe(4000);
+    expect(detail.pending).toBe(500);
+    expect(detail.total).toBe(4500);
+  });
+
+  // REGRESSION: the sign flip is income-ONLY. A spend drill still negates (a positive amount is a
+  // refund and clamps its bucket to 0), so the sign flip can't silently invert spend totals.
+  it('leaves a spend-bucket drill on the spend sign (a positive amount is a refund, clamps to 0)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle' })],
+      transactions: [
+        txn({ transaction_id: 'c1', category: 'coffee', amount: -20, status: 'posted', date: '2026-06-10' }),
+        txn({ transaction_id: 'r1', category: 'coffee', amount: 50, status: 'posted', date: '2026-06-11' }), // refund > spend
+      ],
+    });
+    const detail = categoryTransactions(s, 'coffee')!;
+    expect(detail.posted).toBe(0);   // max(0, 20 - 50) = 0 — NOT a positive 30 an income sign would give
+    expect(detail.total).toBe(0);
+  });
 });

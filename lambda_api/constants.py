@@ -161,6 +161,14 @@ UNCATEGORIZED_KEY = "__uncategorized__"
 # UNCATEGORIZED_KEY, the '__' prefix can't collide with any real (slugified) category id.
 EARNED_KEY = "__earned__"
 
+# Sentinel key for the PER-SOURCE income breakdown in the breakdown response (WHIT-366):
+# {income_category_id: {"posted", "pending"}} for each Income-bucket category that earned
+# this cycle — powers the "drill into Earned" screen, which lists each income source (Salary,
+# side income, …) under the __earned__ total. Added only when there is income. Like
+# UNCATEGORIZED_KEY/EARNED_KEY, the '__' prefix can't collide with a real (slugified) category
+# id, and old clients ignore the extra key.
+INCOME_KEY = "__income__"
+
 # Sentinel key for the server-owned parent roll-up in the breakdown response (WHIT-349):
 # {"nodes": {parent_id: {"posted", "pending"}}} — each budgeted-or-not parent's netted
 # subtree spend (aggregate-then-clamp, same fold as /budgets), so the Insights donut reads
