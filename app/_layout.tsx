@@ -29,11 +29,11 @@ function useAppFonts(): boolean {
   if (Platform.OS === 'web') {
     useEffect(() => {
       if (typeof document === 'undefined') return;
-      if (document.querySelector('link[data-whittle-fonts]')) return;
+      if (document.querySelector('link[data-abundo-fonts]')) return;
       const link = document.createElement('link');
       link.rel = 'stylesheet';
       link.href = GOOGLE_FONTS_HREF;
-      link.setAttribute('data-whittle-fonts', '1');
+      link.setAttribute('data-abundo-fonts', '1');
       document.head.appendChild(link);
     }, []);
     return true;

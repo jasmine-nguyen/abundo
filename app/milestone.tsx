@@ -116,13 +116,13 @@ export default function Milestone() {
           ))}
         </View>
 
-        {/* usable equity for IP1 — real once the property value is set, else a prompt */}
+        {/* usable equity from the home — real once the value is set, else a prompt */}
         <View style={[styles.card, { marginBottom: 6 }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, marginBottom: 13 }}>
             <View style={styles.ipChip}><Glyph name="building" size={22} color={C.purple} /></View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>Investment property #2</Text>
-              <Text style={styles.rowSub}>Usable equity toward a deposit</Text>
+              <Text style={styles.rowTitle}>Equity for your next place</Text>
+              <Text style={styles.rowSub}>Usable equity from your current home</Text>
             </View>
           </View>
           {v.equityKnown ? (
@@ -131,11 +131,11 @@ export default function Milestone() {
                 <Text style={styles.equityBig}>{v.usableEquityLabel}</Text>
                 <Text style={styles.equityHint}>at {fmt(v.propertyValue!)} value · {Math.round((loanFacts.lvr ?? 0) * 100)}% LVR</Text>
               </View>
-              <Text style={styles.ipBody}>Usable equity = your LVR × the property value, minus what you still owe. Kill more principal, unlock more deposit. 📈</Text>
+              <Text style={styles.ipBody}>Usable equity = your LVR × your home's value, minus what you still owe. Kill more principal, unlock more deposit. 📈</Text>
             </>
           ) : (
             <>
-              <Text style={styles.ipBody}>Add your property value to see how much equity you could unlock toward your next place.</Text>
+              <Text style={styles.ipBody}>Add your home's value to see how much equity you could unlock toward your next place.</Text>
               <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
                 <Text style={styles.equityCtaText}>Add loan details →</Text>
               </Pressable>

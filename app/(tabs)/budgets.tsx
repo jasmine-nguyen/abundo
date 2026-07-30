@@ -6,7 +6,7 @@ import { Icon, Glyph } from '../../src/icons';
 import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { WhittleBar, RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { BudgetBar, RetryButton, HeroGradientFill } from '../../src/components/ui';
 
 export default function Budgets() {
   const router = useRouter();
@@ -97,7 +97,7 @@ export default function Budgets() {
               </View>
             </View>
             <View style={{ marginTop: 15 }}>
-              <WhittleBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} />
+              <BudgetBar postedPct={b.postedPct} pendingPct={b.pendingPct} targetPct={b.targetPct} postedColor={b.postedColor} pendingTint={b.pendingTint} />
               <View style={styles.paceRow}>
                 <Text style={[styles.paceLabel, { color: b.paceColor }]}>{b.paceLabel}</Text>
               </View>
