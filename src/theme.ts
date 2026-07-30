@@ -80,7 +80,7 @@ export function breakdownLineStyle(
   };
 }
 
-// One-cent float-dust tolerance (WHIT-380). A signed money amount whose |value| is below this
+// Half-a-cent float-dust tolerance (WHIT-380). A signed money amount whose |value| is below this
 // reconciles to zero: drop it (a ~$0-net income source) or suppress the "adjustment" plug (its
 // residual is dust). Real money only goes to the cent, so anything under half a cent is rounding
 // noise, never a real amount. The single source of truth for the three reconcile guards that
