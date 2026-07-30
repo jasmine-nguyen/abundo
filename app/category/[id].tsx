@@ -37,7 +37,7 @@ export default function CategoryDetail() {
         <DetailStates
           isLoading={isLoading}
           isError={isError}
-          // WHIT-367: the detail needs the taxonomy to label rows/icons and pick the income-vs-spend
+          // WHIT-374: the detail needs the taxonomy to label rows/icons and pick the income-vs-spend
           // sign, so "have cache" means BOTH transactions AND categories are loaded. Without the
           // categoriesReady half, a cold taxonomy renders an income drill as "Spent $0" with grey
           // rows for a beat; gating here shows the spinner until the taxonomy is ready instead.

@@ -1,4 +1,4 @@
-// WHIT-367 GAP — useCategoryTransactionsScreenData (src/queries.ts:667): the drill-in composite
+// WHIT-374 GAP — useCategoryTransactionsScreenData (src/queries.ts:667): the drill-in composite
 // that feeds `categoriesReady` to app/category/[id].tsx. The screen tests mock this hook, so they
 // can't prove the FLAG itself is derived right from a real cache. These do, over a real
 // QueryClient (../api + ../auth mocked, mirroring categoryDrillQuery.gaps / screenQueryHooks):

@@ -1,4 +1,4 @@
-// WHIT-367 GAP — the drill-in screen (app/category/[id].tsx) when the taxonomy FAILS to load
+// WHIT-374 GAP — the drill-in screen (app/category/[id].tsx) when the taxonomy FAILS to load
 // while transactions are cached. categoryDetail.screen.test.tsx covers error-with-NO-cache and a
 // background refetch failing over BOTH-loaded cache; the gap is: transactions cached but
 // categoriesReady false + isError true. hasCache = txns>0 && categoriesReady, so this must resolve
@@ -46,7 +46,7 @@ function screenData(over: Partial<{ transactions: unknown[]; categoriesReady: bo
 
 beforeEach(() => { mockData = screenData(); mockDetail = DETAIL; });
 
-// WHIT-367 [A-CE1] (P0) — taxonomy read failed but transactions are cached. Because categoriesReady
+// WHIT-374 [A-CE1] (P0) — taxonomy read failed but transactions are cached. Because categoriesReady
 // is false, hasCache is false, so the error card (which needs the taxonomy to label/sign rows)
 // wins over rendering a cold detail. FAIL-ON-REVERT: dropping `&& categoriesReady` from hasCache
 // makes hasCache true → showError false → the cold detail renders and this assertion fails.
