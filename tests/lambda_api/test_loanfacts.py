@@ -26,9 +26,14 @@ class FakeLoanFactsRepo:
         self.get_calls += 1
         return dict(self._facts) if self._facts is not None else None
 
-    def set_loanfacts(self, payoffGoalDate=None, **kwargs):
-        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate})
-        return {**{k: float(v) for k, v in kwargs.items()}, "payoffGoalDate": payoffGoalDate}
+    def set_loanfacts(self, payoffGoalDate=None, depositTarget=None, **kwargs):
+        # depositTarget is a NAMED param (like payoffGoalDate) so None never reaches float().
+        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate, "depositTarget": depositTarget})
+        return {
+            **{k: float(v) for k, v in kwargs.items()},
+            "payoffGoalDate": payoffGoalDate,
+            "depositTarget": float(depositTarget) if depositTarget is not None else None,
+        }
 
 
 def _put_event(body):
@@ -45,8 +50,8 @@ def _put_event(body):
 
 def test_get_loanfacts_null_sentinel_when_unset(handler):
     out = handler.get_loanfacts(FakeLoanFactsRepo(None))
-    # The sentinel carries the optional payoffGoalDate key too (WHIT-126).
-    assert out == {**{f: None for f in _FIELDS}, "payoffGoalDate": None}
+    # The sentinel carries the optional keys too (payoffGoalDate WHIT-126, depositTarget WHIT-378).
+    assert out == {**{f: None for f in _FIELDS}, "payoffGoalDate": None, "depositTarget": None}
 
 
 def test_get_loanfacts_returns_saved_facts(handler):
@@ -69,10 +74,11 @@ def test_set_loanfacts_success_persists_all_six(handler):
     repo = FakeLoanFactsRepo()
     resp = handler.set_loanfacts(_put_event(VALID), repo)
     assert resp["statusCode"] == 200
-    # No goal date in the body → payoffGoalDate forwarded + returned as None.
-    assert json.loads(resp["body"]) == {**{k: float(v) for k, v in VALID.items()}, "payoffGoalDate": None}
-    assert set(repo.set_calls[0]) == set(_FIELDS) | {"payoffGoalDate"}
+    # No optional fields in the body → both forwarded + returned as None.
+    assert json.loads(resp["body"]) == {**{k: float(v) for k, v in VALID.items()}, "payoffGoalDate": None, "depositTarget": None}
+    assert set(repo.set_calls[0]) == set(_FIELDS) | {"payoffGoalDate", "depositTarget"}
     assert repo.set_calls[0]["payoffGoalDate"] is None
+    assert repo.set_calls[0]["depositTarget"] is None
 
 
 # --- set_loanfacts: payoff goal date (WHIT-126) ------------------------------
@@ -107,6 +113,24 @@ def test_set_loanfacts_rejects_an_impossible_calendar_date(handler):
     resp = handler.set_loanfacts(_put_event({**VALID, "payoffGoalDate": "2035-13-45"}), FakeLoanFactsRepo())
     assert resp["statusCode"] == 400
     assert "real calendar date" in json.loads(resp["body"])["error"]
+
+
+# --- set_loanfacts: deposit target (WHIT-378) --------------------------------
+
+
+def test_set_loanfacts_accepts_and_forwards_a_valid_deposit_target(handler):
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": 120000}), repo)
+    assert resp["statusCode"] == 200
+    assert repo.set_calls[0]["depositTarget"] == 120000        # forwarded to the repo
+    assert json.loads(resp["body"])["depositTarget"] == 120000.0
+
+
+def test_set_loanfacts_accepts_explicit_null_deposit_target(handler):
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": None}), repo)
+    assert resp["statusCode"] == 200
+    assert repo.set_calls[0]["depositTarget"] is None
 
 
 def test_set_loanfacts_extra_zero_is_allowed(handler):

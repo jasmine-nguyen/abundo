@@ -3,7 +3,7 @@
 // (makeState), like the sibling budget/format selector tests.
 import { describe, it, expect } from '@jest/globals';
 import { budgetEditInfo, goalView } from '../context';
-import { makeState, cat, budget, EMPTY_LOAN_FACTS } from './factory';
+import { makeState, cat, budget, EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 
 describe('budgetEditInfo', () => {
   it('is in "set" mode with no existing budget, deriving avg from category.recent', () => {
@@ -92,7 +92,7 @@ describe('goalView', () => {
     expect(v.paidOff).toBeNull();         // needs the live balance -> stays null
     expect(v.paidPct).toBe(0);
     expect(v.usableEquity).toBeNull();
-    expect(v.depositPct).toBe(0);         // null equity -> 0, never NaN
+    expect(v.depositPct).toBeNull();      // no equity yet -> null (no fake %), never NaN
   });
 
   it('facts unset AND balance NULL: everything null, "—", no crash', () => {
@@ -103,7 +103,7 @@ describe('goalView', () => {
     expect(v.paidOff).toBeNull();
     expect(v.contribution).toBeNull();
     expect(v.usableEquity).toBeNull();
-    expect(v.depositPct).toBe(0);
+    expect(v.depositPct).toBeNull();
   });
 
   it('live balance ABOVE the original loan: paidOff goes negative, paidPct clamps to 0', () => {
@@ -114,10 +114,41 @@ describe('goalView', () => {
     expect(v.paidPct).toBe(0);
   });
 
-  it('usable equity computes to exactly 0 (balance == property×LVR): 0, not null, depositPct 0', () => {
+  it('usable equity computes to exactly 0 (balance == property×LVR): 0, not null; depositPct null (no target)', () => {
     // homeValue 770000 × lvr 0.8 = 616000; a balance of 616000 -> equity exactly 0.
     const v = goalView(makeState({ homeLoan: { balance: 616000, asOf: null } }));
     expect(v.usableEquity).toBe(0);
-    expect(v.depositPct).toBe(0);
+    expect(v.depositPct).toBeNull();   // no deposit target set -> null
+  });
+
+  // WHIT-378: the deposit target is the user's own number, not a hardcoded $90k.
+  it('deposit target set + equity known: depositPct is the real ratio, clamped to 100', () => {
+    // homeValue 770000 × lvr 0.8 = 616000; balance 500000 -> equity 116000.
+    const facts = { ...LOAN_FACTS, depositTarget: 116000 };
+    const v = goalView(makeState({ loanFacts: facts, homeLoan: { balance: 500000, asOf: null } }));
+    expect(v.usableEquity).toBe(116000);
+    expect(v.depositTarget).toBe(116000);
+    expect(v.depositPct).toBe(100);            // equity == target -> 100%
+  });
+
+  it('deposit target set but equity above it: depositPct clamps at 100, never over', () => {
+    const facts = { ...LOAN_FACTS, depositTarget: 50000 };   // equity 116000 > target
+    const v = goalView(makeState({ loanFacts: facts, homeLoan: { balance: 500000, asOf: null } }));
+    expect(v.depositPct).toBe(100);
+  });
+
+  it('deposit target set but balance NULL: depositPct stays null (no equity to measure)', () => {
+    const facts = { ...LOAN_FACTS, depositTarget: 100000 };
+    const v = goalView(makeState({ loanFacts: facts, homeLoan: { balance: null, asOf: null } }));
+    expect(v.usableEquity).toBeNull();
+    expect(v.depositTarget).toBe(100000);
+    expect(v.depositPct).toBeNull();
+  });
+
+  it('no deposit target: depositTarget + depositPct both null, no hardcoded $90k', () => {
+    const v = goalView(makeState({ homeLoan: { balance: 500000, asOf: null } }));
+    expect(v.usableEquity).toBe(116000);       // equity is real...
+    expect(v.depositTarget).toBeNull();        // ...but there's no target
+    expect(v.depositPct).toBeNull();           // so no % (never the old fake 90000-based figure)
   });
 });

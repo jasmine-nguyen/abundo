@@ -566,6 +566,10 @@ export interface LoanFacts {
   // the six all-or-nothing facts above, it's null/absent until the user sets one, and
   // drives the required-repayment solver on the "won't pay off" state.
   payoffGoalDate?: string | null;
+  // WHIT-378: the user's real next-place deposit target, in dollars. Independently
+  // OPTIONAL like payoffGoalDate — null/absent until set. Drives the equity card's
+  // "% toward deposit"; when unset the card shows equity without a fake denominator.
+  depositTarget?: number | null;
 }
 
 /**
@@ -575,6 +579,7 @@ export interface LoanFacts {
 export interface LoanFactsInput {
   original: number; homeValue: number; lvr: number; ratePct: number; baseRepay: number; extra: number;
   payoffGoalDate?: string | null;
+  depositTarget?: number | null;
 }
 
 /**

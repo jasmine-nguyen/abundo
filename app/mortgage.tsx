@@ -228,17 +228,30 @@ export default function Mortgage() {
               <Text style={styles.repayTitle}>Equity for your next place</Text>
               <Text style={styles.repaySub}>Usable equity from your current home</Text>
             </View>
-            {g.usableEquity != null && <View style={styles.ipPct}><Text style={styles.ipPctText}>{Math.round(g.depositPct)}%</Text></View>}
+            {g.usableEquity != null && g.depositPct != null && <View style={styles.ipPct}><Text style={styles.ipPctText}>{Math.round(g.depositPct)}%</Text></View>}
           </View>
           {g.usableEquity != null ? (
-            <>
-              <Bar pct={g.depositPct} color={C.purple} height={10} />
-              <View style={[styles.cardHead, { marginTop: 9, marginBottom: 0 }]}>
+            g.depositTarget != null && g.depositPct != null ? (
+              // Deposit target set → real progress toward the user's own number.
+              <>
+                <Bar pct={g.depositPct} color={C.purple} height={10} />
+                <View style={[styles.cardHead, { marginTop: 9, marginBottom: 0 }]}>
+                  <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
+                  <Text style={styles.cardHint}>of {fmt(g.depositTarget)} needed</Text>
+                </View>
+                <Text style={styles.ipBody}>Keep chipping away — the more principal you clear, the more equity you can put toward your next place. 📈</Text>
+              </>
+            ) : (
+              // Equity known, but no deposit target yet — show the real figure, never a
+              // fabricated denominator; nudge the user to set their target.
+              <>
                 <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
-                <Text style={styles.cardHint}>of {fmt(g.depositTarget)} needed</Text>
-              </View>
-              <Text style={styles.ipBody}>Keep chipping away — the more principal you clear, the more equity you can put toward your next place. 📈</Text>
-            </>
+                <Text style={styles.ipBody}>Set your deposit target and we'll track how close this gets you to your next place. 📈</Text>
+                <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
+                  <Text style={styles.equityCtaText}>Set deposit target →</Text>
+                </Pressable>
+              </>
+            )
           ) : g.factsReady ? (
             // Property value is set; the equity figure just needs the live balance.
             <Text style={styles.ipBody}>Your usable equity will show once your balance loads.</Text>

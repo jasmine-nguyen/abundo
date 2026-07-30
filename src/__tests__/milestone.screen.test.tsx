@@ -7,7 +7,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { makeGoalData, EMPTY_LOAN_FACTS } from './factory';
+import { makeGoalData, EMPTY_LOAN_FACTS, LOAN_FACTS } from './factory';
 import type { GoalScreenData } from '../queries';
 
 // The composite the two screens now read (makeGoalData is typed off the real
@@ -122,13 +122,35 @@ it('The mortgage equity card frames it as the home\'s equity, not a separate inv
   // must read as "equity from your current home toward your next place" — NOT "Investment
   // property #2" with its own loan (the copy that confused a real user). Fail-on-revert: any
   // return to the old "#2" / "Landlord arc" framing turns this red.
-  mockGoal = makeGoalData({ homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  // A deposit target is set, so the card is in its "tracking progress" body.
+  mockGoal = makeGoalData({ loanFacts: { ...LOAN_FACTS, depositTarget: 120000 }, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   render(<Mortgage />);
   expect(screen.getByText('Equity for your next place')).toBeTruthy();
   expect(screen.getByText('Usable equity from your current home')).toBeTruthy();
   expect(screen.getByText(/put toward your next place/)).toBeTruthy();   // the "known" body
   expect(screen.queryByText('Investment property #2')).toBeNull();
   expect(screen.queryByText(/Landlord arc/)).toBeNull();
+});
+
+// WHIT-378: the deposit target is the user's real number, not a hardcoded $90k.
+it('equity card shows real progress toward the deposit target when one is set', () => {
+  // homeValue 770000 × lvr 0.8 = 616000; balance 566000 → equity 50000; target 100000 → 50%.
+  mockGoal = makeGoalData({ loanFacts: { ...LOAN_FACTS, depositTarget: 100000 }, homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
+  render(<Mortgage />);
+  expect(screen.getByText('$50,000 unlocked')).toBeTruthy();
+  expect(screen.getByText('of $100,000 needed')).toBeTruthy();   // the user's real target, not $90,000
+  expect(screen.getByText('50%')).toBeTruthy();
+  expect(screen.queryByText('of $90,000 needed')).toBeNull();    // the old fake figure is gone
+});
+
+it('equity card degrades cleanly (no %, no bar, no fake "needed") when no deposit target is set', () => {
+  // Equity is known (facts + balance) but the user has set no target → honest prompt, no denominator.
+  mockGoal = makeGoalData({ homeLoan: { balance: 566000, asOf: '2026-07-04T00:24:37.614Z' } });
+  render(<Mortgage />);
+  expect(screen.getByText('$50,000 unlocked')).toBeTruthy();          // the real figure still shows
+  expect(screen.getByText('Set deposit target →')).toBeTruthy();      // nudge instead of a fake bar
+  expect(screen.queryByText(/needed/)).toBeNull();                    // no "of $X needed" denominator
+  expect(screen.queryByText(/put toward your next place/)).toBeNull(); // not the target-set body
 });
 
 it('The mortgage screen shows a balance error + Retry when the balance read fails (WHIT-121 #2)', () => {
