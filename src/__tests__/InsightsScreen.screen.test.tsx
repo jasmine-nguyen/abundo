@@ -28,10 +28,13 @@ jest.mock('../context', () => {
   return { ...actual, useAppContext: () => mockState };
 });
 
-// Run the focus callback through a real effect so refresh-on-focus is exercised.
+// Run the focus callback through a real effect so refresh-on-focus is exercised. `mockPush` is a
+// STABLE spy (was a throwaway `jest.fn()` per render) so a test can assert where a bar tap
+// navigates — the cycle param that rides the /breakdown URL (WHIT-381 gap). clearMocks resets it.
+const mockPush = jest.fn();
 jest.mock('expo-router', () => {
   const React = require('react');
-  return { useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
+  return { useFocusEffect: (cb: () => void) => React.useEffect(() => cb(), [cb]), useRouter: () => ({ push: mockPush }) };
 });
 
 import Insights from '../../app/(tabs)/insights';
@@ -51,8 +54,8 @@ const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: nul
 const READY_LOAN_FACTS = { original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 3667, extra: 500 };
 
 // The breakdown query composite.
-function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; earned: number; isLoading: boolean; isError: boolean }>) {
-  return { breakdown: {}, earned: 0, category, isLoading: false, isError: false, refetch, refetchStale, ...over };
+function insightsData(over: Partial<{ breakdown: Record<string, { posted: number; pending: number }>; earned: number; incomeSources: { id: string; posted: number; pending: number; amount: number }[]; isLoading: boolean; isError: boolean }>) {
+  return { breakdown: {}, earned: 0, incomeSources: [], category, isLoading: false, isError: false, refetch, refetchStale, ...over };
 }
 
 // The AI slice of the context store (+ loanFacts/homeLoan the goal-query mock reads).
@@ -465,5 +468,81 @@ describe('earned-vs-spent chart — screen gaps (WHIT-312)', () => {
     // The surplus is earned − spent = 3000 − 105: it can only read $2,895 if the chart was
     // fed the SAME $105 spend total the hero shows. A different spend would change this string.
     expect(screen.getByTestId('earned-vs-spent-amount').props.children).toBe('+$2,895 surplus');
+  });
+});
+
+// WHIT-381 — the Earned bar links to the drill only when there is per-source income to show, so a
+// tap can't dead-end on the empty state. `${testID}-press` (earned-bar-press / spent-bar-press) is
+// the Pressable a tappable bar renders; a non-tappable bar renders a plain View with no such node.
+describe('earned bar tappability gate (WHIT-381)', () => {
+  it('does NOT make the Earned bar tappable when earned>0 but there are no income sources', () => {
+    // Old server (or a source that nets ~$0 and is filtered): earned total but empty incomeSources.
+    mockInsights = insightsData({ breakdown: { coffee: { posted: 40, pending: 0 } }, earned: 3000, incomeSources: [] });
+    render(<Insights />);
+    expect(screen.getByTestId('insights-earned-spent')).toBeTruthy();      // card still shows
+    expect(screen.queryByTestId('earned-bar-press')).toBeNull();           // but the Earned bar is NOT a link
+    // FAIL-ON-REVERT: without `&& incomeSources.length > 0` the bar would be a Pressable here.
+  });
+
+  it('makes the Earned bar tappable when there are income sources', () => {
+    mockInsights = insightsData({
+      breakdown: { coffee: { posted: 40, pending: 0 } },
+      earned: 3000,
+      incomeSources: [{ id: 'salary', posted: 3000, pending: 0, amount: 3000 }],
+    });
+    render(<Insights />);
+    expect(screen.getByTestId('earned-bar-press')).toBeTruthy();
+  });
+
+  it('leaves the Spent bar tappable regardless of income sources', () => {
+    // The Spent gate (total > 0) is independent of incomeSources — no regression from the fix.
+    mockInsights = insightsData({ breakdown: { coffee: { posted: 40, pending: 0 } }, earned: 3000, incomeSources: [] });
+    render(<Insights />);
+    expect(screen.getByTestId('spent-bar-press')).toBeTruthy();
+  });
+});
+
+// WHIT-381 (qa gaps) — the implementer's 3 tests all use earned:3000, so they exercise only the
+// `incomeSources.length > 0` half of the AND gate. These pin the OTHER half (`earned > 0`) and the
+// tap's destination (the cycle-keyed /breakdown URL) — neither is covered above.
+describe('earned bar tappability gate — qa gaps (WHIT-381)', () => {
+  // [G1] Net-zero income (e.g. +$100 and −$100 offsetting sources) → __earned__ nets to $0 while
+  // incomeSources is NON-empty. The bar must stay non-tappable because earned is not > 0 — a $0
+  // Earned bar is a dead tap regardless of how many rows the drill would list.
+  // FAIL-ON-REVERT: drop the `earned > 0 &&` half (gate on incomeSources alone) → this goes tappable.
+  it('keeps the Earned bar NON-tappable when income nets to $0 even though sources exist', () => {
+    mockInsights = insightsData({
+      breakdown: { coffee: { posted: 40, pending: 0 } }, // spend present so the card renders
+      earned: 0,
+      incomeSources: [
+        { id: 'salary', posted: 100, pending: 0, amount: 100 },
+        { id: 'clawback', posted: -100, pending: 0, amount: -100 },
+      ],
+    });
+    render(<Insights />);
+    expect(screen.getByTestId('insights-earned-spent')).toBeTruthy(); // card shows (spend present)
+    expect(screen.queryByTestId('earned-bar-press')).toBeNull();      // Earned bar is NOT a link
+  });
+
+  // [G2] The tappable Earned bar drills into the breakdown for the CURRENTLY-SELECTED cycle, and the
+  // gate re-evaluates after a cycle toggle (incomeSources is per-cycle from the same hook). Tapping
+  // on "This cycle" pushes cycle=0; after switching to "Last cycle" the bar is STILL tappable and now
+  // pushes cycle=1.
+  // FAIL-ON-REVERT: hardcode `cycle=0` in the earned push → the last-cycle assertion fails.
+  it('drills into the cycle-correct Earned breakdown, and the cycle rides a Last-cycle toggle', () => {
+    mockInsights = insightsData({
+      breakdown: { coffee: { posted: 40, pending: 0 } },
+      earned: 3000,
+      incomeSources: [{ id: 'salary', posted: 3000, pending: 0, amount: 3000 }],
+    });
+    render(<Insights />);
+
+    fireEvent.press(screen.getByTestId('earned-bar-press'));
+    expect(mockPush).toHaveBeenLastCalledWith('/breakdown?kind=earned&cycle=0');
+
+    // Switch to Last cycle → the screen re-renders; the gate re-evaluates and the bar stays a link.
+    fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+    fireEvent.press(screen.getByTestId('earned-bar-press'));
+    expect(mockPush).toHaveBeenLastCalledWith('/breakdown?kind=earned&cycle=1');
   });
 });

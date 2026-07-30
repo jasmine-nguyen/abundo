@@ -18,7 +18,9 @@ export default function Insights() {
   // cycle, 1 = last (full) cycle. Only the breakdown reads move; the AI coach stays current.
   const [cycle, setCycle] = useState(0);
   // WHIT-189: breakdown now comes from the cached, auth-gated, self-healing query layer.
-  const { breakdown, earned, category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
+  // `incomeSources = []` default: the real hook always returns an array, but the default keeps a
+  // hand-mocked test harness that omits it from throwing on `.length` (WHIT-381).
+  const { breakdown, earned, incomeSources = [], category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
   const { rows, total } = categoryBreakdown({ breakdown, category });
 
   // WHIT-226: parent categories are collapsed by default; tap to reveal their subs. A row
@@ -143,7 +145,11 @@ export default function Insights() {
             // WHIT-366: each bar drills into the shared breakdown screen for the selected cycle —
             // Earned → income sources, Spent → spending groups. Only when that side has something
             // to show, so a $0 bar isn't a dead tap.
-            onEarnedPress={earned > 0 ? () => router.push(`/breakdown?kind=earned&cycle=${cycle}`) : undefined}
+            // WHIT-381: gate Earned on per-source rows EXISTING, not just earned > 0. The drill lists
+            // incomeSources; that can be empty while earned > 0 — an old server with no __income__
+            // map, OR a source that nets ~$0 and is filtered out while its bucket still lifts the
+            // earned total. Either way tapping would dead-end on the empty state, so don't link it.
+            onEarnedPress={earned > 0 && incomeSources.length > 0 ? () => router.push(`/breakdown?kind=earned&cycle=${cycle}`) : undefined}
             onSpentPress={total > 0 ? () => router.push(`/breakdown?kind=spent&cycle=${cycle}`) : undefined}
           />
         )}
