@@ -1,4 +1,4 @@
-// WHIT-233 — the mortgage screen's PRIMARY hero: the facts-ready "WHITTLED SO FAR" state
+// WHIT-233 — the mortgage screen's PRIMARY hero: the facts-ready "PAID DOWN SO FAR" state
 // (real payoff progress). The relocation kept this content verbatim, but no repointed suite
 // asserts the hero eyebrow / paid-off figure / % — they assert the payoff mini-cards, sprint
 // row, or the facts-UNSET hero instead. This locks the headline the whole screen exists for,
@@ -26,9 +26,9 @@ import Mortgage from '../../app/mortgage';
 
 beforeEach(() => { mockGoal = makeGoalData(); });
 
-// [A28] facts set + a live balance below the original → the whittled-so-far hero:
+// [A28] facts set + a live balance below the original → the paid-down-so-far hero:
 // LOAN_FACTS.original 500,000 − balance 432,900 = 67,100 paid (13% gone).
-it('renders the whittled-so-far hero with the real paid-off figure and progress', () => {
+it('renders the paid-down-so-far hero with the real paid-off figure and progress', () => {
   mockGoal = makeGoalData({ homeLoan: { balance: 432900, asOf: '2026-07-04T00:00:00Z' } });
   render(<Mortgage />);
   expect(screen.getByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeTruthy();

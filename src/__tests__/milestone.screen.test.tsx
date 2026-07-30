@@ -171,10 +171,11 @@ it('The mortgage screen shows a balance error + Retry when the balance read fail
 it('The mortgage screen shows a set-up prompt (not fake numbers) when loan facts are unset', () => {
   mockGoal = makeGoalData({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   render(<Mortgage />);
-  // The real live balance still shows; the fake "$67,100 whittled" seed does not.
+  // The real live balance still shows; the fabricated "$67,100 paid down" seed does not.
   expect(screen.getByText('$596,642')).toBeTruthy();
   expect(screen.getByText('Set up loan details →')).toBeTruthy();
-  expect(screen.queryByText(/whittled so far/i)).toBeNull();
+  // The facts-ready "PAID DOWN SO FAR" hero must NOT appear in the unset state.
+  expect(screen.queryByText(/paid down so far/i)).toBeNull();
   expect(screen.queryByText('Mortgage-free')).toBeNull();  // seed projection hidden until set up
 });
 
