@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -2664,7 +2664,10 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
 // Insights screens feed cached query data straight in (type-checked, not cast). WHIT-192
 // removed the eager store, so all callers now feed query data (or the Insights aiGoalSignal
 // via useGoalScreenData).
-export interface GoalViewInput { loanFacts: LoanFacts; homeLoan: HomeLoanState; }
+// `milestones` is the user's saved paydown plan (WHIT-367); optional so goalView/paydownView/
+// aiGoalSignal and every existing caller stay valid unchanged. Only milestoneView reads it, and
+// an absent/empty list falls back to the built-in default MILESTONES.
+export interface GoalViewInput { loanFacts: LoanFacts; homeLoan: HomeLoanState; milestones?: MilestoneRecord[]; }
 export interface RepaymentViewInput { repayment: Repayment; }
 
 // The Goal-tab hero + equity + contribution, computed from the user's saved loan
@@ -2948,17 +2951,17 @@ export interface MilestoneView {
 }
 
 // The planned loan balance on day `t` (UTC-midnight ms), read off the piecewise-
-// linear curve through the Sprint anchors: flat before Sprint 0 and after the
-// final target, linearly interpolated between. The MILESTONES invariant
-// (strictly increasing dates) guarantees the interpolation denominator is never
-// zero. Pure over MILESTONES.
-function expectedBalanceAt(t: number): number {
-  const first = MILESTONES[0];
-  const last = MILESTONES[MILESTONES.length - 1];
+// linear curve through the plan's anchors: flat before the first anchor and after
+// the final target, linearly interpolated between. The plan's strictly-increasing-
+// date ordering guarantees the interpolation denominator is never zero. Pure over
+// the passed-in plan (the saved milestones, or the built-in default).
+function expectedBalanceAt(t: number, plan: readonly { targetBalance: number; targetDate: string }[]): number {
+  const first = plan[0];
+  const last = plan[plan.length - 1];
   if (t <= milestoneTime(first)) return first.targetBalance;
   if (t >= milestoneTime(last)) return last.targetBalance;
-  for (let i = 1; i < MILESTONES.length; i++) {
-    const a = MILESTONES[i - 1], b = MILESTONES[i];
+  for (let i = 1; i < plan.length; i++) {
+    const a = plan[i - 1], b = plan[i];
     const ta = milestoneTime(a), tb = milestoneTime(b);
     if (t < tb) {
       return a.targetBalance + (b.targetBalance - a.targetBalance) * ((t - ta) / (tb - ta));
@@ -2967,14 +2970,30 @@ function expectedBalanceAt(t: number): number {
   return last.targetBalance; // unreachable (t < last handled above), keeps TS happy
 }
 
-// Progress against the Sprint 0–4 paydown plan (WHIT-8). Pure over the live
-// home-loan balance (s.homeLoan) + the MILESTONES constants + `today` (injected
-// for tests). Until the balance loads, hasBalance is false and the schedule
-// verdict is null so the screen can show a waiting state instead of fake numbers.
+// Percent progress from the plan's first target down to its last, clamped 0..100. A
+// single-row saved plan has start === end (a zero span): treat it as fully done once the
+// balance is at or below that lone target, else not started — rather than dividing by zero
+// (which NaNs when the balance sits exactly on the target). The built-in default (5 rows)
+// never hits the degenerate branch.
+function overallProgressPct(balance: number, start: number, end: number): number {
+  if (start === end) return balance <= end ? 100 : 0;
+  return Math.max(0, Math.min(100, ((start - balance) / (start - end)) * 100));
+}
+
+// Progress against the paydown plan (WHIT-8). Pure over the live home-loan balance
+// (s.homeLoan) + the plan + `today` (injected for tests). The plan is the user's
+// saved milestones (WHIT-367), or the built-in default when they haven't saved one.
+// Until the balance loads, hasBalance is false and the schedule verdict is null so
+// the screen can show a waiting state instead of fake numbers.
 export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   const rawBalance = s.homeLoan.balance;
   const hasBalance = typeof rawBalance === 'number';
   const balance = hasBalance ? rawBalance! : 0;
+
+  // The saved milestone plan, or the built-in default when the user hasn't saved one
+  // (the server returns [] until then). A saved MilestoneRecord has no `sprint`, so the
+  // step number is derived from list position below.
+  const plan = s.milestones && s.milestones.length > 0 ? s.milestones : MILESTONES;
 
   // Equity needs the user's saved property value + LVR (Loan facts card); until
   // they're set, equity figures show a "set this up" state rather than a fake number.
@@ -2982,8 +3001,8 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   const lvr = s.loanFacts.lvr;
   const equityKnown = typeof homeValue === 'number' && typeof lvr === 'number';
 
-  const rows: MilestoneRow[] = MILESTONES.map((m) => ({
-    sprint: m.sprint,
+  const rows: MilestoneRow[] = plan.map((m, i) => ({
+    sprint: i,
     label: m.label,
     targetBalance: m.targetBalance,
     targetEquity: equityKnown ? computeUsableEquity(homeValue!, m.targetBalance, lvr!) : null,
@@ -2999,11 +3018,9 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   const next = hasBalance ? rows.find((r) => !r.cleared) ?? null : null;
   const amountToNext = next ? balance - next.targetBalance : 0;
 
-  const start = MILESTONES[0].targetBalance;
-  const end = MILESTONES[MILESTONES.length - 1].targetBalance;
-  const overallPct = hasBalance
-    ? Math.max(0, Math.min(100, ((start - balance) / (start - end)) * 100))
-    : 0;
+  const start = plan[0].targetBalance;
+  const end = plan[plan.length - 1].targetBalance;
+  const overallPct = hasBalance ? overallProgressPct(balance, start, end) : 0;
 
   const equity = equityKnown && hasBalance ? computeUsableEquity(homeValue!, balance, lvr!) : null;
 
@@ -3011,7 +3028,7 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   if (hasBalance) {
     const now = today ?? new Date();
     const t = dateToUtcDayMs(now);
-    const expectedBalance = expectedBalanceAt(t);
+    const expectedBalance = expectedBalanceAt(t, plan);
     const delta = expectedBalance - balance;   // >0 => balance lower than planned => ahead
     const deltaAmount = Math.abs(delta);
     const ahead = delta > 0;

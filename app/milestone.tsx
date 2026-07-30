@@ -24,9 +24,9 @@ export default function Milestone() {
   // WHIT-197: the live balance + loan facts now come from the cached query layer.
   // Re-check on focus only when stale. `homeLoanError` is the balance read's OWN error
   // (not the aggregate) — a repayment/loanFacts failure must not show as a balance error.
-  const { loanFacts, homeLoan, homeLoanError, refetch, refetchStale } = useGoalScreenData();
+  const { loanFacts, homeLoan, milestones, homeLoanError, refetch, refetchStale } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
-  const v = milestoneView({ loanFacts, homeLoan });
+  const v = milestoneView({ loanFacts, homeLoan, milestones });
 
   const scheduleColor = !v.schedule
     ? C.textDim

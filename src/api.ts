@@ -486,6 +486,31 @@ export async function fetchGoals(): Promise<GoalRecord[]> {
 }
 
 /**
+ * A saved milestone in the user's home-loan paydown plan. The server owns the id (it mints one
+ * when a new row is saved). There is no `sprint` — the screen derives the step number from the
+ * row's position in the list. Matches the server's client shape (shared/repository_milestone.py).
+ */
+export interface MilestoneRecord {
+  id: string;
+  label: string;
+  targetBalance: number;   // outstanding loan balance to reach by targetDate
+  targetDate: string;      // ISO "YYYY-MM-DD"
+}
+
+/**
+ * Fetch the user's saved milestone plan. Empty until the user has saved one — a normal success,
+ * not an error — so the caller falls back to the built-in default plan.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchMilestones(): Promise<MilestoneRecord[]> {
+  const response = await apiFetch(`${API_BASE}/milestones`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * Save (create or replace) a goal — an idempotent upsert at PUT /goals/{id}. A create and
  * an edit are the same call; the client mints the id, so the two are indistinguishable to
  * the server. The body carries exactly one balance source (see GoalWriteBody).

@@ -20,11 +20,11 @@ export default function Mortgage() {
 
   // WHIT-197: the live balance, last repayment, and loan facts come from the cached query
   // layer. Re-check on focus, but only if the cache has gone stale (no request storm).
-  const { loanFacts, homeLoan, repayment, repaymentError, homeLoanError, refetch, refetchStale } = useGoalScreenData();
+  const { loanFacts, homeLoan, repayment, milestones, repaymentError, homeLoanError, refetch, refetchStale } = useGoalScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   const g = goalView({ loanFacts, homeLoan });
-  const m = milestoneView({ loanFacts, homeLoan });
+  const m = milestoneView({ loanFacts, homeLoan, milestones });
   const lr = lastRepaymentView({ repayment });
   const p = paydownView({ loanFacts, homeLoan });
   // WHIT-215: one hint element, used in both mutually-exclusive 'none' arms (figure shown

@@ -4,7 +4,7 @@
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName, ROLLUP_KEY } from '../context';
 import type { Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
-import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, Repayment } from '../api';
+import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
 
 // Narrow an AiGoalSignal to the payoff arm (partial/flat/ahead), so payoff-arm tests
@@ -82,6 +82,7 @@ interface StateOver {
   homeLoan?: HomeLoanState;
   loanFacts?: LoanFacts;
   repayment?: Repayment;
+  milestones?: MilestoneRecord[];
   cycleLen?: number;
   daysLeft?: number;
 }
@@ -95,6 +96,9 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
     loanFacts: LOAN_FACTS,
     homeLoan: { balance: null, asOf: null },
     repayment: NO_REPAYMENT,
+    // Empty by default so milestoneView falls back to the built-in default plan — every
+    // existing screen test's assertions (Sprint 0 · Kickoff, $544,000, …) stay green (WHIT-367).
+    milestones: [],
     isLoading: false,
     isError: false,
     homeLoanError: false,
@@ -122,6 +126,9 @@ export function makeState(over: StateOver = {}) {
     homeLoan: over.homeLoan ?? { balance: null, asOf: null },
     loanFacts: over.loanFacts ?? LOAN_FACTS,
     repayment: over.repayment ?? NO_REPAYMENT,
+    // Absent by default → milestoneView falls back to the built-in default plan (WHIT-367);
+    // pass a list to exercise the saved-plan read path.
+    milestones: over.milestones,
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
     category: (id: string | null) => categories.find((c) => c.id === id),
