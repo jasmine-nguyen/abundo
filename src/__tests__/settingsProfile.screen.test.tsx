@@ -32,7 +32,7 @@ it('shows the real name + email (Google login), not the mock', () => {
   expect(getByText('Jasmine Nguyen')).toBeTruthy();
   expect(getByText('me.jasminenguyen@gmail.com')).toBeTruthy();
   expect(queryByText('Jordan Diaz')).toBeNull();
-  expect(queryByText('jordan@whittle.app')).toBeNull();
+  expect(queryByText('jordan@abundo.app')).toBeNull();
 });
 
 it('shows just the email when there is no name (native password user)', () => {
