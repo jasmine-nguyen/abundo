@@ -188,6 +188,12 @@ LOANFACTS_PATH = "/loanfacts"
 # extra). Same ceiling as budget targets — a sanity guard, not a real limit.
 LOANFACTS_FIELD_MAX = 1_000_000_000
 
+# --- Milestones (user-owned mortgage-paydown plan, WHIT-375) ----------------
+# API Gateway route path for the milestone endpoints (GET list, PUT whole list).
+# Read ONLY by lambda_api/handler.py (no shared repository_* module imports it), so —
+# like GOALS_PATH — the WHIT-136 constants-sync guard needs no shared/constants.py mirror.
+MILESTONES_PATH = "/milestones"
+
 # --- Home loan (live mortgage balance, WHIT-8) -----------------------------
 # API Gateway route path for the home-loan balance endpoint (GET only). The
 # balance-poller lambda writes the row; this read API serves it to the app.

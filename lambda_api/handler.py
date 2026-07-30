@@ -27,6 +27,7 @@ from constants import (
     LOANFACTS_FIELD_MAX,
     LOANFACTS_PATH,
     MAX_PAGE_SIZE,
+    MILESTONES_PATH,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
     REPAYMENT_PATH,
@@ -56,6 +57,7 @@ from repository import (
     InsightRepository,
     InvalidCategoryParentError,
     LoanFactsRepository,
+    MilestoneRepository,
     PayCycleRepository,
     TransactionRepository,
     VersionConflictError,
@@ -92,6 +94,7 @@ import json
 import logging
 import math
 import re
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +215,15 @@ def lambda_handler(event, context):
 
         if path == LOANFACTS_PATH and method == "PUT":
             return set_loanfacts(event, LoanFactsRepository())
+
+        # Milestones (user-owned mortgage-paydown plan, WHIT-375). GET returns the saved
+        # list (empty until saved); PUT replaces the whole list. Inert until the client
+        # tickets consume it.
+        if path == MILESTONES_PATH and method == "GET":
+            return _json_response(200, get_milestones(event, MilestoneRepository()))
+
+        if path == MILESTONES_PATH and method == "PUT":
+            return set_milestones(event, MilestoneRepository())
 
         if path == PAYCYCLE_PATH and method == "GET":
             return _json_response(200, get_paycycle_view(PayCycleRepository()))
@@ -2011,6 +2023,103 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
 
     saved = repo.set_loanfacts(
         **{k: Decimal(str(v)) for k, v in values.items()}, payoffGoalDate=goal_date)
+    return _json_response(200, saved)
+
+
+# Milestone plan limits (WHIT-375). Handler literals — not shared constants — so they
+# never cross the lambda_api constants shadow (WHIT-136).
+_MILESTONE_MAX_COUNT = 50
+_MILESTONE_LABEL_MAX_LEN = 100
+_MILESTONE_BALANCE_MAX = 1_000_000_000
+
+
+def current_scope(event: dict) -> str:
+    # Multi-tenant seam (WHIT-375): resolve "whose milestones?" in ONE place. Today every
+    # request maps to the shared scope. Later, return the authenticated user id from the JWT
+    # claims (event["requestContext"]["authorizer"]["jwt"]["claims"]["sub"]) — only this line
+    # changes. No scope literal lives anywhere else.
+    return "SHARED"
+
+
+def get_milestones(event: dict, repo: MilestoneRepository) -> list:
+    """GET /milestones — the user's saved milestone plan.
+
+    Returns the saved list, or an empty list while unset — the app shows its own built-in
+    default plan until the user saves their own (WHIT-376).
+    """
+    stored = repo.get_milestones(current_scope(event))
+    return stored if stored is not None else []
+
+
+def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
+    """PUT /milestones — save (replace) the whole milestone plan.
+
+    Body: {"milestones": [{label, targetBalance, targetDate, id?}, ...]} — a non-empty
+    list, replaced whole (add/edit/delete/reorder are all one PUT). Each targetBalance is
+    validated like a loan-facts field (reject bool, require a finite number in [0, cap]);
+    targetDate must be a real ISO YYYY-MM-DD date; and the list must be strictly paid-down —
+    each step a LOWER targetBalance and a LATER targetDate than the one before. (This extends
+    shared/milestones.py's balance-only load-time invariant, additionally requiring
+    strictly-increasing targetDate.) A milestone without an id gets a fresh uuid so later
+    edits key off a stable id (WHIT-378); a supplied id is preserved. Stored via
+    Decimal(str(...)) to avoid float drift.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    raw = body.get("milestones")
+    if not isinstance(raw, list) or not raw:
+        return _json_response(400, {"error": "milestones must be a non-empty list"})
+    if len(raw) > _MILESTONE_MAX_COUNT:
+        return _json_response(400, {"error": f"milestones must have at most {_MILESTONE_MAX_COUNT} entries"})
+
+    cleaned = []
+    ids = set()
+    for m in raw:
+        if not isinstance(m, dict):
+            return _json_response(400, {"error": "each milestone must be an object"})
+
+        label = m.get("label")
+        if not isinstance(label, str) or not label.strip():
+            return _json_response(400, {"error": "each milestone needs a non-empty label"})
+        label = label.strip()
+        if len(label) > _MILESTONE_LABEL_MAX_LEN:
+            return _json_response(400, {"error": "label too long"})
+
+        balance = m.get("targetBalance")
+        if not _finite_number(balance, low=0, high=_MILESTONE_BALANCE_MAX):
+            return _json_response(400, {"error": "targetBalance must be a number between 0 and the cap"})
+
+        target_date = m.get("targetDate")
+        if not _valid_iso_date(target_date):
+            return _json_response(400, {"error": "targetDate must be a real ISO YYYY-MM-DD date"})
+
+        milestone_id = m.get("id")
+        if milestone_id is None:
+            milestone_id = str(uuid.uuid4())
+        elif not isinstance(milestone_id, str) or not milestone_id.strip():
+            return _json_response(400, {"error": "id must be a non-empty string"})
+        if milestone_id in ids:
+            return _json_response(400, {"error": "milestone ids must be unique"})
+        ids.add(milestone_id)
+
+        cleaned.append({
+            "id": milestone_id,
+            "label": label,
+            "targetBalance": Decimal(str(balance)),
+            "targetDate": target_date,
+        })
+
+    # Strictly paid-down: each step a LOWER balance and a LATER date than the previous. ISO
+    # YYYY-MM-DD strings compare lexically == chronologically, so a plain string compare is
+    # safe. (Extends shared/milestones.py's balance-only invariant with the date check.)
+    for prev, cur in zip(cleaned, cleaned[1:]):
+        if not (cur["targetBalance"] < prev["targetBalance"] and cur["targetDate"] > prev["targetDate"]):
+            return _json_response(400, {
+                "error": "milestones must be ordered by strictly decreasing targetBalance and increasing targetDate"})
+
+    saved = repo.set_milestones(cleaned, current_scope(event))
     return _json_response(200, saved)
 
 

@@ -33,6 +33,7 @@ from repository_goals import GoalsRepository
 from repository_paycycle import PayCycleRepository
 from repository_balance import AccountBalanceRepository, HomeLoanBalanceRepository
 from repository_loanfacts import LoanFactsRepository
+from repository_milestone import MilestoneRepository
 from repository_device import DeviceRepository
 from repository_insight import InsightRepository
 
@@ -45,6 +46,7 @@ __all__ = [
     "HomeLoanBalanceRepository",
     "AccountBalanceRepository",
     "LoanFactsRepository",
+    "MilestoneRepository",
     "DeviceRepository",
     "InsightRepository",
     "DuplicateCategoryError",

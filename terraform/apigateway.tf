@@ -50,6 +50,8 @@ locals {
     "GET /repayment",
     "GET /loanfacts",
     "PUT /loanfacts",
+    "GET /milestones",
+    "PUT /milestones",
     "GET /paycycle",
     "PUT /paycycle",
     "GET /goals",

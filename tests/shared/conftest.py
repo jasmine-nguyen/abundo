@@ -91,7 +91,8 @@ _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 # shared/ modules whose bare names collide with the sibling suites.
 _REIMPORT = (
     "constants", "models", "encoders", "repository_base", "repository_transaction",
-    "repository_balance", "repository_loanfacts", "repository_budget", "repository_goals",
+    "repository_balance", "repository_loanfacts", "repository_milestone", "repository_budget",
+    "repository_goals",
     "repository_errors", "repository_insight", "repository_device", "push",
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "milestones", "repayment_alerts",
@@ -118,6 +119,7 @@ def shared():
     import repository_transaction
     import repository_balance
     import repository_loanfacts
+    import repository_milestone
     import repository_budget
     import repository_goals
     import repository_insight
@@ -135,6 +137,7 @@ def shared():
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
         balance=repository_balance, loanfacts=repository_loanfacts,
+        milestone=repository_milestone,
         budget=repository_budget, goals=repository_goals, insight=repository_insight,
         device=repository_device, push=push, push_receipt=repository_push_receipt,
         notify=repository_notify, spend=spend,
@@ -364,6 +367,14 @@ def insight_repo(shared):
 def loanfacts_repo(shared):
     """A shared LoanFactsRepository backed by an in-memory FakeTable."""
     r = shared.loanfacts.LoanFactsRepository()
+    r._table = FakeTable()
+    return r
+
+
+@pytest.fixture
+def milestone_repo(shared):
+    """A shared MilestoneRepository backed by an in-memory FakeTable."""
+    r = shared.milestone.MilestoneRepository()
     r._table = FakeTable()
     return r
 
