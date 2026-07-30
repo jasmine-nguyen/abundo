@@ -21,7 +21,7 @@ export default function CategoryDetail() {
   // {0,1} so a stale or hand-edited deep-link (?cycle=2, ?cycle=-1, ?cycle=0.5) can't request an
   // older window or mislabel it — cycleNum is a discrete cycle index, so it must be whole (WHIT-309).
   const cycleNum = Math.min(1, Math.max(0, Math.floor(Number(cycle) || 0)));
-  const { transactions, category, isLoading, isError, refetch } = useCategoryTransactionsScreenData(id, cycleNum);
+  const { transactions, category, categoriesReady, isLoading, isError, refetch } = useCategoryTransactionsScreenData(id, cycleNum);
   const detail = categoryTransactions({ transactions, category }, id);
   // WHIT-366: an Income-bucket category reached from the Earned drill reads "Earned", not "Spent".
   const isIncome = category(id)?.bucket === 'Income';
@@ -37,7 +37,11 @@ export default function CategoryDetail() {
         <DetailStates
           isLoading={isLoading}
           isError={isError}
-          hasCache={transactions.length > 0}
+          // WHIT-367: the detail needs the taxonomy to label rows/icons and pick the income-vs-spend
+          // sign, so "have cache" means BOTH transactions AND categories are loaded. Without the
+          // categoriesReady half, a cold taxonomy renders an income drill as "Spent $0" with grey
+          // rows for a beat; gating here shows the spinner until the taxonomy is ready instead.
+          hasCache={transactions.length > 0 && categoriesReady}
           idPrefix="category"
           errorText="Couldn't load your transactions."
           retryLabel="Retry loading this category"
