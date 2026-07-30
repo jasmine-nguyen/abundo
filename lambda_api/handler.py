@@ -1367,22 +1367,25 @@ def list_category_breakdown(
     # only when there's income, so a no-income cycle's response is byte-identical to
     # before — old clients ignore the extra key, new clients read it as earned (else 0).
     earned = summarise_earned(transactions, income_ids)
-    if earned["posted"] > 0 or earned["pending"] > 0:
+    has_earned = earned["posted"] > 0 or earned["pending"] > 0
+    if has_earned:
         result[EARNED_KEY] = earned
 
-    # Per-source income (WHIT-366): the same earnings broken out by category, so the
+    # Per-source income (WHIT-366/376): the same earnings broken out by category, so the
     # "drill into Earned" screen can list each source (Salary, side income, …) under the
-    # __earned__ total. summarise_income clamps PER source (vs summarise_earned's single
-    # aggregate clamp), so on clean all-positive income the sources sum to __earned__ exactly.
-    # Drop any source that clamped to 0 (a fully net-reversed income category) so __income__
-    # carries only real sources — no phantom $0 rows, and no key at all when there's no income
-    # (byte-identical to a pre-WHIT-366 response). Additive + old-client safe.
+    # __earned__ total. Use the SIGNED per-source net (clamp=False), so a source clawed back
+    # this cycle survives as a NEGATIVE row instead of vanishing — the client renders it as a
+    # "−$X" reversal and reconciles the rows to __earned__ (WHIT-376), the way Spend already
+    # shows net-refunded members. Drop only a source that nets to EXACTLY $0 (no phantom row).
+    # Gate on __earned__ being present (not merely a non-empty map): an all-reversed cycle nets
+    # <= 0, so __earned__ is absent and __income__ must be too — otherwise the client would show
+    # a lone negative row under a $0 headline. Absent when no income ⇒ old-client safe.
     income_sources = {
         category_id: amounts
-        for category_id, amounts in summarise_income(transactions, income_ids).items()
-        if amounts["posted"] + amounts["pending"] > 0
+        for category_id, amounts in summarise_income(transactions, income_ids, clamp=False).items()
+        if amounts["posted"] + amounts["pending"] != 0
     }
-    if income_sources:
+    if has_earned and income_sources:
         result[INCOME_KEY] = income_sources
 
     # __rollup__ (WHIT-349): server-owned netted parent totals, so the Insights donut reads

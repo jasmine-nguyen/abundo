@@ -464,10 +464,11 @@ export interface InsightsScreenData {
   // same window as spend, for the Earned-vs-Spent chart (WHIT-312). 0 when the response
   // carries no __earned__ bucket (no income, or an older server).
   earned: number;
-  // The __earned__ total broken out PER SOURCE (WHIT-366): each Income-bucket category that
-  // earned this cycle, biggest-first, with zero/net-reversed sources dropped — what the
-  // "drill into Earned" screen lists. `amount` is posted + pending (matching `earned`). Empty
-  // when there's no income (or an older server with no __income__ key).
+  // The __earned__ total broken out PER SOURCE (WHIT-366/376): each Income-bucket category that
+  // earned this cycle, biggest-first. `amount` (posted + pending) can be NEGATIVE for a source
+  // clawed back this cycle — the drill screen renders it as a "−$X" reversal row (a net-negative
+  // source sorts last). Only an exact-$0-net source is dropped. Empty when there's no income (or
+  // an older server with no __income__ key).
   incomeSources: { id: string; posted: number; pending: number; amount: number }[];
   category: (id: string) => Category | undefined;
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
@@ -516,15 +517,16 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   const earnedEntry = breakdownQuery.data?.[EARNED_KEY];
   const earned = earnedEntry ? earnedEntry.posted + earnedEntry.pending : 0;
 
-  // Per-source income for the drill-into-Earned screen (WHIT-366). Drop sources that net to
-  // zero (a fully clawed-back income category still rides the __income__ map) so the screen
-  // never shows a phantom $0 row — mirrors the spend-row rule in categoryBreakdown. Sort
-  // biggest-first. The screen joins each id to the taxonomy for its name/icon/colour.
+  // Per-source income for the drill-into-Earned screen (WHIT-366/376). A source clawed back this
+  // cycle rides the __income__ map as a NEGATIVE net (server sends the signed per-source value) —
+  // keep it so the screen can show it as a "−$X" reversal and the rows reconcile to `earned`. Drop
+  // only an exact-$0-net source (no phantom $0 row); the 0.005 epsilon guards float dust. Sort
+  // biggest-first, so a negative source sorts last. The screen joins each id to the taxonomy.
   const incomeSources = useMemo(() => {
     const sources = readIncomeSources(breakdownQuery.data ?? {}) ?? {};
     return Object.entries(sources)
       .map(([id, s]) => ({ id, posted: s.posted, pending: s.pending, amount: s.posted + s.pending }))
-      .filter((s) => s.amount > 0)
+      .filter((s) => Math.abs(s.amount) >= 0.005)
       .sort((a, b) => b.amount - a.amount);
   }, [breakdownQuery.data]);
 
