@@ -46,7 +46,10 @@ it('renders the live balance, the sprint plan, and usable equity', () => {
   render(<Milestone />);
   expect(screen.getByText('$596,642')).toBeTruthy();       // hero balance
   expect(screen.getByText('The 36-month plan')).toBeTruthy();
-  expect(screen.getByText('Investment property #2')).toBeTruthy();
+  expect(screen.getByText('Equity for your next place')).toBeTruthy();
+  // The known-state body frames the source as the user's own home (not "the property"),
+  // matching the retitled card. Fail-on-revert to "the property value".
+  expect(screen.getByText(/your LVR × your home's value/)).toBeTruthy();
   // Sprint 0 is the next milestone at this balance, so its callout shows.
   expect(screen.getByText('under $544,000')).toBeTruthy();
   // WHIT-216 fail-on-revert: the sync pill's "Mon YYYY" label comes from milestone.tsx's
@@ -114,6 +117,20 @@ it('Mortgage-screen Sprint summary invites a tap before the balance loads', () =
   expect(screen.getByText('Tap to see your live progress')).toBeTruthy();
 });
 
+it('The mortgage equity card frames it as the home\'s equity, not a separate investment property', () => {
+  // The equity is computed from the user's OWN home (homeValue*lvr - balance), so the card
+  // must read as "equity from your current home toward your next place" — NOT "Investment
+  // property #2" with its own loan (the copy that confused a real user). Fail-on-revert: any
+  // return to the old "#2" / "Landlord arc" framing turns this red.
+  mockGoal = makeGoalData({ homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  render(<Mortgage />);
+  expect(screen.getByText('Equity for your next place')).toBeTruthy();
+  expect(screen.getByText('Usable equity from your current home')).toBeTruthy();
+  expect(screen.getByText(/put toward your next place/)).toBeTruthy();   // the "known" body
+  expect(screen.queryByText('Investment property #2')).toBeNull();
+  expect(screen.queryByText(/Landlord arc/)).toBeNull();
+});
+
 it('The mortgage screen shows a balance error + Retry when the balance read fails (WHIT-121 #2)', () => {
   // WHIT-121 (#2): with loan facts SET, a homeLoan failure now surfaces an error + Retry on
   // the Goal hero instead of silently degrading to "—" — the Goal tab previously swallowed a
@@ -146,9 +163,36 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   expect(screen.getByText('$596,642')).toBeTruthy();
   expect(screen.getByText('The 36-month plan')).toBeTruthy();
   // ...but equity is a prompt, not a fabricated figure.
-  expect(screen.getByText(/Add your property value/)).toBeTruthy();
+  expect(screen.getByText(/Add your home's value/)).toBeTruthy();
   fireEvent.press(screen.getByText('Add loan details →'));
   expect(mockPush).toHaveBeenCalledWith('/loan');
+});
+
+// --- equity card copy: gap coverage (empty-state body, CTA routing, milestone subtitle) ---
+
+it('mortgage equity card empty-state uses the reworded prompt, not the old property framing', () => {
+  mockGoal = makeGoalData({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  render(<Mortgage />);
+  expect(screen.getByText(/Add your home's value/)).toBeTruthy();
+  expect(screen.queryByText(/Add your property value/)).toBeNull();
+  expect(screen.queryByText('Investment property #2')).toBeNull();
+});
+
+it('mortgage equity card "Add loan details →" routes to /loan', () => {
+  // Two CTAs render in the empty state (hero "Set up loan details →" + equity "Add loan
+  // details →"); this locks the equity one specifically.
+  mockGoal = makeGoalData({ loanFacts: EMPTY_LOAN_FACTS, homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  render(<Mortgage />);
+  fireEvent.press(screen.getByText('Add loan details →'));
+  expect(mockPush).toHaveBeenCalledWith('/loan');
+});
+
+it('milestone equity card known-state shows the current-home subtitle, not "Investment property #2"', () => {
+  mockGoal = makeGoalData({ homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
+  render(<Milestone />);
+  expect(screen.getByText('Usable equity from your current home')).toBeTruthy();
+  expect(screen.queryByText('Investment property #2')).toBeNull();
+  expect(screen.queryByText(/Usable equity toward a deposit/)).toBeNull();
 });
 
 // --- mortgage-screen last-repayment card (WHIT-115) ---------------------------------

@@ -8,7 +8,7 @@ import { budgetDetail, groupTransactionsByDate, useAppContext } from '../../src/
 import { useBudgetDetailScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
-import { WhittleBar } from '../../src/components/ui';
+import { BudgetBar } from '../../src/components/ui';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 
 // How many related-transaction rows to show before the "Load More" button.
@@ -84,7 +84,7 @@ export default function BudgetDetail() {
               <Text style={[styles.status, { color: bd.statusColor }]}>{bd.statusLabel}</Text>
               <Text style={styles.daysLeft}>{bd.daysLeftLabel}</Text>
             </View>
-            <WhittleBar postedPct={bd.postedPct} pendingPct={bd.pendingPct} targetPct={bd.targetPct} postedColor={bd.postedColor} pendingTint={bd.pendingTint} height={12} />
+            <BudgetBar postedPct={bd.postedPct} pendingPct={bd.pendingPct} targetPct={bd.targetPct} postedColor={bd.postedColor} pendingTint={bd.pendingTint} height={12} />
             <View style={styles.targetRow}>
               <Text style={[styles.targetLabel, { left: `${bd.targetPct}%` }]}>today's target</Text>
             </View>

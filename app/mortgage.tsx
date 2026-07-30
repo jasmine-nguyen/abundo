@@ -224,14 +224,14 @@ export default function Mortgage() {
           </Pressable>
         </View>
 
-        {/* investment property unlock — real usable equity once the property value
-            is set, else a friendly prompt to add it. */}
+        {/* usable equity from the home — how much the user could unlock from their
+            current home toward the deposit on their next place, once the value is set. */}
         <View style={[styles.card, { marginBottom: 6 }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, marginBottom: 13 }}>
             <View style={styles.ipChip}><Glyph name="building" size={22} color={C.purple} /></View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.repayTitle}>Investment property #2</Text>
-              <Text style={styles.repaySub}>Usable equity toward a deposit</Text>
+              <Text style={styles.repayTitle}>Equity for your next place</Text>
+              <Text style={styles.repaySub}>Usable equity from your current home</Text>
             </View>
             {g.usableEquity != null && <View style={styles.ipPct}><Text style={styles.ipPctText}>{Math.round(g.depositPct)}%</Text></View>}
           </View>
@@ -242,14 +242,14 @@ export default function Mortgage() {
                 <Text style={[styles.cardTitle, { color: '#d9c9f7', fontSize: 12.5 }]}>{fmt(g.usableEquity)} unlocked</Text>
                 <Text style={styles.cardHint}>of {fmt(g.depositTarget)} needed</Text>
               </View>
-              <Text style={styles.ipBody}>Keep whittling — the more principal you kill, the more equity you can borrow against. Landlord arc loading. 📈</Text>
+              <Text style={styles.ipBody}>Keep chipping away — the more principal you clear, the more equity you can put toward your next place. 📈</Text>
             </>
           ) : g.factsReady ? (
             // Property value is set; the equity figure just needs the live balance.
             <Text style={styles.ipBody}>Your usable equity will show once your balance loads.</Text>
           ) : (
             <>
-              <Text style={styles.ipBody}>Add your property value to see how much equity you could unlock toward your next place.</Text>
+              <Text style={styles.ipBody}>Add your home's value to see how much equity you could unlock toward your next place.</Text>
               <Pressable onPress={() => router.push('/loan')} style={styles.equityCta}>
                 <Text style={styles.equityCtaText}>Add loan details →</Text>
               </Pressable>

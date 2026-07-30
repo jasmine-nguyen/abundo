@@ -43,7 +43,7 @@ export function RetryButton({ onPress, label, testID, style, textStyle }: {
 }
 
 // A pace progress bar: posted (solid) + pending (translucent) + target tick.
-export function WhittleBar({
+export function BudgetBar({
   postedPct, pendingPct, targetPct, postedColor, pendingTint, height = 10, showTarget = true,
 }: {
   postedPct: number; pendingPct: number; targetPct: number;
