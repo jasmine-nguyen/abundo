@@ -3,7 +3,7 @@
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel, cycleName } from '../context';
-import { fmt, fmt2, fmtBalance, fmtExact, tint, agoLabel } from '../theme';
+import { fmt, fmt2, fmtBalance, fmtExact, tint, agoLabel, breakdownLineStyle, C } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -108,5 +108,44 @@ describe('agoLabel', () => {
 
   it('clamps a future timestamp (clock skew) to "just now"', () => {
     expect(agoLabel(at(-10), now)).toBe('just now');
+  });
+});
+
+// WHIT-375: the one shared refund/remainder/normal row convention, used by both the Insights
+// list and the Earned/Spent breakdown screen. Locks the rule so it can't drift again (the
+// refund line once regressed to a signed "-$30").
+describe('breakdownLineStyle', () => {
+  it('renders a refund as an UNSIGNED green credit, dimmed name', () => {
+    // A refund's spent is negative; fmt drops the sign and the green colour carries "credit".
+    expect(breakdownLineStyle({ isRefund: true, spent: -30 })).toEqual({
+      amountText: '$30',            // NOT "-$30" — the historical regression this guards
+      amountColor: C.good,
+      nameColor: C.textDim,
+    });
+  });
+
+  it('keeps the sign on a NEGATIVE remainder "Other" plug, dimmed', () => {
+    // A negative plug MUST show its minus or the expanded rows look like they don't add up.
+    expect(breakdownLineStyle({ isRemainder: true, spent: -40 })).toEqual({
+      amountText: '-$40',
+      amountColor: C.textDim,
+      nameColor: C.textDim,
+    });
+  });
+
+  it('shows a POSITIVE remainder plug unsigned, dimmed', () => {
+    expect(breakdownLineStyle({ isRemainder: true, spent: 60 })).toEqual({
+      amountText: '$60',
+      amountColor: C.textDim,
+      nameColor: C.textDim,
+    });
+  });
+
+  it('renders a normal row as a positive amount in the bright ink', () => {
+    expect(breakdownLineStyle({ spent: 100 })).toEqual({
+      amountText: '$100',
+      amountColor: C.textBright,
+      nameColor: C.textBright,
+    });
   });
 });

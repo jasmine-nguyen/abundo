@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, fmt, tint } from '../src/theme';
+import { C, FONT, fmt, tint, breakdownLineStyle } from '../src/theme';
 import { Icon } from '../src/icons';
 import { categoryBreakdown } from '../src/context';
 import { useInsightsScreenData } from '../src/queries';
@@ -133,11 +133,10 @@ export default function Breakdown() {
               </View>
               <Text style={styles.count}>{countLabel}</Text>
               {items.map((item) => {
-                // A refund is an unsigned green credit; the "Other" plug shows its sign (it can be
-                // negative) and is dimmed; a normal row is a positive amount in the bright ink.
-                const amountText = item.muted && item.amount < 0 ? `-${fmt(item.amount)}` : fmt(item.amount);
-                const amountColor = item.credit ? C.good : (item.muted ? C.textDim : C.textBright);
-                const nameColor = item.credit || item.muted ? C.textDim : C.textBright;
+                // WHIT-375: amount text + colours come from the one shared convention (see
+                // breakdownLineStyle) — the same rule the Insights list uses. `credit`/`muted`/
+                // `amount` map to the helper's `isRefund`/`isRemainder`/`spent`.
+                const { amountText, amountColor, nameColor } = breakdownLineStyle({ isRefund: item.credit, isRemainder: item.muted, spent: item.amount });
                 const body = (
                   <View style={styles.rowBody}>
                     <View style={[styles.chip, { backgroundColor: item.chipBg }]}>
