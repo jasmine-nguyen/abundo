@@ -3,7 +3,7 @@
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel, cycleName } from '../context';
-import { fmt, fmt2, fmtBalance, fmtExact, tint, agoLabel, breakdownLineStyle, C } from '../theme';
+import { fmt, fmt2, fmtBalance, fmtExact, tint, agoLabel, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON, C } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -156,6 +156,24 @@ describe('breakdownLineStyle', () => {
       amountText: '-$150',
       amountColor: C.textMid,
       nameColor: C.textBright,
+    });
+  });
+});
+
+// WHIT-380: the single source of truth for the shared "adjustment" reconciliation row + the
+// float-dust epsilon, used by BOTH the Spend remainder line (context.tsx) and the Earned plug
+// (breakdown.tsx). This pins the shared values so a change here is a deliberate, one-place edit.
+describe('shared reconciliation constants', () => {
+  it('RECONCILE_EPSILON is a half-cent float-dust tolerance', () => {
+    expect(RECONCILE_EPSILON).toBe(0.005);
+  });
+
+  it('ADJUSTMENT_ROW carries the shared label / icon / dimmed tone', () => {
+    expect(ADJUSTMENT_ROW).toEqual({
+      name: 'Pending/refund adjustment',
+      icon: 'sliders',
+      color: C.textDim,
+      chipBg: tint(C.textDim, 0.15),
     });
   });
 });

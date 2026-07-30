@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT, fmt, tint, breakdownLineStyle } from '../src/theme';
+import { C, FONT, fmt, tint, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON } from '../src/theme';
 import { Icon } from '../src/icons';
 import { categoryBreakdown } from '../src/context';
 import { useInsightsScreenData } from '../src/queries';
@@ -82,12 +82,9 @@ export default function Breakdown() {
     // __income__) never synthesises a lone plug.
     const shownAmount = items.reduce((sum, i) => sum + i.amount, 0);
     const residual = earned - shownAmount;
-    if (items.length > 0 && Math.abs(residual) >= 0.005) {
-      items.push({
-        key: '__earned_adjustment__', name: 'Pending/refund adjustment',
-        color: C.textDim, icon: 'sliders', chipBg: tint(C.textDim, 0.15),
-        amount: residual, pending: 0, muted: true,
-      });
+    if (items.length > 0 && Math.abs(residual) >= RECONCILE_EPSILON) {
+      // WHIT-380: shared label/icon/tone (see theme.ts) — the same row Spend's remainder uses.
+      items.push({ key: '__earned_adjustment__', ...ADJUSTMENT_ROW, amount: residual, pending: 0, muted: true });
     }
     // Count the real sources — the synthetic plug isn't one (mirrors the spend branch).
     const sourceCount = items.filter((i) => !i.muted).length;

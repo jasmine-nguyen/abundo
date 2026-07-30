@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { C, tint, fmt, fmtExact } from './theme';
+import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
 import * as Crypto from 'expo-crypto';
@@ -2194,10 +2194,10 @@ export function categoryBreakdown(s: CategoryBreakdownInput): { rows: CategoryBr
     let childSum = 0;
     for (const childId of emitChildren.get(parentId)!) childSum += rowById.get(childId)!.spent;
     const remainder = parentRow.spent - childSum;
-    if (Math.abs(remainder) < 0.005) continue;  // already sums (one-cent epsilon guards float dust)
+    if (Math.abs(remainder) < RECONCILE_EPSILON) continue;  // already sums (float-dust tolerance)
     const remainderId = `${parentId}__remainder`;
     rowById.set(remainderId, {
-      id: remainderId, name: 'Pending/refund adjustment', color: C.textDim, icon: 'sliders', chipBg: tint(C.textDim, 0.15),
+      id: remainderId, ...ADJUSTMENT_ROW,  // WHIT-380: shared label/icon/tone (see theme.ts)
       spent: remainder, posted: remainder, pending: 0,
       // `fmt` drops the sign, so the amount column renders a signed value (WHIT-357 R1); the sub-label
       // explains the row rather than repeating an unsigned number.

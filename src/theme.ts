@@ -80,6 +80,25 @@ export function breakdownLineStyle(
   };
 }
 
+// One-cent float-dust tolerance (WHIT-380). A signed money amount whose |value| is below this
+// reconciles to zero: drop it (a ~$0-net income source) or suppress the "adjustment" plug (its
+// residual is dust). Real money only goes to the cent, so anything under half a cent is rounding
+// noise, never a real amount. The single source of truth for the three reconcile guards that
+// previously each hard-coded 0.005 (src/context.tsx, app/breakdown.tsx, src/queries.ts).
+export const RECONCILE_EPSILON = 0.005;
+
+// The muted "Pending/refund adjustment" reconciliation row's shared visual fields (WHIT-380). Both
+// the Spend remainder line (src/context.tsx categoryBreakdown) and the Earned adjustment plug
+// (app/breakdown.tsx) build a row from these — spread this in and add each screen's own shape
+// fields. One source of truth so the label/icon/tone can't drift between the two (they duplicated
+// these literals by hand before, and the sibling refund line had already regressed once).
+export const ADJUSTMENT_ROW = {
+  name: 'Pending/refund adjustment',
+  icon: 'sliders',
+  color: C.textDim,
+  chipBg: tint(C.textDim, 0.15),
+} as const;
+
 export function fmt2(n: number): string {
   return (n < 0 ? '-' : '+') + '$' +
     Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

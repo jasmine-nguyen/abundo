@@ -9,6 +9,7 @@ import type { InfiniteData } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, PayCycle, Repayment, TransactionFeedPage } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
 
@@ -520,13 +521,13 @@ export function useInsightsScreenData(cycle = 0): InsightsScreenData {
   // Per-source income for the drill-into-Earned screen (WHIT-366/376). A source clawed back this
   // cycle rides the __income__ map as a NEGATIVE net (server sends the signed per-source value) —
   // keep it so the screen can show it as a "−$X" reversal and the rows reconcile to `earned`. Drop
-  // only an exact-$0-net source (no phantom $0 row); the 0.005 epsilon guards float dust. Sort
-  // biggest-first, so a negative source sorts last. The screen joins each id to the taxonomy.
+  // only an exact-$0-net source (no phantom $0 row); RECONCILE_EPSILON is the shared float-dust
+  // tolerance. Sort biggest-first, so a negative source sorts last. The screen joins each id to the taxonomy.
   const incomeSources = useMemo(() => {
     const sources = readIncomeSources(breakdownQuery.data ?? {}) ?? {};
     return Object.entries(sources)
       .map(([id, s]) => ({ id, posted: s.posted, pending: s.pending, amount: s.posted + s.pending }))
-      .filter((s) => Math.abs(s.amount) >= 0.005)
+      .filter((s) => Math.abs(s.amount) >= RECONCILE_EPSILON)
       .sort((a, b) => b.amount - a.amount);
   }, [breakdownQuery.data]);
 
