@@ -511,6 +511,24 @@ export async function fetchMilestones(): Promise<MilestoneRecord[]> {
 }
 
 /**
+ * Save (replace) the user's milestone plan — the whole ordered list at once. The client mints an
+ * id for a new row; the server preserves supplied ids and mints one for any missing. Returns the
+ * saved list the server echoes back.
+ *
+ * @throws If the response status is not OK (e.g. 400 on an empty / invalid / out-of-order list).
+ */
+export async function setMilestones(milestones: MilestoneRecord[]): Promise<MilestoneRecord[]> {
+  const response = await apiFetch(`${API_BASE}/milestones`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ milestones }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return response.json();
+}
+
+/**
  * Save (create or replace) a goal — an idempotent upsert at PUT /goals/{id}. A create and
  * an edit are the same call; the client mints the id, so the two are indistinguishable to
  * the server. The body carries exactly one balance source (see GoalWriteBody).

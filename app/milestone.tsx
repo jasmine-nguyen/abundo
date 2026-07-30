@@ -95,7 +95,17 @@ export default function Milestone() {
 
         {/* sprint track */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>The 36-month plan</Text>
+          <View style={styles.planHeader}>
+            <Text style={styles.cardTitle}>The 36-month plan</Text>
+            <Pressable
+              testID="milestone-edit-plan"
+              onPress={() => router.push('/milestone/edit')}
+              accessibilityRole="button"
+              accessibilityLabel="Edit your milestone plan"
+            >
+              <Text style={styles.editPlan}>Edit plan</Text>
+            </Pressable>
+          </View>
           {v.rows.map((r) => (
             <View key={r.sprint} style={styles.row}>
               <View style={[styles.check, { backgroundColor: r.cleared ? tint(C.good, 0.16) : 'rgba(255,255,255,.06)' }]}>
@@ -174,6 +184,8 @@ const styles = StyleSheet.create({
 
   card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
   cardTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright, marginBottom: 12 },
+  planHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  editPlan: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.accent, paddingHorizontal: 4, marginBottom: 12 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
   check: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   rowTitle: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.textBright },

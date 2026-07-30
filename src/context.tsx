@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
 import * as Crypto from 'expo-crypto';
 import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -476,6 +476,7 @@ export interface AppContext {
   saveGoal: (editId: string | null, body: GoalWriteBody) => Promise<boolean>;
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
+  saveMilestones: (next: MilestoneRecord[]) => Promise<boolean>;
 
 	// AI spending insights (WHIT-104) — the last slice still held on the store; its
 	// migration to a query + mutation is tracked separately.
@@ -739,6 +740,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
       queryClient.setQueryData(['loanFacts'], prev);
       showToast('Could not save loan details. Please try again.');
+      return false;
+    }
+  }, [showToast]);
+
+  // Save the milestone editor's plan: optimistically write the ['milestones'] cache the milestone
+  // + mortgage screens read, PUT the whole ordered list, invalidate to reconcile. Roll the cache
+  // back + toast on failure — the same optimistic pattern as saveLoanFacts. The invalidate is
+  // load-bearing: milestones is SECONDARY in useGoalScreenData (out of that composite's refetch),
+  // so this save's own invalidation is what refreshes the screen (WHIT-367 wired it that way).
+  const saveMilestones = useCallback(async (next: MilestoneRecord[]): Promise<boolean> => {
+    const prev = queryClient.getQueryData<MilestoneRecord[]>(['milestones']) ?? [];
+    queryClient.setQueryData(['milestones'], next);
+    // WHIT-271: a sign-out during the round-trip must make this a no-op — no re-seat of the old
+    // plan, no toast, and no `true` (which would fire the editor's router.back() post-redirect).
+    const epoch = sessionEpoch.current;
+    try {
+      await apiSetMilestones(next);
+      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+      queryClient.invalidateQueries({ queryKey: ['milestones'] });
+      return true;
+    } catch {
+      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+      queryClient.setQueryData(['milestones'], prev);
+      showToast('Could not save milestones. Please try again.');
       return false;
     }
   }, [showToast]);
@@ -1438,9 +1463,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [goal, alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
