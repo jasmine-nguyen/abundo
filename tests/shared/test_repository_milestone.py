@@ -49,6 +49,19 @@ def test_get_surfaces_only_the_four_fields(milestone_repo):
         assert set(m) == {"id", "label", "targetBalance", "targetDate"}   # no pk/sk leaked
 
 
+def test_get_raw_returns_none_before_any_save(milestone_repo):
+    assert milestone_repo.get_milestones_raw() is None
+
+
+def test_get_raw_preserves_target_balance_as_decimal(milestone_repo):
+    # The poller path (WHIT-384) needs exact Decimals; get_milestones floats them, get_milestones_raw
+    # must not — so a custom cent boundary stays exact.
+    milestone_repo.set_milestones(_PLAN)
+    raw = milestone_repo.get_milestones_raw()
+    assert [m["targetBalance"] for m in raw] == [Decimal("544000"), Decimal("295000"), Decimal("55000")]
+    assert all(isinstance(m["targetBalance"], Decimal) for m in raw)
+
+
 def test_scope_isolates_rows(milestone_repo):
     # The multi-tenant seam: a non-default scope lands at a different key, so the shared
     # scope still reads None. Proves per-user isolation lives in the sort key.
