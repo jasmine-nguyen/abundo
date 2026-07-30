@@ -1956,7 +1956,7 @@ def get_loanfacts(repo: LoanFactsRepository) -> dict:
     """
     stored = repo.get_loanfacts()
     if stored is None:
-        return {**{field: None for field in _LOANFACTS_FIELDS}, "payoffGoalDate": None}
+        return {**{field: None for field in _LOANFACTS_FIELDS}, "payoffGoalDate": None, "depositTarget": None}
     return stored
 
 
@@ -1964,7 +1964,8 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     """PUT /loanfacts — save (replace) the user's home-loan facts.
 
     Body: all six of {original, homeValue, lvr, ratePct, baseRepay, extra}, plus an
-    optional payoffGoalDate (WHIT-126). The six-field object is required and replaced
+    optional payoffGoalDate (WHIT-126) and an optional depositTarget (WHIT-378, a
+    positive dollar amount). The six-field object is required and replaced
     together (like /paycycle) — there is no partial save, so the app is never left
     with a half-set object. Each field is validated like a budget target (reject bool,
     require a finite number); amounts must be > 0 (extra >= 0, an optional top-up), lvr
@@ -2012,8 +2013,23 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
         except ValueError:
             return _json_response(400, {"error": "payoffGoalDate must be a real calendar date"})
 
+    # Optional next-place deposit target (WHIT-378): absent/None is fine (unset or
+    # cleared); when present it must be a finite number > 0 within the dollar ceiling.
+    deposit_target = body.get("depositTarget")
+    if deposit_target is not None:
+        if isinstance(deposit_target, bool) or not isinstance(deposit_target, (int, float)):
+            return _json_response(400, {"error": "depositTarget must be a number"})
+        if not math.isfinite(deposit_target):
+            return _json_response(400, {"error": "depositTarget must be a finite number"})
+        if deposit_target <= 0:
+            return _json_response(400, {"error": "depositTarget must be > 0"})
+        if deposit_target > LOANFACTS_FIELD_MAX:
+            return _json_response(400, {"error": "depositTarget too large"})
+
     saved = repo.set_loanfacts(
-        **{k: Decimal(str(v)) for k, v in values.items()}, payoffGoalDate=goal_date)
+        **{k: Decimal(str(v)) for k, v in values.items()},
+        payoffGoalDate=goal_date,
+        depositTarget=Decimal(str(deposit_target)) if deposit_target is not None else None)
     return _json_response(200, saved)
 
 

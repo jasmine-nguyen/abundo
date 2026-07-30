@@ -39,7 +39,7 @@ class LoanFactsRepository:
         return self._table
 
     def get_loanfacts(self) -> Optional[dict]:
-        """Return {field: float, ..., "payoffGoalDate": str|None} or None if unset.
+        """Return {field: float, ..., "payoffGoalDate": str|None, "depositTarget": float|None} or None if unset.
 
         Only the known fields are surfaced (pk/sk/version stay internal), so the
         client never sees storage keys. The six numeric fields are normalised to
@@ -56,6 +56,10 @@ class LoanFactsRepository:
             return None
         result = {field: float(item[field]) for field in LOANFACTS_FIELDS}
         result["payoffGoalDate"] = item.get("payoffGoalDate")
+        # depositTarget (WHIT-378) is stored as Decimal; surface as float, or None when
+        # absent (legacy rows saved before the field existed — no migration).
+        deposit_target = item.get("depositTarget")
+        result["depositTarget"] = float(deposit_target) if deposit_target is not None else None
         return result
 
     def set_loanfacts(
@@ -67,12 +71,13 @@ class LoanFactsRepository:
         baseRepay: Decimal,
         extra: Decimal,
         payoffGoalDate: Optional[str] = None,
+        depositTarget: Optional[Decimal] = None,
     ) -> dict:
         """Overwrite the whole loan-facts object and return it.
 
-        The whole item is replaced on every save, so writing payoffGoalDate only
-        when set means clearing it (None) drops the attribute cleanly — no stale
-        date survives a clear (WHIT-126).
+        The whole item is replaced on every save, so writing an optional attribute
+        (payoffGoalDate / depositTarget) only when set means clearing it (None) drops
+        the attribute cleanly — no stale value survives a clear (WHIT-126, WHIT-378).
         """
         item = {
             **_LOANFACTS_KEY,
@@ -85,6 +90,8 @@ class LoanFactsRepository:
         }
         if payoffGoalDate is not None:
             item["payoffGoalDate"] = payoffGoalDate
+        if depositTarget is not None:
+            item["depositTarget"] = depositTarget
         try:
             self._get_table().put_item(Item=item)
         except ClientError as e:
@@ -97,4 +104,5 @@ class LoanFactsRepository:
             "baseRepay": float(baseRepay),
             "extra": float(extra),
             "payoffGoalDate": payoffGoalDate,
+            "depositTarget": float(depositTarget) if depositTarget is not None else None,
         }

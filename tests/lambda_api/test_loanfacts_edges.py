@@ -22,9 +22,13 @@ class FakeLoanFactsRepo:
     def get_loanfacts(self):
         return dict(self._facts) if self._facts is not None else None
 
-    def set_loanfacts(self, payoffGoalDate=None, **kwargs):
-        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate})
-        return {**{k: float(v) for k, v in kwargs.items()}, "payoffGoalDate": payoffGoalDate}
+    def set_loanfacts(self, payoffGoalDate=None, depositTarget=None, **kwargs):
+        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate, "depositTarget": depositTarget})
+        return {
+            **{k: float(v) for k, v in kwargs.items()},
+            "payoffGoalDate": payoffGoalDate,
+            "depositTarget": float(depositTarget) if depositTarget is not None else None,
+        }
 
 
 def _put_event(body):
@@ -50,6 +54,46 @@ def test_set_loanfacts_accepts_inclusive_upper_bounds(handler, over):
     resp = handler.set_loanfacts(_put_event({**VALID, **over}), repo)
     assert resp["statusCode"] == 200
     assert len(repo.set_calls) == 1
+
+
+# --- deposit target (WHIT-378) boundaries ------------------------------------
+
+
+def test_set_loanfacts_accepts_deposit_target_at_the_ceiling(handler):
+    # Shares the dollar ceiling with the other amounts; the guard is strict >, so == is fine.
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": CEILING}), repo)
+    assert resp["statusCode"] == 200
+    assert len(repo.set_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "bad, needle",
+    [
+        (True, "number"),          # bool is rejected before the numeric check
+        (0, "> 0"),                # zero is not a real target
+        (-100, "> 0"),             # negative
+        (CEILING + 1, "too large"),
+    ],
+)
+def test_set_loanfacts_rejects_a_bad_deposit_target(handler, bad, needle):
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": bad}), repo)
+    assert resp["statusCode"] == 400
+    assert needle in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []   # nothing persisted on a rejected write
+
+
+def test_set_loanfacts_rejects_non_finite_deposit_target(handler):
+    body = (
+        '{"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, '
+        '"baseRepay": 1240, "extra": 200, "depositTarget": Infinity}'
+    )
+    repo = FakeLoanFactsRepo()
+    resp = handler.set_loanfacts(_put_event(body), repo)
+    assert resp["statusCode"] == 400
+    assert "finite" in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []
 
 
 @pytest.mark.parametrize("token", ["Infinity", "-Infinity", "NaN"])

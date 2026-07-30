@@ -19,7 +19,7 @@ import { getStatus, subscribe } from './auth';
 // module const so every "unset" origin (initial state, a failed fetch) agrees.
 // Exported (WHIT-197) so the Goal/milestone query composite has the same all-null
 // default before the loan-facts read resolves.
-export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null, payoffGoalDate: null };
+export const EMPTY_LOAN_FACTS: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null, payoffGoalDate: null, depositTarget: null };
 
 // Loan facts are "ready" only when the user has saved all six fields — until then
 // the app shows a set-up prompt instead of any fabricated number. Narrows to
@@ -2700,8 +2700,15 @@ export function goalView(s: GoalViewInput) {
     }
   }
 
-  const depositTarget = 90000;
-  const depositPct = usableEquity != null ? Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100)) : 0;
+  // WHIT-378: the user's real next-place deposit target (optional, dollars). Null until
+  // set — so we never divide by a fabricated denominator. depositPct is null (not a fake
+  // 0/100) when there's no target or no equity yet, so the card's bar + "%" simply don't
+  // render and it shows an honest "set your target" prompt instead.
+  const depositTarget = facts.depositTarget ?? null;
+  const depositPct =
+    usableEquity != null && depositTarget != null && depositTarget > 0
+      ? Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100))
+      : null;
 
   return {
     factsReady,

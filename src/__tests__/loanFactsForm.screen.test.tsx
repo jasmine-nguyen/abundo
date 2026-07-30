@@ -51,7 +51,7 @@ it('saves the facts (LVR as a fraction) and navigates back', async () => {
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
 
   // 80% entered → stored as the fraction 0.8; no goal date set → payoffGoalDate null.
-  expect(saveLoanFacts).toHaveBeenCalledWith({ original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null });
+  expect(saveLoanFacts).toHaveBeenCalledWith({ original: 600000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, payoffGoalDate: null, depositTarget: null });
   expect(mockBack).toHaveBeenCalled();
 });
 
@@ -73,6 +73,23 @@ it('sends the picked target payoff date, and clears it back to null (WHIT-126)',
   expect(screen.getByText('Not set')).toBeTruthy();
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ payoffGoalDate: null }));
+});
+
+it('sends a typed deposit target as a number (WHIT-378)', async () => {
+  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+  render(<Loan />);
+  fillValid();
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), '120000');
+  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: 120000 }));
+  // (the blank → null case is already locked by the "saves the facts" test above)
+});
+
+it('seeds the deposit target from already-saved facts (WHIT-378)', () => {
+  mockState = state({ loanFacts: { original: 500000, homeValue: 770000, lvr: 0.8, ratePct: 5.74, baseRepay: 1240, extra: 200, depositTarget: 120000 } });
+  render(<Loan />);
+  expect(screen.getByDisplayValue('120000')).toBeTruthy();
 });
 
 it('blocks an incomplete save with a toast and no API call', async () => {

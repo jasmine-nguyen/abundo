@@ -26,6 +26,7 @@ export default function Loan() {
   const [baseRepay, setBaseRepay] = useState(numText(f.baseRepay));
   const [extra, setExtra] = useState(numText(f.extra));
   const [payoffGoalDate, setPayoffGoalDate] = useState<string | null>(f.payoffGoalDate ?? null);
+  const [depositTarget, setDepositTarget] = useState(numText(f.depositTarget));
   const [saving, setSaving] = useState(false);
 
   // The payoff date can't be in the past; midnight so the seed has no time-of-day.
@@ -43,6 +44,9 @@ export default function Loan() {
       // Optional (WHIT-126): null when unset/cleared. The picker only yields valid
       // future ISO dates, so it needs no extra guard and never blocks the save.
       payoffGoalDate,
+      // Optional (WHIT-378): the user's next-place deposit target. Blank => null (unset);
+      // when filled it must be a valid positive amount, checked below.
+      depositTarget: depositTarget.trim() === '' ? null : parseAmount(depositTarget),
     };
     // Client-side guard mirroring the server so we fail fast with a clear message
     // instead of a 400 round-trip. extra may be 0 (an optional top-up).
@@ -53,6 +57,11 @@ export default function Loan() {
       && next.ratePct > 0 && next.ratePct <= 100;
     if (!ok) {
       s.showToast('Please fill in every field with a valid amount.');
+      return;
+    }
+    // The deposit target is optional, but a filled-in value must be a valid amount > 0.
+    if (next.depositTarget != null && !(Number.isFinite(next.depositTarget) && next.depositTarget > 0)) {
+      s.showToast('Enter a valid deposit target, or leave it blank.');
       return;
     }
     setSaving(true);
@@ -94,6 +103,8 @@ export default function Loan() {
           />
           <Text style={styles.hint}>Optional — how we work out the repayment needed if the loan won't clear at your current rate.</Text>
         </View>
+
+        <Field label="Deposit needed for your next place" hint="Optional — sets the target the equity card tracks toward." placeholder="e.g. 120000" prefix="$" value={depositTarget} onChangeText={setDepositTarget} />
 
         <Pressable onPress={onSave} disabled={saving} style={[styles.save, saving && { opacity: 0.6 }]}>
           <Text style={styles.saveText}>{saving ? 'Saving…' : 'Save loan details'}</Text>
