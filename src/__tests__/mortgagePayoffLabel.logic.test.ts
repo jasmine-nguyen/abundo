@@ -19,8 +19,8 @@ describe('goalView.paidPctLabel — WHIT-372 boundary + degenerate inputs', () =
 
   // [E2] Balance slightly OVER the original (a redraw / refinance that grew the loan). paidOff is
   // negative, paidPct clamps to 0 — the label must be a coherent 0, never a negative or NaN "% gone".
-  // The card hides this via its paidDown>0 gate, but the /mortgage HERO has no such gate and WILL
-  // render this label, so it must be sane at the source.
+  // Both screens now gate this state out via goalView.paidDownReady (WHIT-372), but the selector is
+  // the source of truth, so the value it returns here must still be sane.
   it('[E2] balance above original -> paidPctLabel is a coherent 0 (not negative/NaN)', () => {
     const v = goalView(makeState({ homeLoan: { balance: 500001, asOf: null } }));
     expect(v.paidPctLabel).toBe(0);

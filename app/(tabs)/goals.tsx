@@ -8,6 +8,7 @@ import { useGoalsScreenData } from '../../src/queries';
 import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { Bar, RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { PayoffSummary } from '../../src/components/PayoffSummary';
 
 // "2026-08-15" -> "Aug 2026". Parsed by hand (no Date) so the label can't shift across a
 // timezone boundary. Falls back to the raw ISO if it's somehow unparseable.
@@ -43,9 +44,10 @@ export default function Goals() {
   // nothing honest to put in a "paid down" card, so it falls through to the plain "owing" line.
   const mortgage = goalView({ loanFacts, homeLoan });
   const paidDown = mortgage.paidOff ?? 0;
-  // Gate on the DISPLAYED whole-dollar figure (what fmt shows), not the raw feed float: a
-  // sub-dollar paydown rounds to "$0" and has no honest headline, so it stays on the plain line.
-  const mortgageRich = mortgage.factsReady && mortgage.balanceKnown && Math.round(paidDown) > 0;
+  // Shared gate (WHIT-372): goalView.paidDownReady is the one "genuine paydown to show?" flag both
+  // this card and the /mortgage hero read — a sub-dollar paydown rounds to "$0" and has no honest
+  // headline, so it stays on the plain "owing" line.
+  const mortgageRich = mortgage.paidDownReady;
 
   // Load-on-focus, staleness-gated (like Budgets) so tab-hopping doesn't refetch every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
@@ -98,18 +100,14 @@ export default function Goals() {
                   <Text style={[styles.mortgageTitle, { flex: 1 }]}>The mortgage</Text>
                   <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
                 </View>
-                <Text style={styles.mortgageEyebrow}>PAID DOWN SO FAR</Text>
-                <View style={styles.mortgageFigureRow}>
-                  <Text style={styles.mortgageBig} numberOfLines={1}>{fmt(paidDown)}</Text>
-                  <Text style={styles.mortgagePct}>{mortgage.paidPctLabel}% gone</Text>
-                </View>
-                <View style={{ marginTop: 12 }}>
-                  <Bar pct={mortgage.paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={11} />
-                </View>
-                <View style={styles.mortgageRichFoot}>
-                  <Text style={styles.mortgageRichFootL}>{mortgage.balanceLabel} to go</Text>
-                  <Text style={styles.mortgageRichFootR}>started at {fmt(mortgage.original!)}</Text>
-                </View>
+                <PayoffSummary
+                  variant="card"
+                  paidOff={paidDown}
+                  paidPctLabel={mortgage.paidPctLabel}
+                  paidPct={mortgage.paidPct}
+                  balanceLabel={mortgage.balanceLabel}
+                  original={mortgage.original!}
+                />
               </>
             ) : (
               <>
@@ -224,13 +222,6 @@ const styles = StyleSheet.create({
   // goal cards below. Column layout (the plain variant above is a row).
   mortgageCardRich: { position: 'relative', overflow: 'hidden', backgroundColor: C.accent, borderRadius: 20, padding: 18, marginBottom: 20 },
   mortgageRichHead: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  mortgageEyebrow: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3, marginTop: 15 },
-  mortgageFigureRow: { flexDirection: 'row', alignItems: 'baseline', gap: 9, marginTop: 6 },
-  mortgageBig: { flexShrink: 1, fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.heroInk, letterSpacing: -1 },
-  mortgagePct: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk2 },
-  mortgageRichFoot: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
-  mortgageRichFootL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
-  mortgageRichFootR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
 
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textDim, letterSpacing: 0.5, marginBottom: 12, marginLeft: 2 },
 
