@@ -46,4 +46,16 @@ describe('goalView.paidPctLabel — WHIT-372 boundary + degenerate inputs', () =
     expect(v.factsReady).toBe(false);
     expect(v.paidPctLabel).toBe(0);
   });
+
+  // [E6] WHIT-391 — a real dollar paydown under ~0.5% of the loan must never headline "0% gone".
+  // The card's example: $1,200 paid on $500,000 = 0.24% → the raw round is 0, but the label is
+  // floored to 1 so it stays coherent with the "$1,200 paid" figure. Fail-on-revert: drop the
+  // hasRoundedPaydown floor and this drops back to 0 next to a "$1,200 paid" block.
+  it('[E6] $1,200 paid on $500k -> paidPctLabel floored to 1, coherent with the dollar figure', () => {
+    const v = goalView(makeState({ homeLoan: { balance: 498800, asOf: null } }));
+    expect(v.paidOff).toBe(1200);
+    expect(v.paidDownReady).toBe(true);
+    expect(v.paidPctLabel).toBe(1);   // NOT 0 — WHIT-391 floor
+    expect(v.paidPct).toBeCloseTo(0.24, 5);  // the raw Bar fill stays the true 0.24%
+  });
 });
