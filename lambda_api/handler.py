@@ -2144,6 +2144,10 @@ def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
             milestone_id = str(uuid.uuid4())
         elif not isinstance(milestone_id, str) or not milestone_id.strip():
             return _json_response(400, {"error": "id must be a non-empty string"})
+        else:
+            # Trim like the label above, so a client that round-trips its own id with stray
+            # whitespace stores it clean and " a "/"a" collide in the uniqueness check (WHIT-383).
+            milestone_id = milestone_id.strip()
         if milestone_id in ids:
             return _json_response(400, {"error": "milestone ids must be unique"})
         ids.add(milestone_id)

@@ -19,7 +19,7 @@ from typing import Any, Optional
 import boto3
 from botocore.exceptions import ClientError
 
-from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
+from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
 # The single tenant every request maps to until multi-user lands. A module literal,
 # not a shared constant, so it never crosses the lambda_api constants shadow (WHIT-136).
@@ -35,16 +35,34 @@ def _milestones_key(scope: str) -> dict:
 
 def _to_client(milestones: list) -> list:
     """Normalise stored milestones to the client shape: only {id, label, targetBalance,
-    targetDate}, with targetBalance as a float (stored as Decimal). pk/sk stay internal."""
-    return [
-        {
-            "id": m["id"],
-            "label": m["label"],
-            "targetBalance": float(m["targetBalance"]),
-            "targetDate": m["targetDate"],
-        }
-        for m in milestones
-    ]
+    targetDate}, with targetBalance as a float (stored as Decimal). pk/sk stay internal.
+
+    Skips any milestone missing a field or with a non-numeric targetBalance, so a legacy or
+    partially-written row degrades to a shorter list instead of 500ing the client read
+    (WHIT-383). The poller reads through get_milestones_raw, which does NOT use this and
+    stays deliberately fail-loud on a bad row (shared/milestones.py)."""
+    # A corrupt row could store `milestones` as a non-list (a scalar isn't iterable); guard
+    # the iteration itself so the client read degrades to empty instead of 500ing (WHIT-383).
+    if not isinstance(milestones, list):
+        logger.warning("stored milestones is not a list, ignoring: %r", milestones)
+        return []
+    client_milestones = []
+    for m in milestones:
+        try:
+            client_milestones.append(
+                {
+                    "id": m["id"],
+                    "label": m["label"],
+                    "targetBalance": float(m["targetBalance"]),
+                    "targetDate": m["targetDate"],
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            # Degrade, don't 500 — but leave a breadcrumb so a legacy/partial row that
+            # silently drops from a user's plan is diagnosable.
+            logger.warning("skipping malformed stored milestone on client read: %r", m)
+            continue
+    return client_milestones
 
 
 class MilestoneRepository:
@@ -70,7 +88,10 @@ class MilestoneRepository:
             item = self._get_table().get_item(Key=_milestones_key(scope)).get("Item")
         except ClientError as e:
             handle_database_error(e, "read milestones")
-        return None if item is None else item["milestones"]
+        # .get so a row that exists without a "milestones" attribute (a legacy or partial
+        # write) reads as unset (None) rather than KeyError-500ing — both accessors below
+        # already treat None as "no plan saved" (WHIT-383).
+        return None if item is None else item.get("milestones")
 
     def get_milestones(self, scope: str = _MILESTONE_SCOPE_SHARED) -> Optional[list]:
         """Return the stored milestone list, or None if the user hasn't saved one.
