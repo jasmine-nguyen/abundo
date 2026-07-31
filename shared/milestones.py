@@ -217,15 +217,23 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
 
     # WHIT-385: reconcile away dead custom markers so a re-targeted or deleted milestone's old
     # marker can't accumulate forever. Runs BEFORE the "nothing crossed" short-circuit, since a
-    # re-target poll usually crosses nothing. Only on an AUTHORITATIVE plan (a genuine saved list,
-    # possibly empty) — never on a fallback default (None repo / unset / read failure), which would
-    # wipe live markers on a transient blip. Only custom markers ("id:<id>:bal:<amount>" or the
-    # legacy "bal:<amount>", per _is_custom_marker) are ever removed, so built-in sprint markers
+    # re-target poll usually crosses nothing. Only on an AUTHORITATIVE plan (a genuine saved list)
+    # with at least one row — never on a fallback default (None repo / unset / read failure), which
+    # would wipe live markers on a transient blip. Only custom markers ("id:<id>:bal:<amount>" or
+    # the legacy "bal:<amount>", per _is_custom_marker) are ever removed, so built-in sprint markers
     # ("0".."4") are untouched. `fired` is reused for the dedup below without subtracting `stale`:
     # every stale key is a target NOT in the plan and `crossed` ⊆ plan, so no fresh key can be
     # stale — subtracting would be dead work.
+    #
+    # WHIT-386: require a non-empty plan (`and plan`), not just authoritative. An authoritative
+    # empty [] would make EVERY custom marker stale and delete the whole "already celebrated"
+    # record in one sweep. That [] is API-unreachable today (the save endpoint rejects an empty
+    # list), so this is defence in depth: if that guard ever regresses, an empty plan sweeps
+    # nothing instead of silently erasing the once-ever record. The cost — a directly-DB-written
+    # empty plan no longer self-heals its dead markers — is harmless: an unmatched marker never
+    # re-fires.
     fired = None
-    if authoritative:
+    if authoritative and plan:
         # Best-effort: reconcile is bookkeeping, so a marker read/write blip must never suppress a
         # genuine celebration (the crossing is never re-detected once the balance moves past it).
         # On any error, skip the sweep this poll — the next poll retries. If the read succeeded but

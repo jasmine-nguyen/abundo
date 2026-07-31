@@ -2,7 +2,7 @@
 
 The implementer's test_milestones_custom_plan.py + test_repository_notify.py already lock:
 core re-target sweep, the non-authoritative no-delete guards (read-fail / unset / None repo),
-empty-plan clears-all, sprint markers preserved, no-delete-when-live, once-ever dedup for a
+empty-plan does NOT wipe markers (WHIT-386), sprint markers preserved, no-delete-when-live, once-ever dedup for a
 live marker, and the repo DELETE/empty-guard/no-TTL/error surface. This file adds ONLY the
 gaps they leave:
   - a stale sweep AND a genuine fresh crossing in the SAME poll (moved-up `fired` still dedups,
