@@ -10,6 +10,7 @@ import { RetryButton, HeroGradientFill } from '../../src/components/ui';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
 import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
+import { SegmentedControl } from '../../src/components/SegmentedControl';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
@@ -83,23 +84,14 @@ export default function Insights() {
         {/* WHIT-68: look back one pay cycle. "This cycle" is spend so far; "Last cycle"
             is the full prior cycle. Switching only moves the hero + rows (the AI coach
             below stays about the current cycle). */}
-        <View style={styles.cycleTabs}>
-          {[{ v: 0, label: 'This cycle' }, { v: 1, label: 'Last cycle' }].map(({ v, label }) => {
-            const active = cycle === v;
-            return (
-              <Pressable
-                key={v}
-                testID={v === 0 ? 'insights-cycle-current' : 'insights-cycle-prev'}
-                onPress={() => setCycle(v)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                style={[styles.cycleTab, active && styles.cycleTabActive]}
-              >
-                <Text style={[styles.cycleTabText, active && styles.cycleTabTextActive]}>{label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <SegmentedControl
+          value={cycle}
+          onChange={setCycle}
+          options={[
+            { value: 0, label: 'This cycle', testID: 'insights-cycle-current', activeTint: 'rgba(124,140,255,.16)', activeTextColor: C.accentSoft },
+            { value: 1, label: 'Last cycle', testID: 'insights-cycle-prev', activeTint: 'rgba(124,140,255,.16)', activeTextColor: C.accentSoft },
+          ]}
+        />
 
         {/* hero: where the money went in the selected cycle */}
         <View style={styles.hero}>
@@ -155,23 +147,14 @@ export default function Insights() {
         {/* WHIT-373: one list, a switch — Spending shows the category breakdown, Earning shows the
             same cycle's income sources. Only shown when a side has content (else it's a dead switch). */}
         {showToggle && (
-          <View style={styles.sideTabs}>
-            {[{ v: 'spending' as const, label: 'Spending', color: C.bad }, { v: 'earning' as const, label: 'Earning', color: C.good }].map(({ v, label, color }) => {
-              const active = side === v;
-              return (
-                <Pressable
-                  key={v}
-                  testID={`insights-side-${v}`}
-                  onPress={() => setSideChoice(v)}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                  style={[styles.sideTab, active && { backgroundColor: tint(color, 0.16) }]}
-                >
-                  <Text style={[styles.sideTabText, active && { color, fontWeight: '700' }]}>{label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          <SegmentedControl
+            value={side}
+            onChange={setSideChoice}
+            options={[
+              { value: 'spending', label: 'Spending', testID: 'insights-side-spending', activeTint: tint(C.bad, 0.16), activeTextColor: C.bad },
+              { value: 'earning', label: 'Earning', testID: 'insights-side-earning', activeTint: tint(C.good, 0.16), activeTextColor: C.good },
+            ]}
+          />
         )}
 
         {/* Spending side: each row's bar is its share of total spend this cycle (matches the donut) —
@@ -308,20 +291,6 @@ export default function Insights() {
 }
 
 const styles = StyleSheet.create({
-  // WHIT-68: the "This cycle / Last cycle" segmented control above the hero. Reuses the
-  // app's accent chip tokens so the active segment matches the retry/accent styling.
-  cycleTabs: { flexDirection: 'row', gap: 3, padding: 3, marginBottom: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14 },
-  cycleTab: { flex: 1, paddingVertical: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  cycleTabActive: { backgroundColor: 'rgba(124,140,255,.16)' },
-  cycleTabText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
-  cycleTabTextActive: { color: C.accentSoft, fontWeight: '700' },
-
-  // WHIT-373: the Spending / Earning switch above the list. Same segmented shape as cycleTabs, but
-  // the active segment tints to its side's colour (coral for Spending, teal for Earning).
-  sideTabs: { flexDirection: 'row', gap: 3, padding: 3, marginBottom: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14 },
-  sideTab: { flex: 1, paddingVertical: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  sideTabText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
-
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
   heroBlob: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.65)', letterSpacing: 0.2 },
