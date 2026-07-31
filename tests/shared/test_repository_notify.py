@@ -287,8 +287,8 @@ def test_no_milestones_fired_initially(shared):
 
 def test_mark_milestone_then_read_round_trips_as_strings(shared):
     r = _milestone_repo(shared)
-    r.mark_milestone_fired("2")
-    assert r.fired_milestones() == {"2"}
+    r.mark_milestone_fired("id:m1:bal:480000.00")  # WHIT-369 id-marker
+    assert r.fired_milestones() == {"id:m1:bal:480000.00"}
 
 
 def test_milestone_marks_accumulate_and_are_idempotent(shared):
@@ -301,11 +301,25 @@ def test_milestone_marks_accumulate_and_are_idempotent(shared):
 
 def test_milestone_mark_writes_no_ttl(shared):
     # The FakeMilestoneTable asserts the update carries no expires_at; also confirm the
-    # stored item never grows a TTL attribute (a milestone must never expire + re-fire).
+    # stored item never grows a TTL attribute (a milestone must never expire + re-fire). The
+    # shared-tenant default keeps the historical sk="FIRED" so WHIT-369 doesn't orphan existing
+    # markers (which would re-fire on a non-monotonic balance).
     r = _milestone_repo(shared)
     r.mark_milestone_fired("0")
     stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
     assert "expires_at" not in stored
+
+
+def test_milestone_fired_state_is_scoped_by_owner(shared):
+    # WHIT-369 multi-tenant seam: a marker written under one scope is invisible to another and
+    # to the shared default, and lands under sk=<scope>. Today only the shared tenant is used;
+    # this proves the seam is a per-owner key, so multi-user is a one-line poller change.
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("id:m1:bal:480000.00", scope="user-1")
+    assert r.fired_milestones(scope="user-1") == {"id:m1:bal:480000.00"}
+    assert r.fired_milestones(scope="user-2") == set()
+    assert r.fired_milestones() == set()  # shared default untouched
+    assert ("NOTIFY#MILESTONE", "user-1") in r._table.store
 
 
 # --- reconcile: remove dead milestone markers (WHIT-385) --------------------------------

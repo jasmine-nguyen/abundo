@@ -39,14 +39,14 @@ class FakeNotifyRepo:
         self.fired = set(fired or set())
         self.removed = set()
 
-    def fired_milestones(self):
+    def fired_milestones(self, scope=None):
         return set(self.fired)
 
-    def mark_milestone_fired(self, key):
+    def mark_milestone_fired(self, key, scope=None):
         assert isinstance(key, str), "marker must be a string (String Set)"
         self.fired.add(key)
 
-    def remove_milestone_markers(self, keys):
+    def remove_milestone_markers(self, keys, scope=None):
         assert keys, "must guard empty before calling remove_milestone_markers"
         self.removed |= set(keys)
         self.fired -= set(keys)
@@ -97,30 +97,30 @@ def _run(shared, *, old, new, milestone_repo, notify, tokens=("tok",)):
 # --- Gap A: stale sweep AND a genuine fresh crossing in the SAME poll ------------------------
 
 def test_stale_swept_and_fresh_crossing_fires_same_poll(shared, recorder):
-    # [G-A1] bal:300000 was re-targeted away (stale); the plan now points at 280000, which this
-    # poll crosses. Reconcile must sweep the dead key AND the fresh crossing must fire — and the
-    # swept key must NOT be re-added by the mark step.
-    notify = FakeNotifyRepo({"bal:300000.00"})
+    # [G-A1] milestone m1 was re-targeted 300000 → 280000; its old "id:m1:bal:300000.00" marker is
+    # stale and the plan now points at 280000, which this poll crosses. Reconcile must sweep the
+    # dead key AND the fresh crossing must fire — the swept key must NOT be re-added by the mark.
+    notify = FakeNotifyRepo({"id:m1:bal:300000.00"})
     sent = _run(shared, old="285000", new="280000",
                 milestone_repo=FakeMilestoneRepo(stored=[_row("House", "280000")]), notify=notify)
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — House!"
-    assert notify.removed == {"bal:300000.00"}
-    assert notify.fired == {"bal:280000.00"}          # stale gone, fresh added, stale not re-added
+    assert notify.removed == {"id:m1:bal:300000.00"}
+    assert notify.fired == {"id:m1:bal:280000.00"}    # stale gone, fresh added, stale not re-added
 
 
 def test_reconcile_and_dedup_coexist_live_fired_not_refired(shared, recorder):
-    # [G-A2] Hardest interleave: fired = {bal:300000 (stale), bal:480000 (LIVE + already fired)};
-    # plan = [480000 (already), 280000 (fresh)]; a lump-sum poll crosses BOTH. The moved-up
-    # `fired` read must still dedup 480000 (no re-fire) while 300000 is swept and 280000 fires.
-    notify = FakeNotifyRepo({"bal:300000.00", "bal:480000.00"})
+    # [G-A2] Hardest interleave: fired = {id:x:300000 (stale), id:d:480000 (LIVE + already fired)};
+    # plan = [480000 id:d (already), 280000 id:h (fresh)]; a lump-sum poll crosses BOTH. The moved-up
+    # `fired` read must still dedup id:d (no re-fire) while id:x:300000 is swept and id:h fires.
+    notify = FakeNotifyRepo({"id:x:bal:300000.00", "id:d:bal:480000.00"})
     sent = _run(shared, old="500000", new="280000",
-                milestone_repo=FakeMilestoneRepo(stored=[_row("Deposit", "480000"), _row("House", "280000")]),
+                milestone_repo=FakeMilestoneRepo(stored=[_row("Deposit", "480000", id="d"), _row("House", "280000", id="h")]),
                 notify=notify)
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — House!"   # furthest FRESH (480000 suppressed)
-    assert notify.removed == {"bal:300000.00"}
-    assert notify.fired == {"bal:480000.00", "bal:280000.00"}          # 480000 kept (not re-fired)
+    assert notify.removed == {"id:x:bal:300000.00"}
+    assert notify.fired == {"id:d:bal:480000.00", "id:h:bal:280000.00"}   # id:d kept (not re-fired)
 
 
 # --- Gap B: reconcile runs on the SEED poll (old_balance is None) ----------------------------
@@ -139,25 +139,28 @@ def test_reconcile_runs_on_seed_poll_old_balance_none(shared, recorder):
 # --- Gap C: duplicate targets collapse in `live`; a dup-target live marker is not swept -------
 
 def test_duplicate_live_target_preserved_while_stale_removed(shared, recorder):
-    # [G-C1] Two rows share target 280000 → its "bal:280000.00" key collapses once in `live`. A
-    # live-but-duplicated marker must NOT be treated as stale, while a genuinely dead one is swept.
-    notify = FakeNotifyRepo({"bal:280000.00", "bal:300000.00"})
+    # [G-C1] Two rows share target 280000 but with distinct ids → two DISTINCT live markers (id-
+    # keying, WHIT-369, so no collapse). Both live markers must be preserved, while a genuinely
+    # dead one (id:z:300000) is swept.
+    notify = FakeNotifyRepo({"id:a:bal:280000.00", "id:b:bal:280000.00", "id:z:bal:300000.00"})
     _run(shared, old="285000", new="284000",
          milestone_repo=FakeMilestoneRepo(stored=[_row("A", "280000", id="a"), _row("B", "280000", id="b")]),
          notify=notify)
-    assert notify.removed == {"bal:300000.00"}
-    assert notify.fired == {"bal:280000.00"}
+    assert notify.removed == {"id:z:bal:300000.00"}
+    assert notify.fired == {"id:a:bal:280000.00", "id:b:bal:280000.00"}
 
 
-# --- Gap D: malformed "bal:" keys are swept as dead (self-heal) ------------------------------
+# --- Gap D: malformed / legacy "bal:" keys are swept as dead (self-heal) ---------------------
 
 def test_malformed_bal_keys_are_swept_as_stale(shared, recorder):
-    # [G-D1] Characterization: any "bal:"-prefixed key not in the plan is dead — including garbage
-    # like "bal:" (no amount) or "bal:oops". Reconcile sweeps them, self-healing the set. The live
-    # "bal:280000.00" is preserved.
+    # [G-D1] Characterization: any custom-namespaced key not in the plan is dead — including garbage
+    # like "bal:" (no amount) or "bal:oops". Reconcile sweeps them, self-healing the set. Here the
+    # plan row is a LEGACY row with no id, so its live marker is the amount-only "bal:280000.00",
+    # which is preserved while the garbage keys are swept.
+    legacy_row = {"label": "House", "targetBalance": Decimal("280000"), "targetDate": "2027-01-01"}
     notify = FakeNotifyRepo({"bal:", "bal:oops", "bal:280000.00"})
     _run(shared, old="285000", new="284000",
-         milestone_repo=FakeMilestoneRepo(stored=[_row("House", "280000")]), notify=notify)
+         milestone_repo=FakeMilestoneRepo(stored=[legacy_row]), notify=notify)
     assert notify.removed == {"bal:", "bal:oops"}
     assert notify.fired == {"bal:280000.00"}
 

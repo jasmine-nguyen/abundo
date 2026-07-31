@@ -31,10 +31,10 @@ class FakeNotifyRepo:
     def __init__(self, fired=None):
         self.fired = set(fired or set())
 
-    def fired_milestones(self):
+    def fired_milestones(self, scope=None):
         return set(self.fired)
 
-    def mark_milestone_fired(self, sprint):
+    def mark_milestone_fired(self, sprint, scope=None):
         assert isinstance(sprint, str), "sprint marker must be a string (String Set)"
         self.fired.add(sprint)
 
