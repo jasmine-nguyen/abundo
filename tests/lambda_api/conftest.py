@@ -74,7 +74,8 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # leak across tests).
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
-    "banksync_enrichments", "insights_ai", "spend", "repayment_rules",
+    "banksync_enrichments", "insights_ai", "milestone_ai", "paydown",
+    "spend", "repayment_rules",
 )
 
 
