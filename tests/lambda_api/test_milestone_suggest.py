@@ -551,17 +551,18 @@ def _messages_payload(text):
 
 
 def _stub_key(monkeypatch):
-    """milestone_ai reuses insights_ai's key plumbing (`from insights_ai import get_api_key`), so
-    get_api_key resolves _api_key / get_param out of the insights_ai module globals — patch THERE,
-    not on milestone_ai. The handler fixture already imported both this package's copies."""
-    import insights_ai
-    insights_ai._api_key = None
-    monkeypatch.setattr(insights_ai, "get_param", lambda path: "test-anthropic-key")
+    """The key/HTTP plumbing lives in the shared anthropic_client (WHIT-388) that milestone_ai
+    delegates to, so get_api_key resolves _api_key / get_param out of anthropic_client's module
+    globals — patch THERE. The handler fixture already imported this package's copy."""
+    import anthropic_client
+    anthropic_client._api_key = None
+    monkeypatch.setattr(anthropic_client, "get_param", lambda path: "test-anthropic-key")
 
 
 def test_suggest_pacing_builds_request_and_parses(handler, monkeypatch):
-    # Reuse the handler fixture's isolated import machinery: milestone_ai is registered in
-    # _COLLIDING, so importing it here resolves this package's copy.
+    # Reuse the handler fixture's isolated import machinery: milestone_ai and anthropic_client
+    # are registered in _COLLIDING, so importing them here resolves this package's copies.
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
 
@@ -575,7 +576,7 @@ def test_suggest_pacing_builds_request_and_parses(handler, monkeypatch):
             '{"milestones": [{"index": 0, "label": "Great start"}, '
             '{"index": 4, "label": "Almost home"}]}'))
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ac.urllib.request, "urlopen", fake_urlopen)
 
     model_input = {"targetDate": "2035-06-01", "payoffDate": "2053-01-01",
                    "candidates": [{"index": 0, "balance": 500000, "date": "2026-02-01"}]}
@@ -593,40 +594,44 @@ def test_suggest_pacing_builds_request_and_parses(handler, monkeypatch):
 
 
 def test_suggest_pacing_extracts_json_wrapped_in_prose(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload(
             'Sure!\n{"milestones": [{"index": 1, "label": "Halfway"}]}\nHope that helps.')))
     assert milestone_ai.suggest_pacing({}) == [{"index": 1, "label": "Halfway"}]
 
 
 def test_suggest_pacing_non_json_reply_degrades_to_empty(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload("I could not do that.")))
     assert milestone_ai.suggest_pacing({}) == []
 
 
 def test_suggest_pacing_braces_with_bad_json_degrades_to_empty(handler, monkeypatch):
     # A {...} span that isn't valid JSON (json.loads raises) -> [] , never a crash.
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload("{not: valid, json}")))
     assert milestone_ai.suggest_pacing({}) == []
 
 
 def test_suggest_pacing_milestones_not_a_list_is_empty(handler, monkeypatch):
     # Valid JSON but "milestones" isn't a list -> [] (nothing to pace).
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload('{"milestones": "nope"}')))
     assert milestone_ai.suggest_pacing({}) == []
 
@@ -634,10 +639,11 @@ def test_suggest_pacing_milestones_not_a_list_is_empty(handler, monkeypatch):
 def test_suggest_pacing_drops_malformed_entries(handler, monkeypatch):
     # Non-dict entries, a bool index (int subclass), a non-int index, and a non-string label
     # are all dropped; only the well-formed {int index, str label} entries survive.
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload(json.dumps({"milestones": [
             {"index": 0, "label": "keep"},
             "not-a-dict",
@@ -652,27 +658,29 @@ def test_suggest_pacing_drops_malformed_entries(handler, monkeypatch):
 
 def test_suggest_pacing_http_error_raises_with_status(handler, monkeypatch):
     import io
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
 
     def boom(req, timeout=None):
         raise urllib.error.HTTPError("u", 429, "rate", None, io.BytesIO(b""))
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", boom)
-    with pytest.raises(milestone_ai.AnthropicError) as ei:
+    monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
+    with pytest.raises(ac.AnthropicError) as ei:
         milestone_ai.suggest_pacing({})
     assert ei.value.upstream_status == 429
 
 
 def test_suggest_pacing_url_error_is_none_status(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
 
     def boom(req, timeout=None):
         raise urllib.error.URLError("down")
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", boom)
-    with pytest.raises(milestone_ai.AnthropicError) as ei:
+    monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
+    with pytest.raises(ac.AnthropicError) as ei:
         milestone_ai.suggest_pacing({})
     assert ei.value.upstream_status is None
 
@@ -680,16 +688,16 @@ def test_suggest_pacing_url_error_is_none_status(handler, monkeypatch):
 def test_suggest_pacing_ssm_failure_degrades_to_anthropic_error(handler, monkeypatch):
     # A missing/denied SSM key raises ValueError inside get_api_key(); it must surface as an
     # AnthropicError (-> 502), never an uncaught 500, and urlopen must never run.
-    import insights_ai
+    import anthropic_client as ac
     import milestone_ai
-    insights_ai._api_key = None
+    ac._api_key = None
 
     def unreachable(req, timeout=None):
         raise AssertionError("urlopen must not run when the key can't be read")
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", unreachable)
-    monkeypatch.setattr(insights_ai, "get_param",
+    monkeypatch.setattr(ac.urllib.request, "urlopen", unreachable)
+    monkeypatch.setattr(ac, "get_param",
                         lambda path: (_ for _ in ()).throw(ValueError("no such param")))
-    with pytest.raises(milestone_ai.AnthropicError) as ei:
+    with pytest.raises(ac.AnthropicError) as ei:
         milestone_ai.suggest_pacing({})
     assert ei.value.upstream_status is None

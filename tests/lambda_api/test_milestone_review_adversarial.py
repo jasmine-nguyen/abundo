@@ -1,8 +1,9 @@
 """Adversarial QA for POST /milestones/review (WHIT-371) — the review_pacing client layer and the
 non-ASCII scrub hole, mirroring test_milestone_suggest_adversarial.py.
 
-review_pacing shares _call_anthropic with suggest_pacing, so the request/error plumbing is exercised
-here directly (urllib.request.urlopen monkeypatched); _parse_review is the review-specific parser.
+review_pacing shares the anthropic_client.post plumbing with suggest_pacing, so the request/error
+path is exercised here directly (urllib.request.urlopen monkeypatched); _parse_review is the
+review-specific parser.
 """
 
 import datetime
@@ -86,12 +87,14 @@ def _messages_payload(text):
 
 
 def _stub_key(monkeypatch):
-    import insights_ai
-    insights_ai._api_key = None
-    monkeypatch.setattr(insights_ai, "get_param", lambda path: "test-anthropic-key")
+    # Key/HTTP plumbing lives in the shared anthropic_client (WHIT-388); patch it THERE.
+    import anthropic_client
+    anthropic_client._api_key = None
+    monkeypatch.setattr(anthropic_client, "get_param", lambda path: "test-anthropic-key")
 
 
 def test_review_pacing_builds_request_and_parses(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     captured = {}
@@ -104,7 +107,7 @@ def test_review_pacing_builds_request_and_parses(handler, monkeypatch):
             '{"adjustments": [{"index": 0, "reason": "behind your plan"}, '
             '{"index": 3, "reason": "drifting later"}]}'))
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ac.urllib.request, "urlopen", fake_urlopen)
     model_input = {"milestones": [{"index": 0, "targetBalance": 400000, "targetDate": "2030-01-01",
                                    "projectedDate": "2036-03-01", "varianceMonths": 74}]}
     result = milestone_ai.review_pacing(model_input)
@@ -119,39 +122,43 @@ def test_review_pacing_builds_request_and_parses(handler, monkeypatch):
 
 
 def test_review_pacing_extracts_json_wrapped_in_prose(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload(
             'Sure!\n{"adjustments": [{"index": 1, "reason": "slipping"}]}\nHope that helps.')))
     assert milestone_ai.review_pacing({}) == [{"index": 1, "reason": "slipping"}]
 
 
 def test_review_pacing_non_json_reply_degrades_to_empty(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload("I could not do that.")))
     assert milestone_ai.review_pacing({}) == []
 
 
 def test_review_pacing_braces_with_bad_json_degrades_to_empty(handler, monkeypatch):
     # A {...} span that isn't valid JSON (json.loads raises) -> [], never a crash.
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload("{not: valid, json}")))
     assert milestone_ai.review_pacing({}) == []
 
 
 def test_parse_review_adjustments_not_a_list_is_empty(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload('{"adjustments": "nope"}')))
     assert milestone_ai.review_pacing({}) == []
 
@@ -159,10 +166,11 @@ def test_parse_review_adjustments_not_a_list_is_empty(handler, monkeypatch):
 def test_review_pacing_drops_malformed_entries(handler, monkeypatch):
     # Non-dict entries, a bool index (int subclass), a non-int index, and a non-string reason are
     # all dropped; only well-formed {int index, str reason} entries survive.
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
     monkeypatch.setattr(
-        milestone_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload(json.dumps({"adjustments": [
             {"index": 0, "reason": "keep"},
             "not-a-dict",
@@ -176,42 +184,44 @@ def test_review_pacing_drops_malformed_entries(handler, monkeypatch):
 
 
 def test_review_pacing_http_error_raises_with_status(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
 
     def boom(req, timeout=None):
         raise urllib.error.HTTPError("u", 429, "rate", None, io.BytesIO(b""))
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", boom)
-    with pytest.raises(milestone_ai.AnthropicError) as ei:
+    monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
+    with pytest.raises(ac.AnthropicError) as ei:
         milestone_ai.review_pacing({})
     assert ei.value.upstream_status == 429
 
 
 def test_review_pacing_url_error_is_none_status(handler, monkeypatch):
+    import anthropic_client as ac
     import milestone_ai
     _stub_key(monkeypatch)
 
     def boom(req, timeout=None):
         raise urllib.error.URLError("down")
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", boom)
-    with pytest.raises(milestone_ai.AnthropicError) as ei:
+    monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
+    with pytest.raises(ac.AnthropicError) as ei:
         milestone_ai.review_pacing({})
     assert ei.value.upstream_status is None
 
 
 def test_review_pacing_ssm_failure_degrades_to_anthropic_error(handler, monkeypatch):
-    import insights_ai
+    import anthropic_client as ac
     import milestone_ai
-    insights_ai._api_key = None
+    ac._api_key = None
 
     def unreachable(req, timeout=None):
         raise AssertionError("urlopen must not run when the key can't be read")
 
-    monkeypatch.setattr(milestone_ai.urllib.request, "urlopen", unreachable)
-    monkeypatch.setattr(insights_ai, "get_param",
+    monkeypatch.setattr(ac.urllib.request, "urlopen", unreachable)
+    monkeypatch.setattr(ac, "get_param",
                         lambda path: (_ for _ in ()).throw(ValueError("no such param")))
-    with pytest.raises(milestone_ai.AnthropicError) as ei:
+    with pytest.raises(ac.AnthropicError) as ei:
         milestone_ai.review_pacing({})
     assert ei.value.upstream_status is None

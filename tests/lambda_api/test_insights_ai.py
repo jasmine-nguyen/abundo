@@ -42,6 +42,9 @@ def _messages_payload(text):
 
 
 def test_generate_suggestions_builds_request_and_parses(insights_ai, monkeypatch):
+    # generate_suggestions delegates the HTTP call to anthropic_client (WHIT-388), so
+    # patch urlopen THERE — insights_ai no longer owns the urllib import.
+    import anthropic_client as ac
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -51,7 +54,7 @@ def test_generate_suggestions_builds_request_and_parses(insights_ai, monkeypatch
         return _FakeResponse(_messages_payload(
             '{"summary": "Solid cycle.", "suggestions": ["Cut coffee $20", "Watch groceries"]}'))
 
-    monkeypatch.setattr(insights_ai.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(ac.urllib.request, "urlopen", fake_urlopen)
 
     model_input = {"cycle": {"length": 14}, "categories": [{"name": "Coffee", "posted": 52.0}]}
     result = insights_ai.generate_suggestions(model_input)
@@ -73,8 +76,9 @@ def test_generate_suggestions_builds_request_and_parses(insights_ai, monkeypatch
 
 def test_generate_suggestions_extracts_json_wrapped_in_prose(insights_ai, monkeypatch):
     # Despite the "strict JSON" instruction a model may add prose; we extract the {...}.
+    import anthropic_client as ac
     monkeypatch.setattr(
-        insights_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload(
             'Sure! Here you go:\n{"summary": "ok", "suggestions": ["a"]}\nHope that helps.')))
 
@@ -83,8 +87,9 @@ def test_generate_suggestions_extracts_json_wrapped_in_prose(insights_ai, monkey
 
 
 def test_generate_suggestions_non_json_reply_degrades_gracefully(insights_ai, monkeypatch):
+    import anthropic_client as ac
     monkeypatch.setattr(
-        insights_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload("I could not analyse that.")))
 
     result = insights_ai.generate_suggestions({})
@@ -92,8 +97,9 @@ def test_generate_suggestions_non_json_reply_degrades_gracefully(insights_ai, mo
 
 
 def test_generate_suggestions_drops_non_string_suggestions(insights_ai, monkeypatch):
+    import anthropic_client as ac
     monkeypatch.setattr(
-        insights_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload(
             '{"summary": 5, "suggestions": ["keep", 3, "", "  ", "also"]}')))
 
@@ -105,8 +111,9 @@ def test_generate_suggestions_blank_summary_becomes_none(insights_ai, monkeypatc
     # A whitespace-only summary is not real advice: it is nulled at the parse layer
     # (mirroring the suggestions strip) so the handler's empty-result guard treats
     # it as empty rather than caching a blank insight card (WHIT-138).
+    import anthropic_client as ac
     monkeypatch.setattr(
-        insights_ai.urllib.request, "urlopen",
+        ac.urllib.request, "urlopen",
         lambda req, timeout=None: _FakeResponse(_messages_payload(
             '{"summary": "   ", "suggestions": []}')))
 
@@ -115,48 +122,45 @@ def test_generate_suggestions_blank_summary_becomes_none(insights_ai, monkeypatc
 
 
 def test_generate_suggestions_http_error_raises_with_status(insights_ai, monkeypatch):
+    import anthropic_client as ac
+
     def boom(req, timeout=None):
         raise urllib.error.HTTPError("u", 429, "rate", None, io.BytesIO(b""))
 
-    monkeypatch.setattr(insights_ai.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
 
-    with pytest.raises(insights_ai.AnthropicError) as ei:
+    with pytest.raises(ac.AnthropicError) as ei:
         insights_ai.generate_suggestions({})
     assert ei.value.upstream_status == 429
 
 
 def test_generate_suggestions_url_error_is_none_status(insights_ai, monkeypatch):
+    import anthropic_client as ac
+
     def boom(req, timeout=None):
         raise urllib.error.URLError("down")
 
-    monkeypatch.setattr(insights_ai.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(ac.urllib.request, "urlopen", boom)
 
-    with pytest.raises(insights_ai.AnthropicError) as ei:
+    with pytest.raises(ac.AnthropicError) as ei:
         insights_ai.generate_suggestions({})
     assert ei.value.upstream_status is None
-
-
-def test_get_api_key_is_cached(insights_ai, monkeypatch):
-    calls = []
-    monkeypatch.setattr(insights_ai, "get_param", lambda path: calls.append(path) or "k")
-    insights_ai._api_key = None
-    insights_ai.get_api_key()
-    insights_ai.get_api_key()
-    assert len(calls) == 1  # SSM read once, then served from the module cache
 
 
 def test_generate_suggestions_ssm_failure_degrades_to_anthropic_error(insights_ai, monkeypatch):
     # A missing/denied SSM key raises ValueError inside get_api_key(). It must surface
     # as an AnthropicError (-> 502), NOT an uncaught 500. urlopen must never run.
+    import anthropic_client as ac
+
     def unreachable(req, timeout=None):
         raise AssertionError("urlopen must not run when the key can't be read")
 
-    monkeypatch.setattr(insights_ai.urllib.request, "urlopen", unreachable)
-    monkeypatch.setattr(insights_ai, "get_param",
+    monkeypatch.setattr(ac.urllib.request, "urlopen", unreachable)
+    monkeypatch.setattr(ac, "get_param",
                         lambda path: (_ for _ in ()).throw(ValueError("no such param")))
-    insights_ai._api_key = None
+    ac._api_key = None
 
-    with pytest.raises(insights_ai.AnthropicError) as ei:
+    with pytest.raises(ac.AnthropicError) as ei:
         insights_ai.generate_suggestions({})
     assert ei.value.upstream_status is None
 
