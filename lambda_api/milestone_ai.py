@@ -83,13 +83,14 @@ def _parse_pacing(text: str) -> list:
     return pacing
 
 
-def suggest_pacing(model_input: dict) -> list:
-    """Call Anthropic with the candidate points + target/payoff dates and return the chosen
-    [{index, label}, ...] (possibly empty).
+def _call_anthropic(system_prompt: str, user_prefix: str, model_input: dict, parse) -> list:
+    """POST the numbers-only model_input to the Messages API and return parse(reply_text).
+
+    The one place the urllib call, headers, timeout, and error taxonomy live — suggest_pacing
+    and review_pacing differ only in their system prompt, user prefix, and reply parser.
 
     Raises AnthropicError on any non-2xx (carrying the upstream status) or transport failure
-    (status None) — mirrors insights_ai.generate_suggestions. The numbers are passed as a JSON
-    blob in the user turn, with the system prompt's "only choose provided indexes" instruction.
+    (status None) — mirrors insights_ai.generate_suggestions.
     """
     body = {
         "model": ANTHROPIC_MODEL,
@@ -97,13 +98,9 @@ def suggest_pacing(model_input: dict) -> list:
         # Disable Sonnet's default "thinking" so it can't eat the token budget and truncate the
         # JSON reply — a single-shot choice, no reasoning needed (mirrors insights_ai).
         "thinking": ANTHROPIC_THINKING,
-        "system": _SYSTEM_PROMPT,
+        "system": system_prompt,
         "messages": [
-            {
-                "role": "user",
-                "content": "Here is the real paydown schedule. Choose the milestones:\n"
-                + json.dumps(model_input, separators=(",", ":")),
-            }
+            {"role": "user", "content": user_prefix + json.dumps(model_input, separators=(",", ":"))}
         ],
     }
     try:
@@ -130,11 +127,76 @@ def suggest_pacing(model_input: dict) -> list:
         raise AnthropicError(None, "Anthropic key unavailable or non-JSON envelope") from e
 
     # Messages API: {"content": [{"type": "text", "text": "..."}], ...}. Pull the first text
-    # block; anything unexpected degrades via _parse_pacing.
+    # block; anything unexpected degrades via the parser.
     content = payload.get("content") or []
     text = ""
     for block in content:
         if isinstance(block, dict) and block.get("type") == "text":
             text = block.get("text", "")
             break
-    return _parse_pacing(text)
+    return parse(text)
+
+
+def suggest_pacing(model_input: dict) -> list:
+    """Call Anthropic with the candidate points + target/payoff dates and return the chosen
+    [{index, label}, ...] (possibly empty). The numbers are passed as a JSON blob in the user
+    turn, with the system prompt's "only choose provided indexes" instruction."""
+    return _call_anthropic(
+        _SYSTEM_PROMPT, "Here is the real paydown schedule. Choose the milestones:\n",
+        model_input, _parse_pacing)
+
+
+_REVIEW_SYSTEM_PROMPT = (
+    "You help a mortgage-payoff app review a user's saved milestone plan against their real "
+    "current pace. You are given a list of the user's milestones that are running BEHIND, each "
+    "with an integer \"index\", its target, the real projected date it's actually reached at the "
+    "current pace, and how many months behind it is (\"varianceMonths\"). "
+    "Choose which of these indexes are worth flagging to the user (the most useful few, not "
+    "necessarily all) and write a short, warm one-line \"reason\" for each — why it's worth "
+    "nudging the milestone's date out. You may ONLY choose indexes from the list; never invent a "
+    "milestone, a balance, or a date. "
+    "Reasons are WORDS ONLY: never put a number, a dollar amount, a percentage, or a date in a "
+    "reason — the app shows the real figures next to your words. Good reasons: \"running a little "
+    "behind your plan\", \"drifting later than you hoped\". Bad reasons: \"3 months late\", "
+    "\"$20k short\", \"behind since 2032\". "
+    "Reply with STRICT JSON only, no prose outside it, in exactly this shape: "
+    '{"adjustments": [{"index": <int>, "reason": "<words>"}, ...]}'
+)
+
+
+def _parse_review(text: str) -> list:
+    """Turn the model's reply into a list of {"index": int, "reason": str}.
+
+    Defensive twin of _parse_pacing: extract the first {...} span, json.loads it, keep only
+    well-formed entries (int index — bool excluded — and a str reason). Any failure -> [] (never
+    raises), so a chatty/malformed reply degrades to a soft failure instead of 500ing.
+    """
+    match = re.search(r"\{.*\}", text or "", re.DOTALL)
+    if not match:
+        return []
+    try:
+        parsed = json.loads(match.group(0))
+    except (ValueError, TypeError):
+        return []
+    adjustments = parsed.get("adjustments")
+    if not isinstance(adjustments, list):
+        return []
+    reviewed = []
+    for entry in adjustments:
+        if not isinstance(entry, dict):
+            continue
+        index = entry.get("index")
+        reason = entry.get("reason")
+        # bool is an int subclass — exclude it; reason must be a real string.
+        if isinstance(index, bool) or not isinstance(index, int) or not isinstance(reason, str):
+            continue
+        reviewed.append({"index": index, "reason": reason})
+    return reviewed
+
+
+def review_pacing(model_input: dict) -> list:
+    """Call Anthropic with the behind-schedule milestones and return the chosen
+    [{index, reason}, ...] (possibly empty). Numbers only, no PII — matches suggest_pacing."""
+    return _call_anthropic(
+        _REVIEW_SYSTEM_PROMPT, "Here is the user's plan vs their real pace. Choose which to flag:\n",
+        model_input, _parse_review)
