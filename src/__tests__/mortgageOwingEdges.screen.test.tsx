@@ -48,17 +48,16 @@ describe('mortgage hero — WHIT-372 branch-order edges', () => {
   });
 
   // THE paidOff===0.5 knife-edge, rendered. Balance 499,999.5 → paidOff 0.5 → Math.round=1 →
-  // paidDownReady TRUE → the payoff block renders. fmt(0.5)="$1" but the % rounds to "0% gone",
-  // and fmt(499999.5) rounds the balance back to "$500,000". So the block shows "$1 paid / 0% gone /
-  // $500,000 to go / started at $500,000" — a real, if tiny, residual incoherence at exactly 0.5.
-  // NOT a WHIT-372 regression (the old ungated hero AND the card's identical `round(paidOff)>0` gate
-  // both rendered this same block), but this locks the current behaviour so a future change SEES it.
-  it('paidOff === 0.5 renders the payoff block reading "$1" next to "0% gone" (documented edge)', () => {
+  // paidDownReady TRUE → the payoff block renders. fmt(0.5)="$1", and WHIT-391 floors the headline
+  // to "1% gone" so it AGREES with the "$1 paid" figure (was the old "$1 / 0% gone"). Reverting the
+  // WHIT-391 floor drops it back to "0% gone" and reddens here.
+  it('paidOff === 0.5 renders the payoff block reading "$1" next to "1% gone" (floored, coherent)', () => {
     mockGoal = makeGoalData({ homeLoan: { balance: 499999.5, asOf: '2026-07-04T00:00:00Z' } });
     render(<Mortgage />);
     expect(screen.getByText('THE MORTGAGE · PAID DOWN SO FAR')).toBeTruthy();
     expect(screen.getByText('$1')).toBeTruthy();          // fmt(0.5)
-    expect(screen.getByText('0% gone')).toBeTruthy();      // round(0.0001%) -> 0
+    expect(screen.getByText('1% gone')).toBeTruthy();      // WHIT-391: floored to 1, not "0% gone"
+    expect(screen.queryByText('0% gone')).toBeNull();      // the old incoherent copy is gone
     expect(screen.getByText('$500,000 to go')).toBeTruthy(); // fmt(499999.5) rounds back up
     expect(screen.queryByText(OWING_BODY)).toBeNull();     // it is NOT routed to the owing state
   });

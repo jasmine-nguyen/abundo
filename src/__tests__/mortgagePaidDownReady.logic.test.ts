@@ -27,13 +27,15 @@ describe('goalView.paidDownReady — WHIT-372 gate boundaries', () => {
     expect(v.paidDownReady).toBe(false);
   });
 
-  // [A52] THE knife-edge: paidOff === 0.5. Math.round(0.5) === 1 > 0, so paidDownReady is TRUE and
-  // the payoff block renders — even though the % headline rounds to 0 and the balance rounds back to
-  // the original. This documents the (pre-existing, un-changed by WHIT-372) behaviour at exactly 0.5.
-  it('[A52] paidOff === 0.5 → paidDownReady TRUE (Math.round(0.5)=1), but the % label is 0', () => {
+  // [A52] The knife-edge: paidOff === 0.5. Math.round(0.5)=1 > 0, so paidDownReady is TRUE and the
+  // payoff block renders. WHIT-391 floors the headline to 1 so it AGREES with the "$1 paid" figure
+  // (fmt(0.5)="$1") — no longer the old "$1 paid / 0% gone" contradiction.
+  it('[A52] paidOff === 0.5 → paidDownReady TRUE and the % label floors to 1 (agrees with "$1 paid")', () => {
     const v = at(499999.5);
     expect(v.paidOff).toBe(0.5);
-    expect(v.paidDownReady).toBe(true);   // the payoff block WILL render
-    expect(v.paidPctLabel).toBe(0);       // ...yet reads "0% gone" — the residual incoherence
+    expect(v.paidDownReady).toBe(true);   // the payoff block renders
+    expect(v.paidPctLabel).toBe(1);       // WHIT-391: floored to 1, coherent with the dollar figure
   });
+  // The full "paidDownReady ⇔ paidPctLabel >= 1" invariant is swept densely across loan sizes in
+  // mortgagePayoffFloorEdges.logic.test.ts [F6].
 });

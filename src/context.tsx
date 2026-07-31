@@ -2743,15 +2743,24 @@ export function goalView(s: GoalViewInput) {
   // truly rounds to $0 (facts-unset has no original to measure, so it's never "100% gone");
   // anything still owing is floored at 99, so a residual "$X to go" never sits next to "100% gone".
   // The progress Bar still uses the raw paidPct; only this headline label is clamped.
+  // WHIT-391: also floor the label at 1 whenever there's genuine (rounded-dollar) paydown — the
+  // mirror of the 99-clamp above. That floors the TOP so "$X to go" never reads "100% gone"; this
+  // floors the BOTTOM so a real "$X paid" figure never reads "0% gone".
   const balanceCleared = factsReady && balanceKnown && Math.round(liveBalance!) === 0;
-  const paidPctLabel = balanceCleared ? 100 : Math.min(99, Math.round(paidPct));
+  // One predicate for "is there genuine (rounded-dollar) paydown?", used BOTH to floor the label
+  // and to gate the block (paidDownReady). Sharing it makes "block shown ⟺ label >= 1" structural
+  // — the two can never drift out of sync.
+  const hasRoundedPaydown = Math.round(paidOff ?? 0) > 0;
+  const paidPctLabel = balanceCleared
+    ? 100
+    : Math.min(99, Math.max(Math.round(paidPct), hasRoundedPaydown ? 1 : 0));
 
   // WHIT-372: the single "is there genuine paydown to show?" flag, shared by both screens so the
   // hero and the card can't drift on it (the card already gated on this; the hero didn't). False
   // when the balance is at or above the original — no dollars paid down — so a redraw/refinance
-  // that grew the loan never shows an incoherent "$1 paid / 0% gone" block; the screen falls back
-  // to a plain "balance owing" state instead. Rounded to whole dollars, matching the displayed figure.
-  const paidDownReady = factsReady && balanceKnown && Math.round(paidOff ?? 0) > 0;
+  // that grew the loan never shows an incoherent "$1 paid" block; the screen falls back to a plain
+  // "balance owing" state instead.
+  const paidDownReady = factsReady && balanceKnown && hasRoundedPaydown;
 
   return {
     factsReady,
