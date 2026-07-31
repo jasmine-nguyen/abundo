@@ -39,3 +39,22 @@ it('renders the paid-down-so-far hero with the real paid-off figure and progress
   // The set-up prompt must NOT show — this is the real-progress state, not the unset one.
   expect(screen.queryByText('Set up loan details →')).toBeNull();
 });
+
+// WHIT-372 — the coherence fix + fail-on-revert for the drift the card names. The hero used a
+// bare Math.round(paidPct), so a nearly-paid loan showed the incoherent "100% gone" next to
+// "$1,000 to go". Reading the shared clamped goalView.paidPctLabel, a still-owing balance now
+// reads "99% gone". Reverting app/mortgage.tsx to Math.round(g.paidPct) reddens this.
+it('a nearly-paid balance shows "99% gone", never "100% gone" while a balance is owing', () => {
+  mockGoal = makeGoalData({ homeLoan: { balance: 1000, asOf: '2026-07-04T00:00:00Z' } });
+  render(<Mortgage />);
+  expect(screen.getByText('99% gone')).toBeTruthy();       // round(99.8)=100 -> clamped to 99
+  expect(screen.queryByText('100% gone')).toBeNull();      // never 100 while $1,000 is owing
+  expect(screen.getByText('$1,000 to go')).toBeTruthy();
+});
+
+it('a truly $0 balance shows "100% gone" — the label matches the "$0 to go" figure', () => {
+  mockGoal = makeGoalData({ homeLoan: { balance: 0, asOf: '2026-07-04T00:00:00Z' } });
+  render(<Mortgage />);
+  expect(screen.getByText('100% gone')).toBeTruthy();
+  expect(screen.getByText('$0 to go')).toBeTruthy();
+});

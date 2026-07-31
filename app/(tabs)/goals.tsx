@@ -46,10 +46,6 @@ export default function Goals() {
   // Gate on the DISPLAYED whole-dollar figure (what fmt shows), not the raw feed float: a
   // sub-dollar paydown rounds to "$0" and has no honest headline, so it stays on the plain line.
   const mortgageRich = mortgage.factsReady && mortgage.balanceKnown && Math.round(paidDown) > 0;
-  // "% gone" reads 100 only when the balance rounds to $0 — matching the "$0 to go" the card
-  // shows; anything still owing rounds to at most 99, never a "100% gone" next to "$1,000 to go".
-  const balanceCleared = mortgage.balanceKnown && Math.round(homeLoan.balance!) === 0;
-  const paidPctLabel = balanceCleared ? 100 : Math.min(99, Math.round(mortgage.paidPct));
 
   // Load-on-focus, staleness-gated (like Budgets) so tab-hopping doesn't refetch every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
@@ -105,7 +101,7 @@ export default function Goals() {
                 <Text style={styles.mortgageEyebrow}>PAID DOWN SO FAR</Text>
                 <View style={styles.mortgageFigureRow}>
                   <Text style={styles.mortgageBig} numberOfLines={1}>{fmt(paidDown)}</Text>
-                  <Text style={styles.mortgagePct}>{paidPctLabel}% gone</Text>
+                  <Text style={styles.mortgagePct}>{mortgage.paidPctLabel}% gone</Text>
                 </View>
                 <View style={{ marginTop: 12 }}>
                   <Bar pct={mortgage.paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={11} />

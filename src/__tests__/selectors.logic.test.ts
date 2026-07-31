@@ -114,6 +114,35 @@ describe('goalView', () => {
     expect(v.paidPct).toBe(0);
   });
 
+  // WHIT-372: the shared, coherence-clamped "% gone" headline label. One source of truth for
+  // both the Goals-hub card and the /mortgage hero — it must never read 100 while a balance is
+  // still owing, but the raw paidPct (which the progress bar uses) stays untouched.
+  it('a nearly-paid balance floors the label at 99 while the raw paidPct stays ~99.8', () => {
+    // original 500000, balance 1000 -> paidPct 99.8 rounds to 100; the label clamps to 99 so it
+    // never says "100% gone" next to "$1,000 to go". The bar value (paidPct) is NOT clamped.
+    const v = goalView(makeState({ homeLoan: { balance: 1000, asOf: null } }));
+    expect(v.paidPctLabel).toBe(99);
+    expect(v.paidPct).toBeCloseTo(99.8, 5);
+  });
+
+  it('a truly $0 balance reads 100% gone', () => {
+    const v = goalView(makeState({ homeLoan: { balance: 0, asOf: null } }));
+    expect(v.paidPctLabel).toBe(100);
+  });
+
+  it('a residual-cents balance that rounds to $0 reads 100% gone (matches the "$0 to go" figure)', () => {
+    // balance 0.43 shows as "$0 to go"; the label keys off the rounded balance, so it says 100 —
+    // not the 99 the raw clamp alone would give — so figure and label agree.
+    const v = goalView(makeState({ homeLoan: { balance: 0.43, asOf: null } }));
+    expect(v.paidPctLabel).toBe(100);
+  });
+
+  it('a mid-range balance is unclamped: the floor only bites at the very top', () => {
+    // balance 430000 -> paidPct 14 -> label 14 (Math.min(99, 14) is a no-op here).
+    const v = goalView(makeState({ homeLoan: { balance: 430000, asOf: null } }));
+    expect(v.paidPctLabel).toBe(14);
+  });
+
   it('usable equity computes to exactly 0 (balance == property×LVR): 0, not null; depositPct null (no target)', () => {
     // homeValue 770000 × lvr 0.8 = 616000; a balance of 616000 -> equity exactly 0.
     const v = goalView(makeState({ homeLoan: { balance: 616000, asOf: null } }));

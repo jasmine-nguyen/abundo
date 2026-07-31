@@ -2738,10 +2738,18 @@ export function goalView(s: GoalViewInput) {
       ? Math.max(0, Math.min(100, (usableEquity / depositTarget) * 100))
       : null;
 
+  // WHIT-372: the coherence-clamped "% gone" headline label, shared by the Goals-hub card and
+  // the /mortgage hero so they can't drift. Reads 100 ONLY when the loan is set up AND the balance
+  // truly rounds to $0 (facts-unset has no original to measure, so it's never "100% gone");
+  // anything still owing is floored at 99, so a residual "$X to go" never sits next to "100% gone".
+  // The progress Bar still uses the raw paidPct; only this headline label is clamped.
+  const balanceCleared = factsReady && balanceKnown && Math.round(liveBalance!) === 0;
+  const paidPctLabel = balanceCleared ? 100 : Math.min(99, Math.round(paidPct));
+
   return {
     factsReady,
     liveBalance, balanceKnown, balanceLabel: balanceKnown ? fmt(liveBalance!) : '—',
-    original, paidOff, paidPct,
+    original, paidOff, paidPct, paidPctLabel,
     usableEquity, depositTarget, depositPct,
     baseRepay, extra, contribution,
   };
