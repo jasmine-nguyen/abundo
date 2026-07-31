@@ -10,9 +10,10 @@ import { NativeDateField } from '../src/components/NativeDateField';
 import { parseAmount, numText } from '../src/numutil';
 import type { LoanFactsInput } from '../src/api';
 
-// Server dollar ceiling mirrored from lambda_api/handler.py set_loanfacts (LOANFACTS_FIELD_MAX) —
+// Server dollar ceiling mirrored from lambda_api/constants.py (LOANFACTS_FIELD_MAX) —
 // kept here so the form blocks a too-large amount with a friendly message before any round-trip,
-// instead of a 400 + generic save-error toast.
+// instead of a 400 + generic save-error toast. Kept in sync by
+// tests/lambda_api/test_loanfacts_ceiling_sync.py (WHIT-392).
 const LOANFACTS_FIELD_MAX = 1_000_000_000;
 
 export default function Loan() {
