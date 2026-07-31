@@ -39,8 +39,9 @@ def _to_client(milestones: list) -> list:
 
     Skips any milestone missing a field or with a non-numeric targetBalance, so a legacy or
     partially-written row degrades to a shorter list instead of 500ing the client read
-    (WHIT-383). The poller reads through get_milestones_raw, which does NOT use this and
-    stays deliberately fail-loud on a bad row (shared/milestones.py)."""
+    (WHIT-383). The poller reads through get_milestones_raw, which does NOT use this; its own
+    per-row skip lives in shared/milestones._resolve_plan (WHIT-387), so both read paths now
+    degrade a bad row rather than raise."""
     # A corrupt row could store `milestones` as a non-list (a scalar isn't iterable); guard
     # the iteration itself so the client read degrades to empty instead of 500ing (WHIT-383).
     if not isinstance(milestones, list):

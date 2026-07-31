@@ -19,7 +19,7 @@ only moves down, so the crossing is never re-detected to retry).
 import logging
 import math
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from push import send_push
 
@@ -70,6 +70,12 @@ def _plan_marker(milestone: dict) -> str:
     back to the amount-only marker rather than raise, which the poller would swallow into a
     silently-skipped celebration."""
     amount = Decimal(milestone["targetBalance"]).quantize(Decimal("0.01"))
+    # A NaN target quantizes to NaN WITHOUT raising (Infinity does raise), so it would slip
+    # past _resolve_plan's per-row skip and only blow up later in crossed_milestones' Decimal
+    # comparison — outside that guard, back in the poller's swallow (WHIT-387). Reject any
+    # non-finite target here so the corrupt row is skipped + logged like every other.
+    if not amount.is_finite():
+        raise ValueError(f"non-finite milestone target: {milestone['targetBalance']!r}")
     milestone_id = milestone.get("id")
     if milestone_id is None:
         return f"{_BAL_PREFIX}{amount}"
@@ -108,10 +114,39 @@ def _resolve_plan(milestone_repo=None, scope=None):
         return list(MILESTONES), False
     if stored is None:
         return list(MILESTONES), False
-    return [
-        PlanMilestone(label=m["label"], target_balance=m["targetBalance"], key=_plan_marker(m))
-        for m in stored
-    ], True
+    # A corrupt whole-plan write (a non-list scalar isn't iterable) degrades to an authoritative
+    # EMPTY plan, not the default: an empty plan celebrates nothing and — via the WHIT-386
+    # `and plan` guard — sweeps no markers, whereas falling back to the default would send a
+    # WRONG default celebration for what is really corrupt data. Distinct alarm token so a
+    # corrupt plan is visible, not silently eaten (WHIT-387).
+    if not isinstance(stored, list):
+        logger.error("MILESTONE_PLAN_MALFORMED stored milestone plan is not a list, treating as empty: %r", stored)
+        return [], True
+    # Resolve row by row so ONE corrupt saved row (missing label/targetBalance, non-dict, or a
+    # non-numeric target) is skipped + logged rather than raising the whole poll's celebration
+    # into the poller's best-effort swallow — which would drop every good row's push permanently,
+    # since the balance only moves down so the crossing is never re-detected (WHIT-387). Mirrors
+    # the client-read skip in repository_milestone._to_client.
+    #
+    # target_balance is COERCED to a Decimal here (not stored raw): a legacy/direct-write row can
+    # hold the target as a string ("120000"), which crossed_milestones would later compare as
+    # Decimal > str -> TypeError OUTSIDE this loop, back in the poller's swallow — the same drop.
+    # Coercing here (like _to_client's float() cast) both fixes that and celebrates such a row
+    # rather than diverging from the client, which already shows it. After coercion + the is_finite
+    # guard below, target_balance is always a FINITE Decimal, so the comparison can never raise.
+    #
+    # The caught tuple: KeyError (missing field), TypeError (non-dict row / Decimal(None)), and
+    # InvalidOperation (a non-numeric target string, which Decimal() raises as an ArithmeticError,
+    # not a ValueError). A NaN target is finite-checked in _plan_marker (quantize accepts NaN
+    # without raising) and re-raised there as ValueError; an Infinity target raises InvalidOperation
+    # at _plan_marker's quantize before the guard. Both end up skipped + logged like any bad row.
+    plan = []
+    for row in stored:
+        try:
+            plan.append(PlanMilestone(label=row["label"], target_balance=Decimal(row["targetBalance"]), key=_plan_marker(row)))
+        except (KeyError, TypeError, ValueError, InvalidOperation) as e:
+            logger.error("MILESTONE_ROW_MALFORMED skipping a corrupt saved milestone row, celebrating the rest: %r (%s)", row, e)
+    return plan, True
 
 
 def resolve_plan(milestone_repo=None, scope=None) -> list:
@@ -119,8 +154,10 @@ def resolve_plan(milestone_repo=None, scope=None) -> list:
     they have one, else the built-in default MILESTONES (WHIT-384). Falls back to the default
     when the plan is UNSET (None) or the READ fails — a store hiccup must degrade to the
     default, never skip the celebration (the balance only moves down, so a dropped crossing is
-    never re-detected). The saved plan is otherwise used as-is: a malformed stored row is left
-    to surface (fail-loud) rather than send a WRONG default celebration in its place, and an
+    never re-detected). Within a genuine saved list, a malformed row (missing label/targetBalance,
+    non-dict, or a non-numeric target) is skipped + logged with a distinct alarm token and the
+    rest still celebrate — never a WRONG default celebration in its place, and never the whole
+    poll's push lost to the poller's swallow (WHIT-387). An
     empty list is a genuinely empty plan — reachable only by a direct write, since the API
     rejects an empty save. A None repo (every pre-WHIT-384 caller) also gets the default."""
     return _resolve_plan(milestone_repo, scope)[0]

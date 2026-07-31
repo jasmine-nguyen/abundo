@@ -303,3 +303,36 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_missed" {
   alarm_description   = "A home-loan repayment landed but no instant repayment push fired around then — caught either by the balance dropping (WHIT-316) or by the repayment transaction having no matching push (WHIT-317, source=txn). The push may be silently down (signing secret / Up token / re-linked account / deregistered webhook rotated or broken)."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
+
+# A corrupt saved milestone row (missing label/targetBalance, non-dict, or a non-numeric
+# target) is now skipped so the rest of the plan still celebrates, but the skip must be VISIBLE
+# rather than silently eating a milestone push (WHIT-387). _resolve_plan logs one of two tokens
+# on the balance-poller log group: MILESTONE_ROW_MALFORMED (a single bad row) or
+# MILESTONE_PLAN_MALFORMED (the whole stored plan isn't a list). The `?a ?b` pattern is an OR,
+# so either fires the metric. Keep this pattern and shared/milestones.py in lockstep.
+resource "aws_cloudwatch_log_metric_filter" "milestone_row_malformed" {
+  name           = "${var.project_name}-milestone-row-malformed"
+  log_group_name = aws_cloudwatch_log_group.homeloan_request.name
+  pattern        = "?MILESTONE_ROW_MALFORMED ?MILESTONE_PLAN_MALFORMED"
+
+  metric_transformation {
+    name          = "MilestoneRowMalformed"
+    namespace     = "${var.project_name}/Milestones"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "milestone_row_malformed" {
+  alarm_name          = "${var.project_name}-milestone-row-malformed"
+  namespace           = "${var.project_name}/Milestones"
+  metric_name         = "MilestoneRowMalformed"
+  statistic           = "Sum"
+  period              = 86400
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "A saved mortgage-milestone row was corrupt and got skipped during the daily balance poll (WHIT-387). The rest of the plan still celebrated, but the stored plan has a bad row (missing label/targetBalance, non-dict, or a non-numeric target) that should be inspected and re-saved."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}

@@ -7,9 +7,10 @@ re-arm, and a cent boundary. This file adds ONLY the gaps it left:
   - a mixed already-fired + fresh custom plan (only fresh fire/mark);
   - a custom target EQUAL to a default (544000) not colliding with a stale "0" sprint marker;
   - the empty-list ([]) vs unset (None) semantics — [] means "never celebrate" (FLAGGED);
-  - a malformed stored row (missing label/targetBalance) — does the mapping swallow or surface?
+  - a malformed stored row (missing label/targetBalance) — skipped + logged, the rest celebrate (WHIT-387).
 """
 
+import logging
 from decimal import Decimal
 
 import pytest
@@ -167,31 +168,78 @@ def test_empty_plan_never_celebrates_even_on_a_huge_paydown(shared, recorder):
     assert notify.fired == set()
 
 
-# --- malformed stored row: does the mapping swallow (fall back) or surface? -----------------
+# --- malformed stored row: skipped + logged, the rest celebrate (WHIT-387) ------------------
 
-def test_malformed_row_missing_label_surfaces_not_swallowed(shared):
-    # The try/except in resolve_plan wraps ONLY the get_milestones_raw() read, NOT the
-    # PlanMilestone comprehension. So a malformed row (missing "label") raises KeyError OUT of
-    # resolve_plan — it does NOT fall back to the default. Characterises the current behaviour.
+def test_malformed_row_missing_label_is_skipped_not_raised(shared):
+    # A row missing "label" no longer raises out of resolve_plan — it is skipped (WHIT-387).
+    # A lone bad row leaves an empty plan; it does NOT fall back to the default.
     bad = FakeMilestoneRepo(stored=[{"id": "x", "targetBalance": Decimal("480000"), "targetDate": "2027-01-01"}])
-    with pytest.raises(KeyError):
-        shared.milestones.resolve_plan(bad)
+    assert shared.milestones.resolve_plan(bad) == []
 
 
-def test_malformed_row_missing_target_balance_surfaces(shared):
+def test_malformed_row_missing_target_balance_is_skipped_not_raised(shared):
     bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetDate": "2027-01-01"}])
-    with pytest.raises(KeyError):
+    assert shared.milestones.resolve_plan(bad) == []
+
+
+def test_bad_row_among_good_ones_is_skipped_and_the_rest_celebrate(shared, recorder):
+    # The core WHIT-387 fix: one corrupt row must not throw away the whole plan's celebration.
+    # good + BAD (no targetBalance) + good -> the two good rows resolve in order and the furthest
+    # good one celebrates. Fail-on-revert lever: revert the per-row skip -> the plan raises -> no
+    # push -> this goes red.
+    repo = FakeMilestoneRepo(stored=[
+        _row("Deposit", "480000", id="a"),
+        {"id": "bad", "label": "Broken", "targetDate": "2027-01-01"},   # no targetBalance
+        _row("Nearly", "120000", id="c"),
+    ])
+    plan = shared.milestones.resolve_plan(repo)
+    assert [m.label for m in plan] == ["Deposit", "Nearly"]     # bad row dropped, order kept
+    sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo)
+    assert sent == 1
+    assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"   # furthest good (120k)
+    assert notify.fired == {"id:a:bal:480000.00", "id:c:bal:120000.00"}
+
+
+def test_bad_row_logs_a_distinct_alarm_line(shared, caplog):
+    # The skip must be VISIBLE (the CloudWatch alarm watches this token), not a silent drop.
+    bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetDate": "2027-01-01"}])
+    with caplog.at_level(logging.ERROR, logger="milestones"):
         shared.milestones.resolve_plan(bad)
+    assert any("MILESTONE_ROW_MALFORMED" in r.message and r.levelno == logging.ERROR
+               for r in caplog.records)
 
 
-def test_malformed_row_propagates_through_notify_to_the_pollers_outer_guard(shared, recorder):
-    # notify calls resolve_plan first, so a malformed row surfaces from notify too — the
-    # celebration is skipped for the WHOLE poll (only the poller's outer except keeps the
-    # balance stored). No push, no default fallback.
-    bad = FakeMilestoneRepo(stored=[{"id": "x", "targetBalance": Decimal("480000"), "targetDate": "2027-01-01"}])
-    with pytest.raises(KeyError):
-        shared.milestones.notify_milestone_crossing(
-            Decimal("500000"), Decimal("100000"),
-            loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
-            notify_repo=FakeNotifyRepo(), milestone_repo=bad)
+def test_all_rows_bad_is_empty_and_never_wipes_markers(shared, recorder):
+    # Every row corrupt -> empty plan. It must behave like a genuine empty plan: no push, and
+    # crucially NOT look like an authoritative-empty that sweeps the "already celebrated" record
+    # (the WHIT-386 interaction). Seeds live custom markers and proves remove is never called.
+    repo = FakeMilestoneRepo(stored=[{"id": "x"}, {"label": "y"}])
+    notify = FakeNotifyRepo(fired={"id:a:bal:480000.00", "id:c:bal:120000.00"})
+    sent, notify = _notify(shared, old="600000", new="100000", milestone_repo=repo, notify=notify)
+    assert sent == 0
     assert recorder == []
+    assert notify.removed == set()                              # WHIT-386 guard held
+    assert notify.fired == {"id:a:bal:480000.00", "id:c:bal:120000.00"}   # record intact
+
+
+def test_previously_fired_row_now_corrupt_is_swept_not_re_fired(shared, recorder):
+    # A row that celebrated earlier and is NOW corrupt: it's skipped, so its stored marker is
+    # absent from the resolved plan. With a good row keeping the plan non-empty, the WHIT-385
+    # reconcile sweeps the now-orphan marker. Harmless — balance only falls, so it can't re-cross
+    # and re-fire. Proves the sweep happens without a crash.
+    repo = FakeMilestoneRepo(stored=[
+        _row("Good", "120000", id="c"),
+        {"id": "gone", "label": "Was celebrated", "targetDate": "2027-01-01"},   # now corrupt
+    ])
+    notify = FakeNotifyRepo(fired={"id:c:bal:120000.00", "id:gone:bal:480000.00"})
+    sent, notify = _notify(shared, old="130000", new="119000", milestone_repo=repo, notify=notify)
+    assert "id:gone:bal:480000.00" in notify.removed            # orphan marker swept
+    assert recorder == []                                       # already-fired good row: no re-fire
+
+
+def test_non_list_stored_plan_is_empty_not_raised(shared, caplog):
+    # A corrupt whole-plan write stored as a non-iterable scalar (not merely a bad row) must
+    # degrade to an empty plan via the isinstance guard, not raise, and log the plan-level token.
+    with caplog.at_level(logging.ERROR, logger="milestones"):
+        assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored=5)) == []
+    assert any("MILESTONE_PLAN_MALFORMED" in r.message for r in caplog.records)

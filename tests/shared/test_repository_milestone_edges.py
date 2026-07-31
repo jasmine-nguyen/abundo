@@ -9,8 +9,9 @@ Gaps covered (verified absent from the implementer's suite first):
   [R-KEY]    the stored row key is pk=MILESTONES / sk=<scope> (seam lives in the sort key).
 
 WHIT-383 read-hardening (legacy/partial rows): the client read tolerates a row with no
-`milestones` attribute and skips a milestone missing/null-ing a field, while the poller's
-raw read stays deliberately fail-loud.
+`milestones` attribute and skips a milestone missing/null-ing a field. The poller's RAW read
+still returns rows verbatim, but its own per-row skip now lives in shared/milestones._resolve_plan
+(WHIT-387), so the poller path degrades a bad row rather than raising.
 """
 
 from decimal import Decimal
@@ -110,8 +111,9 @@ def test_client_read_all_partial_returns_empty_list(milestone_repo):
 
 
 def test_raw_read_does_not_skip_partial_milestones(milestone_repo):
-    # The poller path is NOT hardened: get_milestones_raw returns the partial milestone
-    # verbatim, so shared/milestones.py can stay deliberately fail-loud on it (WHIT-384).
+    # The RAW read returns rows verbatim (the per-row skip lives in _resolve_plan, not the
+    # repo, since WHIT-387). get_milestones_raw hands back the partial milestone untouched;
+    # shared/milestones._resolve_plan is where it gets skipped.
     partial = {"id": "bad", "label": "no balance", "targetDate": "2030-01-01"}
     _store_raw_row(milestone_repo, [_COMPLETE, partial])
     raw = milestone_repo.get_milestones_raw()
@@ -119,13 +121,13 @@ def test_raw_read_does_not_skip_partial_milestones(milestone_repo):
     assert raw[1] == partial
 
 
-def test_poller_resolve_stays_fail_loud_on_a_partial_row(shared, milestone_repo):
-    # Regression pin for the preserved contract: a present-but-partial stored milestone must
-    # still raise out of resolve_plan (fail-loud), never silently degrade to the default plan.
+def test_poller_resolve_skips_a_partial_row_not_raises(shared, milestone_repo):
+    # WHIT-387: a present-but-partial stored milestone is now SKIPPED by resolve_plan, not
+    # raised into the poller's swallow. A lone bad row leaves an empty plan; it never falls
+    # back to the default (which would send a wrong default celebration for corrupt data).
     partial = {"id": "bad", "label": "no balance", "targetDate": "2030-01-01"}  # no targetBalance
     _store_raw_row(milestone_repo, [partial])
-    with pytest.raises(KeyError):
-        shared.milestones.resolve_plan(milestone_repo)
+    assert shared.milestones.resolve_plan(milestone_repo) == []
 
 
 # --- WHIT-383 read-hardening: `milestones` stored as a non-list -----------------------------
@@ -170,10 +172,9 @@ def test_client_read_preserves_order_of_survivors(milestone_repo):
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["m2", "m1"]
 
 
-def test_poller_resolve_fail_loud_on_non_list_milestones(shared, milestone_repo):
-    # The poller path is NOT hardened: a `milestones` stored as a dict must raise out of
-    # resolve_plan (fail-loud), never silently degrade to the default plan. Iterating the dict
-    # yields its keys (strings), so the plan comprehension does "m1"["label"] -> TypeError.
+def test_poller_resolve_degrades_non_list_milestones_to_empty(shared, milestone_repo):
+    # WHIT-387: a `milestones` stored as a non-list (a dict here) is not iterable as rows, so
+    # resolve_plan's isinstance guard degrades it to an empty plan rather than raising into the
+    # poller's swallow. Still never the default (no wrong default celebration for corrupt data).
     _store_raw_row(milestone_repo, {"m1": _COMPLETE})
-    with pytest.raises(TypeError):
-        shared.milestones.resolve_plan(milestone_repo)
+    assert shared.milestones.resolve_plan(milestone_repo) == []
