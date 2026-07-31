@@ -10,6 +10,11 @@ import { NativeDateField } from '../src/components/NativeDateField';
 import { parseAmount, numText } from '../src/numutil';
 import type { LoanFactsInput } from '../src/api';
 
+// Server dollar ceiling mirrored from lambda_api/handler.py set_loanfacts (LOANFACTS_FIELD_MAX) —
+// kept here so the form blocks a too-large amount with a friendly message before any round-trip,
+// instead of a 400 + generic save-error toast.
+const LOANFACTS_FIELD_MAX = 1_000_000_000;
+
 export default function Loan() {
   const s = useAppContext(); // showToast + saveLoanFacts (write) stay on the store
   const insets = useSafeAreaInsets();
@@ -59,9 +64,19 @@ export default function Loan() {
       s.showToast('Please fill in every field with a valid amount.');
       return;
     }
+    // Ceiling guard: the server rejects any dollar field above LOANFACTS_FIELD_MAX. Warn here
+    // with a specific message rather than letting it 400 into the generic save-error toast.
+    if ([next.original, next.homeValue, next.baseRepay, next.extra].some((v) => v > LOANFACTS_FIELD_MAX)) {
+      s.showToast('Keep each amount under $1B.');
+      return;
+    }
     // The deposit target is optional, but a filled-in value must be a valid amount > 0.
     if (next.depositTarget != null && !(Number.isFinite(next.depositTarget) && next.depositTarget > 0)) {
       s.showToast('Enter a valid deposit target, or leave it blank.');
+      return;
+    }
+    if (next.depositTarget != null && next.depositTarget > LOANFACTS_FIELD_MAX) {
+      s.showToast('Keep the deposit target under $1B.');
       return;
     }
     setSaving(true);
