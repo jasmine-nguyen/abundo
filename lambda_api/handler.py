@@ -28,6 +28,7 @@ from constants import (
     LOANFACTS_PATH,
     MAX_PAGE_SIZE,
     MILESTONES_PATH,
+    MILESTONES_SUGGEST_PATH,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
     REPAYMENT_PATH,
@@ -87,6 +88,8 @@ from spend import (
     summarise_uncategorized,
 )
 from insights_ai import AnthropicError, generate_suggestions
+from milestone_ai import suggest_pacing
+from paydown import amortization_curve, months_to_payoff, required_monthly_payment, round_dollars
 from encoders import DecimalEncoder
 import base64
 import hashlib
@@ -94,6 +97,7 @@ import json
 import logging
 import math
 import re
+import unicodedata
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -224,6 +228,12 @@ def lambda_handler(event, context):
 
         if path == MILESTONES_PATH and method == "PUT":
             return set_milestones(event, MilestoneRepository())
+
+        # AI "Suggest a plan" (WHIT-370): server computes the real paydown numbers, Claude
+        # only chooses the pacing + writes word-only labels. Drafts into the editor; never
+        # saves. Exact path, disjoint from "/milestones", so route order is irrelevant.
+        if path == MILESTONES_SUGGEST_PATH and method == "POST":
+            return suggest_milestones(event, HomeLoanBalanceRepository(), LoanFactsRepository())
 
         if path == PAYCYCLE_PATH and method == "GET":
             return _json_response(200, get_paycycle_view(PayCycleRepository()))
@@ -2140,6 +2150,214 @@ def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
 
     saved = repo.set_milestones(cleaned, current_scope(event))
     return _json_response(200, saved)
+
+
+# "Suggest a plan" limits (WHIT-370). Handler literals, not shared constants (WHIT-136).
+_SUGGEST_CURVE_MAX_MONTHS = 1200          # 100 years — a hard bound on the curve length
+_SUGGEST_MAX_CANDIDATES = 36              # cap the choice set handed to the model (bounds cost)
+# The honesty scrub: a label may contain NO figure of any kind — the model is told this, but
+# THIS server check is the guarantee, not the prompt. "Figure" is broad on purpose (a hole here
+# is a broken promise): any Unicode numeric char (0-9 AND ½ ¾ ² ① Ⅳ …), any currency symbol
+# (Unicode category "Sc": $ £ € ¥ ₹ ¢ …), or a percent sign (ASCII or fullwidth).
+_SUGGEST_ERROR = {"error": "couldn't draft a plan, please try again"}
+
+
+def _is_figure_char(ch: str) -> bool:
+    return ch.isnumeric() or unicodedata.category(ch) == "Sc" or ch in "%％"
+
+
+def _months_between(start: date, target: date) -> int:
+    """Whole calendar months from `start` to `target` (both compared at month granularity)."""
+    return (target.year - start.year) * 12 + (target.month - start.month)
+
+
+def _downsample_curve(curve: list, max_points: int) -> list:
+    """Thin `curve` to at most `max_points` evenly-spaced candidates, ALWAYS keeping the final
+    payoff point. Keeps the model's choice set small without inventing a point — every candidate
+    is a real curve entry."""
+    if len(curve) <= max_points:
+        return list(curve)
+    step = len(curve) / max_points
+    picked = [curve[int(i * step)] for i in range(max_points)]
+    picked[-1] = curve[-1]
+    return picked
+
+
+def _suggest_model_input(candidates: list, target_date: str, payoff_date: str) -> dict:
+    """The numbers-only blob handed to the model (WHIT-370): each candidate with its index +
+    real balance + date, plus the target and real projected payoff dates. NO account ids, NO
+    transactions — matches insights_ai's privacy discipline."""
+    return {
+        "targetDate": target_date,
+        "payoffDate": payoff_date,
+        "candidates": [
+            {"index": i, "balance": c["balance"], "date": c["date"].isoformat()}
+            for i, c in enumerate(candidates)
+        ],
+    }
+
+
+def _clean_pacing_indices(pacing: list, candidate_count: int) -> list:
+    """Sanitise the model's chosen indexes (WHIT-370): keep only integers in range, de-dup, and
+    sort ascending. Trust the SORT for order, never the model. Returns [] when nothing survives."""
+    indexes = []
+    for entry in pacing:
+        index = entry.get("index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        if 0 <= index < candidate_count:
+            indexes.append(index)
+    return sorted(set(indexes))
+
+
+def _clean_suggest_label(label):
+    """Scrub a model label to WORDS ONLY (WHIT-370): drop every figure char (see _is_figure_char),
+    collapse ALL whitespace runs — newlines/tabs included — to single spaces, trim. Return None
+    when nothing usable survives or it exceeds the label cap — the caller drops that milestone.
+    This is the honesty guarantee, not the prompt."""
+    if not isinstance(label, str):
+        return None
+    stripped = "".join(ch for ch in label if not _is_figure_char(ch))
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    if not stripped or len(stripped) > _MILESTONE_LABEL_MAX_LEN:
+        return None
+    return stripped
+
+
+def _build_suggested_milestones(indexes: list, candidates: list, label_by_index: dict):
+    """Map the chosen indexes back to REAL milestones {label, targetBalance, targetDate} — every
+    number comes from OUR candidate curve, never the model (WHIT-370). Drop a milestone whose
+    label scrubs empty; return None (soft failure) when none survive or the result isn't strictly
+    paid-down (belt-and-braces vs set_milestones' own check)."""
+    out = []
+    for index in indexes:
+        label = _clean_suggest_label(label_by_index.get(index))
+        if label is None:
+            continue
+        point = candidates[index]
+        out.append({
+            "label": label,
+            "targetBalance": point["balance"],
+            "targetDate": point["date"].isoformat(),
+        })
+    if not out:
+        return None
+    for prev, cur in zip(out, out[1:]):
+        if not (cur["targetBalance"] < prev["targetBalance"] and cur["targetDate"] > prev["targetDate"]):
+            return None
+    return out
+
+
+def _shortfall(balance, monthly_rate, current_payment, months_until_target, achievable_payoff_date):
+    """The honest "you'd need ~$X/month more" signal (WHIT-370): the extra-per-month needed to
+    clear the loan by the target date, plus the date the chosen payment actually reaches (or None
+    when the loan never pays off). requiredExtraMonthly is None when the target date is unusable.
+
+    Measured against `current_payment` = baseRepay + the extraMonthly the user just proposed (NOT
+    baseRepay alone), so it reads as "$X MORE than what you entered" and stays consistent with
+    achievablePayoffDate (same payment) and the client twin (src/context.tsx requiredRepayment)."""
+    required = required_monthly_payment(balance, monthly_rate, months_until_target)
+    required_extra = round_dollars(required - current_payment) if required is not None else None
+    return {"requiredExtraMonthly": required_extra, "achievablePayoffDate": achievable_payoff_date}
+
+
+def suggest_milestones(event: dict, homeloan_repo, loanfacts_repo) -> dict:
+    """POST /milestones/suggest — draft an AI-paced milestone plan with REAL, server-computed
+    numbers (WHIT-370).
+
+    Body: {"targetDate": "YYYY-MM-DD" (future), "extraMonthly": <number in [0, cap]>}. Reads the
+    live mortgage balance + loan facts, computes a real month-by-month paydown curve HERE, hands
+    Claude only those candidate points (numbers only, no PII) to choose the pacing + write
+    word-only labels, then maps its chosen indexes back to our real {label, targetBalance,
+    targetDate}. AI never invents a number and never saves — the client drops the result into the
+    editor for review. Returns {milestones, payoffDate, shortfall}. 409 when the loan isn't set up
+    yet; 502 on an AI failure or an unusable/empty result; 400 on a bad body.
+    """
+    body, error = _parse_json_body(event)
+    if error:
+        return error
+
+    target_date = body.get("targetDate")
+    if not _valid_iso_date(target_date):
+        return _json_response(400, {"error": "targetDate must be a real ISO YYYY-MM-DD date"})
+
+    extra_monthly = body.get("extraMonthly")
+    if not _finite_number(extra_monthly, low=0, high=LOANFACTS_FIELD_MAX):
+        return _json_response(400, {"error": "extraMonthly must be a number between 0 and the cap"})
+
+    facts = loanfacts_repo.get_loanfacts()
+    if facts is None:
+        return _json_response(409, {"error": "set up your loan first"})
+
+    stored = homeloan_repo.get_balance(HOMELOAN_ACCOUNT_ID)
+    if stored is None or stored.get("balance") is None:
+        return _json_response(409, {"error": "loan balance not available yet"})
+
+    # Resolve the owner via the shared multi-tenant seam even though this endpoint never writes
+    # (WHIT-370/375): per-user reads are a one-line change here later. Today it's the shared scope.
+    current_scope(event)
+
+    start = date.today()
+    target = date.fromisoformat(target_date)  # validated above; parse once, reuse below
+    months_until_target = _months_between(start, target)
+    if months_until_target <= 0:
+        return _json_response(400, {"error": "targetDate must be in the future"})
+
+    balance = float(stored["balance"])
+    if balance <= 0:
+        # Already mortgage-free: nothing to plan, and NOT an AI failure. Honest empty result
+        # (no plan, no payoff date to project, no shortfall) rather than a "try again" 502.
+        return _json_response(200, {"milestones": [], "payoffDate": None, "shortfall": None})
+
+    monthly_rate = facts["ratePct"] / 100.0 / 12.0
+    monthly_payment = facts["baseRepay"] + extra_monthly
+
+    payoff_months = months_to_payoff(balance, monthly_rate, monthly_payment)
+    if payoff_months is None or math.ceil(payoff_months) > _SUGGEST_CURVE_MAX_MONTHS:
+        # The payment never clears the balance, OR only clears it past our 100-year horizon (a
+        # payment barely above the monthly interest). Either way it's an honest "this won't pay
+        # it off": no plan, no payoffDate (never report a truncated, still-owing date as payoff),
+        # just the extra/month needed to hit the target date. No AI call.
+        return _json_response(200, {
+            "milestones": [],
+            "payoffDate": None,
+            "shortfall": _shortfall(balance, monthly_rate, monthly_payment, months_until_target, None),
+        })
+
+    max_months = min(int(math.ceil(payoff_months)), _SUGGEST_CURVE_MAX_MONTHS)
+    curve = amortization_curve(balance, monthly_rate, monthly_payment, start_date=start, max_months=max_months)
+    if not curve:
+        return _json_response(502, _SUGGEST_ERROR)
+    candidates = _downsample_curve(curve, _SUGGEST_MAX_CANDIDATES)
+
+    payoff_date = candidates[-1]["date"]
+    shortfall = None
+    if payoff_date > target:
+        shortfall = _shortfall(balance, monthly_rate, monthly_payment, months_until_target, payoff_date.isoformat())
+
+    model_input = _suggest_model_input(candidates, target_date, payoff_date.isoformat())
+    try:
+        pacing = suggest_pacing(model_input)
+    except AnthropicError as e:
+        logger.warning("milestone suggest failed: upstream=%s", e.upstream_status)
+        return _json_response(502, _SUGGEST_ERROR)
+
+    label_by_index = {}
+    for entry in pacing:
+        index = entry.get("index")
+        if index not in label_by_index:
+            label_by_index[index] = entry.get("label")
+    milestones = _build_suggested_milestones(
+        _clean_pacing_indices(pacing, len(candidates)), candidates, label_by_index)
+    if milestones is None:
+        logger.warning("milestone suggest produced no usable milestones")
+        return _json_response(502, _SUGGEST_ERROR)
+
+    return _json_response(200, {
+        "milestones": milestones,
+        "payoffDate": payoff_date.isoformat(),
+        "shortfall": shortfall,
+    })
 
 
 def set_budget(
