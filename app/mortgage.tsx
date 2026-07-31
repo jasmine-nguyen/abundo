@@ -7,6 +7,7 @@ import { Glyph } from '../src/icons';
 import { goalView, paydownView, milestoneView, lastRepaymentView } from '../src/context';
 import { useGoalScreenData } from '../src/queries';
 import { Bar, RetryButton, HeroGradientFill } from '../src/components/ui';
+import { PayoffSummary } from '../src/components/PayoffSummary';
 import { Header } from '../src/components/Header';
 
 // WHIT-233: the home-loan detail screen, relocated out of the Goal tab (which is now the
@@ -40,21 +41,15 @@ export default function Mortgage() {
         <View style={styles.hero}>
           <HeroGradientFill />
           <View style={styles.heroBlob} />
-          {g.factsReady && g.balanceKnown ? (
-            <>
-              <Text style={styles.heroEyebrow}>THE MORTGAGE · PAID DOWN SO FAR</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 7 }}>
-                <Text style={styles.heroBig}>{fmt(g.paidOff!)}</Text>
-                <Text style={styles.heroPct}>{g.paidPctLabel}% gone</Text>
-              </View>
-              <View style={{ marginTop: 16 }}>
-                <Bar pct={g.paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={12} />
-              </View>
-              <View style={styles.heroRow}>
-                <Text style={styles.heroRowL}>{g.balanceLabel} to go</Text>
-                <Text style={styles.heroRowR}>started at {fmt(g.original!)}</Text>
-              </View>
-            </>
+          {g.paidDownReady ? (
+            <PayoffSummary
+              variant="hero"
+              paidOff={g.paidOff!}
+              paidPctLabel={g.paidPctLabel}
+              paidPct={g.paidPct}
+              balanceLabel={g.balanceLabel}
+              original={g.original!}
+            />
           ) : !g.factsReady ? (
             <>
               <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
@@ -75,6 +70,16 @@ export default function Mortgage() {
               <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
               <Text style={[styles.heroSetupBody, { marginTop: 6 }]} accessibilityLiveRegion="polite">Couldn't load your balance.</Text>
               <RetryButton onPress={() => refetch()} label="Retry loading your balance" testID="hero-balance-retry" style={styles.heroSetupBtn} textStyle={styles.heroSetupBtnText} />
+            </>
+          ) : g.balanceKnown ? (
+            // WHIT-372: facts + balance are both loaded, but nothing's genuinely paid down — the
+            // balance is at or above the original (a fresh loan, or a redraw/refinance that grew
+            // it). Show the real balance owing with an honest "you're at the start" line, never the
+            // incoherent "$1 paid / 0% gone" payoff block the un-gated hero used to render.
+            <>
+              <Text style={styles.heroEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
+              <Text style={[styles.heroBig, { marginTop: 6 }]}>{g.balanceLabel}</Text>
+              <Text style={styles.heroSetupBody}>You're at the start — your payoff progress will show here as you pay it down.</Text>
             </>
           ) : (
             // Facts are set, but the live balance hasn't loaded yet — don't imply
@@ -275,10 +280,6 @@ const styles = StyleSheet.create({
   heroBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: 'rgba(255,255,255,.1)' },
   heroEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: 'rgba(20,18,50,.62)', letterSpacing: 0.3 },
   heroBig: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },
-  heroPct: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.heroInk2 },
-  heroRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
-  heroRowL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: C.heroInk2 },
-  heroRowR: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
   heroSetupBody: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.heroInk2, lineHeight: 20, marginTop: 10 },
   heroSetupBtn: { alignSelf: 'flex-start', backgroundColor: 'rgba(21,18,58,.18)', borderRadius: 11, paddingVertical: 9, paddingHorizontal: 14, marginTop: 14 },
   heroSetupBtnText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.heroInk },

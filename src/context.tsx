@@ -2746,10 +2746,17 @@ export function goalView(s: GoalViewInput) {
   const balanceCleared = factsReady && balanceKnown && Math.round(liveBalance!) === 0;
   const paidPctLabel = balanceCleared ? 100 : Math.min(99, Math.round(paidPct));
 
+  // WHIT-372: the single "is there genuine paydown to show?" flag, shared by both screens so the
+  // hero and the card can't drift on it (the card already gated on this; the hero didn't). False
+  // when the balance is at or above the original — no dollars paid down — so a redraw/refinance
+  // that grew the loan never shows an incoherent "$1 paid / 0% gone" block; the screen falls back
+  // to a plain "balance owing" state instead. Rounded to whole dollars, matching the displayed figure.
+  const paidDownReady = factsReady && balanceKnown && Math.round(paidOff ?? 0) > 0;
+
   return {
     factsReady,
     liveBalance, balanceKnown, balanceLabel: balanceKnown ? fmt(liveBalance!) : '—',
-    original, paidOff, paidPct, paidPctLabel,
+    original, paidOff, paidPct, paidPctLabel, paidDownReady,
     usableEquity, depositTarget, depositPct,
     baseRepay, extra, contribution,
   };
