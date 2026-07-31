@@ -45,6 +45,18 @@ def test_required_monthly_payment_matches_the_closed_form(shared):
     assert shared.paydown.required_monthly_payment(balance, i, n) == pytest.approx(expected)
 
 
+def test_reach_date_is_the_payoff_difference(shared):
+    # The primitive the milestone review (WHIT-371) builds on: because amortization is memoryless
+    # (only the current balance matters at a fixed payment), the months to fall from B to a target
+    # T equal months_to_payoff(B) − months_to_payoff(T). Cross-check that difference (ceil'd) against
+    # the discrete month-by-month curve's first month at/below T.
+    balance, target, i, pmt = 500000.0, 400000.0, 0.0574 / 12, 3000.0
+    delta = shared.paydown.months_to_payoff(balance, i, pmt) - shared.paydown.months_to_payoff(target, i, pmt)
+    curve = shared.paydown.amortization_curve(balance, i, pmt, start_date=date(2026, 1, 1), max_months=1200)
+    first_at_or_below = next(point["month_offset"] for point in curve if point["balance"] <= target)
+    assert first_at_or_below == math.ceil(delta)
+
+
 def test_payoff_and_required_are_inverses(shared):
     # required_monthly_payment then months_to_payoff round-trips (the invariant the TS twin
     # documents): pay the required amount and you clear the loan in exactly the given months.

@@ -196,6 +196,10 @@ MILESTONES_PATH = "/milestones"
 # POST-only "Suggest a plan" route (WHIT-370): server computes the numbers, Claude only
 # chooses the pacing + labels. lambda_api-only, like MILESTONES_PATH — no shared mirror.
 MILESTONES_SUGGEST_PATH = "/milestones/suggest"
+# POST-only "Review my plan" route (WHIT-371): server computes each milestone's real
+# projected date at the user's saved pace, Claude only chooses which to flag + writes the
+# word-only reason. lambda_api-only, like MILESTONES_PATH — no shared mirror.
+MILESTONES_REVIEW_PATH = "/milestones/review"
 
 # --- Home loan (live mortgage balance, WHIT-8) -----------------------------
 # API Gateway route path for the home-loan balance endpoint (GET only). The

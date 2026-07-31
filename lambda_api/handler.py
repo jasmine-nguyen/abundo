@@ -28,6 +28,7 @@ from constants import (
     LOANFACTS_PATH,
     MAX_PAGE_SIZE,
     MILESTONES_PATH,
+    MILESTONES_REVIEW_PATH,
     MILESTONES_SUGGEST_PATH,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
@@ -88,8 +89,14 @@ from spend import (
     summarise_uncategorized,
 )
 from insights_ai import AnthropicError, generate_suggestions
-from milestone_ai import suggest_pacing
-from paydown import amortization_curve, months_to_payoff, required_monthly_payment, round_dollars
+from milestone_ai import review_pacing, suggest_pacing
+from paydown import (
+    add_months,
+    amortization_curve,
+    months_to_payoff,
+    required_monthly_payment,
+    round_dollars,
+)
 from encoders import DecimalEncoder
 import base64
 import hashlib
@@ -234,6 +241,13 @@ def lambda_handler(event, context):
         # saves. Exact path, disjoint from "/milestones", so route order is irrelevant.
         if path == MILESTONES_SUGGEST_PATH and method == "POST":
             return suggest_milestones(event, HomeLoanBalanceRepository(), LoanFactsRepository())
+
+        # AI "Review my plan" (WHIT-371): server computes each saved milestone's real projected
+        # date at the user's saved pace, Claude only chooses which behind-schedule ones to flag +
+        # writes the word-only reason. Proposes editable adjustments; never saves. Exact path.
+        if path == MILESTONES_REVIEW_PATH and method == "POST":
+            return review_milestones(
+                event, MilestoneRepository(), HomeLoanBalanceRepository(), LoanFactsRepository())
 
         if path == PAYCYCLE_PATH and method == "GET":
             return _json_response(200, get_paycycle_view(PayCycleRepository()))
@@ -2210,18 +2224,23 @@ def _clean_pacing_indices(pacing: list, candidate_count: int) -> list:
     return sorted(set(indexes))
 
 
-def _clean_suggest_label(label):
-    """Scrub a model label to WORDS ONLY (WHIT-370): drop every figure char (see _is_figure_char),
-    collapse ALL whitespace runs — newlines/tabs included — to single spaces, trim. Return None
-    when nothing usable survives or it exceeds the label cap — the caller drops that milestone.
-    This is the honesty guarantee, not the prompt."""
-    if not isinstance(label, str):
+def _scrub_figures(text, max_len):
+    """Scrub model-written text to WORDS ONLY (WHIT-370/371): drop every figure char (see
+    _is_figure_char), collapse ALL whitespace runs — newlines/tabs included — to single spaces,
+    trim. Return None when nothing usable survives or it exceeds max_len. This is the honesty
+    guarantee, not the prompt."""
+    if not isinstance(text, str):
         return None
-    stripped = "".join(ch for ch in label if not _is_figure_char(ch))
+    stripped = "".join(ch for ch in text if not _is_figure_char(ch))
     stripped = re.sub(r"\s+", " ", stripped).strip()
-    if not stripped or len(stripped) > _MILESTONE_LABEL_MAX_LEN:
+    if not stripped or len(stripped) > max_len:
         return None
     return stripped
+
+
+def _clean_suggest_label(label):
+    """A suggest milestone label — a short phrase, capped at the milestone label max."""
+    return _scrub_figures(label, _MILESTONE_LABEL_MAX_LEN)
 
 
 def _build_suggested_milestones(indexes: list, candidates: list, label_by_index: dict):
@@ -2358,6 +2377,154 @@ def suggest_milestones(event: dict, homeloan_repo, loanfacts_repo) -> dict:
         "payoffDate": payoff_date.isoformat(),
         "shortfall": shortfall,
     })
+
+
+# "Review my plan" limits (WHIT-371). Handler literals, not shared constants (WHIT-136).
+_REVIEW_REASON_MAX_LEN = 200             # a one-line reason is a sentence, not a 2-word label
+_REVIEW_BEHIND_THRESHOLD_MONTHS = 1      # only flag milestones at least a month behind
+_REVIEW_CURVE_MAX_MONTHS = 1200          # 100 years — same horizon bound as suggest
+_REVIEW_ERROR = {"error": "couldn't review your plan, please try again"}
+
+
+def _review_candidates(stored, balance, monthly_rate, monthly_payment, base_months, today):
+    """The behind-schedule milestones worth flagging (WHIT-371). For each saved milestone, the
+    real month its balance is reached at the current pace is base_months - months_to_payoff(target)
+    (amortization is memoryless, so the months-from-here difference is exact); ceil it to the first
+    whole month at/below the target, matching how suggest pins its dates. Keep only milestones that
+    are still ahead of the current balance AND at least the threshold behind their planned date.
+    The stored id + label ride along server-side (never sent to the model)."""
+    candidates = []
+    for milestone in stored:
+        target_balance = float(milestone["targetBalance"])
+        if target_balance >= balance:
+            continue  # already at/below the current balance — reached, nothing to nudge
+        target_months = months_to_payoff(target_balance, monthly_rate, monthly_payment)
+        # target is strictly below the current balance, so it's reached in a positive number of
+        # months → ceil is always >= 1 (no zero/negative offset to guard).
+        month_offset = math.ceil(base_months - target_months)
+        projected_date = add_months(today, month_offset)
+        variance_months = _months_between(date.fromisoformat(milestone["targetDate"]), projected_date)
+        if variance_months < _REVIEW_BEHIND_THRESHOLD_MONTHS:
+            continue  # on track or ahead — not an adjustment
+        candidates.append({
+            "id": milestone["id"],
+            "label": milestone["label"],
+            "targetBalance": target_balance,
+            "targetDate": milestone["targetDate"],
+            "projectedDate": projected_date,
+            "varianceMonths": variance_months,
+        })
+    return candidates
+
+
+def _review_model_input(candidates: list) -> dict:
+    """The numbers-only blob handed to the model (WHIT-371): each behind milestone with its index,
+    target, real projected date, and months behind. NO id, NO label, NO account/transaction data —
+    matches insights_ai's privacy discipline. The model returns only {index, reason}."""
+    return {
+        "milestones": [
+            {
+                "index": i,
+                "targetBalance": c["targetBalance"],
+                "targetDate": c["targetDate"],
+                "projectedDate": c["projectedDate"].isoformat(),
+                "varianceMonths": c["varianceMonths"],
+            }
+            for i, c in enumerate(candidates)
+        ],
+    }
+
+
+def _build_adjustments(indexes: list, candidates: list, reason_by_index: dict):
+    """Map the chosen indexes back to REAL adjustments (WHIT-371) — every number comes from OUR
+    candidate list, never the model. Date-only: the balance stays, the date moves to the real
+    projected date. Drop an adjustment whose reason scrubs empty; return None (soft failure) when
+    none survive, so a whiff on a genuinely-behind plan becomes a 502, not a false "on track"."""
+    adjustments = []
+    for index in indexes:
+        reason = _scrub_figures(reason_by_index.get(index), _REVIEW_REASON_MAX_LEN)
+        if reason is None:
+            continue
+        candidate = candidates[index]
+        adjustments.append({
+            "milestoneId": candidate["id"],
+            "label": candidate["label"],
+            "currentTargetBalance": candidate["targetBalance"],
+            "currentTargetDate": candidate["targetDate"],
+            "suggestedTargetBalance": candidate["targetBalance"],   # date-only: balance unchanged
+            "suggestedTargetDate": candidate["projectedDate"].isoformat(),
+            "varianceMonths": candidate["varianceMonths"],
+            "reason": reason,
+        })
+    if not adjustments:
+        return None
+    return adjustments
+
+
+def review_milestones(event: dict, milestone_repo, homeloan_repo, loanfacts_repo) -> dict:
+    """POST /milestones/review — review the user's SAVED plan against their real pace and propose
+    editable adjustments with REAL, server-computed dates (WHIT-371).
+
+    Reads the stored milestones + loan facts + live balance, computes HERE the real date each
+    milestone is reached at the saved pace (baseRepay + extra), and hands Claude only the
+    behind-schedule ones (numbers only, no PII) to choose which to flag + write a word-only reason.
+    Maps its chosen indexes back to our real {suggestedTargetDate, ...}; the balance is unchanged
+    (date-only). AI never invents a number and never saves — the client stages the edits for
+    review. Returns {adjustments, payoffFeasible}. 409 when there's no plan/loan/balance yet; 502
+    on an AI failure or a whiff on a behind plan; 200 with empty adjustments when nothing's behind.
+    """
+    scope = current_scope(event)
+    stored = milestone_repo.get_milestones(scope)
+    if not stored:
+        return _json_response(409, {"error": "save a plan first"})
+
+    facts = loanfacts_repo.get_loanfacts()
+    if facts is None:
+        return _json_response(409, {"error": "set up your loan first"})
+
+    stored_balance = homeloan_repo.get_balance(HOMELOAN_ACCOUNT_ID)
+    if stored_balance is None or stored_balance.get("balance") is None:
+        return _json_response(409, {"error": "loan balance not available yet"})
+
+    balance = float(stored_balance["balance"])
+    if balance <= 0:
+        # Already mortgage-free — nothing to review. Honest empty result, no AI call.
+        return _json_response(200, {"adjustments": [], "payoffFeasible": True})
+
+    monthly_rate = facts["ratePct"] / 100.0 / 12.0
+    monthly_payment = facts["baseRepay"] + facts["extra"]
+    base_months = months_to_payoff(balance, monthly_rate, monthly_payment)
+    if base_months is None or math.ceil(base_months) > _REVIEW_CURVE_MAX_MONTHS:
+        # The saved pace never clears the loan, or only past our 100-year horizon (a payment barely
+        # above the monthly interest — a ~100k-month offset would overflow the date). No honest
+        # projected dates: honest "won't pay off", no plan, no AI call.
+        return _json_response(200, {"adjustments": [], "payoffFeasible": False})
+
+    candidates = _review_candidates(stored, balance, monthly_rate, monthly_payment, base_months, date.today())
+    if not candidates:
+        # Nothing materially behind — honest "your plan's on track", no AI call.
+        return _json_response(200, {"adjustments": [], "payoffFeasible": True})
+
+    try:
+        pacing = review_pacing(_review_model_input(candidates))
+    except AnthropicError as e:
+        logger.warning("milestone review failed: upstream=%s", e.upstream_status)
+        return _json_response(502, _REVIEW_ERROR)
+
+    reason_by_index = {}
+    for entry in pacing:
+        index = entry.get("index")
+        if index not in reason_by_index:
+            reason_by_index[index] = entry.get("reason")
+    adjustments = _build_adjustments(
+        _clean_pacing_indices(pacing, len(candidates)), candidates, reason_by_index)
+    if adjustments is None:
+        # Real slippage exists but the AI returned nothing usable — soft failure, NOT a false
+        # "on track" (which is why an empty result here is a 502, unlike the no-candidates 200).
+        logger.warning("milestone review produced no usable adjustments")
+        return _json_response(502, _REVIEW_ERROR)
+
+    return _json_response(200, {"adjustments": adjustments, "payoffFeasible": True})
 
 
 def set_budget(
