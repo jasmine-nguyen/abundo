@@ -29,3 +29,8 @@ class FakeResponse:
 def messages_payload(content):
     """An Anthropic Messages API envelope carrying `content` (a list of blocks)."""
     return {"content": content}
+
+
+def text_payload(text):
+    """A Messages API success envelope carrying a single text block of `text`."""
+    return messages_payload([{"type": "text", "text": text}])
