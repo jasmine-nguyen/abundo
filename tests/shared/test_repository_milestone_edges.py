@@ -7,9 +7,28 @@ Gaps covered (verified absent from the implementer's suite first):
   [R-CENTS]  a Decimal balance with cents (595413.43) round-trips to the exact float.
   [R-SCOPES] two DIFFERENT non-default scopes don't bleed into each other.
   [R-KEY]    the stored row key is pk=MILESTONES / sk=<scope> (seam lives in the sort key).
+
+WHIT-383 read-hardening (legacy/partial rows): the client read tolerates a row with no
+`milestones` attribute and skips a milestone missing/null-ing a field, while the poller's
+raw read stays deliberately fail-loud.
 """
 
 from decimal import Decimal
+
+import pytest
+
+
+def _store_raw_row(milestone_repo, milestones, scope="SHARED"):
+    """Inject a stored row directly, bypassing set_milestones' validation, to mimic a
+    legacy / partially-written row. Pass milestones=None for a row with no attribute."""
+    row = {"pk": "MILESTONES", "sk": scope}
+    if milestones is not None:
+        row["milestones"] = milestones
+    milestone_repo._table.store[("MILESTONES", scope)] = row
+
+
+_COMPLETE = {"id": "m1", "label": "Halfway", "targetBalance": Decimal("300000"),
+             "targetDate": "2030-01-01"}
 
 
 def test_stored_empty_list_returns_empty_list_not_none(milestone_repo):
@@ -46,3 +65,115 @@ def test_row_key_is_milestones_pk_and_scope_sk(milestone_repo):
     plan = [{"id": "a", "label": "K", "targetBalance": Decimal("100000"), "targetDate": "2026-06-18"}]
     milestone_repo.set_milestones(plan, scope="user-z")
     assert ("MILESTONES", "user-z") in milestone_repo._table.store
+
+
+# --- WHIT-383 read-hardening --------------------------------------------------------------
+
+
+def test_row_without_milestones_attribute_reads_as_none(milestone_repo):
+    # A row exists at pk=MILESTONES but carries no `milestones` attribute (a legacy/partial
+    # write). Both accessors must read it as "unset" (None), never KeyError-500.
+    _store_raw_row(milestone_repo, None)
+    assert milestone_repo.get_milestones() is None
+    assert milestone_repo.get_milestones_raw() is None
+
+
+@pytest.mark.parametrize("missing_field", ["id", "label", "targetBalance", "targetDate"])
+def test_client_read_skips_a_milestone_missing_a_field(milestone_repo, missing_field):
+    # A milestone missing any one field is skipped on the client read; the complete one stays.
+    partial_base = {"id": "bad", "label": "Half", "targetBalance": Decimal("200000"),
+                    "targetDate": "2031-01-01"}
+    partial = {k: v for k, v in partial_base.items() if k != missing_field}
+    _store_raw_row(milestone_repo, [_COMPLETE, partial])
+    got = milestone_repo.get_milestones()
+    assert [m["id"] for m in got] == ["m1"]
+
+
+def test_client_read_skips_a_milestone_with_null_target_balance(milestone_repo):
+    # The field is PRESENT but null: float(None) would 500 the read. Must skip, not crash.
+    partial = {**_COMPLETE, "id": "bad", "targetBalance": None}
+    _store_raw_row(milestone_repo, [_COMPLETE, partial])
+    assert [m["id"] for m in milestone_repo.get_milestones()] == ["m1"]
+
+
+def test_client_read_skips_a_milestone_with_non_numeric_target_balance(milestone_repo):
+    # A non-numeric string balance (float("abc") -> ValueError) is skipped, not a crash.
+    partial = {**_COMPLETE, "id": "bad", "targetBalance": "not-a-number"}
+    _store_raw_row(milestone_repo, [_COMPLETE, partial])
+    assert [m["id"] for m in milestone_repo.get_milestones()] == ["m1"]
+
+
+def test_client_read_all_partial_returns_empty_list(milestone_repo):
+    # Every stored milestone is malformed -> [] (a coherent "nothing usable"), not None/500.
+    _store_raw_row(milestone_repo, [{"id": "x"}, {"label": "y"}])
+    assert milestone_repo.get_milestones() == []
+
+
+def test_raw_read_does_not_skip_partial_milestones(milestone_repo):
+    # The poller path is NOT hardened: get_milestones_raw returns the partial milestone
+    # verbatim, so shared/milestones.py can stay deliberately fail-loud on it (WHIT-384).
+    partial = {"id": "bad", "label": "no balance", "targetDate": "2030-01-01"}
+    _store_raw_row(milestone_repo, [_COMPLETE, partial])
+    raw = milestone_repo.get_milestones_raw()
+    assert len(raw) == 2
+    assert raw[1] == partial
+
+
+def test_poller_resolve_stays_fail_loud_on_a_partial_row(shared, milestone_repo):
+    # Regression pin for the preserved contract: a present-but-partial stored milestone must
+    # still raise out of resolve_plan (fail-loud), never silently degrade to the default plan.
+    partial = {"id": "bad", "label": "no balance", "targetDate": "2030-01-01"}  # no targetBalance
+    _store_raw_row(milestone_repo, [partial])
+    with pytest.raises(KeyError):
+        shared.milestones.resolve_plan(milestone_repo)
+
+
+# --- WHIT-383 read-hardening: `milestones` stored as a non-list -----------------------------
+
+_COMPLETE2 = {"id": "m2", "label": "Target", "targetBalance": Decimal("55000"),
+              "targetDate": "2032-01-01"}
+
+
+@pytest.mark.parametrize("scalar", [5, Decimal("5"), True])
+def test_client_read_scalar_milestones_returns_empty(milestone_repo, scalar):
+    # A corrupt row storing `milestones` as a non-iterable scalar must NOT 500 on the
+    # iteration itself — the client read degrades to [].
+    _store_raw_row(milestone_repo, scalar)
+    assert milestone_repo.get_milestones() == []
+
+
+def test_client_read_milestones_stored_as_dict_returns_empty(milestone_repo):
+    # `milestones` is a dict (corrupt/legacy write) -> [], not a 500.
+    _store_raw_row(milestone_repo, {"m1": _COMPLETE})
+    assert milestone_repo.get_milestones() == []
+
+
+def test_client_read_milestones_stored_as_string_returns_empty(milestone_repo):
+    # `milestones` stored as a bare string -> [], not a 500.
+    _store_raw_row(milestone_repo, "corrupt")
+    assert milestone_repo.get_milestones() == []
+
+
+@pytest.mark.parametrize("junk", ["a string", None, 42, ["nested"]])
+def test_client_read_skips_non_dict_list_elements(milestone_repo, junk):
+    # A non-dict element (string/None/int/list) among valid milestones is skipped
+    # (TypeError on subscription), the valid ones survive.
+    _store_raw_row(milestone_repo, [_COMPLETE, junk, _COMPLETE2])
+    assert [m["id"] for m in milestone_repo.get_milestones()] == ["m1", "m2"]
+
+
+def test_client_read_preserves_order_of_survivors(milestone_repo):
+    # Interleaved valid/invalid: survivors keep their STORED order (m2 before m1),
+    # locking the append-in-iteration-order contract.
+    bad = {"id": "bad", "label": "x", "targetBalance": None, "targetDate": "2031-01-01"}
+    _store_raw_row(milestone_repo, [_COMPLETE2, bad, _COMPLETE])
+    assert [m["id"] for m in milestone_repo.get_milestones()] == ["m2", "m1"]
+
+
+def test_poller_resolve_fail_loud_on_non_list_milestones(shared, milestone_repo):
+    # The poller path is NOT hardened: a `milestones` stored as a dict must raise out of
+    # resolve_plan (fail-loud), never silently degrade to the default plan. Iterating the dict
+    # yields its keys (strings), so the plan comprehension does "m1"["label"] -> TypeError.
+    _store_raw_row(milestone_repo, {"m1": _COMPLETE})
+    with pytest.raises(TypeError):
+        shared.milestones.resolve_plan(milestone_repo)

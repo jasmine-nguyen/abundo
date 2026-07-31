@@ -165,3 +165,54 @@ def test_zero_balance_before_another_row_is_rejected(handler):
     assert resp["statusCode"] == 400
     assert "targetBalance" in json.loads(resp["body"])["error"]
     assert repo.set_calls == []
+
+
+# --- WHIT-383 supplied-id trimming ------------------------------------------
+
+def test_supplied_id_is_stored_trimmed(handler):
+    # A client-supplied id with stray whitespace is stored trimmed, mirroring the label.
+    resp, repo = _put_plan(handler, [{**VALID0, "id": "  a  "}])
+    assert resp["statusCode"] == 200
+    assert repo.set_calls[0]["milestones"][0]["id"] == "a"
+
+
+def test_ids_differing_only_by_whitespace_collide_as_duplicate(handler):
+    # " a " and "a" are the SAME id once trimmed -> rejected as duplicate. Fail-on-revert:
+    # without the .strip() they stay distinct and this plan wrongly returns 200.
+    plan = [
+        {"label": "A", "targetBalance": 544000, "targetDate": "2026-06-18", "id": " a "},
+        {"label": "B", "targetBalance": 400000, "targetDate": "2027-06-18", "id": "a"},
+    ]
+    resp, repo = _put_plan(handler, plan)
+    assert resp["statusCode"] == 400
+    assert "unique" in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []
+
+
+@pytest.mark.parametrize("blank", ["   ", "\t", "\n", " \t\n "])
+def test_whitespace_only_id_is_rejected_not_stripped_to_empty(handler, blank):
+    # An ALL-whitespace id must be rejected as non-empty-string, NOT silently stripped to
+    # "" then stored/deduped. Guards the elif-before-else ordering.
+    resp, repo = _put_plan(handler, [{**VALID0, "id": blank}])
+    assert resp["statusCode"] == 400
+    assert "non-empty string" in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []
+
+
+def test_tab_newline_padded_id_is_stored_trimmed(handler):
+    # Trimming covers tabs/newlines, not just spaces.
+    resp, repo = _put_plan(handler, [{**VALID0, "id": "\t a1 \n"}])
+    assert resp["statusCode"] == 200
+    assert repo.set_calls[0]["milestones"][0]["id"] == "a1"
+
+
+def test_internal_whitespace_in_id_is_preserved(handler):
+    # strip() only trims the ENDS: an id with internal spaces keeps them, so two genuinely
+    # different ids aren't collapsed by over-trimming.
+    plan = [
+        {**VALID0, "id": "a b"},
+        {"label": "B", "targetBalance": 400000, "targetDate": "2027-06-18", "id": "ab"},
+    ]
+    resp, repo = _put_plan(handler, plan)
+    assert resp["statusCode"] == 200
+    assert [m["id"] for m in repo.set_calls[0]["milestones"]] == ["a b", "ab"]
