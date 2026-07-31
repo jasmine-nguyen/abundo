@@ -310,15 +310,16 @@ def test_none_repo_does_not_delete_markers(shared, recorder):
     assert notify.fired == {"bal:300000.00"}
 
 
-def test_empty_saved_plan_clears_all_custom_markers(shared, recorder):
-    # An authoritative empty plan ([]) is a genuine "no targets" — every custom marker is dead and
-    # is cleared, while the built-in sprint marker "0" is preserved (not "bal:"-prefixed).
+def test_empty_saved_plan_does_not_wipe_markers(shared, recorder):
+    # WHIT-386: an authoritative empty plan ([]) sweeps NOTHING — defence in depth so a regressed
+    # empty-save guard can't erase the once-ever "already celebrated" record in one sweep. Every
+    # marker survives, including custom "bal:" ones (they linger harmlessly — nothing re-fires them).
     notify = FakeNotifyRepo({"bal:300000.00", "bal:120000.00", "0"})
     sent = _run(shared, old="250000", new="249000",
                 milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
     assert sent == 0
-    assert notify.removed == {"bal:300000.00", "bal:120000.00"}
-    assert notify.fired == {"0"}
+    assert notify.removed == set()
+    assert notify.fired == {"bal:300000.00", "bal:120000.00", "0"}
 
 
 def test_reconcile_preserves_builtin_sprint_markers(shared, recorder):
