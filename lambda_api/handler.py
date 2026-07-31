@@ -88,7 +88,8 @@ from spend import (
     summarise_transactions,
     summarise_uncategorized,
 )
-from insights_ai import AnthropicError, generate_suggestions
+from anthropic_client import AnthropicError
+from insights_ai import generate_suggestions
 from milestone_ai import review_pacing, suggest_pacing
 from paydown import (
     add_months,

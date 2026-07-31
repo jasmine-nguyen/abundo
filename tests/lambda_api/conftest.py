@@ -74,8 +74,8 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # leak across tests).
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
-    "banksync_enrichments", "insights_ai", "milestone_ai", "paydown",
-    "spend", "repayment_rules",
+    "banksync_enrichments", "insights_ai", "milestone_ai", "anthropic_client",
+    "paydown", "spend", "repayment_rules",
 )
 
 
@@ -105,8 +105,10 @@ def handler():
 
 @pytest.fixture
 def insights_ai():
-    """Import lambda_api/insights_ai.py in isolation for direct tests of the
-    Anthropic client (generate_suggestions / _parse_reply / get_api_key)."""
+    """Import lambda_api/insights_ai.py in isolation for direct tests of
+    generate_suggestions / _parse_reply. The key/HTTP plumbing now lives in
+    anthropic_client (WHIT-388), so pin the key there — insights_ai delegates the
+    call to it."""
     for d in (_SHARED_DIR, _LAMBDA_API_DIR):
         while d in sys.path:
             sys.path.remove(d)
@@ -115,11 +117,37 @@ def insights_ai():
 
     saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
     import insights_ai as ia
+    import anthropic_client as ac
 
-    ia._api_key = None  # never leak a cached key across tests
-    ia.get_param = lambda path: "test-anthropic-key"
+    ac._api_key = None  # never leak a cached key across tests
+    ac.get_param = lambda path: "test-anthropic-key"
     try:
         yield ia
+    finally:
+        for name in _COLLIDING:
+            sys.modules.pop(name, None)
+        for name, mod in saved.items():
+            if mod is not None:
+                sys.modules[name] = mod
+
+
+@pytest.fixture
+def anthropic_client():
+    """Import lambda_api/anthropic_client.py in isolation for direct tests of the
+    shared Anthropic client (post / extract_first_json / get_api_key)."""
+    for d in (_SHARED_DIR, _LAMBDA_API_DIR):
+        while d in sys.path:
+            sys.path.remove(d)
+    sys.path.insert(0, _SHARED_DIR)
+    sys.path.insert(0, _LAMBDA_API_DIR)
+
+    saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
+    import anthropic_client as ac
+
+    ac._api_key = None  # never leak a cached key across tests
+    ac.get_param = lambda path: "test-anthropic-key"
+    try:
+        yield ac
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)
