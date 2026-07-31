@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-nati
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, fmt, tint, breakdownLineStyle } from '../../src/theme';
 import { Icon } from '../../src/icons';
-import { useAppContext, categoryBreakdown } from '../../src/context';
+import { useAppContext, categoryBreakdown, incomeBreakdown } from '../../src/context';
 import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill } from '../../src/components/ui';
@@ -22,6 +22,16 @@ export default function Insights() {
   // hand-mocked test harness that omits it from throwing on `.length` (WHIT-381).
   const { breakdown, earned, incomeSources = [], category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
   const { rows, total } = categoryBreakdown({ breakdown, category });
+
+  // WHIT-373: one list, a switch. "Spending" shows the category breakdown; "Earning" shows the same
+  // cycle's income sources. Default is Spending. `side` is clamped to 'spending' whenever the toggle
+  // is hidden (nothing to switch to), so an income-only cycle a user last left on Earning can't come
+  // back to a blank hidden-toggle screen.
+  const { rows: incomeRows } = incomeBreakdown({ incomeSources, earned, category });
+  // Each source's share of total income drives its green bar. Denominator is the shown positive
+  // income (a reversed source or the muted plug adds no bar), so the bars read as a share of income.
+  const incomeShareTotal = incomeRows.reduce((sum, r) => (r.muted || r.amount < 0 ? sum : sum + r.amount), 0);
+  const [sideChoice, setSideChoice] = useState<'spending' | 'earning'>('spending');
 
   // WHIT-226: parent categories are collapsed by default; tap to reveal their subs. A row
   // shows only when its whole parent chain is expanded (rows come depth-first, so a parent
@@ -60,6 +70,13 @@ export default function Insights() {
   // the Insights-only hole Budgets doesn't have (every Budgets row needs a category).
   const showError = (isError && rows.length === 0) || categoriesError;
   const showSpinner = !showError && isLoading && rows.length === 0;
+
+  // The Spending/Earning toggle only shows when a side has content — otherwise it's a dead switch.
+  // With it hidden, `side` falls back to Spending so the "No spending" empty renders (never a blank).
+  const hasSpend = rows.length > 0;
+  const hasIncome = incomeRows.length > 0;
+  const showToggle = !showSpinner && !showError && (hasSpend || hasIncome);
+  const side = showToggle ? sideChoice : 'spending';
 
   return (
     <ScrollChromeHeader title="Insights">
@@ -121,50 +138,58 @@ export default function Insights() {
             <RetryButton onPress={refetch} label="Retry loading your insights" testID="insights-retry" style={styles.retryBtn} textStyle={styles.retryText} />
           </View>
         )}
-        {!showSpinner && !showError && rows.length === 0 && (
-          <Text style={styles.empty}>
-            {cycle === 0 ? 'No spending yet this pay cycle.' : 'No spending in that pay cycle.'}
-          </Text>
-        )}
-
         {/* Pie/donut of where the cycle's money went — one wedge per top-level category, in
             its own colour, sized by share of the total. The rows below are its legend. */}
         {!showSpinner && !showError && rows.length > 0 && (
           <SpendingDonut slices={donutSlices} testID="insights-donut" />
         )}
 
-        {/* WHIT-312: earned vs spent for the cycle — shows whenever there's income OR spend,
-            so an income-only cycle (no spend rows) still gets the comparison. Both cycles,
-            unlike the AI coach card (current-cycle only). WHIT-324: the card reads surplus vs
-            deficit only (no budget), so it hides when there was neither income nor spend. */}
+        {/* WHIT-312: earned vs spent for the cycle — a pure summary card (WHIT-373 removed the
+            per-bar drill; the Spending/Earning toggle below is the one, consistent way to drill in).
+            Shows whenever there's income OR spend, so an income-only cycle still gets the comparison.
+            WHIT-324: surplus vs deficit only (no budget), so it hides when there was neither. */}
         {!showSpinner && !showError && (earned > 0 || rows.length > 0) && (
-          <EarnedVsSpent
-            earned={earned}
-            spent={total}
-            testID="insights-earned-spent"
-            // WHIT-366: each bar drills into the shared breakdown screen for the selected cycle —
-            // Earned → income sources, Spent → spending groups. Only when that side has something
-            // to show, so a $0 bar isn't a dead tap.
-            // WHIT-381: gate Earned on per-source rows EXISTING, not just earned > 0. The drill lists
-            // incomeSources; that can be empty while earned > 0 — an old server with no __income__
-            // map, OR a source that nets ~$0 and is filtered out while its bucket still lifts the
-            // earned total. Either way tapping would dead-end on the empty state, so don't link it.
-            onEarnedPress={earned > 0 && incomeSources.length > 0 ? () => router.push(`/breakdown?kind=earned&cycle=${cycle}`) : undefined}
-            onSpentPress={total > 0 ? () => router.push(`/breakdown?kind=spent&cycle=${cycle}`) : undefined}
-          />
+          <EarnedVsSpent earned={earned} spent={total} testID="insights-earned-spent" />
         )}
 
-        {/* Each row's bar is its share of total spend this cycle (matches the donut) — NOT
-            spend-vs-budget. Caption it so the short bars aren't read as "budget barely used". */}
-        {!showSpinner && !showError && rows.length > 0 && (
+        {/* WHIT-373: one list, a switch — Spending shows the category breakdown, Earning shows the
+            same cycle's income sources. Only shown when a side has content (else it's a dead switch). */}
+        {showToggle && (
+          <View style={styles.sideTabs}>
+            {[{ v: 'spending' as const, label: 'Spending', color: C.bad }, { v: 'earning' as const, label: 'Earning', color: C.good }].map(({ v, label, color }) => {
+              const active = side === v;
+              return (
+                <Pressable
+                  key={v}
+                  testID={`insights-side-${v}`}
+                  onPress={() => setSideChoice(v)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  style={[styles.sideTab, active && { backgroundColor: tint(color, 0.16) }]}
+                >
+                  <Text style={[styles.sideTabText, active && { color, fontWeight: '700' }]}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Spending side: each row's bar is its share of total spend this cycle (matches the donut) —
+            NOT spend-vs-budget. Caption it so the short bars aren't read as "budget barely used". */}
+        {!showSpinner && !showError && side === 'spending' && rows.length > 0 && (
           <Text testID="insights-bars-caption" style={styles.barsCaption}>
             Each bar shows the category's share of total spend — not its budget.
+          </Text>
+        )}
+        {!showSpinner && !showError && side === 'spending' && rows.length === 0 && (
+          <Text style={styles.empty}>
+            {cycle === 0 ? 'No spending yet this pay cycle.' : 'No spending in that pay cycle.'}
           </Text>
         )}
 
         {/* WHIT-194: suppress the row list under an error — otherwise the surviving
             taxonomy-free Uncategorized row would render beneath the "Couldn't load" card. */}
-        {!showError && visibleRows.map((r) => {
+        {!showError && side === 'spending' && visibleRows.map((r) => {
           // WHIT-349/357: a muted display-only line under an expanded parent — no bar. A refund
           // line shows a credit in green and taps into that sub's charges. A WHIT-357 "Other" line
           // plugs the residual so the expanded rows sum to the node; it is neutral and NOT tappable
@@ -231,6 +256,53 @@ export default function Insights() {
             </View>
           );
         })}
+
+        {/* Earning side: one row per income source, biggest first, each with a green bar for its
+            share of total income. WHIT-373 folds in the retired /breakdown earned view. */}
+        {!showSpinner && !showError && side === 'earning' && incomeRows.length > 0 && (
+          <Text testID="insights-income-caption" style={styles.barsCaption}>
+            Each bar shows the source's share of total income.
+          </Text>
+        )}
+        {!showSpinner && !showError && side === 'earning' && incomeRows.length === 0 && (
+          <Text style={styles.empty}>
+            {cycle === 0 ? 'No income yet this pay cycle.' : 'No income in that pay cycle.'}
+          </Text>
+        )}
+        {!showSpinner && !showError && side === 'earning' && incomeRows.map((r) => {
+          // WHIT-375/376: amount text + colours come from the one shared convention (see
+          // breakdownLineStyle) — the same rule the spending rows use. A muted plug isn't a real
+          // source: it's dimmed, gets no bar, and doesn't drill.
+          const { amountText, amountColor, nameColor } = breakdownLineStyle({ isReversed: r.reversed, isRemainder: r.muted, spent: r.amount });
+          const barPct = incomeShareTotal > 0 && !r.muted && r.amount > 0 ? Math.min(100, (r.amount / incomeShareTotal) * 100) : 0;
+          const body = (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
+              <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[styles.rowName, { color: nameColor }]} numberOfLines={1}>{r.name}</Text>
+                {r.pending > 0 && <Text style={styles.rowSub}>{fmt(r.pending)} pending</Text>}
+              </View>
+              <Text style={[styles.rowAmount, { color: amountColor }]}>{amountText}</Text>
+            </View>
+          );
+          return (
+            <View key={r.id} style={styles.row}>
+              {r.muted ? body : (
+                <Pressable
+                  onPress={() => router.push(`/category/${encodeURIComponent(r.drillId)}?cycle=${cycle}`)}
+                  accessibilityRole="button"
+                >
+                  {body}
+                </Pressable>
+              )}
+              {barPct > 0 && (
+                <View style={styles.track}>
+                  <View style={{ width: `${barPct}%`, backgroundColor: C.good, height: '100%', borderRadius: 5 }} />
+                </View>
+              )}
+            </View>
+          );
+        })}
     </ScrollChromeHeader>
   );
 }
@@ -243,6 +315,12 @@ const styles = StyleSheet.create({
   cycleTabActive: { backgroundColor: 'rgba(124,140,255,.16)' },
   cycleTabText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
   cycleTabTextActive: { color: C.accentSoft, fontWeight: '700' },
+
+  // WHIT-373: the Spending / Earning switch above the list. Same segmented shape as cycleTabs, but
+  // the active segment tints to its side's colour (coral for Spending, teal for Earning).
+  sideTabs: { flexDirection: 'row', gap: 3, padding: 3, marginBottom: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14 },
+  sideTab: { flex: 1, paddingVertical: 9, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  sideTabText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textDim },
 
   hero: { position: 'relative', overflow: 'hidden', borderRadius: 26, padding: 24, paddingTop: 26, paddingBottom: 22, marginBottom: 22, backgroundColor: C.accent },
   heroBlob: { position: 'absolute', right: -30, top: -30, width: 150, height: 150, borderRadius: 75, backgroundColor: 'rgba(255,255,255,.12)' },

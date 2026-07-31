@@ -2030,6 +2030,59 @@ export function readIncomeSources(breakdown: Record<string, CategorySpend>): Rec
   return (breakdown as Record<string, unknown>)[INCOME_KEY] as Record<string, CategorySpend> | undefined;
 }
 
+// One row for the Insights "Earning" toggle (WHIT-373). Same shape the retired /breakdown earned
+// branch built: each Income-bucket source that earned this cycle, joined to the taxonomy for its
+// name/icon/colour. `amount` is the signed net (posted + pending) — negative for a source clawed
+// back this cycle (`reversed`). `muted` marks the synthetic reconcile plug: not a real source, no
+// drill. `drillId` is the id a tap opens (the source's transactions).
+export interface IncomeBreakdownRow {
+  id: string; name: string; color: string; icon: string; chipBg: string;
+  amount: number; pending: number; reversed: boolean; muted: boolean; drillId: string;
+}
+
+export interface IncomeBreakdownInput {
+  incomeSources: { id: string; posted: number; pending: number; amount: number }[];
+  earned: number;
+  category: (id: string) => Category | undefined;
+}
+
+const INCOME_FALLBACK_ICON = 'briefcase';
+
+// Income by source for the Insights "Earning" toggle (WHIT-373). Pure over { incomeSources, earned,
+// category }, ported from the retired /breakdown earned branch so the rows still reconcile to the
+// `earned` headline. A source clawed back this cycle rides a NEGATIVE net (rendered "−$X"); one
+// muted "adjustment" plug closes any residual between the shown sources and `earned` (mirrors the
+// Spend remainder line). The plug is skipped when there are no sources (an old server with no
+// per-source map never shows a lone plug) or when the residual is float dust.
+export function incomeBreakdown(s: IncomeBreakdownInput): { rows: IncomeBreakdownRow[] } {
+  const rows: IncomeBreakdownRow[] = s.incomeSources.map((source) => {
+    const c = s.category(source.id);
+    const color = c?.color ?? C.good;
+    return {
+      id: source.id,
+      name: c?.name ?? 'Income',
+      color,
+      icon: c?.icon ?? INCOME_FALLBACK_ICON,
+      chipBg: tint(color, 0.15),
+      amount: source.amount,
+      pending: source.pending,
+      reversed: source.amount < 0,  // a source clawed back this cycle — shown as "−$X"
+      muted: false,
+      drillId: source.id,
+    };
+  });
+
+  // `earned` clamps its settled and pending buckets separately while the sources are raw signed
+  // nets, so the two can differ by a clamped-away residual. One muted plug closes the gap.
+  const shownAmount = rows.reduce((sum, row) => sum + row.amount, 0);
+  const residual = s.earned - shownAmount;
+  if (rows.length > 0 && Math.abs(residual) >= RECONCILE_EPSILON) {
+    rows.push({ id: '__earned_adjustment__', ...ADJUSTMENT_ROW, amount: residual, pending: 0, reversed: false, muted: true, drillId: '__earned_adjustment__' });
+  }
+
+  return { rows };
+}
+
 export interface CategoryBreakdownRow {
   id: string; name: string; color: string; icon: string; chipBg: string;
   spent: number; posted: number; pending: number;
