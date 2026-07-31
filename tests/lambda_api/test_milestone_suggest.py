@@ -215,8 +215,8 @@ def test_out_of_range_indexes_are_ignored(handler, monkeypatch):
 
 
 def test_duplicate_indexes_collapse_to_one(handler, monkeypatch):
-    # The model repeats index 2; it must appear ONCE. The first label wins (label_by_index
-    # keeps the earliest), so the second "dup" spelling is discarded.
+    # The model repeats index 2; it must appear ONCE. The first clean label per index wins
+    # (WHIT-389); both are clean here, so the earlier one, "Milestone", is kept.
     status, body = _suggest(
         handler, monkeypatch,
         pacing=[{"index": 2, "label": "Milestone"}, {"index": 2, "label": "dup"}])

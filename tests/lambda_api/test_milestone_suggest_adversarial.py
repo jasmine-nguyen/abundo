@@ -172,15 +172,26 @@ def test_all_indexes_out_of_range_soft_fails_502(handler, monkeypatch):
     assert body["error"]
 
 
-def test_dirty_first_label_poisons_its_index_even_with_a_clean_duplicate(handler, monkeypatch):
-    # label_by_index keeps the FIRST label per index. If the model emits a digits-only label
-    # for an index first and a clean one for the SAME index second, the clean one is discarded
-    # and the point scrubs empty -> dropped. Here index 3 is the only choice -> whole plan 502.
-    # Characterises a minor quality gap (a salvageable point is lost), not a crash.
+def test_duplicate_index_prefers_first_clean_label_over_dirty_twin(handler, monkeypatch):
+    # label_by_index now prefers the first label per index that SURVIVES the scrub (WHIT-389). If
+    # the model emits a digits-only label for an index first and a clean one for the SAME index
+    # second, the clean twin is kept and the point recovers instead of the plan falling to a 502.
     status, body = _suggest(
         handler, monkeypatch,
         pacing=[{"index": 3, "label": "2032"}, {"index": 3, "label": "Halfway"}])
+    assert status == 200
+    assert [m["label"] for m in body["milestones"]] == ["Halfway"]
+
+
+def test_duplicate_index_all_dirty_labels_still_drops_to_502(handler, monkeypatch):
+    # WHIT-389 fallback: when NO twin of a repeated index survives the scrub, the first-seen raw
+    # value is kept, still scrubs empty downstream, and the point drops exactly as before. Here
+    # index 3 is the only choice and both labels are figures-only -> whole plan 502.
+    status, body = _suggest(
+        handler, monkeypatch,
+        pacing=[{"index": 3, "label": "2032"}, {"index": 3, "label": "$50 000"}])
     assert status == 502
+    assert body["error"]
 
 
 def test_large_curve_downsampled_to_cap_keeps_the_real_payoff_last(handler, monkeypatch):

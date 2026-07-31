@@ -10,8 +10,8 @@ by fail-on-revert:
   [G4] an overdue (past) targetDate → flagged, large positive variance, no crash
   [G5] a mixed plan (cleared + on-track + behind) → only the behind-below-balance one reaches the model
   [G6] per-index scrub isolation — one dirty reason is dropped, its clean sibling survives (no 502)
-  [G7] duplicate index, first (dirty) reason wins → the recoverable clean twin is discarded (documents
-       current behaviour; see the QA report's ranked findings)
+  [G7] duplicate index, first (dirty) reason but a clean twin later → the clean twin is kept (WHIT-389:
+       prefer the first value that survives the scrub over the first merely seen)
 
 Harness mirrors test_milestone_review.py: `handler` fixture, FixedDate (today = 2026-01-15),
 stubbed handler.review_pacing. Pace: $500k @ 5.74% paying $3000/mo → 400k reached 2036-03-01,
@@ -176,15 +176,15 @@ def test_one_dirty_reason_dropped_clean_sibling_survives(handler, monkeypatch):
     assert body["adjustments"][0]["reason"] == "running behind"
 
 
-# WHIT-371 — [G7] duplicate index: first (dirty) reason wins, clean twin discarded (documents behaviour)
-def test_duplicate_index_first_dirty_reason_wins_discards_clean_twin(handler, monkeypatch):
+# WHIT-389 — [G7] duplicate index: first reason is figures-only, clean twin later → clean twin kept
+def test_duplicate_index_prefers_first_clean_reason_over_dirty_twin(handler, monkeypatch):
     # The model returns index 0 twice: first a figures-only reason ("2032"), then a clean one.
-    # The handler's reason_by_index keeps the FIRST seen, which scrubs empty → the only candidate is
-    # dropped → 502, even though a usable reason existed. Documents current "first reason wins" +
-    # flags it in the QA findings (a recoverable reason is silently thrown away).
+    # _first_by_index now prefers the first reason that SURVIVES the scrub, so the clean twin is
+    # kept and the milestone recovers with a usable reason instead of falling to a 502 whiff.
     stored = [{"id": "m1", "label": "Quarter down", "targetBalance": 400000, "targetDate": "2030-01-01"}]
     status, body = _review(
         handler, monkeypatch, stored,
         pacing=[{"index": 0, "reason": "2032"}, {"index": 0, "reason": "running behind your plan"}])
-    assert status == 502
-    assert body["error"]
+    assert status == 200
+    assert [a["milestoneId"] for a in body["adjustments"]] == ["m1"]
+    assert body["adjustments"][0]["reason"] == "running behind your plan"

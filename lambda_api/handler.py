@@ -2243,6 +2243,27 @@ def _scrub_figures(text, max_len):
     return stripped
 
 
+def _first_by_index(pacing, value_key, max_len):
+    """Collapse a model pacing list to {index: value}, shared by suggest + review (WHIT-389).
+    Prefer the first value that SURVIVES the figure-scrub over the merely first-seen: if a repeated
+    index has a figures-only twin first and a clean twin later, keep the clean one. When no twin
+    survives, keep the first-seen raw value so it still scrubs empty downstream and drops exactly as
+    before. Stores the RAW value — the build step re-scrubs, so this only changes WHICH twin wins."""
+    by_index = {}
+    survived = set()
+    for entry in pacing:
+        index = entry.get("index")
+        value = entry.get(value_key)
+        if index in survived:
+            continue
+        if _scrub_figures(value, max_len) is not None:
+            by_index[index] = value
+            survived.add(index)
+        elif index not in by_index:
+            by_index[index] = value
+    return by_index
+
+
 def _clean_suggest_label(label):
     """A suggest milestone label — a short phrase, capped at the milestone label max."""
     return _scrub_figures(label, _MILESTONE_LABEL_MAX_LEN)
@@ -2366,11 +2387,7 @@ def suggest_milestones(event: dict, homeloan_repo, loanfacts_repo) -> dict:
         logger.warning("milestone suggest failed: upstream=%s", e.upstream_status)
         return _json_response(502, _SUGGEST_ERROR)
 
-    label_by_index = {}
-    for entry in pacing:
-        index = entry.get("index")
-        if index not in label_by_index:
-            label_by_index[index] = entry.get("label")
+    label_by_index = _first_by_index(pacing, "label", _MILESTONE_LABEL_MAX_LEN)
     milestones = _build_suggested_milestones(
         _clean_pacing_indices(pacing, len(candidates)), candidates, label_by_index)
     if milestones is None:
@@ -2516,11 +2533,7 @@ def review_milestones(event: dict, milestone_repo, homeloan_repo, loanfacts_repo
         logger.warning("milestone review failed: upstream=%s", e.upstream_status)
         return _json_response(502, _REVIEW_ERROR)
 
-    reason_by_index = {}
-    for entry in pacing:
-        index = entry.get("index")
-        if index not in reason_by_index:
-            reason_by_index[index] = entry.get("reason")
+    reason_by_index = _first_by_index(pacing, "reason", _REVIEW_REASON_MAX_LEN)
     adjustments = _build_adjustments(
         _clean_pacing_indices(pacing, len(candidates)), candidates, reason_by_index)
     if adjustments is None:
