@@ -13,26 +13,7 @@ import urllib.error
 
 import pytest
 
-
-class _FakeResponse:
-    """Stand-in for urlopen()'s return: a context manager whose .read() -> bytes."""
-
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode() if payload is not None else b""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
-def _messages_payload(content):
-    """An Anthropic Messages API envelope carrying `content` (a list of blocks)."""
-    return {"content": content}
+from _anthropic_fakes import FakeResponse, messages_payload
 
 
 # --- post: request shape + success -------------------------------------------
@@ -46,7 +27,7 @@ def test_post_builds_request_and_returns_first_text(anthropic_client, monkeypatc
         captured["headers"] = req.headers
         captured["body"] = json.loads(req.data.decode())
         captured["timeout"] = timeout
-        return _FakeResponse(_messages_payload([{"type": "text", "text": "hello"}]))
+        return FakeResponse(messages_payload([{"type": "text", "text": "hello"}]))
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
 
@@ -69,7 +50,7 @@ def test_post_builds_request_and_returns_first_text(anthropic_client, monkeypatc
 def test_post_returns_first_text_block_when_several(anthropic_client, monkeypatch):
     monkeypatch.setattr(
         anthropic_client.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload([
+        lambda req, timeout=None: FakeResponse(messages_payload([
             {"type": "thinking", "text": "ignored"},
             {"type": "text", "text": "first"},
             {"type": "text", "text": "second"},
@@ -82,12 +63,12 @@ def test_post_returns_empty_string_when_no_text_block(anthropic_client, monkeypa
     # rather than the endpoint 500ing.
     monkeypatch.setattr(
         anthropic_client.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload([])))
+        lambda req, timeout=None: FakeResponse(messages_payload([])))
     assert anthropic_client.post("s", "p", {}) == ""
 
     monkeypatch.setattr(
         anthropic_client.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse({"content": None}))
+        lambda req, timeout=None: FakeResponse({"content": None}))
     assert anthropic_client.post("s", "p", {}) == ""
 
 
