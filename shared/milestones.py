@@ -43,14 +43,31 @@ class Milestone:
 class PlanMilestone:
     """A milestone resolved from the user's SAVED plan (WHIT-384). Same duck-type surface
     (.label, .target_balance, .key) as Milestone, so crossed_milestones / notify treat both
-    alike. target_balance is a Decimal (exact to the cent); key is namespaced "bal:<amount>"
-    so a $0–$4 custom target can never collide with a built-in "0".."4" sprint marker."""
+    alike. target_balance is a Decimal (exact to the cent); key is the dedup marker built by
+    _plan_marker — namespaced "id:<id>:bal:<amount>", so it can never collide with a built-in
+    "0".."4" sprint marker."""
     label: str
     target_balance: Decimal
     key: str
 
 
-def resolve_plan(milestone_repo=None) -> list:
+def _plan_marker(milestone: dict) -> str:
+    """The dedup marker for a SAVED milestone: its permanent id AND its cent-quantized target
+    amount (WHIT-369). Keying on the id survives reorder / rename / delete, so an alert can't
+    repeat or go missing; including the amount means re-pointing a target to a new number
+    re-arms its celebration. Quantize to cents so the marker is byte-stable across polls
+    regardless of how the stored Decimal formats (480000 / 480000.0 / 480000.00 all → the same
+    "...bal:480000.00"). A legacy row saved before ids were minted (WHIT-378) has no id — fall
+    back to the amount-only marker rather than raise, which the poller would swallow into a
+    silently-skipped celebration."""
+    amount = Decimal(milestone["targetBalance"]).quantize(Decimal("0.01"))
+    milestone_id = milestone.get("id")
+    if milestone_id is None:
+        return f"bal:{amount}"
+    return f"id:{milestone_id}:bal:{amount}"
+
+
+def resolve_plan(milestone_repo=None, scope=None) -> list:
     """The plan the celebration push measures against: the user's SAVED milestone list when
     they have one, else the built-in default MILESTONES (WHIT-384). Falls back to the default
     when the plan is UNSET (None) or the READ fails — a store hiccup must degrade to the
@@ -58,24 +75,25 @@ def resolve_plan(milestone_repo=None) -> list:
     never re-detected). The saved plan is otherwise used as-is: a malformed stored row is left
     to surface (fail-loud) rather than send a WRONG default celebration in its place, and an
     empty list is a genuinely empty plan — reachable only by a direct write, since the API
-    rejects an empty save. A None repo (every pre-WHIT-384 caller) also gets the default."""
+    rejects an empty save. A None repo (every pre-WHIT-384 caller) also gets the default.
+
+    `scope` is the multi-tenant seam (WHIT-369/375): None reads the single shared tenant (the
+    repository's own default), a user id later reads that user's plan. One param, threaded to
+    the fired-state too, so multi-user is a per-user loop in the poller — not a rewrite."""
     if milestone_repo is None:
         return list(MILESTONES)
     try:
-        stored = milestone_repo.get_milestones_raw()
+        if scope is None:
+            stored = milestone_repo.get_milestones_raw()
+        else:
+            stored = milestone_repo.get_milestones_raw(scope)
     except Exception as e:
         logger.warning("milestones read failed, using the default plan: %s", e)
         return list(MILESTONES)
     if stored is None:
         return list(MILESTONES)
     return [
-        PlanMilestone(
-            label=m["label"],
-            target_balance=m["targetBalance"],
-            # Quantize to cents so the marker is byte-stable across polls regardless of how the
-            # stored Decimal formats (480000 / 480000.0 / 480000.00 all → "bal:480000.00").
-            key=f"bal:{Decimal(m['targetBalance']).quantize(Decimal('0.01'))}",
-        )
+        PlanMilestone(label=m["label"], target_balance=m["targetBalance"], key=_plan_marker(m))
         for m in stored
     ]
 
@@ -149,7 +167,7 @@ def _body(new_balance, loanfacts_repo) -> str:
     return _BODY_FULL.format(paid=_dollars(paid), equity=_dollars(equity))
 
 
-def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, device_repo, notify_repo, milestone_repo=None) -> int:
+def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, device_repo, notify_repo, milestone_repo=None, scope=None) -> int:
     """Send one celebratory push when the balance crosses a payoff milestone.
 
     Measures against the user's SAVED plan when `milestone_repo` is given and they have one,
@@ -159,13 +177,18 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     never re-detected, so "mark only on send" would lose the push forever on a transient
     failure. Short-circuits before any I/O when nothing new was crossed, and before sending
     when no device is registered. Returns 1 if a push was sent, else 0. Best-effort: the caller
-    swallows."""
-    plan = resolve_plan(milestone_repo)
+    swallows.
+
+    `scope` is the multi-tenant seam (WHIT-369): it selects WHOSE plan is read AND whose
+    fired-state is checked/marked — the SAME owner for both. None is the single shared tenant
+    today; the poller passes a user id per user when multi-user lands, and nothing else here
+    changes."""
+    plan = resolve_plan(milestone_repo, scope)
     crossed = crossed_milestones(old_balance, new_balance, plan)
     if not crossed:
         return 0
 
-    fired = notify_repo.fired_milestones()
+    fired = notify_repo.fired_milestones(scope)
     fresh = [m for m in crossed if m.key not in fired]
     if not fresh:
         return 0
@@ -182,5 +205,5 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
         data={"type": "milestone"},  # deep-link a tap to the mortgage screen (WHIT-322)
     )
     for milestone in fresh:  # mark regardless of send outcome (see docstring)
-        notify_repo.mark_milestone_fired(milestone.key)
+        notify_repo.mark_milestone_fired(milestone.key, scope)
     return 1

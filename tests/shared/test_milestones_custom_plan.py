@@ -1,10 +1,11 @@
-"""WHIT-384 — the milestone celebration push reads the user's SAVED plan.
+"""WHIT-384 / WHIT-369 — the milestone celebration push reads the user's SAVED plan.
 
 Covers the resolve-plan fallback (unset / read-failure → built-in default), a custom plan
-firing on the user's own targets/labels, the namespaced "bal:<amount>" dedup marker, the
-re-target re-arm (Decision: key by dollar amount), and cent-exact custom boundaries. The
-no-saved-plan / default path stays covered by test_milestones.py (its callers omit
-milestone_repo → None → default), which is itself the no-regression guard.
+firing on the user's own targets/labels, the "id:<id>:bal:<amount>" dedup marker (WHIT-369:
+key by permanent id AND amount, so reorder/delete can't repeat or drop an alert while
+re-pointing a target still re-arms it), the re-target re-arm, and cent-exact custom
+boundaries. The no-saved-plan / default path stays covered by test_milestones.py (its callers
+omit milestone_repo → None → default), which is itself the no-regression guard.
 """
 
 from decimal import Decimal
@@ -32,10 +33,10 @@ class FakeNotifyRepo:
     def __init__(self, fired=None):
         self.fired = set(fired or set())
 
-    def fired_milestones(self):
+    def fired_milestones(self, scope=None):
         return set(self.fired)
 
-    def mark_milestone_fired(self, key):
+    def mark_milestone_fired(self, key, scope=None):
         assert isinstance(key, str), "marker must be a string (String Set)"
         self.fired.add(key)
 
@@ -107,7 +108,7 @@ def test_resolve_plan_maps_a_saved_plan_to_namespaced_decimal_rows(shared):
     assert len(plan) == 1
     assert plan[0].label == "My House"
     assert plan[0].target_balance == Decimal("480000")
-    assert plan[0].key == "bal:480000.00"  # namespaced + cent-quantized
+    assert plan[0].key == "id:m1:bal:480000.00"  # permanent id + cent-quantized amount
 
 
 # --- notify against a custom plan ----------------------------------------------------------
@@ -135,23 +136,82 @@ def test_custom_marker_is_namespaced_so_it_cannot_collide_with_a_sprint_marker(s
         Decimal("490000"), Decimal("480000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "480000")]))
-    assert notify.fired == {"bal:480000.00"}  # not "0".."4"
+    assert notify.fired == {"id:m1:bal:480000.00"}  # not "0".."4"
 
 
 def test_dedup_skips_an_already_fired_custom_milestone(shared, recorder):
     repo = FakeMilestoneRepo(stored=[_row("My House", "480000")])
-    sent = _notify(shared, old="490000", new="480000", milestone_repo=repo, fired={"bal:480000.00"})
+    sent = _notify(shared, old="490000", new="480000", milestone_repo=repo, fired={"id:m1:bal:480000.00"})
     assert sent == 0
     assert recorder == []
 
 
 def test_retarget_rearms_the_celebration(shared, recorder):
-    # Decision: key by dollar amount. A milestone already crossed & marked at 300000, then
-    # re-pointed to 280000, fires again when the balance crosses the NEW target.
-    repo = FakeMilestoneRepo(stored=[_row("My House", "280000")])
-    sent = _notify(shared, old="290000", new="280000", milestone_repo=repo, fired={"bal:300000.00"})
+    # Decision (WHIT-369): key by permanent id AND amount. Same milestone id already crossed &
+    # marked at 300000, then re-pointed to 280000 → the amount is part of the marker, so the
+    # new target is a fresh marker and fires again when the balance crosses it.
+    repo = FakeMilestoneRepo(stored=[_row("My House", "280000")])  # id defaults to "m1"
+    sent = _notify(shared, old="290000", new="280000", milestone_repo=repo, fired={"id:m1:bal:300000.00"})
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — My House!"
+
+
+# --- WHIT-369: id-keyed dedup survives reorder / delete / same-amount collisions -----------
+
+def test_reorder_does_not_refire_or_drop(shared, recorder):
+    # Two saved targets; the further one (id "b", 300000) was already celebrated. Reordering the
+    # list must NOT re-fire it (dedup keys on the permanent id, not list position) and must NOT
+    # drop the un-fired one (id "a", 480000) — that one fires. Fail-on-revert for the whole card:
+    # amount-only keying wouldn't match the seeded "id:b:..." marker, so B would wrongly re-fire.
+    notify = FakeNotifyRepo(fired={"id:b:bal:300000.00"})
+    reordered = [_row("B", "300000", id="b"), _row("A", "480000", id="a")]
+    sent = shared.milestones.notify_milestone_crossing(
+        Decimal("490000"), Decimal("295000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
+        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=reordered))
+    assert sent == 1
+    assert recorder[0][0] == "\U0001f389 Milestone reached — A!"
+    assert notify.fired == {"id:b:bal:300000.00", "id:a:bal:480000.00"}
+
+
+def test_delete_then_readd_same_amount_fires_under_a_new_id(shared, recorder):
+    # A milestone at 480000 (id "old") was celebrated; the user deletes it and adds a NEW target
+    # at the SAME amount (fresh id "new"). Amount-only keying would swallow it forever; id-keying
+    # fires it because the id differs.
+    notify = FakeNotifyRepo(fired={"id:old:bal:480000.00"})
+    readded = [_row("My House again", "480000", id="new")]
+    sent = shared.milestones.notify_milestone_crossing(
+        Decimal("490000"), Decimal("480000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
+        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=readded))
+    assert sent == 1
+    assert notify.fired == {"id:old:bal:480000.00", "id:new:bal:480000.00"}
+
+
+def test_two_targets_at_the_same_amount_get_distinct_markers(shared, recorder):
+    # Two milestones at the same 300000 target but different ids crossed together → both marked
+    # under distinct id-markers. Amount-only keying collides them into one shared marker.
+    notify = FakeNotifyRepo()
+    plan = [_row("First", "300000", id="one"), _row("Second", "300000", id="two")]
+    shared.milestones.notify_milestone_crossing(
+        Decimal("310000"), Decimal("300000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
+        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=plan))
+    assert notify.fired == {"id:one:bal:300000.00", "id:two:bal:300000.00"}
+
+
+def test_legacy_row_without_id_falls_back_to_amount_marker(shared, recorder):
+    # A row saved before ids were minted (WHIT-378) has no "id" — the marker degrades to the
+    # amount-only form rather than raising (which the poller's outer except would swallow into a
+    # silently-lost celebration).
+    legacy = [{"label": "Old", "targetBalance": Decimal("480000"), "targetDate": None}]
+    notify = FakeNotifyRepo()
+    sent = shared.milestones.notify_milestone_crossing(
+        Decimal("490000"), Decimal("480000"),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
+        notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=legacy))
+    assert sent == 1
+    assert notify.fired == {"bal:480000.00"}
 
 
 def test_cent_exact_custom_boundary(shared):

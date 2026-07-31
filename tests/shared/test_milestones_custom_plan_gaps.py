@@ -35,10 +35,10 @@ class FakeNotifyRepo:
     def __init__(self, fired=None):
         self.fired = set(fired or set())
 
-    def fired_milestones(self):
+    def fired_milestones(self, scope=None):
         return set(self.fired)
 
-    def mark_milestone_fired(self, key):
+    def mark_milestone_fired(self, key, scope=None):
         assert isinstance(key, str), "marker must be a string (String Set)"
         self.fired.add(key)
 
@@ -102,7 +102,7 @@ def test_lump_sum_across_custom_plan_furthest_first_one_push_all_marked(shared, 
     assert sent == 1
     assert len(recorder) == 1                       # exactly one push for the whole jump
     assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"  # furthest (lowest 120k)
-    assert notify.fired == {"bal:480000.00", "bal:300000.00", "bal:120000.00"}  # all marked fresh
+    assert notify.fired == {"id:a:bal:480000.00", "id:b:bal:300000.00", "id:c:bal:120000.00"}  # all marked fresh
 
 
 def test_custom_crossed_list_is_sorted_furthest_first(shared):
@@ -118,27 +118,27 @@ def test_custom_crossed_list_is_sorted_furthest_first(shared):
 
 def test_mixed_fired_and_fresh_only_fresh_fire_and_mark(shared, recorder):
     repo = FakeMilestoneRepo(stored=[
-        _row("Deposit", "480000"), _row("Halfway", "300000"), _row("Nearly", "120000")])
-    notify = FakeNotifyRepo(fired={"bal:300000.00"})          # middle already celebrated
+        _row("Deposit", "480000", id="a"), _row("Halfway", "300000", id="b"), _row("Nearly", "120000", id="c")])
+    notify = FakeNotifyRepo(fired={"id:b:bal:300000.00"})     # middle already celebrated
     sent, notify = _notify(shared, old="500000", new="100000", milestone_repo=repo, notify=notify)
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — Nearly!"  # furthest FRESH (120k)
     # only the two fresh keys are added; the pre-existing one is untouched, none re-fired.
-    assert notify.fired == {"bal:300000.00", "bal:480000.00", "bal:120000.00"}
+    assert notify.fired == {"id:b:bal:300000.00", "id:a:bal:480000.00", "id:c:bal:120000.00"}
 
 
 # --- a custom target EQUAL to a default (544000) must not collide with a stale sprint marker -
 
 def test_custom_target_equal_to_default_does_not_collide_with_stale_sprint_marker(shared, recorder):
     # A user who previously fired the built-in Kickoff (marker "0"), then saved a custom plan
-    # whose target happens to equal 544000. Its key is "bal:544000.00", not "0" — so the stale
-    # "0" must NOT suppress the custom celebration.
+    # whose target happens to equal 544000. Its key is "id:m1:bal:544000.00", not "0" — so the
+    # stale "0" must NOT suppress the custom celebration.
     repo = FakeMilestoneRepo(stored=[_row("My House", "544000")])
     notify = FakeNotifyRepo(fired={"0"})
     sent, notify = _notify(shared, old="545000", new="544000", milestone_repo=repo, notify=notify)
     assert sent == 1
     assert recorder[0][0] == "\U0001f389 Milestone reached — My House!"
-    assert notify.fired == {"0", "bal:544000.00"}            # both live independently
+    assert notify.fired == {"0", "id:m1:bal:544000.00"}      # both live independently
 
 
 # --- empty-list ([]) vs unset (None) semantics ---------------------------------------------

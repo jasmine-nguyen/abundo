@@ -40,8 +40,23 @@ def _pk(last_pay_date: str, length: int) -> str:
 # The single marker item holding every already-notified repayment id (WHIT-15).
 _REPAYMENT_KEY = {"pk": "NOTIFY#REPAYMENT", "sk": "FIRED"}
 
-# The single marker item holding every already-celebrated payoff-milestone sprint (WHIT-301).
-_MILESTONE_KEY = {"pk": "NOTIFY#MILESTONE", "sk": "FIRED"}
+# The already-celebrated payoff-milestone markers, one item per owner (WHIT-301/369). The sort
+# key IS the `scope` (owner): None → the shared tenant, an authenticated user id later. The
+# shared-tenant value stays the historical "FIRED" so existing markers are NOT orphaned by the
+# WHIT-369 seam — orphaning them would let an already-celebrated milestone re-fire a duplicate
+# push, because the balance is NOT strictly monotonic (interest and redraws raise it, so a
+# crossed milestone can be re-crossed; the marker, not monotonicity, is what dedups it). The
+# plan store (MilestoneRepository) scopes its shared tenant as "SHARED"; the two literals differ
+# only for the shared default and only for back-compat — real per-user scopes pass the SAME user
+# id to both. A module literal, not a shared constant, so it never crosses the lambda_api
+# constants shadow (WHIT-136).
+_MILESTONE_SCOPE = "FIRED"
+
+
+def _milestone_key(scope: Optional[str] = None) -> dict:
+    """The marker item's key for `scope`; None is the shared tenant. One place for the
+    None → shared default so every accessor stays consistent."""
+    return {"pk": "NOTIFY#MILESTONE", "sk": _MILESTONE_SCOPE if scope is None else scope}
 
 # The single marker item for the precise repayment-miss detector (WHIT-317): a String Set
 # of "<fired_at>#<amount_cents>#<txn_id>" tokens, one per repayment push. Separate from
@@ -167,26 +182,30 @@ class NotifyRepository:
                 amounts.append(int(amount_str))
         return amounts
 
-    def fired_milestones(self) -> set:
-        """The set of payoff-milestone sprint numbers (as strings) already celebrated (WHIT-301)."""
+    def fired_milestones(self, scope: Optional[str] = None) -> set:
+        """The set of already-celebrated payoff-milestone markers for `scope` (WHIT-301/369).
+        A marker is the milestone's dedup key — "id:<id>:bal:<amount>" for a saved milestone,
+        or a bare sprint "0".."4" for the built-in default. `scope` selects the owner; None is
+        the shared tenant."""
         try:
-            item = self._get_table().get_item(Key=_MILESTONE_KEY).get("Item")
+            item = self._get_table().get_item(Key=_milestone_key(scope)).get("Item")
         except ClientError as e:
             handle_database_error(e, "read milestone-notify markers")
         if item is None:
             return set()
         return set(item.get("fired", set()))
 
-    def mark_milestone_fired(self, sprint: str) -> None:
-        """Record that payoff milestone `sprint` has been celebrated. Deliberately NO TTL
-        (unlike the per-cycle/per-repayment markers above): the paydown is monotonic, so a
-        milestone is a once-ever event that must never expire and re-fire."""
+    def mark_milestone_fired(self, key: str, scope: Optional[str] = None) -> None:
+        """Record that the milestone with dedup marker `key` has been celebrated for `scope`.
+        Deliberately NO TTL (unlike the per-cycle/per-repayment markers above): the paydown is
+        monotonic, so a milestone is a once-ever event that must never expire and re-fire.
+        `scope` selects the owner; None is the shared tenant."""
         try:
             self._get_table().update_item(
-                Key=_MILESTONE_KEY,
+                Key=_milestone_key(scope),
                 UpdateExpression="ADD #f :m",
                 ExpressionAttributeNames={"#f": "fired"},
-                ExpressionAttributeValues={":m": {sprint}},
+                ExpressionAttributeValues={":m": {key}},
             )
         except ClientError as e:
             handle_database_error(e, "mark milestone celebrated")
