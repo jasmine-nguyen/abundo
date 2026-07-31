@@ -32,6 +32,7 @@ class FakeDeviceRepo:
 class FakeNotifyRepo:
     def __init__(self, fired=None):
         self.fired = set(fired or set())
+        self.removed = set()  # every key ever passed to remove_milestone_markers
 
     def fired_milestones(self, scope=None):
         return set(self.fired)
@@ -39,6 +40,11 @@ class FakeNotifyRepo:
     def mark_milestone_fired(self, key, scope=None):
         assert isinstance(key, str), "marker must be a string (String Set)"
         self.fired.add(key)
+
+    def remove_milestone_markers(self, keys, scope=None):
+        assert keys, "must guard empty before calling remove_milestone_markers"
+        self.removed |= set(keys)
+        self.fired -= set(keys)
 
 
 class FakeMilestoneRepo:
@@ -177,7 +183,8 @@ def test_reorder_does_not_refire_or_drop(shared, recorder):
 def test_delete_then_readd_same_amount_fires_under_a_new_id(shared, recorder):
     # A milestone at 480000 (id "old") was celebrated; the user deletes it and adds a NEW target
     # at the SAME amount (fresh id "new"). Amount-only keying would swallow it forever; id-keying
-    # fires it because the id differs.
+    # fires it because the id differs. The WHIT-385 reconcile also sweeps the deleted milestone's
+    # now-dead "id:old" marker in the same poll, so only the live "id:new" marker remains.
     notify = FakeNotifyRepo(fired={"id:old:bal:480000.00"})
     readded = [_row("My House again", "480000", id="new")]
     sent = shared.milestones.notify_milestone_crossing(
@@ -185,7 +192,8 @@ def test_delete_then_readd_same_amount_fires_under_a_new_id(shared, recorder):
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=readded))
     assert sent == 1
-    assert notify.fired == {"id:old:bal:480000.00", "id:new:bal:480000.00"}
+    assert notify.removed == {"id:old:bal:480000.00"}  # dead marker swept by reconcile
+    assert notify.fired == {"id:new:bal:480000.00"}    # only the live marker remains
 
 
 def test_two_targets_at_the_same_amount_get_distinct_markers(shared, recorder):
@@ -240,3 +248,123 @@ def test_no_plan_falls_back_to_default_with_sprint_markers(shared, recorder):
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=None))
     assert notify.fired == {"0"}
+
+
+# --- WHIT-385: reconcile dead custom markers ------------------------------------------------
+# The set of "bal:<amount>" celebration markers must not grow forever when a user re-targets a
+# milestone. On each poll, drop markers whose target is no longer in the saved plan — but ONLY
+# when the plan read was authoritative (a genuine saved list). A read failure / unset / None repo
+# falls back to the built-in default and must delete NOTHING, or a transient blip would wipe the
+# once-ever "already celebrated" record.
+
+def _run(shared, *, old, new, milestone_repo, notify):
+    return shared.milestones.notify_milestone_crossing(
+        Decimal(old) if old is not None else None,
+        Decimal(new),
+        loanfacts_repo=FakeLoanFactsRepo(FACTS),
+        device_repo=FakeDeviceRepo(),
+        notify_repo=notify,
+        milestone_repo=milestone_repo,
+    )
+
+
+def test_retarget_drops_the_dead_marker(shared, recorder):
+    # Core fail-on-revert: a milestone re-pointed 300000 → 280000 leaves a dead "bal:300000.00"
+    # marker. A poll that crosses nothing still reconciles it away. Revert the reconcile and the
+    # dead key survives → this fails.
+    notify = FakeNotifyRepo({"bal:300000.00"})
+    sent = _run(shared, old="285000", new="284000",
+                milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
+    assert sent == 0
+    assert notify.removed == {"bal:300000.00"}
+    assert notify.fired == set()
+
+
+def test_read_failure_does_not_delete_any_marker(shared, recorder):
+    # BLOCKER guard, fail-on-revert: a milestones-store read failure falls back to the default
+    # plan (no "bal:" keys). Reconciling against it would treat EVERY live custom marker as dead
+    # and delete it. Authoritative-only reconcile must delete nothing here.
+    notify = FakeNotifyRepo({"bal:300000.00", "bal:480000.00"})
+    sent = _run(shared, old="250000", new="249000",
+                milestone_repo=FakeMilestoneRepo(raises=RuntimeError("dynamo down")), notify=notify)
+    assert sent == 0
+    assert notify.removed == set()
+    assert notify.fired == {"bal:300000.00", "bal:480000.00"}
+
+
+def test_unset_plan_does_not_delete_markers(shared, recorder):
+    # An unset plan (stored is None) is a fallback default, not an authoritative empty plan, so
+    # custom markers are left intact (only a positively-returned list authorizes deletion).
+    notify = FakeNotifyRepo({"bal:300000.00"})
+    _run(shared, old="250000", new="249000",
+         milestone_repo=FakeMilestoneRepo(stored=None), notify=notify)
+    assert notify.removed == set()
+    assert notify.fired == {"bal:300000.00"}
+
+
+def test_none_repo_does_not_delete_markers(shared, recorder):
+    # No repo at all (pre-WHIT-384 callers) → default plan, non-authoritative → no deletion.
+    notify = FakeNotifyRepo({"bal:300000.00"})
+    _run(shared, old="250000", new="249000", milestone_repo=None, notify=notify)
+    assert notify.removed == set()
+    assert notify.fired == {"bal:300000.00"}
+
+
+def test_empty_saved_plan_clears_all_custom_markers(shared, recorder):
+    # An authoritative empty plan ([]) is a genuine "no targets" — every custom marker is dead and
+    # is cleared, while the built-in sprint marker "0" is preserved (not "bal:"-prefixed).
+    notify = FakeNotifyRepo({"bal:300000.00", "bal:120000.00", "0"})
+    sent = _run(shared, old="250000", new="249000",
+                milestone_repo=FakeMilestoneRepo(stored=[]), notify=notify)
+    assert sent == 0
+    assert notify.removed == {"bal:300000.00", "bal:120000.00"}
+    assert notify.fired == {"0"}
+
+
+def test_reconcile_preserves_builtin_sprint_markers(shared, recorder):
+    # Sprint markers ("0".."4") never carry the "bal:" prefix, so reconcile leaves them alone even
+    # while dropping a dead custom marker.
+    notify = FakeNotifyRepo({"0", "1", "bal:300000.00"})
+    _run(shared, old="285000", new="284000",
+         milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
+    assert notify.removed == {"bal:300000.00"}
+    assert notify.fired == {"0", "1"}
+
+
+def test_reconcile_no_delete_when_marker_still_live(shared, recorder):
+    # The saved target still matches the marker → nothing stale → remove is never called (the
+    # empty-guard would assert if it were).
+    notify = FakeNotifyRepo({"id:m1:bal:280000.00"})
+    _run(shared, old="285000", new="284000",
+         milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
+    assert notify.removed == set()
+    assert notify.fired == {"id:m1:bal:280000.00"}
+
+
+def test_reconcile_preserves_the_once_ever_dedup_for_a_live_marker(shared, recorder):
+    # Moving the fired read above the "nothing crossed" short-circuit must not break dedup: a live
+    # marker whose target is crossed again must NOT re-fire.
+    notify = FakeNotifyRepo({"id:m1:bal:280000.00"})
+    sent = _run(shared, old="285000", new="280000",
+                milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
+    assert sent == 0
+    assert recorder == []
+    assert notify.removed == set()
+
+
+def test_reconcile_write_error_does_not_suppress_celebration(shared, recorder):
+    # Reconcile is best-effort bookkeeping placed BEFORE the send: a marker DELETE blip must not
+    # eat a genuine celebration (the crossing is never re-detected once the balance passes it).
+    # Fail-on-revert: drop the try/except and this raises out of notify instead of sending.
+    # The seeded "bal:300000.00" is a dead legacy marker (not the live "id:m1:..."), so reconcile
+    # tries to delete it → the fake raises → the celebration must still proceed.
+    class RaisingNotifyRepo(FakeNotifyRepo):
+        def remove_milestone_markers(self, keys, scope=None):
+            raise RuntimeError("dynamo down")
+
+    notify = RaisingNotifyRepo({"bal:300000.00"})
+    sent = _run(shared, old="290000", new="280000",
+                milestone_repo=FakeMilestoneRepo(stored=[_row("My House", "280000")]), notify=notify)
+    assert sent == 1
+    assert recorder[0][0] == "\U0001f389 Milestone reached — My House!"
+    assert "id:m1:bal:280000.00" in notify.fired  # the fresh crossing is still marked fired

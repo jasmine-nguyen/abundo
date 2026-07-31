@@ -34,6 +34,7 @@ class FakeDeviceRepo:
 class FakeNotifyRepo:
     def __init__(self, fired=None):
         self.fired = set(fired or set())
+        self.removed = set()
 
     def fired_milestones(self, scope=None):
         return set(self.fired)
@@ -41,6 +42,11 @@ class FakeNotifyRepo:
     def mark_milestone_fired(self, key, scope=None):
         assert isinstance(key, str), "marker must be a string (String Set)"
         self.fired.add(key)
+
+    def remove_milestone_markers(self, keys, scope=None):
+        assert keys, "must guard empty before calling remove_milestone_markers"
+        self.removed |= set(keys)
+        self.fired -= set(keys)
 
 
 class FakeMilestoneRepo:
