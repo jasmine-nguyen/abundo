@@ -15,6 +15,8 @@ from decimal import Decimal
 
 import pytest
 
+from _anthropic_fakes import FakeResponse, text_payload
+
 
 # --- harness (mirrors test_milestone_review.py) ------------------------------
 
@@ -68,24 +70,6 @@ def test_reason_with_non_ascii_numeral_is_scrubbed(handler, monkeypatch):
 # --- review_pacing client layer ----------------------------------------------
 
 
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode() if payload is not None else b""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
-def _messages_payload(text):
-    return {"content": [{"type": "text", "text": text}]}
-
-
 def _stub_key(monkeypatch):
     # Key/HTTP plumbing lives in the shared anthropic_client (WHIT-388); patch it THERE.
     import anthropic_client
@@ -103,7 +87,7 @@ def test_review_pacing_builds_request_and_parses(handler, monkeypatch):
         captured["url"] = req.full_url
         captured["headers"] = req.headers
         captured["body"] = json.loads(req.data.decode())
-        return _FakeResponse(_messages_payload(
+        return FakeResponse(text_payload(
             '{"adjustments": [{"index": 0, "reason": "behind your plan"}, '
             '{"index": 3, "reason": "drifting later"}]}'))
 
@@ -127,7 +111,7 @@ def test_review_pacing_extracts_json_wrapped_in_prose(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload(
+        lambda req, timeout=None: FakeResponse(text_payload(
             'Sure!\n{"adjustments": [{"index": 1, "reason": "slipping"}]}\nHope that helps.')))
     assert milestone_ai.review_pacing({}) == [{"index": 1, "reason": "slipping"}]
 
@@ -138,7 +122,7 @@ def test_review_pacing_non_json_reply_degrades_to_empty(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload("I could not do that.")))
+        lambda req, timeout=None: FakeResponse(text_payload("I could not do that.")))
     assert milestone_ai.review_pacing({}) == []
 
 
@@ -149,7 +133,7 @@ def test_review_pacing_braces_with_bad_json_degrades_to_empty(handler, monkeypat
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload("{not: valid, json}")))
+        lambda req, timeout=None: FakeResponse(text_payload("{not: valid, json}")))
     assert milestone_ai.review_pacing({}) == []
 
 
@@ -159,7 +143,7 @@ def test_parse_review_adjustments_not_a_list_is_empty(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload('{"adjustments": "nope"}')))
+        lambda req, timeout=None: FakeResponse(text_payload('{"adjustments": "nope"}')))
     assert milestone_ai.review_pacing({}) == []
 
 
@@ -171,7 +155,7 @@ def test_review_pacing_drops_malformed_entries(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload(json.dumps({"adjustments": [
+        lambda req, timeout=None: FakeResponse(text_payload(json.dumps({"adjustments": [
             {"index": 0, "reason": "keep"},
             "not-a-dict",
             {"index": True, "reason": "bool index"},

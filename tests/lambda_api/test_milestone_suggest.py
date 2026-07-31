@@ -18,6 +18,8 @@ from decimal import Decimal
 
 import pytest
 
+from _anthropic_fakes import FakeResponse, text_payload
+
 
 # --- deterministic "today" ---------------------------------------------------
 # The endpoint calls date.today() for the curve start; pin it so every candidate date
@@ -532,24 +534,6 @@ def test_build_returns_none_when_every_label_scrubs_empty(handler):
 # mirroring test_insights_ai's client layer. urllib.request.urlopen is monkeypatched.
 
 
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode() if payload is not None else b""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
-def _messages_payload(text):
-    return {"content": [{"type": "text", "text": text}]}
-
-
 def _stub_key(monkeypatch):
     """The key/HTTP plumbing lives in the shared anthropic_client (WHIT-388) that milestone_ai
     delegates to, so get_api_key resolves _api_key / get_param out of anthropic_client's module
@@ -572,7 +556,7 @@ def test_suggest_pacing_builds_request_and_parses(handler, monkeypatch):
         captured["url"] = req.full_url
         captured["headers"] = req.headers
         captured["body"] = json.loads(req.data.decode())
-        return _FakeResponse(_messages_payload(
+        return FakeResponse(text_payload(
             '{"milestones": [{"index": 0, "label": "Great start"}, '
             '{"index": 4, "label": "Almost home"}]}'))
 
@@ -599,7 +583,7 @@ def test_suggest_pacing_extracts_json_wrapped_in_prose(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload(
+        lambda req, timeout=None: FakeResponse(text_payload(
             'Sure!\n{"milestones": [{"index": 1, "label": "Halfway"}]}\nHope that helps.')))
     assert milestone_ai.suggest_pacing({}) == [{"index": 1, "label": "Halfway"}]
 
@@ -610,7 +594,7 @@ def test_suggest_pacing_non_json_reply_degrades_to_empty(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload("I could not do that.")))
+        lambda req, timeout=None: FakeResponse(text_payload("I could not do that.")))
     assert milestone_ai.suggest_pacing({}) == []
 
 
@@ -621,7 +605,7 @@ def test_suggest_pacing_braces_with_bad_json_degrades_to_empty(handler, monkeypa
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload("{not: valid, json}")))
+        lambda req, timeout=None: FakeResponse(text_payload("{not: valid, json}")))
     assert milestone_ai.suggest_pacing({}) == []
 
 
@@ -632,7 +616,7 @@ def test_suggest_pacing_milestones_not_a_list_is_empty(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload('{"milestones": "nope"}')))
+        lambda req, timeout=None: FakeResponse(text_payload('{"milestones": "nope"}')))
     assert milestone_ai.suggest_pacing({}) == []
 
 
@@ -644,7 +628,7 @@ def test_suggest_pacing_drops_malformed_entries(handler, monkeypatch):
     _stub_key(monkeypatch)
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload(json.dumps({"milestones": [
+        lambda req, timeout=None: FakeResponse(text_payload(json.dumps({"milestones": [
             {"index": 0, "label": "keep"},
             "not-a-dict",
             {"index": True, "label": "bool index"},

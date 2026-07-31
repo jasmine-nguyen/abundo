@@ -15,23 +15,7 @@ urllib.request.urlopen is monkeypatched — no network, no AWS. Reuses the
 
 import json
 
-
-class _FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode() if payload is not None else b""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
-def _payload(content):
-    return {"content": content}
+from _anthropic_fakes import FakeResponse, messages_payload
 
 
 # --- request-body parity: model + max_tokens ---------------------------------
@@ -45,7 +29,7 @@ def test_post_body_carries_model_and_max_tokens(anthropic_client, monkeypatch):
 
     def fake_urlopen(req, timeout=None):
         captured["body"] = json.loads(req.data.decode())
-        return _FakeResponse(_payload([{"type": "text", "text": "ok"}]))
+        return FakeResponse(messages_payload([{"type": "text", "text": "ok"}]))
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
     anthropic_client.post("SYS", "P:\n", {"a": 1})
@@ -65,7 +49,7 @@ def test_post_user_turn_is_compact_json_including_commas(anthropic_client, monke
 
     def fake_urlopen(req, timeout=None):
         captured["content"] = json.loads(req.data.decode())["messages"][0]["content"]
-        return _FakeResponse(_payload([{"type": "text", "text": "ok"}]))
+        return FakeResponse(messages_payload([{"type": "text", "text": "ok"}]))
 
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
     anthropic_client.post("s", "P:\n", {"a": 1, "b": 2})
@@ -83,7 +67,7 @@ def test_post_user_turn_is_compact_json_including_commas(anthropic_client, monke
 def test_post_text_block_without_text_key_returns_empty(anthropic_client, monkeypatch):
     monkeypatch.setattr(
         anthropic_client.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_payload([{"type": "text"}])))
+        lambda req, timeout=None: FakeResponse(messages_payload([{"type": "text"}])))
     assert anthropic_client.post("s", "p", {}) == ""
 
 

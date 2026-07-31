@@ -16,26 +16,7 @@ from decimal import Decimal
 
 import pytest
 
-
-class _FakeResponse:
-    """Stand-in for urlopen()'s return: a context manager whose .read() -> bytes."""
-
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode() if payload is not None else b""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
-def _messages_payload(text):
-    """A minimal Anthropic Messages API success envelope carrying `text`."""
-    return {"content": [{"type": "text", "text": text}]}
+from _anthropic_fakes import FakeResponse, text_payload
 
 
 # --- Anthropic client (insights_ai) -----------------------------------------
@@ -51,7 +32,7 @@ def test_generate_suggestions_builds_request_and_parses(insights_ai, monkeypatch
         captured["url"] = req.full_url
         captured["headers"] = req.headers
         captured["body"] = json.loads(req.data.decode())
-        return _FakeResponse(_messages_payload(
+        return FakeResponse(text_payload(
             '{"summary": "Solid cycle.", "suggestions": ["Cut coffee $20", "Watch groceries"]}'))
 
     monkeypatch.setattr(ac.urllib.request, "urlopen", fake_urlopen)
@@ -79,7 +60,7 @@ def test_generate_suggestions_extracts_json_wrapped_in_prose(insights_ai, monkey
     import anthropic_client as ac
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload(
+        lambda req, timeout=None: FakeResponse(text_payload(
             'Sure! Here you go:\n{"summary": "ok", "suggestions": ["a"]}\nHope that helps.')))
 
     result = insights_ai.generate_suggestions({})
@@ -90,7 +71,7 @@ def test_generate_suggestions_non_json_reply_degrades_gracefully(insights_ai, mo
     import anthropic_client as ac
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload("I could not analyse that.")))
+        lambda req, timeout=None: FakeResponse(text_payload("I could not analyse that.")))
 
     result = insights_ai.generate_suggestions({})
     assert result == {"summary": None, "suggestions": []}
@@ -100,7 +81,7 @@ def test_generate_suggestions_drops_non_string_suggestions(insights_ai, monkeypa
     import anthropic_client as ac
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload(
+        lambda req, timeout=None: FakeResponse(text_payload(
             '{"summary": 5, "suggestions": ["keep", 3, "", "  ", "also"]}')))
 
     result = insights_ai.generate_suggestions({})
@@ -114,7 +95,7 @@ def test_generate_suggestions_blank_summary_becomes_none(insights_ai, monkeypatc
     import anthropic_client as ac
     monkeypatch.setattr(
         ac.urllib.request, "urlopen",
-        lambda req, timeout=None: _FakeResponse(_messages_payload(
+        lambda req, timeout=None: FakeResponse(text_payload(
             '{"summary": "   ", "suggestions": []}')))
 
     result = insights_ai.generate_suggestions({})
