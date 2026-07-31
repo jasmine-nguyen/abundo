@@ -45,7 +45,7 @@ export default function Mortgage() {
               <Text style={styles.heroEyebrow}>THE MORTGAGE · PAID DOWN SO FAR</Text>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 7 }}>
                 <Text style={styles.heroBig}>{fmt(g.paidOff!)}</Text>
-                <Text style={styles.heroPct}>{Math.round(g.paidPct)}% gone</Text>
+                <Text style={styles.heroPct}>{g.paidPctLabel}% gone</Text>
               </View>
               <View style={{ marginTop: 16 }}>
                 <Bar pct={g.paidPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={12} />
