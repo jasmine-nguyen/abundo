@@ -70,6 +70,21 @@ it('[A6b] a zero deposit target is rejected the same way (> 0 guard, not just fi
   expect(saveLoanFacts).not.toHaveBeenCalled();
 });
 
+it('[A8] a deposit target over the $1B ceiling is blocked by its own toast, no save', async () => {
+  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+  const showToast = jest.fn();
+  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
+  render(<Loan />);
+  fillValid();
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), '1000000001');
+  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  // Distinct from the finite/>0 toast — this is the ceiling message. Fail-on-revert: drop the
+  // deposit-target ceiling guard and 1000000001 sails through to saveLoanFacts.
+  expect(showToast).toHaveBeenCalledWith('Keep the deposit target under $1B.');
+  expect(saveLoanFacts).not.toHaveBeenCalled();
+  expect(mockBack).not.toHaveBeenCalled();
+});
+
 it('[A7] EDIT: a seeded target cleared to blank saves depositTarget:null (no stale value)', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   mockState = state({

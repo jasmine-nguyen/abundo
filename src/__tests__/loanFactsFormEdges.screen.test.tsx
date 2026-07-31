@@ -85,6 +85,31 @@ it('rejects trailing garbage in a number ("80abc") rather than storing 80', asyn
   expect(showToast).toHaveBeenCalled();
 });
 
+it('blocks a dollar field over the $1B ceiling (extra) with a toast and no save', async () => {
+  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+  const showToast = jest.fn();
+  mockState = state({
+    saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'],
+    showToast: showToast as AppContext['showToast'],
+  });
+  render(<Loan />);
+  // A non-first field over the ceiling — proves the .some() check catches more than original.
+  fill({ extra: '1000000001' });
+  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  expect(saveLoanFacts).not.toHaveBeenCalled();
+  expect(showToast).toHaveBeenCalledWith('Keep each amount under $1B.');
+});
+
+it('accepts exactly $1B (ceiling is strict >, matching the server) and saves', async () => {
+  const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
+  mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
+  render(<Loan />);
+  fill({ orig: '1000000000' });
+  await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: 1000000000 }));
+  expect(mockBack).toHaveBeenCalled();
+});
+
 it('a blank form (opened before facts loaded) cannot wipe saved facts on Save', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   const showToast = jest.fn();
