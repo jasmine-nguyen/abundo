@@ -11,6 +11,7 @@ import { AiCoachCard } from '../../src/components/AiCoachCard';
 import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
 import { SegmentedControl } from '../../src/components/SegmentedControl';
+import { chartCategoryColor } from '../../src/theme/chartColors';
 
 export default function Insights() {
   const s = useAppContext(); // the AI-insights slice (aiInsights / generate / refresh) stays on the store
@@ -22,13 +23,22 @@ export default function Insights() {
   // `incomeSources = []` default: the real hook always returns an array, but the default keeps a
   // hand-mocked test harness that omits it from throwing on `.length` (WHIT-381).
   const { breakdown, earned, incomeSources = [], category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
-  const { rows, total } = categoryBreakdown({ breakdown, category });
+  // Recolour the Insights pie + rows from the chart palette (WHIT chart palette): wrap the category
+  // accessor so its `color` comes from the 20-colour ramp, then feed that to the breakdown selectors.
+  // The pie slices, row icons, chips, and bars all read the wrapped colour — so this screen recolours
+  // consistently while Budgets / Transactions keep the app-wide `colorForCategory` untouched.
+  const chartCategory = useCallback((id: string) => {
+    const c = category(id);
+    if (!c) return c;
+    return { ...c, color: chartCategoryColor(id) };
+  }, [category]);
+  const { rows, total } = categoryBreakdown({ breakdown, category: chartCategory });
 
   // WHIT-373: one list, a switch. "Spending" shows the category breakdown; "Earning" shows the same
   // cycle's income sources. Default is Spending. `side` is clamped to 'spending' whenever the toggle
   // is hidden (nothing to switch to), so an income-only cycle a user last left on Earning can't come
   // back to a blank hidden-toggle screen.
-  const { rows: incomeRows } = incomeBreakdown({ incomeSources, earned, category });
+  const { rows: incomeRows } = incomeBreakdown({ incomeSources, earned, category: chartCategory });
   // Each source's share of total income drives its green bar. Denominator is the shown positive
   // income (a reversed source or the muted plug adds no bar), so the bars read as a share of income.
   const incomeShareTotal = incomeRows.reduce((sum, r) => (r.muted || r.amount < 0 ? sum : sum + r.amount), 0);
@@ -258,6 +268,8 @@ export default function Insights() {
           // source: it's dimmed, gets no bar, and doesn't drill.
           const { amountText, amountColor, nameColor } = breakdownLineStyle({ isReversed: r.reversed, isRemainder: r.muted, spent: r.amount });
           const barPct = incomeShareTotal > 0 && !r.muted && r.amount > 0 ? Math.min(100, (r.amount / incomeShareTotal) * 100) : 0;
+          // Each source's bar is its own chart-palette colour, so the Earning list matches the pie
+          // and the spending rows (one colour per source), not a single flat green (WHIT chart palette).
           const body = (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
               <View style={[styles.chip, { backgroundColor: r.chipBg }]}><Icon name={r.icon} size={23} color={r.color} /></View>
@@ -280,7 +292,7 @@ export default function Insights() {
               )}
               {barPct > 0 && (
                 <View style={styles.track}>
-                  <View style={{ width: `${barPct}%`, backgroundColor: C.good, height: '100%', borderRadius: 5 }} />
+                  <View style={{ width: `${barPct}%`, backgroundColor: r.color, height: '100%', borderRadius: 5 }} />
                 </View>
               )}
             </View>

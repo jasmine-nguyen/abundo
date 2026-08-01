@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { G, Circle, Path } from 'react-native-svg';
 import { C, FONT, fmt } from '../theme';
+import { OTHER_COLOR } from '../theme/chartColors';
 import { useReduceMotion } from '../motion/useReduceMotion';
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
@@ -11,9 +12,8 @@ import { useReduceMotion } from '../motion/useReduceMotion';
 // At rest the hole shows the TOTAL spent. Tap a wedge to read that category's name + total instead;
 // tap it again — OR tap the hole — to clear back to the total.
 
-// Neutral grey for the grouped "Other" slice — distinct from any category hue, and reads as
-// "not one thing" rather than competing for identity with the real categories.
-const OTHER_COLOR = C.textFaint;
+// The grouped "Other" slice grey comes from the chart palette (OTHER_COLOR, === C.textFaint) —
+// distinct from any category hue and low-saturation so it reads as "not one thing".
 
 export interface DonutSlice { id: string; name: string; color: string; value: number }
 
