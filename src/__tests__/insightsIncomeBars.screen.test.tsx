@@ -9,7 +9,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext, LoanFacts } from '../context';
-import { C } from '../theme';
+import { CATEGORY_COLORS } from '../theme/chartColors';
 
 type InsightsState = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsightsError' | 'refreshAiInsights' | 'generateAiInsights'>
   & { loanFacts: LoanFacts; homeLoan: { balance: number | null; asOf: string | null } };
@@ -55,18 +55,18 @@ function state(): InsightsState {
   };
 }
 
-// The income share bars are inline Views with no testID. They're the only nodes filled with C.good
-// EXCEPT the EarnedVsSpent card's "earned-bar" (also C.good) — which carries that testID, so we
-// exclude it. Chip backgrounds/active-tab tints are rgba(tint), never the raw hex, so they don't
-// match. Collect each matching fill's width string.
-const GREEN = C.good; // '#2ac3de'
+// The income share bars are inline Views filled with the SOURCE's chart-palette colour (WHIT chart
+// palette — each source its own colour, matching the pie, not a flat green). They're the only nodes
+// whose raw backgroundColor is a CATEGORY_COLORS hex: chips are rgba(tint) and the EarnedVsSpent card
+// bars are C.good/C.bad (not in the ramp), so neither matches. Collect each matching fill's width.
+const RAMP = new Set<string>(CATEGORY_COLORS);
 function incomeBarWidths(node: unknown, acc: string[] = []): string[] {
   if (!node || typeof node !== 'object') return acc;
   if (Array.isArray(node)) { node.forEach((n) => incomeBarWidths(n, acc)); return acc; }
   const n = node as { props?: { style?: unknown; testID?: string }; children?: unknown[] };
   const style = n.props?.style;
   const flat = Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : (style || {});
-  if ((flat as { backgroundColor?: string }).backgroundColor === GREEN && n.props?.testID !== 'earned-bar') {
+  if (RAMP.has((flat as { backgroundColor?: string }).backgroundColor as string)) {
     acc.push(String((flat as { width?: unknown }).width));
   }
   if (Array.isArray(n.children)) n.children.forEach((c) => incomeBarWidths(c, acc));
