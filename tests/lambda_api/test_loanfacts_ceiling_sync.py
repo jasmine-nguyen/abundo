@@ -18,23 +18,21 @@ declaration — same approach as tests/shared/test_milestones_twin_drift.py.
 import pathlib
 import re
 
+from _lambda_api_constants import api_constant
+
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_API_CONSTANTS = _ROOT / "lambda_api" / "constants.py"
 _CLIENT_LOAN_FORM = _ROOT / "app" / "loan.tsx"
 
-# The client declaration, e.g. `const LOANFACTS_FIELD_MAX = 1_000_000_000;`.
-# Anchored on `const` so a mention of the name in a comment can't match.
+# The client declaration, e.g. `const LOANFACTS_FIELD_MAX = 1_000_000_000;`. Anchored on
+# `const` so a mention of the name in a comment can't match — `export const ...` still does.
 _CLIENT_CEILING = re.compile(r"const\s+LOANFACTS_FIELD_MAX\s*=\s*([\d_]+)")
 
 
 def _server_ceiling() -> int:
-    """LOANFACTS_FIELD_MAX from lambda_api/constants.py, read by exec'ing the
-    module into a fresh namespace (the file has no imports) — same technique as
-    tests/lambda_api/test_constants_sync.py, so no sys.modules clash or stale
-    .pyc can mask a drift."""
-    namespace: dict = {}
-    exec(compile(_API_CONSTANTS.read_text(), str(_API_CONSTANTS), "exec"), namespace)
-    return namespace["LOANFACTS_FIELD_MAX"]
+    """LOANFACTS_FIELD_MAX from lambda_api/constants.py. The read lives in
+    tests/shared/_lambda_api_constants.py (WHIT-393) so this guard and the
+    loan-facts edges suite share one reader."""
+    return api_constant("LOANFACTS_FIELD_MAX")
 
 
 def _client_ceiling() -> int:

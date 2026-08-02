@@ -3,7 +3,7 @@
 // Fortnightly / Monthly).
 import { describe, it, expect } from '@jest/globals';
 import { cleanName, merchantLabel, cycleName } from '../context';
-import { fmt, fmt2, fmtBalance, fmtExact, tint, agoLabel, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON, C } from '../theme';
+import { fmt, fmt2, fmtBalance, fmtExact, fmtCompact, tint, agoLabel, breakdownLineStyle, ADJUSTMENT_ROW, RECONCILE_EPSILON, C } from '../theme';
 import { txn } from './factory';
 
 describe('cleanName / merchantLabel', () => {
@@ -27,6 +27,34 @@ describe('fmt', () => {
     expect(fmt(1234.56)).toBe('$1,235');
     expect(fmt(0)).toBe('$0');
     expect(fmt(-50)).toBe('$50'); // absolute value
+  });
+});
+
+// The loan form's ceiling toasts are built from fmtCompact (WHIT-393), and the loan screen
+// suites derive their expected toast from it too — so these literal expectations are what stops
+// that from being circular. Change the label style here and those suites go red.
+describe('fmtCompact', () => {
+  it('abbreviates billions, dropping a trailing .0', () => {
+    expect(fmtCompact(1_000_000_000)).toBe('$1B');
+    expect(fmtCompact(1_500_000_000)).toBe('$1.5B');
+    expect(fmtCompact(2_000_000_000)).toBe('$2B');
+  });
+
+  it('abbreviates millions below a billion', () => {
+    expect(fmtCompact(500_000_000)).toBe('$500M');
+    expect(fmtCompact(1_000_000)).toBe('$1M');
+    expect(fmtCompact(2_500_000)).toBe('$2.5M');
+  });
+
+  it('rounds up to the next unit rather than printing 1000 of the smaller one', () => {
+    expect(fmtCompact(999_999_999)).toBe('$1B');
+    expect(fmtCompact(999_999)).toBe('$1M');
+  });
+
+  it('falls back to fmt below a million, and is unsigned like fmt', () => {
+    expect(fmtCompact(900_000)).toBe('$900,000');
+    expect(fmtCompact(0)).toBe('$0');
+    expect(fmtCompact(-1_000_000_000)).toBe('$1B');
   });
 });
 

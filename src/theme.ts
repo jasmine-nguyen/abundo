@@ -125,6 +125,24 @@ export function fmtExact(n: number): string {
   });
 }
 
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+// A short money label for warning copy — "$1B", "$1.5B", "$500M". Rounds to one decimal and
+// drops a trailing ".0", so a round billion reads "$1B" rather than "$1.0B". Below a million it
+// falls back to fmt ("$999,000") — abbreviating small amounts reads worse than spelling them out.
+// Unsigned (abs) like fmt. Used for the loan form's ceiling toasts (WHIT-393), so the message
+// follows LOANFACTS_FIELD_MAX instead of hard-coding the figure in prose.
+export function fmtCompact(n: number): string {
+  const abs = Math.abs(n);
+  const billions = round1(abs / 1_000_000_000);
+  if (billions >= 1) return `$${billions}B`;
+  const millions = round1(abs / 1_000_000);
+  if (millions >= 1) return `$${millions}M`;
+  return fmt(abs);
+}
+
 // A short "when did this happen" label from an ISO timestamp (e.g. "just now",
 // "5m ago", "3h ago", "2d ago"). `now` is injectable so it can be unit-tested
 // deterministically. Returns '' for a null/blank/unparseable input so callers can

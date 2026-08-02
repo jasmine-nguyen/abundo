@@ -18,7 +18,14 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
 
-import Loan from '../../app/loan';
+import Loan, { LOANFACTS_FIELD_MAX } from '../../app/loan';
+import { fmtCompact } from '../theme';
+
+// Derived from the ceiling (WHIT-393) so a change to it needs no edit here. The prose is
+// written out on purpose — a reworded toast must still be changed deliberately in both places.
+const AT = String(LOANFACTS_FIELD_MAX);
+const OVER = String(LOANFACTS_FIELD_MAX + 1);
+const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 
 const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
@@ -85,7 +92,7 @@ it('rejects trailing garbage in a number ("80abc") rather than storing 80', asyn
   expect(showToast).toHaveBeenCalled();
 });
 
-it('blocks a dollar field over the $1B ceiling (extra) with a toast and no save', async () => {
+it('blocks a dollar field over the ceiling (extra) with a toast and no save', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   const showToast = jest.fn();
   mockState = state({
@@ -94,19 +101,19 @@ it('blocks a dollar field over the $1B ceiling (extra) with a toast and no save'
   });
   render(<Loan />);
   // A non-first field over the ceiling — proves the .some() check catches more than original.
-  fill({ extra: '1000000001' });
+  fill({ extra: OVER });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(saveLoanFacts).not.toHaveBeenCalled();
-  expect(showToast).toHaveBeenCalledWith('Keep each amount under $1B.');
+  expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
 });
 
-it('accepts exactly $1B (ceiling is strict >, matching the server) and saves', async () => {
+it('accepts exactly the ceiling (strict >, matching the server) and saves', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'] });
   render(<Loan />);
-  fill({ orig: '1000000000' });
+  fill({ orig: AT });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: 1000000000 }));
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ original: LOANFACTS_FIELD_MAX }));
   expect(mockBack).toHaveBeenCalled();
 });
 

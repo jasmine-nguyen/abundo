@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { C, FONT } from '../src/theme';
+import { C, FONT, fmtCompact } from '../src/theme';
 import { useAppContext, EMPTY_LOAN_FACTS } from '../src/context';
 import { useLoanFactsQuery, useIsAuthed } from '../src/queries';
 import { Header } from '../src/components/Header';
@@ -14,7 +14,10 @@ import type { LoanFactsInput } from '../src/api';
 // kept here so the form blocks a too-large amount with a friendly message before any round-trip,
 // instead of a 400 + generic save-error toast. Kept in sync by
 // tests/lambda_api/test_loanfacts_ceiling_sync.py (WHIT-392).
-const LOANFACTS_FIELD_MAX = 1_000_000_000;
+// Exported (WHIT-393) so the loan-form suites derive their at/over-ceiling probes from it
+// instead of re-typing 1000000000 — loanFactsCeilingGaps, loanFactsFormEdges and
+// loanDepositTargetGaps all import it. Keep it exported; inlining it re-opens that drift.
+export const LOANFACTS_FIELD_MAX = 1_000_000_000;
 
 export default function Loan() {
   const s = useAppContext(); // showToast + saveLoanFacts (write) stay on the store
@@ -67,8 +70,10 @@ export default function Loan() {
     }
     // Ceiling guard: the server rejects any dollar field above LOANFACTS_FIELD_MAX. Warn here
     // with a specific message rather than letting it 400 into the generic save-error toast.
+    // The figure comes from the constant (WHIT-393) so the wording can't outlive a ceiling
+    // change; "or less" because the guard is strict > — exactly the ceiling is allowed.
     if ([next.original, next.homeValue, next.baseRepay, next.extra].some((v) => v > LOANFACTS_FIELD_MAX)) {
-      s.showToast('Keep each amount under $1B.');
+      s.showToast(`Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`);
       return;
     }
     // The deposit target is optional, but a filled-in value must be a valid amount > 0.
@@ -77,7 +82,7 @@ export default function Loan() {
       return;
     }
     if (next.depositTarget != null && next.depositTarget > LOANFACTS_FIELD_MAX) {
-      s.showToast('Keep the deposit target under $1B.');
+      s.showToast(`Keep the deposit target to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`);
       return;
     }
     setSaving(true);

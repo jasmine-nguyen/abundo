@@ -1,19 +1,21 @@
-// WHIT-382 — adversarial GAP coverage for the loan form's $1B ceiling guards (app/loan.tsx:69-80).
+// WHIT-382 — adversarial GAP coverage for the loan form's dollar-ceiling guards (app/loan.tsx).
 // The implementer's tests (loanFactsFormEdges + loanDepositTargetGaps) lock only:
-//   - a required field OVER ceiling via `extra` (the shared toast),
-//   - `original` at EXACTLY $1B saves,
-//   - depositTarget OVER ceiling (1000000001) blocked ([A8]).
+//   - a required field OVER the ceiling via `extra` (the shared toast),
+//   - `original` EXACTLY at the ceiling saves,
+//   - depositTarget OVER the ceiling blocked ([A8]).
 // These add the boundaries/precedence/parseAmount paths they skip — every one distinct:
-//   [G1] homeValue over ceiling  -> shared toast (proves .some() isn't extra-only)
-//   [G2] baseRepay over ceiling  -> shared toast
-//   [G3] original  over ceiling  -> shared toast (implementer only tested original AT the bound)
-//   [G4] homeValue EXACTLY $1B   -> saves (strict > lower boundary, non-original field)
-//   [G5] extra     EXACTLY $1B   -> saves
-//   [G6] depositTarget EXACTLY $1B -> saves (off-by-one: 1e9 must pass, 1e9+1 blocked)
-//   [G7] precedence: a required field == 0 AND another over ceiling -> the FILL/positivity
+//   [G1] homeValue over the ceiling -> shared toast (proves .some() isn't extra-only)
+//   [G2] baseRepay over the ceiling -> shared toast
+//   [G3] original  over the ceiling -> shared toast (implementer only tested original AT the bound)
+//   [G4] homeValue EXACTLY at the ceiling -> saves (strict > lower boundary, non-original field)
+//   [G5] extra     EXACTLY at the ceiling -> saves
+//   [G6] depositTarget EXACTLY at the ceiling -> saves (off-by-one: at passes, +1 blocked)
+//   [G7] precedence: a required field == 0 AND another over the ceiling -> the FILL/positivity
 //        toast wins, NOT the ceiling toast (guards ordered positivity-first)
-//   [G8] non-integer over ceiling (1000000000.5) on a required field -> shared ceiling toast
-//   [G9] non-integer over ceiling (1000000000.5) on depositTarget    -> deposit ceiling toast
+//   [G8] non-integer just over the ceiling on a required field -> shared ceiling toast
+//   [G9] non-integer just over the ceiling on depositTarget    -> deposit ceiling toast
+// WHIT-393: every probe here is derived from LOANFACTS_FIELD_MAX, so changing the ceiling
+// needs no edit in this file.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
@@ -29,7 +31,20 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
 
-import Loan from '../../app/loan';
+import Loan, { LOANFACTS_FIELD_MAX } from '../../app/loan';
+import { fmtCompact } from '../theme';
+
+// Probes derived from the ceiling. String() is only safe while the ceiling is a safe integer —
+// past 2^53 it stops incrementing and from 1e21 it stringifies in exponent form, which would make
+// OVER_FRACTION unparseable. The last test in this file pins that precondition.
+const AT = String(LOANFACTS_FIELD_MAX);
+const OVER = String(LOANFACTS_FIELD_MAX + 1);
+const OVER_FRACTION = `${LOANFACTS_FIELD_MAX}.5`;
+// The figure is derived; the prose is written out here on purpose, so a reworded toast still has
+// to be changed deliberately in both the screen and this file (fmtCompact is pinned by
+// format.logic.test.ts, so this is not just asserting the screen against itself).
+const AMOUNT_TOAST = `Keep each amount to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
+const DEPOSIT_TOAST = `Keep the deposit target to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 
 const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
@@ -63,59 +78,59 @@ beforeEach(() => { mockBack.mockClear(); });
 
 // --- Over-ceiling on each required field the implementer skipped (only `extra` was tested) ---
 
-it('[G1] homeValue over the $1B ceiling -> shared toast, no save', async () => {
+it('[G1] homeValue over the ceiling -> shared toast, no save', async () => {
   const { saveLoanFacts, showToast } = setup();
   render(<Loan />);
-  fill({ home: '1000000001' });
+  fill({ home: OVER });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(showToast).toHaveBeenCalledWith('Keep each amount under $1B.');
+  expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
   expect(saveLoanFacts).not.toHaveBeenCalled();
 });
 
-it('[G2] baseRepay over the $1B ceiling -> shared toast, no save', async () => {
+it('[G2] baseRepay over the ceiling -> shared toast, no save', async () => {
   const { saveLoanFacts, showToast } = setup();
   render(<Loan />);
-  fill({ base: '1000000001' });
+  fill({ base: OVER });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(showToast).toHaveBeenCalledWith('Keep each amount under $1B.');
+  expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
   expect(saveLoanFacts).not.toHaveBeenCalled();
 });
 
-it('[G3] original over the $1B ceiling -> shared toast, no save', async () => {
+it('[G3] original over the ceiling -> shared toast, no save', async () => {
   const { saveLoanFacts, showToast } = setup();
   render(<Loan />);
-  fill({ orig: '1000000001' });
+  fill({ orig: OVER });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(showToast).toHaveBeenCalledWith('Keep each amount under $1B.');
+  expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
   expect(saveLoanFacts).not.toHaveBeenCalled();
 });
 
-// --- Exactly $1B is the strict-> lower boundary: it must SAVE, on non-original fields too ---
+// --- Exactly at the ceiling is the strict-> lower boundary: it must SAVE, on non-original fields too ---
 
-it('[G4] homeValue EXACTLY $1B saves (strict >, not just tested on original)', async () => {
+it('[G4] homeValue EXACTLY at the ceiling saves (strict >, not just tested on original)', async () => {
   const { saveLoanFacts } = setup();
   render(<Loan />);
-  fill({ home: '1000000000' });
+  fill({ home: AT });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ homeValue: 1000000000 }));
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ homeValue: LOANFACTS_FIELD_MAX }));
   expect(mockBack).toHaveBeenCalled();
 });
 
-it('[G5] extra EXACTLY $1B saves', async () => {
+it('[G5] extra EXACTLY at the ceiling saves', async () => {
   const { saveLoanFacts } = setup();
   render(<Loan />);
-  fill({ extra: '1000000000' });
+  fill({ extra: AT });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: 1000000000 }));
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ extra: LOANFACTS_FIELD_MAX }));
   expect(mockBack).toHaveBeenCalled();
 });
 
-it('[G6] depositTarget EXACTLY $1B saves (off-by-one: 1e9 passes, 1e9+1 blocked by [A8])', async () => {
+it('[G6] depositTarget EXACTLY at the ceiling saves (off-by-one: at passes, +1 blocked by [A8])', async () => {
   const { saveLoanFacts } = setup();
   render(<Loan />);
-  fill({ deposit: '1000000000' });
+  fill({ deposit: AT });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: 1000000000 }));
+  expect(saveLoanFacts).toHaveBeenCalledWith(expect.objectContaining({ depositTarget: LOANFACTS_FIELD_MAX }));
   expect(mockBack).toHaveBeenCalled();
 });
 
@@ -125,29 +140,40 @@ it('[G7] a zero required field AND another over ceiling -> the fill toast wins, 
   const { saveLoanFacts, showToast } = setup();
   render(<Loan />);
   // original invalid (0) AND homeValue over ceiling: positivity guard runs first.
-  fill({ orig: '0', home: '1000000001' });
+  fill({ orig: '0', home: OVER });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   expect(showToast).toHaveBeenCalledWith('Please fill in every field with a valid amount.');
-  expect(showToast).not.toHaveBeenCalledWith('Keep each amount under $1B.');
+  expect(showToast).not.toHaveBeenCalledWith(AMOUNT_TOAST);
   expect(saveLoanFacts).not.toHaveBeenCalled();
 });
 
 // --- Non-integer over-ceiling: parseAmount accepts decimals, strict > still catches them ---
 
-it('[G8] a non-integer just over ceiling (1000000000.5) on a required field is caught', async () => {
+it('[G8] a non-integer just over the ceiling on a required field is caught', async () => {
   const { saveLoanFacts, showToast } = setup();
   render(<Loan />);
-  fill({ orig: '1000000000.5' });
+  fill({ orig: OVER_FRACTION });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(showToast).toHaveBeenCalledWith('Keep each amount under $1B.');
+  expect(showToast).toHaveBeenCalledWith(AMOUNT_TOAST);
   expect(saveLoanFacts).not.toHaveBeenCalled();
 });
 
-it('[G9] a non-integer just over ceiling (1000000000.5) on depositTarget is caught by its toast', async () => {
+it('[G9] a non-integer just over the ceiling on depositTarget is caught by its toast', async () => {
   const { saveLoanFacts, showToast } = setup();
   render(<Loan />);
-  fill({ deposit: '1000000000.5' });
+  fill({ deposit: OVER_FRACTION });
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
-  expect(showToast).toHaveBeenCalledWith('Keep the deposit target under $1B.');
+  expect(showToast).toHaveBeenCalledWith(DEPOSIT_TOAST);
   expect(saveLoanFacts).not.toHaveBeenCalled();
+});
+
+// --- The precondition the derived probes above rely on ---
+
+it('the ceiling is a positive safe integer, so the derived probes stay meaningful', () => {
+  // Above 2^53 `LOANFACTS_FIELD_MAX + 1` would equal the ceiling and OVER would stop being
+  // "over"; from 1e21 String() switches to exponent form and OVER_FRACTION becomes garbage.
+  // Either way the tests above would pass vacuously, so pin it here instead.
+  expect(Number.isSafeInteger(LOANFACTS_FIELD_MAX)).toBe(true);
+  expect(LOANFACTS_FIELD_MAX).toBeGreaterThan(0);
+  expect(OVER).toMatch(/^\d+$/);
 });
