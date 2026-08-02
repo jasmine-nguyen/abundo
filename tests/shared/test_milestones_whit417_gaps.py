@@ -2,9 +2,10 @@
 change, INDEPENDENT of the implementer's tests.
 
 Already locked elsewhere, NOT repeated here: the bad-date row is hidden and silent on both
-paths ([B1]), its stale marker is swept alone ([B1a]), the repaired-date re-fire ([B1b]), an
-all-bad-date plan celebrating and sweeping nothing ([B1c]), the blank/null/unparsable date
-parity rows and the alarm-token bad-date case (tests/shared/test_milestone_rows.py).
+paths ([B1]), an unreadable row keeping its marker while a gone one is swept ([B3]), the
+repaired-date silence ([B1b]), an all-bad-date plan celebrating and sweeping nothing ([B1c]),
+the blank/null/unparsable date parity rows and the alarm-token bad-date case
+(tests/shared/test_milestone_rows.py).
 
 What none of them cover:
 
@@ -21,8 +22,8 @@ What none of them cover:
   [E3] POSITION. _resolve_plan skips row-by-row; a bad row FIRST must cost no more than a bad
        row LAST. Guards the obvious "optimisation" — an early break/return in that loop — which
        would silently drop every row after the broken one from the celebration.
-  [E4] sweep AND push in the SAME poll. [B1a]/[B3] both use a no-crossing poll, so nothing
-       proves the stale-marker sweep leaves the crossing that DID happen able to celebrate.
+  [E4] sweep AND push in the SAME poll. [B3] uses a no-crossing poll, so nothing proves the
+       stale-marker sweep leaves the crossing that DID happen able to celebrate.
   [E5] the CloudWatch metric filter in terraform/monitoring.tf must actually match the log
        line WHIT-417 newly emits. The alarm is the card's stated win; a token the filter can't
        match makes it silent. Read the pattern out of the terraform file — don't retype it.

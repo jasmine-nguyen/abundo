@@ -296,6 +296,10 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     # nothing instead of silently erasing the once-ever record. The cost — a directly-DB-written
     # empty plan no longer self-heals its dead markers — is harmless: an unmatched marker never
     # re-fires.
+    #
+    # Deliberately `plan`, not `live_keys`: a plan whose rows are ALL unreadable has keys but is
+    # no evidence the store was read correctly, so it skips the sweep entirely. Same harmless
+    # cost — a genuinely dead marker isn't reaped that poll, and the next readable poll reaps it.
     fired = None
     if authoritative and plan:
         # Best-effort: reconcile is bookkeeping, so a marker read/write blip must never suppress a

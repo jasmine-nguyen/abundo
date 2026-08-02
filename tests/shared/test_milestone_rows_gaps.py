@@ -12,9 +12,9 @@ interaction each new poller-side rejection creates:
        longer celebrated by the poller. It used to be: the user got a push naming a milestone
        the app doesn't show, and tapping it opened the plan screen where it isn't listed.
        Pinned in both directions so neither path can quietly drop the rule again.
-  [B1b] the accepted COST of that decision: rejecting the row makes its "already celebrated"
-       marker stale, so the sweep deletes it — a later repair plus a balance rise can
-       celebrate a second time. Needs a healthy row alongside; an empty plan sweeps nothing.
+  [B1b] the once-ever guarantee survives a row being temporarily unreadable: its "already
+       celebrated" marker is NOT swept, so repairing the row and crossing the target again is
+       silent. Needs a healthy row alongside; an empty plan skips the sweep entirely.
   [B1c] the whole-plan case: every row bad-dated -> the poller celebrates nothing and sweeps
        nothing, rather than falling back to the built-in plan and celebrating a milestone the
        user never saved.
@@ -22,10 +22,9 @@ interaction each new poller-side rejection creates:
        poller. The implementer's "both paths tolerate a legacy id-less row" test uses
        {"id": None}; the genuinely key-less legacy row diverges. WHIT-378 carve-out, approved.
        This is the last route to the push [B1] closed — equally hand-edit-only.
-  [B3] each new poller-side rejection x WHIT-385: a row that already celebrated now resolves
-       out of the plan and its marker goes stale. The sweep must remove ONLY that marker and
-       leave every healthy row's "already celebrated" record intact. Covers the WHIT-394
-       blank label and the WHIT-417 bad date.
+  [B3] each new poller-side rejection x WHIT-385: an unreadable row must KEEP its marker while
+       a genuinely gone one still loses it — both asserted in the same poll, so neither
+       direction can regress alone. Covers the WHIT-394 blank label and the WHIT-417 bad date.
   [B4] the missing-field-vs-bad-value nesting trap, for row_date. The implementer pinned it
        for row_target only; row_date has the same `except ValueError` around a call whose
        error type IS a ValueError subclass.
