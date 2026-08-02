@@ -47,8 +47,9 @@ export const C = {
   // Deliberately NOT a shade of accent: this is #7c8cff = rgb(124,140,255), accent is
   // #7aa2f7 = rgb(122,162,247). Rewriting tint(C.accentAlt, a) as tint(C.accent, a) silently
   // repaints it a greener blue — accentAltSweep.logic.test.ts is what catches that.
-  // The three wash cards (AiCoachCard, mortgage contribCard, milestone nextCard) all sit at
-  // 0.1 fill / 0.22 border; accentAltWashCards.logic.test.ts is what keeps them matching.
+  // The wash surfaces (AiCoachCard, mortgage contribCard, milestone nextCard, budget/edit recBtn,
+  // transactions hint) all sit at 0.1 fill / 0.22 border — different shapes, one material.
+  // accentAltWashCards.logic.test.ts is what keeps them matching.
   accentAlt: '#7c8cff',
 
   good: '#2ac3de',

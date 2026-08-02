@@ -15,50 +15,27 @@
 // Same shape as the other structural guard in this suite, themeLayout.logic.test.ts: derive the
 // list from the tree rather than hard-coding filenames, so a NEW offender is caught the day it
 // appears instead of the day someone remembers to update a list.
+// The tests themselves are exempt from the scan (shippedCode() excludes __tests__):
+// insightsSegmentedControl.gaps.screen.test.tsx pins the raw literal ON PURPOSE — asserting
+// against tint(C.accentAlt,…) there would pass even if the token were repainted — and
+// accentAltToken.logic.test.ts pins the token's rgba output.
 import { describe, it, expect } from '@jest/globals';
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative } from 'path';
+import { join } from 'path';
 import { C, tint } from '../theme';
-
-const ROOT = join(__dirname, '..', '..');
-const SCAN_DIRS = ['app', 'src'];
-// The tests themselves are exempt: insightsSegmentedControl.gaps.screen.test.tsx pins the raw
-// literal ON PURPOSE (asserting against tint(C.accentAlt,…) there would pass even if the token
-// were repainted), and accentAltToken.logic.test.ts pins the token's rgba output.
-const EXCLUDE = /(^|[\\/])(__tests__|node_modules)([\\/]|$)/;
-
-function sourceFiles(): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir)) {
-      const abs = join(dir, entry);
-      if (EXCLUDE.test(relative(ROOT, abs))) continue;
-      if (statSync(abs).isDirectory()) walk(abs);
-      else if (/\.tsx?$/.test(entry)) out.push(abs);
-    }
-  };
-  for (const dir of SCAN_DIRS) walk(join(ROOT, dir));
-  return out.sort();
-}
-
-// Comments are not shipped colour. src/theme.ts spells the old literal out in the token's
-// explanatory comment, and that must not read as a violation — but a literal in real CODE in
-// theme.ts still must. Strip comments rather than exempting the file.
-// The `[^:]` guard keeps `https://…` inside a string from being mistaken for a comment.
-function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+import { shippedCode, stripComments } from './support/sourceScan';
 
 const RAW_CHIP_BLUE = /['"`]rgba\(\s*124\s*,\s*140\s*,\s*255\s*[,)]/i;
 // After this card the likeliest way to reintroduce the duplication is pasting the token's own
 // value out of theme.ts, so the hex form is an offender everywhere except its declaration.
-const RAW_CHIP_HEX = /['"`]#7c8cff['"`]/i;
+// No closing quote in the pattern: '#7c8cffcc' is the same blue carrying an alpha, and requiring
+// the quote would let every 8-digit form through.
+const RAW_CHIP_HEX = /['"`]#7c8cff/i;
 const TOKEN_HOME = join('src', 'theme.ts');
 const CHIP_CALL = /tint\(\s*C\.accentAlt\s*,\s*([0-9.]+)\s*\)/g;
 const TINT_TOKEN_CALL = /tint\(\s*C\.([A-Za-z0-9_]+)\s*,/g;
 
-const FILES = sourceFiles();
-const CODE = new Map(FILES.map((f) => [relative(ROOT, f), code(readFileSync(f, 'utf8'))]));
+const code = stripComments;
+const CODE = shippedCode();
 
 function matchesAcross(re: RegExp): { file: string; capture: string }[] {
   const hits: { file: string; capture: string }[] = [];
@@ -87,6 +64,8 @@ describe('[G1] the chip blue is written once, as a token', () => {
     expect(RAW_CHIP_BLUE.test('backgroundColor: tint(C.accentAlt, 0.16)')).toBe(false);
     expect(RAW_CHIP_HEX.test("backgroundColor: '#7c8cff'")).toBe(true);
     expect(RAW_CHIP_HEX.test("accentAlt: '#7C8CFF'")).toBe(true);
+    expect(RAW_CHIP_HEX.test("backgroundColor: '#7c8cffcc'")).toBe(true); // same blue + alpha
+    expect(RAW_CHIP_HEX.test("backgroundColor: '#7aa2f7'")).toBe(false);
   });
 
   it('[G1] no shipped file writes the chip blue as a raw literal — use tint(C.accentAlt, a)', () => {

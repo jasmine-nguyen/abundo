@@ -14,41 +14,20 @@
 // This is a REGRESSION backstop, not a quality signal. It says "no new hand-written colours",
 // nothing about whether the existing ones are right.
 import { describe, it, expect } from '@jest/globals';
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { RAW_COLOR_SOURCE, shippedCode, stripComments } from './support/sourceScan';
 
-const ROOT = join(__dirname, '..', '..');
-const SCAN_DIRS = ['app', 'src'];
-const EXCLUDE = /(^|[\\/])(__tests__|node_modules)([\\/]|$)/;
-
-// The palettes themselves — colour is their JOB, so a literal here is the source of truth, not a
-// copy of one. Everything else must go through C (src/theme.ts) or chartCategoryColor.
+// src/theme.ts and src/chartColors.ts are pure palettes — colour is their JOB, so a literal there
+// is the source of truth, not a copy of one.
+//
+// src/context.tsx is a PARTIAL exemption and the comment should say so: ~40 of its literals are
+// the category palette (BUCKET_COLOR / PALETTE / CATEGORY_BASE / CATEGORY_SIBLINGS), but ~12 are
+// plain UI colours far below it — including seven copies of '#cfd2ff', which is exactly the
+// duplication this ratchet exists to stop. It is exempt wholesale only because the palette and the
+// UI colours share a file; ratcheting it now would falsely redden on a legitimate new category
+// colour. Splitting the palette out is its own card.
 const PALETTE_HOMES = new Set(['src/theme.ts', 'src/context.tsx', 'src/chartColors.ts']);
 
-// A quoted rgb()/rgba()/#rrggbb/#rgb. Quoted, because that is what a hand-written colour looks
-// like; tint(C.x, a) and other token references are exactly what this is steering people toward.
-const RAW_COLOR = /['"`](?:rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+|#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b)/g;
-
-// Comments describing a colour are documentation, not shipped colour (src/theme.ts's own token
-// comments spell several out). The `[^:]` guard keeps `https://` inside a string from reading as
-// a line comment.
-function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
-
-function shippedFiles(): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir)) {
-      const abs = join(dir, entry);
-      if (EXCLUDE.test(relative(ROOT, abs))) continue;
-      if (statSync(abs).isDirectory()) walk(abs);
-      else if (/\.tsx?$/.test(entry)) out.push(abs);
-    }
-  };
-  for (const dir of SCAN_DIRS) walk(join(ROOT, dir));
-  return out.sort();
-}
+const RAW_COLOR = new RegExp(RAW_COLOR_SOURCE, 'g');
 
 // Baseline as of WHIT-398. Lower a number when you tokenise a file; delete the key at zero.
 // Never raise one — that is the regression this exists to stop.
@@ -83,11 +62,10 @@ const BASELINE: Record<string, number> = {
 };
 
 const counts = new Map<string, number>();
-for (const abs of shippedFiles()) {
-  const key = relative(ROOT, abs).split(sep).join('/');
-  if (PALETTE_HOMES.has(key)) continue;
-  const found = code(readFileSync(abs, 'utf8')).match(RAW_COLOR)?.length ?? 0;
-  if (found) counts.set(key, found);
+for (const [file, src] of shippedCode()) {
+  if (PALETTE_HOMES.has(file)) continue;
+  const found = src.match(RAW_COLOR)?.length ?? 0;
+  if (found) counts.set(file, found);
 }
 
 describe('hand-written colours can only decrease', () => {
@@ -97,9 +75,14 @@ describe('hand-written colours can only decrease', () => {
     expect("backgroundColor: '#7c8cff'".match(RAW_COLOR)).toHaveLength(1);
     expect("borderColor: 'rgba(1,2,3,.5)'".match(RAW_COLOR)).toHaveLength(1);
     expect('backgroundColor: tint(C.accentAlt, 0.1)'.match(RAW_COLOR)).toBeNull();
+    // every hex length RN accepts — an 8-digit hex is what design tools export, and a {6}-only
+    // pattern can neither match nor backtrack out of one, so it would slip through silently
+    expect("backgroundColor: '#7c8cffcc'".match(RAW_COLOR)).toHaveLength(1);
+    expect("backgroundColor: '#abcd'".match(RAW_COLOR)).toHaveLength(1);
+    expect("backgroundColor: '#abc'".match(RAW_COLOR)).toHaveLength(1);
     // comments are stripped, code is not
-    expect(code("const a = 1; // '#abcdef'").match(RAW_COLOR)).toBeNull();
-    expect(code("const u = 'https://x'; const c = '#abcdef';").match(RAW_COLOR)).toHaveLength(1);
+    expect(stripComments("const a = 1; // '#abcdef'").match(RAW_COLOR)).toBeNull();
+    expect(stripComments("const u = 'https://x'; const c = '#abcdef';").match(RAW_COLOR)).toHaveLength(1);
     // and the palette homes really are excluded — theme.ts is full of literals by design
     expect([...counts.keys()]).not.toContain('src/theme.ts');
   });
