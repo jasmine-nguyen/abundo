@@ -304,8 +304,9 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_missed" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
-# A corrupt saved milestone row (missing label/targetBalance, non-dict, or a non-numeric
-# target) is now skipped so the rest of the plan still celebrates, but the skip must be VISIBLE
+# A corrupt saved milestone row (missing label/targetBalance, non-dict, a non-numeric target,
+# or — since WHIT-417 — an unparsable targetDate) is skipped so the rest of the plan still
+# celebrates, but the skip must be VISIBLE
 # rather than silently eating a milestone push (WHIT-387). _resolve_plan logs one of two tokens
 # on the balance-poller log group: MILESTONE_ROW_MALFORMED (a single bad row) or
 # MILESTONE_PLAN_MALFORMED (the whole stored plan isn't a list). The `?a ?b` pattern is an OR,

@@ -178,16 +178,6 @@ def test_set_milestones_return_value_is_validated_too(shared, milestone_repo):
     assert [m["id"] for m in saved] == ["good"]
 
 
-def test_client_read_skips_an_unparsable_date(shared, milestone_repo):
-    # WHIT-394 option B3. A null targetDate reaches _review_candidates' date.fromisoformat,
-    # which raises OUTSIDE any per-row guard -> a 500 on the review endpoint. Fail-on-revert:
-    # swap row_text/row_date back for a plain lookup and the bad row survives.
-    # The date SHAPES now live in _CORRUPT_SHAPES below — WHIT-417 gave the rule to the poller
-    # too, so they belong in the parity table. This keeps the review-endpoint reason on record.
-    _store_raw_row(milestone_repo, [_row(id="good"), _row(id="bad", targetDate="not-a-date")])
-    assert [m["id"] for m in milestone_repo.get_milestones()] == ["good"]
-
-
 # --- [P] parity: both read paths agree ---------------------------------------------------
 
 _CORRUPT_SHAPES = [
@@ -202,7 +192,9 @@ _CORRUPT_SHAPES = [
     ("un-floatable target", _row(targetBalance=Decimal("1e100000"))),
     ("blank label", _row(label="")),
     ("null label", _row(label=None)),
-    # WHIT-417 moved these three in: the date rule used to be client-only.
+    # WHIT-417 moved these three in: the date rule used to be client-only, because only
+    # _review_candidates parses the field (an unparsable one raises outside its per-row guard
+    # and 500s the review endpoint — WHIT-394). Now both paths apply it.
     ("blank date", _row(targetDate="")),
     ("null date", _row(targetDate=None)),
     ("unparsable date", _row(targetDate="not-a-date")),

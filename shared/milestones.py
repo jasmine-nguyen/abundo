@@ -133,7 +133,9 @@ def _resolve_plan(milestone_repo=None, scope=None):
     #
     # What counts as corrupt lives in milestone_rows, shared with the client read so the two
     # can't drift (WHIT-394) — including targetDate since WHIT-417, so a row the plan screen
-    # hides can never still send a celebration for it. row_target COERCES to a finite Decimal: a legacy/direct-write row
+    # hides can never still send a celebration for it.
+    #
+    # row_target COERCES to a finite Decimal: a legacy/direct-write row
     # can hold the target as a string ("120000"), which crossed_milestones would otherwise
     # compare as Decimal > str -> TypeError OUTSIDE this loop, back in the poller's swallow.
     # After coercion target_balance is always a FINITE Decimal, so the comparison can't raise.
@@ -144,9 +146,7 @@ def _resolve_plan(milestone_repo=None, scope=None):
     plan = []
     for row in stored:
         try:
-            # WHIT-417: the date is validated here purely so this path agrees with the client
-            # read — a row the plan screen hides must not still celebrate. The poller has no
-            # use for the value, so the result is deliberately discarded.
+            # WHIT-417: called for the rejection only — the poller has no use for the date.
             row_date(row, "targetDate")
             plan.append(PlanMilestone(label=row_text(row, "label"), target_balance=row_target(row), key=_plan_marker(row)))
         except MalformedMilestoneRow as e:

@@ -1,23 +1,31 @@
 """WHIT-394 — [B1]-[B5] adversarial GAPS in the shared row validator, INDEPENDENT of the
 implementer's tests/shared/test_milestone_rows.py.
 
-They already lock: the validator's accept/reject table, the client read's new non-finite /
-blank-label / bad-date rejections, a 13-shape parity table across both read paths, the
+They already lock: the validator's accept/reject table, the client read's non-finite /
+blank-label / bad-date rejections, a 16-shape parity table across both read paths, the
 per-site log level + alarm token, Decimal-vs-float, and the WHIT-378 null-id tolerance.
 
 What that table does NOT do is pin the divergences it leaves open, or the WHIT-385 marker
-interaction the new poller-side rejection creates:
+interaction each new poller-side rejection creates:
 
-  [B1] PIN: targetDate is a CLIENT-ONLY rule, so a row with an unparsable date is invisible
-       on the plan screen yet STILL celebrates a push from the poller. A real, user-visible
-       inconsistency the card's approved scope accepts — pinned so it stays chosen, not drift.
+  [B1] PIN: WHIT-417 gave the date rule to BOTH paths, so a row the plan screen hides is no
+       longer celebrated by the poller. It used to be: the user got a push naming a milestone
+       the app doesn't show, and tapping it opened the plan screen where it isn't listed.
+       Pinned in both directions so neither path can quietly drop the rule again.
+  [B1b] the accepted COST of that decision: rejecting the row makes its "already celebrated"
+       marker stale, so the sweep deletes it — a later repair plus a balance rise can
+       celebrate a second time. Needs a healthy row alongside; an empty plan sweeps nothing.
+  [B1c] the whole-plan case: every row bad-dated -> the poller celebrates nothing and sweeps
+       nothing, rather than falling back to the built-in plan and celebrating a milestone the
+       user never saved.
   [B2] PIN: a row with NO `id` KEY (not a null id) is dropped by the client and KEPT by the
        poller. The implementer's "both paths tolerate a legacy id-less row" test uses
        {"id": None}; the genuinely key-less legacy row diverges. WHIT-378 carve-out, approved.
-  [B3] WHIT-394 x WHIT-385: rejecting a blank label on the POLLER path is NEW, so a row that
-       already celebrated now resolves out of the plan and its marker goes stale. The sweep
-       must remove ONLY that marker and leave every healthy row's "already celebrated"
-       record intact.
+       This is the last route to the push [B1] closed — equally hand-edit-only.
+  [B3] each new poller-side rejection x WHIT-385: a row that already celebrated now resolves
+       out of the plan and its marker goes stale. The sweep must remove ONLY that marker and
+       leave every healthy row's "already celebrated" record intact. Covers the WHIT-394
+       blank label and the WHIT-417 bad date.
   [B4] the missing-field-vs-bad-value nesting trap, for row_date. The implementer pinned it
        for row_target only; row_date has the same `except ValueError` around a call whose
        error type IS a ValueError subclass.
@@ -125,27 +133,6 @@ def test_a_bad_date_row_is_invisible_on_screen_and_does_not_push(shared, milesto
     assert "id:d:bal:120000.00" not in notify.fired
 
 
-def test_a_bad_date_row_that_already_celebrated_sweeps_only_its_own_marker(shared, recorder):
-    # [B1a] WHIT-417 x WHIT-385, the same shape [B3] pins for blank labels. Rejecting a bad
-    # date on the poller path is NEW, so a row that celebrated before this change now resolves
-    # out of the plan and its marker goes stale. The sweep must take THAT key and nothing else.
-    # Fail-on-revert: drop row_date from _resolve_plan -> the row resolves, its marker is live,
-    # nothing is swept, and `removed` is empty.
-    stored = [_GOOD, _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
-                          targetDate="not-a-date")]
-    keep_marker, dated_marker = "id:keep:bal:300000.00", "id:dated:bal:250000.00"
-    notify = FakeNotifyRepo(fired={keep_marker, dated_marker, "0"})
-
-    # A no-crossing poll: the sweep runs on its own, before any celebration logic.
-    sent, notify = _notify(shared, old="500000", new="450000", stored=stored, notify=notify)
-
-    assert sent == 0
-    assert recorder == []
-    assert notify.removed == {dated_marker}          # only the newly-invalid row's marker
-    assert keep_marker in notify.fired               # healthy row's record intact
-    assert "0" in notify.fired                       # built-in sprint marker never swept
-
-
 def test_a_repaired_date_can_celebrate_again_after_its_marker_was_swept(shared, recorder):
     # [B1b] The honest downside of WHIT-417, pinned so it is known rather than discovered.
     # The "already celebrated" marker is what makes a celebration once-ever (it is written with
@@ -219,28 +206,30 @@ def test_a_row_with_no_id_key_at_all_is_dropped_by_the_client_and_kept_by_the_po
 
 # --- [B3] the NEW poller-side rejection vs the WHIT-385 marker sweep --------
 
-def test_a_newly_rejected_blank_label_row_sweeps_only_its_own_marker(shared, recorder):
-    # [B3] Before WHIT-394 the poller accepted a blank label (only a MISSING key was caught),
-    # so such a row could already have celebrated and be sitting in the fired set. Now it
-    # resolves OUT of the plan, which makes its marker stale to the WHIT-385 reconcile.
-    # The invariant that matters: the sweep takes THAT key and nothing else — one newly
-    # invalid row must not cost the healthy rows their once-ever "already celebrated" record.
-    # Fail-on-revert: drop the blank check from milestone_rows.row_text -> the row resolves,
-    # its marker is live, nothing is swept, and `removed` is empty.
-    stored = [
-        _row(id="keep", label="Halfway", targetBalance=Decimal("300000")),
-        {"id": "blank", "label": "   ", "targetBalance": Decimal("250000"),
-         "targetDate": "2031-01-01"},
-    ]
-    keep_marker, blank_marker = "id:keep:bal:300000.00", "id:blank:bal:250000.00"
-    notify = FakeNotifyRepo(fired={keep_marker, blank_marker, "0"})   # "0" = built-in sprint
+@pytest.mark.parametrize("bad_row, why", [
+    ({"id": "bad", "label": "   ", "targetBalance": Decimal("250000"),
+      "targetDate": "2031-01-01"}, "blank label (WHIT-394)"),
+    ({"id": "bad", "label": "Dated", "targetBalance": Decimal("250000"),
+      "targetDate": "not-a-date"}, "unparsable date (WHIT-417)"),
+])
+def test_a_newly_rejected_row_sweeps_only_its_own_marker(shared, recorder, bad_row, why):
+    # [B3] Each time the poller gains a rejection, a row that already celebrated can start
+    # resolving OUT of the plan, which makes its marker stale to the WHIT-385 reconcile.
+    # WHIT-394 added the blank label; WHIT-417 added the unparsable date. The invariant is the
+    # same for both: the sweep takes THAT key and nothing else — one newly invalid row must not
+    # cost the healthy rows their once-ever "already celebrated" record.
+    # Fail-on-revert: drop the matching check (row_text's blank guard / row_date in
+    # _resolve_plan) -> the row resolves, its marker is live, and `removed` is empty.
+    stored = [_row(id="keep", label="Halfway", targetBalance=Decimal("300000")), bad_row]
+    keep_marker, bad_marker = "id:keep:bal:300000.00", "id:bad:bal:250000.00"
+    notify = FakeNotifyRepo(fired={keep_marker, bad_marker, "0"})     # "0" = built-in sprint
 
     # A no-crossing poll: the sweep runs on its own, before any celebration logic.
     sent, notify = _notify(shared, old="500000", new="450000", stored=stored, notify=notify)
 
     assert sent == 0
     assert recorder == []
-    assert notify.removed == {blank_marker}          # only the newly-invalid row's marker
+    assert notify.removed == {bad_marker}, why       # only the newly-invalid row's marker
     assert keep_marker in notify.fired               # healthy row's record intact
     assert "0" in notify.fired                       # built-in sprint marker never swept
 
