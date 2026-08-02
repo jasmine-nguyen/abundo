@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { G, Circle, Path } from 'react-native-svg';
 import { C, FONT, fmt } from '../theme';
-import { OTHER_COLOR } from '../chartColors';
+import { CHART_BG, OTHER_COLOR } from '../chartColors';
 import { useReduceMotion } from '../motion/useReduceMotion';
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
@@ -29,54 +29,6 @@ export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
   const otherValue = rest.reduce((sum, s) => sum + s.value, 0);
   if (otherValue > 0) kept.push({ id: '__other__', name: 'Other', color: OTHER_COLOR, value: otherValue });
   return kept;
-}
-
-// Classify a slice colour as warm (the red→orange→gold→pink arc), cool (green/teal/blue/purple),
-// or neutral (the low-saturation grey "Other"). Used only to arrange the ring — a category keeps
-// its own colour; this just decides where it sits. Hue in degrees off a quick HSL conversion.
-export type Temperature = 'warm' | 'cool' | 'neutral';
-export function temperature(hex: string): Temperature {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16) / 255;
-  const g = parseInt(h.slice(2, 4), 16) / 255;
-  const b = parseInt(h.slice(4, 6), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
-  const light = (max + min) / 2;
-  const sat = delta === 0 ? 0 : delta / (1 - Math.abs(2 * light - 1));
-  if (sat < 0.25) return 'neutral'; // the grey "Other" slice — clashes with nothing
-  let hue = 0;
-  if (max === r) hue = ((g - b) / delta) % 6;
-  else if (max === g) hue = (b - r) / delta + 2;
-  else hue = (r - g) / delta + 4;
-  hue = hue * 60;
-  if (hue < 0) hue += 360;
-  // Warm = the red→gold arc (< 80°) plus pink/magenta (≥ 330°). Every current base + sibling clears
-  // this comfortably (health 341°, eatingout 351°); a NEW magenta added at 320–329° would fall on
-  // the cool side — if the palette ever grows one, widen this bound rather than let it sort cool.
-  return (hue < 80 || hue >= 330) ? 'warm' : 'cool';
-}
-
-// Reorder the painted slices so warm and cool alternate around the ring — so two similar-hued
-// categories (e.g. two warm pinks) are less likely to sit side by side (WHIT-323). Interleave
-// starting with the larger temperature group so the majority is spread out; a circle with a
-// lopsided mix (e.g. 4 warm, 2 cool) can't avoid every same-temperature neighbour, so this
-// minimises rather than guarantees. The neutral "Other" slice sits last (grey needs no spacing).
-// Pure + exported so a test pins the ordering. Every slice is preserved — this only reorders.
-export function arrangeByTemperature(slices: DonutSlice[]): DonutSlice[] {
-  const warm: DonutSlice[] = [], cool: DonutSlice[] = [], neutral: DonutSlice[] = [];
-  for (const slice of slices) {
-    const t = temperature(slice.color);
-    if (t === 'warm') warm.push(slice);
-    else if (t === 'cool') cool.push(slice);
-    else neutral.push(slice);
-  }
-  const [big, small] = warm.length >= cool.length ? [warm, cool] : [cool, warm];
-  const arranged: DonutSlice[] = [];
-  for (let i = 0; i < big.length; i++) {
-    arranged.push(big[i]);
-    if (i < small.length) arranged.push(small[i]);
-  }
-  return [...arranged, ...neutral];
 }
 
 // Where a wedge sits on the emphasis axis, given the current selection: +1 popped (this is the
@@ -113,9 +65,16 @@ const CIRC = 2 * Math.PI * R;
 // (drawn on top), so in practice the radial widening lands OUTWARD, into the transparent margin —
 // never into the hole where the readout + the reset tap live.
 const HIT_STROKE = 46;
-// A small surface gap between adjacent wedges (dataviz: 2px surface gap between fills). As an
-// angle: the whole ring is 360°, so 2px of the circumference is (2 / CIRC) × 360.
-const GAP_DEG = (2 / CIRC) * 360;
+// The divider between adjacent wedges. It is a GAP over the CHART_BG track below, not a drawn
+// line: the track is the same colour, so the gap reads as a clean divider that grows and moves
+// with a popped wedge (a static line would not — see the pop scale below).
+// As an angle: the whole ring is 360°, so DIVIDER_PX of the circumference is (DIVIDER_PX / CIRC) × 360.
+// A constant ANGLE is a constant width only at the mid-line radius R: the divider measures ~1.05px
+// at the band's inner edge and ~1.45px at the outer, straddling the 1.25px mid-line figure.
+// Raising DIVIDER_PX also raises the thin-wedge threshold below (GAP_DEG * 1.5), so more thin
+// wedges keep their full sweep — check that guard before retuning this.
+const DIVIDER_PX = 1.25;
+const GAP_DEG = (DIVIDER_PX / CIRC) * 360;
 // The popped wedge grows a touch (1.1×) to lift it off its neighbours, and must grow ABOUT THE
 // CENTRE so it stays in place. react-native-svg's native group takes a single pre-composed
 // `matrix`, and on an *animated* G only the scale component of that matrix reliably lands each
@@ -168,11 +127,17 @@ function arcPath(startDeg: number, endDeg: number, r: number): string {
 // and read that category's name + total instead, and tap the hole to clear back to the total.
 // Renders nothing when there is no positive spend — the screen shows its own empty state instead.
 export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
-  // `reduced` is largest-first (reduceSlices' sort); `painted` reorders it for warm/cool alternation
-  // (WHIT-323). The RING paints in `painted` order; the spoken a11y summary below reads `reduced`
-  // (largest-first), matching the category rows so a screen-reader hears categories by size.
-  const reduced = reduceSlices(slices);
-  const painted = arrangeByTemperature(reduced);
+  // Ring order is exactly reduceSlices' output: spend descending, with the folded "Other" appended
+  // AFTER the sort — so Other is last even when it outweighs most kept slices. The spoken a11y
+  // summary below reads the same list, so a screen-reader hears categories in the painted order,
+  // matching the category rows. Colour is NOT decided here: each slice arrives with the colour the
+  // caller resolved from that category's persisted colorSlot. WHIT-403 removed a second pass that
+  // re-ordered the ring to alternate warm and cool hues. Note what does and does not replace it:
+  // ASSIGNMENT_ORDER spreads CONSECUTIVELY ASSIGNED slots, so server-slotted categories get hues far
+  // apart by construction — but chartCategoryColor's fallback for a category with no stored slot maps
+  // built-in ids straight to ramp positions, bypassing ASSIGNMENT_ORDER, and there eatingout/health/
+  // coffee land on adjacent hues. On that path two similar colours can sit side by side.
+  const painted = reduceSlices(slices);
   const sum = painted.reduce((acc, s) => acc + s.value, 0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const reduceMotion = useReduceMotion();
@@ -213,7 +178,12 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, reduceMotion, paintedKey]);
 
-  if (sum <= 0) return null;
+  // Not just `<= 0`. An Infinity value survives reduceSlices' `> 0` filter, and enough huge-but-
+  // finite values can overflow the total on their own — either way `sum` goes infinite and every
+  // sweep below becomes Infinity / Infinity = NaN, painting a ring of NaN arcs. Guarding the total
+  // covers both, so the filter above does not need its own finite check. (NaN values are already
+  // dropped by that filter: NaN > 0 is false.)
+  if (!Number.isFinite(sum) || sum <= 0) return null;
 
   const pct = (v: number) => (sum > 0 ? Math.round((v / sum) * 100) : 0);
   const single = painted.length === 1;
@@ -227,9 +197,15 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     const start = cursor;
     const end = cursor + sweep;
     cursor = end;
-    // Inset each end by half the gap so neighbours don't touch; a wedge too thin to inset keeps
-    // its full sweep rather than inverting.
-    const inset = sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0;
+    // Give up half a divider at each end so neighbours don't touch. A wedge narrower than three
+    // halves of a divider cannot afford that without inverting, so it gives up a third of its sweep
+    // instead — always keeping a third of itself, with boundaries as wide as it can pay for.
+    // `Math.min`, not a threshold: the old `sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0` had a CLIFF at
+    // the cutoff, where a wedge dropping from 1.15° to 1.14° of sweep jumped from painting 0.39° to
+    // painting the full 1.14° — a category with LESS spend drawn three times wider than one with
+    // more. Taking the min is continuous, so painted width only ever moves with spend.
+    // Above the cutoff `sweep / 3` always exceeds half a divider, so a normal wedge is unaffected.
+    const inset = Math.min(GAP_DEG / 2, sweep / 3);
     return { s, start, end, inset };
   });
 
@@ -266,10 +242,15 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     // whose start and end coincide degenerates, so both are drawn as plain circles. The hit copy
     // fills its FULL sweep (start→end, no inset) so adjacent tap targets meet edge-to-edge, and the
     // visible band's opacity/dim never touches the hit copy (it's fully transparent either way).
+    // Gated on `interactive` like hitProps above: renderWedge runs a SECOND time for the popped-wedge
+    // overlay (interactive=false), and an ungated id would give the selected wedge two painted-band
+    // nodes. Separate from the hit band's id because they measure different things — the hit band
+    // takes the FULL sweep, so a divider measured there always reads zero.
+    const bandTestID = interactive ? `donut-band-${s.id}` : undefined;
     const visible = single ? (
-      <Circle cx={0} cy={0} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} />
+      <Circle cx={0} cy={0} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} testID={bandTestID} />
     ) : (
-      <Path d={arcPath(start + inset, end - inset, R)} fill="none" stroke={s.color} strokeWidth={STROKE} strokeLinecap="butt" />
+      <Path d={arcPath(start + inset, end - inset, R)} fill="none" stroke={s.color} strokeWidth={STROKE} strokeLinecap="butt" testID={bandTestID} />
     );
     const hit = single ? (
       <Circle cx={0} cy={0} r={R} fill="none" stroke="transparent" strokeWidth={HIT_STROKE} {...hitProps} />
@@ -292,7 +273,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   const selectedLayout = activeId ? layout.find((d) => d.s.id === activeId) : null;
   const topWedge = selectedLayout ? renderWedge(selectedLayout, false) : null;
 
-  const label = `Spending by category. ${reduced
+  const label = `Spending by category. ${painted
     .map((s) => `${s.name} ${pct(s.value)} percent`)
     .join(', ')}. Tap a slice for its total, or the centre for the total spent.`;
 
@@ -304,8 +285,12 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
           scales about that centre and grows in place with symmetric headroom, never clipping. */}
       <Svg width={VIEW} height={VIEW} viewBox={`0 0 ${VIEW} ${VIEW}`}>
         <G x={VIEW / 2} y={VIEW / 2}>
-          {/* Track behind the wedges so a partial ring still reads as a full circle. */}
-          <Circle cx={0} cy={0} r={R} fill="none" stroke={C.hairlineStrong} strokeWidth={STROKE} />
+          {/* The ring's surface, spanning the full painted band — this is what shows through the
+              gap between wedges, so it IS the divider colour. CHART_BG matches the screen behind
+              the chart today, which makes the divider an owned token rather than an accident of
+              whatever sits behind the SVG: drop the donut on a card tomorrow and the dividers stay
+              chart-background instead of silently picking up the card's colour. */}
+          <Circle cx={0} cy={0} r={R} fill="none" stroke={CHART_BG} strokeWidth={STROKE} testID="donut-track" />
           {wedges}
           {topWedge}
           {/* Tap the hole to clear the selection and return to the total-spent readout. A
