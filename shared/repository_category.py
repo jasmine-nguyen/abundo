@@ -1,6 +1,7 @@
 """Category taxonomy storage: the user-defined categories as a single DynamoDB
 config item, with the seed taxonomy and colour palette kept local to this module."""
 
+import logging
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -31,24 +32,126 @@ CATEGORY_PALETTE = [
     "#C7A8F0", "#F2A0C9", "#7FD49B", "#B0A8F0", "#8FD46B",
 ]
 
+# `colorSlot` is the PERMANENT chart colour of a category: an integer assigned once and
+# stored, never recomputed. Adding or deleting a category therefore cannot repaint any other.
+#
+# A slot is NOT a position on the colour ramp. The client (slice 2) resolves it through a
+# fixed permutation, ASSIGNMENT_ORDER, arriving in src/theme/chartColors.ts:
+#     hex = CATEGORY_COLORS[ASSIGNMENT_ORDER[slot]]
+# So consecutive SLOT numbers are deliberately far apart in hue, and reading these integers
+# as ramp positions will mislead you: slots 15,16,17,18 look adjacent but resolve to ramp
+# entries 13,14,16,18. The 13 seeds below were solved against the RAMP positions they resolve
+# to — each built-in stays in its own hue family, and the longest run of neighbouring ramp
+# entries is 3 (down from 5 under the previous id-keyed mapping).
 SEED_CATEGORIES = {
-    "coffee": {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle"},
-    "groceries": {"id": "groceries", "name": "Groceries", "icon": "cart", "color": "#7FD49B", "bucket": "Living"},
-    "eatingout": {"id": "eatingout", "name": "Eating Out", "icon": "food", "color": "#F08C8C", "bucket": "Lifestyle"},
-    "transport": {"id": "transport", "name": "Transport", "icon": "car", "color": "#8AB4F8", "bucket": "Living"},
-    "health": {"id": "health", "name": "Health", "icon": "health", "color": "#F2A0C9", "bucket": "Living"},
-    "pets": {"id": "pets", "name": "Pets", "icon": "pets", "color": "#C7A8F0", "bucket": "Lifestyle"},
-    "utilities": {"id": "utilities", "name": "Utilities", "icon": "bolt", "color": "#F2C94C", "bucket": "Living"},
-    "shopping": {"id": "shopping", "name": "Shopping", "icon": "bag", "color": "#6FD0C9", "bucket": "Lifestyle"},
-    "fitness": {"id": "fitness", "name": "Health & Fitness", "icon": "dumbbell", "color": "#8FD46B", "bucket": "Lifestyle"},
-    "subs": {"id": "subs", "name": "Subscriptions", "icon": "film", "color": "#F0B27A", "bucket": "Lifestyle"},
-    "travel": {"id": "travel", "name": "Travel", "icon": "plane", "color": "#6FB6D0", "bucket": "Lifestyle"},
-    "gifts": {"id": "gifts", "name": "Gifts", "icon": "gift", "color": "#E59BD0", "bucket": "Lifestyle"},
-    "phonenet": {"id": "phonenet", "name": "Phone & Internet", "icon": "phone", "color": "#B0A8F0", "bucket": "Living"},
+    "coffee": {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle", "colorSlot": 4},
+    "groceries": {"id": "groceries", "name": "Groceries", "icon": "cart", "color": "#7FD49B", "bucket": "Living", "colorSlot": 11},
+    "eatingout": {"id": "eatingout", "name": "Eating Out", "icon": "food", "color": "#F08C8C", "bucket": "Lifestyle", "colorSlot": 0},
+    "transport": {"id": "transport", "name": "Transport", "icon": "car", "color": "#8AB4F8", "bucket": "Living", "colorSlot": 15},
+    "health": {"id": "health", "name": "Health", "icon": "health", "color": "#F2A0C9", "bucket": "Living", "colorSlot": 8},
+    "pets": {"id": "pets", "name": "Pets", "icon": "pets", "color": "#C7A8F0", "bucket": "Lifestyle", "colorSlot": 17},
+    "utilities": {"id": "utilities", "name": "Utilities", "icon": "bolt", "color": "#F2C94C", "bucket": "Living", "colorSlot": 10},
+    "shopping": {"id": "shopping", "name": "Shopping", "icon": "bag", "color": "#6FD0C9", "bucket": "Lifestyle", "colorSlot": 13},
+    "fitness": {"id": "fitness", "name": "Health & Fitness", "icon": "dumbbell", "color": "#8FD46B", "bucket": "Lifestyle", "colorSlot": 6},
+    "subs": {"id": "subs", "name": "Subscriptions", "icon": "film", "color": "#F0B27A", "bucket": "Lifestyle", "colorSlot": 18},
+    "travel": {"id": "travel", "name": "Travel", "icon": "plane", "color": "#6FB6D0", "bucket": "Lifestyle", "colorSlot": 1},
+    "gifts": {"id": "gifts", "name": "Gifts", "icon": "gift", "color": "#E59BD0", "bucket": "Lifestyle", "colorSlot": 7},
+    "phonenet": {"id": "phonenet", "name": "Phone & Internet", "icon": "phone", "color": "#B0A8F0", "bucket": "Living", "colorSlot": 16},
 }
+
+# How many slots the client ramp exposes. A slot is always in [0, _COLOR_SLOT_COUNT).
+_COLOR_SLOT_COUNT = 20
+_COLOR_SLOT_FIELD = "colorSlot"
+# Marker on the CONFIG ITEM saying every stored category has been stamped. Its presence is
+# what makes the backfill one-time rather than a re-check on every read.
+_COLOR_SLOT_SCHEMA_FIELD = "colorSlotSchema"
+_COLOR_SLOT_SCHEMA = 1
+
+
+def _coerce_slot(raw: Any) -> Optional[int]:
+    """A stored colorSlot as a usable slot, or None if absent/corrupt.
+
+    DynamoDB returns numbers as Decimal, so 7 arrives as Decimal('7'). Anything else — a
+    string, a fraction, a bool, a negative, or >= _COLOR_SLOT_COUNT — is treated as ABSENT
+    and reassigned, rather than trusted and painting an undefined colour on the client.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, Decimal)):
+        return None
+    try:
+        value = int(raw)
+    except (ValueError, OverflowError):
+        return None  # NaN / Infinity: unreachable from DynamoDB, but the contract says None
+    if Decimal(raw) != Decimal(value):
+        return None
+    return value if 0 <= value < _COLOR_SLOT_COUNT else None
+
+
+def _coerce_slot_schema(raw: Any) -> int:
+    """The stored schema marker as an int; anything unreadable counts as 'not migrated'."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, Decimal)):
+        return 0
+    try:
+        return int(raw)
+    except (ValueError, OverflowError):
+        return 0
+
+
+def used_color_slots(items: dict) -> set:
+    """Every slot currently held by a stored category. Corrupt values are ignored so a bad
+    row can't make a valid slot look taken."""
+    return {
+        slot
+        for slot in (_coerce_slot(cat.get(_COLOR_SLOT_FIELD)) for cat in items.values())
+        if slot is not None
+    }
+
+
+def next_color_slot(used: set) -> int:
+    """The lowest FREE slot. A deleted category's slot is free again, so it gets reused —
+    that is the card's 'deleting frees its slot', with no work in delete_category.
+
+    Past 20 live categories every slot is taken; then share slot 0 rather than fail the
+    create — a duplicate colour beyond 20 categories is acceptable, an error is not.
+    """
+    for slot in range(_COLOR_SLOT_COUNT):
+        if slot not in used:
+            return slot
+    return 0
+
+
+def plan_color_slot_backfill(items: dict) -> dict:
+    """{category id -> slot} for every stored category missing a valid slot.
+
+    Pure and deterministic, so the read path can apply the plan in memory and the write path
+    can persist the identical mapping — two concurrent requests compute the same answer, so
+    losing the race to write costs nothing.
+
+    A built-in claims its designated seed slot when that slot is still free. That is what
+    keeps an existing store's 13 built-ins on the hues they were solved for; a naive
+    lowest-free walk would hand them arbitrary colours instead.
+    """
+    used = used_color_slots(items)
+    plan = {}
+    missing = sorted(
+        cat_id for cat_id, cat in items.items()
+        if _coerce_slot(cat.get(_COLOR_SLOT_FIELD)) is None
+    )
+    for cat_id in missing:  # pass 1: built-ins take their designated slot
+        seed = SEED_CATEGORIES.get(cat_id)
+        if seed is not None and seed[_COLOR_SLOT_FIELD] not in used:
+            plan[cat_id] = seed[_COLOR_SLOT_FIELD]
+            used.add(plan[cat_id])
+    for cat_id in missing:  # pass 2: everything else, lowest free, alphabetical
+        if cat_id not in plan:
+            plan[cat_id] = next_color_slot(used)
+            used.add(plan[cat_id])
+    return plan
 
 
 _CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
+
+# Same stream as repository_base, so a deferred backfill is visible next to DB errors.
+logger = logging.getLogger("repository")
 
 # Sub-category (parent link) support. `parent` is optional on a category: None
 # (or absent, on rows written before this field existed) means a top-level
@@ -209,7 +312,10 @@ class CategoryRepository:
         """
         try:
             self._get_table().put_item(
-                Item={**_CATEGORIES_KEY, "items": dict(SEED_CATEGORIES), "version": Decimal(1)},
+                # The slot marker rides the seed write, so a brand-new store is born
+                # migrated and never performs a backfill update.
+                Item={**_CATEGORIES_KEY, "items": dict(SEED_CATEGORIES), "version": Decimal(1),
+                      _COLOR_SLOT_SCHEMA_FIELD: Decimal(_COLOR_SLOT_SCHEMA)},
                 ConditionExpression="attribute_not_exists(pk)",
             )
         except ClientError as e:
@@ -217,14 +323,97 @@ class CategoryRepository:
                 return
             handle_database_error(e, "seed categories")
 
+    def _is_slot_migrated(self, item: dict) -> bool:
+        """Has this store already been stamped? A corrupt marker reads as 'no', which just
+        re-stamps — cheaper than reasoning about a half-written value."""
+        raw = _coerce_slot_schema(item.get(_COLOR_SLOT_SCHEMA_FIELD))
+        return raw >= _COLOR_SLOT_SCHEMA
+
+    def _write_color_slots(self, version: Any, plan: dict, *, strict: bool) -> None:
+        """Persist a colour-slot plan and stamp the store as migrated.
+
+        FAIL-OPEN on the READ path (strict=False). Seven handler routes call
+        list_categories, and every one of them survives today on a single get_item. If this
+        write raised, a VersionConflictError would 409 the caller and any other ClientError
+        would become a DatabaseError the handler does not catch — a 500 on a read that would
+        have succeeded. So: attempt it once, and on failure log and carry on. The caller has
+        already applied `plan` in memory, so the response is correct either way and a later
+        request retries the write.
+
+        FAIL-CLOSED on the create path (strict=True): a real DB fault there is not something
+        to paper over, and create's own conditional write is about to hit it anyway.
+        """
+        # Names are built INCREMENTALLY: DynamoDB rejects an ExpressionAttributeName the
+        # expression never references. Same technique delete_category uses for #childN.
+        # With an EMPTY plan we still write the marker (names = version + schema only, never
+        # #items), so a store whose categories were all deleted stops re-planning forever.
+        names = {"#v": "version", "#schema": _COLOR_SLOT_SCHEMA_FIELD}
+        values = {":expected": version, ":next": version + Decimal(1),
+                  ":schema": Decimal(_COLOR_SLOT_SCHEMA)}
+        set_parts = ["#v = :next", "#schema = :schema"]
+        if plan:
+            names["#items"] = "items"
+            names["#slot"] = _COLOR_SLOT_FIELD
+            for index, cat_id in enumerate(sorted(plan)):
+                alias = f"#cat{index}"
+                names[alias] = cat_id
+                values[f":slot{index}"] = Decimal(plan[cat_id])
+                set_parts.append(f"#items.{alias}.#slot = :slot{index}")
+        try:
+            self._get_table().update_item(
+                Key=_CATEGORIES_KEY,
+                # Nested SET stamps ONE field per category — never rewrites the items map.
+                UpdateExpression="SET " + ", ".join(set_parts),
+                ConditionExpression="attribute_exists(pk) AND #v = :expected",
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return  # someone else migrated or bumped the version: a no-op success
+            if strict:
+                handle_database_error(e, "backfill category colour slots")
+            else:
+                logger.warning("colour-slot backfill deferred: %s", e)
+        except Exception as e:  # noqa: BLE001 - fail-open has to mean fail-open
+            # A timeout / connection failure is a BotoCoreError, NOT a ClientError, and is
+            # the likeliest transient fault in Lambda. Catching only ClientError above would
+            # let it escape and 500 the seven read routes that call list_categories — the
+            # exact outage this policy exists to prevent. The response is already correct
+            # from `plan`, so on a read nothing may escape; on a write it still propagates.
+            if strict:
+                raise
+            logger.warning("colour-slot backfill deferred: %s", e)
+
     def list_categories(self) -> list[dict]:
         item = self._get_config()
         if item is None:
             self._ensure_seeded()
             item = self._get_config()  # re-read so a concurrent create is reflected
+        items = item["items"]
+        # Planning is pure and cheap (a scan of ~15 map entries), so compute it every read
+        # and let its emptiness decide whether a write is needed. An already-stamped, fully
+        # slotted store plans nothing and writes nothing — every later read is one get_item.
+        plan = plan_color_slot_backfill(items)
+        # `.get` deliberately: this method fails OPEN on a write fault, so it must not gain a
+        # way for malformed data to fail the read either. No version means no optimistic lock
+        # to condition on, so skip the write — the response is still correct from `plan`.
+        version = item.get("version")
+        if version is not None and (plan or not self._is_slot_migrated(item)):
+            self._write_color_slots(version, plan, strict=False)
         # Default `parent` to None so every category leaving the repo carries the
         # field, even seed rows and rows written before sub-categories existed.
-        return [{"parent": None, **cat} for cat in item["items"].values()]
+        # `plan` is applied in memory whether or not the write landed, so the invocation
+        # that migrates returns the slotted view and a deferred write never shows the user
+        # different colours from the ones about to be stored.
+        # Keyed by the MAP KEY, the same key `plan` and the write both use — a row whose
+        # inner "id" disagreed with its map key would otherwise be stamped in the DB but
+        # returned with a null slot.
+        return [
+            {"parent": None, **cat,
+             _COLOR_SLOT_FIELD: plan.get(cat_id, _coerce_slot(cat.get(_COLOR_SLOT_FIELD)))}
+            for cat_id, cat in items.items()
+        ]
 
     def create_category(
         self, cat_id: str, name: str, bucket: str, icon: str, parent: Optional[str] = None
@@ -236,6 +425,14 @@ class CategoryRepository:
         different bucket, self, or a cycle).
         """
         self._ensure_seeded()
+        # Migrate BEFORE the retry loop, on its own read. Inside the loop it would bump the
+        # version between our read and our conditional write and GUARANTEE the first attempt
+        # fails, burning attempt 1 of 2 on every create against an unmigrated store.
+        # strict=True: on a write path a DB fault is a real failure, not something to defer.
+        pre = self._get_config()
+        pre_plan = plan_color_slot_backfill(pre["items"])
+        if pre_plan or not self._is_slot_migrated(pre):
+            self._write_color_slots(pre["version"], pre_plan, strict=True)
         for _attempt in range(2):
             item = self._get_config()
             items = item["items"]
@@ -248,8 +445,16 @@ class CategoryRepository:
 
             # Count taken AFTER seeding, so a new category never reuses a seed's index.
             color = CATEGORY_PALETTE[len(items) % len(CATEGORY_PALETTE)]
+            # The slot is computed INSIDE the loop from the freshly-read items (same rule as
+            # `color` above): on a retry we re-read, so two concurrent creates can never be
+            # handed the same slot — the loser's write fails, it re-reads, and it sees the
+            # winner's slot as taken. Slots still owed to unmigrated rows are reserved via
+            # the plan, so a create can't steal a colour the backfill is about to assign.
+            taken = used_color_slots(items) | set(plan_color_slot_backfill(items).values())
+            slot = next_color_slot(taken)
             new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
-                       "bucket": bucket, "parent": parent}
+                       "bucket": bucket, "parent": parent,
+                       _COLOR_SLOT_FIELD: Decimal(slot)}
             try:
                 self._get_table().update_item(
                     Key=_CATEGORIES_KEY,
@@ -266,7 +471,9 @@ class CategoryRepository:
                         ":next": version + Decimal(1),
                     },
                 )
-                return new_cat
+                # Store a Decimal (DynamoDB's number type) but RETURN a plain int, so the
+                # POST body carries `2` like the GET does — not the `2.0` a Decimal encodes to.
+                return {**new_cat, _COLOR_SLOT_FIELD: slot}
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     handle_database_error(e, "create category")
