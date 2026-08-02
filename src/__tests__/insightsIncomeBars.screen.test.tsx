@@ -9,7 +9,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import type { AppContext, LoanFacts } from '../context';
-import { CATEGORY_COLORS } from '../theme/chartColors';
+import { CATEGORY_COLORS } from '../chartColors';
 
 type InsightsState = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsightsError' | 'refreshAiInsights' | 'generateAiInsights'>
   & { loanFacts: LoanFacts; homeLoan: { balance: number | null; asOf: string | null } };

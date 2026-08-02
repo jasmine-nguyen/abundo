@@ -1982,7 +1982,7 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
     numbers is meaningless (they run 15,16,17,18 but resolve to ramp 13,14,16,18). This
     pins the real invariant: no more than 3 built-ins ever occupy neighbouring ramp entries.
 
-    ASSIGNMENT_ORDER lives client-side (src/theme/chartColors.ts, slice 2); the copy here is
+    ASSIGNMENT_ORDER lives client-side (src/chartColors.ts, slice 2); the copy here is
     the cross-language coupling a sync guard should cover — see the tech-debt card.
     """
     import repository
