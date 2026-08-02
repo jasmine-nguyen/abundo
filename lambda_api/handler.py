@@ -2545,6 +2545,12 @@ def review_milestones(event: dict, milestone_repo, homeloan_repo, loanfacts_repo
     return _json_response(200, {"adjustments": adjustments, "payoffFeasible": True})
 
 
+# Absurd for a personal budget; also keeps a giant value from blowing past DynamoDB's
+# number limit and 500ing at write instead of a clean 400. Named (WHIT-393) so the cap
+# isn't a bare literal in the middle of the guard — _GOAL_AMOUNT_MAX is its sibling.
+_BUDGET_TARGET_MAX = 1_000_000_000
+
+
 def set_budget(
     event: dict, repo: BudgetRepository, category_repo: CategoryRepository
 ) -> dict:
@@ -2577,9 +2583,7 @@ def set_budget(
         return _json_response(400, {"error": "target must be a finite number"})
     if target < 0:
         return _json_response(400, {"error": "target must be >= 0"})
-    # Absurd for a personal budget; also keeps a giant value from blowing past
-    # DynamoDB's number limit and 500ing at write instead of a clean 400.
-    if target > 1_000_000_000:
+    if target > _BUDGET_TARGET_MAX:
         return _json_response(400, {"error": "target too large"})
 
     # WHIT-202: reject a Savings-bucket target (an unknown id stays accepted — .get is
@@ -2661,7 +2665,8 @@ def _validate_goal_body(event: dict):
     target_amount = body.get("target_amount")
     if not _finite_number(target_amount, high=_GOAL_AMOUNT_MAX):
         return None, _json_response(
-            400, {"error": "target_amount must be a number between 0 and 1000000000"})
+            # The figure comes from the cap (WHIT-393) so the message can't outlive a change to it.
+            400, {"error": f"target_amount must be a number between 0 and {_GOAL_AMOUNT_MAX}"})
     # A savings target of 0 is meaningless; a debt target of 0 ("pay it off") is the point.
     if direction == "grow" and target_amount <= 0:
         return None, _json_response(400, {"error": "target_amount must be > 0 for a savings goal"})

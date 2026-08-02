@@ -1,13 +1,14 @@
 """WHIT-392: guard that the loan form's client dollar ceiling stays in sync
 with the server's LOANFACTS_FIELD_MAX.
 
-The loan form (`app/loan.tsx`) hand-mirrors the server's field ceiling so it can
-block a too-large amount with a friendly message before any round-trip. The
-authoritative value lives in `lambda_api/constants.py` (LOANFACTS_FIELD_MAX);
-the client copy is a plain `const` in a `.tsx` file. Nothing proved the two
-agree — the WHIT-136 sync test only covers names the shared layer imports, and
-this constant lives only in lambda_api, so a one-sided change would drift
-silently (client wrongly blocks valid amounts, or wrongly allows too-large ones).
+The client (`src/loanLimits.ts`, used by the loan form) hand-mirrors the server's
+field ceiling so it can block a too-large amount with a friendly message before any
+round-trip. The authoritative value lives in `lambda_api/constants.py`
+(LOANFACTS_FIELD_MAX); the client copy is a plain `const` in a TypeScript file.
+Nothing proved the two agree — the WHIT-136 sync test only covers names the shared
+layer imports, and this constant lives only in lambda_api, so a one-sided change
+would drift silently (client wrongly blocks valid amounts, or wrongly allows
+too-large ones).
 
 This reads BOTH values and asserts they match, so editing one side without the
 other fails loudly. It parses the TypeScript client as TEXT (no JS runtime in
@@ -25,10 +26,10 @@ import re
 from _lambda_api_constants import api_constant
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_CLIENT_LOAN_FORM = _ROOT / "app" / "loan.tsx"
+_CLIENT_LOAN_FORM = _ROOT / "src" / "loanLimits.ts"
 
-# The client declaration, e.g. `const LOANFACTS_FIELD_MAX = 1_000_000_000;`. Anchored on
-# `const` so a mention of the name in a comment can't match — `export const ...` still does.
+# The client declaration, e.g. `export const LOANFACTS_FIELD_MAX = 1_000_000_000;`. Anchored
+# on `const` so a mention of the name in a comment can't match.
 _CLIENT_CEILING = re.compile(r"const\s+LOANFACTS_FIELD_MAX\s*=\s*([\d_]+)")
 
 
@@ -40,9 +41,9 @@ def _server_ceiling() -> int:
 
 
 def _client_ceiling() -> int:
-    """The LOANFACTS_FIELD_MAX const parsed out of app/loan.tsx."""
+    """The LOANFACTS_FIELD_MAX const parsed out of src/loanLimits.ts."""
     match = _CLIENT_CEILING.search(_CLIENT_LOAN_FORM.read_text())
-    assert match, "could not locate `const LOANFACTS_FIELD_MAX = ...` in app/loan.tsx"
+    assert match, "could not locate `const LOANFACTS_FIELD_MAX = ...` in src/loanLimits.ts"
     return int(match.group(1).replace("_", ""))
 
 
@@ -62,7 +63,7 @@ def test_exactly_one_client_ceiling_declaration():
     matches = _CLIENT_CEILING.findall(_CLIENT_LOAN_FORM.read_text())
     assert len(matches) == 1, (
         f"expected exactly one `const LOANFACTS_FIELD_MAX = <number>` in "
-        f"app/loan.tsx, found {len(matches)}: {matches} — a shadowing/commented "
+        f"src/loanLimits.ts, found {len(matches)}: {matches} — a shadowing/commented "
         "copy makes the sync guard compare the wrong (first-matched) value"
     )
 
@@ -90,7 +91,7 @@ def test_client_and_server_loanfacts_ceilings_agree():
     client = _client_ceiling()
     server = _server_ceiling()
     assert client == server, (
-        f"loan-facts ceiling drift: app/loan.tsx has {client} but "
+        f"loan-facts ceiling drift: src/loanLimits.ts has {client} but "
         f"lambda_api/constants.py LOANFACTS_FIELD_MAX is {server} — "
         "update both to the same value"
     )

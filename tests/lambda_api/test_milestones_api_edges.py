@@ -4,7 +4,7 @@ implementer's tests/lambda_api/test_milestones_api.py (no duplication).
 Gaps covered here (each verified absent from the implementer's suite first):
   [A-EX]  extra unknown keys on a milestone are silently dropped (whitelist), and a
           smuggled pk/sk never reaches the repo.
-  [A-CAPHI] targetBalance exactly at the cap (1_000_000_000) is accepted; cap+1 rejected.
+  [A-CAPHI] targetBalance exactly at the cap is accepted; cap+1 rejected.
   [A-NAN] targetBalance NaN / Infinity rejected (the math.isfinite guard).
   [A-LBL] label longer than 100 chars rejected; exactly 100 accepted.
   [A-50]  a full 50-row valid plan is accepted (the count-cap boundary; impl only tests 51).
@@ -64,13 +64,15 @@ def test_extra_unknown_keys_are_dropped_and_pk_not_smuggled(handler):
 # --- [A-CAPHI] balance cap boundary -----------------------------------------
 
 def test_target_balance_exactly_at_cap_is_accepted(handler):
-    resp, repo = _put_plan(handler, [{**VALID0, "targetBalance": 1_000_000_000}])
+    # Read from the handler (WHIT-393) so a cap change needs no edit here.
+    cap = handler._MILESTONE_BALANCE_MAX
+    resp, repo = _put_plan(handler, [{**VALID0, "targetBalance": cap}])
     assert resp["statusCode"] == 200
-    assert repo.set_calls[0]["milestones"][0]["targetBalance"] == 1_000_000_000
+    assert repo.set_calls[0]["milestones"][0]["targetBalance"] == cap
 
 
 def test_target_balance_one_over_cap_is_rejected(handler):
-    resp, repo = _put_plan(handler, [{**VALID0, "targetBalance": 1_000_000_001}])
+    resp, repo = _put_plan(handler, [{**VALID0, "targetBalance": handler._MILESTONE_BALANCE_MAX + 1}])
     assert resp["statusCode"] == 400
     assert "targetBalance" in json.loads(resp["body"])["error"]
     assert repo.set_calls == []

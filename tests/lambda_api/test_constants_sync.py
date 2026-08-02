@@ -17,20 +17,13 @@ the missing/mismatched constant.
 import ast
 import pathlib
 
+# The exec-into-a-fresh-namespace reader both constants guards share (WHIT-393) — it
+# keeps the two bare `constants` modules out of sys.modules and ignores stale bytecode.
+from _lambda_api_constants import constants_namespace as _constants_namespace
+
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SHARED_DIR = _ROOT / "shared"
 _API_CONSTANTS = _ROOT / "lambda_api" / "constants.py"
-
-
-def _constants_namespace(path):
-    """Exec a constants.py into a fresh namespace and return it.
-
-    Compiles the source directly rather than importing it, so (a) the two bare
-    `constants` modules can't collide in sys.modules, and (b) no __pycache__
-    bytecode is ever consulted — a stale .pyc can't mask a real drift."""
-    namespace: dict = {}
-    exec(compile(path.read_text(), str(path), "exec"), namespace)
-    return namespace
 
 
 def _names_imported_from_constants(py_path):

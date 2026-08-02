@@ -55,7 +55,7 @@ def test_guard_is_green_as_shipped(sync_guard):
 
 
 def test_guard_goes_red_when_the_server_ceiling_drifts(sync_guard, monkeypatch):
-    """[D2] Someone edits lambda_api/constants.py and forgets app/loan.tsx."""
+    """[D2] Someone edits lambda_api/constants.py and forgets src/loanLimits.ts."""
     client = sync_guard._client_ceiling()
     monkeypatch.setattr(sync_guard, "api_constant", lambda name: client + 1)
     with pytest.raises(AssertionError, match="ceiling drift"):
@@ -63,7 +63,7 @@ def test_guard_goes_red_when_the_server_ceiling_drifts(sync_guard, monkeypatch):
 
 
 def test_guard_goes_red_when_the_client_ceiling_drifts(sync_guard, tmp_path, monkeypatch):
-    """[D3] Someone edits app/loan.tsx and forgets the server."""
+    """[D3] Someone edits src/loanLimits.ts and forgets the server."""
     monkeypatch.setattr(
         sync_guard, "_CLIENT_LOAN_FORM",
         _client_file(tmp_path, "export const LOANFACTS_FIELD_MAX = 12_345;\n"))

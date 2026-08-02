@@ -70,15 +70,17 @@ def _put(handler, body, goal_id="g1"):
 
 
 def test_target_amount_exactly_at_ceiling_is_accepted(handler):
-    # [G1] 1e9 is the max; `<= high` must let it through (guards a `<` regression).
-    resp, repo = _put(handler, _grow_body(target_amount=1_000_000_000))
+    # [G1] the cap itself; `<= high` must let it through (guards a `<` regression).
+    # Read from the handler (WHIT-393) so a cap change needs no edit here.
+    cap = handler._GOAL_AMOUNT_MAX
+    resp, repo = _put(handler, _grow_body(target_amount=cap))
     assert resp["statusCode"] == 200, json.loads(resp["body"])
-    assert repo.upsert_calls[0][1]["target_amount"] == Decimal("1000000000")
+    assert repo.upsert_calls[0][1]["target_amount"] == Decimal(str(cap))
 
 
 def test_target_amount_one_over_ceiling_is_rejected(handler):
     # [G2] just past the ceiling -> 400 (the implementer only tests 2e9).
-    resp, repo = _put(handler, _grow_body(target_amount=1_000_000_001))
+    resp, repo = _put(handler, _grow_body(target_amount=handler._GOAL_AMOUNT_MAX + 1))
     assert resp["statusCode"] == 400
     assert repo.upsert_calls == []
 

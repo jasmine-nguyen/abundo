@@ -1,9 +1,11 @@
-"""Read a constant out of lambda_api/constants.py without importing it (WHIT-393).
+"""Read constants out of a constants.py without importing it (WHIT-393).
 
-`constants` is in the _COLLIDING list in tests/lambda_api/conftest.py — a plain
-`import constants` here would poison sys.modules for the suites that import their
-own. lambda_api/constants.py has no imports of its own, so exec'ing it into a fresh
-namespace is safe, needs no fixture, and can't be masked by a stale .pyc.
+Both `constants` modules (shared/ and lambda_api/) are bare top-level names that
+collide in sys.modules — `constants` is in the _COLLIDING list in
+tests/lambda_api/conftest.py, so whichever suite imported one first would win for
+the rest of the pytest process. Neither file imports anything, so exec'ing into a
+fresh namespace reads them safely: no sys.modules entry, and no __pycache__
+bytecode that could mask a real drift.
 
 Lives in tests/shared because pytest.ini's `pythonpath` makes only that directory
 importable by name. Test-only: never staged into the deployed shared layer.
@@ -14,8 +16,13 @@ import pathlib
 _API_CONSTANTS = pathlib.Path(__file__).resolve().parents[2] / "lambda_api" / "constants.py"
 
 
+def constants_namespace(path) -> dict:
+    """Exec a constants.py into a fresh namespace and return it."""
+    namespace: dict = {}
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
+    return namespace
+
+
 def api_constant(name: str):
     """The named constant's value from lambda_api/constants.py."""
-    namespace: dict = {}
-    exec(compile(_API_CONSTANTS.read_text(), str(_API_CONSTANTS), "exec"), namespace)
-    return namespace[name]
+    return constants_namespace(_API_CONSTANTS)[name]

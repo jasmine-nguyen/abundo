@@ -22,7 +22,8 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
 
-import Loan, { LOANFACTS_FIELD_MAX } from '../../app/loan';
+import Loan from '../../app/loan';
+import { LOANFACTS_FIELD_MAX } from '../loanLimits';
 
 const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 

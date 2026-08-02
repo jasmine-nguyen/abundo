@@ -22,7 +22,8 @@ jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFr
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
 
-import Loan, { LOANFACTS_FIELD_MAX } from '../../app/loan';
+import Loan from '../../app/loan';
+import { LOANFACTS_FIELD_MAX } from '../loanLimits';
 import { fmtCompact } from '../theme';
 
 // Derived from the ceiling (WHIT-393) so a change to it needs no edit here. The prose is
