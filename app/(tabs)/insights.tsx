@@ -99,8 +99,8 @@ export default function Insights() {
           value={cycle}
           onChange={setCycle}
           options={[
-            { value: 0, label: 'This cycle', testID: 'insights-cycle-current', activeTint: 'rgba(124,140,255,.16)', activeTextColor: C.accentSoft },
-            { value: 1, label: 'Last cycle', testID: 'insights-cycle-prev', activeTint: 'rgba(124,140,255,.16)', activeTextColor: C.accentSoft },
+            { value: 0, label: 'This cycle', testID: 'insights-cycle-current', activeTint: tint(C.accentAlt, 0.16), activeTextColor: C.accentSoft },
+            { value: 1, label: 'Last cycle', testID: 'insights-cycle-prev', activeTint: tint(C.accentAlt, 0.16), activeTextColor: C.accentSoft },
           ]}
         />
 
@@ -320,6 +320,6 @@ const styles = StyleSheet.create({
   barsCaption: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, textAlign: 'center', marginTop: -6, marginBottom: 16 },
   empty: { fontFamily: FONT.body, fontSize: 14, color: C.textDim, textAlign: 'center', paddingVertical: 40 },
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 14 },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

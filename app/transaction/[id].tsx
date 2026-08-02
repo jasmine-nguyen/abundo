@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C, FONT } from '../../src/theme';
+import { C, FONT, tint } from '../../src/theme';
 import { transactionView, useAppContext, Transaction } from '../../src/context';
 import { formatDayMonthYear } from '../../src/dateutil';
 import { useTransactionsScreenData, useRecentTransactionsScreenData } from '../../src/queries';
@@ -230,7 +230,7 @@ function NoteAndTagsEditor({ transaction }: { transaction: Transaction }) {
         accessibilityRole="button"
         accessibilityLabel="Save note"
         accessibilityState={{ disabled: !noteDirty }}
-        style={[styles.noteSaveBtn, { backgroundColor: noteDirty ? C.accent : 'rgba(124,140,255,.25)' }]}
+        style={[styles.noteSaveBtn, { backgroundColor: noteDirty ? C.accent : tint(C.accentAlt, 0.25) }]}
       >
         <Text style={[styles.noteSaveText, { color: noteDirty ? C.accentInk : '#6a6a90' }]}>Save note</Text>
       </Pressable>

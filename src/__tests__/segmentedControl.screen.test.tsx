@@ -10,9 +10,11 @@ import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { SegmentedControl } from '../components/SegmentedControl';
 
+// Synthetic colours on purpose (WHIT-398): these are fixtures for the generic component, not
+// production values, so they must not read as a second copy of a real theme colour.
 const NUM_OPTIONS = [
-  { value: 0, label: 'This cycle', testID: 'seg-current', activeTint: 'rgba(124,140,255,.16)', activeTextColor: '#9db3f9' },
-  { value: 1, label: 'Last cycle', testID: 'seg-prev', activeTint: 'rgba(124,140,255,.16)', activeTextColor: '#9db3f9' },
+  { value: 0, label: 'This cycle', testID: 'seg-current', activeTint: 'rgba(7,8,9,.16)', activeTextColor: '#9db3f9' },
+  { value: 1, label: 'Last cycle', testID: 'seg-prev', activeTint: 'rgba(7,8,9,.16)', activeTextColor: '#9db3f9' },
 ];
 const STR_OPTIONS = [
   { value: 'spending' as const, label: 'Spending', testID: 'seg-spending', activeTint: 'rgba(1,2,3,.16)', activeTextColor: '#f7768e' },

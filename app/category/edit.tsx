@@ -224,7 +224,7 @@ export default function CategoryEdit() {
                   <Pressable
                     key={`new-${i}`}
                     onPress={() => setNewChildren((prev) => prev.filter((_, j) => j !== i))}
-                    style={[styles.bucketBtn, { borderColor: C.accent, backgroundColor: 'rgba(124,140,255,.14)' }]}
+                    style={[styles.bucketBtn, { borderColor: C.accent, backgroundColor: tint(C.accentAlt, 0.14) }]}
                   >
                     <Text style={[styles.bucketText, { color: C.accentSofter }]} numberOfLines={1}>{nc.name}  ✕</Text>
                   </Pressable>
@@ -256,7 +256,7 @@ export default function CategoryEdit() {
             <Text style={styles.deleteText}>Delete category</Text>
           </Pressable>
         )}
-        <Pressable onPress={save} style={[styles.saveBtn, { backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}>
+        <Pressable onPress={save} style={[styles.saveBtn, { backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}>
           <Text style={[styles.saveText, { color: canSave ? C.accentInk : '#6a6a90' }]}>Save category</Text>
         </Pressable>
       </ScrollView>
@@ -272,7 +272,7 @@ const styles = StyleSheet.create({
   bucketBtn: { flexGrow: 1, minWidth: '47%', alignItems: 'center', paddingVertical: 13, borderRadius: 13, borderWidth: 1 },
   bucketText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600' },
   subHint: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginBottom: 8, marginHorizontal: 2 },
-  addChildBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 13, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', alignItems: 'center' },
+  addChildBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 13, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), alignItems: 'center' },
   addChildText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSofter },
   deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
   deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },

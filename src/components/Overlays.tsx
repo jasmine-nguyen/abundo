@@ -289,7 +289,7 @@ function PickerSheet() {
       <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
         {/* WHIT-238: make a category on the spot rather than round-tripping to Settings. */}
         <Pressable testID="pickerNewCategory" onPress={() => setCreating(true)} style={styles.pickRow}>
-          <View style={[styles.pickChip, { backgroundColor: 'rgba(124,140,255,.14)' }]}>
+          <View style={[styles.pickChip, { backgroundColor: tint(C.accentAlt, 0.14) }]}>
             <Glyph name="plus" size={18} color={C.accent} />
           </View>
           <Text style={[styles.pickName, { color: C.accentSofter }]}>New category</Text>
@@ -537,7 +537,7 @@ function AddRuleSheet() {
         <Pressable
           onPress={submit}
           testID="rule-submit"
-          style={[styles.btn, { marginTop: 16, backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}
+          style={[styles.btn, { marginTop: 16, backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}
         >
           <Text style={[styles.btnPrimaryText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{editing ? 'Update rule' : 'Add rule'}</Text>
         </Pressable>
@@ -571,7 +571,7 @@ function PayCycleSheet() {
             <Pressable
               key={o.len}
               onPress={() => s.setPayCycleLength(o.len)}
-              style={[styles.cycleRow, { backgroundColor: sel ? 'rgba(124,140,255,.14)' : C.cardAlt, borderColor: sel ? C.accent : 'rgba(255,255,255,.07)' }]}
+              style={[styles.cycleRow, { backgroundColor: sel ? tint(C.accentAlt, 0.14) : C.cardAlt, borderColor: sel ? C.accent : 'rgba(255,255,255,.07)' }]}
             >
               <Text style={[styles.cycleText, { color: sel ? C.accentSofter : C.textMid }]}>{o.n}</Text>
               {sel && <Glyph name="check" size={18} color={C.accent} />}

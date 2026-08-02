@@ -302,7 +302,7 @@ const styles = StyleSheet.create({
 
   planSchedule: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', marginTop: 8 },
 
-  contribCard: { backgroundColor: 'rgba(124,140,255,.1)', borderWidth: 1, borderColor: 'rgba(124,140,255,.22)', borderRadius: 18, padding: 16, marginBottom: 12 },
+  contribCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 18, padding: 16, marginBottom: 12 },
   contribEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter },
   contribBig: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: '#fff', letterSpacing: -1, marginTop: 4 },
   contribBody: { fontFamily: FONT.body, fontSize: 13, color: '#a6a6b0', lineHeight: 19, marginTop: 6 },
@@ -314,7 +314,7 @@ const styles = StyleSheet.create({
   repayAmount: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.good },
   // WHIT-121: the repayment-error Retry chip. Sits inline on the dark card, so it uses an
   // accent tint (milestone's retryBtn is hero-ink, tuned for the light hero — wrong here).
-  repayRetryBtn: { backgroundColor: 'rgba(124,140,255,.14)', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14 },
+  repayRetryBtn: { backgroundColor: tint(C.accentAlt, 0.14), borderRadius: 10, paddingVertical: 7, paddingHorizontal: 14 },
   repayRetryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSoft },
 
   ipChip: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(201,179,245,.16)', alignItems: 'center', justifyContent: 'center' },

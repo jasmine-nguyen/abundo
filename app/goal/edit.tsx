@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { C, FONT, fmt } from '../../src/theme';
+import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon, ICON_KEYS } from '../../src/icons';
 import { useAppContext, accountSummaries } from '../../src/context';
 import { useGoalsQuery, useRecentTransactionsScreenData, useIsAuthed } from '../../src/queries';
@@ -201,7 +201,7 @@ export default function GoalEdit() {
                 key={key}
                 testID={`goal-icon-${key}`}
                 onPress={() => setIcon(key)}
-                style={[styles.iconBtn, { borderColor: selected ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: selected ? 'rgba(124,140,255,.14)' : C.card }]}
+                style={[styles.iconBtn, { borderColor: selected ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: selected ? tint(C.accentAlt, 0.14) : C.card }]}
               >
                 <Icon name={key} size={22} color={selected ? C.accentSofter : C.textMid} />
               </Pressable>
@@ -233,7 +233,7 @@ export default function GoalEdit() {
                     key={account.id}
                     testID={`goal-account-${account.id}`}
                     onPress={() => setAccountId(account.id)}
-                    style={[styles.accountRow, { borderColor: selected ? C.accent : C.hairline, backgroundColor: selected ? 'rgba(124,140,255,.10)' : C.card }]}
+                    style={[styles.accountRow, { borderColor: selected ? C.accent : C.hairline, backgroundColor: selected ? tint(C.accentAlt, 0.1) : C.card }]}
                   >
                     <Text style={[styles.accountName, { color: selected ? C.textBright : C.textMid }]} numberOfLines={1}>
                       {selected ? '✓ ' : ''}{account.name}
@@ -307,7 +307,7 @@ function Segment({ label, selected, onPress, testID }: { label: string; selected
     <Pressable
       testID={testID}
       onPress={onPress}
-      style={[styles.segment, { borderColor: selected ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: selected ? 'rgba(124,140,255,.14)' : C.card }]}
+      style={[styles.segment, { borderColor: selected ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: selected ? tint(C.accentAlt, 0.14) : C.card }]}
     >
       <Text style={[styles.segmentText, { color: selected ? C.accentSofter : C.textMid }]} numberOfLines={1}>{label}</Text>
     </Pressable>

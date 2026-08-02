@@ -90,12 +90,28 @@ describe('Insights toggles — active colours pinned to production tokens (WHIT-
   it('[A10] cycle toggle: active "This cycle" carries the blue tint + accentSoft bold text', () => {
     render(<Insights />);
     // active on mount (cycle = 0)
-    expect(flat('insights-cycle-current').backgroundColor).toBe('rgba(124,140,255,.16)');
+    // Pinned to the literal, not to tint(C.accentAlt, .16) — asserting against the token would
+    // pass even if the token were repainted. accentAltToken.logic.test.ts pins the token itself.
+    expect(flat('insights-cycle-current').backgroundColor).toBe('rgba(124,140,255,0.16)');
     expect(textFlat('This cycle').color).toBe(C.accentSoft);
     expect(textFlat('This cycle').fontWeight).toBe('700');
     // inactive segment: no tint
     expect(flat('insights-cycle-prev').backgroundColor).toBeUndefined();
     expect(textFlat('Last cycle').fontWeight).toBe('600');
+  });
+
+  // [A11] WHIT-398 — the DRY property the token exists for: the two cycle options are one colour,
+  // not two that happen to match. Both options were written out separately before the token, so an
+  // edit that changed only one of them would have passed every other assertion in this file.
+  it('[A11] cycle toggle: both options light up the SAME blue', () => {
+    render(<Insights />);
+    const currentActiveTint = flat('insights-cycle-current').backgroundColor;
+    // anchored, so "both are ONE colour" can't be satisfied by "neither has a colour"
+    expect(currentActiveTint).toBe('rgba(124,140,255,0.16)');
+    fireEvent.press(screen.getByTestId('insights-cycle-prev'));
+    expect(flat('insights-cycle-prev').backgroundColor).toBe(currentActiveTint);
+    // and the handover is clean — the previously active segment drops its tint
+    expect(flat('insights-cycle-current').backgroundColor).toBeUndefined();
   });
 
   it('[A10] side toggle: Spending active = coral (tint(C.bad,.16) + C.bad text)', () => {
