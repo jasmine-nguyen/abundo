@@ -21,6 +21,12 @@ on:
       - "jest.config.js"
       - "jest.setup.js"
       - "tsconfig.json"
+      # Bundling config (WHIT-411): these decide how Metro resolves, so the bundle job has
+      # to run when they change. metro.config.js does not exist yet — listed so that adding
+      # one, the most likely reason to add resolution config, cannot skip the workflow.
+      - "babel.config.js"
+      - "app.json"
+      - "metro.config.js"
       - "scripts/coverage-merge-check.js"
       - "scripts/coverage-run-local.sh"
       - ".github/workflows/client-tests.yml"
@@ -112,11 +118,15 @@ jobs:
           if-no-files-found: error
 
   # WHIT-411. Neither the tests nor the typecheck BUILD the app, so a break in how modules
-  # resolve at bundle time — a file shadowing a folder, a bad alias, a package that only
-  # ships an ESM entry — passes both and surfaces at release, where it is most expensive.
-  # The web target uses the same Metro resolution as the phone build and exports in ~10s,
-  # so it buys that whole class of failure cheaply. It is NOT a substitute for the native
-  # build (ios-testflight.yml), which still runs only on a tag.
+  # resolve at bundle time — a bad babel alias, a package that only ships an ESM entry, a
+  # dependency only Jest's mocks were covering — passes both and surfaces at release, where
+  # it is most expensive.
+  # NOT in that set: a file shadowing a same-named folder. Metro resolves that one silently
+  # (verified — the WHIT-408 collision exports clean), so it is guarded by
+  # src/__tests__/themeLayout.logic.test.ts instead, not here.
+  # This exports the WEB target: the same Metro resolver, web-flavoured — react-native-web
+  # substitutes in and .web.ts wins over .native.ts — so native-only resolution breaks still
+  # reach only the tag-time build in ios-testflight.yml. This does not replace it.
   bundle:
     name: bundle
     runs-on: ubuntu-latest
@@ -131,6 +141,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The export itself is a few seconds; `npm ci` above dominates the job's wall time.
       - name: Build the web bundle
         run: npx expo export -p web --output-dir "$RUNNER_TEMP/expo-web-export"
 

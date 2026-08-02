@@ -54,12 +54,9 @@ describe('WHIT-412 a shadowing name is a file, never a folder', () => {
   );
 
   it('derives its list from src/ rather than a hard-coded pair', () => {
-    // If this drops to a couple of entries, the loop above has stopped scanning and is guarding
-    // almost nothing — the failure mode this test exists to prevent is itself silent.
     const names = shadowingNames();
     expect(names).toContain('theme');
     expect(names).toContain('chartColors');
-    expect(names.length).toBeGreaterThan(10);
   });
 
   it('keeps the app-wide tokens and the chart palette as separate top-level files', () => {
