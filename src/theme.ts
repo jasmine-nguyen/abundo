@@ -125,21 +125,24 @@ export function fmtExact(n: number): string {
   });
 }
 
-function round1(n: number): number {
-  return Math.round(n * 10) / 10;
+// One decimal place of `unit`, but ONLY when that says the figure exactly; otherwise the full
+// amount. Rounding is deliberately not allowed: this labels a LIMIT, and rounding up would name
+// an amount the limit itself rejects — "$1.3B or less" when the real cap is $1.25B sends the user
+// round a loop, retyping the figure the message gave them. Naming it in full is never wrong.
+function scaledOrFull(abs: number, unit: number, suffix: string): string {
+  if ((abs * 10) % unit !== 0) return fmt(abs);
+  return `$${abs / unit}${suffix}`;
 }
 
-// A short money label for warning copy — "$1B", "$1.5B", "$500M". Rounds to one decimal and
-// drops a trailing ".0", so a round billion reads "$1B" rather than "$1.0B". Below a million it
-// falls back to fmt ("$999,000") — abbreviating small amounts reads worse than spelling them out.
-// Unsigned (abs) like fmt. Used for the loan form's ceiling toasts (WHIT-393), so the message
-// follows LOANFACTS_FIELD_MAX instead of hard-coding the figure in prose.
+// A short money label for warning copy — "$1B", "$1.5B", "$500M". Drops a trailing ".0", so a
+// round billion reads "$1B" rather than "$1.0B", and spells out anything one decimal can't say
+// exactly ($1,250,000,000). Below a million it defers to fmt — abbreviating small amounts reads
+// worse than spelling them out. Unsigned (abs) like fmt. Used for the loan form's ceiling toasts
+// (WHIT-393) so the message follows LOANFACTS_FIELD_MAX instead of hard-coding the figure.
 export function fmtCompact(n: number): string {
   const abs = Math.abs(n);
-  const billions = round1(abs / 1_000_000_000);
-  if (billions >= 1) return `$${billions}B`;
-  const millions = round1(abs / 1_000_000);
-  if (millions >= 1) return `$${millions}M`;
+  if (abs >= 1_000_000_000) return scaledOrFull(abs, 1_000_000_000, 'B');
+  if (abs >= 1_000_000) return scaledOrFull(abs, 1_000_000, 'M');
   return fmt(abs);
 }
 

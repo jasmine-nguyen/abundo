@@ -63,6 +63,19 @@ def test_exactly_one_client_ceiling_declaration():
     )
 
 
+def test_the_loanfacts_ceiling_is_still_one_billion():
+    """WHIT-393 made every test mirror derive from lambda_api/constants.py, so nothing
+    else asserts the ceiling's actual VALUE any more — a typo there (1_000_000 for
+    1_000_000_000) would leave the whole suite green while the app silently rejected
+    normal loan amounts. This is the one deliberate pin: changing the ceiling should
+    cost exactly one honest edit, here."""
+    assert _server_ceiling() == 1_000_000_000, (
+        f"the loan-facts ceiling is now {_server_ceiling()}, not 1_000_000_000 — if you "
+        "meant to change it, update this pin too; if you didn't, this is the typo it exists "
+        "to catch. Remember the toast copy is generated, so check how the new figure reads."
+    )
+
+
 def test_client_and_server_loanfacts_ceilings_agree():
     """The loan form's ceiling and the server's LOANFACTS_FIELD_MAX must match.
     Change one without the other -> red."""

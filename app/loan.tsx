@@ -14,9 +14,8 @@ import type { LoanFactsInput } from '../src/api';
 // kept here so the form blocks a too-large amount with a friendly message before any round-trip,
 // instead of a 400 + generic save-error toast. Kept in sync by
 // tests/lambda_api/test_loanfacts_ceiling_sync.py (WHIT-392).
-// Exported (WHIT-393) so the loan-form suites derive their at/over-ceiling probes from it
-// instead of re-typing 1000000000 — loanFactsCeilingGaps, loanFactsFormEdges and
-// loanDepositTargetGaps all import it. Keep it exported; inlining it re-opens that drift.
+// Exported (WHIT-393) so the loan-form suites derive their probes from it rather than
+// re-typing the figure; don't inline it.
 export const LOANFACTS_FIELD_MAX = 1_000_000_000;
 
 export default function Loan() {

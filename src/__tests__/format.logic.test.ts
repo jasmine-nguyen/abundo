@@ -46,9 +46,16 @@ describe('fmtCompact', () => {
     expect(fmtCompact(2_500_000)).toBe('$2.5M');
   });
 
-  it('rounds up to the next unit rather than printing 1000 of the smaller one', () => {
-    expect(fmtCompact(999_999_999)).toBe('$1B');
-    expect(fmtCompact(999_999)).toBe('$1M');
+  it('spells out in full anything one decimal cannot say exactly, never rounding up', () => {
+    // It labels a limit, so overstating would name an amount the limit rejects.
+    expect(fmtCompact(999_999_999)).toBe('$999,999,999');
+    expect(fmtCompact(1_250_000_000)).toBe('$1,250,000,000');
+    expect(fmtCompact(999_999)).toBe('$999,999');
+  });
+
+  it('still abbreviates an exact figure just below the next unit', () => {
+    expect(fmtCompact(950_000_000)).toBe('$950M');
+    expect(fmtCompact(1_100_000_000)).toBe('$1.1B');
   });
 
   it('falls back to fmt below a million, and is unsigned like fmt', () => {
