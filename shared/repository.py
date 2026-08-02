@@ -25,6 +25,9 @@ from repository_category import (
     CATEGORY_PALETTE,
     SEED_CATEGORIES,
     CategoryRepository,
+    next_color_slot,
+    plan_color_slot_backfill,
+    used_color_slots,
     validate_category_depth,
     validate_category_parent,
 )
@@ -58,6 +61,9 @@ __all__ = [
     "CATEGORY_PALETTE",
     "validate_category_parent",
     "validate_category_depth",
+    "used_color_slots",
+    "next_color_slot",
+    "plan_color_slot_backfill",
     "sanitise_transaction",
     "handle_database_error",
 ]

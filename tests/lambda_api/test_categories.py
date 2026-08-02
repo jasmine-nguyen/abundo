@@ -13,6 +13,8 @@ shared/repository.py with boto3/botocore already faked.
 import base64
 import copy
 import json
+import re
+from decimal import Decimal
 
 import pytest
 from botocore.exceptions import ClientError
@@ -558,6 +560,10 @@ class FakeTable:
         # Queue of callables(item) run just before each update_item evaluation,
         # to simulate a concurrent writer mutating the row between read and write.
         self.before_update = []
+        # Every update_item call, so a test can assert a migrated store writes ZERO times.
+        self.update_calls = []
+        # When set, every update_item raises it — used to prove the read path fails OPEN.
+        self.update_error = None
 
     def get_item(self, Key):
         item = self.store.get((Key["pk"], Key["sk"]))
@@ -574,8 +580,35 @@ class FakeTable:
         item = self.store.get((Key["pk"], Key["sk"]))
         if self.before_update and item is not None:
             self.before_update.pop(0)(item)  # simulate a concurrent writer
-        cat_id = ExpressionAttributeNames["#id"]
         values = ExpressionAttributeValues
+        self.update_calls.append(
+            (UpdateExpression, dict(ExpressionAttributeNames), dict(values))
+        )
+        if self.update_error is not None:
+            raise self.update_error
+
+        # The colour-slot backfill is its own shape: it stamps #schema (and, when there is
+        # anything to backfill, one #items.#catN.#slot per category). It carries no #id, so
+        # it must be handled before the create/rename/delete paths read one.
+        if "#schema" in ExpressionAttributeNames:
+            if item is None or item["version"] != values[":expected"]:
+                raise _ccfe()
+            # DynamoDB rejects a declared-but-unreferenced name; mirror that so a regression
+            # here fails loudly in tests instead of silently passing.
+            for alias in ExpressionAttributeNames:
+                # Word-boundary, not substring: "#cat1" occurs inside "#cat10", so a plain
+                # `in` check silently passes the very regression this guard exists for.
+                assert re.search(rf"{re.escape(alias)}(?![0-9])", UpdateExpression), \
+                    f"unused ExpressionAttributeName {alias}"
+            for alias, real in ExpressionAttributeNames.items():
+                if alias.startswith("#cat"):
+                    index = alias[len("#cat"):]
+                    item["items"][real]["colorSlot"] = values[f":slot{index}"]
+            item["colorSlotSchema"] = values[":schema"]
+            item["version"] = values[":next"]
+            return
+
+        cat_id = ExpressionAttributeNames["#id"]
 
         # attribute_exists(pk) AND #v = :expected are common to create/rename/delete.
         if item is None or item["version"] != values[":expected"]:
@@ -744,8 +777,9 @@ def test_repo_update_changes_editable_fields(handler):
     assert stored["name"] == "Coffee & Cake" and stored["bucket"] == "Living" and stored["icon"] == "cart"
     assert stored["id"] == "coffee" and stored["color"] == "#E8A87C"
     assert len(config["items"]) == 13 and config["version"] == 2
+    # colorSlot rides through an edit untouched — a rename must never repaint a category.
     assert updated == {"id": "coffee", "name": "Coffee & Cake", "icon": "cart",
-                       "color": "#E8A87C", "bucket": "Living", "parent": None}
+                       "color": "#E8A87C", "bucket": "Living", "parent": None, "colorSlot": 4}
 
 
 def test_repo_update_unknown_id_raises(handler):
@@ -1498,3 +1532,469 @@ def test_validate_depth_terminates_on_a_long_corrupt_cycle(handler):
     # Moving c0 (its "subtree" is the whole 300-node ring) under top must return a decision.
     with pytest.raises(repository.InvalidCategoryParentError):  # 1 + 300 > 5
         repository.validate_category_depth(ring, "c0", "top")
+
+
+# --- permanent chart colour slots (colorSlot) --------------------------------
+#
+# A category's chart colour is a STORED integer, assigned once and never recomputed, so
+# adding or deleting a category cannot repaint any other one. These tests pin that promise,
+# the one-time backfill that gives existing stores their slots, and — most importantly —
+# that the backfill can NEVER fail a read (seven handler routes call list_categories).
+
+# The solved slot table (see repository_category.SEED_CATEGORIES): each built-in in its own hue family, spread around the ramp.
+SEED_SLOTS = {
+    "eatingout": 0, "travel": 1, "coffee": 4, "fitness": 6, "gifts": 7, "health": 8,
+    "utilities": 10, "groceries": 11, "shopping": 13, "transport": 15, "phonenet": 16,
+    "pets": 17, "subs": 18,
+}
+_CFG = ("CATEGORIES", "CATEGORIES")
+
+
+def _throttle():
+    err = ClientError()
+    # handle_database_error reads Message too, so a realistic fake carries both.
+    err.response = {"Error": {"Code": "ProvisionedThroughputExceededException",
+                              "Message": "rate exceeded"}}
+    return err
+
+
+def _legacy_store(repo, repository, *, extra=None, drop_marker=True):
+    """A store as it existed BEFORE colorSlot: seeded rows with no slot, no marker."""
+    items = {}
+    for cat_id, cat in repository.SEED_CATEGORIES.items():
+        items[cat_id] = {k: v for k, v in cat.items() if k != "colorSlot"}
+    if extra:
+        items.update(copy.deepcopy(extra))
+    item = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": items, "version": Decimal(1)}
+    if not drop_marker:
+        item["colorSlotSchema"] = 1
+    repo._table.store[_CFG] = item
+    return item
+
+
+def test_seed_slots_are_the_solved_table(handler):
+    import repository
+    slots = {cid: cat["colorSlot"] for cid, cat in repository.SEED_CATEGORIES.items()}
+    assert slots == SEED_SLOTS
+    assert len(set(slots.values())) == 13          # distinct: no two built-ins share a colour
+    assert all(0 <= s < 20 for s in slots.values())
+
+
+def test_fresh_store_is_born_migrated_and_never_backfills(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    rows = repo.list_categories()
+    assert {r["id"]: r["colorSlot"] for r in rows} == SEED_SLOTS
+    # The seed put_item carries the marker, so a brand-new store performs NO backfill write.
+    assert repo._table.update_calls == []
+    assert repo._table.store[_CFG]["version"] == 1
+
+
+def test_legacy_store_backfills_once_to_the_solved_table(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+
+    rows = repo.list_categories()
+
+    # Every built-in lands on its designated slot — an existing user's colours are the ones
+    # that were solved for, not whatever a lowest-free walk would have handed out.
+    assert {r["id"]: r["colorSlot"] for r in rows} == SEED_SLOTS
+    stored = repo._table.store[_CFG]
+    assert {cid: c["colorSlot"] for cid, c in stored["items"].items()} == SEED_SLOTS
+    assert stored["colorSlotSchema"] == 1 and stored["version"] == 2
+    assert len(repo._table.update_calls) == 1
+
+
+def test_migrated_store_performs_zero_writes_on_every_later_read(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo.list_categories()                      # migrates
+    repo._table.update_calls.clear()
+
+    for _ in range(5):
+        rows = repo.list_categories()
+
+    # "One-time migration, not work on every load" — the load-bearing guarantee.
+    assert repo._table.update_calls == []
+    assert {r["id"]: r["colorSlot"] for r in rows} == SEED_SLOTS
+
+
+def test_empty_plan_still_stamps_the_marker_without_touching_items(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository, drop_marker=True)
+    # Everything already validly slotted, but the marker is missing.
+    for cat_id, cat in repo._table.store[_CFG]["items"].items():
+        cat["colorSlot"] = SEED_SLOTS[cat_id]
+
+    repo.list_categories()
+
+    expr, names, _ = repo._table.update_calls[0]
+    # Declaring #items with nothing to write would be a DynamoDB ValidationException.
+    assert set(names) == {"#v", "#schema"}
+    assert "#items" not in expr
+    repo._table.update_calls.clear()
+    repo.list_categories()
+    assert repo._table.update_calls == []       # and it never re-plans again
+
+
+def test_store_with_every_category_deleted_still_stops_replanning(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                               "items": {}, "version": 1}
+
+    assert repo.list_categories() == []
+    assert len(repo._table.update_calls) == 1   # marker written
+    repo._table.update_calls.clear()
+    assert repo.list_categories() == []
+    assert repo._table.update_calls == []       # not once per read, forever
+
+
+def test_corrupt_slots_are_reassigned_not_trusted(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    bad = {
+        "s": {"id": "s", "name": "S", "icon": "i", "color": "#fff", "bucket": "Living", "colorSlot": "7"},
+        "f": {"id": "f", "name": "F", "icon": "i", "color": "#fff", "bucket": "Living", "colorSlot": 7.5},
+        "n": {"id": "n", "name": "N", "icon": "i", "color": "#fff", "bucket": "Living", "colorSlot": -5},
+        "b": {"id": "b", "name": "B", "icon": "i", "color": "#fff", "bucket": "Living", "colorSlot": True},
+        "o": {"id": "o", "name": "O", "icon": "i", "color": "#fff", "bucket": "Living", "colorSlot": 999},
+    }
+    _legacy_store(repo, repository, extra=bad)
+
+    rows = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+
+    for cat_id in bad:
+        assert isinstance(rows[cat_id], int) and 0 <= rows[cat_id] < 20
+    assert len(set(rows.values())) == len(rows)          # still all distinct
+    assert {k: rows[k] for k in SEED_SLOTS} == SEED_SLOTS   # built-ins unaffected
+
+
+def test_already_slotted_rows_keep_their_slots_when_others_backfill(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo._table.store[_CFG]["items"]["coffee"]["colorSlot"] = 19   # deliberately not its seed slot
+
+    rows = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+
+    assert rows["coffee"] == 19                     # untouched: never repaint a stored slot
+    _, names, _ = repo._table.update_calls[0]
+    assert "coffee" not in names.values()           # and it isn't even in the write
+    assert rows["eatingout"] == 0                   # the rest still land on their table
+
+
+def test_read_fails_open_when_the_backfill_write_is_throttled(handler):
+    """The blocker this design exists for: a failed backfill must NOT fail the read.
+
+    list_categories is called by GET /categories, /breakdown, /budgets, /insights and more.
+    A raise here would 500 or 409 a read that would otherwise have succeeded.
+    """
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo._table.update_error = _throttle()
+
+    rows = repo.list_categories()                   # must not raise
+
+    # The response still carries the RIGHT slots, computed in memory.
+    assert {r["id"]: r["colorSlot"] for r in rows} == SEED_SLOTS
+    # Nothing was persisted, so a later request retries.
+    assert "colorSlotSchema" not in repo._table.store[_CFG]
+
+
+def test_read_fails_open_when_another_writer_wins_the_race(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo._table.update_error = _ccfe()
+
+    rows = repo.list_categories()
+
+    assert {r["id"]: r["colorSlot"] for r in rows} == SEED_SLOTS
+
+
+def test_create_fails_closed_when_the_backfill_write_errors(handler):
+    """The write path is the opposite policy: a real DB fault is a real failure."""
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo._table.update_error = _throttle()
+
+    with pytest.raises(repository.DatabaseError):
+        repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+
+def test_create_takes_the_lowest_free_slot(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()                          # seed (slots 0,1,4,6,7,8,10,11,13,15,16,17,18)
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] == 2                # lowest free under the solved table
+    assert repo._table.store[_CFG]["items"]["wine"]["colorSlot"] == 2
+
+
+def test_create_on_a_legacy_store_lands_on_the_first_attempt(handler):
+    """The backfill runs BEFORE the retry loop. Inside it, it would bump the version between
+    create's read and its conditional write and burn attempt 1 of 2 on every create."""
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] == 2
+    # exactly two writes: the backfill, then the create. A third means create retried.
+    assert len(repo._table.update_calls) == 2
+
+
+def test_deleting_a_category_frees_its_slot_for_reuse(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    assert repository.SEED_CATEGORIES["gifts"]["colorSlot"] == 7
+
+    repo.delete_category("gifts")
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] == 2                # still the lowest free, not gifts' 7
+    repo.delete_category("coffee")                  # frees slot 4
+    assert repo.create_category("beer", "Beer", "Lifestyle", "glass")["colorSlot"] == 3
+
+
+def test_adding_and_deleting_never_repaints_another_category(handler):
+    """The card's whole promise, asserted end to end."""
+    repository, repo = _repo_with_fake_table(handler)
+    before = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+
+    repo.create_category("wine", "Wine", "Lifestyle", "glass")
+    after_add = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+    assert {k: after_add[k] for k in before} == before
+
+    repo.delete_category("wine")
+    after_delete = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+    assert after_delete == before
+
+
+def test_plan_is_deterministic_regardless_of_map_order(handler):
+    import repository
+    items = {cid: {k: v for k, v in cat.items() if k != "colorSlot"}
+             for cid, cat in repository.SEED_CATEGORIES.items()}
+    reordered = {cid: items[cid] for cid in reversed(list(items))}
+
+    # Both request paths compute the plan independently; if they could disagree, a deferred
+    # write and the response it already returned would show different colours.
+    assert repository.plan_color_slot_backfill(items) == repository.plan_color_slot_backfill(reordered)
+    assert repository.plan_color_slot_backfill(items) == SEED_SLOTS
+
+
+def test_next_color_slot_reuses_gaps_and_survives_a_full_ramp(handler):
+    import repository
+    assert repository.next_color_slot(set()) == 0
+    assert repository.next_color_slot({0, 1, 2}) == 3
+    assert repository.next_color_slot({0, 2, 3}) == 1        # a delete freed slot 1
+    full = set(range(20))
+    # Past 20 live categories every slot is taken; we deliberately SHARE slot 0 rather than
+    # fail the create. Pinned exactly so the collapse is a decision, not an accident.
+    assert repository.next_color_slot(full) == 0
+
+
+def test_slot_survives_json_encoding_as_a_number(handler):
+    """DynamoDB hands back Decimal; the client reads JSON. Pin the seam between the slices."""
+    import repository
+    from encoders import DecimalEncoder
+    _, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    decoded = json.loads(json.dumps(created, cls=DecimalEncoder))
+
+    assert decoded["colorSlot"] == 2
+    # `type is int`, not isinstance: bool passes isinstance(int), and a Decimal would encode
+    # to 2.0 (a float) — the POST body must match the int GET returns.
+    assert type(decoded["colorSlot"]) is int
+
+
+# --- colorSlot: the adversarial half -----------------------------------------
+
+
+def _cat(cat_id, bucket="Living", **extra):
+    return {"id": cat_id, "name": cat_id.title(), "icon": "tag",
+            "color": "#ffffff", "bucket": bucket, **extra}
+
+
+def test_read_fails_open_when_the_backfill_hits_a_network_error(handler):
+    """A timeout is a BotoCoreError, NOT a ClientError. Catching only ClientError would let
+    it escape and 500 every route that reads categories — the outage fail-open exists to
+    prevent, and the likeliest transient fault in Lambda."""
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+
+    class NetworkBlip(Exception):
+        pass
+    repo._table.update_error = NetworkBlip("connect timeout")
+
+    rows = repo.list_categories()  # must not raise
+
+    assert {r["id"]: r["colorSlot"] for r in rows} == SEED_SLOTS
+    assert "colorSlotSchema" not in repo._table.store[_CFG]  # nothing persisted; retries later
+
+
+def test_a_stored_row_without_an_id_field_does_not_break_the_read(handler):
+    """list_categories fails OPEN on write faults, so it must not gain a way for malformed
+    DATA to fail the read either — it is on the read path of every category-reading route."""
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo._table.store[_CFG]["items"]["orphan"] = {
+        k: v for k, v in _cat("orphan").items() if k != "id"}
+
+    assert len(repo.list_categories()) == 14
+
+
+def test_a_config_item_without_a_version_does_not_break_the_read(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    del repo._table.store[_CFG]["version"]
+
+    assert len(repo.list_categories()) == 13
+
+
+def test_a_row_whose_id_disagrees_with_its_map_key_still_gets_its_slot(handler):
+    """The plan and the write are both keyed by the MAP KEY; the response must be too, or a
+    skewed row is stamped in the store but returned with a null slot — which the client would
+    resolve to an undefined colour."""
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo._table.store[_CFG]["items"]["skew"] = _cat("skew-different")
+
+    rows = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+
+    assert rows["skew-different"] is not None
+
+
+def test_a_custom_id_sorting_before_a_builtin_cannot_steal_its_slot(handler):
+    """Pass 1 runs to completion over ALL missing ids before pass 2 starts. Collapse them
+    into one alphabetical walk and "aaa" takes slot 0 — eatingout's designated hue."""
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository, extra={"aaa": _cat("aaa"), "aab": _cat("aab")})
+
+    rows = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+
+    assert {k: rows[k] for k in SEED_SLOTS} == SEED_SLOTS
+    assert rows["aaa"] == 2 and rows["aab"] == 3   # the first slots no built-in wants
+    assert len(set(rows.values())) == len(rows)
+
+
+def test_create_cannot_steal_a_slot_the_deferred_backfill_still_owes(handler):
+    """The pre-loop backfill LOSES its race, so create runs against still-unslotted rows. It
+    must reserve what the plan owes them, or it takes 0 (eatingout's colour) and the next
+    read repaints one of them."""
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository)
+    repo._table.before_update.append(_bump_version)  # backfill write -> CCFE, silent no-op
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] == 2                 # NOT 0
+    rows = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+    assert {k: rows[k] for k in SEED_SLOTS} == SEED_SLOTS
+    assert len(set(rows.values())) == len(rows)
+
+
+def test_two_creates_racing_never_land_on_the_same_slot(handler):
+    """The slot is computed INSIDE the retry loop, so the loser re-reads and sees the
+    winner's slot taken. Hoist it out of the loop and both creates land on 2."""
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()                           # migrated; lowest free = 2
+
+    def concurrent_create(item):
+        item["items"]["beer"] = _cat("beer", "Lifestyle", colorSlot=Decimal(2))
+        item["version"] = item["version"] + 1
+    repo._table.before_update.append(concurrent_create)
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] == 3                 # not 2 — the winner holds that
+    stored = repo._table.store[_CFG]["items"]
+    assert stored["beer"]["colorSlot"] == 2 and stored["wine"]["colorSlot"] == 3
+
+
+def test_past_twenty_categories_slots_stay_in_range(handler):
+    """The ramp has 20 colours, so past 20 live categories distinctness is impossible. Pin
+    what actually happens so the client can never index outside the ramp."""
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()                           # 13 seeds
+    slots = [int(repo.create_category(f"x{n}", f"X{n}", "Lifestyle", "tag")["colorSlot"])
+             for n in range(9)]                      # the 14th .. 22nd category
+
+    assert all(0 <= s < 20 for s in slots)
+    assert slots[:7] == [2, 3, 5, 9, 12, 14, 19]     # every free slot, lowest first
+    assert slots[7:] == [0, 0]                       # ramp full -> share slot 0
+
+
+def test_plan_past_twenty_unslotted_rows_stays_in_range(handler):
+    import repository
+    items = {f"c{n:02d}": _cat(f"c{n:02d}") for n in range(25)}
+
+    plan = repository.plan_color_slot_backfill(items)
+
+    assert len(plan) == 25
+    assert all(0 <= s < 20 for s in plan.values())   # never an out-of-ramp index
+    assert sorted(set(plan.values())) == list(range(20))
+
+
+def test_used_color_slots_boundary_and_exotic_values(handler):
+    """_coerce_slot is all that stands between a corrupt row and an undefined colour on the
+    client. Pin the exact boundary (19 in, 20 out) and the shapes a bad write could leave."""
+    import repository
+    items = {
+        "lo": _cat("lo", colorSlot=Decimal(0)),          # first valid slot
+        "hi": _cat("hi", colorSlot=Decimal(19)),         # last valid slot
+        "over": _cat("over", colorSlot=Decimal(20)),     # exactly at the limit -> out
+        "exp": _cat("exp", colorSlot=Decimal("1E+1")),   # 10, in exponent form
+        "huge": _cat("huge", colorSlot=Decimal("1E+30")),
+        "nan": _cat("nan", colorSlot=Decimal("NaN")),
+        "inf": _cat("inf", colorSlot=Decimal("Infinity")),
+        "none": _cat("none", colorSlot=None),
+        "dict": _cat("dict", colorSlot={"n": 3}),
+        "blank": _cat("blank", colorSlot="  "),
+        "float": _cat("float", colorSlot=7.0),           # DynamoDB never returns a float
+        "absent": _cat("absent"),
+    }
+
+    assert repository.used_color_slots(items) == {0, 19, 10}
+
+
+def test_colorslot_never_reaches_the_ai_model_input_hash(handler):
+    """POST /insights/ai hashes model_input to decide cache-hit vs a PAID Anthropic re-run.
+    If the projection ever stopped dropping this new field, every cached insight would bust
+    once and every user would pay for a regeneration. Nothing else enforces it."""
+    cats_without = [{"id": "coffee", "name": "Cafes", "bucket": "Lifestyle", "parent": None},
+                    {"id": "rent", "name": "Rent", "bucket": "Living", "parent": None}]
+    cats_with = [{**c, "colorSlot": 4} for c in cats_without]
+    txns = [{"category": "coffee", "amount": -10, "status": "posted",
+             "counts_to_budget": True, "date": "2026-06-01"}]
+
+    rows_without = handler._window_category_spend(txns, cats_without)
+    rows_with = handler._window_category_spend(txns, cats_with)
+
+    assert rows_with == rows_without
+    assert "colorSlot" not in json.dumps(rows_with, sort_keys=True)
+
+
+def test_seed_slots_are_spread_across_the_colour_ramp(handler):
+    """The property the seed table was solved for — and the one two reviewers misread.
+
+    A slot is NOT a ramp position: the client resolves it through ASSIGNMENT_ORDER, so
+    consecutive slots are deliberately far apart in hue. Measuring runs on the raw slot
+    numbers is meaningless (they run 15,16,17,18 but resolve to ramp 13,14,16,18). This
+    pins the real invariant: no more than 3 built-ins ever occupy neighbouring ramp entries.
+
+    ASSIGNMENT_ORDER lives client-side (src/theme/chartColors.ts, slice 2); the copy here is
+    the cross-language coupling a sync guard should cover — see the tech-debt card.
+    """
+    import repository
+    assignment_order = [0, 10, 5, 15, 2, 7, 12, 17, 1, 3, 4, 6, 8, 9, 11, 13, 14, 16, 18, 19]
+    assert sorted(assignment_order) == list(range(20))  # a true permutation of the ramp
+
+    ramp = sorted(assignment_order[cat["colorSlot"]]
+                  for cat in repository.SEED_CATEGORIES.values())
+    assert len(set(ramp)) == 13                          # 13 distinct colours
+
+    longest = run = 1
+    for previous, current in zip(ramp, ramp[1:]):
+        run = run + 1 if current == previous + 1 else 1
+        longest = max(longest, run)
+    assert longest == 3, f"longest neighbouring-ramp run is {longest}: {ramp}"
