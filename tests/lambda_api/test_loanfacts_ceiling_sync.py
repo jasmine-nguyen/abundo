@@ -78,10 +78,12 @@ def test_the_loanfacts_ceiling_value_is_pinned():
     Note for anyone temporarily changing the ceiling to check the mirrors follow it:
     this test is the ONE that should go red, and only this one. Anything else red is a
     real failure. Update the pin, don't delete it."""
-    assert _server_ceiling() == 1_000_000_000, (
-        f"the loan-facts ceiling is now {_server_ceiling()}, not 1_000_000_000 — if you "
-        "meant to change it, update this pin too; if you didn't, this is the typo it exists "
-        "to catch. Remember the toast copy is generated, so check how the new figure reads."
+    ceiling = _server_ceiling()
+    assert isinstance(ceiling, int) and ceiling == 1_000_000_000, (
+        f"the loan-facts ceiling is now {ceiling!r}, not 1_000_000_000 — if you meant to "
+        "change it, update this pin too; if you didn't, this is the typo it exists to catch. "
+        "It must stay an int: the toast copy is generated from it, and a float would read "
+        "'$1000000000.5' rather than '$1B'."
     )
 
 

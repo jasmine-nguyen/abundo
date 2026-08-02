@@ -76,10 +76,11 @@ def test_the_goal_amount_cap_value_is_pinned(handler):
     cap should cost exactly one honest edit, here.
 
     If you are deliberately changing the cap, this is the ONE test that should go red."""
-    assert handler._GOAL_AMOUNT_MAX == 1_000_000_000, (
-        f"the goal amount cap is now {handler._GOAL_AMOUNT_MAX}, not 1_000_000_000 — if you "
-        "meant to change it, update this pin too; if you didn't, this is the typo it exists to "
-        "catch (the 400 message quotes the cap, so check how the new figure reads)."
+    cap = handler._GOAL_AMOUNT_MAX
+    assert isinstance(cap, int) and cap == 1_000_000_000, (
+        f"the goal amount cap is now {cap!r}, not 1_000_000_000 — if you meant to change it, "
+        "update this pin too; if you didn't, this is the typo it exists to catch. It must stay "
+        "an int: the 400 message quotes the cap, and a float would read '1000000000.0'."
     )
 
 
