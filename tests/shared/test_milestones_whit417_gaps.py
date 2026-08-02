@@ -203,22 +203,26 @@ def test_a_bad_date_row_costs_only_itself_wherever_it_sits(shared, recorder, pos
 # --- [E4] sweeping a stale marker must not cost the poll its celebration ----
 
 def test_the_sweep_and_a_real_celebration_survive_the_same_poll(shared, recorder):
-    # [E4] [B1a] and [B3] both sweep on a no-crossing poll. The sweep runs BEFORE the crossing
-    # check and reuses the marker set it read, deliberately WITHOUT subtracting the keys it just
-    # deleted (milestones.py:265-267). If a fresh key could ever land in `stale`, the deleted
-    # marker would still be in `fired` and the genuine push would be swallowed. Prove the two
-    # coexist in one poll: the bad row's marker goes, the good row's crossing still pushes.
+    # [E4] [B3] sweeps on a no-crossing poll. The sweep runs BEFORE the crossing check and
+    # reuses the marker set it read, deliberately WITHOUT subtracting the keys it just deleted.
+    # If a fresh key could ever land in `stale`, the deleted marker would still be in `fired`
+    # and the genuine push would be swallowed. Prove the two coexist in one poll: a genuinely
+    # gone milestone's marker is swept, and the good row's crossing still pushes.
+    # The stale marker has to be one no stored row keys to — an unreadable row keeps its marker
+    # now, so a bad-date row would sweep nothing and this would prove only half of itself.
     stored = [_row(id="good", label="Good", targetBalance=Decimal("300000")),
               _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
                    targetDate="not-a-date")]
-    notify = FakeNotifyRepo(fired={"id:dated:bal:250000.00"})
+    gone = "id:deleted:bal:900000.00"
+    notify = FakeNotifyRepo(fired={gone, "id:dated:bal:250000.00"})
 
     sent, notify = _notify(shared, old="310000", new="240000", stored=stored, notify=notify)
 
     assert sent == 1
     assert recorder[-1][0] == "\U0001f389 Milestone reached — Good!"
-    assert notify.removed == {"id:dated:bal:250000.00"}   # swept in the same poll
+    assert notify.removed == {gone}                       # swept in the same poll
     assert "id:good:bal:300000.00" in notify.fired        # and the real crossing was recorded
+    assert "id:dated:bal:250000.00" in notify.fired       # the unreadable row kept its record
 
 
 # --- [E5] the alarm the card relies on can actually fire --------------------
