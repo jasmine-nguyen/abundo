@@ -13,7 +13,8 @@ export const CATEGORY_COLORS = [
 
 // The neutral grey the donut folds small slices into ("Other"). Deliberately OUTSIDE the ramp and
 // low-saturation so it reads as "not one thing" — reserved for "Other" only, never a real category.
-// Same value as C.textFaint.
+// Same value as C.textFaint — a coincidence of the palette, not a derivation, pinned by
+// otherColorToken.logic.test.ts [Q19]. Retuning either without the other reddens it, on purpose.
 export const OTHER_COLOR = '#565f89';
 
 // The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg.
