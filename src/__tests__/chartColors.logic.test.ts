@@ -16,6 +16,13 @@ describe('chartCategoryColor', () => {
     expect(new Set(colours).size).toBe(13);
   });
 
+  it('never puts the reserved "Other" grey in the category ramp', () => {
+    // WHIT-403: a strictly weaker stand-in for a deleted check. The old one proved no ramp colour was
+    // dull enough to be MISTAKEN for the reserved grey; the classifier that made that measurable went
+    // with the donut's warm/cool shuffle. This only catches an exact duplicate, not a drift toward grey.
+    expect(CATEGORY_COLORS).not.toContain(OTHER_COLOR);
+  });
+
   it('keeps coffee, health and utilities on different colours (the collision the review caught)', () => {
     const coffee = chartCategoryColor('coffee');
     const health = chartCategoryColor('health');

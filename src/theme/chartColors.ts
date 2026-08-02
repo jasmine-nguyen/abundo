@@ -12,11 +12,13 @@ export const CATEGORY_COLORS = [
 ] as const;
 
 // The neutral grey the donut folds small slices into ("Other"). Deliberately OUTSIDE the ramp and
-// low-saturation so the donut's temperature() classifies it neutral — reserved for "Other" only,
-// never a real category. Same value as C.textFaint.
+// low-saturation so it reads as "not one thing" — reserved for "Other" only, never a real category.
+// Same value as C.textFaint.
 export const OTHER_COLOR = '#565f89';
 
 // The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg.
+// Consumer: SpendingDonut's ring track — the surface that shows through the gap between wedges,
+// which is what makes that gap a divider.
 export const CHART_BG = '#16161e';
 
 // Slot → ramp position. A stored `colorSlot` is NOT a ramp index: the server hands out the LOWEST
@@ -37,10 +39,10 @@ export const ASSIGNMENT_ORDER = [
 // value with no coercion, so a corrupt row reaches the client uncleaned.
 // NOT a truthy check: slot 0 is VALID (it is Eating Out), and `raw || undefined` would drop it.
 // Everything rejected here would otherwise index ASSIGNMENT_ORDER out of range and yield
-// `undefined`, which does NOT merely paint an invisible wedge: it reaches SpendingDonut's
-// temperature(), whose `hex.replace('#','')` throws on undefined and takes the whole Insights
-// screen down. Note JS `%` keeps the sign, so a negative slot cannot be rescued by wrapping:
-// -5 % 20 is -5.
+// `undefined`, which reaches `stroke` on the donut wedge and `backgroundColor` on the category row
+// as an INVISIBLE slice — no crash, but a category that silently disappears from the chart, which
+// is why the guard stays. Note JS `%` keeps the sign, so a negative slot cannot be rescued by
+// wrapping: -5 % 20 is -5.
 export function normalizeColorSlot(raw: unknown): number | undefined {
   if (typeof raw !== 'number' || !Number.isInteger(raw)) return undefined;
   return raw >= 0 && raw < ASSIGNMENT_ORDER.length ? raw : undefined;
@@ -74,7 +76,7 @@ function categoryColorHash(id: string): number {
 // to EXACTLY today's colours instead of a broken chart.
 // Never returns OTHER_COLOR — that grey is reserved for the donut's grouped "Other". A negative or
 // out-of-range slot therefore falls back rather than going grey: painting a real category the
-// reserved grey would read as a lumped-together bucket and the donut would re-sort it to the tail.
+// reserved grey would read as a lumped-together bucket rather than a category of its own.
 //
 // The slot arrives in an options bag, not a second positional arg, so that `ids.map(chartCategory-
 // Color)` cannot compile — `.map` passes the array INDEX as arg 2, which would silently resolve a
