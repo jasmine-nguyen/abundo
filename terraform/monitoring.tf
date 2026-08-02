@@ -336,6 +336,6 @@ resource "aws_cloudwatch_metric_alarm" "milestone_row_malformed" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_description   = "A saved mortgage-milestone row was corrupt and got skipped during the daily balance poll (WHIT-387). The rest of the plan still celebrated, but the stored plan has a bad row (missing label/targetBalance, non-dict, or a non-numeric target) that should be inspected and re-saved."
+  alarm_description   = "A saved mortgage-milestone row was corrupt and got skipped during the daily balance poll (WHIT-387). The rest of the plan still celebrated, but the stored plan has a bad row (missing label/targetBalance, non-dict, or a non-numeric target) that should be inspected and re-saved. Since WHIT-417 an unparsable targetDate counts too — that row is also hidden from the plan screen."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }

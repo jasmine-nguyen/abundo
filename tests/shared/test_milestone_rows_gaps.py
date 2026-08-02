@@ -101,27 +101,102 @@ def _notify(shared, *, old, new, stored, notify=None):
     return sent, notify
 
 
-# --- [B1] PIN: the date rule is client-only, so the two paths DO diverge -----
+# --- [B1] PIN: the date rule is shared, so a hidden row does NOT push --------
 
-def test_a_bad_date_row_is_invisible_on_screen_but_still_pushes(shared, milestone_repo, recorder):
-    # [B1] APPROVED divergence (card option B3: targetDate is checked on the CLIENT path
-    # only, because only lambda_api._review_candidates parses it). The consequence is worth
-    # stating out loud: the user gets a "Milestone reached - Dated!" push for a milestone
-    # that is NOT in the plan the app shows them. Pinned, not endorsed — see the critique.
-    # Fail-on-revert (either direction): add row_date to _resolve_plan, or drop it from
-    # _to_client, and this test goes red.
+def test_a_bad_date_row_is_invisible_on_screen_and_does_not_push(shared, milestone_repo, recorder):
+    # [B1] WHIT-417 DECIDED this. It used to diverge: targetDate was checked on the client path
+    # only, so a row the plan screen hid still sent "Milestone reached - Dated!" — the user
+    # tapped the celebration and landed on a plan that milestone wasn't in. Both paths now
+    # apply the same rule, so what pushes is what the screen shows.
+    # Fail-on-revert (either direction): drop row_date from _resolve_plan and the row pushes
+    # again; drop it from _to_client and the screen stops hiding it. Either way, red.
     stored = [_GOOD, {"id": "d", "label": "Dated", "targetBalance": Decimal("120000"),
                       "targetDate": "not-a-date"}]
     _store_raw_row(milestone_repo, stored)
 
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["keep"]   # screen: gone
     assert [p.label for p in shared.milestones.resolve_plan(FakeMilestoneRepo(stored))] == [
-        "Halfway", "Dated"]                                                # poller: kept
+        "Halfway"]                                                         # poller: gone too
 
+    # A poll whose balance crosses the bad row's target celebrates nothing, and records nothing.
     sent, notify = _notify(shared, old="130000", new="119000", stored=stored)
+    assert sent == 0
+    assert recorder == []
+    assert "id:d:bal:120000.00" not in notify.fired
+
+
+def test_a_bad_date_row_that_already_celebrated_sweeps_only_its_own_marker(shared, recorder):
+    # [B1a] WHIT-417 x WHIT-385, the same shape [B3] pins for blank labels. Rejecting a bad
+    # date on the poller path is NEW, so a row that celebrated before this change now resolves
+    # out of the plan and its marker goes stale. The sweep must take THAT key and nothing else.
+    # Fail-on-revert: drop row_date from _resolve_plan -> the row resolves, its marker is live,
+    # nothing is swept, and `removed` is empty.
+    stored = [_GOOD, _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
+                          targetDate="not-a-date")]
+    keep_marker, dated_marker = "id:keep:bal:300000.00", "id:dated:bal:250000.00"
+    notify = FakeNotifyRepo(fired={keep_marker, dated_marker, "0"})
+
+    # A no-crossing poll: the sweep runs on its own, before any celebration logic.
+    sent, notify = _notify(shared, old="500000", new="450000", stored=stored, notify=notify)
+
+    assert sent == 0
+    assert recorder == []
+    assert notify.removed == {dated_marker}          # only the newly-invalid row's marker
+    assert keep_marker in notify.fired               # healthy row's record intact
+    assert "0" in notify.fired                       # built-in sprint marker never swept
+
+
+def test_a_repaired_date_can_celebrate_again_after_its_marker_was_swept(shared, recorder):
+    # [B1b] The honest downside of WHIT-417, pinned so it is known rather than discovered.
+    # The "already celebrated" marker is what makes a celebration once-ever (it is written with
+    # no expiry — repository_notify.py). Rejecting the row makes that marker stale, so the sweep
+    # deletes it. If the date is later repaired AND the balance has since risen back above the
+    # target (a redraw, an extra draw, or capitalised interest — the balance does NOT only fall),
+    # the crossing is detected again and the user is congratulated a second time.
+    # Accepted: it needs a hand-edited row, a repair, and a balance rise. Cheaper than keeping a
+    # dead marker for a row that is no longer in the plan.
+    #
+    # A healthy row has to sit alongside the broken one for the sweep to run at all: a plan that
+    # resolves to EMPTY sweeps nothing (the WHIT-386 `and plan` guard, pinned by [B1c]). So the
+    # re-fire is narrower still — it needs the rest of the plan to survive.
+    broken = _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
+                  targetDate="not-a-date")
+    marker = "id:dated:bal:250000.00"
+    notify = FakeNotifyRepo(fired={marker})
+
+    # 1. While broken, a no-crossing poll sweeps the stale marker.
+    _notify(shared, old="500000", new="450000", stored=[_GOOD, broken], notify=notify)
+    assert notify.removed == {marker}
+    assert marker not in notify.fired
+
+    # 2. The date is repaired and the balance crosses the target again.
+    repaired = _row(id="dated", label="Dated", targetBalance=Decimal("250000"),
+                    targetDate="2030-01-01")
+    sent, notify = _notify(shared, old="260000", new="240000", stored=[_GOOD, repaired],
+                           notify=notify)
+
     assert sent == 1
-    assert recorder[0][0] == "\U0001f389 Milestone reached — Dated!"        # pushed anyway
-    assert "id:d:bal:120000.00" in notify.fired
+    assert recorder[-1][0] == "\U0001f389 Milestone reached — Dated!"
+    assert marker in notify.fired                    # re-armed, so it can't fire a third time
+
+
+def test_a_plan_where_every_row_has_a_bad_date_celebrates_nothing(shared, recorder):
+    # [B1c] The whole-plan case. Every row is hidden from the screen, so the app falls back to
+    # showing the built-in starter plan — but the poller must NOT celebrate the saved rows it
+    # can no longer resolve, and must NOT fall back to the built-in plan either (that would
+    # send a celebration for a milestone the user never saved). An authoritative empty plan
+    # celebrates nothing and, via the WHIT-386 `and plan` guard, sweeps nothing.
+    # Fail-on-revert: drop row_date from _resolve_plan -> both rows resolve and push.
+    stored = [_row(id="a", label="A", targetBalance=Decimal("300000"), targetDate="not-a-date"),
+              _row(id="b", label="B", targetBalance=Decimal("250000"), targetDate="")]
+    notify = FakeNotifyRepo(fired={"0"})
+
+    sent, notify = _notify(shared, old="500000", new="200000", stored=stored, notify=notify)
+
+    assert sent == 0
+    assert recorder == []
+    assert notify.removed == set()                   # nothing swept on an empty plan
+    assert "0" in notify.fired
 
 
 # --- [B2] PIN: a row with no `id` KEY diverges (WHIT-378 carve-out) ---------
