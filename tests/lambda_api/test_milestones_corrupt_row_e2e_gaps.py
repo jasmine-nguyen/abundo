@@ -145,12 +145,14 @@ def test_null_target_date_no_longer_crashes_the_review_endpoint(milestone_repo, 
     assert captured, "the healthy row still reached the model"
 
 
-@pytest.mark.parametrize("bad_date", ["", "   ", "not-a-date", "2026-02-30", "01/01/2030", 20300101])
+@pytest.mark.parametrize("bad_date", ["", "not-a-date", "2026-02-30", 20300101])
 def test_unparsable_stored_target_date_no_longer_crashes_the_review_endpoint(
         milestone_repo, review, bad_date):
-    # [A2] Same crash, ValueError flavour (and TypeError for the int). 2026-02-30 has the
-    # right SHAPE but isn't a real calendar day — the shape-only check the save endpoint's
-    # regex does would let it through; only date.fromisoformat catches it.
+    # [A2] Same crash, ValueError flavour (and TypeError for the int). The four distinct
+    # branches: empty, unparsable text, right SHAPE but not a real calendar day, and non-text.
+    # 2026-02-30 is the one a shape-only regex would let through — only a fromisoformat bar
+    # catches it on read. (The save endpoint does BOTH, so it rejects all four; these reach
+    # the store as a legacy or hand-written row.)
     _store_raw(milestone_repo, [_row(id="bad", targetDate=bad_date), GOOD])
     resp, _ = review(milestone_repo)
     assert resp["statusCode"] == 200

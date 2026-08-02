@@ -281,7 +281,8 @@ def test_each_path_keeps_its_own_numeric_type(shared, milestone_repo):
     assert isinstance(client_target, float) and client_target == 595413.43
 
 
-def test_a_legacy_row_without_an_id_is_still_tolerated_on_both_paths(shared, milestone_repo):
+def test_a_null_id_passes_the_client_read_and_a_missing_id_degrades_the_poller_marker(
+        shared, milestone_repo):
     # WHIT-378's deliberate carve-out, explicitly preserved by WHIT-394 option B3: id handling
     # is UNCHANGED on both paths. The poller degrades to the amount-only marker; the client
     # still requires the key (its pre-existing behaviour) but a NULL id passes through.

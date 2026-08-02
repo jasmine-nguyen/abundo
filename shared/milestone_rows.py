@@ -12,10 +12,12 @@ On reachability, so the next reader isn't misled about which guard earns its kee
     reaches lambda_api._review_candidates' date.fromisoformat outside any per-row guard and
     500s the review endpoint.
   - DEFENCE-IN-DEPTH — NaN and +Infinity, which boto3's TypeSerializer rejects before the
-    wire ("Infinity and NaN not supported"), and a target above ~1e309, which it rejects as
-    Overflow. Worth keeping (the rule is about what the STORE can hand back, not about what
-    today's writer happens to send), but they are not live bugs. Note boto3 is asymmetric:
-    it serialises Decimal("-Infinity") happily, so that one is not clearly unreachable.
+    wire ("Infinity and NaN not supported"), and a target above ~1e126, which it rejects as
+    Overflow (its DYNAMODB_CONTEXT caps the exponent at 126 — far below float()'s ~1e309
+    limit, which is why row_target_float has to check separately). Worth keeping (the rule is
+    about what the STORE can hand back, not what today's writer sends), but they are not live
+    bugs. Note boto3 is asymmetric: it serialises Decimal("-Infinity") happily, so that one is
+    not clearly unreachable.
 The save endpoint blocks all of the above, so any such row predates it or bypassed it.
 
 Flat top-level module on purpose: the Lambda layer stages shared/ with a NON-RECURSIVE

@@ -26,7 +26,6 @@ interaction the new poller-side rejection creates:
        magnitude gap either an over-strict cap or a missing check could hide in.
 """
 
-import logging
 import sys
 from decimal import Decimal
 
