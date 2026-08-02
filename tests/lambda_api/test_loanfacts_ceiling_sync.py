@@ -26,7 +26,7 @@ import re
 from _lambda_api_constants import api_constant
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_CLIENT_LOAN_FORM = _ROOT / "src" / "loanLimits.ts"
+_CLIENT_LIMITS = _ROOT / "src" / "loanLimits.ts"
 
 # The client declaration, e.g. `export const LOANFACTS_FIELD_MAX = 1_000_000_000;`. Anchored
 # on `const` so a mention of the name in a comment can't match.
@@ -42,7 +42,7 @@ def _server_ceiling() -> int:
 
 def _client_ceiling() -> int:
     """The LOANFACTS_FIELD_MAX const parsed out of src/loanLimits.ts."""
-    match = _CLIENT_CEILING.search(_CLIENT_LOAN_FORM.read_text())
+    match = _CLIENT_CEILING.search(_CLIENT_LIMITS.read_text())
     assert match, "could not locate `const LOANFACTS_FIELD_MAX = ...` in src/loanLimits.ts"
     return int(match.group(1).replace("_", ""))
 
@@ -60,7 +60,7 @@ def test_exactly_one_client_ceiling_declaration():
     `const LOANFACTS_FIELD_MAX = <number>` (e.g. a commented-out old value left
     above the live line) would silently be compared instead — and could hide a
     real drift if it happened to equal the server. Pin exactly one declaration."""
-    matches = _CLIENT_CEILING.findall(_CLIENT_LOAN_FORM.read_text())
+    matches = _CLIENT_CEILING.findall(_CLIENT_LIMITS.read_text())
     assert len(matches) == 1, (
         f"expected exactly one `const LOANFACTS_FIELD_MAX = <number>` in "
         f"src/loanLimits.ts, found {len(matches)}: {matches} — a shadowing/commented "

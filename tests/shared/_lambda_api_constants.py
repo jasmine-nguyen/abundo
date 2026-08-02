@@ -3,9 +3,10 @@
 Both `constants` modules (shared/ and lambda_api/) are bare top-level names that
 collide in sys.modules — `constants` is in the _COLLIDING list in
 tests/lambda_api/conftest.py, so whichever suite imported one first would win for
-the rest of the pytest process. Neither file imports anything, so exec'ing into a
-fresh namespace reads them safely: no sys.modules entry, and no __pycache__
-bytecode that could mask a real drift.
+the rest of the pytest process. Neither file imports another project module (only
+stdlib), so exec'ing into a fresh namespace has no side effects beyond the file's
+own load-time asserts: no sys.modules entry, and no __pycache__ bytecode that could
+mask a real drift.
 
 Lives in tests/shared because pytest.ini's `pythonpath` makes only that directory
 importable by name. Test-only: never staged into the deployed shared layer.

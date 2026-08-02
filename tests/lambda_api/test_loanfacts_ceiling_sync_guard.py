@@ -41,7 +41,7 @@ def sync_guard():
 
 
 def _client_file(tmp_path, body: str) -> pathlib.Path:
-    path = tmp_path / "loan.tsx"
+    path = tmp_path / "loanLimits.ts"
     path.write_text(body)
     return path
 
@@ -65,7 +65,7 @@ def test_guard_goes_red_when_the_server_ceiling_drifts(sync_guard, monkeypatch):
 def test_guard_goes_red_when_the_client_ceiling_drifts(sync_guard, tmp_path, monkeypatch):
     """[D3] Someone edits src/loanLimits.ts and forgets the server."""
     monkeypatch.setattr(
-        sync_guard, "_CLIENT_LOAN_FORM",
+        sync_guard, "_CLIENT_LIMITS",
         _client_file(tmp_path, "export const LOANFACTS_FIELD_MAX = 12_345;\n"))
     with pytest.raises(AssertionError, match="ceiling drift"):
         sync_guard.test_client_and_server_loanfacts_ceilings_agree()
@@ -75,7 +75,7 @@ def test_guard_goes_red_when_the_client_declaration_disappears(sync_guard, tmp_p
     """[D4] The const is renamed/inlined: the parser must say so rather than let the
     equality assertion pass on nothing."""
     monkeypatch.setattr(
-        sync_guard, "_CLIENT_LOAN_FORM",
+        sync_guard, "_CLIENT_LIMITS",
         _client_file(tmp_path, "// LOANFACTS_FIELD_MAX lives somewhere else now\n"))
     with pytest.raises(AssertionError, match="could not locate"):
         sync_guard.test_client_ceiling_parses_to_a_positive_int()
@@ -85,7 +85,7 @@ def test_guard_goes_red_on_a_shadowing_second_declaration(sync_guard, tmp_path, 
     """[D5] A leftover/commented-out old value above the live one would be the value
     compared (the parser takes the FIRST match)."""
     monkeypatch.setattr(
-        sync_guard, "_CLIENT_LOAN_FORM",
+        sync_guard, "_CLIENT_LIMITS",
         _client_file(tmp_path, (
             "const LOANFACTS_FIELD_MAX = 500_000_000;\n"
             "export const LOANFACTS_FIELD_MAX = 1_000_000_000;\n")))
@@ -97,7 +97,7 @@ def test_guard_reads_an_exported_declaration(sync_guard, tmp_path, monkeypatch):
     """[D6] WHIT-393 changed the client line from `const` to `export const` so the loan
     suites can import it. The parser must keep seeing it — and see exactly one."""
     monkeypatch.setattr(
-        sync_guard, "_CLIENT_LOAN_FORM",
+        sync_guard, "_CLIENT_LIMITS",
         _client_file(tmp_path, "export const LOANFACTS_FIELD_MAX = 7;\n"))
     assert sync_guard._client_ceiling() == 7
     sync_guard.test_exactly_one_client_ceiling_declaration()
