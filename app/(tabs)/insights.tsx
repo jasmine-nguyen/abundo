@@ -23,14 +23,15 @@ export default function Insights() {
   // `incomeSources = []` default: the real hook always returns an array, but the default keeps a
   // hand-mocked test harness that omits it from throwing on `.length` (WHIT-381).
   const { breakdown, earned, incomeSources = [], category, isLoading, isError, categoriesError, refetch, refetchStale } = useInsightsScreenData(cycle);
-  // Recolour the Insights pie + rows from the chart palette (WHIT chart palette): wrap the category
-  // accessor so its `color` comes from the 20-colour ramp, then feed that to the breakdown selectors.
-  // The pie slices, row icons, chips, and bars all read the wrapped colour — so this screen recolours
+  // Recolour the Insights pie + rows from the chart palette: wrap the category accessor so its
+  // `color` comes from the category's PERMANENT server-assigned slot (falling back to the id-derived
+  // colour when a category has no slot yet), then feed that to the breakdown selectors. The pie
+  // slices, row icons, chips, and bars all read the wrapped colour — so this screen recolours
   // consistently while Budgets / Transactions keep the app-wide `colorForCategory` untouched.
   const chartCategory = useCallback((id: string) => {
     const c = category(id);
     if (!c) return c;
-    return { ...c, color: chartCategoryColor(id) };
+    return { ...c, color: chartCategoryColor(id, { slot: c.colorSlot }) };
   }, [category]);
   const { rows, total } = categoryBreakdown({ breakdown, category: chartCategory });
 

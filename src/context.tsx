@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
+import { normalizeColorSlot } from './theme/chartColors';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
 import * as Crypto from 'expo-crypto';
@@ -45,6 +46,10 @@ export interface Category {
   // top-level. Optional so existing category literals stay valid; toCategory
   // always normalises it to a value.
   parent?: string | null;
+  // The server's permanent chart-colour slot, an integer in [0,20). Optional so existing
+  // category literals — and a server that predates slots — stay valid; absent means the
+  // Insights chart falls back to the id-derived colour.
+  colorSlot?: number;
 }
 export interface Budget { id: string; budget: number; posted: number; pending: number; }
 export interface Transaction {
@@ -506,6 +511,11 @@ export function toCategory(raw: any): Category {
     color: colorForCategory(raw.id),
     recent: typeof raw.recent === 'number' ? raw.recent : 0,
     parent: raw.parent ?? null,
+    // The Insights chart's permanent colour. Absent or unusable → undefined, so the chart falls
+    // back to the id-derived colour. NOT `raw.colorSlot || undefined` (that drops slot 0, a real
+    // slot — Eating Out) and NOT `?? 0` (that would paint every slot-less category one pink, which
+    // reads as a rendering bug rather than a loud failure).
+    colorSlot: normalizeColorSlot(raw.colorSlot),
   };
 }
 

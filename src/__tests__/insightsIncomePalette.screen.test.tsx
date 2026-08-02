@@ -39,7 +39,7 @@ import Insights from '../../app/(tabs)/insights';
 const OLD_SALARY = '#2ac3de';
 const CATS = [
   { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#9ece6a', bucket: 'Living', recent: 0 },
-  { id: 'salary', name: 'Salary', icon: 'briefcase', color: OLD_SALARY, bucket: 'Income', recent: 0 },
+  { id: 'salary', name: 'Salary', icon: 'briefcase', color: OLD_SALARY, bucket: 'Income', recent: 0, colorSlot: 2 },
 ] as const;
 const category = (id: string) => CATS.find((c) => c.id === id) as never;
 const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
@@ -79,7 +79,9 @@ describe('Insights Earning tab recolours income-source rows from the chart palet
     fireEvent.press(screen.getByTestId('insights-side-earning'));
     const tree = screen.toJSON();
     // chip background = tint(row.color, 0.15); row.color must be the ramp slot for 'salary'.
-    expect(hasFillColor(tree, tint(chartCategoryColor('salary'), 0.15))).toBe(true);
+    expect(hasFillColor(tree, tint(chartCategoryColor('salary', { slot: 2 }), 0.15))).toBe(true);
+    // the hashed fallback colour must be ABSENT — the stored slot won
+    expect(hasFillColor(tree, tint(chartCategoryColor('salary'), 0.15))).toBe(false);
     expect(hasFillColor(tree, tint(OLD_SALARY, 0.15))).toBe(false);
   });
 
@@ -92,6 +94,7 @@ describe('Insights Earning tab recolours income-source rows from the chart palet
     // backgroundColor equal to the raw ramp hex is the bar. FAIL-ON-REVERT: revert the bar to the old
     // flat C.good and this raw-hex fill disappears → the assertion reddens. (C.good itself can't be
     // asserted absent — the EarnedVsSpent summary card's teal "Earned" bar is legitimately C.good.)
-    expect(hasFillColor(tree, chartCategoryColor('salary'))).toBe(true);
+    expect(hasFillColor(tree, chartCategoryColor('salary', { slot: 2 }))).toBe(true);
+    expect(hasFillColor(tree, chartCategoryColor('salary'))).toBe(false);
   });
 });

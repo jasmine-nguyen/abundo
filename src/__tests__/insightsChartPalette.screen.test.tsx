@@ -1,8 +1,10 @@
-// WHIT chart palette — the Insights pie + its category rows must render the NEW 20-colour ramp, not
-// the app-wide colorForCategory hues. The screen wraps the category accessor so both the donut slices
-// and the row bars/chips read the ramp colour. This proves that wiring end-to-end: the mock category
-// carries the OLD colours (groceries #9ece6a, eatingout #e5495f); if the wrapper were removed the pie
-// and rows would show those, so asserting the ramp hexes is fail-on-revert.
+// WHIT-402 — the Insights pie + its category rows must paint from each category's PERSISTED
+// colorSlot, not from the id-derived colour. The `coffee` fixture is deliberate: it is one of only
+// four built-ins whose slot-derived and id-derived colours DIFFER (#f49964 vs #e8a24f), so these
+// assertions redden if the screen stops passing the slot. A category whose two paths agree (e.g.
+// groceries) would let this suite pass even if the wiring were never written.
+// The last test covers the other half of the contract: a category with NO slot — a client running
+// ahead of the server — must still render exactly today's colours.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -41,9 +43,12 @@ jest.mock('expo-router', () => {
 import Insights from '../../app/(tabs)/insights';
 
 // Mock categories carry the OLD app-wide colours — the wrapper must override them with the ramp.
+// `coffee` is deliberate: it is one of the four built-ins whose colour MOVES when the chart paints
+// from the stored slot (#e8a24f id-derived -> #f49964 slot-derived). A category whose two paths
+// agree would let this suite pass even if the slot wiring were never written.
 const CATS = [
-  { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#9ece6a', bucket: 'Living', recent: 0 },
-  { id: 'eatingout', name: 'Eating Out', icon: 'food', color: '#e5495f', bucket: 'Lifestyle', recent: 0 },
+  { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#ff9e64', bucket: 'Lifestyle', recent: 0, colorSlot: 4 },
+  { id: 'eatingout', name: 'Eating Out', icon: 'food', color: '#e5495f', bucket: 'Lifestyle', recent: 0, colorSlot: 0 },
 ] as const;
 const category = (id: string) => CATS.find((c) => c.id === id) as never;
 const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
@@ -70,25 +75,53 @@ beforeEach(() => {
     generateAiInsights: jest.fn() as AppContext['generateAiInsights'],
     loanFacts: NO_LOAN_FACTS, homeLoan: { balance: null, asOf: null },
   };
-  mockInsights = insightsData({ breakdown: { groceries: { posted: 80, pending: 0 }, eatingout: { posted: 40, pending: 0 } } });
+  mockInsights = insightsData({ breakdown: { coffee: { posted: 80, pending: 0 }, eatingout: { posted: 40, pending: 0 } } });
 });
 
 describe('Insights recolours the pie + rows from the chart palette', () => {
   it('paints the donut slices with the ramp colours, not the old category hues', () => {
     render(<Insights />);
-    const groceries = capturedSlices.find((s) => s.id === 'groceries');
+    const coffee = capturedSlices.find((s) => s.id === 'coffee');
     const eatingout = capturedSlices.find((s) => s.id === 'eatingout');
-    expect(groceries?.color).toBe('#8ec56f'); // ramp slot 6, not old #9ece6a
-    expect(eatingout?.color).toBe('#f98f98'); // ramp slot 0, not old #e5495f
+    // slot 4 -> ramp 2. NOT #e8a24f, which is what the id-derived fallback would give — so this
+    // assertion is what proves the screen reads the stored slot.
+    expect(coffee?.color).toBe('#f49964');
+    expect(eatingout?.color).toBe('#f98f98'); // slot 0 -> ramp 0
   });
 
   it('paints the category row bars with the ramp colours too', () => {
     render(<Insights />);
     const tree = screen.toJSON();
-    expect(hasFillColor(tree, '#8ec56f')).toBe(true); // groceries bar = ramp colour
-    expect(hasFillColor(tree, '#f98f98')).toBe(true); // eatingout bar = ramp colour
-    // and the OLD colours are gone from the screen
-    expect(hasFillColor(tree, '#9ece6a')).toBe(false);
+    expect(hasFillColor(tree, '#f49964')).toBe(true); // coffee bar = its SLOT colour
+    expect(hasFillColor(tree, '#f98f98')).toBe(true); // eatingout bar = its slot colour
+    // the old app-wide colours are gone
+    expect(hasFillColor(tree, '#ff9e64')).toBe(false);
     expect(hasFillColor(tree, '#e5495f')).toBe(false);
+    // and so is coffee's id-derived fallback — the slot won
+    expect(hasFillColor(tree, '#e8a24f')).toBe(false);
+  });
+
+  it('falls back to today\'s colours for a category the server has not slotted yet', () => {
+    // The deploy-ordering guarantee: this client can ship before the server does. Every category
+    // then arrives with no slot, and the chart must render EXACTLY as it does today rather than
+    // going blank or one flat colour.
+    mockInsights = insightsData({
+      breakdown: { coffee: { posted: 80, pending: 0 }, eatingout: { posted: 40, pending: 0 } },
+    });
+    // strip the slots the way a pre-slot server would
+    (mockInsights as { category: (id: string) => unknown }).category = (id: string) => {
+      const found = CATS.find((c) => c.id === id);
+      if (!found) return undefined;
+      const { colorSlot, ...withoutSlot } = found;
+      return withoutSlot;
+    };
+    render(<Insights />);
+
+    const coffee = capturedSlices.find((s) => s.id === 'coffee');
+    const eatingout = capturedSlices.find((s) => s.id === 'eatingout');
+    expect(coffee?.color).toBe('#e8a24f');     // coffee's id-derived colour — today's chart
+    expect(eatingout?.color).toBe('#f98f98');
+    // and never the "no slot means slot 0" bug, which would paint BOTH the same pink
+    expect(coffee?.color).not.toBe(eatingout?.color);
   });
 });

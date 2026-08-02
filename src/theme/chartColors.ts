@@ -19,6 +19,33 @@ export const OTHER_COLOR = '#565f89';
 // The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg.
 export const CHART_BG = '#16161e';
 
+// Slot → ramp position. A stored `colorSlot` is NOT a ramp index: the server hands out the LOWEST
+// FREE slot, so two categories created back-to-back get 5 and 6 — adjacent hues that read as the
+// same colour. This permutation is the indirection that pulls them apart (slots 0,1,2,3 → ramp
+// 0,10,5,15). Do not sort, reverse, or regenerate it: the slots are PERSISTED, so changing this
+// array repaints every category.
+// Two counterparts must stay in step, neither of which a Jest run can see:
+//   • shared/repository_category.py — _COLOR_SLOT_COUNT (the slot range the server assigns)
+//   • tests/lambda_api/test_categories.py — a copy of this array, guarding the seed spread
+// WHIT-406 tracks the cross-language guard; the permutation invariant itself is pinned below.
+export const ASSIGNMENT_ORDER = [
+  0, 10, 5, 15, 2, 7, 12, 17, 1, 3, 4, 6, 8, 9, 11, 13, 14, 16, 18, 19,
+] as const;
+
+// A raw colorSlot off the wire as a usable slot, or undefined when it is absent or unusable.
+// Mirrors the server's _coerce_slot — necessary because PATCH /categories/{id} echoes the STORED
+// value with no coercion, so a corrupt row reaches the client uncleaned.
+// NOT a truthy check: slot 0 is VALID (it is Eating Out), and `raw || undefined` would drop it.
+// Everything rejected here would otherwise index ASSIGNMENT_ORDER out of range and yield
+// `undefined`, which does NOT merely paint an invisible wedge: it reaches SpendingDonut's
+// temperature(), whose `hex.replace('#','')` throws on undefined and takes the whole Insights
+// screen down. Note JS `%` keeps the sign, so a negative slot cannot be rescued by wrapping:
+// -5 % 20 is -5.
+export function normalizeColorSlot(raw: unknown): number | undefined {
+  if (typeof raw !== 'number' || !Number.isInteger(raw)) return undefined;
+  return raw >= 0 && raw < ASSIGNMENT_ORDER.length ? raw : undefined;
+}
+
 // The 13 built-in category ids → a DISTINCT ramp slot each, hue-ordered so warm categories
 // (eating out, coffee, utilities) sit on the warm end and cool ones (transport, travel) on the cool
 // end. Distinct indices ⇒ 13 distinct colours, forever — never the deterministic hash collision a
@@ -38,10 +65,31 @@ function categoryColorHash(id: string): number {
   return Math.abs(h);
 }
 
-// A category id → its chart colour on the Insights screen. Built-in → its fixed hue-ordered slot;
-// unknown id → a stable hashed slot; null/blank id → the first ramp colour (a defensive path).
-// Never returns OTHER_COLOR — that grey is reserved for the donut's grouped "Other".
-export function chartCategoryColor(id: string | null | undefined): string {
+// A category's chart colour on the Insights screen.
+// PREFERRED: its stored, permanent `colorSlot` resolved through ASSIGNMENT_ORDER — assigned once
+// server-side, so adding or deleting a category can never repaint another one.
+// FALLBACK (slot absent or unusable): the id-derived colour — built-in → its fixed slot, unknown id
+// → a stable hashed slot, null/blank id → the first ramp colour. Kept ON PURPOSE: it makes deploy
+// ordering a preference rather than a hard gate, so a client running ahead of the server degrades
+// to EXACTLY today's colours instead of a broken chart.
+// Never returns OTHER_COLOR — that grey is reserved for the donut's grouped "Other". A negative or
+// out-of-range slot therefore falls back rather than going grey: painting a real category the
+// reserved grey would read as a lumped-together bucket and the donut would re-sort it to the tail.
+//
+// The slot arrives in an options bag, not a second positional arg, so that `ids.map(chartCategory-
+// Color)` cannot compile — `.map` passes the array INDEX as arg 2, which would silently resolve a
+// list position as a colour slot and make a passing test prove nothing.
+// `slot?: number` — validate at the boundary, type strictly inside. toCategory already guarantees
+// Category.colorSlot is a normalised number|undefined, so a caller passing anything else (say a hex
+// string) is a bug the compiler should catch, not one normalizeColorSlot should silently absorb.
+// The runtime check stays: it still range-guards, and still catches a lying `any`.
+export function chartCategoryColor(
+  id: string | null | undefined,
+  options?: { slot?: number },
+): string {
+  const stored = normalizeColorSlot(options?.slot);
+  // `!== undefined`, not `if (stored)` — slot 0 is Eating Out, and truthiness eats it.
+  if (stored !== undefined) return CATEGORY_COLORS[ASSIGNMENT_ORDER[stored]];
   if (!id) return CATEGORY_COLORS[0];
   const builtin = BUILTIN_CATEGORY_INDEX[id];
   if (builtin !== undefined) return CATEGORY_COLORS[builtin];

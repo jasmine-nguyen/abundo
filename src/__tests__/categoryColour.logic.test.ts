@@ -128,3 +128,36 @@ describe('CATEGORY_SIBLINGS — the OKLCH relationship to the base', () => {
     for (const s of CATEGORY_SIBLINGS) expect(bases.has(s)).toBe(false); // siblings never equal a base
   });
 });
+
+// --- the persisted chart-colour slot (WHIT-402) ------------------------------
+//
+// toCategory is the ONLY place a Category is constructed in production, and it is the gate between
+// the wire and the chart. It must let a valid slot through untouched (including 0) and reject
+// anything unusable, because PATCH /categories/{id} echoes the STORED value with no server-side
+// coercion — so a corrupt row arrives uncleaned.
+
+describe('toCategory — colorSlot', () => {
+  const base = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee' };
+
+  it('carries a valid slot through, and treats 0 as valid', () => {
+    expect(toCategory({ ...base, colorSlot: 4 }).colorSlot).toBe(4);
+    expect(toCategory({ ...base, colorSlot: 19 }).colorSlot).toBe(19);
+    // 0 is Eating Out's slot. `raw.colorSlot || undefined` would silently drop it.
+    expect(toCategory({ ...base, colorSlot: 0 }).colorSlot).toBe(0);
+  });
+
+  it('leaves it undefined when the server sent none — NOT 0', () => {
+    // `?? 0` here would paint an entire un-migrated taxonomy one pink, which reads as a rendering
+    // bug; undefined instead routes each category to its id-derived colour, i.e. today's chart.
+    expect(toCategory(base).colorSlot).toBeUndefined();
+    expect(toCategory({ ...base, colorSlot: null }).colorSlot).toBeUndefined();
+  });
+
+  it('rejects the uncoerced values a PATCH response can carry', () => {
+    // A representative sample — normalizeColorSlot's own suite pins the exhaustive table. What
+    // this test is for is proving toCategory actually CALLS the normaliser.
+    for (const bad of ['7', 7.5, -5, 20]) {
+      expect(toCategory({ ...base, colorSlot: bad }).colorSlot).toBeUndefined();
+    }
+  });
+});
