@@ -17,7 +17,8 @@ export const CATEGORY_COLORS = [
 // otherColorToken.logic.test.ts [Q19]. Retuning either without the other reddens it, on purpose.
 export const OTHER_COLOR = '#565f89';
 
-// The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg.
+// The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg — pinned by
+// chartDividerColor.logic.test.ts [Q15], the same tripwire [Q19] gives OTHER_COLOR above.
 // Consumer: SpendingDonut's ring track — the surface that shows through the gap between wedges,
 // which is what makes that gap a divider. (WHIT-408 removed this as unused; WHIT-403 gives it its
 // first consumer, so it comes back.)
