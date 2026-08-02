@@ -212,7 +212,9 @@ def test_legacy_row_without_id_falls_back_to_amount_marker(shared, recorder):
     # A row saved before ids were minted (WHIT-378) has no "id" — the marker degrades to the
     # amount-only form rather than raising (which the poller's outer except would swallow into a
     # silently-lost celebration).
-    legacy = [{"label": "Old", "targetBalance": Decimal("480000"), "targetDate": None}]
+    # The date is a real one because WHIT-417 made the poller reject unparsable dates; this test
+    # is about the id fallback, and a null date here would fail it for the wrong reason.
+    legacy = [{"label": "Old", "targetBalance": Decimal("480000"), "targetDate": "2030-01-01"}]
     notify = FakeNotifyRepo()
     sent = shared.milestones.notify_milestone_crossing(
         Decimal("490000"), Decimal("480000"),

@@ -69,8 +69,11 @@ def row_date(row, name) -> str:
 
     The bar is exactly `date.fromisoformat` — what lambda_api._review_candidates calls on
     this field. A blank or unparsable stored date raises there, outside any per-row guard,
-    which 500s the review endpoint (WHIT-394). Only the client read needs this: the poller
-    path never reads targetDate.
+    which 500s the review endpoint (WHIT-394).
+
+    Both read paths apply it. The poller has no use for the value, but WHIT-417 decided a row
+    the plan screen hides must not still celebrate: the user would tap "🎉 Milestone reached"
+    and land on a plan the milestone isn't in.
     """
     value = row_field(row, name)
     if not isinstance(value, str):

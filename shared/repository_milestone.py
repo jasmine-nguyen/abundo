@@ -50,11 +50,11 @@ def _to_client(milestones: list) -> list:
     so the two read paths can't drift (WHIT-394). The poller reads through get_milestones_raw,
     which does NOT use this.
 
-    Two guards are client-only, because only this path feeds them: the target must survive
-    float() as a finite number (an inf/NaN serialises as a bare token that isn't valid JSON,
-    making the WHOLE response unparsable), and targetDate must be a date the review endpoint
-    can parse. The poller never reads targetDate. Logs at WARNING with NO alarm token — the
-    poller's ERROR token pages, and a client read must not fire that alarm."""
+    One guard is client-only, because only this path feeds it: the target must survive float()
+    as a finite number (an inf/NaN serialises as a bare token that isn't valid JSON, making the
+    WHOLE response unparsable). targetDate used to be client-only too; WHIT-417 gave it to the
+    poller as well, so a row hidden here can't still celebrate. Logs at WARNING with NO alarm
+    token — the poller's ERROR token pages, and a client read must not fire that alarm."""
     if not is_plan_list(milestones):
         logger.warning("stored milestones is not a list, ignoring: %r", milestones)
         return []
