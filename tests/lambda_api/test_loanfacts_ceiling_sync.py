@@ -72,7 +72,11 @@ def test_the_loanfacts_ceiling_value_is_pinned():
     else asserts the ceiling's actual VALUE any more — a typo there (1_000_000 for
     1_000_000_000) would leave the whole suite green while the app silently rejected
     normal loan amounts. This is the one deliberate pin: changing the ceiling should
-    cost exactly one honest edit, here."""
+    cost exactly one honest edit, here.
+
+    Note for anyone temporarily changing the ceiling to check the mirrors follow it:
+    this test is the ONE that should go red, and only this one. Anything else red is a
+    real failure. Update the pin, don't delete it."""
     assert _server_ceiling() == 1_000_000_000, (
         f"the loan-facts ceiling is now {_server_ceiling()}, not 1_000_000_000 — if you "
         "meant to change it, update this pin too; if you didn't, this is the typo it exists "
