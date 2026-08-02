@@ -13,12 +13,19 @@ passes an authenticated user id as `scope` — only this helper and the handler'
 current_scope() change; the stored list shape carries no owner field.
 """
 
-from decimal import Decimal
 from typing import Any, Optional
 
 import boto3
 from botocore.exceptions import ClientError
 
+from milestone_rows import (
+    MalformedMilestoneRow,
+    is_plan_list,
+    row_date,
+    row_field,
+    row_target_float,
+    row_text,
+)
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
 # The single tenant every request maps to until multi-user lands. A module literal,
@@ -37,14 +44,18 @@ def _to_client(milestones: list) -> list:
     """Normalise stored milestones to the client shape: only {id, label, targetBalance,
     targetDate}, with targetBalance as a float (stored as Decimal). pk/sk stay internal.
 
-    Skips any milestone missing a field or with a non-numeric targetBalance, so a legacy or
-    partially-written row degrades to a shorter list instead of 500ing the client read
-    (WHIT-383). The poller reads through get_milestones_raw, which does NOT use this; its own
-    per-row skip lives in shared/milestones._resolve_plan (WHIT-387), so both read paths now
-    degrade a bad row rather than raise."""
-    # A corrupt row could store `milestones` as a non-list (a scalar isn't iterable); guard
-    # the iteration itself so the client read degrades to empty instead of 500ing (WHIT-383).
-    if not isinstance(milestones, list):
+    Skips any row that isn't usable, so a legacy or partially-written row degrades to a
+    shorter list instead of 500ing the client read (WHIT-383). What "usable" means lives in
+    milestone_rows, shared with the poller's per-row skip in shared/milestones._resolve_plan,
+    so the two read paths can't drift (WHIT-394). The poller reads through get_milestones_raw,
+    which does NOT use this.
+
+    Two guards are client-only, because only this path feeds them: the target must survive
+    float() as a finite number (an inf/NaN serialises as a bare token that isn't valid JSON,
+    making the WHOLE response unparsable), and targetDate must be a date the review endpoint
+    can parse. The poller never reads targetDate. Logs at WARNING with NO alarm token — the
+    poller's ERROR token pages, and a client read must not fire that alarm."""
+    if not is_plan_list(milestones):
         logger.warning("stored milestones is not a list, ignoring: %r", milestones)
         return []
     client_milestones = []
@@ -52,16 +63,16 @@ def _to_client(milestones: list) -> list:
         try:
             client_milestones.append(
                 {
-                    "id": m["id"],
-                    "label": m["label"],
-                    "targetBalance": float(m["targetBalance"]),
-                    "targetDate": m["targetDate"],
+                    "id": row_field(m, "id"),
+                    "label": row_text(m, "label"),
+                    "targetBalance": row_target_float(m),
+                    "targetDate": row_date(m, "targetDate"),
                 }
             )
-        except (KeyError, TypeError, ValueError):
+        except MalformedMilestoneRow as e:
             # Degrade, don't 500 — but leave a breadcrumb so a legacy/partial row that
             # silently drops from a user's plan is diagnosable.
-            logger.warning("skipping malformed stored milestone on client read: %r", m)
+            logger.warning("skipping malformed stored milestone on client read: %r (%s)", m, e)
             continue
     return client_milestones
 
