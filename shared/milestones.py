@@ -21,6 +21,7 @@ import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from milestone_rows import MalformedMilestoneRow, is_plan_list, row_target, row_text
 from push import send_push
 
 logger = logging.getLogger(__name__)
@@ -69,13 +70,15 @@ def _plan_marker(milestone: dict) -> str:
     "...bal:480000.00"). A legacy row saved before ids were minted (WHIT-378) has no id — fall
     back to the amount-only marker rather than raise, which the poller would swallow into a
     silently-skipped celebration."""
-    amount = Decimal(milestone["targetBalance"]).quantize(Decimal("0.01"))
-    # A NaN target quantizes to NaN WITHOUT raising (Infinity does raise), so it would slip
-    # past _resolve_plan's per-row skip and only blow up later in crossed_milestones' Decimal
-    # comparison — outside that guard, back in the poller's swallow (WHIT-387). Reject any
-    # non-finite target here so the corrupt row is skipped + logged like every other.
-    if not amount.is_finite():
-        raise ValueError(f"non-finite milestone target: {milestone['targetBalance']!r}")
+    # row_target already rejects a non-finite target (WHIT-387's guard, now shared — WHIT-394).
+    # Quantize can still raise on a finite but huge target (from ~1e26, where cent precision
+    # exceeds the decimal module's 28 working digits); re-raise it as the row error both read
+    # paths skip on, or it would escape _resolve_plan into the poller's swallow and lose every
+    # good row's celebration.
+    try:
+        amount = row_target(milestone).quantize(Decimal("0.01"))
+    except InvalidOperation as e:
+        raise MalformedMilestoneRow(f"milestone target too large to quantize: {milestone['targetBalance']!r}") from e
     milestone_id = milestone.get("id")
     if milestone_id is None:
         return f"{_BAL_PREFIX}{amount}"
@@ -119,32 +122,28 @@ def _resolve_plan(milestone_repo=None, scope=None):
     # `and plan` guard — sweeps no markers, whereas falling back to the default would send a
     # WRONG default celebration for what is really corrupt data. Distinct alarm token so a
     # corrupt plan is visible, not silently eaten (WHIT-387).
-    if not isinstance(stored, list):
+    if not is_plan_list(stored):
         logger.error("MILESTONE_PLAN_MALFORMED stored milestone plan is not a list, treating as empty: %r", stored)
         return [], True
-    # Resolve row by row so ONE corrupt saved row (missing label/targetBalance, non-dict, or a
-    # non-numeric target) is skipped + logged rather than raising the whole poll's celebration
-    # into the poller's best-effort swallow — which would drop every good row's push permanently,
-    # since the balance only moves down so the crossing is never re-detected (WHIT-387). Mirrors
-    # the client-read skip in repository_milestone._to_client.
+    # Resolve row by row so ONE corrupt saved row is skipped + logged rather than raising the
+    # whole poll's celebration into the poller's best-effort swallow — which would drop every
+    # good row's push permanently, since the balance only moves down so the crossing is never
+    # re-detected (WHIT-387).
     #
-    # target_balance is COERCED to a Decimal here (not stored raw): a legacy/direct-write row can
-    # hold the target as a string ("120000"), which crossed_milestones would later compare as
-    # Decimal > str -> TypeError OUTSIDE this loop, back in the poller's swallow — the same drop.
-    # Coercing here (like _to_client's float() cast) both fixes that and celebrates such a row
-    # rather than diverging from the client, which already shows it. After coercion + the is_finite
-    # guard below, target_balance is always a FINITE Decimal, so the comparison can never raise.
+    # What counts as corrupt lives in milestone_rows, shared with the client read so the two
+    # can't drift (WHIT-394). row_target COERCES to a finite Decimal: a legacy/direct-write row
+    # can hold the target as a string ("120000"), which crossed_milestones would otherwise
+    # compare as Decimal > str -> TypeError OUTSIDE this loop, back in the poller's swallow.
+    # After coercion target_balance is always a FINITE Decimal, so the comparison can't raise.
     #
-    # The caught tuple: KeyError (missing field), TypeError (non-dict row / Decimal(None)), and
-    # InvalidOperation (a non-numeric target string, which Decimal() raises as an ArithmeticError,
-    # not a ValueError). A NaN target is finite-checked in _plan_marker (quantize accepts NaN
-    # without raising) and re-raised there as ValueError; an Infinity target raises InvalidOperation
-    # at _plan_marker's quantize before the guard. Both end up skipped + logged like any bad row.
+    # _plan_marker re-derives the target rather than taking it as an argument: five tests call it
+    # directly with one argument, and a plan is capped at 50 rows, so the repeat coercion is
+    # deliberate — don't "optimise" it into a two-argument form.
     plan = []
     for row in stored:
         try:
-            plan.append(PlanMilestone(label=row["label"], target_balance=Decimal(row["targetBalance"]), key=_plan_marker(row)))
-        except (KeyError, TypeError, ValueError, InvalidOperation) as e:
+            plan.append(PlanMilestone(label=row_text(row, "label"), target_balance=row_target(row), key=_plan_marker(row)))
+        except MalformedMilestoneRow as e:
             logger.error("MILESTONE_ROW_MALFORMED skipping a corrupt saved milestone row, celebrating the rest: %r (%s)", row, e)
     return plan, True
 

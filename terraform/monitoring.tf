@@ -309,7 +309,10 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_missed" {
 # rather than silently eating a milestone push (WHIT-387). _resolve_plan logs one of two tokens
 # on the balance-poller log group: MILESTONE_ROW_MALFORMED (a single bad row) or
 # MILESTONE_PLAN_MALFORMED (the whole stored plan isn't a list). The `?a ?b` pattern is an OR,
-# so either fires the metric. Keep this pattern and shared/milestones.py in lockstep.
+# so either fires the metric. Keep this pattern and shared/milestones.py in lockstep — the skip
+# DECISION now lives in shared/milestone_rows.py (WHIT-394), but only _resolve_plan logs these
+# tokens. The client read (repository_milestone._to_client) shares the same validator and
+# deliberately logs at WARNING with NO token, so a screen read never fires this poller alarm.
 resource "aws_cloudwatch_log_metric_filter" "milestone_row_malformed" {
   name           = "${var.project_name}-milestone-row-malformed"
   log_group_name = aws_cloudwatch_log_group.homeloan_request.name

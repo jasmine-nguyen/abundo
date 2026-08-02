@@ -18,7 +18,8 @@ the gaps they left:
        surviving row's live marker is kept, and a corrupt row present doesn't crash the sweep;
   [G6] regression: a NaN target (quantize accepts NaN, so it would slip the per-row skip and
        raise InvalidOperation later at the crossing comparison — the silent whole-poll drop) is
-       rejected by _plan_marker's is_finite guard, so it's skipped + logged like any bad row.
+       rejected by the shared row validator (milestone_rows.row_target, WHIT-394 — the guard
+       started life inline in _plan_marker), so it's skipped + logged like any bad row.
 
 Self-contained fakes mirror the implementer's FakeMilestoneRepo / FakeNotifyRepo / _notify /
 _row patterns (importing them cross-file is fragile under pytest importlib mode); the
@@ -131,9 +132,10 @@ def _notify(shared, *, old, new, milestone_repo, notify=None, scope=None):
 ])
 def test_corrupt_target_type_is_skipped_and_logged(shared, caplog, bad_target, branch):
     # Every non-numeric/junk target shape resolves to an EMPTY plan (skipped), never raises, and
-    # is logged with the alarm token. Locks that ALL FOUR branches of the caught tuple are
-    # actually reached by a plausible corrupt row. Fail-on-revert: drop the matching type from
-    # the (KeyError, TypeError, ValueError, InvalidOperation) tuple -> that row raises out.
+    # is logged with the alarm token. Locks that every branch of the shared validator's coercion
+    # catch is actually reached by a plausible corrupt row. Fail-on-revert: drop the matching type
+    # from milestone_rows.row_target's (TypeError, ValueError, InvalidOperation) catch -> that row
+    # raises out of the loop, which now catches only MalformedMilestoneRow (WHIT-394).
     bad = FakeMilestoneRepo(stored=[{"id": "x", "label": "Broken", "targetBalance": bad_target,
                                      "targetDate": "2027-01-01"}])
     with caplog.at_level(logging.ERROR, logger="milestones"):
@@ -249,9 +251,10 @@ def test_nan_target_is_skipped_like_any_other_corrupt_target(shared, recorder):
     # A NaN targetBalance quantizes to NaN WITHOUT raising, so it would slip past the per-row
     # skip and only blow up later in crossed_milestones' `old > NaN >= new` comparison (a Decimal
     # compare against NaN raises InvalidOperation) — OUTSIDE the guarded loop, back in the poller's
-    # swallow, losing the whole poll's celebration. _plan_marker's is_finite guard rejects it so
-    # the NaN row is skipped + logged and the good rows still celebrate. Fail-on-revert: drop the
-    # is_finite guard -> notify raises InvalidOperation and this errors instead of asserting.
+    # swallow, losing the whole poll's celebration. The shared validator's is_finite guard rejects
+    # it so the NaN row is skipped + logged and the good rows still celebrate. Fail-on-revert: drop
+    # the is_finite check in milestone_rows.row_target (WHIT-394) -> notify raises InvalidOperation
+    # and this errors instead of asserting.
     repo = FakeMilestoneRepo(stored=[
         _row("Deposit", "480000", id="a"),
         {"id": "nan", "label": "Broken", "targetBalance": Decimal("NaN"), "targetDate": "2027-01-01"},
