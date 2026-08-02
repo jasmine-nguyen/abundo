@@ -13,11 +13,9 @@ export const CATEGORY_COLORS = [
 
 // The neutral grey the donut folds small slices into ("Other"). Deliberately OUTSIDE the ramp and
 // low-saturation so the donut's temperature() classifies it neutral — reserved for "Other" only,
-// never a real category. Same value as C.textFaint.
+// never a real category. Same value as C.textFaint. (A CHART_BG token for slice dividers lived
+// here too and was never used — deleted in WHIT-409; WHIT-403 can reintroduce it when it needs one.)
 export const OTHER_COLOR = '#565f89';
-
-// The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg.
-export const CHART_BG = '#16161e';
 
 // Slot → ramp position. A stored `colorSlot` is NOT a ramp index: the server hands out the LOWEST
 // FREE slot, so two categories created back-to-back get 5 and 6 — adjacent hues that read as the

@@ -7,8 +7,8 @@ name: Client tests
 #     change; a server-only PR skips it entirely (the Python workflow still runs).
 # Caveat: if branch protection ever marks this a REQUIRED check, a path-skipped run
 # leaves the PR's check "pending" and can block merge — revisit paths if that's turned on.
-# The jobs below are `logic`, `screen` (a shard matrix) and `coverage`; if a required
-# check was ever pinned to the old single `jest` job name, update it to `coverage`.
+# The jobs below are `logic`, `screen` (a shard matrix), `bundle` and `coverage`; if a
+# required check was ever pinned to the old single `jest` job name, update it to `coverage`.
 on:
   push:
     branches: [main]
@@ -110,6 +110,29 @@ jobs:
           name: cov-screen-${{ matrix.shard }}
           path: coverage-screen/coverage-final.json
           if-no-files-found: error
+
+  # WHIT-411. Neither the tests nor the typecheck BUILD the app, so a break in how modules
+  # resolve at bundle time — a file shadowing a folder, a bad alias, a package that only
+  # ships an ESM entry — passes both and surfaces at release, where it is most expensive.
+  # The web target uses the same Metro resolution as the phone build and exports in ~10s,
+  # so it buys that whole class of failure cheaply. It is NOT a substitute for the native
+  # build (ios-testflight.yml), which still runs only on a tag.
+  bundle:
+    name: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the web bundle
+        run: npx expo export -p web --output-dir "$RUNNER_TEMP/expo-web-export"
 
   coverage:
     name: coverage

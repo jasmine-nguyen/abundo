@@ -1,14 +1,14 @@
 /// <reference types="node" />
-// WHIT-408 — `src/theme.ts` (the app-wide tokens) and a folder `src/theme/` (the Insights chart
-// palette) used to sit side by side under nearly the same name. Every resolver in this project
-// prefers the FILE over a folder of the same name — checked in TypeScript, Jest and metro-resolver
-// — so if a module ever lands back under `src/theme/`, NOTHING turns red: every `from '../theme'`
-// import keeps hitting theme.ts and the new file is dead weight no one notices. The typecheck
-// catches a wrong import path; it cannot catch this. That is what this guard is for.
+// WHIT-408 / WHIT-412 — every resolver in this project prefers a FILE over a folder of the same
+// name (checked in TypeScript, Jest and metro-resolver). So if `src/X.ts` and `src/X/` both exist,
+// `from '../X'` keeps hitting the file and everything under the folder is silently ignored:
+// no error, no red test, the code just never runs. The typecheck catches a wrong import path;
+// it cannot catch this.
 //
-// `chartColors` is guarded too: the move created a SECOND shadowing name, and `src/chartColors.ts`
-// would swallow a future `src/chartColors/` folder in exactly the same silent way. Guarding only
-// the old name would leave the trap open one rename later.
+// WHIT-408 was that exact collision — `src/theme.ts` beside a `src/theme/` holding the chart
+// palette — and fixed it by moving the palette to `src/chartColors.ts`. Rather than name the two
+// files involved, this guard derives the list from src/ itself, so a new collision is caught the
+// day it appears instead of the day someone remembers to add it here.
 //
 // An empty shadowed folder is tolerated, and so are dotfiles. Git prunes the emptied directory on
 // checkout, so the husk that actually survives is one holding untracked junk — a Finder .DS_Store
@@ -25,13 +25,16 @@ import { join } from 'path';
 
 const SRC_DIR = join(__dirname, '..');
 
-// Top-level modules whose name must stay a FILE. A folder of the same name is silently shadowed
-// by it, so nothing may live inside one.
-const SHADOWING_NAMES = ['theme', 'chartColors'];
-
 function isFile(relativePath: string): boolean {
   const absolute = join(SRC_DIR, relativePath);
   return existsSync(absolute) && statSync(absolute).isFile();
+}
+
+// Every top-level module in src/, by bare name — `api.ts` → `api`. Each one shadows a folder of
+// that name, so each one is a place the trap can reappear. Deduped: `X.ts` and `X.tsx` are one name.
+function shadowingNames(): string[] {
+  const modules = readdirSync(SRC_DIR).filter((entry) => isFile(entry) && /\.tsx?$/.test(entry));
+  return [...new Set(modules.map((entry) => entry.replace(/\.tsx?$/, '')))].sort();
 }
 
 function modulesIn(name: string): string[] {
@@ -40,15 +43,24 @@ function modulesIn(name: string): string[] {
   return readdirSync(directory).filter((entry) => !entry.startsWith('.'));
 }
 
-describe('WHIT-408 a shadowing name is a file, never a folder', () => {
+describe('WHIT-412 a shadowing name is a file, never a folder', () => {
   // The remediation lives in the test NAME on purpose — Jest prints the name on failure but not
   // the comments around it, so advice written here as a comment never reaches the developer.
-  it.each(SHADOWING_NAMES)(
+  it.each(shadowingNames())(
     'has no module under src/%s/ — the same-named .ts file silently shadows one, so keep modules at the top of src/',
     (name) => {
       expect(modulesIn(name)).toEqual([]);
     },
   );
+
+  it('derives its list from src/ rather than a hard-coded pair', () => {
+    // If this drops to a couple of entries, the loop above has stopped scanning and is guarding
+    // almost nothing — the failure mode this test exists to prevent is itself silent.
+    const names = shadowingNames();
+    expect(names).toContain('theme');
+    expect(names).toContain('chartColors');
+    expect(names.length).toBeGreaterThan(10);
+  });
 
   it('keeps the app-wide tokens and the chart palette as separate top-level files', () => {
     expect(isFile('theme.ts')).toBe(true);
