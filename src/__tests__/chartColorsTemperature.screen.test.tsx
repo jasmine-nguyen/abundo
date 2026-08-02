@@ -4,7 +4,7 @@
 // reads as neutral, and that the reserved OTHER grey correctly does.
 import { describe, it, expect } from '@jest/globals';
 import { temperature } from '../components/SpendingDonut';
-import { CATEGORY_COLORS, OTHER_COLOR } from '../theme/chartColors';
+import { CATEGORY_COLORS, OTHER_COLOR } from '../chartColors';
 
 describe('chart palette vs the donut neutral cutoff', () => {
   it('classifies every one of the 20 ramp colours as warm or cool, never neutral', () => {

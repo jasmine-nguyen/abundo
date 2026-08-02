@@ -36,7 +36,7 @@ CATEGORY_PALETTE = [
 # stored, never recomputed. Adding or deleting a category therefore cannot repaint any other.
 #
 # A slot is NOT a position on the colour ramp. The client (slice 2) resolves it through a
-# fixed permutation, ASSIGNMENT_ORDER, arriving in src/theme/chartColors.ts:
+# fixed permutation, ASSIGNMENT_ORDER, arriving in src/chartColors.ts:
 #     hex = CATEGORY_COLORS[ASSIGNMENT_ORDER[slot]]
 # So consecutive SLOT numbers are deliberately far apart in hue, and reading these integers
 # as ramp positions will mislead you: slots 15,16,17,18 look adjacent but resolve to ramp

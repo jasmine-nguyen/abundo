@@ -16,9 +16,6 @@ export const CATEGORY_COLORS = [
 // never a real category. Same value as C.textFaint.
 export const OTHER_COLOR = '#565f89';
 
-// The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg.
-export const CHART_BG = '#16161e';
-
 // Slot → ramp position. A stored `colorSlot` is NOT a ramp index: the server hands out the LOWEST
 // FREE slot, so two categories created back-to-back get 5 and 6 — adjacent hues that read as the
 // same colour. This permutation is the indirection that pulls them apart (slots 0,1,2,3 → ramp
