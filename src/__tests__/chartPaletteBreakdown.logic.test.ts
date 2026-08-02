@@ -13,7 +13,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { categoryBreakdown, incomeBreakdown, UNCATEGORIZED_KEY } from '../context';
 import { C, ADJUSTMENT_ROW } from '../theme';
-import { chartCategoryColor } from '../theme/chartColors';
+import { chartCategoryColor } from '../chartColors';
 import { cat, spend, withRollup } from './factory';
 import type { Category } from '../context';
 

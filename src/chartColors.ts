@@ -18,8 +18,10 @@ export const OTHER_COLOR = '#565f89';
 
 // The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg.
 // Consumer: SpendingDonut's ring track — the surface that shows through the gap between wedges,
-// which is what makes that gap a divider.
+// which is what makes that gap a divider. (WHIT-408 removed this as unused; WHIT-403 gives it its
+// first consumer, so it comes back.)
 export const CHART_BG = '#16161e';
+
 
 // Slot → ramp position. A stored `colorSlot` is NOT a ramp index: the server hands out the LOWEST
 // FREE slot, so two categories created back-to-back get 5 and 6 — adjacent hues that read as the

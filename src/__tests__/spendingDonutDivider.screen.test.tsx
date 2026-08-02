@@ -11,7 +11,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-import { CHART_BG } from '../theme/chartColors';
+import { CHART_BG } from '../chartColors';
 import { C } from '../theme';
 import { sl, paintedBands, bandPath, arcExtentDeg, dividerGapPx } from './support/donut';
 

@@ -2,7 +2,7 @@
 // categories get 13 DISTINCT, fixed colours (the coffee/health/utilities collision a blind hash would
 // create is gone), and a category's colour is a pure, stable function of its id (never reshuffles).
 import { describe, it, expect } from '@jest/globals';
-import { chartCategoryColor, normalizeColorSlot, ASSIGNMENT_ORDER, CATEGORY_COLORS, OTHER_COLOR, BUILTIN_CATEGORY_INDEX } from '../theme/chartColors';
+import { chartCategoryColor, normalizeColorSlot, ASSIGNMENT_ORDER, CATEGORY_COLORS, OTHER_COLOR, BUILTIN_CATEGORY_INDEX } from '../chartColors';
 
 // The built-in category ids, mirroring the server seed (shared/repository_category.py).
 const BUILTIN_IDS = [

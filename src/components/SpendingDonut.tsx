@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { G, Circle, Path } from 'react-native-svg';
 import { C, FONT, fmt } from '../theme';
-import { CHART_BG, OTHER_COLOR } from '../theme/chartColors';
+import { CHART_BG, OTHER_COLOR } from '../chartColors';
 import { useReduceMotion } from '../motion/useReduceMotion';
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level

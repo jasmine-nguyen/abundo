@@ -17,7 +17,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-import { CHART_BG } from '../theme/chartColors';
+import { CHART_BG } from '../chartColors';
 import { sl, paintedBands, bandPath, arcPoints, arcExtentDeg, dividerGapPx, dividerGapDeg, ancestorProp } from './support/donut';
 
 // Every testID in RENDER order. SVG paints in document order, so later = drawn ON TOP.

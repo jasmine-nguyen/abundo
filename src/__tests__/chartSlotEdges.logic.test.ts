@@ -6,7 +6,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   chartCategoryColor, normalizeColorSlot, ASSIGNMENT_ORDER, CATEGORY_COLORS,
   OTHER_COLOR, BUILTIN_CATEGORY_INDEX,
-} from '../theme/chartColors';
+} from '../chartColors';
 import { toCategory } from '../context';
 
 // The server's seed slots, mirroring shared/repository_category.py SEED_CATEGORIES.

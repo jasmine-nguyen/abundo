@@ -4,7 +4,7 @@
 // than as a category. Nothing else in the suite pins that, because before this card the track was a
 // faint blue and a CHART_BG slice would merely have been dark.
 import { describe, it, expect } from '@jest/globals';
-import { CATEGORY_COLORS, CHART_BG, OTHER_COLOR, ASSIGNMENT_ORDER, chartCategoryColor } from '../theme/chartColors';
+import { CATEGORY_COLORS, CHART_BG, OTHER_COLOR, ASSIGNMENT_ORDER, chartCategoryColor } from '../chartColors';
 import { C } from '../theme';
 
 describe('the divider colour can never also be a slice colour', () => {
