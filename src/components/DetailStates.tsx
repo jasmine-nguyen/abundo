@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import { C, FONT } from '../theme';
+import { C, FONT, tint } from '../theme';
 import { RetryButton } from './ui';
 
 // WHIT-276: the cache-first loading/error/retry scaffold shared by the by-id detail screens
@@ -46,6 +46,6 @@ export function DetailStates({ isLoading, isError, hasCache, idPrefix, errorText
 const styles = StyleSheet.create({
   state: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
   stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

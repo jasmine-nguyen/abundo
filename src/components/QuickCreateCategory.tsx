@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { C, FONT } from '../theme';
+import { C, FONT, tint } from '../theme';
 import { Bucket, Category, eligibleParents } from '../context';
 import { CategoryFields } from './CategoryFields';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
@@ -107,7 +107,7 @@ export function QuickCreateCategory({
             <Text style={styles.btnGhostText}>Cancel</Text>
           </Pressable>
         )}
-        <Pressable onPress={submit} style={[styles.btn, { flex: 1, backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}>
+        <Pressable onPress={submit} style={[styles.btn, { flex: 1, backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}>
           <Text style={[styles.btnText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{submitLabel}</Text>
         </Pressable>
       </View>

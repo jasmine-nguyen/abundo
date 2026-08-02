@@ -66,7 +66,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingVertical: 13, paddingHorizontal: 14, marginBottom: 8 },
   chip: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   name: { flex: 1, fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
-  budgeted: { fontFamily: FONT.body, fontSize: 11, fontWeight: '600', color: C.accentSoft, backgroundColor: 'rgba(124,140,255,.14)', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 7 },
-  newBtn: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', backgroundColor: 'rgba(124,140,255,.07)', borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  budgeted: { fontFamily: FONT.body, fontSize: 11, fontWeight: '600', color: C.accentSoft, backgroundColor: tint(C.accentAlt, 0.14), paddingVertical: 3, paddingHorizontal: 8, borderRadius: 7 },
+  newBtn: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   newText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
 });

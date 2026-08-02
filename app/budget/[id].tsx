@@ -130,7 +130,7 @@ const styles = StyleSheet.create({
   daysLeft: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim },
   targetRow: { position: 'relative', height: 16, marginTop: 1 },
   targetLabel: { position: 'absolute', top: 4, transform: [{ translateX: -32 }], fontFamily: FONT.body, fontSize: 10, color: '#73737d', fontWeight: '500' },
-  dailyBox: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(124,140,255,.1)', borderRadius: 13, paddingVertical: 11, paddingHorizontal: 13, marginTop: 16 },
+  dailyBox: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: tint(C.accentAlt, 0.1), borderRadius: 13, paddingVertical: 11, paddingHorizontal: 13, marginTop: 16 },
   dailyText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.accentSofter },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 4, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginHorizontal: 4, marginBottom: 2, marginTop: 8 },

@@ -186,7 +186,7 @@ export default function Rules() {
 }
 
 const styles = StyleSheet.create({
-  addBtn: { width: 40, height: 40, backgroundColor: 'rgba(124,140,255,.16)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  addBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   searchWrap: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 4 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 13, paddingVertical: 4, paddingHorizontal: 14 },
   searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },
@@ -194,7 +194,7 @@ const styles = StyleSheet.create({
   // marginBottom 4 (not 14): the section header's marginTop 16 supplies the gap below the
   // intro, so first-section spacing (4 + 16 = 20) matches the pre-SectionList layout.
   intro: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 14, marginTop: 6, marginBottom: 4 },
-  introIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.14)', alignItems: 'center', justifyContent: 'center' },
+  introIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.14), alignItems: 'center', justifyContent: 'center' },
   introText: { flex: 1, fontFamily: FONT.body, fontSize: 13, color: '#b6b6c0', lineHeight: 19 },
   introBold: { color: '#fff', fontWeight: '700' },
   // marginTop absorbs the removed group-wrapper marginBottom so inter-section spacing (~24px:
@@ -210,8 +210,8 @@ const styles = StyleSheet.create({
   trash: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   stateCard: { alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingVertical: 28, paddingHorizontal: 14, marginBottom: 8 },
   stateText: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center' },
-  retryBtn: { paddingVertical: 9, paddingHorizontal: 18, borderRadius: 10, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryBtn: { paddingVertical: 9, paddingHorizontal: 18, borderRadius: 10, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.accentSoft },
-  newRuleBtn: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', backgroundColor: 'rgba(124,140,255,.07)', borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  newRuleBtn: { marginTop: 8, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   newRuleText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
 });

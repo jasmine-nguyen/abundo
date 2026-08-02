@@ -1,11 +1,32 @@
 // Design tokens ported from Whittle.dc.html (Whittle).
+
+// Convert a #rrggbb hex + alpha into an rgba() string (port of prototype `tint`).
+// Declared above C so the tokens below can build themselves from a base hex.
+export function tint(hex: string, a: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// C can't reference its own keys mid-literal, so the accent-derived tokens below build from this.
+// The one place the accent hex is written in the theme (WHIT-398) — the hairlines and the hero
+// gradient's first stop all derive from it, so a rebrand moves them together.
+// (src/context.tsx repeats this hex in its CATEGORY palette; that is a different colour that
+// happens to match, not the accent, and is deliberately not wired to this.)
+const ACCENT = '#7aa2f7';
+
 export const C = {
   bg: '#16161e',
   bgDeep: '#13131a',
   card: '#1f2030',
   cardAlt: '#24263a',
-  hairline: 'rgba(122,162,247,.1)',
-  hairlineStrong: 'rgba(122,162,247,.16)',
+  // Both hairlines ARE shades of the accent — derived, not hand-written, so repainting the accent
+  // carries them with it. They were literal rgba strings until WHIT-398, which meant a new accent
+  // silently left every card border on the old blue.
+  hairline: tint(ACCENT, 0.1),
+  hairlineStrong: tint(ACCENT, 0.16),
 
   text: '#c0caf5',
   textBright: '#d5daf5',
@@ -15,10 +36,20 @@ export const C = {
   textFaintest: '#414868',
   placeholder: '#565f89',
 
-  accent: '#7aa2f7',
+  accent: ACCENT,
   accentSoft: '#9db3f9',
   accentSofter: '#c0caf5',
   accentInk: '#16161e',
+
+  // The app's SECOND blue, used at ~8 alphas across ~50 surfaces: add buttons, dashed "new X"
+  // rows, retry pills, wash cards, disabled Save buttons, selected rows and icon tiles, the
+  // Insights cycle toggle. Written as the raw string 'rgba(124,140,255,...)' before WHIT-398.
+  // Deliberately NOT a shade of accent: this is #7c8cff = rgb(124,140,255), accent is
+  // #7aa2f7 = rgb(122,162,247). Rewriting tint(C.accentAlt, a) as tint(C.accent, a) silently
+  // repaints it a greener blue — accentAltSweep.logic.test.ts is what catches that.
+  // The three wash cards (AiCoachCard, mortgage contribCard, milestone nextCard) all sit at
+  // 0.1 fill / 0.22 border; accentAltWashCards.logic.test.ts is what keeps them matching.
+  accentAlt: '#7c8cff',
 
   good: '#2ac3de',
   goodBright: '#42d4ec',
@@ -34,7 +65,8 @@ export const C = {
   heroInk2: '#1a1b26',
 
   // Hero card gradient (Tokyo Night): accent-blue → indigo → purple, 150°.
-  heroGradFrom: '#7aa2f7',
+  // The gradient starts on the accent by design, so it derives rather than copying the hex.
+  heroGradFrom: ACCENT,
   heroGradMid: '#8b8ff5',
   heroGradTo: '#bb9af7',
 } as const;
@@ -46,15 +78,6 @@ export const FONT = {
   display: 'Inter Tight',
   body: 'Inter',
 } as const;
-
-// Convert a #rrggbb hex + alpha into an rgba() string (port of prototype `tint`).
-export function tint(hex: string, a: number): string {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${a})`;
-}
 
 export function fmt(n: number): string {
   return '$' + Math.round(Math.abs(n)).toLocaleString('en-US');

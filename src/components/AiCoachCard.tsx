@@ -125,9 +125,11 @@ export function AiCoachCard() {
 }
 
 const styles = StyleSheet.create({
-  // Coach card: a soft accent wash + accent hairline so it reads as "advice", sitting
-  // between the loud hero and the plain category rows.
-  aiCard: { backgroundColor: tint(C.accent, 0.07), borderWidth: 1, borderColor: tint(C.accent, 0.22), borderRadius: 20, padding: 16, marginBottom: 22 },
+  // Coach card: a soft wash + hairline so it reads as "advice", sitting between the loud hero
+  // and the plain category rows. WHIT-398 moved it onto accentAlt at 0.1/0.22 so it matches the
+  // other two wash cards (mortgage.tsx contribCard, milestone.tsx nextCard) — it was the last
+  // surface still built from C.accent at 0.07, which made it a slightly greener, fainter blue.
+  aiCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 20, padding: 16, marginBottom: 22 },
   aiHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   aiHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   aiEmoji: { fontSize: 15 },
