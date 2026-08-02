@@ -2,11 +2,21 @@
 
 Both read paths — the poller's shared/milestones._resolve_plan and the client read in
 shared/repository_milestone._to_client — carried their own copy of "is this saved row
-usable", and had already drifted: the poller rejected a non-finite target (WHIT-387) while
-the client read cast with float(), which turns NaN/Infinity into a bare NaN/Infinity token.
-That token is not valid JSON, so ONE corrupt row made the whole milestones response
-unparsable. This module owns the rule; each read path keeps only its genuine differences
-(log level and alarm token, and Decimal vs float for the target).
+usable", and had drifted: the poller rejected a non-finite target (WHIT-387) while the
+client read cast with float(). This module owns the rule; each read path keeps only its
+genuine differences (log level and alarm token, and Decimal vs float for the target).
+
+On reachability, so the next reader isn't misled about which guard earns its keep:
+  - REACHABLE through a legacy or hand-edited row — a blank label, a missing or unparsable
+    targetDate, a string/None/bytes target. The bad date is the one that actually bit: it
+    reaches lambda_api._review_candidates' date.fromisoformat outside any per-row guard and
+    500s the review endpoint.
+  - DEFENCE-IN-DEPTH — NaN and +Infinity, which boto3's TypeSerializer rejects before the
+    wire ("Infinity and NaN not supported"), and a target above ~1e309, which it rejects as
+    Overflow. Worth keeping (the rule is about what the STORE can hand back, not about what
+    today's writer happens to send), but they are not live bugs. Note boto3 is asymmetric:
+    it serialises Decimal("-Infinity") happily, so that one is not clearly unreachable.
+The save endpoint blocks all of the above, so any such row predates it or bypassed it.
 
 Flat top-level module on purpose: the Lambda layer stages shared/ with a NON-RECURSIVE
 `cp shared/*.py` (terraform/layers.tf), so a package directory here would be silently
@@ -95,8 +105,8 @@ def row_target_float(row) -> float:
     finite Decimal that float() still turns into inf, and inf serialises as a bare Infinity
     token that no JSON parser accepts.
     """
-    value = row_field(row, "targetBalance")
-    target = float(row_target(row))
-    if not math.isfinite(target):
-        raise MalformedMilestoneRow(f"milestone target too large for a float: {value!r}")
-    return target
+    target = row_target(row)
+    as_float = float(target)
+    if not math.isfinite(as_float):
+        raise MalformedMilestoneRow(f"milestone target too large for a float: {target}")
+    return as_float

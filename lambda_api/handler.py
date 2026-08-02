@@ -2414,7 +2414,13 @@ def _review_candidates(stored, balance, monthly_rate, monthly_payment, base_mont
     (amortization is memoryless, so the months-from-here difference is exact); ceil it to the first
     whole month at/below the target, matching how suggest pins its dates. Keep only milestones that
     are still ahead of the current balance AND at least the threshold behind their planned date.
-    The stored id + label ride along server-side (never sent to the model)."""
+    The stored id + label ride along server-side (never sent to the model).
+
+    `stored` MUST come from MilestoneRepository.get_milestones — its _to_client guarantees a
+    finite float target and a fromisoformat-parsable targetDate (WHIT-394). This loop has no
+    per-row guard of its own and lambda_handler catches only VersionConflictError, so feeding
+    it raw rows (get_milestones_raw, or a hand-built list) turns one corrupt row back into a
+    500 on "Review my plan"."""
     candidates = []
     for milestone in stored:
         target_balance = float(milestone["targetBalance"])

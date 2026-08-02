@@ -75,10 +75,11 @@ def _plan_marker(milestone: dict) -> str:
     # exceeds the decimal module's 28 working digits); re-raise it as the row error both read
     # paths skip on, or it would escape _resolve_plan into the poller's swallow and lose every
     # good row's celebration.
+    target = row_target(milestone)
     try:
-        amount = row_target(milestone).quantize(Decimal("0.01"))
+        amount = target.quantize(Decimal("0.01"))
     except InvalidOperation as e:
-        raise MalformedMilestoneRow(f"milestone target too large to quantize: {milestone['targetBalance']!r}") from e
+        raise MalformedMilestoneRow(f"milestone target too large to quantize: {target}") from e
     milestone_id = milestone.get("id")
     if milestone_id is None:
         return f"{_BAL_PREFIX}{amount}"
@@ -136,9 +137,9 @@ def _resolve_plan(milestone_repo=None, scope=None):
     # compare as Decimal > str -> TypeError OUTSIDE this loop, back in the poller's swallow.
     # After coercion target_balance is always a FINITE Decimal, so the comparison can't raise.
     #
-    # _plan_marker re-derives the target rather than taking it as an argument: five tests call it
-    # directly with one argument, and a plan is capped at 50 rows, so the repeat coercion is
-    # deliberate — don't "optimise" it into a two-argument form.
+    # _plan_marker re-derives the target rather than taking it as an argument: a plan is capped
+    # at 50 rows, so the repeat coercion is deliberate — it keeps _plan_marker callable with just
+    # a row, which is the whole reason it can be reasoned about (and tested) on its own.
     plan = []
     for row in stored:
         try:
@@ -153,11 +154,10 @@ def resolve_plan(milestone_repo=None, scope=None) -> list:
     they have one, else the built-in default MILESTONES (WHIT-384). Falls back to the default
     when the plan is UNSET (None) or the READ fails — a store hiccup must degrade to the
     default, never skip the celebration (the balance only moves down, so a dropped crossing is
-    never re-detected). Within a genuine saved list, a malformed row (missing label/targetBalance,
-    non-dict, or a non-numeric target) is skipped + logged with a distinct alarm token and the
-    rest still celebrate — never a WRONG default celebration in its place, and never the whole
-    poll's push lost to the poller's swallow (WHIT-387). An
-    empty list is a genuinely empty plan — reachable only by a direct write, since the API
+    never re-detected). Within a genuine saved list, any row milestone_rows rejects (WHIT-394) is
+    skipped + logged with a distinct alarm token and the rest still celebrate — never a WRONG
+    default celebration in its place, and never the whole poll's push lost to the poller's
+    swallow (WHIT-387). An empty list is a genuinely empty plan — reachable only by a direct write, since the API
     rejects an empty save. A None repo (every pre-WHIT-384 caller) also gets the default."""
     return _resolve_plan(milestone_repo, scope)[0]
 

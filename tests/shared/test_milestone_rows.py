@@ -151,13 +151,12 @@ def test_row_date_returns_the_date_unchanged(shared):
 
 # --- [C] the client read gains the missing rejections ------------------------------------
 
-@pytest.mark.parametrize("bad_target", [
-    Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity"), Decimal("1e100000"),
-])
-def test_client_read_skips_a_non_finite_target(shared, milestone_repo, bad_target):
+def test_client_read_skips_a_non_finite_target(shared, milestone_repo):
     # THE card's headline gap. Fail-on-revert: put `float(m["targetBalance"])` back in
-    # _to_client and the bad row survives as nan/inf, so this fails.
-    _store_raw_row(milestone_repo, [_row(id="good"), _row(id="bad", targetBalance=bad_target)])
+    # _to_client and the bad row survives as nan, so this fails.
+    # Only NaN here — Infinity/-Infinity/1e100000 are already locked at this same level by
+    # _CORRUPT_SHAPES below; duplicating them makes the parity table look weaker than it is.
+    _store_raw_row(milestone_repo, [_row(id="good"), _row(id="bad", targetBalance=Decimal("NaN"))])
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["good"]
 
 
@@ -180,13 +179,13 @@ def test_set_milestones_return_value_is_validated_too(shared, milestone_repo):
 
 
 @pytest.mark.parametrize("bad_row, why", [
-    (_row(label=""), "blank label"),
-    (_row(label=None), "null label"),
+    # Date shapes only — the blank/null LABEL cases are in _CORRUPT_SHAPES below, since both
+    # paths reject those. The date rule is client-only, so it can't live in the parity table.
     (_row(targetDate=""), "blank date"),
     (_row(targetDate=None), "null date"),
     (_row(targetDate="not-a-date"), "unparsable date"),
 ])
-def test_client_read_skips_a_blank_label_or_unparsable_date(shared, milestone_repo, bad_row, why):
+def test_client_read_skips_an_unparsable_date(shared, milestone_repo, bad_row, why):
     # WHIT-394 option B3. A null targetDate reaches _review_candidates' date.fromisoformat,
     # which raises OUTSIDE any per-row guard -> a 500 on the review endpoint. Fail-on-revert:
     # swap row_text/row_date back for a plain lookup and the bad row survives.
@@ -228,12 +227,14 @@ def test_both_read_paths_drop_the_same_corrupt_rows(shared, milestone_repo, why,
     assert poller_labels == ["Halfway"], f"poller read kept the {why} row"
 
 
-def test_the_one_remaining_divergence_is_pinned_not_accidental(shared, milestone_repo):
+def test_the_target_precision_divergence_is_pinned_not_accidental(shared, milestone_repo):
     # HONEST GAP, deliberately not closed by WHIT-394: a target between ~1e26 and ~1e309 is a
     # fine float (client KEEPS it) but can't quantize to cents (poller DROPS it). Closing it
     # would impose the poller's cent-precision constraint on a client read that has no such
     # need. Unreachable in practice — the save endpoint caps targetBalance at 1e9. Pinned here
     # so it stays a known, chosen difference rather than silent drift.
+    # NOT the only divergence — the client-only date rule and the missing-`id`-KEY case are
+    # pinned in test_milestone_rows_gaps.py [B1]/[B2].
     stored = [_row(id="big", targetBalance=Decimal("1e26"))]
     _store_raw_row(milestone_repo, stored)
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["big"]
