@@ -10,8 +10,13 @@ import json
 
 import pytest
 
+from _lambda_api_constants import api_constant
+
 VALID = {"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, "baseRepay": 1240, "extra": 200}
-CEILING = 1_000_000_000  # LOANFACTS_FIELD_MAX
+# Read from lambda_api/constants.py rather than hand-copied (WHIT-393), so changing the
+# ceiling there needs no edit here. Bound at import time, so the parametrize tables below
+# (which are built at collection time, before any fixture runs) can use it.
+CEILING = api_constant("LOANFACTS_FIELD_MAX")
 
 
 class FakeLoanFactsRepo:

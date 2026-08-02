@@ -23,6 +23,13 @@ const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack, push: jest.fn() }) }));
 
 import Loan from '../../app/loan';
+import { LOANFACTS_FIELD_MAX } from '../loanLimits';
+import { fmtCompact } from '../theme';
+
+// Derived from the ceiling (WHIT-393) so a change to it needs no edit here. The prose is
+// written out on purpose — a reworded toast must still be changed deliberately in both places.
+const OVER = String(LOANFACTS_FIELD_MAX + 1);
+const DEPOSIT_TOAST = `Keep the deposit target to ${fmtCompact(LOANFACTS_FIELD_MAX)} or less.`;
 
 const EMPTY: LoanFacts = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
@@ -70,17 +77,17 @@ it('[A6b] a zero deposit target is rejected the same way (> 0 guard, not just fi
   expect(saveLoanFacts).not.toHaveBeenCalled();
 });
 
-it('[A8] a deposit target over the $1B ceiling is blocked by its own toast, no save', async () => {
+it('[A8] a deposit target over the ceiling is blocked by its own toast, no save', async () => {
   const saveLoanFacts = jest.fn(async (_f: LoanFactsInput) => true);
   const showToast = jest.fn();
   mockState = state({ saveLoanFacts: saveLoanFacts as AppContext['saveLoanFacts'], showToast: showToast as AppContext['showToast'] });
   render(<Loan />);
   fillValid();
-  fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), '1000000001');
+  fireEvent.changeText(screen.getByPlaceholderText('e.g. 120000'), OVER);
   await act(async () => { fireEvent.press(screen.getByText('Save loan details')); });
   // Distinct from the finite/>0 toast — this is the ceiling message. Fail-on-revert: drop the
-  // deposit-target ceiling guard and 1000000001 sails through to saveLoanFacts.
-  expect(showToast).toHaveBeenCalledWith('Keep the deposit target under $1B.');
+  // deposit-target ceiling guard and an over-ceiling value sails through to saveLoanFacts.
+  expect(showToast).toHaveBeenCalledWith(DEPOSIT_TOAST);
   expect(saveLoanFacts).not.toHaveBeenCalled();
   expect(mockBack).not.toHaveBeenCalled();
 });

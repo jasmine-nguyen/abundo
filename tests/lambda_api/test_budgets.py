@@ -170,6 +170,30 @@ def test_set_budget_too_large_400(handler):
     assert repo.set_calls == []
 
 
+def test_the_budget_target_cap_is_pinned_and_its_boundary_holds(handler):
+    """WHIT-393 named the bare `1_000_000_000` in set_budget `_BUDGET_TARGET_MAX`, which
+    makes it READ as guarded — but the only test reaching that branch sends 1e40, so a
+    1000x typo in the cap would ship green while a $2M target started 400ing. Pin the
+    value, and walk the real boundary either side of it.
+
+    If you are deliberately changing the cap, this is the ONE test that should go red."""
+    cap = handler._BUDGET_TARGET_MAX
+    assert isinstance(cap, int) and cap == 1_000_000_000, (
+        f"the budget target cap is now {cap!r}, not 1_000_000_000 — if you meant to change "
+        "it, update this pin too; if you didn't, this is the typo it exists to catch"
+    )
+
+    at_cap = handler.set_budget(
+        _put_budget_event(body=json.dumps({"target": cap})), FakeBudgetRepo(), FakeCategoryRepo())
+    assert at_cap["statusCode"] == 200, "the cap itself must be accepted (the guard is strict >)"
+
+    over_repo = FakeBudgetRepo()
+    over = handler.set_budget(
+        _put_budget_event(body=json.dumps({"target": cap + 1})), over_repo, FakeCategoryRepo())
+    assert over["statusCode"] == 400
+    assert over_repo.set_calls == []
+
+
 def test_set_budget_missing_path_param_404(handler):
     repo = FakeBudgetRepo()
     event = _put_budget_event()
