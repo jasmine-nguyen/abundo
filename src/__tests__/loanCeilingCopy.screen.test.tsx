@@ -1,4 +1,4 @@
-// WHIT-393 — [C1]-[C5]: is the ceiling toast the user actually sees HONEST about the ceiling?
+// WHIT-393 — [C1]-[C4]: is the ceiling toast the user actually sees HONEST about the ceiling?
 //
 // Why this file exists. Every other loan-form suite now builds its expected toast with the same
 // fmtCompact the screen uses, so the FIGURE in the message is never independently checked — flip
@@ -59,7 +59,9 @@ function dollarsNamedIn(sentence: string): number {
   expect(token).not.toBeNull();
   const match = /^\$([\d,]+(?:\.\d+)?)([BM]?)$/.exec(token![0])!;
   const unit = match[2] === 'B' ? 1_000_000_000 : match[2] === 'M' ? 1_000_000 : 1;
-  return Number(match[1].replace(/,/g, '')) * unit;
+  // Rounded because the multiply is not exact for every tenth — Number('4.1') * 1e9 lands on
+  // 4100000000.0000005, which would fail the exact comparisons below at a $4.1B ceiling.
+  return Math.round(Number(match[1].replace(/,/g, '')) * unit);
 }
 
 // Trigger each ceiling toast and hand back the exact string the screen passed to showToast.
@@ -86,19 +88,15 @@ function depositCeilingToast(): string {
 beforeEach(() => { mockBack.mockClear(); });
 
 describe('the ceiling toast tells the truth about the ceiling', () => {
-  it('[C1] the amounts toast never names a figure ABOVE the real ceiling', () => {
-    // The harmful direction: naming more than the guard allows sends the user round a loop —
-    // they retype the figure the message told them to and get the same message back.
-    expect(dollarsNamedIn(amountCeilingToast())).toBeLessThanOrEqual(LOANFACTS_FIELD_MAX);
-  });
-
-  it('[C2] the amounts toast names the ceiling EXACTLY', () => {
-    // "or less" is an inclusive promise, so the figure has to be the actual bound. Naming
-    // less is safe but wrong; naming more is [C1]. Both are caught here.
+  it('[C1] the amounts toast names the ceiling EXACTLY', () => {
+    // "or less" is an inclusive promise, so the figure has to be the actual bound. Naming less
+    // is safe but wrong; naming MORE is the harmful direction — it sends the user round a loop,
+    // retyping the figure the message told them and getting the same message back. Exact
+    // equality catches both, so there is no separate "never above" case to write.
     expect(dollarsNamedIn(amountCeilingToast())).toBe(LOANFACTS_FIELD_MAX);
   });
 
-  it('[C3] the deposit-target toast names the ceiling EXACTLY too', () => {
+  it('[C2] the deposit-target toast names the ceiling EXACTLY too', () => {
     expect(dollarsNamedIn(depositCeilingToast())).toBe(LOANFACTS_FIELD_MAX);
   });
 });
@@ -107,13 +105,13 @@ describe('the corrected wording (WHIT-393)', () => {
   // The guard is strict `>`, so exactly the ceiling is ACCEPTED (locked by [G4]-[G6]). The old
   // copy said "under $1B", which was wrong by a dollar. These lock the fix so it can't drift
   // back, independently of the figure.
-  it('[C4] the amounts toast says "or less", never "under"', () => {
+  it('[C3] the amounts toast says "or less", never "under"', () => {
     const toast = amountCeilingToast();
     expect(toast).toContain('or less');
     expect(toast).not.toMatch(/\bunder\b/i);
   });
 
-  it('[C5] the deposit-target toast says "or less", never "under"', () => {
+  it('[C4] the deposit-target toast says "or less", never "under"', () => {
     const toast = depositCeilingToast();
     expect(toast).toContain('or less');
     expect(toast).not.toMatch(/\bunder\b/i);

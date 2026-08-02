@@ -13,6 +13,10 @@ This reads BOTH values and asserts they match, so editing one side without the
 other fails loudly. It parses the TypeScript client as TEXT (no JS runtime in
 the pytest suite) via a simple regex over the `const LOANFACTS_FIELD_MAX = ...`
 declaration — same approach as tests/shared/test_milestones_twin_drift.py.
+
+WHIT-393 added one more assertion here: a pin on the ceiling's actual VALUE.
+Every test mirror now derives from lambda_api/constants.py, so without the pin
+a typo in that file would ship green.
 """
 
 import pathlib
@@ -63,7 +67,7 @@ def test_exactly_one_client_ceiling_declaration():
     )
 
 
-def test_the_loanfacts_ceiling_is_still_one_billion():
+def test_the_loanfacts_ceiling_value_is_pinned():
     """WHIT-393 made every test mirror derive from lambda_api/constants.py, so nothing
     else asserts the ceiling's actual VALUE any more — a typo there (1_000_000 for
     1_000_000_000) would leave the whole suite green while the app silently rejected

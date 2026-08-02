@@ -11,7 +11,8 @@ nobody deploys. These pin the three properties the rest of the consolidation lea
   [B3] it re-reads the file every call — no caching, no .pyc, no sys.modules;
   [B4] it does not register `constants` in sys.modules (the docstring's whole reason for
        exec'ing instead of importing — `constants` is in the _COLLIDING list of the
-       lambda_api conftest, and importing it here would poison the sibling suites).
+       lambda_api conftest, and importing it here would poison the sibling suites);
+  [B5] the namespace is fresh per call, so a name deleted from the file stops resolving.
 """
 
 import sys
@@ -65,8 +66,9 @@ def test_does_not_register_constants_in_sys_modules(monkeypatch):
 
 
 def test_the_namespace_is_not_shared_between_calls(tmp_path, monkeypatch):
-    """A fresh namespace per call: a name defined by one read must not survive into the
-    next, or a constant deleted from the file would keep resolving."""
+    """[B5] A fresh namespace per call: a name defined by one read must not survive into
+    the next, or a constant deleted from the file would keep resolving. Distinct from [B3]:
+    an implementation that re-execs into ONE shared namespace passes [B3] and fails this."""
     stub = tmp_path / "constants.py"
     stub.write_text("ONLY_HERE_FIRST = 1\n")
     monkeypatch.setattr(helper, "_API_CONSTANTS", stub)

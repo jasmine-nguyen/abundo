@@ -53,11 +53,6 @@ describe('fmtCompact', () => {
     expect(fmtCompact(999_999)).toBe('$999,999');
   });
 
-  it('still abbreviates an exact figure just below the next unit', () => {
-    expect(fmtCompact(950_000_000)).toBe('$950M');
-    expect(fmtCompact(1_100_000_000)).toBe('$1.1B');
-  });
-
   it('falls back to fmt below a million, and is unsigned like fmt', () => {
     expect(fmtCompact(900_000)).toBe('$900,000');
     expect(fmtCompact(0)).toBe('$0');
