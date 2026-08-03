@@ -7,7 +7,7 @@ import { describe, it, expect } from '@jest/globals';
 import { C } from '../theme';
 
 describe('the ink tokens still match the background hex they were copied from (tripwire)', () => {
-  // [Q22] TRIPWIRE, not a design rule — same contract as [Q15]/[Q19]. accentInk is chosen to be
+  // [Q22] TRIPWIRE, not a design rule — same contract as [Q15]. accentInk is chosen to be
   // legible ON the accent blue; C.bg is chosen to be a good screen surface. They are equal today
   // by coincidence. Retuning the background is NOT a reason to repaint button ink, and this failing
   // is the prompt to decide which of the two actually needed to move.

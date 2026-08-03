@@ -13,9 +13,17 @@ export const CATEGORY_COLORS = [
 
 // The neutral grey the donut folds small slices into ("Other"). Deliberately OUTSIDE the ramp and
 // low-saturation so it reads as "not one thing" — reserved for "Other" only, never a real category.
-// Same value as C.textFaint — a coincidence of the palette, not a derivation, pinned by
-// otherColorToken.logic.test.ts [Q19]. Retuning either without the other reddens it, on purpose.
-export const OTHER_COLOR = '#565f89';
+//
+// WHIT-400 lifted it from #565f89, which measured 2.91:1 against CHART_BG — under the 3:1 WCAG
+// minimum for a graphic you need to make out, while every category colour sits at 8:1+. In OKLCH
+// only lightness moved (0.496 -> 0.569); hue 274 -> 275 and chroma 0.068 -> 0.069 are unchanged, so
+// it is the same grey, just no longer disappearing. It stays a full 0.2 lightness below the ramp
+// (all at L 0.765), so it still cannot be mistaken for a category.
+//
+// It used to equal C.textFaint, and that equality was pinned. The lift deliberately severs it: the
+// wedge is a large fill chosen for contrast, C.textFaint is small ink. otherColorToken.logic.test.ts
+// [Q19] now guards the properties that actually matter instead of the coincidence.
+export const OTHER_COLOR = '#6b74a0';
 
 // The chart surface / slice-divider token (Tokyo Night bg). Same value as C.bg — pinned by
 // chartDividerColor.logic.test.ts [Q15], the same tripwire [Q19] gives OTHER_COLOR above.

@@ -1,11 +1,12 @@
 // WHIT-400 (QA gap) — [Q20][Q21] the MISSING LINK in this card's guard chain.
-// [Q19] (otherColorToken.logic.test.ts) pins the TOKEN: OTHER_COLOR === C.textFaint. Nothing pinned
+// [Q19]/[Q25] (otherColorToken.logic.test.ts) pin the TOKEN: that OTHER_COLOR lifts far enough off
+// the chart background to be seen, and stays far enough from the category ramp. Nothing pinned
 // that the "Other" wedge is actually PAINTED that token. Before this file, SpendingDonut.tsx's
 // `color: OTHER_COLOR` (reduceSlices) could be swapped for any other colour and the whole suite —
-// 1053 logic tests, twelve donut screen suites, [Q19] included — stayed green. The existing
+// 1053 logic tests, twelve donut screen suites, the token guards included — stayed green. The existing
 // OTHER_COLOR assertions are all NEGATIVE ("no category is ever this grey"); none is positive.
 //
-// So this is the assertion that makes [Q19] mean something: token → paint. Kept as a `screen` test
+// So this is the assertion that makes those guards mean something: token → paint. Kept as a `screen` test
 // because reduceSlices lives in a React-Native component module.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
