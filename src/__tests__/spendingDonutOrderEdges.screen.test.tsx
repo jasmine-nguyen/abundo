@@ -11,7 +11,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-import { opacityOf, sl, paintedOrder } from './support/donut';
+import { opacityOf, sl, paintedOrder, DIM_BLUE } from './support/donut';
 
 const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
 const labelOf = (testID: string) => String(screen.getByTestId(testID).props.accessibilityLabel);
@@ -127,14 +127,14 @@ describe('SpendingDonut — a data change that reorders the ring', () => {
     fireEvent.press(screen.getByTestId('donut-slice-b'));
     expect(paintedOrder()).toEqual(['a', 'b']);
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$60');
-    expect(opacityOf('a')).toBeCloseTo(0.4);
+    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE);
 
     rerender(<SpendingDonut slices={[sl('a', 50), sl('b', 120)]} />); // b overtakes a
 
     expect(paintedOrder()).toEqual(['b', 'a']);                                   // ring really swapped
     expect(screen.getByTestId('donut-center-amount').props.children).toBe('$120'); // still b, new total
     expect(opacityOf('b')).toBeCloseTo(1);                                        // still popped
-    expect(opacityOf('a')).toBeCloseTo(0.4);                                      // still dimmed
+    expect(opacityOf('a')).toBeCloseTo(DIM_BLUE);                                      // still dimmed
   });
 
   // [Q13] The reorder must not break the divider: after the swap the wedges are still laid out

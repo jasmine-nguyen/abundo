@@ -18,7 +18,7 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
 import { CHART_BG } from '../chartColors';
-import { sl, paintedBands, bandPath, arcPoints, arcExtentDeg, dividerGapPx, dividerGapDeg, ancestorProp } from './support/donut';
+import { sl, paintedBands, bandPath, arcPoints, arcExtentDeg, dividerGapPx, dividerGapDeg, ancestorProp, DIM_BLUE } from './support/donut';
 
 // Every testID in RENDER order. SVG paints in document order, so later = drawn ON TOP.
 const testIdOrder = (): string[] => {
@@ -162,7 +162,7 @@ describe('SpendingDonut — the track is under the wedges and outside the select
 
   // [Q5] The track must not be swept up in a wedge's pop/dim: it is a child of the STATIC group, so
   // it carries no animated opacity and does not scale. If it ever moved inside a wedge's animated
-  // group, every divider would fade to 40% with its wedge and the ring would look smeared while a
+  // group, every divider would fade with its wedge and the ring would look smeared while a
   // slice is selected. REGRESSION GUARD (the current structure has always been this way).
   it('[Q5] selecting a wedge leaves exactly one track, still CHART_BG, with no emphasis opacity', () => {
     render(<SpendingDonut slices={THREE} />);
@@ -171,7 +171,7 @@ describe('SpendingDonut — the track is under the wedges and outside the select
     expect(screen.getAllByTestId('donut-track')).toHaveLength(1);
     expect(screen.getByTestId('donut-track').props.stroke).toBe(CHART_BG);
     expect(ancestorProp('donut-track', 'opacity')).toBeUndefined();  // not inside any animated wedge group
-    expect(ancestorProp('donut-band-b', 'opacity')).toBeCloseTo(0.4); // sanity: the helper does find one
+    expect(ancestorProp('donut-band-b', 'opacity')).toBeCloseTo(DIM_BLUE); // sanity: the helper does find one
   });
 });
 

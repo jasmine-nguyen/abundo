@@ -2,7 +2,7 @@
 // justifies making the divider a GAP over the CHART_BG track rather than a drawn line because the gap
 // "grows and moves with a popped wedge (a static line would not)". Nothing in the suite pinned that:
 // flattening the pop's outputRange to [1, 1, 1] leaves all 57 existing donut tests green, so the
-// divider's stated reason for existing could silently stop being true. [Q5]/[Q12] pin the DIM opacity
+// divider's stated reason for existing could silently stop being true. [Q5]/[Q12] pin the dimmed opacity
 // only; [Q6]/[D4] pin the overlay's arc geometry but not that it is scaled.
 // react-native-svg is stubbed to plain Views by jest.setup and the emphasis springs resolve to plain
 // numbers, so the animated group's `scale` is readable straight off the rendered node.
