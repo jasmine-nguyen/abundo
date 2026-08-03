@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { G, Circle, Path } from 'react-native-svg';
 import { C, FONT, fmt } from '../theme';
 import { CHART_BG, OTHER_COLOR } from '../chartColors';
+import { wedgeDimOpacity } from '../contrast';
 import { useReduceMotion } from '../motion/useReduceMotion';
 
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
@@ -17,6 +18,10 @@ import { useReduceMotion } from '../motion/useReduceMotion';
 
 export interface DonutSlice { id: string; name: string; color: string; value: number }
 
+// The synthesised fold bucket's id. Named because behaviour keys off it: "Other" is not a real
+// category, so it sits out the highlight entirely (see dimOpacityFor).
+export const OTHER_SLICE_ID = '__other__';
+
 // Reduce the full top-level list to at most `max` painted slices: keep the largest `max-1`,
 // fold everything smaller into a single neutral "Other" slice. A pie with too many thin
 // wedges is unreadable (dataviz: a 9th series folds into "Other"), and the rows below still
@@ -27,7 +32,7 @@ export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
   const kept = positive.slice(0, max - 1);
   const rest = positive.slice(max - 1);
   const otherValue = rest.reduce((sum, s) => sum + s.value, 0);
-  if (otherValue > 0) kept.push({ id: '__other__', name: 'Other', color: OTHER_COLOR, value: otherValue });
+  if (otherValue > 0) kept.push({ id: OTHER_SLICE_ID, name: 'Other', color: OTHER_COLOR, value: otherValue });
   return kept;
 }
 
@@ -83,11 +88,24 @@ const GAP_DEG = (DIVIDER_PX / CIRC) * 360;
 // parent group (baked in once at render, never dropped); each wedge's animation carries ONLY a
 // scale about its own origin, which the parent's shift turns into a scale about the centre.
 const SEL_SCALE = 1.1;
-// How far the un-focused wedges fade back when one is picked. High enough that each wedge KEEPS
-// its colour identity (at a heavier fade, distinct hues all collapse toward the black background
-// and two different categories read as the same muddy tone), low enough that the picked wedge —
-// full opacity, popped — still clearly leads.
-const DIM = 0.4;
+// How far an un-focused wedge fades back when another is picked — DERIVED per wedge, not chosen.
+//
+// A faded wedge sits on the opaque CHART_BG track below and nothing else: it never scales (the −1
+// side of SEL_SCALE outputs 1) and never overlaps a neighbour (`inset` is always positive), so its
+// backdrop is known exactly and the fade can be computed. Each wedge fades only as far as it can
+// while still clearing WCAG 1.4.11's 3:1 against that track — so a darker wedge fades less than a
+// bright one. Equal visibility, unequal fade. WHIT-425 replaced a flat 0.4 here, which left the
+// wedges at 1.65–2.46:1; the flat value had been tuned against a faint blue lift that WHIT-403
+// deleted when it repainted the track to the flat page background.
+//
+// "Other" sits the highlight out entirely. It is the synthesised fold bucket, not a real category,
+// so it has nothing to say about which category you picked — and a near-unfaded 0.83 (its own
+// contrast floor) would make the one non-category wedge the second-brightest thing on the ring and
+// read as "also selected". Unfaded it measures 3.97:1, so it clears the bar by standing still.
+function dimOpacityFor(slice: DonutSlice): number {
+  if (slice.id === OTHER_SLICE_ID) return 1;
+  return wedgeDimOpacity(slice.color);
+}
 // Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
 // POP_OUTER is the farthest anything DRAWN OR TAPPED reaches from the centre — the wider HIT band
 // out-reaches the visible one, so budget from whichever is thicker (else a popped wedge's tap area
@@ -223,7 +241,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     // origin, so this scales it in place; the static parent <G> shifts it to the box centre.
     const v = emphasisOf(s.id);
     const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
-    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [DIM, 1, 1], extrapolate: 'clamp' });
+    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [dimOpacityFor(s), 1, 1], extrapolate: 'clamp' });
 
     const isSel = s.id === activeId;
     const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
