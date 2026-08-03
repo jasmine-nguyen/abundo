@@ -81,7 +81,9 @@ function categoryColorHash(id: string): number {
 
 // A category's chart colour on the Insights screen.
 // PREFERRED: its stored, permanent `colorSlot` resolved through ASSIGNMENT_ORDER — assigned once
-// server-side, so adding or deleting a category can never repaint another one.
+// server-side, so adding or deleting a category can never repaint another one. ONE exception,
+// once per account: accounts that migrated before the server spread its colours are levelled a
+// single time (WHIT-428), so a few categories change colour once and then never again.
 // FALLBACK (slot absent or unusable): the id-derived colour — built-in → its fixed slot, unknown id
 // → a stable hashed slot, null/blank id → the first ramp colour. Kept ON PURPOSE: it makes deploy
 // ordering a preference rather than a hard gate, so a client running ahead of the server degrades

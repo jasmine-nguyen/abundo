@@ -34,7 +34,15 @@ CATEGORY_PALETTE = [
 ]
 
 # `colorSlot` is the PERMANENT chart colour of a category: an integer assigned once and
-# stored, never recomputed. Adding or deleting a category therefore cannot repaint any other.
+# stored. Adding or deleting a category cannot repaint any other.
+#
+# ONE exception, once per store: the schema-1 -> schema-2 repaint (WHIT-428). Stores migrated
+# under the old constant slot-0 overflow are piled — up to 11 categories on Eating Out's
+# colour — so they are levelled once, then never again. While that repaint drains, the read
+# path previews the colours it is ABOUT to store; a create or delete landing mid-drain shifts
+# the allowance, so a not-yet-written row can preview one colour and settle on another. A
+# WRITTEN slot is never rewritten. Accepted deliberately: the alternative is showing the old
+# piled colours for several reads and then flipping them all at once.
 #
 # A slot is NOT a position on the colour ramp. The client (slice 2) resolves it through a
 # fixed permutation, ASSIGNMENT_ORDER, arriving in src/chartColors.ts:
@@ -53,7 +61,10 @@ CATEGORY_PALETTE = [
 # so the run of three is gone and nothing tighter replaced it.
 # Two runs of three REMAIN and are tighter than the one removed: fitness/transport/phonenet at ramp
 # 12-14 and pets/gifts/subs at 16-18. NOTE: this only paints NEW stores; a slot is permanent once
-# stored, so existing accounts keep the old layout (WHIT-405).
+# stored, so existing accounts keep the old layout (WHIT-405). The WHIT-428 repaint does not
+# change that: it only moves rows off an OVER-SUBSCRIBED colour, and a built-in sitting on its
+# own designated slot is always the keeper. A built-in sitting on some OTHER built-in's slot has
+# only alphabetical priority there, so the repaint may move it.
 SEED_CATEGORIES = {
     "coffee": {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle", "colorSlot": 9},
     "groceries": {"id": "groceries", "name": "Groceries", "icon": "cart", "color": "#7FD49B", "bucket": "Living", "colorSlot": 11},
@@ -74,9 +85,12 @@ SEED_CATEGORIES = {
 _COLOR_SLOT_COUNT = 20
 _COLOR_SLOT_FIELD = "colorSlot"
 # Marker on the CONFIG ITEM saying every stored category has been stamped. Its presence is
-# what makes the backfill one-time rather than a re-check on every read.
+# what makes the migration one-time rather than a re-check on every read. Versions:
+#   1 = every row holds a valid slot
+#   2 = ...and no colour is worn by more categories than it has to be (WHIT-428's repaint)
+# _is_slot_migrated compares >=, so a store stamped 1 reads as unmigrated and repaints once.
 _COLOR_SLOT_SCHEMA_FIELD = "colorSlotSchema"
-_COLOR_SLOT_SCHEMA = 1
+_COLOR_SLOT_SCHEMA = 2
 # How many categories one backfill write may stamp (WHIT-405). DynamoDB caps an
 # UpdateExpression at 4KB; each clause costs 29-33 bytes depending on the index width, over a
 # 33-byte base, so 129 clauses (4070 bytes) is the last that fits and 130 (4103) is rejected.
@@ -252,6 +266,108 @@ def color_slot_plan_order(plan: dict) -> list:
     alphabetical prefix stopped working the moment pass 2 started spreading (WHIT-428).
     """
     return list(plan)
+
+
+def _repaint_allowance(row_count: int) -> int:
+    """The most categories one colour may be worn by once the ramp is level: ceil(rows/20).
+
+    Depends ONLY on how many categories the store has, never on where they sit. That is
+    exactly what lets a half-written repaint be re-planned to the same answer, which is what
+    makes chunking the repaint equivalent to one shot.
+    """
+    return max(1, -(-row_count // _COLOR_SLOT_COUNT))
+
+
+def _repaint_movers(items: dict) -> list:
+    """The map KEYS that must leave their slot, alphabetically.
+
+    Keyed by the MAP KEY, never the inner "id" field — the plan, the write and the read-path
+    overlay are all map-keyed, so a row whose inner id disagrees would otherwise be planned
+    under one name and stamped under another.
+
+    Keeper priority per slot is ABSOLUTE, so the same rows keep the slot on every
+    recomputation: the built-in whose DESIGNATED slot this is goes first (it never loses the
+    hue it was solved for), then alphabetical. A slot held by `allowance` or fewer categories
+    produces no movers at all — a stored slot stays permanent unless it is part of a pile.
+    """
+    allowance = _repaint_allowance(len(items))
+    by_slot = {}
+    for cat_id, cat in items.items():
+        slot = _coerce_slot(cat.get(_COLOR_SLOT_FIELD))
+        if slot is not None:
+            by_slot.setdefault(slot, []).append(cat_id)
+    movers = []
+    for slot, holders in by_slot.items():
+        holders.sort(key=lambda cat_id: (
+            (SEED_CATEGORIES.get(cat_id) or {}).get(_COLOR_SLOT_FIELD) != slot, cat_id))
+        movers.extend(holders[allowance:])
+    return sorted(movers)
+
+
+def plan_color_slot_repaint(items: dict) -> dict:
+    """{map key -> new slot} for rows piled above the allowance, and nothing else.
+
+    The one-off levelling of stores that migrated under WHIT-404's constant slot-0 overflow
+    (WHIT-428). Empty once the ramp is level, which is why an already-level store costs one
+    marker-only write and nothing more.
+
+    Minimal churn on purpose: only the rows ABOVE the allowance move. A full re-plan would
+    repaint ~24% more rows, including rows a POST already told the client about.
+
+    A destination can never itself exceed the allowance: the keepers total at most
+    20*allowance and the movers are unplaced, so some slot is always strictly below it and
+    least_held_color_slot picks the minimum. So a moved row is never a mover again, and a
+    row's source is never its own destination.
+    """
+    movers = _repaint_movers(items)
+    if not movers:
+        return {}
+    moving = set(movers)
+    counts = color_slot_counts(
+        {cat_id: cat for cat_id, cat in items.items() if cat_id not in moving}
+    )
+    plan = {}
+    for cat_id in movers:
+        plan[cat_id] = least_held_color_slot(counts, frozenset())
+        counts[plan[cat_id]] += 1
+    return plan
+
+
+def _with_slots(items: dict, plan: dict) -> dict:
+    """`items` as it will read once `plan` is persisted.
+
+    Builds FRESH rows: the caller's rows are also used to build the response, so writing the
+    slot into the shared inner dicts would hand the client colours the store does not hold.
+    """
+    return {
+        cat_id: ({**cat, _COLOR_SLOT_FIELD: Decimal(plan[cat_id])} if cat_id in plan else cat)
+        for cat_id, cat in items.items()
+    }
+
+
+def plan_color_slot_stage(items: dict, *, repainted: bool) -> tuple:
+    """(the next mapping to persist, whether persisting it SETTLES the store).
+
+    Two stages, in order. Stage 1 is the backfill: while any row lacks a slot the histogram is
+    not meaningful yet, so the repaint waits. Stage 2 is the one-off repaint, skipped entirely
+    once the store carries the schema-2 marker — that skip is what makes a colour change happen
+    at most once, even if a later delete would put a slot back over the allowance.
+
+    `settled` is what the marker waits on, and it is "does anything follow THIS plan", not
+    "which stage is this". A store needing BOTH stages must not be stamped on the backfill's
+    last chunk, or the row the repaint owed is stranded on a shared colour forever. But a store
+    needing only the backfill must still stamp on that last chunk — answering "no" there would
+    cost every legacy store an extra write, which the chunk-boundary tests pin.
+
+    An already-repainted store still backfills (a corrupt stored slot would produce a plan) and
+    is settled by it: the migration is over, and the repaint must not run a second time.
+    """
+    backfill = plan_color_slot_backfill(items)
+    if repainted:
+        return backfill, True
+    if backfill:
+        return backfill, not plan_color_slot_repaint(_with_slots(items, backfill))
+    return plan_color_slot_repaint(items), True
 
 
 def _designated_builtin_slots(plan: dict) -> frozenset:
@@ -447,9 +563,14 @@ class CategoryRepository:
         raw = _coerce_slot_schema(item.get(_COLOR_SLOT_SCHEMA_FIELD))
         return raw >= _COLOR_SLOT_SCHEMA
 
-    def _write_color_slots(self, version: Any, plan: dict, *, strict: bool) -> None:
+    def _write_color_slots(self, version: Any, plan: dict, *, strict: bool,
+                           settled: bool) -> None:
         """Persist up to _COLOR_SLOT_WRITE_CHUNK of a colour-slot plan, stamping the store as
-        migrated once the plan is fully drained.
+        migrated once the plan is fully drained AND nothing follows it.
+
+        `settled` has NO default on purpose. _is_slot_migrated compares >=, so a store stamped
+        by a call site that forgot the flag would never repaint and would stay mispainted
+        forever. A missed call site must be a TypeError, not a silent permanent bug.
 
         CHUNKING IS EQUIVALENT TO ONE SHOT, and not for the obvious reason. It is NOT because
         planned slots are distinct — past 20 unslotted rows they are not, the assigner hands
@@ -484,11 +605,12 @@ class CategoryRepository:
         # exceed DynamoDB's 4KB cap. The chunk is a prefix of the DRAIN ORDER, which is what
         # keeps chunking equivalent to one shot (see color_slot_plan_order and the docstring).
         chunk = color_slot_plan_order(plan)[:_COLOR_SLOT_WRITE_CHUNK]
-        # Stamp the migrated marker only once this write drains the plan. A partial write must
-        # NOT stamp it, or the remaining categories would never be revisited. An empty plan
-        # counts as drained: that is the "all categories deleted" case, which must still stamp
-        # so the store stops re-planning forever.
-        drained = len(chunk) == len(plan)
+        # Stamp the migrated marker only once this write drains the plan AND no further stage
+        # follows it. A partial write must NOT stamp it, or the remaining categories would
+        # never be revisited; nor may the backfill's last chunk stamp it while a repaint is
+        # still owed. An empty plan counts as drained: that is the "all categories deleted"
+        # case, which must still stamp so the store stops re-planning forever.
+        drained = len(chunk) == len(plan) and settled
         names = {"#v": "version"}
         values = {":expected": version, ":next": version + Decimal(1)}
         set_parts = ["#v = :next"]
@@ -539,13 +661,14 @@ class CategoryRepository:
         # Planning is pure and cheap (a scan of ~15 map entries), so compute it every read
         # and let its emptiness decide whether a write is needed. An already-stamped, fully
         # slotted store plans nothing and writes nothing — every later read is one get_item.
-        plan = plan_color_slot_backfill(items)
+        repainted = self._is_slot_migrated(item)
+        plan, settled = plan_color_slot_stage(items, repainted=repainted)
         # `.get` deliberately: this method fails OPEN on a write fault, so it must not gain a
         # way for malformed data to fail the read either. No version means no optimistic lock
         # to condition on, so skip the write — the response is still correct from `plan`.
         version = item.get("version")
-        if version is not None and (plan or not self._is_slot_migrated(item)):
-            self._write_color_slots(version, plan, strict=False)
+        if version is not None and (plan or not repainted):
+            self._write_color_slots(version, plan, strict=False, settled=settled)
         # Default `parent` to None so every category leaving the repo carries the
         # field, even seed rows and rows written before sub-categories existed.
         # `plan` is applied in memory whether or not the write landed, so the invocation
@@ -575,9 +698,10 @@ class CategoryRepository:
         # fails, burning attempt 1 of 2 on every create against an unmigrated store.
         # strict=True: on a write path a DB fault is a real failure, not something to defer.
         pre = self._get_config()
-        pre_plan = plan_color_slot_backfill(pre["items"])
-        if pre_plan or not self._is_slot_migrated(pre):
-            self._write_color_slots(pre["version"], pre_plan, strict=True)
+        pre_repainted = self._is_slot_migrated(pre)
+        pre_plan, pre_settled = plan_color_slot_stage(pre["items"], repainted=pre_repainted)
+        if pre_plan or not pre_repainted:
+            self._write_color_slots(pre["version"], pre_plan, strict=True, settled=pre_settled)
         for _attempt in range(2):
             item = self._get_config()
             items = item["items"]
@@ -604,7 +728,19 @@ class CategoryRepository:
             # so the taken-back slot is a custom row's, which the next re-plan simply moves.
             pending = plan_color_slot_backfill(items)
             reserved = frozenset(pending.values())
-            slot = least_held_color_slot(color_slot_counts(items), reserved,
+            # PROJECTED counts: what the store will hold once `pending` lands. `counts` alone
+            # covers only the rows already stamped, so mid-drain it understates every slot the
+            # backfill is still piling onto — while the repaint's allowance is computed from
+            # the WHOLE store. That gap let a create take a slot the backfill then pushed over
+            # the allowance, so the repaint evicted the row POST had already told the client
+            # about. Projection is used only for the CAP; the ranking still uses stored counts.
+            # Once a store is fully stamped this is provably a no-op: sum(counts) == rows, so
+            # the least-held slot is always under the allowance and the choice is unchanged.
+            projected = color_slot_counts(items) + Counter(pending.values())
+            allowance = _repaint_allowance(len(items) + 1)
+            crowded = frozenset(slot for slot in range(_COLOR_SLOT_COUNT)
+                                if projected[slot] >= allowance)
+            slot = least_held_color_slot(color_slot_counts(items), reserved | crowded,
                                          _designated_builtin_slots(pending))
             new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
                        "bucket": bucket, "parent": parent,
