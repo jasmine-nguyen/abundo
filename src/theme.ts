@@ -56,12 +56,16 @@ export const C = {
   goodBright: '#42d4ec',
   surplus: '#7ee0a0', // brighter green for the Earned-vs-Spent surplus headline (WHIT-324)
   warn: '#e0af68',
-  warnAmber: '#e0af68',
   bad: '#f7768e',
   badBright: '#ff8fa3',
 
   purple: '#bb9af7',
 
+  // Ink drawn ON a bright surface — accentInk on the accent-blue buttons, heroInk on the hero
+  // gradient. Both are the screen background's hex, but that is a coincidence of the palette, not
+  // a derivation: they are chosen for contrast against what they sit on, while bg is chosen for
+  // the surface itself. Pinned by themeInkTokens.logic.test.ts [Q22]/[Q23] so a retune of one
+  // can't silently move the other — unlike the "Other" wedge, legibility really is at stake here.
   heroInk: '#16161e',
   heroInk2: '#1a1b26',
 
