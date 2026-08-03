@@ -92,7 +92,7 @@ _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 _REIMPORT = (
     "constants", "models", "encoders", "repository_base", "repository_transaction",
     "repository_balance", "repository_loanfacts", "repository_milestone", "repository_budget",
-    "repository_goals",
+    "repository_goals", "repository_category",
     "repository_errors", "repository_insight", "repository_device", "push",
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "milestones", "milestone_rows",
