@@ -11,7 +11,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
-import { opacityOf, sl, DIM_BLUE } from './support/donut';
+import { opacityOf, sl, DIM_BLUE, DIM_OTHER } from './support/donut';
 
 describe('SpendingDonut — a cached wedge re-entering must re-target, not keep its stale emphasis', () => {
   // [A8] A wedge that was itself POPPED (+1), left the data, then RETURNS while a DIFFERENT category
@@ -59,15 +59,14 @@ describe('SpendingDonut — a cached wedge re-entering must re-target, not keep 
   });
 
   // [A10] The synthesised '__other__' bucket appearing for the first time (tail crosses 6 → 7) while
-  // a selection is held. It paints UNFADED — WHIT-425 sits "Other" out of the highlight entirely,
-  // because it is the fold bucket rather than a real category and has nothing to say about which
-  // category you picked. Its real peers still dim around it, which is what this guards: the
-  // exemption must be scoped to this one id and must not leak into the wedges either side of it.
+  // a selection is held must paint dimmed like the real peers — at ITS OWN floor, which is far
+  // higher than theirs because the grey starts darker. That difference is the point: a bucket born
+  // at a peer's fade instead of its own would be invisible, which is the WHIT-425 bug.
   // CHARACTERIZATION w.r.t. the paintedKey dep: __other__ is FIRST-SEEN here, so emphasisOf inits it
-  // at its target and reverting the dep ALONE does not change this test (it moves only if the init
-  // is ALSO reverted, exactly like E1). Its value is a data-path guard: the fold-created bucket is
-  // covered by the same emphasis wiring as a real id, and the held selection's peers stay correct.
-  it('[A10] the __other__ bucket newly appearing while one is selected paints unfaded, its peers dimmed', () => {
+  // at its target (−1) and reverting the dep ALONE still leaves it dimmed — this does NOT fail on
+  // that revert (it fails only if the init is ALSO reverted, exactly like E1). Its value is a
+  // data-path guard: the fold-created bucket is covered by the same emphasis wiring as a real id.
+  it('[A10] the __other__ bucket newly appearing while one is selected paints dimmed at its own floor', () => {
     const six: DonutSlice[] = [sl('a', 100), sl('b', 90), sl('c', 80), sl('d', 70), sl('e', 60), sl('f', 50)];
     const { rerender } = render(<SpendingDonut slices={six} />); // 6 painted, no __other__
     expect(screen.queryByTestId('donut-slice-__other__')).toBeNull();
@@ -79,8 +78,9 @@ describe('SpendingDonut — a cached wedge re-entering must re-target, not keep 
     rerender(<SpendingDonut slices={seven} />);
 
     expect(screen.getByTestId('donut-slice-__other__')).toBeTruthy();
-    expect(opacityOf('__other__')).toBeCloseTo(1);  // Other sits the highlight out — never fades
-    expect(opacityOf('a')).toBeCloseTo(1);          // a still popped
-    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);   // untouched peer still dimmed
+    expect(opacityOf('__other__')).toBeCloseTo(DIM_OTHER); // its own floor, not a peer's
+    expect(opacityOf('__other__')).toBeGreaterThan(DIM_BLUE); // the grey needs far more opacity
+    expect(opacityOf('a')).toBeCloseTo(1);                 // a still popped
+    expect(opacityOf('b')).toBeCloseTo(DIM_BLUE);          // untouched peer still dimmed
   });
 });

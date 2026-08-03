@@ -24,6 +24,7 @@ export const sl = (id: string, value: number): DonutSlice => ({ id, name: id, co
 // calling wedgeDimOpacity would make every assertion below a tautology against the code it pins.
 export const DIM_BLUE = 0.561;   // sl()'s #7aa2f7
 export const DIM_GREEN = 0.462;  // #7FD49B, used by the Fold + Selection fixtures
+export const DIM_OTHER = 0.825;  // OTHER_COLOR — far higher because the grey starts far darker
 
 // The painted wedge order as it renders. `donut-slice-<id>` sits on the TAP band, one per painted
 // wedge in painted order; the selection overlay is `donut-top` (not matched by this regex).

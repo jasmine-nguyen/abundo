@@ -18,8 +18,8 @@ import { useReduceMotion } from '../motion/useReduceMotion';
 
 export interface DonutSlice { id: string; name: string; color: string; value: number }
 
-// The synthesised fold bucket's id. Named because behaviour keys off it: "Other" is not a real
-// category, so it sits out the highlight entirely (see dimOpacityFor).
+// The synthesised fold bucket's id — named rather than repeated as a literal here and across the
+// donut tests. Nothing keys behaviour off it: the bucket fades exactly like a real category.
 export const OTHER_SLICE_ID = '__other__';
 
 // Reduce the full top-level list to at most `max` painted slices: keep the largest `max-1`,
@@ -98,14 +98,11 @@ const SEL_SCALE = 1.1;
 // wedges at 1.65–2.46:1; the flat value had been tuned against a faint blue lift that WHIT-403
 // deleted when it repainted the track to the flat page background.
 //
-// "Other" sits the highlight out entirely. It is the synthesised fold bucket, not a real category,
-// so it has nothing to say about which category you picked — and a near-unfaded 0.83 (its own
-// contrast floor) would make the one non-category wedge the second-brightest thing on the ring and
-// read as "also selected". Unfaded it measures 3.97:1, so it clears the bar by standing still.
-function dimOpacityFor(slice: DonutSlice): number {
-  if (slice.id === OTHER_SLICE_ID) return 1;
-  return wedgeDimOpacity(slice.color);
-}
+// The grey "Other" wedge fades like any other, to ~0.83. That reads as barely a fade as a NUMBER,
+// which is misleading: it starts far darker than a category colour, so 0.83 of it lands at the same
+// brightness 0.50 of a bright blue does. Every faded wedge ends up level. Exempting it instead was
+// tried and reverted — leaving it at full opacity made the one non-category wedge the second
+// brightest thing on the ring, and left tapping it with no effect on the wedge but its size.
 // Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
 // POP_OUTER is the farthest anything DRAWN OR TAPPED reaches from the centre — the wider HIT band
 // out-reaches the visible one, so budget from whichever is thicker (else a popped wedge's tap area
@@ -241,7 +238,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     // origin, so this scales it in place; the static parent <G> shifts it to the box centre.
     const v = emphasisOf(s.id);
     const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
-    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [dimOpacityFor(s), 1, 1], extrapolate: 'clamp' });
+    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [wedgeDimOpacity(s.color), 1, 1], extrapolate: 'clamp' });
 
     const isSel = s.id === activeId;
     const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));

@@ -11,9 +11,9 @@
 // WHIT-425 extends the same idea to the FADED state, which [Q19] never covered: tapping a wedge
 // used to drop every other wedge to a flat 40%, landing them at 1.65–2.46:1 — invisible by the very
 // bar [Q19] enforces at rest. The fade is now derived per colour instead.
-//   [Q27] every colour that fades still clears 3:1 once faded;
-//   [Q28] the fade is still a fade — no wedge quietly stops fading to buy contrast;
-//   [Q29] "Other" is exempt from the fade, and clears the bar unfaded.
+//   [Q27] every wedge colour still clears 3:1 once faded;
+//   [Q28] they all land at the SAME visibility, though their fades differ widely;
+//   [Q29] the fade is still a fade — no wedge quietly stops fading to buy contrast.
 //
 // Note what is deliberately NOT here. The card asked to pin OTHER_COLOR === C.textFaint, which was
 // true when it was filed. Fixing the contrast broke that equality on purpose: the wedge is a large
@@ -54,13 +54,13 @@ function faded(hex: string, alpha: number): string {
   return `#${((mix(16) << 16) | (mix(8) << 8) | mix(0)).toString(16).padStart(6, '0')}`;
 }
 
-// Every colour a donut wedge can actually be painted, EXCEPT "Other" (which no longer fades — see
-// [Q29]). Two sources, both real: the Insights ramp, and C.purple for the Uncategorized row
-// (src/context.tsx builds it with C.purple; app/(tabs)/insights.tsx only recolours rows that map to
-// a category, and Uncategorized has none, so the theme purple survives into the ring). Refund,
-// remainder and "Directly in X" rows are all depth >= 1, so they never become wedges — this list is
-// closed. C.purple is the one a palette retune would most easily forget.
-const FADING_WEDGE_COLORS = [...CATEGORY_COLORS, C.purple];
+// Every colour a donut wedge can actually be painted. Three sources, all real: the Insights ramp,
+// OTHER_COLOR for the fold bucket, and C.purple for the Uncategorized row (src/context.tsx builds it
+// with C.purple; app/(tabs)/insights.tsx only recolours rows that map to a category, and
+// Uncategorized has none, so the theme purple survives into the ring). Refund, remainder and
+// "Directly in X" rows are all depth >= 1, so they never become wedges — this list is closed.
+// C.purple is the one a palette retune would most easily forget.
+const WEDGE_COLORS = [...CATEGORY_COLORS, OTHER_COLOR, C.purple];
 
 describe('the "Other" wedge stays visible and stays un-category-like', () => {
   it('[Q19] OTHER_COLOR clears the 3:1 minimum against the chart background', () => {
@@ -92,31 +92,36 @@ describe('the "Other" wedge stays visible and stays un-category-like', () => {
 });
 
 describe('a faded wedge stays visible (WHIT-425)', () => {
-  it('[Q27] every wedge colour that fades still clears 3:1 once faded', () => {
-    // The bug: a flat 0.4 fade put these at 2.31–2.46:1, under the same bar [Q19] holds the resting
+  it('[Q27] every wedge colour clears 3:1 once faded', () => {
+    // The bug: a flat 0.4 fade put these at 1.65–2.46:1, under the same bar [Q19] holds the resting
     // wedge to. FAIL-ON-REVERT: restore a flat 0.4 and this reddens on every colour in the list.
-    for (const color of FADING_WEDGE_COLORS) {
+    for (const color of WEDGE_COLORS) {
       expect(contrast(faded(color, wedgeDimOpacity(color)), CHART_BG)).toBeGreaterThanOrEqual(3);
       expect(contrast(faded(color, 0.4), CHART_BG)).toBeLessThan(3); // what the old flat fade did
     }
   });
 
-  it('[Q28] the fade is still a fade — no wedge buys its contrast by not fading', () => {
-    // The cheap way to pass [Q27] is to stop fading. The clamp exists for colours we cannot measure,
-    // and nothing paintable should ever reach it: today the worst is 0.534 against a 0.85 ceiling.
-    // If a palette retune ever pushes a wedge into that escape hatch, this is what says so.
-    for (const color of FADING_WEDGE_COLORS) {
-      expect(wedgeDimOpacity(color)).toBeLessThan(WEDGE_DIM_MAX);
-    }
+  it('[Q28] every faded wedge lands at the SAME visibility, whatever its own fade', () => {
+    // The point of deriving per colour: the grey needs 0.825 and a bright ramp colour 0.49, but both
+    // arrive at the same place. A shared fade cannot do this — at any single value the grey is
+    // roughly a stop darker than the rest, which is the bug. Pinning the SPREAD (not just the floor)
+    // is what stops a future "simplification" back to one number passing [Q27] on the bright colours
+    // while the grey quietly fails.
+    const measured = WEDGE_COLORS.map((c) => contrast(faded(c, wedgeDimOpacity(c)), CHART_BG));
+    expect(Math.max(...measured) - Math.min(...measured)).toBeLessThan(0.2);
+    // And the fades really do differ — otherwise the above passes trivially on a flat value.
+    const fades = WEDGE_COLORS.map((c) => wedgeDimOpacity(c));
+    expect(Math.max(...fades) - Math.min(...fades)).toBeGreaterThan(0.25);
   });
 
-  it('[Q29] "Other" clears the bar unfaded, which is why it can sit the highlight out', () => {
-    // "Other" is the synthesised fold bucket, not a real category, so it does not fade at all — see
-    // dimOpacityFor in SpendingDonut. Its own contrast floor would have been 0.825, which is barely
-    // a fade and would have made the one non-category wedge the second-brightest thing on the ring.
-    // Exempting it is only safe because it already clears 3:1 at full opacity, which is [Q19]. This
-    // pins the link: if a retune ever drops it below the bar, exempting it stops being safe.
-    expect(contrast(OTHER_COLOR, CHART_BG)).toBeGreaterThanOrEqual(3);
-    expect(contrast(faded(OTHER_COLOR, 0.4), CHART_BG)).toBeLessThan(2); // the bug: 1.65:1
+  it('[Q29] the fade is still a fade — no wedge buys its contrast by not fading', () => {
+    // The cheap way to pass [Q27] is to stop fading. Two ceilings: nothing may reach the clamp (the
+    // escape hatch for colours we cannot measure), and nothing may creep so close to full opacity
+    // that the highlight stops reading. The grey is the tightest at 0.825, so this has real slack
+    // only on the ramp — which is exactly where a brightening retune would show up.
+    for (const color of WEDGE_COLORS) {
+      expect(wedgeDimOpacity(color)).toBeLessThan(WEDGE_DIM_MAX);
+      expect(wedgeDimOpacity(color)).toBeLessThan(0.9);
+    }
   });
 });

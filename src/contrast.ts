@@ -29,6 +29,10 @@ export const WEDGE_DIM_MAX = 0.85;
 const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 export function parseHexColor(color: string): ParsedColor | null {
+  // Not merely defensive: chartColors.ts documents `undefined` reaching a wedge's stroke when a
+  // corrupt colorSlot comes off the wire, and calls it "an INVISIBLE slice — no crash". This runs
+  // at render time, so without the guard that same row takes the whole Insights tab down instead.
+  if (typeof color !== 'string') return null;
   const match = HEX.exec(color.trim());
   if (!match) return null;
   const digits = match[1];
@@ -94,7 +98,8 @@ export function wedgeDimOpacity(color: string, background: string = CHART_BG): n
   if (floor === null) return WEDGE_DIM_MAX;
 
   // SVG multiplies a stroke's own alpha by its group opacity, so a colour carrying alpha needs a
-  // higher group value to reach the same composite.
-  const groupOpacity = Math.ceil((floor / wedge.alpha) * 1000) / 1000;
-  return Math.min(groupOpacity, WEDGE_DIM_MAX);
+  // higher group value to reach the same composite. A MEASURED floor is never clamped down to
+  // WEDGE_DIM_MAX — handing back less than a colour needs would return a value that fails the
+  // target, the one thing this function must not do. The clamp is for the unmeasurable cases only.
+  return Math.min(1, Math.ceil((floor / wedge.alpha) * 1000) / 1000);
 }
