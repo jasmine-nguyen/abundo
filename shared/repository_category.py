@@ -191,6 +191,14 @@ def least_held_color_slot(counts: Counter, reserved: frozenset,
     it tied with a singly-held slot and the tie-break would hand it straight over — stealing a
     built-in's designated colour permanently.
 
+    NOTE what the fallback drops. When `reserved` covers all 20 slots the fallback re-derives
+    its candidates from `range`, so ONLY `protected` still applies — a caller that folded a
+    soft cap into `reserved` (as plan_new_category_slot does with `crowded`) loses that cap
+    exactly when the store is most crowded. Benign in practice: the backfill hands its pending
+    slots to the emptiest slots while a capped slot is by definition among the fullest, so the
+    least-held tie-break avoids them anyway. Carded rather than patched — the fix is to give
+    this function one preference structure instead of two overloaded frozensets.
+
     `protected` is the SECOND tier, and only matters once every slot is owed and something has
     to be taken back. Those are the slots owed to a BUILT-IN for its OWN designated hue. Taking
     a custom row's owed slot is harmless — the next re-plan simply moves that row — but a
@@ -289,7 +297,9 @@ def _repaint_allowance(row_count: int) -> int:
 
     At least 1 for any non-empty store, so a colour worn by a single category is never a
     mover — that is the permanence promise, and it falls out of the arithmetic rather than
-    needing a floor clamped on top.
+    needing a floor clamped on top. At row_count 0 it returns 0, which is meaningless but
+    unreachable: the only caller with no rows is _repaint_movers on an empty store, which has
+    nothing to bin.
     """
     return -(-row_count // _COLOR_SLOT_COUNT)
 
@@ -322,6 +332,11 @@ def _repaint_movers(items: dict) -> list:
 
 def plan_color_slot_repaint(items: dict) -> dict:
     """{map key -> new slot} for rows piled above the allowance, and nothing else.
+
+    PRECONDITION: every row already holds a valid slot. The allowance counts ALL rows while
+    the histogram counts only slotted ones, and nothing here excludes the slots a pending
+    backfill owes — so on a half-slotted store this plan can collide with that backfill. Call
+    it through plan_color_slot_stage, which sequences the two, not directly.
 
     The one-off levelling of stores that migrated under WHIT-404's constant slot-0 overflow
     (WHIT-428). Empty once the ramp is level, which is why an already-level store costs one
@@ -871,8 +886,16 @@ class CategoryRepository:
                 # Build the response from the pre-read item so id/color survive;
                 # reflect the resolved parent (new one if changed, else stored).
                 resolved_parent = parent if changing_parent else items[cat_id].get("parent")
+                # The slot echoed here must be the one list_categories would show, not the raw
+                # stored value. While a store is mid-migration those differ, so echoing the
+                # stored one made an edit visibly flip the category's chart colour back to its
+                # old one until the next refetch. Same planner, so the two answers agree; and a
+                # plain int, so the body carries `2` like the GET does, not Decimal's `2.0`.
+                pending, _ = plan_color_slot_stage(
+                    items, repainted=self._is_slot_migrated(item))
+                slot = pending.get(cat_id, _coerce_slot(items[cat_id].get(_COLOR_SLOT_FIELD)))
                 return {**items[cat_id], "name": name, "bucket": bucket,
-                        "icon": icon, "parent": resolved_parent}
+                        "icon": icon, "parent": resolved_parent, _COLOR_SLOT_FIELD: slot}
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     handle_database_error(e, "update category")

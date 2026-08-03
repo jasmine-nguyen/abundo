@@ -3551,3 +3551,28 @@ def test_a_versionless_store_mid_backfill_previews_without_writing(handler):
     assert repo._table.update_calls == []
     assert repo._table.store[_CFG]["items"] == before
     assert all(0 <= row[_SLOT] < 20 for row in rows), "a preview handed out an unusable slot"
+
+
+def test_editing_a_category_mid_migration_echoes_the_colour_the_list_shows(handler):
+    # PATCH used to echo the row's STORED slot while GET returned the previewed one, so
+    # mid-migration an edit made the category's chart colour visibly flip back to its old
+    # value until the next refetch (the client writes the PATCH response straight into its
+    # cached list). Both answers now come from the same planner. Echo the stored value again
+    # and this reddens.
+    repository, repo = _repo_with_fake_table(handler)
+    _piled_store(repo, repository, 140)              # 153 rows: the repaint needs 3 chunks
+    repo.list_categories()                           # chunk 1 lands; the rest is still owed
+    items = repo._table.store[_CFG]["items"]
+    pending = repository.plan_color_slot_repaint(items)
+    victim = next(cid for cid in pending if cid.startswith("cat"))
+    assert pending[victim] != int(items[victim][_SLOT]), "fixture drifted: nothing is owed"
+    listed = {row["id"]: row[_SLOT] for row in repo.list_categories()}
+
+    edited = repo.update_category(victim, "Renamed", "Living", "tag")
+
+    assert edited[_SLOT] == listed[victim], "PATCH echoed a colour the list does not show"
+    assert type(edited[_SLOT]) is int, "PATCH must carry a plain int, like GET and POST"
+
+    _drain(repo, limit=40)
+    assert int(repo._table.store[_CFG]["items"][victim][_SLOT]) == edited[_SLOT], \
+        "the colour PATCH echoed is not the one that settled"
