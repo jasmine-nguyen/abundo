@@ -23,8 +23,8 @@ from repository_errors import (
 # deploy skew there fails this import at module load and 500s EVERY route
 # (including /transactions). The palette + seed are used only by CategoryRepository,
 # so keeping them local makes the layer self-contained. Ids are the curated slugs
-# from src/context.tsx SEED_CATS (the vocabulary BankSync rules + client
-# budgets/rules reference); `recent` is omitted (client-derived).
+# mirrored client-side by src/context.tsx CATEGORY_BASE (the vocabulary BankSync
+# rules + client budgets/rules reference); `recent` is omitted (client-derived).
 # Ordered so consecutively-created categories alternate warm/cool once mapped to their Tokyo
 # Night hue (src/context.tsx colorForCategory) — the old order clustered three cool blue-greens
 # at the tail, so two categories created back-to-back could read as the same colour.
@@ -44,8 +44,18 @@ CATEGORY_PALETTE = [
 # entries 13,14,16,18. The 13 seeds below were solved against the RAMP positions they resolve
 # to — each built-in stays in its own hue family, and the longest run of neighbouring ramp
 # entries is 3 (down from 5 under the previous id-keyed mapping).
+#
+# WHIT-415 re-spaced the warm end: eatingout/health/coffee used to be a run of THREE (ramp 0/1/2).
+# Coffee alone moved, to ramp 3, leaving eatingout/health a pair. ONE seed slot changed on purpose —
+# every extra move ripples into which slot a user's first custom category gets, and the obvious
+# second move (utilities to ramp 5) pushed that category into the middle of the blue cluster.
+# Coffee's new neighbour (utilities, ramp 3/4) is WIDER apart than the health/coffee pair removed,
+# so the run of three is gone and nothing tighter replaced it.
+# Two runs of three REMAIN and are tighter than the one removed: fitness/transport/phonenet at ramp
+# 12-14 and pets/gifts/subs at 16-18. NOTE: this only paints NEW stores; a slot is permanent once
+# stored, so existing accounts keep the old layout (WHIT-405).
 SEED_CATEGORIES = {
-    "coffee": {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle", "colorSlot": 4},
+    "coffee": {"id": "coffee", "name": "Cafes & Coffee", "icon": "coffee", "color": "#E8A87C", "bucket": "Lifestyle", "colorSlot": 9},
     "groceries": {"id": "groceries", "name": "Groceries", "icon": "cart", "color": "#7FD49B", "bucket": "Living", "colorSlot": 11},
     "eatingout": {"id": "eatingout", "name": "Eating Out", "icon": "food", "color": "#F08C8C", "bucket": "Lifestyle", "colorSlot": 0},
     "transport": {"id": "transport", "name": "Transport", "icon": "car", "color": "#8AB4F8", "bucket": "Living", "colorSlot": 15},

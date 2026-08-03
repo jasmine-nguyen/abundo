@@ -806,7 +806,7 @@ def test_repo_update_changes_editable_fields(handler):
     assert len(config["items"]) == 13 and config["version"] == 2
     # colorSlot rides through an edit untouched — a rename must never repaint a category.
     assert updated == {"id": "coffee", "name": "Coffee & Cake", "icon": "cart",
-                       "color": "#E8A87C", "bucket": "Living", "parent": None, "colorSlot": 4}
+                       "color": "#E8A87C", "bucket": "Living", "parent": None, "colorSlot": 9}
 
 
 def test_repo_update_unknown_id_raises(handler):
@@ -1570,7 +1570,7 @@ def test_validate_depth_terminates_on_a_long_corrupt_cycle(handler):
 
 # The solved slot table (see repository_category.SEED_CATEGORIES): each built-in in its own hue family, spread around the ramp.
 SEED_SLOTS = {
-    "eatingout": 0, "travel": 1, "coffee": 4, "fitness": 6, "gifts": 7, "health": 8,
+    "eatingout": 0, "travel": 1, "fitness": 6, "gifts": 7, "health": 8, "coffee": 9,
     "utilities": 10, "groceries": 11, "shopping": 13, "transport": 15, "phonenet": 16,
     "pets": 17, "subs": 18,
 }
@@ -1747,7 +1747,7 @@ def test_create_fails_closed_when_the_backfill_write_errors(handler):
 
 def test_create_takes_the_lowest_free_slot(handler):
     repository, repo = _repo_with_fake_table(handler)
-    repo.list_categories()                          # seed (slots 0,1,4,6,7,8,10,11,13,15,16,17,18)
+    repo.list_categories()                          # seed (slots 0,1,6,7,8,9,10,11,13,15,16,17,18)
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
@@ -1777,7 +1777,7 @@ def test_deleting_a_category_frees_its_slot_for_reuse(handler):
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
     assert created["colorSlot"] == 2                # still the lowest free, not gifts' 7
-    repo.delete_category("coffee")                  # frees slot 4
+    repo.delete_category("coffee")                  # frees slot 9
     assert repo.create_category("beer", "Beer", "Lifestyle", "glass")["colorSlot"] == 3
 
 
@@ -2007,7 +2007,8 @@ def test_past_twenty_categories_slots_stay_in_range(handler):
              for n in range(9)]                      # the 14th .. 22nd category
 
     assert all(0 <= s < 20 for s in slots)
-    assert slots[:7] == [2, 3, 5, 9, 12, 14, 19]     # every free slot, lowest first
+    # WHIT-415 moved coffee off slot 4 onto 9, so the free list shifts but stays 7 long.
+    assert slots[:7] == [2, 3, 4, 5, 12, 14, 19]     # every free slot, lowest first
     # WHIT-404: ramp full -> the repeat goes to the LEAST-held slot, preferring one no
     # built-in owns. Was [0, 0] — every category past the 20th piled onto Eating Out.
     assert slots[7:] == [2, 3]
@@ -2066,6 +2067,151 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
         longest = max(longest, run)
     assert longest == 3, f"longest neighbouring-ramp run is {longest}: {ramp}"
 
+
+# =============================================================================
+# WHIT-415 — the seed re-space as PROPERTIES, not slot numbers.
+#
+# Every colour-slot test above pins an integer. Re-shuffle the seed and they all just get
+# retyped, and the INTENT is never checked — test_seed_slots_are_spread_across_the_colour_ramp
+# ("longest run == 3") was true BEFORE this card and is true AFTER it, so it did not guard the
+# fix at all. These compute the RESOLVED RAMP LAYOUT from repository.SEED_CATEGORIES and assert
+# what the card actually promised, so a future bad re-space fails loudly instead of quietly.
+# =============================================================================
+
+# The client's slot -> ramp-position permutation (src/chartColors.ts ASSIGNMENT_ORDER). Nothing in
+# a pytest process can see the TypeScript, so this is a hand copy — the WHIT-406 gap. It is guarded
+# from the OTHER side by src/__tests__/seedSlotSync.logic.test.ts, which parses this module's seed
+# out of the .py and checks the same run structure. Both must be edited to move a slot unnoticed.
+_ASSIGNMENT_ORDER = [0, 10, 5, 15, 2, 7, 12, 17, 1, 3, 4, 6, 8, 9, 11, 13, 14, 16, 18, 19]
+
+
+def _seed_ramp(repository) -> dict:
+    """{built-in id -> the RAMP POSITION its stored slot resolves to on the client}."""
+    return {cid: _ASSIGNMENT_ORDER[cat["colorSlot"]]
+            for cid, cat in repository.SEED_CATEGORIES.items()}
+
+
+def _neighbouring_runs(ramp: dict) -> list:
+    """Ids sitting on NEIGHBOURING ramp entries, grouped, warm end first. Runs of 1 are dropped.
+    This is the shape a user perceives: a run of N is N near-identical hues that read as one
+    colour when they land next to each other in the ring."""
+    ordered = sorted((position, cid) for cid, position in ramp.items())
+    runs, current = [], [ordered[0]]
+    for previous, entry in zip(ordered, ordered[1:]):
+        if entry[0] == previous[0] + 1:
+            current.append(entry)
+        else:
+            runs.append(current)
+            current = [entry]
+    runs.append(current)
+    return [[cid for _, cid in run] for run in runs if len(run) > 1]
+
+
+def test_no_builtin_trio_sits_on_the_warm_end_of_the_ramp(handler):
+    """THE card: Eating Out / Health / Coffee resolved to ramp 0/1/2 and, as the top three by
+    spend, painted as three near-identical salmons. Asserted as the property — not as
+    "coffee's slot is 9", which the next re-shuffle would simply retype."""
+    import repository
+    ramp = _seed_ramp(repository)
+
+    warm_runs = [run for run in _neighbouring_runs(ramp) if min(ramp[c] for c in run) <= 5]
+    assert all(len(run) <= 2 for run in warm_runs), f"warm-end run of 3+: {warm_runs}"
+    # the salmon end (ramp 0-2) holds at most a PAIR, and nothing may creep back into it
+    assert sorted(c for c, p in ramp.items() if p <= 2) == ["eatingout", "health"]
+    # and the pair the card named by name is broken apart
+    assert abs(ramp["coffee"] - ramp["eatingout"]) > 1
+    assert abs(ramp["coffee"] - ramp["health"]) > 1
+
+
+def test_the_neighbouring_builtin_runs_are_exactly_these(handler):
+    """WHICH built-ins touch, pinned by name. Re-space again and you must edit this on purpose.
+
+    It also records, honestly, what the card did NOT fix: TWO trios survive — fitness/transport/
+    phonenet (ramp 12/13/14) and pets/gifts/subs (16/17/18) — and 12->13->14 are the TIGHTEST
+    steps in the whole ramp, tighter than the warm trio that was just removed. Same symptom,
+    different hue family; out of the approved scope, so it is pinned rather than fixed.
+    """
+    import repository
+    assert _neighbouring_runs(_seed_ramp(repository)) == [
+        ["eatingout", "health"],
+        ["coffee", "utilities"],
+        ["shopping", "travel"],
+        ["fitness", "transport", "phonenet"],
+        ["pets", "gifts", "subs"],
+    ]
+
+
+def test_the_slots_new_categories_get_never_reuse_a_builtin_hue(handler):
+    """The property behind `slots[:7] == [3, 4, 5, 10, 12, 14, 19]`: the free slots are free
+    RAMP ENTRIES too, so the first seven categories a user creates each get a hue no built-in
+    owns. A re-space that duplicated a seed slot, or moved one onto a slot the lowest-free walk
+    hands out, would give a custom category a built-in's exact colour — invisible in a table of
+    magic numbers, caught here."""
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    builtin_ramp = set(_seed_ramp(repository).values())
+
+    created = [repo.create_category(f"c{n}", f"C{n}", "Lifestyle", "tag") for n in range(7)]
+    custom_ramp = [_ASSIGNMENT_ORDER[c["colorSlot"]] for c in created]
+
+    assert len(set(custom_ramp)) == 7                       # seven distinct hues
+    assert set(custom_ramp).isdisjoint(builtin_ramp)        # none of them a built-in's colour
+    # 13 built-ins + 7 customs = the whole ramp, exactly once each
+    assert set(custom_ramp) | builtin_ramp == set(range(20))
+
+
+def test_the_first_custom_category_stays_out_of_the_ramps_tightest_stretch(handler):
+    """Re-spacing the seed changes which slot is lowest-free, so it silently changes the colour a
+    user's FIRST custom category gets. That is the trap this test exists for.
+
+    Moving BOTH coffee and utilities (the obvious re-space) pushed the lowest free slot to 3, which
+    resolves to ramp 15 — the gap between Phone & Internet (14) and Pets (16), the two tightest
+    steps in the ramp — so the first custom category joined a run of SEVEN. Moving coffee alone
+    keeps it on ramp 5, in the widest-spaced stretch, with the longest run at FOUR
+    (coffee/utilities/wine/groceries, every step wider than any pair this card removed).
+
+    Fail-on-revert: move utilities to slot 2 as well and wine lands on ramp 15 in a run of 7.
+    """
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+
+    first = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    ramp = _seed_ramp(repository)
+    ramp["wine"] = _ASSIGNMENT_ORDER[first["colorSlot"]]
+    assert ramp["wine"] == 5
+    runs = _neighbouring_runs(ramp)
+    assert max(len(run) for run in runs) == 4
+    assert ["coffee", "utilities", "wine", "groceries"] in runs
+    # the blue cluster — the tightest stretch — must not have grown
+    assert ["fitness", "transport", "phonenet"] in runs
+
+
+@pytest.mark.parametrize("builtin,slot", [("coffee", 9)])
+def test_a_custom_category_squatting_on_a_new_seed_slot_is_never_evicted(handler, builtin, slot):
+    """Slots 2 and 9 are the two the re-space newly claims. Slot 2 in particular is the one the
+    OLD lowest-free walk handed to the first category a user ever created, so a store that was
+    partially slotted under the old rules can arrive with a squatter sitting exactly there.
+
+    The rule that must hold: a stored slot is PERMANENT (WHIT-405), so the squatter keeps it and
+    the built-in gives way — never the reverse, and never a shared colour.
+    """
+    repository, repo = _repo_with_fake_table(handler)
+    _legacy_store(repo, repository, extra={"wine": _cat("wine", colorSlot=Decimal(slot))})
+
+    rows = {r["id"]: r["colorSlot"] for r in repo.list_categories()}
+
+    assert rows["wine"] == slot                      # the squatter is never repainted
+    assert rows[builtin] != slot                     # the built-in gives way
+    assert len(set(rows.values())) == len(rows)      # and nobody ends up sharing a colour
+    # every OTHER built-in still lands on its solved slot
+    assert {k: v for k, v in rows.items() if k in SEED_SLOTS and k != builtin} == \
+           {k: v for k, v in SEED_SLOTS.items() if k != builtin}
+    # The consequence worth knowing: the evicted built-in takes the lowest free slot, which
+    # resolves to ramp 5 — so a squatter turns Coffee from an amber into an olive. Acceptable
+    # (permanence beats hue fidelity), but not silent. Coffee's slot 9 is the ONLY slot this card
+    # newly claims, so it is the only one a legacy squatter can now contest.
+    assert _ASSIGNMENT_ORDER[rows[builtin]] == 5
 
 # ---- WHIT-405: the backfill write is chunked so it can never exceed DynamoDB's 4KB cap ------
 
@@ -2499,7 +2645,8 @@ def test_a_create_on_a_saturated_store_cannot_steal_a_slot_the_backfill_owes(han
     repository, repo = _repo_with_fake_table(handler)
     items = {cat_id: dict(seed) for cat_id, seed in repository.SEED_CATEGORIES.items()}
     # Every non-seed slot held EXCEPT 2, so the planner owes 2 to the one unslotted row.
-    for index, slot in enumerate([3, 5, 9, 12, 14, 19]):
+    # (WHIT-415 moved coffee onto slot 9 and freed slot 4, so the non-seed set shifted.)
+    for index, slot in enumerate([3, 4, 5, 12, 14, 19]):
         items[f"custom{index}"] = _cat(f"custom{index}", colorSlot=Decimal(slot))
     items["aaa"] = _cat("aaa")                          # unslotted -> owed the lowest free slot
     repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
@@ -2644,7 +2791,7 @@ def test_creates_mid_drain_on_a_saturated_store_spread_without_touching_an_owed_
            for n in range(4)]
 
     assert len(set(got)) == 4, f"four creates mid-drain shared a colour: {got}"
-    assert got == [2, 3, 5, 9]
+    assert got == [2, 3, 4, 5]
     assert set(got).isdisjoint(SEED_SLOTS.values()), \
         "a create took a slot the backfill owes a built-in"
 
