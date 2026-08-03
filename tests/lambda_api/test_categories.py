@@ -2776,3 +2776,117 @@ def test_a_create_may_never_take_a_free_slot_a_builtin_is_owed_even_when_all_are
     stored = repo._table.store[_CFG]["items"]
     assert int(stored["travel"][_SLOT]) == 1, "travel was repainted off its designated hue"
     assert all(_SLOT in cat for cat in stored.values())
+
+
+# ---- WHIT-426: breadth is capped so delete's detach write always fits ----------------------
+# delete_category detaches every child in ONE write, and DynamoDB rejects an UpdateExpression
+# over 4KB — 122 children fit (4070 bytes), 123 do not (4104), which made DELETE 500. Rather
+# than split the delete across writes (which would cost its atomicity), breadth is capped so
+# the write can never grow that big. These pin the cap, the no-op escape hatch it needs, and
+# the 400-not-500 path for data written before the cap existed.
+
+_CAP = 50
+
+
+def _parent_with_children(repo, repository, count, parent_id="coffee"):
+    """`count` children under `parent_id`, written straight into the store — bypassing the
+    API the way grandfathered data would have."""
+    items = {cid: dict(seed) for cid, seed in repository.SEED_CATEGORIES.items()}
+    bucket = items[parent_id]["bucket"]
+    for index in range(count):
+        child = f"kid{index:04d}"
+        items[child] = _cat(child, bucket, parent=parent_id)
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                               "items": items, "version": Decimal(1),
+                               "colorSlotSchema": Decimal(1)}
+    return items
+
+
+def test_the_pure_breadth_rule(handler):
+    import repository
+    items = {"p": _cat("p"), "other": _cat("other")}
+    items.update({f"k{n}": _cat(f"k{n}", parent="p") for n in range(_CAP - 1)})
+
+    # one short of the cap -> the next child is fine
+    repository.validate_category_breadth(items, "new", "p")
+    # children of a DIFFERENT parent don't count toward this one
+    repository.validate_category_breadth(items, "new", "other")
+
+    items[f"k{_CAP - 1}"] = _cat(f"k{_CAP - 1}", parent="p")      # now exactly at the cap
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most 50 sub-categories"):
+        repository.validate_category_breadth(items, "new", "p")
+    # ...but re-saving a child that ALREADY sits there adds nothing, so it must still pass.
+    repository.validate_category_breadth(items, "k0", "p")
+
+
+def test_the_cap_plus_one_child_is_refused_at_create(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, _CAP)
+    before = len(repo._table.store[_CFG]["items"])
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most 50 sub-categories"):
+        repo.create_category("wine", "Wine", "Lifestyle", "glass", parent="coffee")
+
+    assert len(repo._table.store[_CFG]["items"]) == before    # nothing was written
+
+
+def test_the_cap_plus_one_child_is_refused_at_reparent(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    items = _parent_with_children(repo, repository, _CAP)
+    items["loner"] = _cat("loner", "Lifestyle")               # top-level, wants to move in
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most 50 sub-categories"):
+        repo.update_category("loner", "Loner", "Lifestyle", "tag", parent="coffee")
+
+    assert repo._table.store[_CFG]["items"]["loner"].get("parent") is None
+
+
+def test_a_full_parent_still_accepts_a_no_op_resave_of_an_existing_child(handler):
+    """The trap the no-op skip exists for: a plain name edit resubmits the stored parent. If
+    the rule counted that as a new child, editing any child of a full parent would 400."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, _CAP)
+
+    updated = repo.update_category("kid0000", "Renamed", "Lifestyle", "tag", parent="coffee")
+
+    assert updated["name"] == "Renamed"
+    assert repo._table.store[_CFG]["items"]["kid0000"]["parent"] == "coffee"
+
+
+def test_a_parent_filled_to_the_cap_can_still_be_deleted(handler):
+    """The point of the whole card: at the cap the detach write must fit, with room to spare."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, _CAP)
+
+    repo.delete_category("coffee")
+
+    stored = repo._table.store[_CFG]["items"]
+    assert "coffee" not in stored
+    assert all(stored[f"kid{n:04d}"]["parent"] is None for n in range(_CAP))
+    expression = repo._table.update_calls[-1][0]
+    assert len(expression.encode()) <= _MAX_UPDATE_EXPRESSION_BYTES
+    # Well under, not just under — the cap exists to leave headroom, not to sit on the line.
+    assert len(expression.encode()) < _MAX_UPDATE_EXPRESSION_BYTES // 2
+
+
+def test_an_over_wide_legacy_parent_is_refused_not_crashed(handler):
+    """Data written before the cap can still be over-wide. It must fail as a stated rule, not
+    as DynamoDB rejecting a 4KB expression — that was an uncaught DatabaseError, i.e. a 500."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, 123)             # one past what one write can hold
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="move some out"):
+        repo.delete_category("coffee")
+
+    assert "coffee" in repo._table.store[_CFG]["items"]       # nothing half-done
+
+
+def test_deleting_an_over_wide_parent_returns_400_not_a_crash(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, 123)
+
+    resp = handler.delete_category(_category_item_event("DELETE", body=None),
+                                   repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 400
+    assert "50" in json.loads(resp["body"])["error"]

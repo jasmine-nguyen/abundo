@@ -247,6 +247,24 @@ _MAX_CATEGORY_DEPTH = 5
 # A SEPARATE, larger cycle bound: it only stops the ancestor walk from looping forever
 # on a corrupt cycle in stored data, and never fires before the depth cap on legit data.
 _MAX_PARENT_WALK = 100
+# Breadth is capped too (WHIT-426), and unlike depth the reason is mechanical rather than
+# a product judgement: delete_category detaches every child in ONE conditional write, and
+# DynamoDB rejects an UpdateExpression over 4KB. Each child costs a `, #items.#childN
+# .#parent = :null` clause; 122 children = 4070 bytes is the last that fits and 123 = 4104
+# is rejected, which made DELETE /categories/{id} 500 for that parent. The clause cost is
+# independent of the id length — only the #childN alias appears in the expression — so 122
+# is a hard universal ceiling, not a typical case. 50 children = 1672 bytes, ~41% of the
+# cap, the same headroom _COLOR_SLOT_WRITE_CHUNK was chosen for, so the clause shape can
+# grow without silently re-breaking.
+#
+# This bound is only sufficient because delete promotes children to TOP LEVEL, never to the
+# grandparent (pinned by test_repo_delete_middle_node_promotes_only_direct_children). If a
+# delete ever re-homed children onto the grandparent it could push THAT parent past the cap
+# and reopen this bug one level up.
+#
+# Enforced on the same writes as the depth cap — create-with-parent and re-parent — so data
+# written before the cap existed stays readable and editable.
+_MAX_CHILDREN_PER_CATEGORY = 50
 
 # Sentinel for update_category's `parent`: distinguishes "caller omitted parent,
 # leave the stored link untouched" from "caller passed parent=None, detach to
@@ -356,6 +374,28 @@ def validate_category_depth(items: dict, cat_id: str, parent_id: str) -> None:
     if resulting_depth > _MAX_CATEGORY_DEPTH:
         raise InvalidCategoryParentError(
             f"categories can be nested at most {_MAX_CATEGORY_DEPTH} levels deep")
+
+
+def validate_category_breadth(items: dict, cat_id: str, parent_id: str) -> None:
+    """Raise InvalidCategoryParentError if giving `parent_id` one more child would exceed
+    _MAX_CHILDREN_PER_CATEGORY. Pure — reads only `items` — so it is unit-testable and
+    shared by the create and re-parent paths (the only two writes that ADD a child link;
+    delete only ever detaches).
+
+    The cap exists so delete_category's single detach write can never outgrow DynamoDB's
+    4KB expression limit — see the _MAX_CHILDREN_PER_CATEGORY comment.
+    """
+    # A no-op re-parent (cat_id already sits under parent_id) adds no child — the tree is
+    # unchanged — so it can never breach the cap. Same skip as validate_category_depth, and
+    # for the same reason: a client resubmitting the stored parent on a name/icon edit must
+    # not be blocked, including on a grandfathered parent already over the cap.
+    existing = items.get(cat_id)
+    if existing is not None and existing.get("parent") == parent_id:
+        return
+    children = sum(1 for child in items.values() if child.get("parent") == parent_id)
+    if children >= _MAX_CHILDREN_PER_CATEGORY:
+        raise InvalidCategoryParentError(
+            f"a category can have at most {_MAX_CHILDREN_PER_CATEGORY} sub-categories")
 
 
 class CategoryRepository:
@@ -545,6 +585,10 @@ class CategoryRepository:
             if parent is not None:
                 validate_category_parent(items, cat_id, parent, bucket)
                 validate_category_depth(items, cat_id, parent)
+                # Inside the retry loop, which re-reads `items`, so two racing creates can't
+                # both slip past the cap: the loser's conditional write fails and it
+                # re-validates against the winner's state.
+                validate_category_breadth(items, cat_id, parent)
 
             # Count taken AFTER seeding, so a new category never reuses a seed's index.
             color = CATEGORY_PALETTE[len(items) % len(CATEGORY_PALETTE)]
@@ -617,6 +661,7 @@ class CategoryRepository:
             if changing_parent and parent is not None:
                 validate_category_parent(items, cat_id, parent, bucket)
                 validate_category_depth(items, cat_id, parent)
+                validate_category_breadth(items, cat_id, parent)
             elif not changing_parent and bucket_changing:
                 # A plain edit can flip the bucket without touching the parent link;
                 # if this row IS a sub, it must stay in its parent's bucket.
@@ -681,6 +726,11 @@ class CategoryRepository:
         is cleared) in the SAME atomic write, so deleting a parent never strands
         its children pointing at a gone id. Raises CategoryNotFoundError if the id
         is absent.
+
+        One write stays safe because breadth is capped (_MAX_CHILDREN_PER_CATEGORY): the
+        detach clauses can no longer outgrow DynamoDB's 4KB expression limit. Data written
+        before that cap existed can still be over-wide, so it is refused with a 400 rather
+        than left to fail as an uncaught 500 (WHIT-426).
         """
         self._ensure_seeded()
         for _attempt in range(2):
@@ -691,6 +741,11 @@ class CategoryRepository:
                 raise CategoryNotFoundError(cat_id)
 
             child_ids = [cid for cid, child in items.items() if child.get("parent") == cat_id]
+            if len(child_ids) > _MAX_CHILDREN_PER_CATEGORY:
+                raise InvalidCategoryParentError(
+                    f"'{cat_id}' has {len(child_ids)} sub-categories, more than the "
+                    f"{_MAX_CHILDREN_PER_CATEGORY} that can be detached in one write — "
+                    f"move some out from under it first")
             names = {"#items": "items", "#id": cat_id, "#v": "version"}
             values = {":expected": version, ":next": version + Decimal(1)}
             set_clause = "#v = :next"
