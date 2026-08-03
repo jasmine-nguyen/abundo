@@ -1866,13 +1866,16 @@ def test_least_held_color_slot_treats_reserved_as_a_hard_exclusion(handler):
     it as merely +1 leaves it tied with a singly-held slot and the tie-break hands it over —
     permanently stealing the colour the backfill was about to give a built-in."""
     import repository
-    # slot 1 is free but owed to travel; slot 0 is doubled up.
-    counts = Counter({0: 2, **{slot: 1 for slot in range(2, 20)}})
-    assert repository.least_held_color_slot(counts, frozenset()) == 1        # unreserved: takes it
-    assert repository.least_held_color_slot(counts, frozenset({1})) == 2     # reserved: skips it
-    # Every slot owed (an unmigrated store with >20 unslotted rows) falls back to all 20,
-    # which is what happens today.
-    assert repository.least_held_color_slot(counts, frozenset(range(20))) == 1
+    # The owed slot must be a NON-SEED slot or this cannot discriminate: if it belonged to a
+    # built-in, the non-seed preference would walk away from it anyway and the test would pass
+    # against the weight design too. Slot 2 is free and owned by no built-in.
+    counts = Counter({0: 1, 1: 1, **{slot: 1 for slot in range(3, 20)}})
+    assert repository.least_held_color_slot(counts, frozenset()) == 2        # unreserved: takes it
+    assert repository.least_held_color_slot(counts, frozenset({2})) == 3     # reserved: skips it
+    # Every slot owed (an unmigrated store with >20 unslotted rows): something must be taken
+    # back, but it must not be a built-in's designated slot. Slot 1 is travel's and free;
+    # returning it would repaint travel permanently, which is the bug this branch exists for.
+    assert repository.least_held_color_slot(Counter({0: 1}), frozenset(range(20))) == 2
 
 
 def test_slot_survives_json_encoding_as_a_number(handler):
@@ -2558,21 +2561,27 @@ def test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix(handler
     """WHIT-404 leaves TWO assigners on purpose: create spreads, the backfill planner does not.
     This is the guard on that split. Persisting an alphabetical prefix of a plan and re-planning
     must reproduce the one-shot plan exactly — which is what makes WHIT-405's chunked drain
-    equivalent to one unchunked write. Swap the planner to the least-held rule and this fails
-    on 107 of 250 stores, because an earlier chunk can then consume a built-in's designated
-    slot before pass 1 reaches it. Do not merge the two assigners."""
+    equivalent to one unchunked write. Swap the planner to the least-held rule and it diverges
+    on roughly half the randomised stores, because an earlier chunk can then consume a
+    built-in's designated slot before pass 1 reaches it. Do not merge the two assigners.
+
+    Not the only thing that catches a merge — WHIT-405's chunk-equivalence tests do too. This
+    one isolates the PURE planner from the write path, so its failure names the rule rather
+    than a drain that happens to disagree."""
     import random
+    import repository_category
     repository, _ = _repo_with_fake_table(handler)
     rng = random.Random(404)
+    chunk = repository_category._COLOR_SLOT_WRITE_CHUNK
 
     for trial in range(250):
         original = _random_legacy_store(repository, rng)
         one_shot = repository.plan_color_slot_backfill(copy.deepcopy(original))
         partial = copy.deepcopy(original)
-        for cat_id in sorted(one_shot)[:50]:                  # persist the first chunk
+        for cat_id in sorted(one_shot)[:chunk]:               # persist the first chunk
             partial[cat_id][_SLOT] = Decimal(one_shot[cat_id])
         replanned = repository.plan_color_slot_backfill(partial)
 
-        drained = {cid: one_shot[cid] for cid in sorted(one_shot)[:50]}
+        drained = {cid: one_shot[cid] for cid in sorted(one_shot)[:chunk]}
         drained.update(replanned)
         assert drained == one_shot, f"trial {trial}: chunked planning diverged from one shot"

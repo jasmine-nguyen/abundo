@@ -142,8 +142,9 @@ def _lowest_free_color_slot(used: set) -> int:
     planner, and that rests on the overflow value being CONSTANT: a chunk can only rob a later
     built-in of its designated slot via the overflow value, and the robbed row then falls
     through to that same value anyway. A least-held overflow moves, so the robbed built-in
-    lands elsewhere and the drain stops converging — measured at 107 of 250 randomised stores.
-    Pinned by test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix.
+    lands elsewhere and the drain stops converging on roughly half of randomised stores.
+    Pinned by test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix and by
+    WHIT-405's chunk-equivalence property tests.
     """
     for slot in range(_COLOR_SLOT_COUNT):
         if slot not in used:
@@ -179,7 +180,12 @@ def least_held_color_slot(counts: Counter, reserved: frozenset) -> int:
     """
     candidates = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in reserved]
     if not candidates:
-        candidates = list(range(_COLOR_SLOT_COUNT))
+        # Every slot is owed, so something must be taken back. Go straight to the preference —
+        # NOT to the free-slot branch, which would hand over the lowest owed slot and that is
+        # usually a built-in's pass-1 designation, lost permanently. A non-seed slot is owed to
+        # a custom row, which simply gets re-planned onto another one.
+        return min(range(_COLOR_SLOT_COUNT),
+                   key=lambda slot: (counts[slot], slot not in _NON_SEED_COLOR_SLOTS, slot))
     free = [slot for slot in candidates if counts[slot] == 0]
     if free:
         return min(free)
