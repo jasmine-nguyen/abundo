@@ -2,6 +2,7 @@
 config item, with the seed taxonomy and colour palette kept local to this module."""
 
 import logging
+from collections import Counter
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -76,6 +77,13 @@ _COLOR_SLOT_FIELD = "colorSlot"
 # what makes the backfill one-time rather than a re-check on every read.
 _COLOR_SLOT_SCHEMA_FIELD = "colorSlotSchema"
 _COLOR_SLOT_SCHEMA = 1
+# How many categories one backfill write may stamp (WHIT-405). DynamoDB caps an
+# UpdateExpression at 4KB; each clause costs 29-33 bytes depending on the index width, over a
+# 33-byte base, so 129 clauses (4070 bytes) is the last that fits and 130 (4103) is rejected.
+# An unchunked plan past that point made create_category 500 forever — the write could never
+# succeed and it runs fail-closed. 50 is ~1.6KB, leaving ~2.5x headroom so the clause shape
+# can grow without silently re-breaking. Successive requests drain the rest.
+_COLOR_SLOT_WRITE_CHUNK = 50
 
 
 def _coerce_slot(raw: Any) -> Optional[int]:
@@ -106,27 +114,99 @@ def _coerce_slot_schema(raw: Any) -> int:
         return 0
 
 
-def used_color_slots(items: dict) -> set:
-    """Every slot currently held by a stored category. Corrupt values are ignored so a bad
-    row can't make a valid slot look taken."""
-    return {
+def color_slot_counts(items: dict) -> Counter:
+    """How many stored categories hold each slot. Corrupt values are ignored so a bad row
+    can't make a valid slot look taken.
+
+    `used_color_slots` answers "is this slot taken"; this answers "by how many", which is what
+    the create path needs once the ramp is saturated and the answer to the first question is
+    "yes" for all 20. A slot nobody holds is simply absent — Counter reads it as 0.
+    """
+    return Counter(
         slot
         for slot in (_coerce_slot(cat.get(_COLOR_SLOT_FIELD)) for cat in items.values())
         if slot is not None
-    }
+    )
 
 
-def next_color_slot(used: set) -> int:
-    """The lowest FREE slot. A deleted category's slot is free again, so it gets reused —
-    that is the card's 'deleting frees its slot', with no work in delete_category.
+def used_color_slots(items: dict) -> set:
+    """Every slot currently held by a stored category."""
+    return set(color_slot_counts(items))
 
-    Past 20 live categories every slot is taken; then share slot 0 rather than fail the
-    create — a duplicate colour beyond 20 categories is acceptable, an error is not.
+
+# Slots no built-in claims. Preferred for the first repeats (WHIT-404 option B): a duplicate
+# has to happen somewhere past 20 categories, and doubling up on a colour only a custom
+# category wears is less confusing than doubling up on Eating Out's. Derived from the seed
+# table rather than written out, so it cannot drift if the seeds are ever retuned.
+_NON_SEED_COLOR_SLOTS = frozenset(range(_COLOR_SLOT_COUNT)) - {
+    cat[_COLOR_SLOT_FIELD] for cat in SEED_CATEGORIES.values()
+}
+
+
+def _lowest_free_color_slot(used: set) -> int:
+    """The lowest FREE slot, collapsing to slot 0 once all 20 are taken.
+
+    The BACKFILL's assigner — deliberately NOT the create path's least-held rule, and the two
+    must not be merged. The chunked drain (_write_color_slots, WHIT-405) is only equivalent to
+    one unchunked write because persisting an alphabetical prefix is a fixed point of this
+    planner, and that rests on the overflow value being CONSTANT: a chunk can only rob a later
+    built-in of its designated slot via the overflow value, and the robbed row then falls
+    through to that same value anyway. A least-held overflow moves, so the robbed built-in
+    lands elsewhere and the drain stops converging on roughly half of randomised stores.
+    Pinned by test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix and by
+    WHIT-405's chunk-equivalence property tests.
     """
     for slot in range(_COLOR_SLOT_COUNT):
         if slot not in used:
             return slot
     return 0
+
+
+def least_held_color_slot(counts: Counter, reserved: frozenset) -> int:
+    """The slot to give a NEW category: the least-held one, preferring slots no built-in owns,
+    with the lowest slot number breaking any remaining tie.
+
+    While ANY slot is free this is exactly "the lowest free slot", non-seed preference and all
+    — so a deleted category's slot is still reused immediately, with no work in
+    delete_category, and a deleted BUILT-IN's slot is not passed over in favour of a
+    never-used one. The preference only decides which colour to DOUBLE UP on, which is a
+    question that does not exist until the ramp is full.
+
+    Past 20 live categories a duplicate is unavoidable (an error is not acceptable). Handing
+    out the least-held slot spreads the repeats across the ramp instead of piling every one of
+    them onto slot 0, which is what the old lowest-free walk did (WHIT-404). Among equally
+    held slots the seven that no built-in owns go first, so the first seven repeats double up
+    on a custom category's colour rather than on Eating Out's — the first built-in clash moves
+    from the 21st category to the 28th.
+
+    `reserved` is a HARD exclusion, not a weight. Slots the pending backfill owes must not be
+    candidates at all: an owed slot is held by nobody, so counting it as merely +1 would leave
+    it tied with a singly-held slot and the tie-break would hand it straight over — stealing a
+    built-in's designated colour permanently. If EVERY slot is owed, something has to be taken
+    back: the least-held one, still preferring a slot no built-in owns, so a built-in keeps its
+    designated hue and a custom row is simply re-planned onto another slot. Deliberately not
+    the free-slot branch — a free-but-owed slot is exactly what must not be handed out.
+
+    Iterates `range`, never the Counter, so the answer never depends on insertion order: two
+    concurrent creates must compute the same slot.
+    """
+    def least_held(slots) -> int:
+        """Fewest holders wins; among equals a slot no built-in owns; then the lowest number.
+        False sorts before True, so the non-seed test reads as "seed slots go last"."""
+        return min(slots,
+                   key=lambda slot: (counts[slot], slot not in _NON_SEED_COLOR_SLOTS, slot))
+
+    candidates = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in reserved]
+    if not candidates:
+        # Every slot is owed, so something must be taken back. Go straight to the preference —
+        # NOT to the free-slot branch, which would hand over the lowest owed slot and that is
+        # usually a built-in's pass-1 designation, lost permanently. A non-seed slot is owed to
+        # a custom row, which simply gets re-planned onto another one.
+        return least_held(range(_COLOR_SLOT_COUNT))
+    free = [slot for slot in candidates if counts[slot] == 0]
+    if free:
+        return min(free)
+    return least_held(candidates)  # saturated: a duplicate is unavoidable, so spread it
 
 
 def plan_color_slot_backfill(items: dict) -> dict:
@@ -153,7 +233,7 @@ def plan_color_slot_backfill(items: dict) -> dict:
             used.add(plan[cat_id])
     for cat_id in missing:  # pass 2: everything else, lowest free, alphabetical
         if cat_id not in plan:
-            plan[cat_id] = next_color_slot(used)
+            plan[cat_id] = _lowest_free_color_slot(used)
             used.add(plan[cat_id])
     return plan
 
@@ -340,10 +420,21 @@ class CategoryRepository:
         return raw >= _COLOR_SLOT_SCHEMA
 
     def _write_color_slots(self, version: Any, plan: dict, *, strict: bool) -> None:
-        """Persist a colour-slot plan and stamp the store as migrated.
+        """Persist up to _COLOR_SLOT_WRITE_CHUNK of a colour-slot plan, stamping the store as
+        migrated once the plan is fully drained.
 
-        FAIL-OPEN on the READ path (strict=False). Seven handler routes call
-        list_categories, and every one of them survives today on a single get_item. If this
+        CHUNKING IS EQUIVALENT TO ONE SHOT, and not for the obvious reason. It is NOT because
+        planned slots are distinct — past 20 unslotted rows they are not, the assigner hands
+        the same overflow slot to many rows. It holds because persisting an alphabetical
+        prefix is a fixed point of the planner: a chunk can only take a later built-in's
+        preferred slot via that overflow value, and the robbed row then falls through to the
+        same overflow value anyway. So re-planning after each chunk converges on exactly the
+        assignment one write would have produced. Verified by simulation over randomised
+        stores, including >20 unslotted rows and a create or delete landing between chunks.
+
+        FAIL-OPEN on the READ path (strict=False). Seven handler routes call list_categories,
+        as does the webhook Lambda's budget-alert path (shared/budget_alerts.py), and every
+        one of them survives today on a single get_item. If this
         write raised, a VersionConflictError would 409 the caller and any other ClientError
         would become a DatabaseError the handler does not catch — a 500 on a read that would
         have succeeded. So: attempt it once, and on failure log and carry on. The caller has
@@ -357,14 +448,26 @@ class CategoryRepository:
         # expression never references. Same technique delete_category uses for #childN.
         # With an EMPTY plan we still write the marker (names = version + schema only, never
         # #items), so a store whose categories were all deleted stops re-planning forever.
-        names = {"#v": "version", "#schema": _COLOR_SLOT_SCHEMA_FIELD}
-        values = {":expected": version, ":next": version + Decimal(1),
-                  ":schema": Decimal(_COLOR_SLOT_SCHEMA)}
-        set_parts = ["#v = :next", "#schema = :schema"]
+        # At most _COLOR_SLOT_WRITE_CHUNK categories per write, so the expression can never
+        # exceed DynamoDB's 4KB cap. `sorted` makes the chunk an alphabetical prefix, which is
+        # what keeps chunking equivalent to one shot (see the `drained` comment below).
+        chunk = sorted(plan)[:_COLOR_SLOT_WRITE_CHUNK]
+        # Stamp the migrated marker only once this write drains the plan. A partial write must
+        # NOT stamp it, or the remaining categories would never be revisited. An empty plan
+        # counts as drained: that is the "all categories deleted" case, which must still stamp
+        # so the store stops re-planning forever.
+        drained = len(chunk) == len(plan)
+        names = {"#v": "version"}
+        values = {":expected": version, ":next": version + Decimal(1)}
+        set_parts = ["#v = :next"]
+        if drained:
+            names["#schema"] = _COLOR_SLOT_SCHEMA_FIELD
+            values[":schema"] = Decimal(_COLOR_SLOT_SCHEMA)
+            set_parts.append("#schema = :schema")
         if plan:
             names["#items"] = "items"
             names["#slot"] = _COLOR_SLOT_FIELD
-            for index, cat_id in enumerate(sorted(plan)):
+            for index, cat_id in enumerate(chunk):
                 alias = f"#cat{index}"
                 names[alias] = cat_id
                 values[f":slot{index}"] = Decimal(plan[cat_id])
@@ -458,10 +561,13 @@ class CategoryRepository:
             # The slot is computed INSIDE the loop from the freshly-read items (same rule as
             # `color` above): on a retry we re-read, so two concurrent creates can never be
             # handed the same slot — the loser's write fails, it re-reads, and it sees the
-            # winner's slot as taken. Slots still owed to unmigrated rows are reserved via
-            # the plan, so a create can't steal a colour the backfill is about to assign.
-            taken = used_color_slots(items) | set(plan_color_slot_backfill(items).values())
-            slot = next_color_slot(taken)
+            # winner's slot as taken. Slots still owed to unmigrated rows are RESERVED — a
+            # hard exclusion, not a weight, so a create can't steal a colour the backfill is
+            # about to assign. `counts` comes from the STORED slots only: feeding the owed
+            # slots in as counts instead would leave an owed-but-unheld slot tied with a
+            # singly-held one, and the tie-break would hand it straight over (WHIT-404).
+            reserved = frozenset(plan_color_slot_backfill(items).values())
+            slot = least_held_color_slot(color_slot_counts(items), reserved)
             new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
                        "bucket": bucket, "parent": parent,
                        _COLOR_SLOT_FIELD: Decimal(slot)}

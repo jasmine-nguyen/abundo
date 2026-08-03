@@ -223,10 +223,12 @@ def test_all_rows_bad_is_empty_and_never_wipes_markers(shared, recorder):
 
 
 def test_previously_fired_row_now_corrupt_is_swept_not_re_fired(shared, recorder):
-    # A row that celebrated earlier and is NOW corrupt: it's skipped, so its stored marker is
-    # absent from the resolved plan. With a good row keeping the plan non-empty, the WHIT-385
-    # reconcile sweeps the now-orphan marker. Harmless — balance only falls, so it can't re-cross
-    # and re-fire. Proves the sweep happens without a crash.
+    # A row that celebrated earlier and is NOW corrupt. Note WHY it is swept: the row has no
+    # readable targetBalance, so _plan_marker can't build a key for it at all — that, not "it
+    # was skipped", is what makes it look gone. A row skipped for a bad date or a blank label IS
+    # keyable and KEEPS its marker ([B3] in test_milestone_rows_gaps.py). This is the one
+    # remaining corner where an unreadable row still loses its record; it is the accepted
+    # fallback, and this is the only test pinning it. Proves the sweep happens without a crash.
     repo = FakeMilestoneRepo(stored=[
         _row("Good", "120000", id="c"),
         {"id": "gone", "label": "Was celebrated", "targetDate": "2027-01-01"},   # now corrupt

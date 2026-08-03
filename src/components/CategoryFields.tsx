@@ -74,7 +74,7 @@ export function CategoryFields({
         key={k}
         testID={`icon-${k}`}
         onPress={() => onIconChange(k)}
-        style={[s.iconBtn, { borderColor: sel ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: sel ? 'rgba(124,140,255,.14)' : unselectedBg }]}
+        style={[s.iconBtn, { borderColor: sel ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: sel ? tint(C.accentAlt, 0.14) : unselectedBg }]}
       >
         <Icon name={k} size={iconSize} color={sel ? C.accentSofter : C.textMid} />
       </Pressable>
@@ -120,7 +120,7 @@ export function CategoryFields({
           <View style={s.row}>
             <Pressable
               onPress={() => onParentChange(null)}
-              style={[s.chip, { borderColor: parent === null ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: parent === null ? 'rgba(124,140,255,.14)' : unselectedBg }]}
+              style={[s.chip, { borderColor: parent === null ? C.accent : 'rgba(255,255,255,.07)', backgroundColor: parent === null ? tint(C.accentAlt, 0.14) : unselectedBg }]}
             >
               <Text style={[s.chipText, { color: parent === null ? C.accentSofter : C.textMid }]}>{noneLabel}</Text>
             </Pressable>

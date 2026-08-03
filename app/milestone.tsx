@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
   retryBtn: { backgroundColor: 'rgba(21,18,58,.16)', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 14 },
   retryText: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.heroInk },
 
-  nextCard: { backgroundColor: 'rgba(124,140,255,.1)', borderWidth: 1, borderColor: 'rgba(124,140,255,.22)', borderRadius: 18, padding: 16, marginBottom: 12 },
+  nextCard: { backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 18, padding: 16, marginBottom: 12 },
   nextEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSofter },
   nextBig: { fontFamily: FONT.display, fontSize: 26, fontWeight: '800', color: '#fff', letterSpacing: -0.8 },
   nextTo: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.accentSoft },

@@ -120,14 +120,14 @@ export default function BudgetEdit() {
           <View style={styles.hist}>
             {info.histBars.map((h, i) => (
               <View key={i} style={styles.histCol}>
-                <View style={{ width: 18, height: h.h, borderRadius: 5, backgroundColor: h.last ? C.accent : 'rgba(124,140,255,.32)' }} />
+                <View style={{ width: 18, height: h.h, borderRadius: 5, backgroundColor: h.last ? C.accent : tint(C.accentAlt, 0.32) }} />
                 <Text style={styles.histLabel}>{h.label}</Text>
               </View>
             ))}
           </View>
         )}
 
-        <Pressable onPress={save} style={[styles.saveBtn, { backgroundColor: canSave ? C.accent : 'rgba(124,140,255,.25)' }]}>
+        <Pressable onPress={save} style={[styles.saveBtn, { backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}>
           <Text style={[styles.saveText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{info.saveText}</Text>
         </Pressable>
       </ScrollView>
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
   amountBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', borderRadius: 16, paddingHorizontal: 18 },
   dollar: { fontFamily: FONT.display, fontSize: 28, fontWeight: '700', color: C.textMid },
   amountInput: { flex: 1, fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: '#fff', paddingVertical: 16, marginLeft: 4 },
-  recBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(124,140,255,.1)', borderWidth: 1, borderColor: 'rgba(124,140,255,.22)', borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16, marginTop: 12 },
+  recBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 14, paddingVertical: 13, paddingHorizontal: 16, marginTop: 12 },
   recBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.accentSofter },
   recBtnAmount: { fontFamily: FONT.display, fontSize: 15, fontWeight: '700', color: '#fff' },
   histToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, marginTop: 4 },

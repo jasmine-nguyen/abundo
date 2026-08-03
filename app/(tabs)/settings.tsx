@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT } from '../../src/theme';
+import { C, FONT, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { useAppContext } from '../../src/context';
 import { useSettingsScreenData, useRulesScreenData, usePayCycle } from '../../src/queries';
@@ -126,7 +126,7 @@ export default function Settings() {
 function Row({ icon, label, value, onPress, last }: { icon: string; label: string; value: string; onPress: () => void; last?: boolean }) {
   return (
     <Pressable onPress={onPress} style={[styles.rowBase, last && { borderBottomWidth: 0 }]}>
-      <View style={[styles.rowIcon, { backgroundColor: 'rgba(124,140,255,.14)' }]}><Glyph name={icon} size={19} color={C.accentSoft} /></View>
+      <View style={[styles.rowIcon, { backgroundColor: tint(C.accentAlt, 0.14) }]}><Glyph name={icon} size={19} color={C.accentSoft} /></View>
       <Text style={styles.rowLabel}>{label}</Text>
       <Text style={styles.rowValue}>{value}</Text>
       <Glyph name="chevron" size={18} color={C.textFaint} />
@@ -156,6 +156,6 @@ const styles = StyleSheet.create({
   // Budgets retry tokens (retryBtn/retryText) so the retry looks identical app-wide.
   setupError: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: -10, marginBottom: 18 },
   setupErrorText: { fontFamily: FONT.body, fontSize: 14, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

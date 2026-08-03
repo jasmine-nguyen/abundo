@@ -12,8 +12,8 @@ import { useReduceMotion } from '../motion/useReduceMotion';
 // At rest the hole shows the TOTAL spent. Tap a wedge to read that category's name + total instead;
 // tap it again — OR tap the hole — to clear back to the total.
 
-// The grouped "Other" slice grey comes from the chart palette (OTHER_COLOR, === C.textFaint) —
-// distinct from any category hue and low-saturation so it reads as "not one thing".
+// The grouped "Other" slice grey comes from the chart palette (OTHER_COLOR) — distinct from any
+// category hue and low-saturation so it reads as "not one thing".
 
 export interface DonutSlice { id: string; name: string; color: string; value: number }
 

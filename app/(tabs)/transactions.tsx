@@ -311,7 +311,7 @@ const styles = StyleSheet.create({
   actionBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, paddingHorizontal: 18, backgroundColor: '#161620', borderTopWidth: 1, borderTopColor: C.hairline },
   actionCount: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '600', color: C.textMid },
   actionBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 13, backgroundColor: C.accent },
-  actionBtnDisabled: { backgroundColor: 'rgba(124,140,255,.22)' },
+  actionBtnDisabled: { backgroundColor: tint(C.accentAlt, 0.22) },
   actionBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
   actionBtnTextDisabled: { color: '#6a6a90' },
 
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontFamily: FONT.body, fontSize: 14, color: C.textBright, paddingVertical: 8, padding: 0 },
   searchClear: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#6e6e78', paddingHorizontal: 2 },
 
-  hint: { flexDirection: 'row', gap: 11, alignItems: 'flex-start', backgroundColor: 'rgba(124,140,255,.1)', borderWidth: 1, borderColor: 'rgba(124,140,255,.22)', borderRadius: 16, padding: 13, paddingHorizontal: 14, marginTop: 10 },
+  hint: { flexDirection: 'row', gap: 11, alignItems: 'flex-start', backgroundColor: tint(C.accentAlt, 0.1), borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), borderRadius: 16, padding: 13, paddingHorizontal: 14, marginTop: 10 },
   hintText: { flex: 1, fontFamily: FONT.body, fontSize: 12.5, color: C.accentSofter, lineHeight: 18 },
   hintBold: { color: '#fff', fontWeight: '700' },
 
@@ -356,6 +356,6 @@ const styles = StyleSheet.create({
 
   rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
   stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

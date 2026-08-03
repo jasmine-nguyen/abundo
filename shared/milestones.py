@@ -21,7 +21,7 @@ import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from milestone_rows import MalformedMilestoneRow, is_plan_list, row_target, row_text
+from milestone_rows import MalformedMilestoneRow, is_plan_list, row_date, row_target, row_text
 from push import send_push
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,13 @@ def _is_custom_marker(key: str) -> bool:
 
 
 def _resolve_plan(milestone_repo=None, scope=None):
-    """Return (plan, authoritative).
+    """Return (plan, authoritative, live_keys).
+
+    `live_keys` is every marker the STORED rows still key to — which is not the same as the
+    markers in `plan`. A row that is present but unreadable (a bad date, a blank label) resolves
+    out of `plan` yet is still a row the user has, so its key belongs here: the WHIT-385 sweep
+    below uses this to tell "unreadable" apart from "deleted", and only the latter should lose
+    its once-ever record. Empty for every non-authoritative case, where nothing is swept anyway.
 
     `plan` is the same list resolve_plan has always returned. `authoritative` is True ONLY when
     the store returned a genuine saved list (populated OR a real empty []) — the sole case in
@@ -107,7 +113,7 @@ def _resolve_plan(milestone_repo=None, scope=None):
     repository's own default), a user id later reads that user's plan. One param, threaded to the
     fired-state + reconcile too, so multi-user is a per-user loop in the poller — not a rewrite."""
     if milestone_repo is None:
-        return list(MILESTONES), False
+        return list(MILESTONES), False, set()
     try:
         if scope is None:
             stored = milestone_repo.get_milestones_raw()
@@ -115,9 +121,9 @@ def _resolve_plan(milestone_repo=None, scope=None):
             stored = milestone_repo.get_milestones_raw(scope)
     except Exception as e:
         logger.warning("milestones read failed, using the default plan: %s", e)
-        return list(MILESTONES), False
+        return list(MILESTONES), False, set()
     if stored is None:
-        return list(MILESTONES), False
+        return list(MILESTONES), False, set()
     # A corrupt whole-plan write (a non-list scalar isn't iterable) degrades to an authoritative
     # EMPTY plan, not the default: an empty plan celebrates nothing and — via the WHIT-386
     # `and plan` guard — sweeps no markers, whereas falling back to the default would send a
@@ -125,28 +131,41 @@ def _resolve_plan(milestone_repo=None, scope=None):
     # corrupt plan is visible, not silently eaten (WHIT-387).
     if not is_plan_list(stored):
         logger.error("MILESTONE_PLAN_MALFORMED stored milestone plan is not a list, treating as empty: %r", stored)
-        return [], True
+        return [], True, set()
     # Resolve row by row so ONE corrupt saved row is skipped + logged rather than raising the
     # whole poll's celebration into the poller's best-effort swallow — which would drop every
     # good row's push permanently, since the balance only moves down so the crossing is never
     # re-detected (WHIT-387).
     #
     # What counts as corrupt lives in milestone_rows, shared with the client read so the two
-    # can't drift (WHIT-394). row_target COERCES to a finite Decimal: a legacy/direct-write row
+    # can't drift (WHIT-394) — including targetDate since WHIT-417, so a row the plan screen
+    # hides can never still send a celebration for it.
+    #
+    # row_target COERCES to a finite Decimal: a legacy/direct-write row
     # can hold the target as a string ("120000"), which crossed_milestones would otherwise
     # compare as Decimal > str -> TypeError OUTSIDE this loop, back in the poller's swallow.
     # After coercion target_balance is always a FINITE Decimal, so the comparison can't raise.
     #
-    # _plan_marker re-derives the target rather than taking it as an argument: a plan is capped
-    # at 50 rows, so the repeat coercion is deliberate — it keeps _plan_marker callable with just
-    # a row, which is the whole reason it can be reasoned about (and tested) on its own.
+    # _plan_marker takes just a row rather than a pre-coerced target, which is the whole reason
+    # it can be reasoned about (and tested) on its own. The target is therefore coerced twice per
+    # row; a plan is capped at 50 rows, so that is deliberate.
     plan = []
+    live_keys = set()
     for row in stored:
         try:
-            plan.append(PlanMilestone(label=row_text(row, "label"), target_balance=row_target(row), key=_plan_marker(row)))
+            # The marker comes FIRST because it answers a different question from the rest of
+            # the loop: "does the user still have this row?", not "can we celebrate it?".
+            # A row we can key is a row that is still in the saved plan, even when the rest of
+            # it is unreadable — so its once-ever marker stays live and the sweep below leaves
+            # it alone. Only a row we can't key at all (a corrupt target) is treated as gone.
+            key = _plan_marker(row)
+            live_keys.add(key)
+            # WHIT-417: called for the rejection only — the poller has no use for the date.
+            row_date(row, "targetDate")
+            plan.append(PlanMilestone(label=row_text(row, "label"), target_balance=row_target(row), key=key))
         except MalformedMilestoneRow as e:
             logger.error("MILESTONE_ROW_MALFORMED skipping a corrupt saved milestone row, celebrating the rest: %r (%s)", row, e)
-    return plan, True
+    return plan, True, live_keys
 
 
 def resolve_plan(milestone_repo=None, scope=None) -> list:
@@ -249,7 +268,7 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     fired-state is read / reconciled / marked — the SAME owner for all. None is the single shared
     tenant today; the poller passes a user id per user when multi-user lands, and nothing else
     here changes."""
-    plan, authoritative = _resolve_plan(milestone_repo, scope)
+    plan, authoritative, live_keys = _resolve_plan(milestone_repo, scope)
 
     # WHIT-385: reconcile away dead custom markers so a re-targeted or deleted milestone's old
     # marker can't accumulate forever. Runs BEFORE the "nothing crossed" short-circuit, since a
@@ -257,7 +276,16 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     # with at least one row — never on a fallback default (None repo / unset / read failure), which
     # would wipe live markers on a transient blip. Only custom markers ("id:<id>:bal:<amount>" or
     # the legacy "bal:<amount>", per _is_custom_marker) are ever removed, so built-in sprint markers
-    # ("0".."4") are untouched. `fired` is reused for the dedup below without subtracting `stale`:
+    # ("0".."4") are untouched.
+    #
+    # "Dead" means the row is GONE from the saved plan — deleted, or re-targeted so it keys to a
+    # new amount. It does NOT mean the row failed validation: an unreadable row is still a row the
+    # user has, and wiping its marker would re-arm a celebration they already had. That is why the
+    # live set comes from `live_keys` (every stored row we could key) and not from `plan` (only the
+    # rows we could fully read). Using `plan` cost a row its once-ever record the moment either
+    # read path gained a new rejection — WHIT-394's blank label, then WHIT-417's bad date.
+    #
+    # `fired` is reused for the dedup below without subtracting `stale`:
     # every stale key is a target NOT in the plan and `crossed` ⊆ plan, so no fresh key can be
     # stale — subtracting would be dead work.
     #
@@ -268,6 +296,10 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
     # nothing instead of silently erasing the once-ever record. The cost — a directly-DB-written
     # empty plan no longer self-heals its dead markers — is harmless: an unmatched marker never
     # re-fires.
+    #
+    # Deliberately `plan`, not `live_keys`: a plan whose rows are ALL unreadable has keys but is
+    # no evidence the store was read correctly, so it skips the sweep entirely. Same harmless
+    # cost — a genuinely dead marker isn't reaped that poll, and the next readable poll reaps it.
     fired = None
     if authoritative and plan:
         # Best-effort: reconcile is bookkeeping, so a marker read/write blip must never suppress a
@@ -277,8 +309,7 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
         # `crossed`, so dedup below is unaffected.
         try:
             fired = notify_repo.fired_milestones(scope)
-            live = {milestone.key for milestone in plan}
-            stale = {k for k in fired if _is_custom_marker(k) and k not in live}
+            stale = {k for k in fired if _is_custom_marker(k) and k not in live_keys}
             if stale:
                 notify_repo.remove_milestone_markers(stale, scope)
         except Exception as e:
@@ -303,7 +334,7 @@ def notify_milestone_crossing(old_balance, new_balance, *, loanfacts_repo, devic
         _TITLE.format(label=furthest.label),
         _body(new_balance, loanfacts_repo),
         tokens,
-        data={"type": "milestone"},  # deep-link a tap to the mortgage screen (WHIT-322)
+        data={"type": "milestone"},  # deep-link a tap to the milestone plan screen (WHIT-322)
     )
     for milestone in fresh:  # mark regardless of send outcome (see docstring)
         notify_repo.mark_milestone_fired(milestone.key, scope)

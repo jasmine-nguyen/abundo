@@ -178,21 +178,6 @@ def test_set_milestones_return_value_is_validated_too(shared, milestone_repo):
     assert [m["id"] for m in saved] == ["good"]
 
 
-@pytest.mark.parametrize("bad_row, why", [
-    # Date shapes only — the blank/null LABEL cases are in _CORRUPT_SHAPES below, since both
-    # paths reject those. The date rule is client-only, so it can't live in the parity table.
-    (_row(targetDate=""), "blank date"),
-    (_row(targetDate=None), "null date"),
-    (_row(targetDate="not-a-date"), "unparsable date"),
-])
-def test_client_read_skips_an_unparsable_date(shared, milestone_repo, bad_row, why):
-    # WHIT-394 option B3. A null targetDate reaches _review_candidates' date.fromisoformat,
-    # which raises OUTSIDE any per-row guard -> a 500 on the review endpoint. Fail-on-revert:
-    # swap row_text/row_date back for a plain lookup and the bad row survives.
-    _store_raw_row(milestone_repo, [_row(id="good"), {**bad_row, "id": "bad"}])
-    assert [m["id"] for m in milestone_repo.get_milestones()] == ["good"], why
-
-
 # --- [P] parity: both read paths agree ---------------------------------------------------
 
 _CORRUPT_SHAPES = [
@@ -207,6 +192,12 @@ _CORRUPT_SHAPES = [
     ("un-floatable target", _row(targetBalance=Decimal("1e100000"))),
     ("blank label", _row(label="")),
     ("null label", _row(label=None)),
+    # WHIT-417 moved these three in: the date rule used to be client-only, because only
+    # _review_candidates parses the field (an unparsable one raises outside its per-row guard
+    # and 500s the review endpoint — WHIT-394). Now both paths apply it.
+    ("blank date", _row(targetDate="")),
+    ("null date", _row(targetDate=None)),
+    ("unparsable date", _row(targetDate="not-a-date")),
     ("non-dict row", "a bare string row"),
     ("null row", None),
 ]
@@ -233,8 +224,8 @@ def test_the_target_precision_divergence_is_pinned_not_accidental(shared, milest
     # would impose the poller's cent-precision constraint on a client read that has no such
     # need. Unreachable in practice — the save endpoint caps targetBalance at 1e9. Pinned here
     # so it stays a known, chosen difference rather than silent drift.
-    # NOT the only divergence — the client-only date rule and the missing-`id`-KEY case are
-    # pinned in test_milestone_rows_gaps.py [B1]/[B2].
+    # After WHIT-417 closed the date one, this and the missing-`id`-KEY case ([B2] in
+    # test_milestone_rows_gaps.py) are the two divergences left, both hand-edit-only.
     stored = [_row(id="big", targetBalance=Decimal("1e26"))]
     _store_raw_row(milestone_repo, stored)
     assert [m["id"] for m in milestone_repo.get_milestones()] == ["big"]
@@ -250,12 +241,19 @@ def test_both_read_paths_degrade_a_non_list_plan_to_empty(shared, milestone_repo
 
 # --- [D] the per-site differences that must SURVIVE unification --------------------------
 
-def test_poller_logs_the_alarm_token_at_error(shared, caplog):
+@pytest.mark.parametrize("bad_row, why", [
+    (_row(targetBalance=Decimal("NaN")), "non-numeric target"),
+    # WHIT-417: a bad date now reaches the poller's rejection too, so it raises the alarm. That
+    # visibility is the upside of the change — before it, such a row was silent on both paths
+    # (the client read logs at WARNING with no token, pinned by the test below). Fail-on-revert:
+    # drop row_date from _resolve_plan and the row resolves, so no token is ever logged.
+    (_row(targetDate="not-a-date"), "unparsable date"),
+])
+def test_poller_logs_the_alarm_token_at_error(shared, caplog, bad_row, why):
     # The CloudWatch metric filter (terraform/monitoring.tf) string-matches these tokens.
-    stored = [_row(targetBalance=Decimal("NaN"))]
     with caplog.at_level(logging.ERROR, logger="milestones"):
-        assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored)) == []
-    assert "MILESTONE_ROW_MALFORMED" in caplog.text
+        assert shared.milestones.resolve_plan(FakeMilestoneRepo([bad_row])) == []
+    assert "MILESTONE_ROW_MALFORMED" in caplog.text, why
 
 
 def test_client_read_warns_WITHOUT_any_alarm_token(shared, milestone_repo, caplog):

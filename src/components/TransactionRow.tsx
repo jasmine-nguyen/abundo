@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { C, FONT } from '../theme';
+import { C, FONT, tint } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, transactionView, Transaction, Category } from '../context';
 
@@ -85,7 +85,7 @@ export function TransactionRow({ t, category, selectable = false, selected = fal
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: C.hairline },
   // WHIT-291: a faint accent wash marks a selected row in selection mode.
-  rowSelected: { backgroundColor: 'rgba(124,140,255,.10)' },
+  rowSelected: { backgroundColor: tint(C.accentAlt, 0.1) },
   body: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 13, paddingLeft: 6 },
   rowPressed: { opacity: 0.6 },
   check: { paddingLeft: 6, paddingRight: 2, paddingVertical: 13, alignItems: 'center', justifyContent: 'center' },

@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, fmt } from '../../src/theme';
+import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { balanceGoalView, goalView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
@@ -209,7 +209,7 @@ export default function Goals() {
 const styles = StyleSheet.create({
   // Grows the ScrollView content so the spinner/error state centres mid-viewport (WHIT-199).
   fill: { flexGrow: 1 },
-  addBtn: { width: 40, height: 40, backgroundColor: 'rgba(124,140,255,.16)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  addBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   // The mortgage entry — a light hero-tinted card so it reads as the headline goal.
   mortgageCard: { position: 'relative', overflow: 'hidden', flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.accent, borderRadius: 20, padding: 18, marginBottom: 20 },
@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
 
   goalCard: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18, padding: 16, marginBottom: 12 },
   goalHead: { flexDirection: 'row', alignItems: 'center', gap: 13 },
-  goalChip: { width: 42, height: 42, borderRadius: 13, backgroundColor: 'rgba(124,140,255,.14)', alignItems: 'center', justifyContent: 'center' },
+  goalChip: { width: 42, height: 42, borderRadius: 13, backgroundColor: tint(C.accentAlt, 0.14), alignItems: 'center', justifyContent: 'center' },
   goalName: { fontFamily: FONT.body, fontSize: 15.5, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
   goalSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   goalPct: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.5 },
@@ -239,18 +239,18 @@ const styles = StyleSheet.create({
   manualRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.hairline },
   asOf: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },
   staleTag: { fontFamily: FONT.body, fontSize: 11, fontWeight: '700', color: C.warn, marginTop: 2 },
-  updateBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 11, backgroundColor: 'rgba(124,140,255,.14)' },
+  updateBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 11, backgroundColor: tint(C.accentAlt, 0.14) },
   updateText: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
 
   // WHIT-295: the additive invite shown when the mortgage is your only goal — a light hint line,
   // not a "you have nothing" card, since the mortgage above already counts.
   emptyHint: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, lineHeight: 19, textAlign: 'center', marginTop: 2, marginBottom: 14, paddingHorizontal: 10 },
 
-  addGoal: { marginTop: 8, marginBottom: 6, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(124,140,255,.4)', backgroundColor: 'rgba(124,140,255,.07)', borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  addGoal: { marginTop: 8, marginBottom: 6, paddingVertical: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: tint(C.accentAlt, 0.4), backgroundColor: tint(C.accentAlt, 0.07), borderRadius: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addGoalText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSoft },
 
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 16 },
   errorText: { fontFamily: FONT.body, fontSize: 15, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: 'rgba(124,140,255,.16)' },
+  retryBtn: { paddingVertical: 11, paddingHorizontal: 24, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
   retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });
