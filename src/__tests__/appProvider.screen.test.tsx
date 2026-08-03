@@ -590,6 +590,21 @@ it('createCategoryInline stays silent on failure with { silent: true }', async (
   expect(result.current.toast).toBeNull();  // ...but fires no toast of its own
 });
 
+// WHIT-437: the UPDATE writer's silent-reject needs its own pin. The card's headline journey —
+// attaching an existing sub-category to a parent already at 50 — runs through saveCategory, not
+// createCategoryInline, so without this the line can be reverted with the whole suite still green.
+it('saveCategory stays silent on failure with { silent: true } and rejects', async () => {
+  mockApi.updateCategory.mockRejectedValue(new ApiError(400, CAP_REASON));
+  seed();
+  const result = mount();
+  await act(async () => {
+    await expect(
+      result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart' }, { silent: true }),
+    ).rejects.toThrow('API error: 400');    // reports by rejecting, so the reason survives
+  });
+  expect(result.current.toast).toBeNull(); // ...but fires no toast of its own (WHIT-240)
+});
+
 it('createCategoryInline returns null + toasts on failure', async () => {
   mockApi.createCategory.mockRejectedValue(new Error('x'));
   seed();

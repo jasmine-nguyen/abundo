@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
-import { writeFailureReason, endSentence } from '../../src/apiError';
+import { writeFailureReason, writeFailureMessage, endSentence } from '../../src/apiError';
 import { Icon } from '../../src/icons';
 import { useAppContext, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, MAX_CATEGORY_DEPTH } from '../../src/context';
 import { useCategories } from '../../src/queries';
@@ -117,9 +117,7 @@ export default function CategoryEdit() {
         // WHIT-437: a silent writer rejects rather than toasting, so say it here.
         if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }   // WHIT-282
         const reason = writeFailureReason(error);
-        s.showToast(reason === null
-          ? 'Could not save category. Please try again.'
-          : endSentence(reason[0].toUpperCase() + reason.slice(1)));
+        s.showToast(writeFailureMessage(error, 'Could not save category. Please try again.'));
         setSubmitting(false);
         // WHIT-249: a reason means the server refused us and we HANDLED it. No reason means
         // something unexpected escaped — re-throw so useInFlightGuard still logs it.

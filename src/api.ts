@@ -2,7 +2,8 @@ import { Transaction, Category, Bucket } from "./context";
 import { ApiError } from "./apiError";
 import { getAuthToken } from "./auth";
 
-// Re-exported so callers can narrow with `instanceof ApiError` without a second import path.
+// Re-exported for the api-level tests, which assert the thrown shape alongside the fetchers.
+// Production callers import it from ./apiError directly.
 export { ApiError } from "./apiError";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
