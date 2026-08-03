@@ -2026,12 +2026,12 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
     assert longest == 3, f"longest neighbouring-ramp run is {longest}: {ramp}"
 
 
+# ---- WHIT-405: the backfill write is chunked so it can never exceed DynamoDB's 4KB cap ------
+
 _SLOT = "colorSlot"
 # The last clause count that fits DynamoDB's 4KB UpdateExpression cap: 129 clauses = 4070
 # bytes, 130 = 4103. Any plan above this could not be written at all before the chunk cap.
 _LAST_UNCHUNKED_CLAUSE_COUNT = 129
-
-# ---- WHIT-405: the backfill write is chunked so it can never exceed DynamoDB's 4KB cap ------
 
 def _unslotted_store(repo, repository, count):
     """A legacy store with `count` EXTRA unslotted custom categories on top of the seeds."""
@@ -2064,8 +2064,6 @@ def test_a_backfill_expression_never_exceeds_dynamodbs_4kb_limit(handler):
     assert len(expression.encode()) <= _MAX_UPDATE_EXPRESSION_BYTES
     # Well under, not just under: the cap exists to leave headroom, not to sit on the line.
     assert len(expression.encode()) < _MAX_UPDATE_EXPRESSION_BYTES // 2
-
-
 
 
 def test_a_read_mid_drain_still_returns_every_category_fully_slotted(handler):
@@ -2149,6 +2147,13 @@ def test_a_delete_between_chunks_still_lands_on_the_planners_fixed_point(handler
         {cid: int(slot) for cid, slot in expected.items()}
 
 
+# ---- WHIT-405 [A1]-[A10]: randomised and boundary coverage of the chunked drain -------------
+# The tests above cover the drain on hand-built stores. These cover it on GENERATED ones, on
+# the exact chunk boundaries, and while another write lands mid-drain. [A1] is the one that
+# catches a break the hand-built tests miss entirely: the equivalence argument rests on the
+# chunk being an ALPHABETICAL prefix, so reversing the sort order diverges only on stores the
+# generator produces. Expected values always come from the real exported planner — nothing is
+# re-implemented here, so these cannot catch a planner bug; [A9] is the absolute pin for that.
 
 def _exactly_unslotted(repo, count, *, version=1):
     """A store whose plan size is EXACTLY `count` — no seeds, so nothing else is unslotted.
@@ -2206,8 +2211,10 @@ def test_a_chunked_drain_lands_exactly_where_one_unchunked_write_would_have(hand
     # (repository.plan_color_slot_backfill) applied once to the original store — never
     # re-implemented here.
     import random
+    import repository_category
     repository, _ = _repo_with_fake_table(handler)
     rng = random.Random(_PROPERTY_SEED)
+    chunk = repository_category._COLOR_SLOT_WRITE_CHUNK
     saw_over_the_unchunked_limit = 0
 
     for trial in range(_PROPERTY_TRIALS):
@@ -2229,8 +2236,6 @@ def test_a_chunked_drain_lands_exactly_where_one_unchunked_write_would_have(hand
         assert {cid: int(cat[_SLOT]) for cid, cat in stored.items()} == expected, \
             f"trial {trial}: chunked drain diverged from the one-shot plan"
         # Bounded, and never more writes than chunks: no read may re-plan work already done.
-        import repository_category
-        chunk = repository_category._COLOR_SLOT_WRITE_CHUNK
         assert writes == max(1, -(-len(one_shot) // chunk)), f"trial {trial}: {writes} writes"
         assert repo._table.store[_CFG]["colorSlotSchema"] == 1, f"trial {trial}: unmarked"
 
@@ -2359,7 +2364,7 @@ def test_a_create_mid_drain_still_survives_one_concurrent_version_bump(handler):
     assert "wine" in repo._table.store[_CFG]["items"]
 
 
-def test_a_update_and_delete_mid_drain_succeed_on_their_first_attempt(handler):
+def test_update_and_delete_mid_drain_succeed_on_their_first_attempt(handler):
     # WHIT-405 — [A7] update/delete never run the backfill, so a mid-drain store must not cost
     # them a retry. If either ever started migrating inline, its own version bump would
     # guarantee a CCFE and halve its budget — this pins one update_item call each.
@@ -2379,7 +2384,7 @@ def test_a_update_and_delete_mid_drain_succeed_on_their_first_attempt(handler):
     assert "cat0100" not in repo._table.store[_CFG]["items"]
 
 
-def test_a_rows_already_holding_a_valid_slot_never_move_during_a_chunked_drain(handler):
+def test_rows_already_holding_a_valid_slot_never_move_during_a_chunked_drain(handler):
     # WHIT-405 — [A8] "adding a category cannot repaint any other" has to survive the drain.
     # These five sit on deliberately non-designated slots, so a chunk that re-derived them
     # instead of leaving them alone would change their colour.
@@ -2396,7 +2401,7 @@ def test_a_rows_already_holding_a_valid_slot_never_move_during_a_chunked_drain(h
     assert all(_SLOT in cat for cat in stored.values())
 
 
-def test_a_built_ins_keep_their_designated_slots_when_they_fall_in_a_later_chunk(handler):
+def test_built_ins_keep_their_designated_slots_when_they_fall_in_a_later_chunk(handler):
     # WHIT-405 — [A9] the user-visible risk of chunking. Ids sorting BEFORE every built-in
     # push all 13 seeds past the first chunk, and there are far more than 20 unslotted rows,
     # so the assigner saturates and starts handing out the overflow slot. The built-ins must
