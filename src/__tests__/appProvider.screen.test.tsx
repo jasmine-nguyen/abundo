@@ -12,6 +12,7 @@ import { AppProvider, useAppContext } from '../context';
 import type { Transaction, Category, Rule, LoanFacts } from '../context';
 import { queryClient } from '../queryClient';
 import { seedTransactionsCache, readTransactionsCache } from './support/transactionsCache';
+import { ApiError } from '../apiError';
 
 jest.mock('../api');
 // The writers guard the load-error banner on auth (retired), but auth still gates
@@ -65,6 +66,58 @@ function mount() {
   const { result } = renderHook(() => useAppContext(), { wrapper });
   return result;
 }
+
+
+// --- WHIT-437: the server's reason reaches the toast --------------------------
+// These run against the REAL provider with only ../api mocked, so they also prove the path
+// src/components/Overlays.tsx uses (createAndFile calls createCategoryInline with no opts and
+// therefore inherits this fix with zero code change of its own).
+
+const CAP_REASON = 'a category can have at most 50 sub-categories';
+
+it('createCategoryInline toasts the server reason and still returns null', async () => {
+  mockApi.createCategory.mockRejectedValue(new ApiError(400, CAP_REASON));
+  seed();
+  const result = mount();
+  let created: unknown = 'unset';
+  await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
+  expect(result.current.toast).toBe('A category can have at most 50 sub-categories.');
+  // null, not a throw: Overlays.tsx's `else setSubmitting(false)` depends on this branch.
+  expect(created).toBeNull();
+});
+
+it('saveCategory toasts the depth reason', async () => {
+  mockApi.updateCategory.mockRejectedValue(new ApiError(400, 'categories can be nested at most 5 levels deep'));
+  seed();
+  const result = mount();
+  await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'cart' }); });
+  expect(result.current.toast).toBe('Categories can be nested at most 5 levels deep.');
+});
+
+it('deleteCategory toasts the too-wide-to-detach reason', async () => {
+  const detach = "'cafes-coffee' has 73 sub-categories — too many to detach in one write; move some out from under it first";
+  mockApi.deleteCategory.mockRejectedValue(new ApiError(400, detach));
+  seed();
+  const result = mount();
+  await act(async () => { await result.current.deleteCategory('cafes-coffee'); });
+  expect(result.current.toast).toBe(`${detach}.`);
+});
+
+it('keeps the generic copy when the failure explains nothing', async () => {
+  mockApi.createCategory.mockRejectedValue(new Error('offline'));
+  seed();
+  const result = mount();
+  await act(async () => { await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }); });
+  expect(result.current.toast).toBe('Could not save category. Please try again.');
+});
+
+it('keeps the generic copy for a 5xx that did explain itself', async () => {
+  mockApi.deleteCategory.mockRejectedValue(new ApiError(500, 'internal boom'));
+  seed();
+  const result = mount();
+  await act(async () => { await result.current.deleteCategory('groceries'); });
+  expect(result.current.toast).toBe('Could not delete category. Please try again.');
+});
 
 // --- applyCategory -----------------------------------------------------------
 
@@ -519,16 +572,21 @@ it('saveCategory (update) toasts by default, and stays silent with { silent: tru
   expect(result.current.toast).toBe('Category updated.');
 });
 
-// WHIT-240: silent must also suppress the FAILURE toast — a bulk save owns the whole outcome
-// (its summary reports the failure count), so a silent write must stay silent even when it fails.
-// Fail-on-revert: ungate the catch-branch showToast and this null assertion goes red.
+// WHIT-240: silent must suppress the FAILURE toast — a bulk save owns the whole outcome (its
+// summary reports the failure count), so a silent write must stay silent even when it fails.
+// WHIT-437 changed HOW it reports: it now REJECTS with the error rather than returning null, so
+// the caller can fold the server's reason into its own summary line. The promise this test
+// exists for — a silent write fires no toast of its own — is unchanged and still pinned below.
+// Fail-on-revert: ungate the catch-branch showToast and the toast assertion goes red.
 it('createCategoryInline stays silent on failure with { silent: true }', async () => {
   mockApi.createCategory.mockRejectedValue(new Error('x'));
   seed();
   const result = mount();
-  let created: unknown;
-  await act(async () => { created = await result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }, { silent: true }); });
-  expect(created).toBeNull();               // still reports failure via the return value
+  await act(async () => {
+    await expect(
+      result.current.createCategoryInline({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }, { silent: true }),
+    ).rejects.toThrow('x');                 // reports failure by rejecting, so the reason survives
+  });
   expect(result.current.toast).toBeNull();  // ...but fires no toast of its own
 });
 

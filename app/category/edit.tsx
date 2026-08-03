@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
+import { writeFailureReason, endSentence } from '../../src/apiError';
 import { Icon } from '../../src/icons';
 import { useAppContext, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, MAX_CATEGORY_DEPTH } from '../../src/context';
 import { useCategories } from '../../src/queries';
@@ -99,17 +100,31 @@ export default function CategoryEdit() {
       // WHIT-240: the parent + every child write run SILENT so the per-op toasts don't stack;
       // this screen fires one summary toast at the end. On a parent failure the writer no longer
       // toasts, so own that message here before bailing.
-      if (categoryId) {
-        const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
-        // WHIT-282: the session changed mid-save (sign-out or re-auth) → bail silently rather than
-        // toasting the generic failure / navigating into the next session.
-        if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
-        if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
-      } else {
-        const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
-        if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
-        if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
-        parentId = created.id;
+      try {
+        if (categoryId) {
+          const ok = await s.saveCategory(categoryId, { name, bucket, icon, parent }, { silent: true });
+          // WHIT-282: the session changed mid-save (sign-out or re-auth) → bail silently rather than
+          // toasting the generic failure / navigating into the next session.
+          if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
+          if (!ok) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
+        } else {
+          const created = await s.createCategoryInline({ name, bucket, icon, parent }, { silent: true });
+          if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
+          if (!created) { s.showToast('Could not save category. Please try again.'); setSubmitting(false); return; }
+          parentId = created.id;
+        }
+      } catch (error) {
+        // WHIT-437: a silent writer rejects rather than toasting, so say it here.
+        if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }   // WHIT-282
+        const reason = writeFailureReason(error);
+        s.showToast(reason === null
+          ? 'Could not save category. Please try again.'
+          : endSentence(reason[0].toUpperCase() + reason.slice(1)));
+        setSubmitting(false);
+        // WHIT-249: a reason means the server refused us and we HANDLED it. No reason means
+        // something unexpected escaped — re-throw so useInFlightGuard still logs it.
+        if (reason === null) throw error;
+        return;
       }
       // 2) Attach the picked existing children + create the new inline ones under this parent.
       // Re-parenting resends the child's OWN name/bucket/icon (the PATCH replaces them); new subs
@@ -126,14 +141,21 @@ export default function CategoryEdit() {
       const results = ops.length ? await Promise.allSettled(ops) : [];
       // WHIT-282: a session change during the child writes → don't fire the summary toast + router.back().
       if (s.getSessionEpoch() !== epoch) { setSubmitting(false); return; }
-      const failed = results.filter((r) => r.status === 'rejected' || r.value === false || r.value === null).length;
+      const failures = results.filter((r) => r.status === 'rejected' || r.value === false || r.value === null);
+      const failed = failures.length;
+      // WHIT-437: fold the server's own words into the ONE summary line — but only when EVERY
+      // failure gave the SAME reason. Two different refusals, or a refusal mixed with a plain
+      // failure, cannot honestly be summarised as one cause, so those keep the generic tail.
+      const reasons = failures.map((r) => (r.status === 'rejected' ? writeFailureReason(r.reason) : null));
+      const sharedReason = failed > 0 && reasons.every((m) => m !== null && m === reasons[0]) ? reasons[0] : null;
       // WHIT-240: exactly ONE summary toast. Lead with created/updated (matching the writers' own
       // copy) so the message reads consistently, then report the sub-category outcome. Option A
       // (agreed WHIT-237): a flaky child never rolls back a good parent — it's reported, not undone.
       const verb = categoryId ? 'updated' : 'created';
       const subCount = (n: number) => `${n} sub-categor${n === 1 ? 'y' : 'ies'}`;
       if (failed > 0) {
-        s.showToast(`Category ${verb}, but ${subCount(failed)} couldn't be attached — add ${failed === 1 ? 'it' : 'them'} from its page.`);
+        const tail = sharedReason ?? `add ${failed === 1 ? 'it' : 'them'} from its page`;
+        s.showToast(`Category ${verb}, but ${subCount(failed)} couldn't be attached — ${endSentence(tail)}`);
       } else if (ops.length > 0) {
         s.showToast(`Category ${verb}, with ${subCount(ops.length)}.`);
       } else {
