@@ -26,6 +26,7 @@ from repository_category import (
     SEED_CATEGORIES,
     CategoryRepository,
     color_slot_counts,
+    color_slot_plan_order,
     least_held_color_slot,
     plan_color_slot_backfill,
     used_color_slots,
@@ -66,6 +67,7 @@ __all__ = [
     "color_slot_counts",
     "least_held_color_slot",
     "plan_color_slot_backfill",
+    "color_slot_plan_order",
     "sanitise_transaction",
     "handle_database_error",
 ]

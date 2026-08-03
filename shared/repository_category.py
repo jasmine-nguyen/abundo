@@ -136,35 +136,23 @@ def used_color_slots(items: dict) -> set:
 
 # Slots no built-in claims. Preferred for the first repeats (WHIT-404 option B): a duplicate
 # has to happen somewhere past 20 categories, and doubling up on a colour only a custom
-# category wears is less confusing than doubling up on Eating Out's. Derived from the seed
-# table rather than written out, so it cannot drift if the seeds are ever retuned.
+# category wears is less confusing than doubling up on Eating Out's. Applies to the BACKFILL
+# and the repaint too, not just the create path — all three share least_held_color_slot
+# (WHIT-428). Derived from the seed table rather than written out, so it cannot drift if the
+# seeds are ever retuned.
 _NON_SEED_COLOR_SLOTS = frozenset(range(_COLOR_SLOT_COUNT)) - {
     cat[_COLOR_SLOT_FIELD] for cat in SEED_CATEGORIES.values()
 }
 
 
-def _lowest_free_color_slot(used: set) -> int:
-    """The lowest FREE slot, collapsing to slot 0 once all 20 are taken.
+def least_held_color_slot(counts: Counter, reserved: frozenset,
+                          protected: frozenset = frozenset()) -> int:
+    """The slot to give a category needing one: the least-held one, preferring slots no
+    built-in owns, with the lowest slot number breaking any remaining tie.
 
-    The BACKFILL's assigner — deliberately NOT the create path's least-held rule, and the two
-    must not be merged. The chunked drain (_write_color_slots, WHIT-405) is only equivalent to
-    one unchunked write because persisting an alphabetical prefix is a fixed point of this
-    planner, and that rests on the overflow value being CONSTANT: a chunk can only rob a later
-    built-in of its designated slot via the overflow value, and the robbed row then falls
-    through to that same value anyway. A least-held overflow moves, so the robbed built-in
-    lands elsewhere and the drain stops converging on roughly half of randomised stores.
-    Pinned by test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix and by
-    WHIT-405's chunk-equivalence property tests.
-    """
-    for slot in range(_COLOR_SLOT_COUNT):
-        if slot not in used:
-            return slot
-    return 0
-
-
-def least_held_color_slot(counts: Counter, reserved: frozenset) -> int:
-    """The slot to give a NEW category: the least-held one, preferring slots no built-in owns,
-    with the lowest slot number breaking any remaining tie.
+    THE ONE ASSIGNER. Both the create path and the backfill planner's pass 2 use this
+    (WHIT-428); they used to differ, and the backfill's old constant slot-0 overflow is what
+    piled 11 categories onto Eating Out's colour on a 30-category legacy store.
 
     While ANY slot is free this is exactly "the lowest free slot", non-seed preference and all
     — so a deleted category's slot is still reused immediately, with no work in
@@ -182,10 +170,14 @@ def least_held_color_slot(counts: Counter, reserved: frozenset) -> int:
     `reserved` is a HARD exclusion, not a weight. Slots the pending backfill owes must not be
     candidates at all: an owed slot is held by nobody, so counting it as merely +1 would leave
     it tied with a singly-held slot and the tie-break would hand it straight over — stealing a
-    built-in's designated colour permanently. If EVERY slot is owed, something has to be taken
-    back: the least-held one, still preferring a slot no built-in owns, so a built-in keeps its
-    designated hue and a custom row is simply re-planned onto another slot. Deliberately not
-    the free-slot branch — a free-but-owed slot is exactly what must not be handed out.
+    built-in's designated colour permanently.
+
+    `protected` is the SECOND tier, and only matters once every slot is owed and something has
+    to be taken back. Those are the slots owed to a BUILT-IN for its OWN designated hue. Taking
+    a custom row's owed slot is harmless — the next re-plan simply moves that row — but a
+    built-in robbed of its designation never gets it back, because pass 1 only entitles it
+    while the slot is free. Once the backfill spreads (WHIT-428) a saturated store's plan can
+    own all 20 slots, so this branch became reachable on real stores rather than theoretical.
 
     Iterates `range`, never the Counter, so the answer never depends on insertion order: two
     concurrent creates must compute the same slot.
@@ -198,11 +190,14 @@ def least_held_color_slot(counts: Counter, reserved: frozenset) -> int:
 
     candidates = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in reserved]
     if not candidates:
-        # Every slot is owed, so something must be taken back. Go straight to the preference —
-        # NOT to the free-slot branch, which would hand over the lowest owed slot and that is
-        # usually a built-in's pass-1 designation, lost permanently. A non-seed slot is owed to
-        # a custom row, which simply gets re-planned onto another one.
-        return least_held(range(_COLOR_SLOT_COUNT))
+        # Every slot is owed, so something must be taken back. Take it from a slot owed to a
+        # CUSTOM row: that row is simply re-planned onto another slot, while a built-in robbed
+        # of its designated hue never gets it back. NOT the free-slot branch, which would hand
+        # over the lowest owed slot — usually eatingout's slot 0.
+        spare = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in protected]
+        # `protected` is a subset of the 13 seed slots, so `spare` always has the 7 non-seed
+        # slots in it. The fallback is defensive only, for a caller that protects all 20.
+        return least_held(spare or range(_COLOR_SLOT_COUNT))
     free = [slot for slot in candidates if counts[slot] == 0]
     if free:
         return min(free)
@@ -219,8 +214,16 @@ def plan_color_slot_backfill(items: dict) -> dict:
     A built-in claims its designated seed slot when that slot is still free. That is what
     keeps an existing store's 13 built-ins on the hues they were solved for; a naive
     lowest-free walk would hand them arbitrary colours instead.
+
+    Pass 2 hands out the LEAST-HELD slot, the same rule the create path uses (WHIT-428). While
+    any slot is still free that is exactly the old lowest-free answer, so nothing below 20
+    categories moves; past saturation it spreads the repeats instead of piling every one onto
+    slot 0. Both passes carry a live `counts`, so pass 2 sees what pass 1 already claimed.
+
+    ITERATION ORDER IS THE DRAIN ORDER — see color_slot_plan_order, which the chunked write
+    depends on. Do not re-sort the returned mapping.
     """
-    used = used_color_slots(items)
+    counts = color_slot_counts(items)
     plan = {}
     missing = sorted(
         cat_id for cat_id, cat in items.items()
@@ -228,14 +231,39 @@ def plan_color_slot_backfill(items: dict) -> dict:
     )
     for cat_id in missing:  # pass 1: built-ins take their designated slot
         seed = SEED_CATEGORIES.get(cat_id)
-        if seed is not None and seed[_COLOR_SLOT_FIELD] not in used:
+        if seed is not None and counts[seed[_COLOR_SLOT_FIELD]] == 0:
             plan[cat_id] = seed[_COLOR_SLOT_FIELD]
-            used.add(plan[cat_id])
-    for cat_id in missing:  # pass 2: everything else, lowest free, alphabetical
+            counts[plan[cat_id]] += 1
+    for cat_id in missing:  # pass 2: everything else, least-held, alphabetical
         if cat_id not in plan:
-            plan[cat_id] = _lowest_free_color_slot(used)
-            used.add(plan[cat_id])
+            plan[cat_id] = least_held_color_slot(counts, frozenset())
+            counts[plan[cat_id]] += 1
     return plan
+
+
+def color_slot_plan_order(plan: dict) -> list:
+    """The order a plan MUST be drained in, and the reason chunking equals one shot.
+
+    It is plan_color_slot_backfill's own build order: every pass-1 built-in first (at most 13,
+    so ALWAYS inside the first chunk), then everything else alphabetically. Draining in this
+    order is a fixed point of the planner — a chunk can no longer consume a built-in's
+    designated slot before pass 1 reaches it, because pass 1 is already drained. Sorting the
+    plan instead diverges on roughly half of randomised stores, which is why the old
+    alphabetical prefix stopped working the moment pass 2 started spreading (WHIT-428).
+    """
+    return list(plan)
+
+
+def _designated_builtin_slots(plan: dict) -> frozenset:
+    """Of a pending backfill, the slots owed to a BUILT-IN for its OWN designated hue.
+
+    Matches on the planned slot EQUALLING the seed's designation: a built-in that pass 2 put
+    somewhere else has no claim on that slot, so it must not be protected there.
+    """
+    return frozenset(
+        slot for cat_id, slot in plan.items()
+        if (SEED_CATEGORIES.get(cat_id) or {}).get(_COLOR_SLOT_FIELD) == slot
+    )
 
 
 _CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
@@ -425,12 +453,16 @@ class CategoryRepository:
 
         CHUNKING IS EQUIVALENT TO ONE SHOT, and not for the obvious reason. It is NOT because
         planned slots are distinct — past 20 unslotted rows they are not, the assigner hands
-        the same overflow slot to many rows. It holds because persisting an alphabetical
-        prefix is a fixed point of the planner: a chunk can only take a later built-in's
-        preferred slot via that overflow value, and the robbed row then falls through to the
-        same overflow value anyway. So re-planning after each chunk converges on exactly the
-        assignment one write would have produced. Verified by simulation over randomised
-        stores, including >20 unslotted rows and a create or delete landing between chunks.
+        repeats to many rows. It holds because persisting a prefix OF THE DRAIN ORDER
+        (color_slot_plan_order) is a fixed point of the planner. Two halves:
+          - pass 1 is stable: every built-in claiming its designation is in the first chunk, so
+            no later row can be persisted ahead of it and rob the slot. A built-in that missed
+            pass 1 missed it because a STORED row held the slot, which no chunk can undo.
+          - pass 2 is stable: persisting a prefix turns exactly those rows into stored counts,
+            leaving the running counter identical, so re-planning resumes the same least-held
+            walk on the untouched suffix.
+        Verified by simulation over randomised stores, including >20 unslotted rows and a
+        create or delete landing between chunks.
 
         FAIL-OPEN on the READ path (strict=False). Seven handler routes call list_categories,
         as does the webhook Lambda's budget-alert path (shared/budget_alerts.py), and every
@@ -449,9 +481,9 @@ class CategoryRepository:
         # With an EMPTY plan we still write the marker (names = version + schema only, never
         # #items), so a store whose categories were all deleted stops re-planning forever.
         # At most _COLOR_SLOT_WRITE_CHUNK categories per write, so the expression can never
-        # exceed DynamoDB's 4KB cap. `sorted` makes the chunk an alphabetical prefix, which is
-        # what keeps chunking equivalent to one shot (see the `drained` comment below).
-        chunk = sorted(plan)[:_COLOR_SLOT_WRITE_CHUNK]
+        # exceed DynamoDB's 4KB cap. The chunk is a prefix of the DRAIN ORDER, which is what
+        # keeps chunking equivalent to one shot (see color_slot_plan_order and the docstring).
+        chunk = color_slot_plan_order(plan)[:_COLOR_SLOT_WRITE_CHUNK]
         # Stamp the migrated marker only once this write drains the plan. A partial write must
         # NOT stamp it, or the remaining categories would never be revisited. An empty plan
         # counts as drained: that is the "all categories deleted" case, which must still stamp
@@ -566,8 +598,14 @@ class CategoryRepository:
             # about to assign. `counts` comes from the STORED slots only: feeding the owed
             # slots in as counts instead would leave an owed-but-unheld slot tied with a
             # singly-held one, and the tie-break would hand it straight over (WHIT-404).
-            reserved = frozenset(plan_color_slot_backfill(items).values())
-            slot = least_held_color_slot(color_slot_counts(items), reserved)
+            # Once the backfill spreads, a saturated store's plan can owe ALL 20 slots, so the
+            # "every slot is owed" fallback became reachable — and it ignores `reserved` by
+            # design. `protected` keeps a built-in's own designated hue out of that fallback,
+            # so the taken-back slot is a custom row's, which the next re-plan simply moves.
+            pending = plan_color_slot_backfill(items)
+            reserved = frozenset(pending.values())
+            slot = least_held_color_slot(color_slot_counts(items), reserved,
+                                         _designated_builtin_slots(pending))
             new_cat = {"id": cat_id, "name": name, "icon": icon, "color": color,
                        "bucket": bucket, "parent": parent,
                        _COLOR_SLOT_FIELD: Decimal(slot)}

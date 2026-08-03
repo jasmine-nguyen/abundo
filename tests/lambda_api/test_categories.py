@@ -2279,11 +2279,13 @@ def test_create_survives_a_backfill_too_big_for_one_write(handler):
 
     # Not raising IS the assertion — on the unchunked code this call goes through
     # handle_database_error and raises DatabaseError, which the handler does not catch.
-    # Slot 2 because the ramp is saturated past 20 live categories, so a duplicate is
-    # unavoidable and least_held_color_slot picks the lowest slot no built-in owns (WHIT-404;
-    # this was slot 0 while every overflow piled onto Eating Out). The non-collision property
-    # is pinned by test_create_cannot_steal_a_slot_the_deferred_backfill_still_owes.
-    assert created["colorSlot"] == 2
+    # Slot 7 because the ramp is saturated past 20 live categories, so a duplicate is
+    # unavoidable, and after chunk 1 the backfill has itself SPREAD its overflow (WHIT-428),
+    # leaving the held counts uneven — so the genuinely least-held slot is 7, not the lowest
+    # non-seed one. It was 2 while the backfill piled every overflow onto slot 0. The
+    # non-collision property is pinned by
+    # test_create_cannot_steal_a_slot_the_deferred_backfill_still_owes.
+    assert created["colorSlot"] == 7
 
 
 def test_a_throttled_chunk_leaves_earlier_chunks_intact_and_recovers(handler):
@@ -2502,6 +2504,8 @@ def test_a_create_between_chunks_keeps_its_slot_and_the_drain_still_finishes(han
     _unslotted_store(repo, repository, 200)
 
     repo.list_categories()                                   # chunk 1
+    after_chunk_one = {cid: int(cat[_SLOT])
+                       for cid, cat in repo._table.store[_CFG]["items"].items() if _SLOT in cat}
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
     _drain(repo)
 
@@ -2511,15 +2515,16 @@ def test_a_create_between_chunks_keeps_its_slot_and_the_drain_still_finishes(han
     assert int(stored["wine"][_SLOT]) == created[_SLOT]
     assert all(_SLOT in cat for cat in stored.values()), "a row was left permanently unslotted"
     assert repo._table.store[_CFG]["colorSlotSchema"] == 1
-    # And every row the plan covered still landed where the planner would put it. `wine` is
-    # excluded on purpose: since WHIT-404 a CREATE assigns from least_held_color_slot while the
-    # drain assigns from the planner's lowest-free rule, so a created row can never satisfy a
-    # fresh plan. Its slot is pinned by the assertion above, which is the stronger claim.
-    pre_create = {cid: {k: v for k, v in cat.items() if k != _SLOT}
-                  for cid, cat in stored.items() if cid != "wine"}
-    expected = repository.plan_color_slot_backfill(pre_create)
-    assert {cid: int(stored[cid][_SLOT]) for cid in expected} == \
-        {cid: int(slot) for cid, slot in expected.items()}
+    # WHIT-428 replaced a "re-plan the final store and compare" assertion here. It could not
+    # survive, and NOT for a fixture reason: `wine`'s slot counts towards the least-held rule
+    # from the moment it is created, so rows stamped in chunk 1 never saw it while a fresh
+    # whole-store plan does — ~110 rows legitimately shift by one. The drain is a fixed point
+    # under PREFIX PERSISTENCE, not under INSERTION. These three are what still bind, and (a)
+    # is the stronger user-visible claim: a colour you have already been shown never changes.
+    assert {cid: int(stored[cid][_SLOT]) for cid in after_chunk_one} == after_chunk_one
+    assert {cid: int(stored[cid][_SLOT]) for cid in SEED_SLOTS} == SEED_SLOTS
+    holders = _slot_histogram(repo)
+    assert max(holders.values()) - min(holders.values()) <= 1
 
 
 def test_a_create_mid_drain_spends_one_backfill_write_and_one_create_write(handler):
@@ -2592,19 +2597,26 @@ def test_rows_already_holding_a_valid_slot_never_move_during_a_chunked_drain(han
     assert all(_SLOT in cat for cat in stored.values())
 
 
-def test_built_ins_keep_their_designated_slots_when_they_fall_in_a_later_chunk(handler):
-    # WHIT-405 — [A9] the user-visible risk of chunking. Ids sorting BEFORE every built-in
-    # push all 13 seeds past the first chunk, and there are far more than 20 unslotted rows,
-    # so the assigner saturates and starts handing out the overflow slot. The built-ins must
-    # still land on the solved table — the thing the whole pass-1 rule exists for.
+def test_every_built_in_pass_one_entitles_is_stamped_by_the_first_chunk(handler):
+    # WHIT-405 [A9] / WHIT-428. Ids sorting BEFORE every built-in used to push all 13 seeds
+    # past the first chunk, which was the user-visible risk of chunking. Since WHIT-428 the
+    # chunk is a prefix of the DRAIN ORDER, and pass 1 is emitted first — so a built-in
+    # entitled to its designation can never fall past chunk 1. That is not a nicety: it is
+    # what makes chunking equivalent to one shot now that pass 2's overflow moves.
+    #
+    # NOTE the premise must be read off color_slot_plan_order, not sorted(). Computing it from
+    # sorted() still "passes" while asserting nothing about what the code actually writes.
     repository, repo = _repo_with_fake_table(handler)
     early = {f"aaa{index:04d}": {"id": f"aaa{index:04d}", "name": "A", "icon": "tag",
                                  "color": "#888888", "bucket": "Lifestyle", "parent": None}
              for index in range(60)}
     _legacy_store(repo, repository, extra=early)
-    first_chunk = sorted(repository.plan_color_slot_backfill(
-        repo._table.store[_CFG]["items"]))[:50]
-    assert not any(cid in repository.SEED_CATEGORIES for cid in first_chunk)
+    plan = repository.plan_color_slot_backfill(repo._table.store[_CFG]["items"])
+    first_chunk = repository.color_slot_plan_order(plan)[:50]
+    entitled = [cid for cid, slot in plan.items()
+                if repository.SEED_CATEGORIES.get(cid, {}).get(_SLOT) == slot]
+    assert len(entitled) == 13
+    assert set(entitled) <= set(first_chunk), "a built-in's designation slipped past chunk 1"
 
     _drain(repo)
 
@@ -2682,17 +2694,21 @@ def test_every_slot_holds_two_categories_before_any_slot_holds_three(handler):
     assert set(holders) == set(range(20)) and set(holders.values()) == {2}
 
 
-def test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix(handler):
-    """WHIT-404 leaves TWO assigners on purpose: create spreads, the backfill planner does not.
-    This is the guard on that split. Persisting an alphabetical prefix of a plan and re-planning
-    must reproduce the one-shot plan exactly — which is what makes WHIT-405's chunked drain
-    equivalent to one unchunked write. Swap the planner to the least-held rule and it diverges
-    on roughly half the randomised stores, because an earlier chunk can then consume a
-    built-in's designated slot before pass 1 reaches it. Do not merge the two assigners.
+def test_the_backfill_planner_is_a_fixed_point_on_its_own_drain_order(handler):
+    """Since WHIT-428 there is ONE assigner: create and the backfill planner both spread via
+    least_held_color_slot. What keeps WHIT-405's chunked drain equivalent to one unchunked
+    write is no longer a constant overflow — it is the ORDER. Persisting a prefix of
+    color_slot_plan_order and re-planning must reproduce the one-shot plan exactly.
 
-    Not the only thing that catches a merge — WHIT-405's chunk-equivalence tests do too. This
-    one isolates the PURE planner from the write path, so its failure names the rule rather
-    than a drain that happens to disagree."""
+    This is the fail-on-revert guard for the order. Swap color_slot_plan_order back to
+    sorted() and it diverges on 132 of these 250 stores, because an alphabetically-early
+    overflow row can then be persisted onto a slot pass 1 had claimed for a built-in, and the
+    robbed built-in lands somewhere new on the re-plan. Under the old CONSTANT overflow the
+    robbed row fell through to the same value, which is why sorted() used to be safe.
+
+    Not the only thing that catches it — WHIT-405's chunk-equivalence tests do too. This one
+    isolates the PURE planner from the write path, so its failure names the rule rather than a
+    drain that happens to disagree."""
     import random
     import repository_category
     repository, _ = _repo_with_fake_table(handler)
@@ -2702,12 +2718,13 @@ def test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix(handler
     for trial in range(250):
         original = _random_legacy_store(repository, rng)
         one_shot = repository.plan_color_slot_backfill(copy.deepcopy(original))
+        order = repository.color_slot_plan_order(one_shot)[:chunk]
         partial = copy.deepcopy(original)
-        for cat_id in sorted(one_shot)[:chunk]:               # persist the first chunk
+        for cat_id in order:                                  # persist the first chunk
             partial[cat_id][_SLOT] = Decimal(one_shot[cat_id])
         replanned = repository.plan_color_slot_backfill(partial)
 
-        drained = {cid: one_shot[cid] for cid in sorted(one_shot)[:chunk]}
+        drained = {cid: one_shot[cid] for cid in order}
         drained.update(replanned)
         assert drained == one_shot, f"trial {trial}: chunked planning diverged from one shot"
 
@@ -2783,17 +2800,27 @@ def test_creates_mid_drain_on_a_saturated_store_spread_without_touching_an_owed_
     # rule both bind. By the fourth the drain has finished and `reserved` is empty; it spreads on
     # the least-held rule alone, which is worth keeping because it proves a new create walks AWAY
     # from the legacy slot-0 pile-up (slot 0 is held 194 times by then).
+    import repository_category
     repository, repo = _repo_with_fake_table(handler)
     _unslotted_store(repo, repository, 200)          # 213 rows, none slotted
     repo.list_categories()                           # chunk 1 lands; the rest is still owed
 
-    got = [repo.create_category(f"w{n}", f"W{n}", "Lifestyle", "glass")["colorSlot"]
-           for n in range(4)]
+    got = []
+    for n in range(4):
+        pending = repository.plan_color_slot_backfill(repo._table.store[_CFG]["items"])
+        protected = repository_category._designated_builtin_slots(pending)
+        slot = repo.create_category(f"w{n}", f"W{n}", "Lifestyle", "glass")["colorSlot"]
+        # The invariant that actually matters: never take a hue still OWED to a built-in.
+        # WHIT-428 replaced `isdisjoint(SEED_SLOTS)` here — under the drain order all 13
+        # built-ins are stamped in chunk 1, so nothing is owed to them by now and `protected`
+        # is empty. That makes the old assertion vacuous, and worse, it forbade a legitimate
+        # duplicate: 8/13/15 below are built-in hues the create is doubling up on, not
+        # stealing. The theft case has its own test — see the 70+4 store below.
+        assert slot not in protected, "a create took a hue the backfill still owes a built-in"
+        got.append(slot)
 
     assert len(set(got)) == 4, f"four creates mid-drain shared a colour: {got}"
-    assert got == [2, 3, 4, 5]
-    assert set(got).isdisjoint(SEED_SLOTS.values()), \
-        "a create took a slot the backfill owes a built-in"
+    assert got == [2, 8, 13, 15]
 
     _drain(repo, limit=30)
     stored = repo._table.store[_CFG]["items"]
@@ -2878,13 +2905,14 @@ def test_color_slot_counts_counts_duplicates_and_used_slots_still_dedupes(handle
     assert set(plan.values()).isdisjoint({0, 10, 19})
 
 
-def test_a_legacy_store_of_thirty_categories_still_migrates_onto_one_shared_slot(handler):
-    # [A11] the SCOPE GAP, pinned on purpose so it is visible rather than assumed. The card's own
-    # example is "30 categories left 23 sharing Eating Out's colour". This change moves only the
-    # CREATE path; the backfill planner keeps its constant slot-0 overflow, because WHIT-405's
-    # chunked drain is equivalent to one unchunked write ONLY while that overflow is constant. So
-    # a store that MIGRATES holding 30 categories still lands 11 of them on slot 0. If the planner
-    # is ever taught to spread too, this test is where that decision has to be written down.
+def test_a_legacy_store_of_thirty_categories_spreads_its_repeats(handler):
+    # [A11] WHIT-428 closed the scope gap WHIT-404 recorded here, and this is where that
+    # decision is written down. WHIT-404 spread repeats on the CREATE path only; the backfill
+    # kept a constant slot-0 overflow, because WHIT-405's chunked drain was equivalent to one
+    # unchunked write ONLY while that overflow was constant. So a store MIGRATING with 30
+    # categories used to land 11 of them on Eating Out's colour — permanently, since a slot is
+    # never recomputed. Teaching pass 2 the least-held rule needed the drain order to change
+    # too (see color_slot_plan_order); with both, the same store now lands 2 per colour.
     repository, repo = _repo_with_fake_table(handler)
     _unslotted_store(repo, repository, 17)           # 13 built-ins + 17 custom = 30, none slotted
 
@@ -2892,8 +2920,9 @@ def test_a_legacy_store_of_thirty_categories_still_migrates_onto_one_shared_slot
 
     holders = _slot_histogram(repo)
     assert sum(holders.values()) == 30
-    assert holders[0] == 11, "the planner's overflow moved — was that deliberate?"
-    assert sorted(holders.values()) == [1] * 19 + [11]
+    assert holders[0] == 2, "Eating Out's colour is piled again — did the overflow stop moving?"
+    assert sorted(holders.values()) == [1] * 10 + [2] * 10
+    assert max(holders.values()) == 2
     stored = repo._table.store[_CFG]["items"]
     assert {cid: int(stored[cid][_SLOT]) for cid in SEED_SLOTS} == SEED_SLOTS
 
@@ -2923,3 +2952,70 @@ def test_a_create_may_never_take_a_free_slot_a_builtin_is_owed_even_when_all_are
     stored = repo._table.store[_CFG]["items"]
     assert int(stored["travel"][_SLOT]) == 1, "travel was repainted off its designated hue"
     assert all(_SLOT in cat for cat in stored.values())
+
+
+def test_a_create_cannot_rob_a_builtin_when_the_spread_backfill_owes_every_slot(handler):
+    # WHIT-428 — the fail-on-revert guard for `protected`. Once the backfill SPREADS, a
+    # saturated store's plan owes all 20 slots for real (before, the overflow was the single
+    # constant 0), so `candidates` is empty and the fallback runs — and that branch ignores
+    # `reserved` by design. Without `protected` it picks the lowest zero-count slot, which is
+    # eatingout's 0, and Eating Out is pushed onto 7 where it collides with Gifts. Permanently:
+    # pass 1 only entitles a built-in while its slot is free.
+    #
+    # The fixture is the shape that exposes it: every built-in unslotted, a squatter already on
+    # each of the seven non-built-in slots (so the seed slots have ZERO stored holders and win
+    # the least-held tie-break), and enough custom rows to saturate.
+    repository, repo = _repo_with_fake_table(handler)
+    import repository_category
+    items = {cid: {k: v for k, v in seed.items() if k != _SLOT}
+             for cid, seed in repository.SEED_CATEGORIES.items()}
+    non_seed = sorted(set(range(20)) - set(SEED_SLOTS.values()))
+    assert len(non_seed) == 7
+    for n, slot in enumerate(non_seed):
+        items[f"squat{n}"] = _cat(f"squat{n}", colorSlot=Decimal(slot))
+    for n in range(30):
+        items[f"cat{n:04d}"] = _cat(f"cat{n:04d}")
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                               "items": items, "version": Decimal(1)}
+    owed = repository.plan_color_slot_backfill(items)
+    assert set(owed.values()) == set(range(20)), "fixture drifted: not every slot is owed"
+    protected = repository_category._designated_builtin_slots(owed)
+    assert protected == frozenset(SEED_SLOTS.values()), "every built-in should be owed its hue"
+    repo._table.before_update.append(_bump_version)   # the pre-loop backfill loses its race
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] not in protected, \
+        "create robbed a built-in of its designated hue from the all-owed fallback"
+    _drain(repo, limit=30)
+    stored = repo._table.store[_CFG]["items"]
+    # The whole solved table survives — not just the one the create happened to aim at.
+    assert {cid: int(stored[cid][_SLOT]) for cid in SEED_SLOTS} == SEED_SLOTS
+    assert all(_SLOT in cat for cat in stored.values())
+
+
+def test_the_backfill_plan_is_ordered_pass_one_first_so_a_chunk_cannot_rob_a_builtin(handler):
+    # WHIT-428 — the pin on the load-bearing but invisible contract. `_write_color_slots` takes
+    # its chunk as a prefix of color_slot_plan_order, which is just the plan's build order; a
+    # stray sorted() in a future refactor would silently re-open the divergence with no obvious
+    # symptom (colours would just be slightly wrong on legacy stores). Assert the order at the
+    # planner end AND that the real write used it, so a break is caught at both ends.
+    repository, repo = _repo_with_fake_table(handler)
+    early = {f"aaa{index:04d}": {"id": f"aaa{index:04d}", "name": "A", "icon": "tag",
+                                 "color": "#888888", "bucket": "Lifestyle", "parent": None}
+             for index in range(60)}
+    _legacy_store(repo, repository, extra=early)      # seed ids all sort AFTER the aaa rows
+    items = repo._table.store[_CFG]["items"]
+    plan = repository.plan_color_slot_backfill(items)
+
+    order = repository.color_slot_plan_order(plan)
+    entitled = [cid for cid, slot in plan.items()
+                if repository.SEED_CATEGORIES.get(cid, {}).get(_SLOT) == slot]
+    assert order[:len(entitled)] == sorted(entitled), "pass-1 rows are no longer emitted first"
+    assert order[len(entitled):] == sorted(order[len(entitled):]), "pass 2 is not alphabetical"
+    assert order != sorted(order), "fixture drifted: the order is indistinguishable from sorted"
+
+    repo.list_categories()                            # one chunk lands
+    names = repo._table.update_calls[-1][1]            # (expression, names, values)
+    written = [names[f"#cat{index}"] for index in range(len(names)) if f"#cat{index}" in names]
+    assert written == order[:50], "the write did not use the drain order"
