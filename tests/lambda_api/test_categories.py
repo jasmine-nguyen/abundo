@@ -609,11 +609,11 @@ class FakeTable:
 
         # The colour-slot backfill is its own shape: it stamps #schema and/or one
         # #items.#catN.#slot per category. It carries no #id, so it must be handled before
-        # the create/rename/delete paths read one. Matching on #slot as well as #schema is
-        # required since WHIT-405: a PARTIAL chunk carries no #schema, and would otherwise
-        # fall through to `ExpressionAttributeNames["#id"]` and KeyError. No other write
-        # declares #slot — create sets the whole category object via :cat, not a slot field.
-        if "#schema" in ExpressionAttributeNames or "#slot" in ExpressionAttributeNames:
+        # the create/rename/delete paths read one. Route on that ABSENCE, not on a positive
+        # guess at the backfill's own aliases: since WHIT-405 a partial chunk carries no
+        # #schema, and a future write declaring both #id and #slot would be mis-routed here,
+        # match nothing in the #cat loop, and be silently dropped while the test went green.
+        if "#id" not in ExpressionAttributeNames:
             if item is None or item["version"] != values[":expected"]:
                 raise _ccfe()
             # DynamoDB rejects a declared-but-unreferenced name; mirror that so a regression
@@ -2026,6 +2026,11 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
     assert longest == 3, f"longest neighbouring-ramp run is {longest}: {ramp}"
 
 
+_SLOT = "colorSlot"
+# The last clause count that fits DynamoDB's 4KB UpdateExpression cap: 129 clauses = 4070
+# bytes, 130 = 4103. Any plan above this could not be written at all before the chunk cap.
+_LAST_UNCHUNKED_CLAUSE_COUNT = 129
+
 # ---- WHIT-405: the backfill write is chunked so it can never exceed DynamoDB's 4KB cap ------
 
 def _unslotted_store(repo, repository, count):
@@ -2061,34 +2066,6 @@ def test_a_backfill_expression_never_exceeds_dynamodbs_4kb_limit(handler):
     assert len(expression.encode()) < _MAX_UPDATE_EXPRESSION_BYTES // 2
 
 
-def test_a_huge_backfill_is_split_across_reads_and_converges(handler):
-    """213 unslotted rows drain over successive reads, landing exactly where a single
-    unchunked write would have put them."""
-    repository, repo = _repo_with_fake_table(handler)
-    original = copy.deepcopy(_unslotted_store(repo, repository, 200)["items"])
-
-    writes = _drain(repo)
-
-    # 213 rows / 50 per write = 5 writes: four full chunks, one remainder.
-    assert writes == 5
-    one_shot = repository.plan_color_slot_backfill(original)
-    stored = {cid: int(cat["colorSlot"])
-              for cid, cat in repo._table.store[_CFG]["items"].items()}
-    assert stored == {cid: int(slot) for cid, slot in one_shot.items()}
-    assert repo._table.store[_CFG]["colorSlotSchema"] == 1
-
-
-def test_a_partial_backfill_does_not_stamp_the_marker(handler):
-    """The marker means "every row is stamped". A partial chunk must not claim that, or the
-    remaining rows are never revisited."""
-    repository, repo = _repo_with_fake_table(handler)
-    _unslotted_store(repo, repository, 200)
-
-    repo.list_categories()                       # first chunk only
-    assert "colorSlotSchema" not in repo._table.store[_CFG]
-
-    _drain(repo)
-    assert repo._table.store[_CFG]["colorSlotSchema"] == 1
 
 
 def test_a_read_mid_drain_still_returns_every_category_fully_slotted(handler):
@@ -2113,30 +2090,48 @@ def test_create_survives_a_backfill_too_big_for_one_write(handler):
     repository, repo = _repo_with_fake_table(handler)
     _unslotted_store(repo, repository, 200)
 
-    created = repo.create_category("wine", "Wine", "glass", "Lifestyle")
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
 
-    assert 0 <= created["colorSlot"] < 20
-    # The new row must not take a slot the still-pending backfill is about to hand out.
-    remaining = repository.plan_color_slot_backfill(repo._table.store[_CFG]["items"])
-    assert created["id"] not in remaining
+    # Not raising IS the assertion — on the unchunked code this call goes through
+    # handle_database_error and raises DatabaseError, which the handler does not catch.
+    # Slot 0 because the ramp is saturated past 20 live categories: sharing slot 0 is the
+    # designed collapse (next_color_slot), not a collision this test should object to. The
+    # non-collision property is pinned at a small store size by
+    # test_create_cannot_steal_a_slot_the_deferred_backfill_still_owes.
+    assert created["colorSlot"] == 0
 
 
-def test_a_partial_chunk_that_throttles_still_fails_open_on_a_read(handler):
-    """Fail-open has to survive chunking: a throttled PARTIAL write leaves the marker absent
-    so a later request retries, and the read still returns the full plan."""
+def test_a_throttled_chunk_leaves_earlier_chunks_intact_and_recovers(handler):
+    """Fail-open has to survive PART-WAY through a drain: the throttle lands after chunk 1,
+    so the rows already stamped must stay stamped, the marker must stay absent, and once the
+    throttle clears a later read must finish the job."""
     repository, repo = _repo_with_fake_table(handler)
     _unslotted_store(repo, repository, 200)
+
+    repo.list_categories()                       # chunk 1 lands
+    persisted = {cid: cat["colorSlot"]
+                 for cid, cat in repo._table.store[_CFG]["items"].items() if "colorSlot" in cat}
+    assert len(persisted) == 50
+
     repo._table.update_error = _throttle()
+    rows = repo.list_categories()                # chunk 2 is throttled — must not raise
 
-    rows = repo.list_categories()
-
-    assert len(rows) == 213
+    assert len(rows) == 213                      # response is still complete and correct
     assert all(0 <= row["colorSlot"] < 20 for row in rows)
     assert "colorSlotSchema" not in repo._table.store[_CFG]
+    # the throttled write changed nothing — chunk 1's rows are untouched
+    assert {cid: cat["colorSlot"]
+            for cid, cat in repo._table.store[_CFG]["items"].items()
+            if "colorSlot" in cat} == persisted
+
+    repo._table.update_error = None
+    _drain(repo)
+    assert repo._table.store[_CFG]["colorSlotSchema"] == 1
 
 
-def test_a_delete_between_chunks_does_not_strand_or_duplicate_a_slot(handler):
-    """A category removed mid-drain must not leave a hole or a clash."""
+def test_a_delete_between_chunks_still_lands_on_the_planners_fixed_point(handler):
+    """A category removed mid-drain must leave every survivor stamped, on exactly the
+    slots a fresh plan over the surviving rows would assign."""
     repository, repo = _repo_with_fake_table(handler)
     _unslotted_store(repo, repository, 200)
 
@@ -2153,27 +2148,6 @@ def test_a_delete_between_chunks_does_not_strand_or_duplicate_a_slot(handler):
     assert {cid: int(cat["colorSlot"]) for cid, cat in stored.items()} == \
         {cid: int(slot) for cid, slot in expected.items()}
 
-
-def test_no_write_other_than_the_backfill_declares_a_slot_alias(handler):
-    """FakeTable routes on #slot since WHIT-405. That is only safe while the backfill is the
-    sole writer declaring it — pin it, so a future write can't be silently re-routed."""
-    repository, repo = _repo_with_fake_table(handler)
-    repo.list_categories()                       # seed: a fresh store is born migrated
-    repo._table.update_calls.clear()
-    repo.create_category("wine", "Wine", "glass", "Lifestyle")
-    repo.update_category("wine", "Vino", "glass", "Lifestyle")
-    repo.delete_category("wine")
-
-    for expression, names, _values in repo._table.update_calls:
-        assert "#slot" not in names, f"non-backfill write declared #slot: {expression}"
-
-
-# ---- WHIT-405 (QA): the gaps the implementer's suite leaves open ---------------------------
-# The committed suite pins ONE store shape (200 extras + 13 seeds) and a delete between
-# chunks. These add: the randomised equivalence property both planning agents claimed to have
-# simulated but never committed, the exact chunk boundaries, a CREATE between chunks, the
-# already-slotted rows staying put, the seed slots surviving saturation, and the retry budget
-# of update/delete/create while a store is mid-drain.
 
 
 def _exactly_unslotted(repo, count, *, version=1):
@@ -2216,9 +2190,8 @@ def _random_legacy_store(repository, rng):
     return items
 
 
-_SLOT = "colorSlot"
 # 250 randomised stores, fixed seed: deterministic, and wide enough that many trials exceed
-# the 129-clause point where an unchunked expression is rejected outright.
+# the clause count where an unchunked expression is rejected outright.
 _PROPERTY_TRIALS = 250
 _PROPERTY_SEED = 405
 
@@ -2243,7 +2216,7 @@ def test_a_chunked_drain_lands_exactly_where_one_unchunked_write_would_have(hand
         repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
                                    "items": copy.deepcopy(original), "version": Decimal(1)}
         one_shot = repository.plan_color_slot_backfill(copy.deepcopy(original))
-        if len(one_shot) > 129:
+        if len(one_shot) > _LAST_UNCHUNKED_CLAUSE_COUNT:
             saw_over_the_unchunked_limit += 1
         # What a single unbounded write would have left in the table: the plan for every
         # unslotted row, the untouched stored value for every already-valid row.
@@ -2256,7 +2229,9 @@ def test_a_chunked_drain_lands_exactly_where_one_unchunked_write_would_have(hand
         assert {cid: int(cat[_SLOT]) for cid, cat in stored.items()} == expected, \
             f"trial {trial}: chunked drain diverged from the one-shot plan"
         # Bounded, and never more writes than chunks: no read may re-plan work already done.
-        assert writes == max(1, -(-len(one_shot) // 50)), f"trial {trial}: {writes} writes"
+        import repository_category
+        chunk = repository_category._COLOR_SLOT_WRITE_CHUNK
+        assert writes == max(1, -(-len(one_shot) // chunk)), f"trial {trial}: {writes} writes"
         assert repo._table.store[_CFG]["colorSlotSchema"] == 1, f"trial {trial}: unmarked"
 
     # Guard the guard: if the generator ever stopped producing stores past the point an
