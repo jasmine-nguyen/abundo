@@ -172,8 +172,10 @@ def least_held_color_slot(counts: Counter, reserved: frozenset) -> int:
     `reserved` is a HARD exclusion, not a weight. Slots the pending backfill owes must not be
     candidates at all: an owed slot is held by nobody, so counting it as merely +1 would leave
     it tied with a singly-held slot and the tie-break would hand it straight over — stealing a
-    built-in's designated colour permanently. If every slot is owed, fall back to all 20, which
-    is what happens today on an unmigrated store.
+    built-in's designated colour permanently. If EVERY slot is owed, something has to be taken
+    back: the least-held one, still preferring a slot no built-in owns, so a built-in keeps its
+    designated hue and a custom row is simply re-planned onto another slot. Deliberately not
+    the free-slot branch — a free-but-owed slot is exactly what must not be handed out.
 
     Iterates `range`, never the Counter, so the answer never depends on insertion order: two
     concurrent creates must compute the same slot.

@@ -2585,3 +2585,212 @@ def test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix(handler
         drained = {cid: one_shot[cid] for cid in sorted(one_shot)[:chunk]}
         drained.update(replanned)
         assert drained == one_shot, f"trial {trial}: chunked planning diverged from one shot"
+
+
+# ---- WHIT-404 QA: the adversarial half -----------------------------------------------------
+# The tests above cover the RULE (least_held_color_slot as a pure function) and one clean run of
+# creates on a pristine store. These cover the rule THROUGH create_category on stores that are
+# contended, uneven, mid-drain, or corrupt. Every expected value comes from the real exported
+# functions or is read back out of the store — nothing re-derives the rule.
+
+def _slot_histogram(repo):
+    """Every slot 0-19 -> how many stored categories hold it, read back out of the fake table."""
+    held = Counter(int(cat[_SLOT]) for cat in repo._table.store[_CFG]["items"].values()
+                   if _SLOT in cat)
+    return Counter({slot: held.get(slot, 0) for slot in range(20)})
+
+
+def test_two_creates_racing_on_a_saturated_store_still_land_on_different_slots(handler):
+    # [A6] contention past 20 categories. test_two_creates_racing_never_land_on_the_same_slot
+    # proves the loser re-reads BELOW saturation, where "is this slot taken" still discriminates.
+    # Past 20 every slot is taken, so only the COUNT does.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    for n in range(7):
+        repo.create_category(f"x{n}", f"X{n}", "Lifestyle", "tag")   # 20 live: every slot held once
+    assert set(_slot_histogram(repo).values()) == {1}, "fixture drifted: store is not saturated"
+
+    def concurrent_create(item):
+        item["items"]["beer"] = _cat("beer", "Lifestyle", colorSlot=Decimal(2))
+        item["version"] = item["version"] + 1
+    repo._table.before_update.append(concurrent_create)
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    holders = _slot_histogram(repo)
+    assert created["colorSlot"] != 2, "the loser piled onto the slot the winner just doubled"
+    assert created["colorSlot"] == 3
+    assert holders[2] == 2 and holders[3] == 2
+    assert max(holders.values()) == 2       # no slot reached three while another sat on one
+
+
+def test_a_delete_at_saturation_hands_the_freed_capacity_to_the_next_create(handler):
+    # [A7] Below 20 a delete makes a slot FREE and the free branch reuses it (already covered).
+    # Past 20 a delete usually only makes a slot LESS HELD — that count has to drop for real, or
+    # the ramp stays permanently uneven after any deletion.
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()
+    for n in range(9):
+        repo.create_category(f"x{n}", f"X{n}", "Lifestyle", "tag")   # 22 live: slots 2 and 3 doubled
+    holders = _slot_histogram(repo)
+    assert holders[2] == 2 and holders[3] == 2, "fixture drifted"
+    stored = repo._table.store[_CFG]["items"]
+    assert int(stored["x7"][_SLOT]) == 2
+
+    repo.delete_category("x7")                       # one of slot 2's two holders
+    assert _slot_histogram(repo)[2] == 1
+
+    # The freed capacity, not the next non-seed slot along: 2 is the least-held again.
+    assert repo.create_category("wine", "Wine", "Lifestyle", "glass")["colorSlot"] == 2
+
+    repo.delete_category("x1")
+    repo.delete_category("x8")                       # both of slot 3's holders
+    assert _slot_histogram(repo)[3] == 0
+    # Genuinely free again -> the free branch, exactly as below 20 categories.
+    assert repo.create_category("beer", "Beer", "Lifestyle", "glass")["colorSlot"] == 3
+    assert max(_slot_histogram(repo).values()) == 2
+
+
+def test_creates_mid_drain_on_a_saturated_store_spread_without_touching_an_owed_slot(handler):
+    # [A8] the WHIT-405 chunked drain crossed with saturation. A create mid-drain sees `reserved`
+    # covering all 13 built-in slots, so it is squeezed into the seven the ramp has left — every
+    # one already held. The only place the hard exclusion and the least-held rule both bind.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)          # 213 rows, none slotted
+    repo.list_categories()                           # chunk 1 lands; the rest is still owed
+
+    got = [repo.create_category(f"w{n}", f"W{n}", "Lifestyle", "glass")["colorSlot"]
+           for n in range(4)]
+
+    assert len(set(got)) == 4, f"four creates mid-drain shared a colour: {got}"
+    assert got == [2, 3, 5, 9]
+    assert set(got).isdisjoint(SEED_SLOTS.values()), \
+        "a create took a slot the backfill owes a built-in"
+
+    _drain(repo, limit=30)
+    stored = repo._table.store[_CFG]["items"]
+    assert all(_SLOT in cat for cat in stored.values()), "a row was left permanently unslotted"
+    # The built-ins still land on the hues they were solved for...
+    assert {cid: int(stored[cid][_SLOT]) for cid in SEED_SLOTS} == SEED_SLOTS
+    # ...and no created row was repainted by a later chunk.
+    assert [int(stored[f"w{n}"][_SLOT]) for n in range(4)] == got
+
+
+def test_every_create_takes_a_least_held_slot_however_uneven_the_ramp_is(handler):
+    # [A9] the invariant, over randomised create/delete churn. The evenness test above is a
+    # straight run on a pristine store where the histogram is flat at every step. DELETES make it
+    # uneven, and an uneven ramp is the only thing separating "least-held" from "round-robin".
+    # The expected value is read out of the STORE before each create, never re-derived.
+    import random
+    repository, _ = _repo_with_fake_table(handler)
+    rng = random.Random(404)
+    saturated_creates = 0
+
+    for trial in range(40):
+        _, repo = _repo_with_fake_table(handler)
+        repo.list_categories()
+        made = 0
+        for _ in range(50):
+            items = repo._table.store[_CFG]["items"]
+            if len(items) <= 21 or rng.random() < 0.72:
+                before = _slot_histogram(repo)
+                made += 1
+                slot = int(
+                    repo.create_category(f"c{made}", f"C{made}", "Lifestyle", "tag")[_SLOT])
+                if min(before.values()) > 0:
+                    saturated_creates += 1
+                assert before[slot] == min(before.values()), (
+                    f"trial {trial}: create took slot {slot} (held {before[slot]} times) while "
+                    f"{min(before.values())} was the least-held count")
+            else:
+                repo.delete_category(rng.choice(sorted(items)))
+            # ...and below 20 live categories nothing changed: the colours are still all distinct.
+            live = _slot_histogram(repo)
+            if sum(live.values()) <= 20:
+                assert max(live.values()) == 1, f"trial {trial}: a duplicate under 20 categories"
+
+    # Guard the guard: if the generator stopped reaching saturation this would test nothing.
+    assert saturated_creates >= 200, saturated_creates
+
+
+def test_color_slot_counts_counts_duplicates_and_used_slots_still_dedupes(handler):
+    # [A10] the derivation. used_color_slots is no longer its own walk; it is
+    # set(color_slot_counts). A set masquerading as a Counter passes every duplicate-free test in
+    # the suite, then silently turns the whole least-held rule back into lowest-free.
+    import repository
+    items = {
+        "lo": _cat("lo", colorSlot=Decimal(0)),
+        "lo2": _cat("lo2", colorSlot=Decimal(0)),        # DUPLICATE: counts 2, used still {0}
+        "hi": _cat("hi", colorSlot=Decimal(19)),
+        "over": _cat("over", colorSlot=Decimal(20)),     # exactly at the limit -> out
+        "exp": _cat("exp", colorSlot=Decimal("1E+1")),   # 10, in exponent form
+        "ten": _cat("ten", colorSlot=Decimal(10)),       # the same slot by another spelling
+        "huge": _cat("huge", colorSlot=Decimal("1E+30")),
+        "nan": _cat("nan", colorSlot=Decimal("NaN")),
+        "inf": _cat("inf", colorSlot=Decimal("Infinity")),
+        "neg": _cat("neg", colorSlot=Decimal(-1)),
+        "frac": _cat("frac", colorSlot=Decimal("3.5")),
+        "bool": _cat("bool", colorSlot=True),            # bool subclasses int — must read as junk
+        "none": _cat("none", colorSlot=None),
+        "dict": _cat("dict", colorSlot={"n": 3}),
+        "blank": _cat("blank", colorSlot="  "),
+        "float": _cat("float", colorSlot=7.0),           # DynamoDB never returns a float
+        "absent": _cat("absent"),
+    }
+
+    counts = repository.color_slot_counts(items)
+
+    assert counts == Counter({0: 2, 10: 2, 19: 1})
+    assert repository.used_color_slots(items) == {0, 10, 19} == set(counts)
+    assert 5 not in counts and counts[5] == 0 and 5 not in counts   # a read must not INSERT
+    # The real consumer agrees: the planner treats exactly those three as taken.
+    plan = repository.plan_color_slot_backfill(items)
+    assert len(plan) == 12
+    assert set(plan.values()).isdisjoint({0, 10, 19})
+
+
+def test_a_legacy_store_of_thirty_categories_still_migrates_onto_one_shared_slot(handler):
+    # [A11] the SCOPE GAP, pinned on purpose so it is visible rather than assumed. The card's own
+    # example is "30 categories left 23 sharing Eating Out's colour". This change moves only the
+    # CREATE path; the backfill planner keeps its constant slot-0 overflow, because WHIT-405's
+    # chunked drain is equivalent to one unchunked write ONLY while that overflow is constant. So
+    # a store that MIGRATES holding 30 categories still lands 11 of them on slot 0. If the planner
+    # is ever taught to spread too, this test is where that decision has to be written down.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 17)           # 13 built-ins + 17 custom = 30, none slotted
+
+    _drain(repo)
+
+    holders = _slot_histogram(repo)
+    assert sum(holders.values()) == 30
+    assert holders[0] == 11, "the planner's overflow moved — was that deliberate?"
+    assert sorted(holders.values()) == [1] * 19 + [11]
+    stored = repo._table.store[_CFG]["items"]
+    assert {cid: int(stored[cid][_SLOT]) for cid in SEED_SLOTS} == SEED_SLOTS
+
+
+def test_a_create_may_never_take_a_free_slot_a_builtin_is_owed_even_when_all_are_owed(handler):
+    # [A12] the fallback branch, END TO END. The unit test pins the branch's return value; this
+    # pins what it costs the user. When the plan owes all 20 slots `candidates` is empty, and if
+    # that fallback reaches the FREE branch it hands out a slot that is free only because the
+    # backfill has not written it yet — the exact theft `reserved` exists to stop.
+    repository, repo = _repo_with_fake_table(handler)
+    items = {cid: {k: v for k, v in seed.items() if k != _SLOT}
+             for cid, seed in repository.SEED_CATEGORIES.items()}
+    items["zsquatter"] = _cat("zsquatter", colorSlot=Decimal(0))
+    for n in range(21):
+        items[f"cat{n:04d}"] = _cat(f"cat{n:04d}")
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                               "items": items, "version": Decimal(1)}
+    owed = repository.plan_color_slot_backfill(items)
+    assert set(owed.values()) == set(range(20)), "fixture drifted: not every slot is owed"
+    assert owed["travel"] == 1
+    repo._table.before_update.append(_bump_version)   # the pre-loop backfill loses its race
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] != owed["travel"], "create stole the slot the backfill owed travel"
+    _drain(repo, limit=30)
+    stored = repo._table.store[_CFG]["items"]
+    assert int(stored["travel"][_SLOT]) == 1, "travel was repainted off its designated hue"
+    assert all(_SLOT in cat for cat in stored.values())
