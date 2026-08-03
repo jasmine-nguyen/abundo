@@ -21,6 +21,13 @@ the ones that name the OTHER language in the failure. Changing the slot count is
 multi-file edit; treat a red here as "the other side has not moved yet", not as a
 number to bump.
 
+The client half of this contract is guarded from Jest by
+src/__tests__/seedSlotSync.logic.test.ts, which reads the .py. That is NOT redundant with
+this file, it is the other direction: CI runs each suite on a different trigger, so a
+server-only change skips Jest and a client-only change skips pytest (hence the
+src/chartColors.ts entry in python-tests.yml). Only this side ties CATEGORY_COLORS itself
+to the slot count — the Jest side compares against ASSIGNMENT_ORDER.length.
+
 There is deliberately NO pin on the value 20. Both sides agreeing on 25 is a correct
 state, so a pin would only cry wolf; the cross-check is self-sufficient. (The
 loan-facts ceiling is pinned because every mirror there derives from one file, so a

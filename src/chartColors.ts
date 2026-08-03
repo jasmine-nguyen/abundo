@@ -38,10 +38,13 @@ export const CHART_BG = '#16161e';
 // same colour. This permutation is the indirection that pulls them apart (slots 0,1,2,3 → ramp
 // 0,10,5,15). Do not sort, reverse, or regenerate it: the slots are PERSISTED, so changing this
 // array repaints every category.
-// One counterpart must stay in step, which a Jest run cannot see:
-//   • shared/repository_category.py — _COLOR_SLOT_COUNT (the slot range the server assigns)
-// tests/shared/test_color_slot_ramp_drift.py reads THIS file and fails if the two drift
-// (WHIT-406); the permutation invariant itself is pinned below.
+// One counterpart must stay in step: shared/repository_category.py's _COLOR_SLOT_COUNT,
+// the slot range the server assigns. Guarded from BOTH sides, because CI runs each suite
+// on a different trigger — a client-only change skips pytest, a server-only one skips Jest:
+//   • seedSlotSync.logic.test.ts reads the .py from Jest      (catches a change made HERE)
+//   • tests/shared/test_color_slot_ramp_drift.py reads THIS file from pytest, and
+//     python-tests.yml lists it so a client-only edit still wakes that suite (WHIT-406)
+// The permutation invariant itself is pinned below.
 export const ASSIGNMENT_ORDER = [
   0, 10, 5, 15, 2, 7, 12, 17, 1, 3, 4, 6, 8, 9, 11, 13, 14, 16, 18, 19,
 ] as const;
