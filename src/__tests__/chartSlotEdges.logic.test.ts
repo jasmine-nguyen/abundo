@@ -11,7 +11,7 @@ import { toCategory } from '../context';
 
 // The server's seed slots, mirroring shared/repository_category.py SEED_CATEGORIES.
 const SEED_SLOTS: Record<string, number> = {
-  eatingout: 0, travel: 1, coffee: 4, fitness: 6, gifts: 7, health: 8, utilities: 10,
+  eatingout: 0, travel: 1, fitness: 6, gifts: 7, health: 8, coffee: 9, utilities: 10,
   groceries: 11, shopping: 13, transport: 15, phonenet: 16, pets: 17, subs: 18,
 };
 

@@ -94,8 +94,8 @@ describe('chartCategoryColor', () => {
 // The server's seed slots (shared/repository_category.py SEED_CATEGORIES), and the hex each one
 // resolves to. Hard-coded rather than computed, so a regenerated ASSIGNMENT_ORDER fails loudly.
 const SEED_SLOT_HEX: Record<string, [number, string]> = {
-  eatingout: [0, '#f98f98'], travel: [1, '#0bcbd3'], coffee: [4, '#f49964'],
-  fitness: [6, '#47c1f5'], gifts: [7, '#bf9ff8'], health: [8, '#f9927e'],
+  eatingout: [0, '#f98f98'], travel: [1, '#0bcbd3'], fitness: [6, '#47c1f5'],
+  gifts: [7, '#bf9ff8'], health: [8, '#f9927e'], coffee: [9, '#e8a24f'],
   utilities: [10, '#d2ae45'], groceries: [11, '#8ec56f'], shopping: [13, '#25cdbd'],
   transport: [15, '#65baff'], phonenet: [16, '#82b4ff'], pets: [17, '#aba7ff'],
   subs: [18, '#d797e6'],
@@ -122,11 +122,13 @@ describe('chartCategoryColor — the stored slot', () => {
     for (const [id, [slot, hex]] of Object.entries(SEED_SLOT_HEX)) {
       expect(chartCategoryColor(id, { slot })).toBe(hex);
     }
-    // The four that move off their id-derived colour, and the nine that do not.
+    // The built-ins that move off their id-derived colour, and the rest that do not. WHIT-415 took
+    // coffee OUT of this set: its slot now resolves to the same ramp entry as its fallback, so the
+    // set shrank from four to three.
     const moved = Object.entries(SEED_SLOT_HEX)
       .filter(([id, [slot]]) => chartCategoryColor(id, { slot }) !== chartCategoryColor(id))
       .map(([id]) => id);
-    expect(moved.sort()).toEqual(['coffee', 'phonenet', 'shopping', 'transport']);
+    expect(moved.sort()).toEqual(['phonenet', 'shopping', 'transport']);
   });
 
   it('treats slot 0 as a REAL slot, not as absent', () => {
