@@ -294,8 +294,9 @@ def _repaint_allowance(row_count: int) -> int:
     At least 1 for any non-empty store, so a colour worn by a single category is never a
     mover — that is the permanence promise, and it falls out of the arithmetic rather than
     needing a floor clamped on top. At row_count 0 it returns 0, which is meaningless but
-    unreachable: the only caller with no rows is _repaint_movers on an empty store, which has
-    nothing to bin.
+    INERT rather than unreachable: a store whose categories were all deleted really does reach
+    it, via _repaint_movers, whose `by_slot` is then empty so the 0 is never compared to
+    anything. The other caller passes len(items) + 1 and can never reach it.
     """
     return -(-row_count // _COLOR_SLOT_COUNT)
 
