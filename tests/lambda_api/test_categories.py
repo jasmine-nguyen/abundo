@@ -20,6 +20,10 @@ from decimal import Decimal
 import pytest
 from botocore.exceptions import ClientError
 
+# Pure stdlib, resolved by pytest.ini's `pythonpath = tests/shared` — it needs none of
+# the `handler` fixture's sys.path juggling, so it belongs at module scope.
+from _chart_ramp import assignment_order as client_assignment_order
+
 
 # --- handler-level fake ------------------------------------------------------
 
@@ -2050,12 +2054,15 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
     numbers is meaningless (they run 15,16,17,18 but resolve to ramp 13,14,16,18). This
     pins the real invariant: no more than 3 built-ins ever occupy neighbouring ramp entries.
 
-    ASSIGNMENT_ORDER lives client-side (src/chartColors.ts, slice 2); the copy here is
-    the cross-language coupling a sync guard should cover — see the tech-debt card.
+    ASSIGNMENT_ORDER lives client-side (src/chartColors.ts, slice 2) and is READ from
+    there rather than copied (WHIT-406): a hand-typed copy would keep measuring a
+    permutation the app no longer ships, so regenerating it client-side would repaint
+    every category with nothing going red. tests/shared/test_color_slot_ramp_drift.py
+    guards the lengths against the server's slot range.
     """
     import repository
-    assignment_order = [0, 10, 5, 15, 2, 7, 12, 17, 1, 3, 4, 6, 8, 9, 11, 13, 14, 16, 18, 19]
-    assert sorted(assignment_order) == list(range(20))  # a true permutation of the ramp
+    assignment_order = client_assignment_order()
+    assert sorted(assignment_order) == list(range(len(assignment_order)))  # a true permutation
 
     ramp = sorted(assignment_order[cat["colorSlot"]]
                   for cat in repository.SEED_CATEGORIES.values())

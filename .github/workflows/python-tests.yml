@@ -15,6 +15,12 @@ on:
       - "shared/**"
       - "lambda*/**"
       - "tests/**"
+      # Half of a cross-language contract with shared/repository_category.py
+      # (_COLOR_SLOT_COUNT): the client ramp is what the server's permanent colour
+      # slots index into. tests/shared/test_color_slot_ramp_drift.py must run when it
+      # changes; test_chart_ramp_parser_edges.py asserts this entry is still a live
+      # trigger pointing at the real file, so it cannot rot into a dead line.
+      - "src/chartColors.ts"
       - "pytest.ini"
       - "**/requirements*.txt"
       - ".github/workflows/python-tests.yml"

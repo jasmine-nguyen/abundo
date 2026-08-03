@@ -71,6 +71,8 @@ SEED_CATEGORIES = {
 }
 
 # How many slots the client ramp exposes. A slot is always in [0, _COLOR_SLOT_COUNT).
+# Pinned against the real client ramp by tests/shared/test_color_slot_ramp_drift.py —
+# changing this alone fails there, naming src/chartColors.ts.
 _COLOR_SLOT_COUNT = 20
 _COLOR_SLOT_FIELD = "colorSlot"
 # Marker on the CONFIG ITEM saying every stored category has been stamped. Its presence is
