@@ -66,6 +66,13 @@ _COLOR_SLOT_FIELD = "colorSlot"
 # what makes the backfill one-time rather than a re-check on every read.
 _COLOR_SLOT_SCHEMA_FIELD = "colorSlotSchema"
 _COLOR_SLOT_SCHEMA = 1
+# How many categories one backfill write may stamp (WHIT-405). DynamoDB caps an
+# UpdateExpression at 4KB; each clause costs 29-33 bytes depending on the index width, over a
+# 33-byte base, so 129 clauses (4070 bytes) is the last that fits and 130 (4103) is rejected.
+# An unchunked plan past that point made create_category 500 forever — the write could never
+# succeed and it runs fail-closed. 50 is ~1.6KB, leaving ~2.5x headroom so the clause shape
+# can grow without silently re-breaking. Successive requests drain the rest.
+_COLOR_SLOT_WRITE_CHUNK = 50
 
 
 def _coerce_slot(raw: Any) -> Optional[int]:
@@ -330,10 +337,21 @@ class CategoryRepository:
         return raw >= _COLOR_SLOT_SCHEMA
 
     def _write_color_slots(self, version: Any, plan: dict, *, strict: bool) -> None:
-        """Persist a colour-slot plan and stamp the store as migrated.
+        """Persist up to _COLOR_SLOT_WRITE_CHUNK of a colour-slot plan, stamping the store as
+        migrated once the plan is fully drained.
 
-        FAIL-OPEN on the READ path (strict=False). Seven handler routes call
-        list_categories, and every one of them survives today on a single get_item. If this
+        CHUNKING IS EQUIVALENT TO ONE SHOT, and not for the obvious reason. It is NOT because
+        planned slots are distinct — past 20 unslotted rows they are not, the assigner hands
+        the same overflow slot to many rows. It holds because persisting an alphabetical
+        prefix is a fixed point of the planner: a chunk can only take a later built-in's
+        preferred slot via that overflow value, and the robbed row then falls through to the
+        same overflow value anyway. So re-planning after each chunk converges on exactly the
+        assignment one write would have produced. Verified by simulation over randomised
+        stores, including >20 unslotted rows and a create or delete landing between chunks.
+
+        FAIL-OPEN on the READ path (strict=False). Seven handler routes call list_categories,
+        as does the webhook Lambda's budget-alert path (shared/budget_alerts.py), and every
+        one of them survives today on a single get_item. If this
         write raised, a VersionConflictError would 409 the caller and any other ClientError
         would become a DatabaseError the handler does not catch — a 500 on a read that would
         have succeeded. So: attempt it once, and on failure log and carry on. The caller has
@@ -347,14 +365,26 @@ class CategoryRepository:
         # expression never references. Same technique delete_category uses for #childN.
         # With an EMPTY plan we still write the marker (names = version + schema only, never
         # #items), so a store whose categories were all deleted stops re-planning forever.
-        names = {"#v": "version", "#schema": _COLOR_SLOT_SCHEMA_FIELD}
-        values = {":expected": version, ":next": version + Decimal(1),
-                  ":schema": Decimal(_COLOR_SLOT_SCHEMA)}
-        set_parts = ["#v = :next", "#schema = :schema"]
+        # At most _COLOR_SLOT_WRITE_CHUNK categories per write, so the expression can never
+        # exceed DynamoDB's 4KB cap. `sorted` makes the chunk an alphabetical prefix, which is
+        # what keeps chunking equivalent to one shot (see the `drained` comment below).
+        chunk = sorted(plan)[:_COLOR_SLOT_WRITE_CHUNK]
+        # Stamp the migrated marker only once this write drains the plan. A partial write must
+        # NOT stamp it, or the remaining categories would never be revisited. An empty plan
+        # counts as drained: that is the "all categories deleted" case, which must still stamp
+        # so the store stops re-planning forever.
+        drained = len(chunk) == len(plan)
+        names = {"#v": "version"}
+        values = {":expected": version, ":next": version + Decimal(1)}
+        set_parts = ["#v = :next"]
+        if drained:
+            names["#schema"] = _COLOR_SLOT_SCHEMA_FIELD
+            values[":schema"] = Decimal(_COLOR_SLOT_SCHEMA)
+            set_parts.append("#schema = :schema")
         if plan:
             names["#items"] = "items"
             names["#slot"] = _COLOR_SLOT_FIELD
-            for index, cat_id in enumerate(sorted(plan)):
+            for index, cat_id in enumerate(chunk):
                 alias = f"#cat{index}"
                 names[alias] = cat_id
                 values[f":slot{index}"] = Decimal(plan[cat_id])

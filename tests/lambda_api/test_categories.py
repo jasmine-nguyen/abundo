@@ -551,6 +551,20 @@ def _ccfe():
     return err
 
 
+# DynamoDB's documented UpdateExpression ceiling. FakeTable enforces it so an expression that
+# the real service would reject cannot pass in tests — without this, WHIT-405's chunk cap
+# could be deleted and every test would still be green.
+_MAX_UPDATE_EXPRESSION_BYTES = 4096
+
+
+def _validation_error(message):
+    err = ClientError()
+    # Message, not just Code: handle_database_error reads BOTH (shared/repository_base.py),
+    # so a Message-less response raises KeyError instead of the DatabaseError under test.
+    err.response = {"Error": {"Code": "ValidationException", "Message": message}}
+    return err
+
+
 class FakeTable:
     """In-memory table emulating only the calls CategoryRepository makes:
     get_item, conditional put_item, and the nested conditional update_item."""
@@ -586,11 +600,20 @@ class FakeTable:
         )
         if self.update_error is not None:
             raise self.update_error
+        expression_bytes = len(UpdateExpression.encode())
+        if expression_bytes > _MAX_UPDATE_EXPRESSION_BYTES:
+            raise _validation_error(
+                f"Invalid UpdateExpression: expression is too large; "
+                f"{expression_bytes} bytes exceeds the {_MAX_UPDATE_EXPRESSION_BYTES} limit"
+            )
 
-        # The colour-slot backfill is its own shape: it stamps #schema (and, when there is
-        # anything to backfill, one #items.#catN.#slot per category). It carries no #id, so
-        # it must be handled before the create/rename/delete paths read one.
-        if "#schema" in ExpressionAttributeNames:
+        # The colour-slot backfill is its own shape: it stamps #schema and/or one
+        # #items.#catN.#slot per category. It carries no #id, so it must be handled before
+        # the create/rename/delete paths read one. Matching on #slot as well as #schema is
+        # required since WHIT-405: a PARTIAL chunk carries no #schema, and would otherwise
+        # fall through to `ExpressionAttributeNames["#id"]` and KeyError. No other write
+        # declares #slot — create sets the whole category object via :cat, not a slot field.
+        if "#schema" in ExpressionAttributeNames or "#slot" in ExpressionAttributeNames:
             if item is None or item["version"] != values[":expected"]:
                 raise _ccfe()
             # DynamoDB rejects a declared-but-unreferenced name; mirror that so a regression
@@ -604,7 +627,10 @@ class FakeTable:
                 if alias.startswith("#cat"):
                     index = alias[len("#cat"):]
                     item["items"][real]["colorSlot"] = values[f":slot{index}"]
-            item["colorSlotSchema"] = values[":schema"]
+            # A partial chunk carries no :schema — the store stays unmarked so the remaining
+            # categories get picked up by a later request.
+            if ":schema" in values:
+                item["colorSlotSchema"] = values[":schema"]
             item["version"] = values[":next"]
             return
 
@@ -1998,3 +2024,437 @@ def test_seed_slots_are_spread_across_the_colour_ramp(handler):
         run = run + 1 if current == previous + 1 else 1
         longest = max(longest, run)
     assert longest == 3, f"longest neighbouring-ramp run is {longest}: {ramp}"
+
+
+# ---- WHIT-405: the backfill write is chunked so it can never exceed DynamoDB's 4KB cap ------
+
+def _unslotted_store(repo, repository, count):
+    """A legacy store with `count` EXTRA unslotted custom categories on top of the seeds."""
+    extra = {f"cat{index:04d}": {"id": f"cat{index:04d}", "name": f"Cat {index}",
+                                 "icon": "tag", "color": "#888888",
+                                 "bucket": "Lifestyle", "parent": None}
+             for index in range(count)}
+    return _legacy_store(repo, repository, extra=extra)
+
+
+def _drain(repo, limit=20):
+    """Read until the backfill stops writing. Returns the number of write attempts."""
+    for _ in range(limit):
+        before = len(repo._table.update_calls)
+        repo.list_categories()
+        if len(repo._table.update_calls) == before:
+            return before
+    raise AssertionError(f"backfill did not converge within {limit} reads")
+
+
+def test_a_backfill_expression_never_exceeds_dynamodbs_4kb_limit(handler):
+    """The structural guard. Unchunked, 200 categories build a ~6KB expression that the real
+    service rejects — and FakeTable now rejects it too, so deleting the cap reddens here."""
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+
+    repo.list_categories()
+
+    expression = repo._table.update_calls[0][0]
+    assert len(expression.encode()) <= _MAX_UPDATE_EXPRESSION_BYTES
+    # Well under, not just under: the cap exists to leave headroom, not to sit on the line.
+    assert len(expression.encode()) < _MAX_UPDATE_EXPRESSION_BYTES // 2
+
+
+def test_a_huge_backfill_is_split_across_reads_and_converges(handler):
+    """213 unslotted rows drain over successive reads, landing exactly where a single
+    unchunked write would have put them."""
+    repository, repo = _repo_with_fake_table(handler)
+    original = copy.deepcopy(_unslotted_store(repo, repository, 200)["items"])
+
+    writes = _drain(repo)
+
+    # 213 rows / 50 per write = 5 writes: four full chunks, one remainder.
+    assert writes == 5
+    one_shot = repository.plan_color_slot_backfill(original)
+    stored = {cid: int(cat["colorSlot"])
+              for cid, cat in repo._table.store[_CFG]["items"].items()}
+    assert stored == {cid: int(slot) for cid, slot in one_shot.items()}
+    assert repo._table.store[_CFG]["colorSlotSchema"] == 1
+
+
+def test_a_partial_backfill_does_not_stamp_the_marker(handler):
+    """The marker means "every row is stamped". A partial chunk must not claim that, or the
+    remaining rows are never revisited."""
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+
+    repo.list_categories()                       # first chunk only
+    assert "colorSlotSchema" not in repo._table.store[_CFG]
+
+    _drain(repo)
+    assert repo._table.store[_CFG]["colorSlotSchema"] == 1
+
+
+def test_a_read_mid_drain_still_returns_every_category_fully_slotted(handler):
+    """The user-visible guarantee: colours are right immediately, the database catches up
+    behind. The response applies the WHOLE plan even though one chunk was persisted."""
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+
+    rows = repo.list_categories()               # persists 50, returns all 213
+
+    assert len(rows) == 213
+    assert all(0 <= row["colorSlot"] < 20 for row in rows)
+    # only the first chunk reached storage
+    persisted = [cat for cat in repo._table.store[_CFG]["items"].values() if "colorSlot" in cat]
+    assert len(persisted) == 50
+
+
+def test_create_survives_a_backfill_too_big_for_one_write(handler):
+    """The severity test — this is the production 500 the card describes. Unchunked, the
+    pre-loop backfill runs strict=True against a 213-row plan, the expression is rejected,
+    and POST /categories 500s forever."""
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+
+    created = repo.create_category("wine", "Wine", "glass", "Lifestyle")
+
+    assert 0 <= created["colorSlot"] < 20
+    # The new row must not take a slot the still-pending backfill is about to hand out.
+    remaining = repository.plan_color_slot_backfill(repo._table.store[_CFG]["items"])
+    assert created["id"] not in remaining
+
+
+def test_a_partial_chunk_that_throttles_still_fails_open_on_a_read(handler):
+    """Fail-open has to survive chunking: a throttled PARTIAL write leaves the marker absent
+    so a later request retries, and the read still returns the full plan."""
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+    repo._table.update_error = _throttle()
+
+    rows = repo.list_categories()
+
+    assert len(rows) == 213
+    assert all(0 <= row["colorSlot"] < 20 for row in rows)
+    assert "colorSlotSchema" not in repo._table.store[_CFG]
+
+
+def test_a_delete_between_chunks_does_not_strand_or_duplicate_a_slot(handler):
+    """A category removed mid-drain must not leave a hole or a clash."""
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+
+    repo.list_categories()                       # chunk 1
+    repo.delete_category("cat0150")              # still unslotted, in a later chunk
+    _drain(repo)
+
+    stored = repo._table.store[_CFG]["items"]
+    assert "cat0150" not in stored
+    assert all("colorSlot" in cat for cat in stored.values())
+    expected = repository.plan_color_slot_backfill(
+        {cid: {k: v for k, v in cat.items() if k != "colorSlot"} for cid, cat in stored.items()}
+    )
+    assert {cid: int(cat["colorSlot"]) for cid, cat in stored.items()} == \
+        {cid: int(slot) for cid, slot in expected.items()}
+
+
+def test_no_write_other_than_the_backfill_declares_a_slot_alias(handler):
+    """FakeTable routes on #slot since WHIT-405. That is only safe while the backfill is the
+    sole writer declaring it — pin it, so a future write can't be silently re-routed."""
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()                       # seed: a fresh store is born migrated
+    repo._table.update_calls.clear()
+    repo.create_category("wine", "Wine", "glass", "Lifestyle")
+    repo.update_category("wine", "Vino", "glass", "Lifestyle")
+    repo.delete_category("wine")
+
+    for expression, names, _values in repo._table.update_calls:
+        assert "#slot" not in names, f"non-backfill write declared #slot: {expression}"
+
+
+# ---- WHIT-405 (QA): the gaps the implementer's suite leaves open ---------------------------
+# The committed suite pins ONE store shape (200 extras + 13 seeds) and a delete between
+# chunks. These add: the randomised equivalence property both planning agents claimed to have
+# simulated but never committed, the exact chunk boundaries, a CREATE between chunks, the
+# already-slotted rows staying put, the seed slots surviving saturation, and the retry budget
+# of update/delete/create while a store is mid-drain.
+
+
+def _exactly_unslotted(repo, count, *, version=1):
+    """A store whose plan size is EXACTLY `count` — no seeds, so nothing else is unslotted.
+    Lets a test sit precisely on a chunk boundary."""
+    items = {f"c{index:04d}": {"id": f"c{index:04d}", "name": f"C{index}", "icon": "tag",
+                               "color": "#888888", "bucket": "Lifestyle", "parent": None}
+             for index in range(count)}
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                               "items": items, "version": Decimal(version)}
+    return repo._table.store[_CFG]
+
+
+def _random_legacy_store(repository, rng):
+    """A plausible legacy store: some built-ins deleted, some already slotted (not always on
+    their designated slot), plus 0-260 custom rows, some slotted, some CORRUPT. Custom ids are
+    random lowercase words so the built-ins land at random positions in the alphabetical
+    chunk order — the one thing the committed 'cat0000..cat0199' shape never varies."""
+    items = {}
+    for cat_id, seed in repository.SEED_CATEGORIES.items():
+        roll = rng.random()
+        if roll < 0.25:
+            continue                                     # built-in deleted before the backfill
+        row = {k: v for k, v in seed.items() if k != _SLOT}
+        if roll < 0.45:
+            row[_SLOT] = Decimal(rng.randrange(20))      # already slotted, maybe not its own
+        items[seed["id"]] = row
+    for _ in range(rng.randrange(0, 260)):
+        cat_id = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(6))
+        if cat_id in repository.SEED_CATEGORIES:
+            continue
+        row = {"id": cat_id, "name": cat_id, "icon": "tag", "color": "#888888",
+               "bucket": "Lifestyle", "parent": None}
+        roll = rng.random()
+        if roll < 0.15:
+            row[_SLOT] = Decimal(rng.randrange(20))
+        elif roll < 0.22:
+            row[_SLOT] = rng.choice(["7", 7.5, -1, 99, True])   # corrupt -> must be reassigned
+        items[cat_id] = row
+    return items
+
+
+_SLOT = "colorSlot"
+# 250 randomised stores, fixed seed: deterministic, and wide enough that many trials exceed
+# the 129-clause point where an unchunked expression is rejected outright.
+_PROPERTY_TRIALS = 250
+_PROPERTY_SEED = 405
+
+
+def test_a_chunked_drain_lands_exactly_where_one_unchunked_write_would_have(handler):
+    # WHIT-405 — [A1] chunking is equivalent to one shot, over randomised stores.
+    # The committed convergence test pins a SINGLE store shape. The equivalence argument in
+    # _write_color_slots' docstring ("persisting an alphabetical prefix is a fixed point of
+    # the planner") is subtle and load-bearing, and nothing in the suite exercises it against
+    # varied shapes: built-ins scattered through the chunk order, pre-slotted rows, corrupt
+    # slots, and saturation past 20. Expected values come from the REAL exported planner
+    # (repository.plan_color_slot_backfill) applied once to the original store — never
+    # re-implemented here.
+    import random
+    repository, _ = _repo_with_fake_table(handler)
+    rng = random.Random(_PROPERTY_SEED)
+    saw_over_the_unchunked_limit = 0
+
+    for trial in range(_PROPERTY_TRIALS):
+        _, repo = _repo_with_fake_table(handler)
+        original = _random_legacy_store(repository, rng)
+        repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                                   "items": copy.deepcopy(original), "version": Decimal(1)}
+        one_shot = repository.plan_color_slot_backfill(copy.deepcopy(original))
+        if len(one_shot) > 129:
+            saw_over_the_unchunked_limit += 1
+        # What a single unbounded write would have left in the table: the plan for every
+        # unslotted row, the untouched stored value for every already-valid row.
+        expected = {cat_id: int(one_shot[cat_id]) if cat_id in one_shot else int(cat[_SLOT])
+                    for cat_id, cat in original.items()}
+
+        writes = _drain(repo, limit=30)
+
+        stored = repo._table.store[_CFG]["items"]
+        assert {cid: int(cat[_SLOT]) for cid, cat in stored.items()} == expected, \
+            f"trial {trial}: chunked drain diverged from the one-shot plan"
+        # Bounded, and never more writes than chunks: no read may re-plan work already done.
+        assert writes == max(1, -(-len(one_shot) // 50)), f"trial {trial}: {writes} writes"
+        assert repo._table.store[_CFG]["colorSlotSchema"] == 1, f"trial {trial}: unmarked"
+
+    # Guard the guard: if the generator ever stopped producing stores past the point an
+    # unchunked expression is rejected, this test would quietly stop testing the fix.
+    assert saw_over_the_unchunked_limit >= 20, saw_over_the_unchunked_limit
+
+
+def test_a_marker_is_never_present_while_a_row_is_still_unslotted(handler):
+    # WHIT-405 — [A2] the marker means "every row is stamped", checked after EVERY write of
+    # every randomised drain, not just the first chunk of one store. This is the invariant
+    # `drained` exists to hold; the committed test checks it at one point of one store.
+    import random
+    repository, _ = _repo_with_fake_table(handler)
+    rng = random.Random(_PROPERTY_SEED + 1)
+
+    for trial in range(60):
+        _, repo = _repo_with_fake_table(handler)
+        repo._table.store[_CFG] = {
+            "pk": "CATEGORIES", "sk": "CATEGORIES",
+            "items": _random_legacy_store(repository, rng), "version": Decimal(1)}
+
+        for _ in range(30):
+            before = len(repo._table.update_calls)
+            repo.list_categories()
+            config = repo._table.store[_CFG]
+            if "colorSlotSchema" in config:
+                # Marker present -> the real planner must find nothing left to do.
+                assert repository.plan_color_slot_backfill(config["items"]) == {}, \
+                    f"trial {trial}: marker stamped with rows still unslotted"
+            if len(repo._table.update_calls) == before:
+                break
+        else:
+            raise AssertionError(f"trial {trial}: backfill did not converge")
+        assert "colorSlotSchema" in repo._table.store[_CFG]
+
+
+@pytest.mark.parametrize("unslotted,expected_writes", [
+    (1, 1),        # smallest non-empty plan
+    (49, 1),       # one under the chunk
+    (50, 1),       # EXACTLY the chunk: must drain and stamp in a single write, not two
+    (51, 2),       # one over: a 50 chunk plus a 1 remainder
+    (100, 2),      # exact multiple: no empty third write
+    (129, 3),      # the last plan an unchunked expression could still have written
+    (130, 3),      # the first plan an unchunked expression could NOT (4103 bytes) — the card
+    (213, 5),
+])
+def test_a_drain_takes_exactly_one_write_per_chunk(handler, unslotted, expected_writes):
+    # WHIT-405 — [A3] chunk boundaries, including the 129/130 point the card names.
+    # An off-by-one in `chunk`/`drained` shows up here as a wrong write count or a store that
+    # keeps writing forever; the committed suite only ever tests 213.
+    repository, repo = _repo_with_fake_table(handler)
+    _exactly_unslotted(repo, unslotted)
+    one_shot = repository.plan_color_slot_backfill(
+        copy.deepcopy(repo._table.store[_CFG]["items"]))
+    assert len(one_shot) == unslotted            # the fixture really does sit on the boundary
+
+    writes = _drain(repo)
+
+    assert writes == expected_writes
+    stored = repo._table.store[_CFG]
+    assert {cid: int(c[_SLOT]) for cid, c in stored["items"].items()} == \
+        {cid: int(s) for cid, s in one_shot.items()}
+    assert stored["colorSlotSchema"] == 1
+    # ...and a fully drained store is back to one get_item per read, forever.
+    repo._table.update_calls.clear()
+    repo.list_categories()
+    repo.list_categories()
+    assert repo._table.update_calls == []
+
+
+def test_a_create_between_chunks_keeps_its_slot_and_the_drain_still_finishes(handler):
+    # WHIT-405 — [A4] only a DELETE between chunks is pinned. A create is the write that
+    # actually adds a row the later chunks have never planned for, and it runs its own
+    # strict=True backfill first — so it both consumes a chunk and inserts a row.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+
+    repo.list_categories()                                   # chunk 1
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+    _drain(repo)
+
+    stored = repo._table.store[_CFG]["items"]
+    # The created row keeps the slot the POST already told the client about — a later chunk
+    # must never repaint a category that was already handed a colour.
+    assert int(stored["wine"][_SLOT]) == created[_SLOT]
+    assert all(_SLOT in cat for cat in stored.values()), "a row was left permanently unslotted"
+    assert repo._table.store[_CFG]["colorSlotSchema"] == 1
+    # And the final assignment is still the one the planner would produce for this store.
+    expected = repository.plan_color_slot_backfill(
+        {cid: {k: v for k, v in cat.items() if k != _SLOT} for cid, cat in stored.items()})
+    assert {cid: int(cat[_SLOT]) for cid, cat in stored.items()} == \
+        {cid: int(slot) for cid, slot in expected.items()}
+
+
+def test_a_create_mid_drain_spends_one_backfill_write_and_one_create_write(handler):
+    # WHIT-405 — [A5] the retry budget. create_category runs the backfill BEFORE its 2-attempt
+    # loop precisely so the version bump can't burn attempt 1. Now that the backfill takes
+    # several bumps to finish, pin that a create still costs exactly one backfill write plus
+    # one create write — moving the backfill inside the loop would show up as 3+.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+    repo.list_categories()                                   # leave the store mid-drain
+    repo._table.update_calls.clear()
+
+    repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert len(repo._table.update_calls) == 2
+    slot_writes = [names for _e, names, _v in repo._table.update_calls if "#slot" in names]
+    assert len(slot_writes) == 1
+
+
+def test_a_create_mid_drain_still_survives_one_concurrent_version_bump(handler):
+    # WHIT-405 — [A6] the second half of the budget: attempt 2 must still be available. A
+    # concurrent writer bumps the version between the create's read and its write; the create
+    # has to retry and succeed, mid-drain, not 409.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+    repo.list_categories()                                   # mid-drain
+    # Skip the create's own backfill write, then race its first create attempt.
+    repo._table.before_update = [lambda item: None, _bump_version]
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["id"] == "wine"
+    assert "wine" in repo._table.store[_CFG]["items"]
+
+
+def test_a_update_and_delete_mid_drain_succeed_on_their_first_attempt(handler):
+    # WHIT-405 — [A7] update/delete never run the backfill, so a mid-drain store must not cost
+    # them a retry. If either ever started migrating inline, its own version bump would
+    # guarantee a CCFE and halve its budget — this pins one update_item call each.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+    repo.list_categories()                                   # mid-drain, marker absent
+    assert "colorSlotSchema" not in repo._table.store[_CFG]
+    repo._table.update_calls.clear()
+
+    repo.update_category("coffee", "Cafes", "Lifestyle", "coffee")
+    assert len(repo._table.update_calls) == 1
+    repo._table.update_calls.clear()
+
+    repo.delete_category("cat0100")
+    assert len(repo._table.update_calls) == 1
+    assert repo._table.store[_CFG]["items"]["coffee"]["name"] == "Cafes"
+    assert "cat0100" not in repo._table.store[_CFG]["items"]
+
+
+def test_a_rows_already_holding_a_valid_slot_never_move_during_a_chunked_drain(handler):
+    # WHIT-405 — [A8] "adding a category cannot repaint any other" has to survive the drain.
+    # These five sit on deliberately non-designated slots, so a chunk that re-derived them
+    # instead of leaving them alone would change their colour.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+    pinned = {"cat0000": 19, "cat0060": 3, "cat0120": 12, "coffee": 9, "transport": 5}
+    for cat_id, slot in pinned.items():
+        repo._table.store[_CFG]["items"][cat_id][_SLOT] = Decimal(slot)
+
+    _drain(repo)
+
+    stored = repo._table.store[_CFG]["items"]
+    assert {cid: int(stored[cid][_SLOT]) for cid in pinned} == pinned
+    assert all(_SLOT in cat for cat in stored.values())
+
+
+def test_a_built_ins_keep_their_designated_slots_when_they_fall_in_a_later_chunk(handler):
+    # WHIT-405 — [A9] the user-visible risk of chunking. Ids sorting BEFORE every built-in
+    # push all 13 seeds past the first chunk, and there are far more than 20 unslotted rows,
+    # so the assigner saturates and starts handing out the overflow slot. The built-ins must
+    # still land on the solved table — the thing the whole pass-1 rule exists for.
+    repository, repo = _repo_with_fake_table(handler)
+    early = {f"aaa{index:04d}": {"id": f"aaa{index:04d}", "name": "A", "icon": "tag",
+                                 "color": "#888888", "bucket": "Lifestyle", "parent": None}
+             for index in range(60)}
+    _legacy_store(repo, repository, extra=early)
+    first_chunk = sorted(repository.plan_color_slot_backfill(
+        repo._table.store[_CFG]["items"]))[:50]
+    assert not any(cid in repository.SEED_CATEGORIES for cid in first_chunk)
+
+    _drain(repo)
+
+    stored = repo._table.store[_CFG]["items"]
+    assert {cid: int(stored[cid][_SLOT]) for cid in repository.SEED_CATEGORIES} == SEED_SLOTS
+
+
+def test_a_chunk_that_loses_the_version_race_writes_nothing_and_a_later_read_recovers(handler):
+    # WHIT-405 — [A10] a partial write is conditional too. A concurrent writer bumping the
+    # version between this read's plan and its write must make the chunk a clean no-op — no
+    # half-stamped rows, no marker — and the next read must still converge.
+    repository, repo = _repo_with_fake_table(handler)
+    _unslotted_store(repo, repository, 200)
+    repo._table.before_update.append(_bump_version)
+
+    repo.list_categories()
+
+    stored = repo._table.store[_CFG]
+    assert not any(_SLOT in cat for cat in stored["items"].values()), "a lost race half-wrote"
+    assert "colorSlotSchema" not in stored
+
+    _drain(repo)
+    assert repo._table.store[_CFG]["colorSlotSchema"] == 1
+    assert all(_SLOT in cat for cat in repo._table.store[_CFG]["items"].values())
