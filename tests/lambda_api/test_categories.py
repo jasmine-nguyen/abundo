@@ -2930,3 +2930,567 @@ def test_a_create_may_never_take_a_free_slot_a_builtin_is_owed_even_when_all_are
     stored = repo._table.store[_CFG]["items"]
     assert int(stored["travel"][_SLOT]) == 1, "travel was repainted off its designated hue"
     assert all(_SLOT in cat for cat in stored.values())
+
+
+# ---- WHIT-426: breadth is capped so delete's detach write always fits ----------------------
+# delete_category detaches every child in ONE write, and DynamoDB rejects an UpdateExpression
+# over 4KB — 122 children fit (4070 bytes), 123 do not (4104), which made DELETE 500. Rather
+# than split the delete across writes (which would cost its atomicity), breadth is capped so
+# the write can never grow that big. These pin the cap, the no-op escape hatch it needs, and
+# the 400-not-500 path for data written before the cap existed.
+
+_CAP = 50
+_COLOR_SLOT_COUNT_FOR_TESTS = 20
+
+
+def _parent_with_children(repo, repository, count, parent_id="coffee"):
+    """`count` children under `parent_id`, written straight into the store — bypassing the
+    API the way grandfathered data would have."""
+    items = {cid: dict(seed) for cid, seed in repository.SEED_CATEGORIES.items()}
+    bucket = items[parent_id]["bucket"]
+    for index in range(count):
+        child = f"kid{index:04d}"
+        items[child] = _cat(child, bucket, parent=parent_id,
+                            colorSlot=Decimal(index % _COLOR_SLOT_COUNT_FOR_TESTS))
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                               "items": items, "version": Decimal(1),
+                               "colorSlotSchema": Decimal(1)}
+    return items
+
+
+def test_the_pure_breadth_rule(handler):
+    import repository
+    items = {"p": _cat("p"), "other": _cat("other")}
+    items.update({f"k{n}": _cat(f"k{n}", parent="p") for n in range(_CAP - 1)})
+
+    # one short of the cap -> the next child is fine
+    repository.validate_category_breadth(items, "new", "p")
+    # children of a DIFFERENT parent don't count toward this one
+    repository.validate_category_breadth(items, "new", "other")
+
+    items[f"k{_CAP - 1}"] = _cat(f"k{_CAP - 1}", parent="p")      # now exactly at the cap
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most 50 sub-categories"):
+        repository.validate_category_breadth(items, "new", "p")
+    # ...but re-saving a child that ALREADY sits there adds nothing, so it must still pass.
+    repository.validate_category_breadth(items, "k0", "p")
+
+
+def test_the_cap_plus_one_child_is_refused_at_create(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, _CAP)
+    before = len(repo._table.store[_CFG]["items"])
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most 50 sub-categories"):
+        repo.create_category("wine", "Wine", "Lifestyle", "glass", parent="coffee")
+
+    assert len(repo._table.store[_CFG]["items"]) == before    # nothing was written
+
+
+def test_the_cap_plus_one_child_is_refused_at_reparent(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    items = _parent_with_children(repo, repository, _CAP)
+    items["loner"] = _cat("loner", "Lifestyle")               # top-level, wants to move in
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most 50 sub-categories"):
+        repo.update_category("loner", "Loner", "Lifestyle", "tag", parent="coffee")
+
+    assert repo._table.store[_CFG]["items"]["loner"].get("parent") is None
+
+
+def test_a_full_parent_still_accepts_a_no_op_resave_of_an_existing_child(handler):
+    """The trap the no-op skip exists for: a plain name edit resubmits the stored parent. If
+    the rule counted that as a new child, editing any child of a full parent would 400."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, _CAP)
+
+    updated = repo.update_category("kid0000", "Renamed", "Lifestyle", "tag", parent="coffee")
+
+    assert updated["name"] == "Renamed"
+    assert repo._table.store[_CFG]["items"]["kid0000"]["parent"] == "coffee"
+
+
+def test_an_over_wide_legacy_parent_is_refused_not_crashed(handler):
+    """Data written before the cap can still be over-wide. It must fail as a stated rule, not
+    as DynamoDB rejecting a 4KB expression — that was an uncaught DatabaseError, i.e. a 500."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, 123)             # one past what one write can hold
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="move some out"):
+        repo.delete_category("coffee")
+
+    assert "coffee" in repo._table.store[_CFG]["items"]       # nothing half-done
+
+
+def test_deleting_an_over_wide_parent_returns_400_not_a_crash(handler):
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, 123)
+
+    resp = handler.delete_category(_category_item_event("DELETE", body=None),
+                                   repo, FakeBudgetRepo())
+
+    assert resp["statusCode"] == 400
+    assert "move some out" in json.loads(resp["body"])["error"]
+
+
+def test_a_grandfathered_parent_that_still_fits_can_still_be_deleted(handler):
+    """The regression this nearly shipped with. 60 children is over the breadth cap but only
+    2002 bytes — well inside the 4096 limit — so it deletes fine on main. Sizing delete's
+    guard by the product cap instead of the real expression would have refused it."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, 60)
+
+    repo.delete_category("coffee")
+
+    stored = repo._table.store[_CFG]["items"]
+    assert "coffee" not in stored
+    assert all(stored[f"kid{n:04d}"]["parent"] is None for n in range(60))
+# ---- WHIT-426 adversarial half: the cap's boundaries, races, and escape hatches -------------
+# The implementer's block pins the rule and the 400. This block pins the things that stay
+# green when the rule is subtly wrong: the cap VALUE being safe (not just the count 50), the
+# exact delete boundary, the check surviving a lost race, the branches deliberately left
+# unchecked, and the fact that a refused delete is actually recoverable.
+
+
+def _breadth_cap():
+    """The LIVE cap, read from the module that defines it — not a literal. Every assertion
+    below scales with it, so raising the constant cannot leave a breadth test quietly passing
+    against a stale 50."""
+    import repository_category
+    return repository_category._MAX_CHILDREN_PER_CATEGORY
+
+
+def _parent_with_children_and_loose_rows(repo, repository, count, extra_top_level=0):
+    """The shipped `_parent_with_children` plus `extra_top_level` unparented rows, colour-
+    slotted the same way, so a test can distinguish "children of coffee" from "categories"."""
+    items = _parent_with_children(repo, repository, count)
+    bucket = items["coffee"]["bucket"]
+    for index in range(extra_top_level):
+        loose = f"top{index:04d}"
+        items[loose] = _cat(loose, bucket, parent=None,
+                            colorSlot=Decimal(index % _COLOR_SLOT_COUNT_FOR_TESTS))
+    return items
+
+
+def _smallest_child_count_delete_refuses(handler):
+    """The first child count delete_category will not take, DISCOVERED by asking the
+    production guard rather than re-deriving its byte arithmetic here. A test that
+    recomputed the budget itself would agree with a broken guard and prove nothing."""
+    repository, _ = _repo_with_fake_table(handler)
+    for count in range(_breadth_cap(), 400):
+        repository, repo = _repo_with_fake_table(handler)
+        _parent_with_children(repo, repository, count)
+        try:
+            repo.delete_category("coffee")
+        except repository.InvalidCategoryParentError:
+            return count
+    raise AssertionError("delete_category never refused, even at 400 children")
+
+
+# Comfortably past any plausible expression frontier, for tests that only need "refused".
+_UNDELETABLY_WIDE = 400
+
+
+# --- the cap VALUE, not just the number 50 ----------------------------------
+
+
+def test_the_chosen_cap_is_small_enough_that_a_full_parents_delete_actually_fits(handler):
+    """[A1] The card's whole promise in one line: no sequence of supported API calls can
+    build a parent whose delete fails. Driven off the PRODUCTION constant, not a literal 50 —
+    every other breadth test builds exactly 50 children, so raising
+    _MAX_CHILDREN_PER_CATEGORY to 200 leaves them all green while a legally-full parent
+    becomes undeletable again. This one grows with the constant."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    _parent_with_children_and_loose_rows(repo, repository, cap)
+
+    try:
+        repo.delete_category("coffee")
+    except repository.InvalidCategoryParentError as e:
+        raise AssertionError(
+            f"a parent filled legally to the cap ({cap}) cannot be deleted at all: {e}") from None
+
+    expression = repo._table.update_calls[-1][0]
+    assert len(expression.encode()) <= _MAX_UPDATE_EXPRESSION_BYTES, (
+        f"a parent filled to the cap ({cap}) builds a "
+        f"{len(expression.encode())}-byte detach expression — DynamoDB would reject it")
+    stored = repo._table.store[_CFG]["items"]
+    assert "coffee" not in stored
+    assert all(stored[f"kid{n:04d}"]["parent"] is None for n in range(cap))
+    assert len(expression.encode()) < _MAX_UPDATE_EXPRESSION_BYTES // 2, (
+        "the cap must leave headroom for the clause shape to grow, not sit on the line")
+
+
+def test_the_delete_guard_refuses_exactly_when_one_more_clause_would_not_fit(handler):
+    """[A2] The guard is now sized by the EXPRESSION, not by the child count (f631588), so
+    the property to pin is tightness from both sides: the largest accepted parent really does
+    write (FakeTable enforces the same 4096 the service does), and it sits within one clause
+    of the ceiling — so the guard is not quietly refusing deletes that would have worked.
+    The shipped 60-child test checks one point inside that range; this finds the edge itself.
+    Also asserts the frontier is far above the breadth cap, which is what makes the cap a
+    safety margin rather than a coincidence."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    frontier = _smallest_child_count_delete_refuses(handler)
+
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, frontier - 1)
+    repo.delete_category("coffee")                       # the largest parent still accepted
+
+    expression = repo._table.update_calls[-1][0]
+    slack = _MAX_UPDATE_EXPRESSION_BYTES - len(expression.encode())
+    assert slack >= 0, "the guard let through an expression the service would reject"
+    assert slack < 34, (
+        f"{slack} spare bytes at the frontier — a whole extra detach clause still fits, so "
+        f"the guard is refusing deletes that would have succeeded")
+    assert frontier - 1 >= 2 * cap, (
+        f"only {frontier - 1} children fit but the breadth cap is {cap} — the cap is no "
+        f"longer a comfortable margin under the mechanical limit")
+
+
+def test_a_full_parents_delete_fits_even_with_very_long_child_ids(handler):
+    """[A11] The cap comment claims the per-child clause cost is independent of the id
+    length, because only the #childN alias reaches the expression. If a refactor ever
+    inlined the real id (`#items.groceries-sub-...`), 50 long-id children would blow the
+    4KB cap and the cap value would be wrong — but every other test uses 7-char ids and
+    would stay green."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    items = {cid: dict(seed) for cid, seed in repository.SEED_CATEGORIES.items()}
+    for index in range(cap):
+        long_id = f"{'x' * 200}{index:04d}"              # ids far longer than any slug
+        items[long_id] = _cat(long_id, items["coffee"]["bucket"], parent="coffee")
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": items,
+                               "version": Decimal(1), "colorSlotSchema": Decimal(1)}
+
+    repo.delete_category("coffee")
+
+    expression = repo._table.update_calls[-1][0]
+    assert len(expression.encode()) <= _MAX_UPDATE_EXPRESSION_BYTES
+
+
+# --- the cap under contention -----------------------------------------------
+
+
+def test_the_loser_of_a_race_for_the_last_slot_is_refused_not_squeezed_in(handler):
+    """[A3] The reason the check sits INSIDE create's retry loop. Both requests read a
+    parent one short of the cap, so both pass validation; the winner takes the last slot and
+    bumps the version, the loser's conditional write fails, and the retry must re-validate
+    against the winner's tree. Hoist the check above `for _attempt in range(2)` and the
+    parent silently ends up with cap+1 children — un-deletable, the original bug."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    _parent_with_children_and_loose_rows(repo, repository, cap - 1)
+
+    def rival_takes_the_last_slot(item):
+        item["items"]["rival"] = _cat("rival", item["items"]["coffee"]["bucket"],
+                                      parent="coffee", **{_SLOT: Decimal(3)})
+        item["version"] = item["version"] + 1
+
+    repo._table.before_update.append(rival_takes_the_last_slot)
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most"):
+        repo.create_category("wine", "Wine", "Lifestyle", "glass", parent="coffee")
+
+    stored = repo._table.store[_CFG]["items"]
+    assert "wine" not in stored
+    assert sum(1 for c in stored.values() if c.get("parent") == "coffee") == cap
+
+
+def test_the_loser_of_a_reparent_race_for_the_last_slot_is_refused_too(handler):
+    """[A4] Same race on the OTHER write that adds a child link. update_category has its own
+    retry loop; the breadth check has to be inside that one as well."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    items = _parent_with_children_and_loose_rows(repo, repository, cap - 1)
+    items["loner"] = _cat("loner", "Lifestyle", parent=None, **{_SLOT: Decimal(7)})
+
+    def rival_takes_the_last_slot(item):
+        item["items"]["rival"] = _cat("rival", "Lifestyle", parent="coffee",
+                                      **{_SLOT: Decimal(3)})
+        item["version"] = item["version"] + 1
+
+    repo._table.before_update.append(rival_takes_the_last_slot)
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most"):
+        repo.update_category("loner", "Loner", "Lifestyle", "tag", parent="coffee")
+
+    stored = repo._table.store[_CFG]["items"]
+    assert stored["loner"].get("parent") is None
+    assert sum(1 for c in stored.values() if c.get("parent") == "coffee") == cap
+
+
+def test_a_plain_version_race_does_not_turn_a_legal_create_into_a_false_refusal(handler):
+    """[A5] The mirror image, and the one that catches an over-eager fix: a retry that
+    re-validates must still SUCCEED when the tree genuinely has room. A check that counted
+    the pending child, or an off-by-one on retry, would 400 a perfectly legal create."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    _parent_with_children_and_loose_rows(repo, repository, cap - 1)
+    repo._table.before_update.append(_bump_version)      # rival writes something unrelated
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass", parent="coffee")
+
+    assert created["parent"] == "coffee"
+    stored = repo._table.store[_CFG]["items"]
+    assert sum(1 for c in stored.values() if c.get("parent") == "coffee") == cap
+
+
+def test_the_delete_guard_is_re_evaluated_on_the_retry_not_only_the_first_read(handler):
+    """[A6] delete_category re-reads on a version race. If the guard were hoisted out of the
+    loop it would be evaluated once, against the FIRST read — and a retry that re-reads an
+    over-wide tree would go on to build the >4KB expression the card exists to prevent.
+    Here the first read is exactly at the cap (legal) and the racing writer pushes it over,
+    so only an inside-the-loop guard catches it."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    _parent_with_children_and_loose_rows(repo, repository, cap)
+
+    def a_restore_widens_the_parent(item):
+        for index in range(200):
+            wide = f"restored{index:04d}"
+            item["items"][wide] = _cat(wide, item["items"]["coffee"]["bucket"],
+                                       parent="coffee")
+        item["version"] = item["version"] + 1
+
+    repo._table.before_update.append(a_restore_widens_the_parent)
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="move some out"):
+        repo.delete_category("coffee")
+
+    assert "coffee" in repo._table.store[_CFG]["items"]  # nothing half-done
+
+
+def test_an_over_wide_delete_is_refused_before_any_write_is_attempted(handler):
+    """[A7] The guard must be a pre-flight check, not a caught write failure: no
+    UpdateExpression may be handed to DynamoDB at all. Catching the ValidationException
+    after the fact would also produce a 400, but would burn a write and depend on parsing
+    an AWS error message."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, _UNDELETABLY_WIDE)
+    repo._table.update_calls.clear()
+
+    with pytest.raises(repository.InvalidCategoryParentError):
+        repo.delete_category("coffee")
+
+    assert repo._table.update_calls == []
+
+
+# --- the no-op skip: is it an escape hatch? ---------------------------------
+
+
+def test_the_no_op_skip_cannot_be_used_to_walk_a_parent_past_the_cap(handler):
+    """[A8] The skip exists so re-saving an existing child is never blocked. The worry is
+    that it becomes a back door: move a child out (parent now has room), then move TWO in.
+    The second must still be refused — the skip only ever fires for a link that already
+    exists, so it can never ADD one."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    items = _parent_with_children_and_loose_rows(repo, repository, cap)
+    items["outsider"] = _cat("outsider", "Lifestyle", parent=None, **{_SLOT: Decimal(9)})
+
+    repo.update_category("kid0000", "Kid Zero", "Lifestyle", "tag", parent=None)   # -> cap-1
+    repo.update_category("kid0000", "Kid Zero", "Lifestyle", "tag", parent="coffee")  # -> cap
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most"):
+        repo.update_category("outsider", "Outsider", "Lifestyle", "tag", parent="coffee")
+
+    stored = repo._table.store[_CFG]["items"]
+    assert sum(1 for c in stored.values() if c.get("parent") == "coffee") == cap
+    assert stored["outsider"].get("parent") is None
+
+
+def test_a_child_that_leaves_an_over_wide_legacy_parent_can_never_move_back(handler):
+    """[A9] The deliberate one-way door on grandfathered data: an over-cap parent may only
+    shrink. Pinning it stops a later 'be lenient to legacy trees' tweak from letting an
+    un-deletable parent re-grow after the user has done the work of shrinking it."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    _parent_with_children_and_loose_rows(repo, repository, cap + 10)
+
+    repo.update_category("kid0000", "Kid Zero", "Lifestyle", "tag", parent=None)
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="at most"):
+        repo.update_category("kid0000", "Kid Zero", "Lifestyle", "tag", parent="coffee")
+
+    stored = repo._table.store[_CFG]["items"]
+    assert stored["kid0000"].get("parent") is None
+    assert sum(1 for c in stored.values() if c.get("parent") == "coffee") == cap + 9
+
+
+# --- the branches deliberately left unchecked -------------------------------
+
+
+def test_a_plain_edit_of_a_child_of_an_over_wide_parent_is_never_blocked(handler):
+    """[A10] The false-refusal guard for the branch that is deliberately NOT breadth-checked
+    (`not changing_parent`). A user stuck with a grandfathered 60-child parent must still be
+    able to rename and re-icon its children while shrinking it — otherwise the cap traps
+    them. Also proves the write carries no parent clause, so this branch cannot grow the
+    parent it skipped the check for."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children_and_loose_rows(repo, repository, _breadth_cap() + 10)
+    before = sum(1 for c in repo._table.store[_CFG]["items"].values()
+                 if c.get("parent") == "coffee")
+    repo._table.update_calls.clear()
+
+    updated = repo.update_category("kid0003", "Renamed", "Lifestyle", "cart")
+
+    assert updated["name"] == "Renamed" and updated["icon"] == "cart"
+    expression = repo._table.update_calls[-1][0]
+    assert "#items.#id.#parent" not in expression, \
+        "a parent-less edit must not write a parent link"
+    stored = repo._table.store[_CFG]["items"]
+    assert stored["kid0003"]["parent"] == "coffee"       # link untouched, not wiped
+    assert sum(1 for c in stored.values() if c.get("parent") == "coffee") == before
+
+
+def test_top_level_categories_are_not_capped(handler):
+    """[A12] Only a PARENT's children are capped. Nothing in delete_category detaches a
+    top-level row, so top-level breadth costs nothing — and capping it would be a false
+    refusal for the flat taxonomy most users actually have. Reddens if the breadth check is
+    ever hoisted out of `if parent is not None`, where parent_id=None would count every
+    top-level category."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    _parent_with_children_and_loose_rows(repo, repository, 0, extra_top_level=cap + 5)
+
+    created = repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
+
+    assert created["parent"] is None
+    assert "gym" in repo._table.store[_CFG]["items"]
+
+
+def test_breadth_counts_direct_children_only_not_the_whole_subtree(handler):
+    """[A13] delete_category detaches DIRECT children only, so that is what the cap must
+    count. A descendant-count implementation would pass every shipped test (they are all one
+    level deep) while falsely refusing a legal shallow-and-wide-below tree."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    items = {cid: dict(seed) for cid, seed in repository.SEED_CATEGORIES.items()}
+    items["mid"] = _cat("mid", items["coffee"]["bucket"], parent="coffee")
+    for index in range(cap):                             # cap GRANDchildren under coffee
+        gc = f"gc{index:04d}"
+        items[gc] = _cat(gc, items["coffee"]["bucket"], parent="mid")
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": items,
+                               "version": Decimal(1), "colorSlotSchema": Decimal(1)}
+
+    repository.validate_category_breadth(items, "new", "coffee")   # 1 direct child: fine
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass", parent="coffee")
+    assert created["parent"] == "coffee"
+
+
+def test_depth_is_reported_before_breadth_when_a_create_breaks_both(handler):
+    """[A15] Error precedence: parent -> depth -> breadth. A category that is both too deep
+    and under a full parent must name the depth problem, because moving it shallower is the
+    fix the user can act on; 'too many sub-categories' would send them to shrink a parent
+    they then still could not nest under."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    items = {cid: dict(seed) for cid, seed in repository.SEED_CATEGORIES.items()}
+    bucket = items["coffee"]["bucket"]
+    chain = ["coffee", "lvl2", "lvl3", "lvl4", "lvl5"]
+    for depth, cat_id in enumerate(chain[1:], start=1):
+        items[cat_id] = _cat(cat_id, bucket, parent=chain[depth - 1])
+    for index in range(cap):                             # lvl5 is BOTH too deep AND full
+        kid = f"deepkid{index:04d}"
+        items[kid] = _cat(kid, bucket, parent="lvl5")
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES", "items": items,
+                               "version": Decimal(1), "colorSlotSchema": Decimal(1)}
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="levels deep"):
+        repo.create_category("toodeep", "Too Deep", bucket, "tag", parent="lvl5")
+
+    # ...and a non-existent parent still beats both.
+    with pytest.raises(repository.InvalidCategoryParentError, match="does not exist"):
+        repo.create_category("ghost", "Ghost", bucket, "tag", parent="nope")
+
+
+# --- is the 400 actually actionable? ----------------------------------------
+
+
+def test_the_delete_400_names_a_fix_the_user_can_actually_carry_out(handler):
+    """[A16] A 400 is only better than a 500 if the advice works. Take a parent three
+    children past the frontier, do exactly what the message says — move some out from under
+    it — and the same DELETE must then succeed. If detaching were itself blocked, or the
+    guard were off by one, the user would be stuck in a loop with an undeletable category and
+    no error that told them so."""
+    repository, repo = _repo_with_fake_table(handler)
+    frontier = _smallest_child_count_delete_refuses(handler)
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, frontier + 2)
+    event = _category_item_event("DELETE", body=None)
+
+    refused = handler.delete_category(event, repo, FakeBudgetRepo())
+    assert refused["statusCode"] == 400
+    message = json.loads(refused["body"])["error"]
+    assert "coffee" in message and "move some out" in message
+
+    for index in range(3):                               # do exactly what the message says
+        moved = handler.update_category(
+            _category_item_event("PATCH", cat_id=f"kid{index:04d}",
+                                 body=json.dumps({"name": f"Kid {index}",
+                                                  "bucket": "Lifestyle",
+                                                  "parent": None})),
+            repo, FakeBudgetRepo())
+        assert moved["statusCode"] == 200, moved["body"]
+
+    allowed = handler.delete_category(event, repo, FakeBudgetRepo())
+
+    assert allowed["statusCode"] == 200
+    stored = repo._table.store[_CFG]["items"]
+    assert "coffee" not in stored
+    assert all(stored[f"kid{n:04d}"]["parent"] is None for n in range(frontier + 2))
+
+
+def test_a_refused_delete_does_not_cascade_delete_the_budget(handler):
+    """[A17] Failure honesty. delete_category cascades a budget delete after the category is
+    gone; a refused delete must not run the cascade, or the user would lose the target of a
+    category that is still there. The 400 is raised before the cascade — pin it."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, _UNDELETABLY_WIDE)
+    budgets = FakeBudgetRepo(budgets={"coffee": {"target": Decimal(100)}})
+
+    resp = handler.delete_category(_category_item_event("DELETE", body=None), repo, budgets)
+
+    assert resp["statusCode"] == 400
+    assert budgets.delete_calls == []
+
+
+def test_the_create_and_reparent_refusals_reach_the_client_as_400s(handler):
+    """[A18] The end-to-end wiring for the two writes the cap actually guards. The shipped
+    handler test covers DELETE only, so a lost `except InvalidCategoryParentError` on POST
+    or PATCH would ship a 500 with every repository test still green."""
+    repository, repo = _repo_with_fake_table(handler)
+    cap = _breadth_cap()
+    items = _parent_with_children_and_loose_rows(repo, repository, cap)
+    items["loner"] = _cat("loner", "Lifestyle", parent=None, **{_SLOT: Decimal(11)})
+
+    posted = handler.create_category(
+        _categories_event(json.dumps({"name": "Wine", "bucket": "Lifestyle",
+                                      "icon": "glass", "parent": "coffee"})),
+        repo, FakeBudgetRepo())
+    assert posted["statusCode"] == 400
+    assert "sub-categories" in json.loads(posted["body"])["error"]
+
+    patched = handler.update_category(
+        _category_item_event("PATCH", cat_id="loner",
+                             body=json.dumps({"name": "Loner", "bucket": "Lifestyle",
+                                              "parent": "coffee"})),
+        repo, FakeBudgetRepo())
+    assert patched["statusCode"] == 400
+    assert "sub-categories" in json.loads(patched["body"])["error"]
+
+
+def test_the_extracted_no_op_skip_did_not_leak_into_the_bucket_rule(handler):
+    """[A19] f631588 pulled the no-op-re-parent predicate out of the depth and breadth
+    validators into one shared `_is_a_no_op_reparent`. validate_category_parent deliberately
+    has NO such skip: a category resubmitted under its existing parent must still be
+    bucket-checked, or a plain edit could silently move a sub into a bucket its parent isn't
+    in. Reddens if the shared helper is ever wired into the parent validator too."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, 3)           # kid000x sit under Lifestyle coffee
+
+    with pytest.raises(repository.InvalidCategoryParentError, match="same bucket"):
+        repo.update_category("kid0000", "Kid Zero", "Living", "tag", parent="coffee")
+
+    assert repo._table.store[_CFG]["items"]["kid0000"]["bucket"] == "Lifestyle"

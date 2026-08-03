@@ -999,6 +999,10 @@ def delete_category(
         repo.delete_category(cat_id)
     except CategoryNotFoundError:
         return _json_response(404, {"error": "category not found"})
+    except InvalidCategoryParentError as e:
+        # Too many sub-categories to detach in one write — only reachable on data written
+        # before the breadth cap. A 400 naming the fix, not an uncaught 500 (WHIT-426).
+        return _json_response(400, {"error": str(e)})
 
     # Cascade AFTER the category is gone. Category-first is the safe failure order:
     # a failed cascade only leaves the orphan target (today's behaviour, recoverable),

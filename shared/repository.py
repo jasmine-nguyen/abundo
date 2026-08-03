@@ -29,6 +29,7 @@ from repository_category import (
     least_held_color_slot,
     plan_color_slot_backfill,
     used_color_slots,
+    validate_category_breadth,
     validate_category_depth,
     validate_category_parent,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "SEED_CATEGORIES",
     "CATEGORY_PALETTE",
     "validate_category_parent",
+    "validate_category_breadth",
     "validate_category_depth",
     "used_color_slots",
     "color_slot_counts",
