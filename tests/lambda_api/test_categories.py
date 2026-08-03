@@ -2786,6 +2786,7 @@ def test_a_create_may_never_take_a_free_slot_a_builtin_is_owed_even_when_all_are
 # the 400-not-500 path for data written before the cap existed.
 
 _CAP = 50
+_COLOR_SLOT_COUNT_FOR_TESTS = 20
 
 
 def _parent_with_children(repo, repository, count, parent_id="coffee"):
@@ -2795,7 +2796,8 @@ def _parent_with_children(repo, repository, count, parent_id="coffee"):
     bucket = items[parent_id]["bucket"]
     for index in range(count):
         child = f"kid{index:04d}"
-        items[child] = _cat(child, bucket, parent=parent_id)
+        items[child] = _cat(child, bucket, parent=parent_id,
+                            colorSlot=Decimal(index % _COLOR_SLOT_COUNT_FOR_TESTS))
     repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
                                "items": items, "version": Decimal(1),
                                "colorSlotSchema": Decimal(1)}
@@ -2889,4 +2891,18 @@ def test_deleting_an_over_wide_parent_returns_400_not_a_crash(handler):
                                    repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
-    assert "50" in json.loads(resp["body"])["error"]
+    assert "move some out" in json.loads(resp["body"])["error"]
+
+
+def test_a_grandfathered_parent_that_still_fits_can_still_be_deleted(handler):
+    """The regression this nearly shipped with. 60 children is over the breadth cap but only
+    2002 bytes — well inside the 4096 limit — so it deletes fine on main. Sizing delete's
+    guard by the product cap instead of the real expression would have refused it."""
+    repository, repo = _repo_with_fake_table(handler)
+    _parent_with_children(repo, repository, 60)
+
+    repo.delete_category("coffee")
+
+    stored = repo._table.store[_CFG]["items"]
+    assert "coffee" not in stored
+    assert all(stored[f"kid{n:04d}"]["parent"] is None for n in range(60))

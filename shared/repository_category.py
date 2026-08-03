@@ -263,8 +263,13 @@ _MAX_PARENT_WALK = 100
 # and reopen this bug one level up.
 #
 # Enforced on the same writes as the depth cap — create-with-parent and re-parent — so data
-# written before the cap existed stays readable and editable.
+# written before the cap existed stays readable and editable. delete_category does NOT use
+# this number: it measures the expression it actually built, so a grandfathered parent that
+# still fits (51-122 children) deletes exactly as it does today.
 _MAX_CHILDREN_PER_CATEGORY = 50
+# DynamoDB's documented UpdateExpression ceiling. The delete path measures against this
+# directly rather than against a child count, so it can't drift from the clause shape.
+_MAX_UPDATE_EXPRESSION_BYTES = 4096
 
 # Sentinel for update_category's `parent`: distinguishes "caller omitted parent,
 # leave the stored link untouched" from "caller passed parent=None, detach to
@@ -349,6 +354,19 @@ def _subtree_height(items: dict, root_id: str) -> int:
     return height(root_id, set())
 
 
+def _is_a_no_op_reparent(items: dict, cat_id: str, parent_id: str) -> bool:
+    """True when cat_id ALREADY sits under parent_id, so the link adds neither depth nor a
+    child. Both caps skip it: a client resubmitting the stored parent on a name/icon edit
+    must not be blocked, including on grandfathered data already over a cap (WHIT-223
+    Decision 2, WHIT-426). On create, cat_id is absent from items, so this never fires.
+
+    NOT shared with validate_category_parent, which has no skip and must keep none — a
+    no-op re-parent still has to be bucket-checked.
+    """
+    existing = items.get(cat_id)
+    return existing is not None and existing.get("parent") == parent_id
+
+
 def validate_category_depth(items: dict, cat_id: str, parent_id: str) -> None:
     """Raise InvalidCategoryParentError if nesting `cat_id` (together with any subtree
     it already has) under `parent_id` would exceed _MAX_CATEGORY_DEPTH levels. Pure —
@@ -361,14 +379,7 @@ def validate_category_depth(items: dict, cat_id: str, parent_id: str) -> None:
     depth(parent) + height(cat_id's subtree): the parent's own level plus the tallest
     chain below cat_id (cat_id itself is one level). On create, cat_id has no subtree
     yet, so its height is 1 and the rule reduces to depth(parent) + 1 <= max."""
-    # A no-op re-parent (cat_id already sits under parent_id) adds no depth — the tree is
-    # unchanged — so it can never breach the cap. Skip the check, so re-saving a category
-    # whose parent is unchanged is never rejected. This matters for a grandfathered chain
-    # deeper than the cap: a client that resubmits the (unchanged) stored parent must not be
-    # blocked, matching the name/icon-edit grandfather guarantee (WHIT-223 Decision 2). On
-    # create, cat_id is absent from items, so this never short-circuits a real new link.
-    existing = items.get(cat_id)
-    if existing is not None and existing.get("parent") == parent_id:
+    if _is_a_no_op_reparent(items, cat_id, parent_id):
         return
     resulting_depth = _ancestor_depth(items, parent_id) + _subtree_height(items, cat_id)
     if resulting_depth > _MAX_CATEGORY_DEPTH:
@@ -385,12 +396,7 @@ def validate_category_breadth(items: dict, cat_id: str, parent_id: str) -> None:
     The cap exists so delete_category's single detach write can never outgrow DynamoDB's
     4KB expression limit — see the _MAX_CHILDREN_PER_CATEGORY comment.
     """
-    # A no-op re-parent (cat_id already sits under parent_id) adds no child — the tree is
-    # unchanged — so it can never breach the cap. Same skip as validate_category_depth, and
-    # for the same reason: a client resubmitting the stored parent on a name/icon edit must
-    # not be blocked, including on a grandfathered parent already over the cap.
-    existing = items.get(cat_id)
-    if existing is not None and existing.get("parent") == parent_id:
+    if _is_a_no_op_reparent(items, cat_id, parent_id):
         return
     children = sum(1 for child in items.values() if child.get("parent") == parent_id)
     if children >= _MAX_CHILDREN_PER_CATEGORY:
@@ -741,11 +747,6 @@ class CategoryRepository:
                 raise CategoryNotFoundError(cat_id)
 
             child_ids = [cid for cid, child in items.items() if child.get("parent") == cat_id]
-            if len(child_ids) > _MAX_CHILDREN_PER_CATEGORY:
-                raise InvalidCategoryParentError(
-                    f"'{cat_id}' has {len(child_ids)} sub-categories, more than the "
-                    f"{_MAX_CHILDREN_PER_CATEGORY} that can be detached in one write — "
-                    f"move some out from under it first")
             names = {"#items": "items", "#id": cat_id, "#v": "version"}
             values = {":expected": version, ":next": version + Decimal(1)}
             set_clause = "#v = :next"
@@ -757,12 +758,22 @@ class CategoryRepository:
                     alias = f"#child{index}"
                     names[alias] = child_id
                     set_clause += f", #items.{alias}.#parent = :null"
+            # REMOVE drops the deleted key; SET bumps the version (and clears any children's
+            # parent). The config item itself stays.
+            expression = f"REMOVE #items.#id SET {set_clause}"
+            # Measure the real expression rather than counting children against the breadth
+            # cap (WHIT-426). New data can't get here — the cap keeps it far under — but data
+            # written before the cap can, and a parent with 51-122 children still FITS. Sizing
+            # the guard by the product cap would refuse a delete that works today. Measuring
+            # also can't drift: add a second clause per child and this stays correct.
+            if len(expression.encode()) > _MAX_UPDATE_EXPRESSION_BYTES:
+                raise InvalidCategoryParentError(
+                    f"'{cat_id}' has {len(child_ids)} sub-categories — too many to detach in "
+                    f"one write; move some out from under it first")
             try:
                 self._get_table().update_item(
                     Key=_CATEGORIES_KEY,
-                    # REMOVE drops the deleted key; SET bumps the version (and clears
-                    # any children's parent). The config item itself stays.
-                    UpdateExpression=f"REMOVE #items.#id SET {set_clause}",
+                    UpdateExpression=expression,
                     ConditionExpression=(
                         "attribute_exists(pk) AND #v = :expected "
                         "AND attribute_exists(#items.#id)"
