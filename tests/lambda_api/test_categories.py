@@ -2024,28 +2024,6 @@ def test_plan_past_twenty_unslotted_rows_stays_in_range(handler):
     assert sorted(set(plan.values())) == list(range(20))
 
 
-def test_used_color_slots_boundary_and_exotic_values(handler):
-    """_coerce_slot is all that stands between a corrupt row and an undefined colour on the
-    client. Pin the exact boundary (19 in, 20 out) and the shapes a bad write could leave."""
-    import repository
-    items = {
-        "lo": _cat("lo", colorSlot=Decimal(0)),          # first valid slot
-        "hi": _cat("hi", colorSlot=Decimal(19)),         # last valid slot
-        "over": _cat("over", colorSlot=Decimal(20)),     # exactly at the limit -> out
-        "exp": _cat("exp", colorSlot=Decimal("1E+1")),   # 10, in exponent form
-        "huge": _cat("huge", colorSlot=Decimal("1E+30")),
-        "nan": _cat("nan", colorSlot=Decimal("NaN")),
-        "inf": _cat("inf", colorSlot=Decimal("Infinity")),
-        "none": _cat("none", colorSlot=None),
-        "dict": _cat("dict", colorSlot={"n": 3}),
-        "blank": _cat("blank", colorSlot="  "),
-        "float": _cat("float", colorSlot=7.0),           # DynamoDB never returns a float
-        "absent": _cat("absent"),
-    }
-
-    assert repository.used_color_slots(items) == {0, 19, 10}
-
-
 def test_colorslot_never_reaches_the_ai_model_input_hash(handler):
     """POST /insights/ai hashes model_input to decide cache-hit vs a PAID Anthropic re-run.
     If the projection ever stopped dropping this new field, every cached insight would bust
@@ -2652,9 +2630,12 @@ def test_a_delete_at_saturation_hands_the_freed_capacity_to_the_next_create(hand
 
 
 def test_creates_mid_drain_on_a_saturated_store_spread_without_touching_an_owed_slot(handler):
-    # [A8] the WHIT-405 chunked drain crossed with saturation. A create mid-drain sees `reserved`
-    # covering all 13 built-in slots, so it is squeezed into the seven the ramp has left — every
-    # one already held. The only place the hard exclusion and the least-held rule both bind.
+    # [A8] the WHIT-405 chunked drain crossed with saturation. The first three creates land
+    # mid-drain: `reserved` covers all 13 built-in slots, so they are squeezed into the seven the
+    # ramp has left, every one already held — the only place the hard exclusion and the least-held
+    # rule both bind. By the fourth the drain has finished and `reserved` is empty; it spreads on
+    # the least-held rule alone, which is worth keeping because it proves a new create walks AWAY
+    # from the legacy slot-0 pile-up (slot 0 is held 194 times by then).
     repository, repo = _repo_with_fake_table(handler)
     _unslotted_store(repo, repository, 200)          # 213 rows, none slotted
     repo.list_categories()                           # chunk 1 lands; the rest is still owed
@@ -2682,7 +2663,6 @@ def test_every_create_takes_a_least_held_slot_however_uneven_the_ramp_is(handler
     # uneven, and an uneven ramp is the only thing separating "least-held" from "round-robin".
     # The expected value is read out of the STORE before each create, never re-derived.
     import random
-    repository, _ = _repo_with_fake_table(handler)
     rng = random.Random(404)
     saturated_creates = 0
 
@@ -2714,7 +2694,9 @@ def test_every_create_takes_a_least_held_slot_however_uneven_the_ramp_is(handler
 
 
 def test_color_slot_counts_counts_duplicates_and_used_slots_still_dedupes(handler):
-    # [A10] the derivation. used_color_slots is no longer its own walk; it is
+    # [A10] the derivation, and the _coerce_slot boundary (19 in, 20 out) it depends on —
+    # that coercion is all that stands between a corrupt row and an undefined colour on the
+    # client. used_color_slots is no longer its own walk; it is
     # set(color_slot_counts). A set masquerading as a Counter passes every duplicate-free test in
     # the suite, then silently turns the whole least-held rule back into lowest-free.
     import repository

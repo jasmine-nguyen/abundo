@@ -180,21 +180,23 @@ def least_held_color_slot(counts: Counter, reserved: frozenset) -> int:
     Iterates `range`, never the Counter, so the answer never depends on insertion order: two
     concurrent creates must compute the same slot.
     """
+    def least_held(slots) -> int:
+        """Fewest holders wins; among equals a slot no built-in owns; then the lowest number.
+        False sorts before True, so the non-seed test reads as "seed slots go last"."""
+        return min(slots,
+                   key=lambda slot: (counts[slot], slot not in _NON_SEED_COLOR_SLOTS, slot))
+
     candidates = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in reserved]
     if not candidates:
         # Every slot is owed, so something must be taken back. Go straight to the preference —
         # NOT to the free-slot branch, which would hand over the lowest owed slot and that is
         # usually a built-in's pass-1 designation, lost permanently. A non-seed slot is owed to
         # a custom row, which simply gets re-planned onto another one.
-        return min(range(_COLOR_SLOT_COUNT),
-                   key=lambda slot: (counts[slot], slot not in _NON_SEED_COLOR_SLOTS, slot))
+        return least_held(range(_COLOR_SLOT_COUNT))
     free = [slot for slot in candidates if counts[slot] == 0]
     if free:
         return min(free)
-    # Saturated, so a duplicate is unavoidable: take the least-held, and among equals prefer a
-    # slot no built-in owns. False sorts before True, so non-seed slots win that tie.
-    return min(candidates,
-               key=lambda slot: (counts[slot], slot not in _NON_SEED_COLOR_SLOTS, slot))
+    return least_held(candidates)  # saturated: a duplicate is unavoidable, so spread it
 
 
 def plan_color_slot_backfill(items: dict) -> dict:
