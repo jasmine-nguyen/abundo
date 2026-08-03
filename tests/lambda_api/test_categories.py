@@ -2884,12 +2884,11 @@ def test_every_create_takes_a_least_held_slot_however_uneven_the_ramp_is(handler
     assert saturated_creates >= 200, saturated_creates
 
 
-def test_color_slot_counts_counts_duplicates_and_used_slots_still_dedupes(handler):
+def test_color_slot_counts_counts_duplicates_and_still_dedupes_to_the_taken_set(handler):
     # [A10] the derivation, and the _coerce_slot boundary (19 in, 20 out) it depends on —
     # that coercion is all that stands between a corrupt row and an undefined colour on the
-    # client. used_color_slots is no longer its own walk; it is
-    # set(color_slot_counts). A set masquerading as a Counter passes every duplicate-free test in
-    # the suite, then silently turns the whole least-held rule back into lowest-free.
+    # client. A set masquerading as a Counter passes every duplicate-free test in the suite,
+    # then silently turns the whole least-held rule back into lowest-free.
     import repository
     items = {
         "lo": _cat("lo", colorSlot=Decimal(0)),
@@ -2914,7 +2913,7 @@ def test_color_slot_counts_counts_duplicates_and_used_slots_still_dedupes(handle
     counts = repository.color_slot_counts(items)
 
     assert counts == Counter({0: 2, 10: 2, 19: 1})
-    assert repository.used_color_slots(items) == {0, 10, 19} == set(counts)
+    assert set(counts) == {0, 10, 19}
     assert 5 not in counts and counts[5] == 0 and 5 not in counts   # a read must not INSERT
     # The real consumer agrees: the planner treats exactly those three as taken.
     plan = repository.plan_color_slot_backfill(items)
@@ -3562,11 +3561,16 @@ def test_editing_a_category_mid_migration_echoes_the_colour_the_list_shows(handl
     repository, repo = _repo_with_fake_table(handler)
     _piled_store(repo, repository, 140)              # 153 rows: the repaint needs 3 chunks
     repo.list_categories()                           # chunk 1 lands; the rest is still owed
+    listed = {row["id"]: row[_SLOT] for row in repo.list_categories()}
+    # Pick the victim AFTER the last read: each read lands another chunk, so a row chosen
+    # earlier may already have been written — and then its stored slot equals its previewed
+    # one and the assertion below passes whatever PATCH echoes. Assert the gap explicitly.
     items = repo._table.store[_CFG]["items"]
     pending = repository.plan_color_slot_repaint(items)
-    victim = next(cid for cid in pending if cid.startswith("cat"))
-    assert pending[victim] != int(items[victim][_SLOT]), "fixture drifted: nothing is owed"
-    listed = {row["id"]: row[_SLOT] for row in repo.list_categories()}
+    victim = next(cid for cid in pending
+                  if cid.startswith("cat") and pending[cid] != int(items[cid][_SLOT]))
+    assert listed[victim] != int(items[victim][_SLOT]), \
+        "fixture drifted: this row's stored colour already equals its previewed one"
 
     edited = repo.update_category(victim, "Renamed", "Living", "tag")
 

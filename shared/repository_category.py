@@ -137,20 +137,16 @@ def color_slot_counts(items: dict) -> Counter:
     """How many stored categories hold each slot. Corrupt values are ignored so a bad row
     can't make a valid slot look taken.
 
-    `used_color_slots` answers "is this slot taken"; this answers "by how many", which is what
-    the create path needs once the ramp is saturated and the answer to the first question is
-    "yes" for all 20. A slot nobody holds is simply absent — Counter reads it as 0.
+    Answers "held by how many", not "is it taken" — which is what every rule here needs once
+    the ramp is saturated and the answer to the second question is "yes" for all 20. A slot
+    nobody holds is simply absent; `Counter` reads it as 0 without inserting it. `set(...)` of
+    this is the set of taken slots, if that is ever wanted again.
     """
     return Counter(
         slot
         for slot in (_coerce_slot(cat.get(_COLOR_SLOT_FIELD)) for cat in items.values())
         if slot is not None
     )
-
-
-def used_color_slots(items: dict) -> set:
-    """Every slot currently held by a stored category."""
-    return set(color_slot_counts(items))
 
 
 # Slots no built-in claims. Preferred for the first repeats (WHIT-404 option B): a duplicate
@@ -433,6 +429,17 @@ def plan_new_category_slot(items: dict) -> int:
                         if projected[slot] >= allowance)
     reserved = frozenset(pending.values())
     return least_held_color_slot(counts, reserved | crowded, _designated_builtin_slots(pending))
+
+
+def _previewed_slot(plan: dict, cat_id: str, cat: dict) -> Optional[int]:
+    """The slot a row READS as: the pending plan's value, else its stored one.
+
+    GET and PATCH must answer identically. Echoing the STORED value on PATCH while GET
+    returned the previewed one is WHIT-428's regression — they agree on a settled store and
+    disagree for the whole migration window, and the client writes the PATCH body straight
+    into its cached list, so an edit made the category's chart colour flip back.
+    """
+    return plan.get(cat_id, _coerce_slot(cat.get(_COLOR_SLOT_FIELD)))
 
 
 def _designated_builtin_slots(plan: dict) -> frozenset:
@@ -743,8 +750,7 @@ class CategoryRepository:
         # inner "id" disagreed with its map key would otherwise be stamped in the DB but
         # returned with a null slot.
         return [
-            {"parent": None, **cat,
-             _COLOR_SLOT_FIELD: plan.get(cat_id, _coerce_slot(cat.get(_COLOR_SLOT_FIELD)))}
+            {"parent": None, **cat, _COLOR_SLOT_FIELD: _previewed_slot(plan, cat_id, cat)}
             for cat_id, cat in items.items()
         ]
 
@@ -886,16 +892,15 @@ class CategoryRepository:
                 # Build the response from the pre-read item so id/color survive;
                 # reflect the resolved parent (new one if changed, else stored).
                 resolved_parent = parent if changing_parent else items[cat_id].get("parent")
-                # The slot echoed here must be the one list_categories would show, not the raw
-                # stored value. While a store is mid-migration those differ, so echoing the
-                # stored one made an edit visibly flip the category's chart colour back to its
-                # old one until the next refetch. Same planner, so the two answers agree; and a
-                # plain int, so the body carries `2` like the GET does, not Decimal's `2.0`.
+                # Same planner and the same _previewed_slot the read path uses, so PATCH can
+                # never echo a colour GET disagrees with. Plain int, so the body carries `2`
+                # like GET does rather than the `2.0` a Decimal encodes to. Pure: no extra
+                # read, no extra write — `item`/`items` are already in hand.
                 pending, _ = plan_color_slot_stage(
                     items, repainted=self._is_slot_migrated(item))
-                slot = pending.get(cat_id, _coerce_slot(items[cat_id].get(_COLOR_SLOT_FIELD)))
                 return {**items[cat_id], "name": name, "bucket": bucket,
-                        "icon": icon, "parent": resolved_parent, _COLOR_SLOT_FIELD: slot}
+                        "icon": icon, "parent": resolved_parent,
+                        _COLOR_SLOT_FIELD: _previewed_slot(pending, cat_id, items[cat_id])}
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     handle_database_error(e, "update category")

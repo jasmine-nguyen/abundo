@@ -299,25 +299,24 @@ def test_the_documented_4kb_clause_boundary_is_exactly_where_the_comment_says(
 # --- [A9]-[A10] preview leaks ------------------------------------------------
 
 
-def test_planning_a_stage_never_mutates_the_rows_the_response_is_built_from(handler):
-    """WHIT-428 — [A9] `settled` is decided by re-planning the repaint over `_with_slots`, the
-    store as it WILL read. Those rows are the same dicts list_categories builds its response
-    from, so writing the slot in place would hand the client colours the store does not hold
-    and will not hold for several more requests. Make _with_slots apply instead of project and
-    this reddens."""
+def test_the_backfill_stage_comes_first_and_cannot_stamp_while_a_repaint_follows(handler):
+    """WHIT-428 — [A9] stage ordering on a store that needs BOTH: the plan handed back must be
+    the backfill's, and it must carry settled=False so the marker waits for the repaint.
+
+    (Purity of the planners is pinned by the impl suite's
+    test_the_planners_never_mutate_the_store_they_are_given, which covers plan_new_category_slot
+    too — not repeated here.)"""
     import repository
 
     items = {cat_id: dict(cat) for cat_id, cat in repository.SEED_CATEGORIES.items()}
     for index in range(30):
         items[f"cat{index:04d}"] = _cat(f"cat{index:04d}", colorSlot=Decimal(0))
     items["zzunslotted"] = _cat("zzunslotted")
-    snapshot = copy.deepcopy(items)
 
     plan, settled = repository.plan_color_slot_stage(items, repainted=False)
 
     assert plan == {"zzunslotted": plan["zzunslotted"]}, "the backfill stage must come first"
     assert settled is False, "a repaint still follows, so this plan cannot stamp"
-    assert items == snapshot, "planning mutated the rows the response is built from"
 
 
 def test_a_read_mid_backfill_shows_stored_colours_not_the_repaint_it_is_about_to_do(handler):

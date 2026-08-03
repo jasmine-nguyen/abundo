@@ -32,7 +32,6 @@ from repository_category import (
     plan_color_slot_repaint,
     plan_new_category_slot,
     plan_color_slot_stage,
-    used_color_slots,
     validate_category_depth,
     validate_category_parent,
 )
@@ -66,7 +65,6 @@ __all__ = [
     "CATEGORY_PALETTE",
     "validate_category_parent",
     "validate_category_depth",
-    "used_color_slots",
     "color_slot_counts",
     "least_held_color_slot",
     "plan_color_slot_backfill",

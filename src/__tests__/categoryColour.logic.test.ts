@@ -133,8 +133,9 @@ describe('CATEGORY_SIBLINGS — the OKLCH relationship to the base', () => {
 //
 // toCategory is the ONLY place a Category is constructed in production, and it is the gate between
 // the wire and the chart. It must let a valid slot through untouched (including 0) and reject
-// anything unusable, because PATCH /categories/{id} echoes the STORED value with no server-side
-// coercion — so a corrupt row arrives uncleaned.
+// anything unusable. Every category route coerces server-side now (WHIT-428 gave PATCH the same
+// treatment GET already had), so this is boundary defence rather than a known-dirty source: a
+// client running AHEAD of the server still meets the old uncleaned shape.
 
 describe('toCategory — colorSlot', () => {
   const base = { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee' };
@@ -153,7 +154,7 @@ describe('toCategory — colorSlot', () => {
     expect(toCategory({ ...base, colorSlot: null }).colorSlot).toBeUndefined();
   });
 
-  it('rejects the uncoerced values a PATCH response can carry', () => {
+  it('rejects uncoerced values, whatever sent them', () => {
     // A representative sample — normalizeColorSlot's own suite pins the exhaustive table. What
     // this test is for is proving toCategory actually CALLS the normaliser.
     for (const bad of ['7', 7.5, -5, 20]) {

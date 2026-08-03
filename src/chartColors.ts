@@ -47,8 +47,10 @@ export const ASSIGNMENT_ORDER = [
 ] as const;
 
 // A raw colorSlot off the wire as a usable slot, or undefined when it is absent or unusable.
-// Mirrors the server's _coerce_slot — necessary because PATCH /categories/{id} echoes the STORED
-// value with no coercion, so a corrupt row reaches the client uncleaned.
+// Mirrors the server's _coerce_slot. Defence at the boundary: every category route now coerces
+// server-side (WHIT-428 gave PATCH the same treatment GET already had), but a client running
+// AHEAD of the server still meets the old uncleaned shape, and this is the only gate between the
+// wire and the chart.
 // NOT a truthy check: slot 0 is VALID (it is Eating Out), and `raw || undefined` would drop it.
 // Everything rejected here would otherwise index ASSIGNMENT_ORDER out of range and yield
 // `undefined`, which reaches `stroke` on the donut wedge and `backgroundColor` on the category row
