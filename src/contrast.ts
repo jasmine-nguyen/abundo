@@ -20,9 +20,11 @@ export const WEDGE_DIM_TARGET = 3.1;
 
 // Fallback for a colour we cannot measure, or one that cannot clear the bar at any opacity. NOT
 // 1: a wedge that does not fade at all reads as the picked one. This still steps visibly back.
-// Deliberately high — if we cannot measure a colour we cannot promise it is visible, so err
-// toward more opaque. Well clear of the largest real floor (0.534 today), so production never
-// reaches it; SpendingDonut's [Q29] guard reddens if a palette change ever brings one close.
+// Deliberately high — if we cannot measure a colour we cannot promise it is visible, so err toward
+// more opaque. Note it is NOT far above the real floors any more: the grey "Other" legitimately
+// measures 0.825. So "at the fallback" and "measured 0.85" are only 0.025 apart and cannot be told
+// apart by the value alone — see the WHIT-425 tech-debt card. [Q29] in otherColorToken.logic.test.ts
+// is what reddens if a palette change pushes a measured floor into that gap.
 export const WEDGE_DIM_MAX = 0.85;
 
 // #rgb, #rgba, #rrggbb, #rrggbbaa — every shape this codebase writes, in either case.
@@ -70,8 +72,15 @@ export function compositeOver(fg: Rgb, bg: Rgb, alpha: number): Rgb {
 }
 
 // The smallest opacity at which `fg` over `bg` clears `target`, or null if it never does.
-// Bisection is valid because the composite's luminance moves monotonically from bg's toward fg's
-// as opacity rises, so the ratio against a fixed bg only grows — whether fg is lighter or darker.
+//
+// The RESULT ALWAYS CLEARS the target, for any pair of colours: `high` starts at 1, which the early
+// return has already shown clears it, and the loop only ever moves `high` to a value that still
+// does. Minimality is the weaker claim — it needs the ratio to rise with opacity, which holds when
+// the channels all move the same way (true for every wedge colour over this dark track) but NOT in
+// general: composite luminance is convex in alpha, so with channels moving in opposite directions
+// the ratio can dip and recover, and the bisection would then settle above the true minimum. Every
+// shipped colour is in the well-behaved case, and a too-high answer is safe anyway — it errs toward
+// more visible, never less.
 export function minOpacityForContrast(fg: Rgb, bg: Rgb, target: number): number | null {
   if (contrastRatio(fg, bg) < target) return null;
   let low = 0;
@@ -98,8 +107,11 @@ export function wedgeDimOpacity(color: string, background: string = CHART_BG): n
   if (floor === null) return WEDGE_DIM_MAX;
 
   // SVG multiplies a stroke's own alpha by its group opacity, so a colour carrying alpha needs a
-  // higher group value to reach the same composite. A MEASURED floor is never clamped down to
-  // WEDGE_DIM_MAX — handing back less than a colour needs would return a value that fails the
-  // target, the one thing this function must not do. The clamp is for the unmeasurable cases only.
-  return Math.min(1, Math.ceil((floor / wedge.alpha) * 1000) / 1000);
+  // higher group value to reach the same composite. A measured floor is never trimmed to fit:
+  // handing back less opacity than a colour needs returns a value that fails the target, the one
+  // thing this function must not do. If even full opacity is not enough, the colour is unusable at
+  // any fade and takes the same fallback as one we cannot read at all.
+  const groupOpacity = Math.ceil((floor / wedge.alpha) * 1000) / 1000;
+  if (groupOpacity > 1) return WEDGE_DIM_MAX;
+  return groupOpacity;
 }

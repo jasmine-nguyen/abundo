@@ -92,12 +92,22 @@ describe('contrast — the fade a wedge is given', () => {
     expect(wedgeDimOpacity('#7aa2f7', '#16161e80')).toBe(WEDGE_DIM_MAX);
   });
 
-  it('[Q34] a colour carrying its own alpha needs a higher group opacity to reach the same contrast', () => {
+  it('[Q34] a colour carrying its own alpha needs a higher group opacity, or takes the fallback', () => {
     // SVG multiplies a stroke's alpha by its group opacity. Ignoring that would under-fade a
     // translucent wedge into invisibility while the maths reported success.
     const opaque = wedgeDimOpacity('#7aa2f7');
-    const halfAlpha = wedgeDimOpacity('#7aa2f780');
-    expect(halfAlpha).toBeGreaterThan(opaque);
+    const slightAlpha = wedgeDimOpacity('#7aa2f7f0'); // 94% alpha: still reachable
+    expect(slightAlpha).toBeGreaterThan(opaque);
+    // ...and it must genuinely still be a fade that clears the bar, not a degenerate 1. Asserting
+    // only "higher than opaque" would be satisfied by returning 1, which is the no-fade result the
+    // whole module exists to avoid.
+    expect(slightAlpha).toBeLessThan(1);
+    const parsed = parseHexColor('#7aa2f7f0')!;
+    expect(contrastAt('#7aa2f7', parsed.alpha * slightAlpha)).toBeGreaterThanOrEqual(WEDGE_DIM_TARGET);
+
+    // Half alpha cannot reach the target even at full group opacity, so it takes the fallback
+    // rather than silently painting at 2.73:1 with no fade at all.
+    expect(wedgeDimOpacity('#7aa2f780')).toBe(WEDGE_DIM_MAX);
     expect(wedgeDimOpacity('#7aa2f700')).toBe(WEDGE_DIM_MAX); // fully transparent: nothing to fade
   });
 });

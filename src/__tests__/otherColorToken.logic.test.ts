@@ -22,7 +22,7 @@
 // Pinning the coincidence would now fight the fix.
 import { describe, it, expect } from '@jest/globals';
 import { OTHER_COLOR, CATEGORY_COLORS, CHART_BG } from '../chartColors';
-import { wedgeDimOpacity, WEDGE_DIM_MAX } from '../contrast';
+import { wedgeDimOpacity } from '../contrast';
 import { C } from '../theme';
 
 // WCAG 2.x relative luminance + contrast ratio. Inlined rather than imported: the point is to
@@ -115,13 +115,14 @@ describe('a faded wedge stays visible (WHIT-425)', () => {
   });
 
   it('[Q29] the fade is still a fade — no wedge buys its contrast by not fading', () => {
-    // The cheap way to pass [Q27] is to stop fading. Two ceilings: nothing may reach the clamp (the
-    // escape hatch for colours we cannot measure), and nothing may creep so close to full opacity
-    // that the highlight stops reading. The grey is the tightest at 0.825, so this has real slack
-    // only on the ramp — which is exactly where a brightening retune would show up.
+    // The cheap way to pass [Q27] is to stop fading. This is a VISIBILITY ceiling, deliberately not
+    // written as "below WEDGE_DIM_MAX": measured floors are no longer trimmed to that value, so the
+    // fallback and a legitimate measurement can now sit on either side of it and the two must not be
+    // conflated. The grey is the tightest real colour at 0.825, so the slack here is on the ramp —
+    // which is exactly where a brightening retune would show up.
+    const MUST_FADE_BELOW = 0.9;
     for (const color of WEDGE_COLORS) {
-      expect(wedgeDimOpacity(color)).toBeLessThan(WEDGE_DIM_MAX);
-      expect(wedgeDimOpacity(color)).toBeLessThan(0.9);
+      expect(wedgeDimOpacity(color)).toBeLessThan(MUST_FADE_BELOW);
     }
   });
 });

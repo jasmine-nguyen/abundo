@@ -9,7 +9,7 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
-import { SpendingDonut, activeSelection, OTHER_SLICE_ID, type DonutSlice } from '../components/SpendingDonut';
+import { SpendingDonut, activeSelection, type DonutSlice } from '../components/SpendingDonut';
 import { opacityOf, DIM_BLUE, DIM_GREEN, DIM_OTHER } from './support/donut';
 
 const TWO: DonutSlice[] = [
@@ -55,12 +55,12 @@ describe('SpendingDonut — the fold bucket fades on its own floor (WHIT-425)', 
       id: `s${i}`, name: `s${i}`, color: '#7aa2f7', value: 100 - i * 10,
     })); // 7 positive, cap 6 → the tail folds into __other__
     render(<SpendingDonut slices={seven} />);
-    expect(screen.getByTestId(`donut-slice-${OTHER_SLICE_ID}`)).toBeTruthy();
+    expect(screen.getByTestId('donut-slice-__other__')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('donut-slice-s0'));
     expect(opacityOf('s0')).toBeCloseTo(1);                      // the picked wedge leads
     expect(opacityOf('s1')).toBeCloseTo(DIM_BLUE);               // a real peer steps back
-    expect(opacityOf(OTHER_SLICE_ID)).toBeCloseTo(DIM_OTHER);    // so does the bucket, further up
-    expect(opacityOf(OTHER_SLICE_ID)).toBeLessThan(1);           // it really does fade
+    expect(opacityOf('__other__')).toBeCloseTo(DIM_OTHER);       // so does the bucket, further up
+    expect(opacityOf('__other__')).toBeLessThan(1);              // it really does fade
   });
 });

@@ -1,14 +1,12 @@
-// WHIT-425 (QA gap) — [Q35]-[Q40], the edges src/contrast.ts's own suite and the [Q27]-[Q29] token
+// WHIT-425 (QA gap) — [Q36]-[Q38], the edges src/contrast.ts's own suite and the [Q27]-[Q29] token
 // guards leave open.
 //
 // contrast.logic.test.ts tests the module's happy shapes and its two fallback paths.
 // otherColorToken.logic.test.ts measures the SHIPPED colours through it. Neither pins:
-//   • that the derived fade is a fade you can SEE (< WEDGE_DIM_MAX is satisfied by 0.849);
-//   • the one input shape that CRASHES instead of falling back;
-//   • the bisection's "whether fg is lighter or darker" claim (only the darker-on-lighter
-//     direction is ever exercised — the app has one, near-black, track);
-//   • the whitespace/length edges of the hex regex;
-//   • the invariant the "Other" EXEMPTION rests on, as opposed to the one [Q29] states.
+//   • the input shapes that must degrade to the fallback rather than crash the screen;
+//   • the bisection on a wedge LIGHTER than its backdrop — the app has one near-black track, so
+//     only the one direction is ever exercised in production;
+//   • the whitespace and near-miss-length edges of the hex regex.
 // Measurements are made with this file's own independently written helpers, never with
 // src/contrast.ts, so nothing here can pass by agreeing with the code it pins.
 import { describe, it, expect } from '@jest/globals';
@@ -19,8 +17,6 @@ import {
   WEDGE_DIM_MAX,
   WEDGE_DIM_TARGET,
 } from '../contrast';
-import { CATEGORY_COLORS, OTHER_COLOR, CHART_BG } from '../chartColors';
-import { C } from '../theme';
 
 // --- independent WCAG helpers (deliberately NOT imported from src/contrast.ts) ---
 const rgb = (hex: string): [number, number, number] => {
@@ -36,14 +32,6 @@ const ratio = (a: number[], b: number[]) =>
   (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
 const over = (fg: number[], bg: number[], alpha: number) =>
   [0, 1, 2].map((i) => alpha * fg[i] + (1 - alpha) * bg[i]);
-
-const TRACK = rgb(CHART_BG);
-// A wedge as the eye receives it: its colour blended over the opaque track at `alpha`.
-const painted = (hex: string, alpha: number) => over(rgb(hex), TRACK, alpha);
-
-// Every colour a wedge that FADES can be painted (the ramp + the Uncategorized purple). Mirrors
-// FADING_WEDGE_COLORS in otherColorToken.logic.test.ts; "Other" is excluded because it is exempt.
-const FADING = [...CATEGORY_COLORS, C.purple];
 
 describe('contrast — the input shapes that must degrade, not crash', () => {
   it('[Q36] a non-string colour lands on the clamp instead of throwing', () => {
@@ -62,7 +50,7 @@ describe('contrast — the input shapes that must degrade, not crash', () => {
 
 describe('contrast — the primitives at the edges nobody exercises', () => {
   it('[Q37] the bisection also works with a DARK wedge on a LIGHT backdrop', () => {
-    // contrast.ts:69-70 claims validity "whether fg is lighter or darker". The app only ever has
+    // contrast.ts:73-74 claims validity "whether fg is lighter or darker". The app only ever has
     // the lighter-on-darker case (one near-black track), so the darker branch is unmeasured — and
     // a bisection whose comparison ran the wrong way would still return a plausible 0-1 number.
     const floor = minOpacityForContrast([0, 0, 0], [255, 255, 255], WEDGE_DIM_TARGET);
@@ -77,7 +65,7 @@ describe('contrast — the primitives at the edges nobody exercises', () => {
   });
 
   it('[Q38] the hex regex trims, and rejects the 5- and 7-digit near-misses', () => {
-    // parseHexColor trims (contrast.ts:32) — untested, and a colour arriving with whitespace from
+    // parseHexColor trims (contrast.ts:36) — untested, and a colour arriving with whitespace from
     // a config string would otherwise silently clamp instead of fading.
     expect(parseHexColor('  #ABC  ')).toEqual(parseHexColor('#aabbcc'));
     expect(parseHexColor('\t#7aa2f7\n')).toEqual(parseHexColor('#7aa2f7'));

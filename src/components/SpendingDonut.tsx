@@ -18,9 +18,11 @@ import { useReduceMotion } from '../motion/useReduceMotion';
 
 export interface DonutSlice { id: string; name: string; color: string; value: number }
 
-// The synthesised fold bucket's id — named rather than repeated as a literal here and across the
-// donut tests. Nothing keys behaviour off it: the bucket fades exactly like a real category.
-export const OTHER_SLICE_ID = '__other__';
+// The synthesised fold bucket's id, named so reduceSlices below does not carry a bare literal.
+// Nothing keys behaviour off it — the bucket fades exactly like a real category. Deliberately NOT
+// exported: the donut tests write '__other__' directly, so a rename reddens them instead of
+// quietly following along.
+const OTHER_SLICE_ID = '__other__';
 
 // Reduce the full top-level list to at most `max` painted slices: keep the largest `max-1`,
 // fold everything smaller into a single neutral "Other" slice. A pie with too many thin

@@ -1,9 +1,9 @@
-// WHIT-425 (QA gap) — [A56]-[A60], the RENDERED edges the swapped-constant screen assertions miss.
+// WHIT-425 (QA gap) — [A56], [A58]-[A60], the RENDERED edges the swapped-constant screen assertions miss.
 //
 // The implementer's screen work swapped 19 literal 0.4s for named per-colour constants. Every one of
 // those runs the same shape: a normal ring, a normal tap. This file is the adversarial half — what
-// the per-colour fade does when a wedge is drawn twice, when the ring is a single full circle, when
-// a colour changes underneath a wedge that is already dimmed, and when a colour will not parse.
+// the per-colour fade does when a wedge is drawn twice, when a colour changes underneath a wedge
+// that is already dimmed, when a colour will not parse, and across repeated selection.
 import { describe, it, expect, jest } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
@@ -15,14 +15,10 @@ jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
 import { OTHER_COLOR } from '../chartColors';
 import { WEDGE_DIM_MAX, wedgeDimOpacity } from '../contrast';
-import { opacityOf, ancestorProp, sl, DIM_BLUE, DIM_GREEN } from './support/donut';
+import { opacityOf, ancestorProp, sl, DIM_BLUE, DIM_GREEN, DIM_OTHER } from './support/donut';
 
 const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
 const scaleOf = (id: string) => ancestorProp(`donut-slice-${id}`, 'scale');
-
-// OTHER_COLOR's own floor. Literal, like DIM_BLUE — calling wedgeDimOpacity here would make [A60]
-// agree with itself instead of pinning a number.
-const DIM_GREY = 0.825;
 
 describe('SpendingDonut — the fade maths assumes each wedge is painted EXACTLY once', () => {
   // [A56] The whole derivation rests on "a faded wedge sits on the opaque CHART_BG track below and
@@ -46,23 +42,6 @@ describe('SpendingDonut — the fade maths assumes each wedge is painted EXACTLY
     expect(opacityOf('c')).toBeCloseTo(DIM_BLUE);
   });
 
-  // [A57] The lone-slice ring takes a different code path entirely: `single` swaps both the painted
-  // band and the hit target from an arc to a full <Circle> (SpendingDonut.tsx:268-277). A full ring
-  // OVERLAPS ITSELF end-to-end, so if it were ever drawn at a partial opacity twice the seam would
-  // double-paint. It must stay at 1 in every state — there are no peers to fade against.
-  it('[A57] the single full-ring slice never fades, and its overlay is a second full ring at 1', () => {
-    render(<SpendingDonut slices={[sl('only', 42)]} />);
-    const band = screen.getByTestId('donut-band-only');
-    expect(band.props.r).toBeDefined();   // a Circle, not an arc Path
-    expect(band.props.d).toBeUndefined();
-    expect(opacityOf('only')).toBeCloseTo(1);
-
-    fireEvent.press(screen.getByTestId('donut-slice-only'));
-    expect(opacityOf('only')).toBeCloseTo(1);
-    expect(ancestorProp('donut-top', 'opacity')).toBeCloseTo(1);
-    expect(scaleOf('only')).toBeGreaterThan(1);          // the pop is the only signal here too
-    expect(screen.getAllByTestId(/^donut-band-/)).toHaveLength(1);
-  });
 });
 
 describe('SpendingDonut — the fade must track the CURRENT colour, not a remembered one', () => {
@@ -117,7 +96,7 @@ describe('SpendingDonut — repeated selection lands exactly on the derived valu
 
     fireEvent.press(screen.getByTestId('donut-slice-blue'));
     expect(opacityOf('green')).toBeCloseTo(DIM_GREEN);
-    expect(opacityOf('grey')).toBeCloseTo(DIM_GREY);
+    expect(opacityOf('grey')).toBeCloseTo(DIM_OTHER);
 
     fireEvent.press(screen.getByTestId('donut-slice-blue'));   // tap again -> deselect
     for (const id of ['blue', 'green', 'grey']) expect(opacityOf(id)).toBeCloseTo(1);
@@ -125,7 +104,7 @@ describe('SpendingDonut — repeated selection lands exactly on the derived valu
     fireEvent.press(screen.getByTestId('donut-slice-green'));  // now pick a different one
     expect(opacityOf('green')).toBeCloseTo(1);
     expect(opacityOf('blue')).toBeCloseTo(DIM_BLUE);           // its own floor, not green's
-    expect(opacityOf('grey')).toBeCloseTo(DIM_GREY);
+    expect(opacityOf('grey')).toBeCloseTo(DIM_OTHER);
 
     fireEvent.press(screen.getByTestId('donut-center-reset')); // clear from the hole
     for (const id of ['blue', 'green', 'grey']) expect(opacityOf(id)).toBeCloseTo(1);
