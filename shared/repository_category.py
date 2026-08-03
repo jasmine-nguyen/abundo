@@ -269,6 +269,10 @@ _MAX_PARENT_WALK = 100
 _MAX_CHILDREN_PER_CATEGORY = 50
 # DynamoDB's documented UpdateExpression ceiling. The delete path measures against this
 # directly rather than against a child count, so it can't drift from the clause shape.
+# tests/lambda_api/test_categories.py keeps its OWN copy of this number, which FakeTable
+# enforces — do NOT make the test import this one. The test copy is the oracle (what the
+# service does); this one is the belief under test. Merged, an inflated value would move both
+# and every size assertion would stop being able to fail.
 _MAX_UPDATE_EXPRESSION_BYTES = 4096
 
 # Sentinel for update_category's `parent`: distinguishes "caller omitted parent,
