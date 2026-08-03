@@ -733,10 +733,10 @@ class CategoryRepository:
         its children pointing at a gone id. Raises CategoryNotFoundError if the id
         is absent.
 
-        One write stays safe because breadth is capped (_MAX_CHILDREN_PER_CATEGORY): the
-        detach clauses can no longer outgrow DynamoDB's 4KB expression limit. Data written
-        before that cap existed can still be over-wide, so it is refused with a 400 rather
-        than left to fail as an uncaught 500 (WHIT-426).
+        One write stays safe because the expression is MEASURED before it is sent (below) —
+        the breadth cap is the margin that keeps new data far away from the limit, not the
+        mechanism. Data written before that cap can still be over-wide, and is refused with a
+        400 rather than left to fail as an uncaught 500 (WHIT-426).
         """
         self._ensure_seeded()
         for _attempt in range(2):
