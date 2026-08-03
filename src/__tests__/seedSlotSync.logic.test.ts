@@ -67,7 +67,7 @@ describe('[A4] the seeded store paints 13 distinct, well-spaced colours', () => 
     // ramp's TIGHTEST steps. Re-space again and you must edit this list on purpose.
     expect(neighbouringRuns(SERVER_RAMP)).toEqual([
       ['eatingout', 'health'],
-      ['utilities', 'groceries'],
+      ['coffee', 'utilities'],
       ['shopping', 'travel'],
       ['fitness', 'transport', 'phonenet'],
       ['pets', 'gifts', 'subs'],
@@ -95,9 +95,10 @@ describe('[A7] a half-migrated store still has exactly one ambiguous pair', () =
   it('coffee now paints the SAME hue whether or not the store has been backfilled', () => {
     // A side effect of the move worth locking: coffee's seeded slot resolves to ramp 3, which is
     // also its id-derived fallback, so a mid-migration store cannot show coffee two colours.
-    // (Utilities took over the opposite role — see chartColors.logic.test.ts's `moved` list.)
+    // Utilities never moved, so it agrees too; shopping is one of the three that still differ.
     expect(chartCategoryColor('coffee', { slot: SERVER_SLOTS.coffee })).toBe(chartCategoryColor('coffee'));
-    expect(chartCategoryColor('utilities', { slot: SERVER_SLOTS.utilities }))
-      .not.toBe(chartCategoryColor('utilities'));
+    expect(chartCategoryColor('utilities', { slot: SERVER_SLOTS.utilities })).toBe(chartCategoryColor('utilities'));
+    expect(chartCategoryColor('shopping', { slot: SERVER_SLOTS.shopping }))
+      .not.toBe(chartCategoryColor('shopping'));
   });
 });

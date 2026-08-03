@@ -136,7 +136,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
   // ASSIGNMENT_ORDER spreads CONSECUTIVELY ASSIGNED slots, so categories a user creates back-to-back
   // land far apart. It does NOT protect the 13 built-ins, whose slots are hand-picked. WHIT-415
   // re-spaced those: eatingout/health/coffee used to resolve to ramp 0/1/2 (three adjacent hues);
-  // coffee now sits at ramp 3 with no neighbour, leaving eatingout/health as a pair. Adjacent hues
+  // coffee moved to ramp 3, leaving eatingout/health as a pair. Adjacent hues
   // are still possible — 13 colours in a 20-entry ramp force at least 5 touching pairs — so two
   // similar colours CAN still sit side by side, and the ring stays strictly spend-ordered.
   // NOTE: re-spacing paints only NEW stores; a slot is permanent once stored (WHIT-405), so an

@@ -45,10 +45,11 @@ CATEGORY_PALETTE = [
 # entries is 3 (down from 5 under the previous id-keyed mapping).
 #
 # WHIT-415 re-spaced the warm end: eatingout/health/coffee used to be a run of THREE (ramp 0/1/2).
-# Coffee moved to ramp 3 and utilities to ramp 5, leaving eatingout/health a pair and coffee with no
-# neighbour. The win is STRUCTURAL — a run of three broken into a pair plus a singleton — not a
-# distance trade: the pair it removes (health/coffee) was actually one of the WIDER touching pairs,
-# and total adjacent pairs is unchanged at 7 (13 colours in a 20-entry ramp force at least 5).
+# Coffee alone moved, to ramp 3, leaving eatingout/health a pair. ONE seed slot changed on purpose —
+# every extra move ripples into which slot a user's first custom category gets, and the obvious
+# second move (utilities to ramp 5) pushed that category into the middle of the blue cluster.
+# Coffee's new neighbour (utilities, ramp 3/4) is WIDER apart than the health/coffee pair removed,
+# so the run of three is gone and nothing tighter replaced it.
 # Two runs of three REMAIN and are tighter than the one removed: fitness/transport/phonenet at ramp
 # 12-14 and pets/gifts/subs at 16-18. NOTE: this only paints NEW stores; a slot is permanent once
 # stored, so existing accounts keep the old layout (WHIT-405).
@@ -59,7 +60,7 @@ SEED_CATEGORIES = {
     "transport": {"id": "transport", "name": "Transport", "icon": "car", "color": "#8AB4F8", "bucket": "Living", "colorSlot": 15},
     "health": {"id": "health", "name": "Health", "icon": "health", "color": "#F2A0C9", "bucket": "Living", "colorSlot": 8},
     "pets": {"id": "pets", "name": "Pets", "icon": "pets", "color": "#C7A8F0", "bucket": "Lifestyle", "colorSlot": 17},
-    "utilities": {"id": "utilities", "name": "Utilities", "icon": "bolt", "color": "#F2C94C", "bucket": "Living", "colorSlot": 2},
+    "utilities": {"id": "utilities", "name": "Utilities", "icon": "bolt", "color": "#F2C94C", "bucket": "Living", "colorSlot": 10},
     "shopping": {"id": "shopping", "name": "Shopping", "icon": "bag", "color": "#6FD0C9", "bucket": "Lifestyle", "colorSlot": 13},
     "fitness": {"id": "fitness", "name": "Health & Fitness", "icon": "dumbbell", "color": "#8FD46B", "bucket": "Lifestyle", "colorSlot": 6},
     "subs": {"id": "subs", "name": "Subscriptions", "icon": "film", "color": "#F0B27A", "bucket": "Lifestyle", "colorSlot": 18},

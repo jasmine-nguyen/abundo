@@ -100,14 +100,17 @@ describe('Insights paints the server-seeded slots', () => {
     expect(paint('health')).toBe('#f9927e');       // ramp 1, unchanged
   });
 
-  it('[A10] utilities paints its re-spaced hue and stays out of the salmon end', () => {
+  it('[A10] every OTHER built-in keeps the hue it already had — exactly one slot moved', () => {
+    // The re-space deliberately moves coffee and nothing else: each extra move shifts which slot is
+    // lowest-free, which silently changes the colour a user's first custom category gets. Utilities
+    // is the one that was nearly moved too, so it is asserted by name.
     mockInsights = insightsData({
       breakdown: { utilities: posted(300), groceries: posted(200), eatingout: posted(100) },
     });
     render(<Insights />);
     expect(paint('utilities')).toBe(CATEGORY_COLORS[ASSIGNMENT_ORDER[SEED.utilities]]);
-    expect(paint('utilities')).toBe('#b5bb51');    // ramp 5 (olive), NOT ramp 4's #d2ae45
-    expect(rampOf(paint('utilities'))).toBeGreaterThan(2);
+    expect(paint('utilities')).toBe('#d2ae45');    // ramp 4 — unchanged by this card
+    expect(paint('groceries')).toBe('#8ec56f');    // ramp 6 — unchanged
   });
 
   it('[A11] the ring is still STRICTLY spend-ordered — recolouring added no re-ordering pass', () => {
