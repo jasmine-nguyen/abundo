@@ -14,6 +14,7 @@ import base64
 import copy
 import json
 import re
+from collections import Counter
 from decimal import Decimal
 
 import pytest
@@ -1806,15 +1807,72 @@ def test_plan_is_deterministic_regardless_of_map_order(handler):
     assert repository.plan_color_slot_backfill(items) == SEED_SLOTS
 
 
-def test_next_color_slot_reuses_gaps_and_survives_a_full_ramp(handler):
+def test_least_held_color_slot_is_the_lowest_free_slot_below_saturation(handler):
+    """While any slot is free, least-held IS lowest-free — a free slot has count 0 and always
+    wins, so WHIT-404 changed nothing for a store under 20 categories."""
     import repository
-    assert repository.next_color_slot(set()) == 0
-    assert repository.next_color_slot({0, 1, 2}) == 3
-    assert repository.next_color_slot({0, 2, 3}) == 1        # a delete freed slot 1
-    full = set(range(20))
-    # Past 20 live categories every slot is taken; we deliberately SHARE slot 0 rather than
-    # fail the create. Pinned exactly so the collapse is a decision, not an accident.
-    assert repository.next_color_slot(full) == 0
+    none_held = frozenset()
+    assert repository.least_held_color_slot(Counter(), none_held) == 0
+    assert repository.least_held_color_slot(Counter({0: 1, 1: 1, 2: 1}), none_held) == 3
+    assert repository.least_held_color_slot(Counter({0: 1, 2: 1, 3: 1}), none_held) == 1  # delete freed 1
+    # A deleted BUILT-IN's slot is reused immediately too — the non-seed preference decides
+    # which colour to DOUBLE UP on, and that question does not exist while a slot is free.
+    seeds_minus_eatingout = Counter({slot: 1 for slot in range(1, 20)})
+    assert repository.least_held_color_slot(seeds_minus_eatingout, none_held) == 0
+    # Junk outside the ramp cannot make a real slot look taken, and reading a missing slot
+    # must not INSERT it (a plain dict here would raise instead).
+    junk = Counter({99: 5, -1: 3})
+    assert repository.least_held_color_slot(junk, none_held) == 0
+    assert set(junk) == {99, -1}
+
+
+def test_least_held_color_slot_spreads_repeats_instead_of_piling_on_one(handler):
+    """WHIT-404: past 20 categories a duplicate is unavoidable, but it must not always be the
+    SAME duplicate. Before this, every category past the 20th took slot 0."""
+    import repository
+    none_held = frozenset()
+    full = Counter({slot: 1 for slot in range(20)})
+    assert repository.least_held_color_slot(full, none_held) == 2       # lowest non-seed slot
+    full[2] += 1
+    assert repository.least_held_color_slot(full, none_held) == 3       # next non-seed, not 2 again
+    # Saturated but uneven: the emptiest slot wins even though it is not the lowest. (A merely
+    # FREE slot 7 would not discriminate — the old lowest-free walk answers 7 too.)
+    uneven = Counter({slot: 2 for slot in range(20)})
+    uneven[0] = 5
+    uneven[7] = 1
+    assert repository.least_held_color_slot(uneven, none_held) == 7
+
+
+def test_least_held_color_slot_prefers_slots_no_builtin_owns(handler):
+    """WHIT-404 option B: a repeat has to land somewhere, and doubling up on a colour only a
+    custom category wears beats doubling up on Eating Out's. Derived from SEED_CATEGORIES, so
+    it cannot drift if the seeds are retuned."""
+    import repository
+    import repository_category
+    seed_slots = {int(cat["colorSlot"]) for cat in repository.SEED_CATEGORIES.values()}
+    non_seed = repository_category._NON_SEED_COLOR_SLOTS
+    assert non_seed == frozenset(range(20)) - seed_slots
+    # slot 0 (Eating Out) and slot 2 (no built-in) both held once: the non-seed slot wins even
+    # though 0 is the lower number.
+    full = Counter({slot: 1 for slot in range(20)})
+    assert repository.least_held_color_slot(full, frozenset()) == 2
+    # ...but count still dominates preference: a seed slot held ONCE beats a non-seed held twice.
+    full.update({slot: 1 for slot in sorted(non_seed)})
+    assert repository.least_held_color_slot(full, frozenset()) == 0
+
+
+def test_least_held_color_slot_treats_reserved_as_a_hard_exclusion(handler):
+    """The blocker WHIT-404's first plan shipped: an owed slot is held by NOBODY, so counting
+    it as merely +1 leaves it tied with a singly-held slot and the tie-break hands it over —
+    permanently stealing the colour the backfill was about to give a built-in."""
+    import repository
+    # slot 1 is free but owed to travel; slot 0 is doubled up.
+    counts = Counter({0: 2, **{slot: 1 for slot in range(2, 20)}})
+    assert repository.least_held_color_slot(counts, frozenset()) == 1        # unreserved: takes it
+    assert repository.least_held_color_slot(counts, frozenset({1})) == 2     # reserved: skips it
+    # Every slot owed (an unmigrated store with >20 unslotted rows) falls back to all 20,
+    # which is what happens today.
+    assert repository.least_held_color_slot(counts, frozenset(range(20))) == 1
 
 
 def test_slot_survives_json_encoding_as_a_number(handler):
@@ -1947,7 +2005,9 @@ def test_past_twenty_categories_slots_stay_in_range(handler):
 
     assert all(0 <= s < 20 for s in slots)
     assert slots[:7] == [2, 3, 5, 9, 12, 14, 19]     # every free slot, lowest first
-    assert slots[7:] == [0, 0]                       # ramp full -> share slot 0
+    # WHIT-404: ramp full -> the repeat goes to the LEAST-held slot, preferring one no
+    # built-in owns. Was [0, 0] — every category past the 20th piled onto Eating Out.
+    assert slots[7:] == [2, 3]
 
 
 def test_plan_past_twenty_unslotted_rows_stays_in_range(handler):
@@ -2092,11 +2152,11 @@ def test_create_survives_a_backfill_too_big_for_one_write(handler):
 
     # Not raising IS the assertion — on the unchunked code this call goes through
     # handle_database_error and raises DatabaseError, which the handler does not catch.
-    # Slot 0 because the ramp is saturated past 20 live categories: sharing slot 0 is the
-    # designed collapse (next_color_slot), not a collision this test should object to. The
-    # non-collision property is pinned at a small store size by
-    # test_create_cannot_steal_a_slot_the_deferred_backfill_still_owes.
-    assert created["colorSlot"] == 0
+    # Slot 2 because the ramp is saturated past 20 live categories, so a duplicate is
+    # unavoidable and least_held_color_slot picks the lowest slot no built-in owns (WHIT-404;
+    # this was slot 0 while every overflow piled onto Eating Out). The non-collision property
+    # is pinned by test_create_cannot_steal_a_slot_the_deferred_backfill_still_owes.
+    assert created["colorSlot"] == 2
 
 
 def test_a_throttled_chunk_leaves_earlier_chunks_intact_and_recovers(handler):
@@ -2324,10 +2384,14 @@ def test_a_create_between_chunks_keeps_its_slot_and_the_drain_still_finishes(han
     assert int(stored["wine"][_SLOT]) == created[_SLOT]
     assert all(_SLOT in cat for cat in stored.values()), "a row was left permanently unslotted"
     assert repo._table.store[_CFG]["colorSlotSchema"] == 1
-    # And the final assignment is still the one the planner would produce for this store.
-    expected = repository.plan_color_slot_backfill(
-        {cid: {k: v for k, v in cat.items() if k != _SLOT} for cid, cat in stored.items()})
-    assert {cid: int(cat[_SLOT]) for cid, cat in stored.items()} == \
+    # And every row the plan covered still landed where the planner would put it. `wine` is
+    # excluded on purpose: since WHIT-404 a CREATE assigns from least_held_color_slot while the
+    # drain assigns from the planner's lowest-free rule, so a created row can never satisfy a
+    # fresh plan. Its slot is pinned by the assertion above, which is the stronger claim.
+    pre_create = {cid: {k: v for k, v in cat.items() if k != _SLOT}
+                  for cid, cat in stored.items() if cid != "wine"}
+    expected = repository.plan_color_slot_backfill(pre_create)
+    assert {cid: int(stored[cid][_SLOT]) for cid in expected} == \
         {cid: int(slot) for cid, slot in expected.items()}
 
 
@@ -2438,3 +2502,77 @@ def test_a_chunk_that_loses_the_version_race_writes_nothing_and_a_later_read_rec
     _drain(repo)
     assert repo._table.store[_CFG]["colorSlotSchema"] == 1
     assert all(_SLOT in cat for cat in repo._table.store[_CFG]["items"].values())
+
+
+# ---- WHIT-404: repeats past 20 categories spread instead of piling onto one slot ------------
+
+def test_a_create_on_a_saturated_store_cannot_steal_a_slot_the_backfill_owes(handler):
+    """The bug WHIT-404's first design shipped. An owed slot is held by NOBODY, so if the
+    reservation were a WEIGHT rather than a hard exclusion it would tie with the singly-held
+    slots and the tie-break would hand it straight over — permanently repainting the row the
+    backfill was about to colour.
+
+    The owed slot must be a NON-SEED slot for this to discriminate: if it belonged to a
+    built-in, the non-seed preference would steer away from it by accident and the test would
+    pass against the broken design too."""
+    repository, repo = _repo_with_fake_table(handler)
+    items = {cat_id: dict(seed) for cat_id, seed in repository.SEED_CATEGORIES.items()}
+    # Every non-seed slot held EXCEPT 2, so the planner owes 2 to the one unslotted row.
+    for index, slot in enumerate([3, 5, 9, 12, 14, 19]):
+        items[f"custom{index}"] = _cat(f"custom{index}", colorSlot=Decimal(slot))
+    items["aaa"] = _cat("aaa")                          # unslotted -> owed the lowest free slot
+    repo._table.store[_CFG] = {"pk": "CATEGORIES", "sk": "CATEGORIES",
+                               "items": items, "version": Decimal(1)}
+    owed = repository.plan_color_slot_backfill(items)["aaa"]
+    assert owed == 2, "fixture drifted: the unslotted row must be owed a non-seed slot"
+    # The pre-loop backfill loses its race, so aaa is still unslotted when the slot is chosen.
+    repo._table.before_update.append(_bump_version)
+
+    created = repo.create_category("wine", "Wine", "Lifestyle", "glass")
+
+    assert created["colorSlot"] != owed, "create stole the slot the backfill owed aaa"
+    assert created["colorSlot"] == 3
+    # And aaa really does still get that slot once the drain catches up.
+    repo.list_categories()
+    assert int(repo._table.store[_CFG]["items"]["aaa"]["colorSlot"]) == owed
+
+
+def test_every_slot_holds_two_categories_before_any_slot_holds_three(handler):
+    """The card's actual complaint: 30 categories used to leave 23 of them sharing one colour.
+    Round-robin means the ramp fills evenly — and the seven slots no built-in owns go first."""
+    repository, repo = _repo_with_fake_table(handler)
+    repo.list_categories()                                    # 13 seeds
+    slots = [int(repo.create_category(f"x{n}", f"X{n}", "Lifestyle", "tag")["colorSlot"])
+             for n in range(27)]                              # categories 14 .. 40
+
+    non_seed = sorted(frozenset(range(20)) - set(SEED_SLOTS.values()))
+    assert slots[:7] == non_seed                              # lap 1: the free slots
+    assert slots[7:14] == non_seed                            # lap 2: double up on those FIRST
+    assert sorted(slots[14:]) == sorted(SEED_SLOTS.values())  # only then the built-ins
+    holders = Counter(int(cat["colorSlot"])
+                      for cat in repo._table.store[_CFG]["items"].values())
+    assert set(holders) == set(range(20)) and set(holders.values()) == {2}
+
+
+def test_the_backfill_planner_is_a_fixed_point_on_an_alphabetical_prefix(handler):
+    """WHIT-404 leaves TWO assigners on purpose: create spreads, the backfill planner does not.
+    This is the guard on that split. Persisting an alphabetical prefix of a plan and re-planning
+    must reproduce the one-shot plan exactly — which is what makes WHIT-405's chunked drain
+    equivalent to one unchunked write. Swap the planner to the least-held rule and this fails
+    on 107 of 250 stores, because an earlier chunk can then consume a built-in's designated
+    slot before pass 1 reaches it. Do not merge the two assigners."""
+    import random
+    repository, _ = _repo_with_fake_table(handler)
+    rng = random.Random(404)
+
+    for trial in range(250):
+        original = _random_legacy_store(repository, rng)
+        one_shot = repository.plan_color_slot_backfill(copy.deepcopy(original))
+        partial = copy.deepcopy(original)
+        for cat_id in sorted(one_shot)[:50]:                  # persist the first chunk
+            partial[cat_id][_SLOT] = Decimal(one_shot[cat_id])
+        replanned = repository.plan_color_slot_backfill(partial)
+
+        drained = {cid: one_shot[cid] for cid in sorted(one_shot)[:50]}
+        drained.update(replanned)
+        assert drained == one_shot, f"trial {trial}: chunked planning diverged from one shot"
