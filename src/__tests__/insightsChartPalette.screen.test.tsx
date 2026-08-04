@@ -13,6 +13,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 import type { AppContext, LoanFacts } from '../context';
+import { PALETTE_CATS } from './insightsColourFixtures';
 
 type InsightsState = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsightsError' | 'refreshAiInsights' | 'generateAiInsights'>
   & { loanFacts: LoanFacts; homeLoan: { balance: number | null; asOf: string | null } };
@@ -49,10 +50,7 @@ import Insights from '../../app/(tabs)/insights';
 // `shopping` carries slot 2 — NOT its seed slot 13 — so the stored path (#b5bb51) and the id
 // fallback (#25cdbd) disagree. That disagreement is the whole point: it is what reddens if the
 // screen stops forwarding the slot. See the header for why a seed slot no longer works here.
-const CATS = [
-  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#73daca', bucket: 'Lifestyle', recent: 0, colorSlot: 2 },
-  { id: 'eatingout', name: 'Eating Out', icon: 'food', color: '#e5495f', bucket: 'Lifestyle', recent: 0, colorSlot: 0 },
-] as const;
+const CATS = PALETTE_CATS;
 const category = (id: string) => CATS.find((c) => c.id === id) as never;
 const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 

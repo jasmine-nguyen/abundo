@@ -5,13 +5,12 @@
 // equality pin passes with it deleted — demonstrated in review), that the guarantee the deleted
 // collision inventory carried still holds, and that the two screen suites' exemplar slot still
 // disagrees with shopping's fallback, which is what stops them going tautological after a re-space.
-import fs from 'fs';
-import path from 'path';
 import { describe, it, expect } from '@jest/globals';
 import {
   ASSIGNMENT_ORDER, CATEGORY_COLORS, BUILTIN_CATEGORY_INDEX, chartCategoryColor,
 } from '../chartColors';
 import { readServerSeedSlots } from './serverSeedSlots';
+import { PALETTE_CATS, SLOT_ROWS_CATS } from './insightsColourFixtures';
 
 const SERVER_SLOTS = readServerSeedSlots();
 
@@ -87,22 +86,23 @@ describe('[B3] the three ids WHIT-432 moved', () => {
 // Both screen suites prove "the screen forwards the stored slot" by giving `shopping` a slot and
 // asserting the painted hue is the SLOT's, not the id's. That only proves anything while the two
 // disagree — which is exactly what WHIT-432 broke for shopping's SEED slot, and why the fixtures
-// moved to a slot it does not own. Nothing ties that number to the invariant it depends on, so read
-// it back out of the fixtures and assert the invariant here, in the fast logic project.
-const SCREEN_SUITES = ['insightsChartPalette.screen.test.tsx', 'insightsSlotRows.screen.test.tsx'];
+// carry a slot it does not own. Nothing else ties that number to the invariant it depends on, so
+// assert it here against the shared fixture objects (WHIT-444 lifted them out of the .tsx files, so
+// this reads their actual values rather than regex-parsing the source).
+const SCREEN_FIXTURES: { name: string; cats: readonly { id: string; colorSlot: number }[] }[] = [
+  { name: 'PALETTE_CATS', cats: PALETTE_CATS },
+  { name: 'SLOT_ROWS_CATS', cats: SLOT_ROWS_CATS },
+];
 
-function fixtureSlots(file: string): { shopping: number; all: number[] } {
-  const src = fs.readFileSync(path.resolve(__dirname, file), 'utf8');
-  const shopping = /\{[^}]*id:\s*'shopping'[^}]*colorSlot:\s*(\d+)[^}]*\}/.exec(src);
-  if (!shopping) throw new Error(`no shopping fixture with a colorSlot in ${file}`);
-  const all = [...src.matchAll(/^\s*\{\s*id:.*colorSlot:\s*(\d+)/gm)].map((m) => Number(m[1]));
-  if (all.length === 0) throw new Error(`parsed 0 fixture colorSlots from ${file}`);
-  return { shopping: Number(shopping[1]), all };
+function shoppingSlot(cats: readonly { id: string; colorSlot: number }[]): number {
+  const shopping = cats.find((cat) => cat.id === 'shopping');
+  if (!shopping) throw new Error('no shopping fixture');
+  return shopping.colorSlot;
 }
 
 describe('[B4] the screen suites cannot silently go tautological again', () => {
-  it.each(SCREEN_SUITES)('%s gives shopping a slot whose hue differs from its fallback', (file) => {
-    const { shopping } = fixtureSlots(file);
+  it.each(SCREEN_FIXTURES)('$name gives shopping a slot whose hue differs from its fallback', ({ cats }) => {
+    const shopping = shoppingSlot(cats);
     // the three ways this fixture could stop proving anything, each named
     expect(SERVER_SLOTS.shopping).not.toBe(shopping);                              // not its seed slot
     expect(ASSIGNMENT_ORDER[shopping]).not.toBe(BUILTIN_CATEGORY_INDEX.shopping);  // not its ramp position
@@ -110,8 +110,8 @@ describe('[B4] the screen suites cannot silently go tautological again', () => {
       .not.toBe(chartCategoryColor('shopping'));                                   // the hues really differ
   });
 
-  it.each(SCREEN_SUITES)('%s fixture slots are all distinct, so no assertion passes by accident', (file) => {
-    const { all } = fixtureSlots(file);
+  it.each(SCREEN_FIXTURES)('$name fixture slots are all distinct, so no assertion passes by accident', ({ cats }) => {
+    const all = cats.map((cat) => cat.colorSlot);
     expect(new Set(all).size).toBe(all.length);
     const painted = all.map((slot) => chartCategoryColor('irrelevant', { slot }));
     expect(new Set(painted).size).toBe(all.length);

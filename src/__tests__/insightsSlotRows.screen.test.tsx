@@ -19,6 +19,7 @@ import { StyleSheet } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { chartCategoryColor } from '../chartColors';
 import type { AppContext, LoanFacts } from '../context';
+import { SLOT_ROWS_CATS } from './insightsColourFixtures';
 
 type InsightsState = Pick<AppContext, 'aiInsights' | 'aiInsightsLoading' | 'aiInsightsError' | 'refreshAiInsights' | 'generateAiInsights'>
   & { loanFacts: LoanFacts; homeLoan: { balance: number | null; asOf: string | null } };
@@ -53,11 +54,7 @@ import Insights from '../../app/(tabs)/insights';
 // A parent with its OWN direct spend (-> a "Directly in X" row), one spending child, and one
 // net-refunded child (-> a refund line). Every mock category carries a WRONG app-wide colour, so a
 // screen that forgot to wrap the accessor at all also fails.
-const CATS = [
-  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#111111', bucket: 'Lifestyle', recent: 0, parent: null, colorSlot: 2 },
-  { id: 'shoes', name: 'Shoes', icon: 'bag', color: '#222222', bucket: 'Lifestyle', recent: 0, parent: 'shopping', colorSlot: 5 },
-  { id: 'clothes', name: 'Clothes', icon: 'bag', color: '#333333', bucket: 'Lifestyle', recent: 0, parent: 'shopping', colorSlot: 9 },
-] as const;
+const CATS = SLOT_ROWS_CATS;
 const category = (id: string) => CATS.find((c) => c.id === id) as never;
 const NO_LOAN_FACTS = { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null };
 
