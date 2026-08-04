@@ -1,14 +1,19 @@
 /// <reference types="node" />
-// WHIT-408 / WHIT-412 — every resolver in this project prefers a FILE over a folder of the same
-// name (checked in TypeScript, Jest and metro-resolver). So if `src/X.ts` and `src/X/` both exist,
-// `from '../X'` keeps hitting the file and everything under the folder is silently ignored:
-// no error, no red test, the code just never runs. The typecheck catches a wrong import path;
-// it cannot catch this.
+// WHIT-408 / WHIT-412 / WHIT-413 — every resolver in this project prefers a FILE over a folder of
+// the same name (checked in TypeScript, Jest and metro-resolver). So if `src/X.ts` and `src/X/`
+// both exist, `from '../X'` keeps hitting the file and everything under the folder is silently
+// ignored: no error, no red test, the code just never runs. The typecheck catches a wrong import
+// path; it cannot catch this.
 //
 // WHIT-408 was that exact collision — `src/theme.ts` beside a `src/theme/` holding the chart
 // palette — and fixed it by moving the palette to `src/chartColors.ts`. Rather than name the two
-// files involved, this guard derives the list from src/ itself, so a new collision is caught the
-// day it appears instead of the day someone remembers to add it here.
+// files involved, this guard walks src/ itself (walkSrc, in support/sourceScan.ts), so a new
+// collision is caught the day it appears instead of the day someone remembers to add it here.
+//
+// WHIT-412 scanned only the top level of src/ and only .ts/.tsx. WHIT-413 walks src/ all the way
+// down and covers .ts/.tsx/.js/.jsx: at every directory it flags any name that is BOTH a code file
+// and a non-empty folder. "Non-empty" means the folder holds at least one non-dotfile entry — a
+// nested subfolder counts. __tests__ is skipped, matching support/sourceScan.ts.
 //
 // An empty shadowed folder is tolerated, and so are dotfiles. Git prunes the emptied directory on
 // checkout, so the husk that actually survives is one holding untracked junk — a Finder .DS_Store
@@ -16,12 +21,15 @@
 // people to ignore this guard. Only real modules are the hazard.
 //
 // Do NOT widen this to app/: `app/milestone.tsx` beside `app/milestone/edit.tsx` is ordinary
-// expo-router sibling routing, and both ship as distinct routes.
+// expo-router sibling routing, and both ship as distinct routes. app/ is a sibling of src/, so this
+// src-rooted walk never reaches it.
 //
+// walkSrc's own behaviour is proven against synthetic fixtures in themeLayoutWalk.gaps.logic.test.ts.
 // Same shape as the server's structural guards (tests/lambda_api/test_constants_sync.py).
 import { describe, it, expect } from '@jest/globals';
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { join } from 'path';
+import { walkSrc } from './support/sourceScan';
 
 const SRC_DIR = join(__dirname, '..');
 
@@ -30,33 +38,19 @@ function isFile(relativePath: string): boolean {
   return existsSync(absolute) && statSync(absolute).isFile();
 }
 
-// Every top-level module in src/, by bare name — `api.ts` → `api`. Each one shadows a folder of
-// that name, so each one is a place the trap can reappear. Deduped: `X.ts` and `X.tsx` are one name.
-function shadowingNames(): string[] {
-  const modules = readdirSync(SRC_DIR).filter((entry) => isFile(entry) && /\.tsx?$/.test(entry));
-  return [...new Set(modules.map((entry) => entry.replace(/\.tsx?$/, '')))].sort();
-}
+describe('WHIT-413 a shadowing name is a file, never a folder — everywhere under src/', () => {
+  const { shadowPairs, visited } = walkSrc(SRC_DIR);
 
-function modulesIn(name: string): string[] {
-  const directory = join(SRC_DIR, name);
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory).filter((entry) => !entry.startsWith('.'));
-}
+  // Each offending entry reads `dir/name`: src/dir/name.{ts,tsx,js,jsx} silently shadows
+  // src/dir/name/. Jest prints the received array, so the remediation is in this test's name.
+  it('flags no folder shadowed by a same-named code file — rename the file or move the folder out', () => {
+    expect(shadowPairs).toEqual([]);
+  });
 
-describe('WHIT-412 a shadowing name is a file, never a folder', () => {
-  // The remediation lives in the test NAME on purpose — Jest prints the name on failure but not
-  // the comments around it, so advice written here as a comment never reaches the developer.
-  it.each(shadowingNames())(
-    'has no module under src/%s/ — the same-named .ts file silently shadows one, so keep modules at the top of src/',
-    (name) => {
-      expect(modulesIn(name)).toEqual([]);
-    },
-  );
-
-  it('derives its list from src/ rather than a hard-coded pair', () => {
-    const names = shadowingNames();
-    expect(names).toContain('theme');
-    expect(names).toContain('chartColors');
+  // Anti-degradation: a walk that silently scanned nothing (bad root, swallowed throw) would pass
+  // the assertion above vacuously. Pin that it actually descended below the top level of src/.
+  it('descends below the top level of src/', () => {
+    expect(visited).toContain('motion');
   });
 
   it('keeps the app-wide tokens and the chart palette as separate top-level files', () => {
