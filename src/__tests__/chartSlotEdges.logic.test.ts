@@ -87,9 +87,9 @@ describe('[A15] toCategory hands chartCategoryColor a value it can actually use'
 
 describe('[A16] a partially-slotted store: which categories can share a colour', () => {
   it('exactly ONE built-in pair collides — un-slotted Transport vs slotted Phone & Internet', () => {
-    // A store can be mixed if the server's slot backfill wrote but a later PATCH echoed a row that
-    // predates it (shared/repository_category.py update_category returns the raw stored item and does
-    // NOT backfill). Two categories then resolve down different paths. This inventories every hue
+    // A store can be mixed while the server's slot migration is still draining: a cached list
+    // fetched before a chunk landed sits alongside rows fetched after it. Two categories then
+    // resolve down different paths. This inventories every hue
     // that can be reached BOTH ways, so a future edit to ASSIGNMENT_ORDER or BUILTIN_CATEGORY_INDEX
     // cannot silently add a second ambiguous pair.
     const collisions: string[] = [];

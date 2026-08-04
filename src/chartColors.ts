@@ -50,8 +50,10 @@ export const ASSIGNMENT_ORDER = [
 ] as const;
 
 // A raw colorSlot off the wire as a usable slot, or undefined when it is absent or unusable.
-// Mirrors the server's _coerce_slot — necessary because PATCH /categories/{id} echoes the STORED
-// value with no coercion, so a corrupt row reaches the client uncleaned.
+// Mirrors the server's _coerce_slot. Defence at the boundary: every category route now coerces
+// server-side (WHIT-428 gave PATCH the same treatment GET already had), but a client running
+// AHEAD of the server still meets the old uncleaned shape, and this is the only gate between the
+// wire and the chart.
 // NOT a truthy check: slot 0 is VALID (it is Eating Out), and `raw || undefined` would drop it.
 // Everything rejected here would otherwise index ASSIGNMENT_ORDER out of range and yield
 // `undefined`, which reaches `stroke` on the donut wedge and `backgroundColor` on the category row
@@ -84,7 +86,9 @@ function categoryColorHash(id: string): number {
 
 // A category's chart colour on the Insights screen.
 // PREFERRED: its stored, permanent `colorSlot` resolved through ASSIGNMENT_ORDER — assigned once
-// server-side, so adding or deleting a category can never repaint another one.
+// server-side, so adding or deleting a category can never repaint another one. ONE exception,
+// once per account: accounts that migrated before the server spread its colours are levelled a
+// single time (WHIT-428), so a few categories change colour once and then never again.
 // FALLBACK (slot absent or unusable): the id-derived colour — built-in → its fixed slot, unknown id
 // → a stable hashed slot, null/blank id → the first ramp colour. Kept ON PURPOSE: it makes deploy
 // ordering a preference rather than a hard gate, so a client running ahead of the server degrades
