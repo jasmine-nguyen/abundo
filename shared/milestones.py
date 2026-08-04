@@ -87,6 +87,22 @@ def _plan_marker(milestone: dict) -> str:
     return f"{_ID_PREFIX}{milestone_id}:{_BAL_PREFIX}{amount}"
 
 
+def mint_migration_markers(target: Decimal, minted_id: str) -> tuple:
+    """The (legacy, id'd) once-ever markers for a milestone at `target` that has just been minted
+    `minted_id` (WHIT-447). The save endpoint uses this pair to migrate a legacy id-less row's
+    "already celebrated" marker `bal:<amount>` → `id:<minted_id>:bal:<amount>` at the moment it
+    fills in the row's missing id, so the once-ever record follows the row instead of being swept
+    as dead by the next poll (which now keys the saved row under the id'd form).
+
+    Built through _plan_marker so the id'd marker is byte-identical to what the poller will later
+    key the row to — same cent-quantize, same prefixes — and can never drift from it. `target` is
+    the stored Decimal(str(balance)); it's already validated finite and capped at the save endpoint,
+    so the quantize can't raise here."""
+    legacy = _plan_marker({"targetBalance": target})
+    idd = _plan_marker({"id": minted_id, "targetBalance": target})
+    return legacy, idd
+
+
 def _row_id_prefix(row) -> Optional[str]:
     """The "id:<row id>:" marker prefix for a row whose id we can read, else None.
 

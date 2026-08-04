@@ -92,6 +92,8 @@ from anthropic_client import AnthropicError
 from insights_ai import generate_suggestions
 from iso_date import ISO_DATE_RE, valid_iso_date
 from milestone_ai import review_pacing, suggest_pacing
+from milestones import mint_migration_markers
+from repository_notify import NotifyRepository
 from paydown import (
     add_months,
     amortization_curve,
@@ -236,7 +238,7 @@ def lambda_handler(event, context):
             return _json_response(200, get_milestones(event, MilestoneRepository()))
 
         if path == MILESTONES_PATH and method == "PUT":
-            return set_milestones(event, MilestoneRepository())
+            return set_milestones(event, MilestoneRepository(), NotifyRepository())
 
         # AI "Suggest a plan" (WHIT-370): server computes the real paydown numbers, Claude
         # only chooses the pacing + writes word-only labels. Drafts into the editor; never
@@ -2083,6 +2085,11 @@ def current_scope(event: dict) -> str:
     # request maps to the shared scope. Later, return the authenticated user id from the JWT
     # claims (event["requestContext"]["authorizer"]["jwt"]["claims"]["sub"]) — only this line
     # changes. No scope literal lives anywhere else.
+    #
+    # NOTE: the notify store's shared tenant is None, not this "SHARED" (WHIT-447). If you ever
+    # rename the shared literal here, update _notify_scope in lockstep — it bridges the two on the
+    # exact string "SHARED", and a silent mismatch makes the mint-marker migration write an item
+    # the poller never reads (an inert fix, no error).
     return "SHARED"
 
 
@@ -2096,7 +2103,7 @@ def get_milestones(event: dict, repo: MilestoneRepository) -> list:
     return stored if stored is not None else []
 
 
-def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
+def set_milestones(event: dict, repo: MilestoneRepository, notify_repo: NotifyRepository) -> dict:
     """PUT /milestones — save (replace) the whole milestone plan.
 
     Body: {"milestones": [{label, targetBalance, targetDate, id?}, ...]} — a non-empty
@@ -2108,6 +2115,10 @@ def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
     strictly-increasing targetDate.) A milestone without an id gets a fresh uuid so later
     edits key off a stable id (WHIT-378); a supplied id is preserved. Stored via
     Decimal(str(...)) to avoid float drift.
+
+    Minting an id for a legacy id-less row also migrates that row's "already celebrated"
+    notify marker onto the new id (WHIT-447), so the next poll keeps — rather than re-arms —
+    the celebration. `notify_repo` is required so that migration can never be silently skipped.
     """
     body, error = _parse_json_body(event)
     if error:
@@ -2121,6 +2132,7 @@ def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
 
     cleaned = []
     ids = set()
+    minted = []  # (stored target, minted id) for legacy rows we filled an id into — WHIT-447
     for m in raw:
         if not isinstance(m, dict):
             return _json_response(400, {"error": "each milestone must be an object"})
@@ -2141,6 +2153,7 @@ def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
             return _json_response(400, {"error": "targetDate must be a real ISO YYYY-MM-DD date"})
 
         milestone_id = m.get("id")
+        was_id_less = milestone_id is None
         if milestone_id is None:
             milestone_id = str(uuid.uuid4())
         elif not isinstance(milestone_id, str) or not milestone_id.strip():
@@ -2153,12 +2166,15 @@ def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
             return _json_response(400, {"error": "milestone ids must be unique"})
         ids.add(milestone_id)
 
+        stored_balance = Decimal(str(balance))
         cleaned.append({
             "id": milestone_id,
             "label": label,
-            "targetBalance": Decimal(str(balance)),
+            "targetBalance": stored_balance,
             "targetDate": target_date,
         })
+        if was_id_less:
+            minted.append((stored_balance, milestone_id))
 
     # Strictly paid-down: each step a LOWER balance and a LATER date than the previous. ISO
     # YYYY-MM-DD strings compare lexically == chronologically, so a plain string compare is
@@ -2169,7 +2185,36 @@ def set_milestones(event: dict, repo: MilestoneRepository) -> dict:
                 "error": "milestones must be ordered by strictly decreasing targetBalance and increasing targetDate"})
 
     saved = repo.set_milestones(cleaned, current_scope(event))
+    _migrate_minted_milestone_markers(event, notify_repo, minted)
     return _json_response(200, saved)
+
+
+def _notify_scope(event: dict):
+    """The notify-store scope for this request. The plan store's shared tenant is "SHARED"
+    (current_scope); the notify store's is None → sk="FIRED" (repository_notify's back-compat
+    wart). The poller reads and writes notify markers at scope None, so the save path must
+    migrate at None too — passing "SHARED" would write to an sk="SHARED" item the poller never
+    reads, making the fix inert (WHIT-447). A real per-user scope later returns the SAME id for
+    both stores, so this bridge only affects the shared default."""
+    scope = current_scope(event)
+    return None if scope == "SHARED" else scope
+
+
+def _migrate_minted_milestone_markers(event: dict, notify_repo: NotifyRepository, minted: list) -> None:
+    """Carry each just-minted legacy row's "already celebrated" marker onto its new id, so the
+    next poll keeps rather than re-arms the celebration (WHIT-447).
+
+    Best-effort: the plan save has already committed, so a notify blip must never 500 the PUT.
+    Worst case is one milestone left re-armed — a single stray celebration only if its balance
+    later genuinely re-crosses (Option A, approved). The row is never id-less again, so this is a
+    one-shot with no retry; that trade is accepted over blocking a plan save on the notify table."""
+    if not minted:
+        return
+    try:
+        migrations = [mint_migration_markers(target, minted_id) for target, minted_id in minted]
+        notify_repo.migrate_milestone_markers(migrations, _notify_scope(event))
+    except Exception as e:
+        logger.warning("milestone marker mint-migration failed (plan already saved): %s", e)
 
 
 # "Suggest a plan" limits (WHIT-370). Handler literals, not shared constants (WHIT-136).

@@ -375,3 +375,125 @@ def test_remove_milestone_markers_error_surfaces_as_database_error(shared, clien
     r._table.update_item = boom
     with pytest.raises(database_error):
         r.remove_milestone_markers({"bal:300000.00"})
+
+
+# --- migrate a legacy marker onto a just-minted id (WHIT-447) -------------------------------
+# When the save endpoint mints an id for a legacy id-less row, its "already celebrated" marker
+# must follow the row from "bal:<amount>" to "id:<id>:bal:<amount>", or the next poll sweeps the
+# bare marker as dead and re-arms the celebration. migrate_milestone_markers does that rename,
+# but ONLY for a marker actually in the fired set, and adds-new-before-deletes-old so a partial
+# failure can never leave the row with zero markers.
+
+
+class _RecordingMilestoneTable(FakeMilestoneTable):
+    """FakeMilestoneTable that also records the order of update expressions, so a test can pin
+    that ADD runs before DELETE (the partial-failure safety contract)."""
+
+    def __init__(self):
+        super().__init__()
+        self.expressions = []
+
+    def update_item(self, **kwargs):
+        self.expressions.append(kwargs["UpdateExpression"])
+        return super().update_item(**kwargs)
+
+
+def _milestone_repo_with(shared, table):
+    r = shared.notify.NotifyRepository()
+    r._table = table
+    return r
+
+
+def test_migrate_renames_a_celebrated_marker_onto_its_new_id(shared):
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:400000.00")  # celebrated back when the row was id-less
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    # The once-ever record now follows the id; the bare legacy marker is gone.
+    assert r.fired_milestones() == {"id:u1:bal:400000.00"}
+
+
+def test_migrate_leaves_an_uncelebrated_marker_untouched(shared):
+    # If the legacy marker was never celebrated, minting an id must NOT invent a "done" marker —
+    # that would silently suppress a legitimate future first celebration.
+    r = _milestone_repo(shared)
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    assert r.fired_milestones() == set()
+
+
+def test_migrate_only_touches_the_celebrated_pairs_in_a_mixed_batch(shared):
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:400000.00")  # this one was celebrated
+    r.migrate_milestone_markers([
+        ("bal:400000.00", "id:u1:bal:400000.00"),   # migrates
+        ("bal:250000.00", "id:u2:bal:250000.00"),   # never celebrated → skipped
+    ])
+    assert r.fired_milestones() == {"id:u1:bal:400000.00"}
+
+
+def test_migrate_empty_is_a_noop(shared):
+    r = _milestone_repo(shared)
+
+    def boom(**kwargs):
+        raise AssertionError("update_item must not be called for an empty migration list")
+
+    r._table.update_item = boom
+    r.migrate_milestone_markers([])  # no raise
+
+
+def test_migrate_all_uncelebrated_does_not_touch_the_table(shared):
+    # Nothing to add → not even the ADD should run (DynamoDB rejects an empty String Set, and a
+    # no-op call must not touch the table).
+    r = _milestone_repo(shared)
+
+    def boom(**kwargs):
+        raise AssertionError("update_item must not be called when no marker is celebrated")
+
+    r._table.update_item = boom
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])  # no raise
+
+
+def test_migrate_adds_the_new_marker_before_deleting_the_old(shared):
+    # The order is the partial-failure contract: if the DELETE never runs, the row keeps BOTH
+    # markers (safe), never zero. Pin ADD-before-DELETE so a reorder can't slip in.
+    table = _RecordingMilestoneTable()
+    r = _milestone_repo_with(shared, table)
+    r.mark_milestone_fired("bal:400000.00")  # one ADD (the seed)
+    table.expressions.clear()
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    assert table.expressions == ["ADD #f :m", "DELETE #f :m"]
+
+
+def test_migrate_partial_failure_after_add_leaves_both_markers_never_zero(shared, client_error, database_error):
+    # If the DELETE fails after the ADD, the row is left holding BOTH markers — deduped, and the
+    # poller reaps the now-dead legacy one later. The one thing that must never happen is ZERO
+    # markers (which would re-arm the celebration this migration exists to prevent).
+    class _DeleteFailsTable(FakeMilestoneTable):
+        def update_item(self, **kwargs):
+            if kwargs["UpdateExpression"] == "DELETE #f :m":
+                raise client_error("InternalServerError")
+            return super().update_item(**kwargs)
+
+    r = _milestone_repo_with(shared, _DeleteFailsTable())
+    r.mark_milestone_fired("bal:400000.00")
+    with pytest.raises(database_error):
+        r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    assert r.fired_milestones() == {"bal:400000.00", "id:u1:bal:400000.00"}
+
+
+def test_migrate_is_scoped_by_owner(shared):
+    # Same multi-tenant seam as the other milestone writers: a migration under one scope must not
+    # touch another scope's markers or the shared default.
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:400000.00", scope="user-1")
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")], scope="user-1")
+    assert r.fired_milestones(scope="user-1") == {"id:u1:bal:400000.00"}
+    assert r.fired_milestones() == set()  # shared default untouched
+
+
+def test_migrate_writes_no_ttl(shared):
+    # Same no-TTL once-ever contract as mark/remove (the fake asserts no #e/:exp on the update).
+    r = _milestone_repo(shared)
+    r.mark_milestone_fired("bal:400000.00")
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
+    assert "expires_at" not in stored

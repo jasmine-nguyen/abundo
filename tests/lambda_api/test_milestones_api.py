@@ -35,6 +35,26 @@ class FakeMilestoneRepo:
         return [{**m, "targetBalance": float(m["targetBalance"])} for m in milestones]
 
 
+class FakeNotifyRepo:
+    """Handler-level stand-in for NotifyRepository (WHIT-447). Records every migrate call and
+    applies the same only-if-celebrated rename the real repo does, so a test can assert the
+    mint-migration. Empty fired set by default → migration is a no-op for the existing tests."""
+
+    def __init__(self, fired=None):
+        self.fired = set(fired or set())
+        self.migrate_calls = []
+
+    def fired_milestones(self, scope=None):
+        return set(self.fired)
+
+    def migrate_milestone_markers(self, migrations, scope=None):
+        self.migrate_calls.append({"migrations": list(migrations), "scope": scope})
+        for old, new in migrations:
+            if old in self.fired:
+                self.fired.add(new)
+                self.fired.discard(old)
+
+
 def _put_event(body):
     return {
         "rawPath": "/milestones",
@@ -44,9 +64,10 @@ def _put_event(body):
     }
 
 
-def _put(handler, body, repo=None):
+def _put(handler, body, repo=None, notify_repo=None):
     repo = repo or FakeMilestoneRepo()
-    return handler.set_milestones(_put_event(body), repo), repo
+    notify_repo = notify_repo or FakeNotifyRepo()
+    return handler.set_milestones(_put_event(body), repo, notify_repo), repo
 
 
 def _put_plan(handler, milestones, repo=None):
@@ -145,6 +166,7 @@ def test_set_milestones_label_is_trimmed(handler):
 def test_route_put_milestones_dispatch(handler, monkeypatch):
     repo = FakeMilestoneRepo()
     monkeypatch.setattr(handler, "MilestoneRepository", lambda: repo)
+    monkeypatch.setattr(handler, "NotifyRepository", FakeNotifyRepo)
     resp = handler.lambda_handler(_put_event({"milestones": VALID}), None)
     assert resp["statusCode"] == 200
     assert len(repo.set_calls) == 1
