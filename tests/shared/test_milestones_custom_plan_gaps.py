@@ -222,20 +222,21 @@ def test_all_rows_bad_is_empty_and_never_wipes_markers(shared, recorder):
     assert notify.fired == {"id:a:bal:480000.00", "id:c:bal:120000.00"}   # record intact
 
 
-def test_previously_fired_row_now_corrupt_is_swept_not_re_fired(shared, recorder):
-    # A row that celebrated earlier and is NOW corrupt. Note WHY it is swept: the row has no
-    # readable targetBalance, so _plan_marker can't build a key for it at all — that, not "it
-    # was skipped", is what makes it look gone. A row skipped for a bad date or a blank label IS
-    # keyable and KEEPS its marker ([B3] in test_milestone_rows_gaps.py). This is the one
-    # remaining corner where an unreadable row still loses its record; it is the accepted
-    # fallback, and this is the only test pinning it. Proves the sweep happens without a crash.
+def test_previously_fired_row_now_unreadable_target_keeps_its_record(shared, recorder):
+    # A row that celebrated earlier and NOW has an unreadable target (no targetBalance), so
+    # _plan_marker can't rebuild its exact key. WHIT-424: its id still reads ("gone"), so every
+    # "id:gone:..." marker it fired stays live via the id prefix rather than being swept as if the
+    # row were deleted — repairing the amount and re-crossing can no longer congratulate twice.
+    # A row that is unreadable AND has no readable id is the one remaining corner that still loses
+    # its record (pinned in test_milestones_live_keys_gaps.py). Proves the sweep runs without a crash.
     repo = FakeMilestoneRepo(stored=[
         _row("Good", "120000", id="c"),
-        {"id": "gone", "label": "Was celebrated", "targetDate": "2027-01-01"},   # now corrupt
+        {"id": "gone", "label": "Was celebrated", "targetDate": "2027-01-01"},   # target now unreadable
     ])
     notify = FakeNotifyRepo(fired={"id:c:bal:120000.00", "id:gone:bal:480000.00"})
     sent, notify = _notify(shared, old="130000", new="119000", milestone_repo=repo, notify=notify)
-    assert "id:gone:bal:480000.00" in notify.removed            # orphan marker swept
+    assert "id:gone:bal:480000.00" not in notify.removed        # kept via the id prefix
+    assert "id:gone:bal:480000.00" in notify.fired              # record intact
     assert recorder == []                                       # already-fired good row: no re-fire
 
 

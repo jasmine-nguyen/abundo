@@ -3,20 +3,22 @@ set _resolve_plan gained so the WHIT-385 sweep can tell an UNREADABLE row from a
 
 Already locked elsewhere, NOT repeated here: an unreadable row keeps its marker while a
 genuinely gone one is swept in the same poll ([B3], test_milestone_rows_gaps.py); a repaired
-date is silent ([B1b]); sweep + real celebration in one poll ([E4]); a row too corrupt to key
-at all loses its marker (test_previously_fired_row_now_corrupt_is_swept_not_re_fired and
-test_sweep_removes_only_the_stale_marker_keeps_survivor_with_a_corrupt_row_present); the
+date is silent ([B1b]); sweep + real celebration in one poll ([E4]); a row whose target is
+unreadable but whose id still reads keeps its record while the sweep runs
+(test_previously_fired_row_now_unreadable_target_keeps_its_record, WHIT-424); the sweep still
+reaps an unrelated stale marker with a corrupt row present
+(test_sweep_removes_only_the_stale_marker_keeps_survivor_with_a_corrupt_row_present); the
 non-authoritative paths never sweep (test_milestones_custom_plan.py); an authoritative EMPTY
 plan never sweeps or even reads ([B1c], [E6], WHIT-386 gaps).
 
 What none of them cover — the two directions this change can be wrong in:
 
-  [L1] the CONTRACT, stated once. Liveness now depends on exactly one field: can we build the
-       marker? Every other rejection must leave the marker alone. Nothing says that in one
-       place, so "which broken field costs the once-ever record" is currently only inferable by
-       reading three files. Both halves in one table, so a future validator added to the read
-       path has an obvious row to add — and moving `_plan_marker` back after the validators
-       turns the whole "survives" half red.
+  [L1] the CONTRACT, stated once. A row's once-ever record survives whenever we can still name
+       the row: an EXACT marker while we can build one, or — when only the target amount is
+       unreadable but the id still reads — every "id:<row id>:" marker under it (WHIT-424). Only
+       a row we can neither key NOR name (unreadable target AND no readable id) loses its record.
+       Both halves in one place, so a future validator added to the read path has an obvious home
+       — and moving `_plan_marker` back after the validators turns the "survives" half red.
   [L2] the OPPOSITE risk to the one the change fixes: markers that should still be swept. A
        keyable row is now immune, so "gone" has to keep meaning gone for a row that is present
        but UNREADABLE — re-targeted, re-identified, or legacy-id-minted. Every one of those
@@ -158,14 +160,14 @@ _UNKEYABLE = [
 
 
 @pytest.mark.parametrize("why, broken", _UNKEYABLE, ids=[c[0] for c in _UNKEYABLE])
-def test_a_row_we_cannot_key_at_all_still_loses_its_marker(shared, recorder, why, broken):
-    # [L1] The accepted cost, pinned as the other half of the contract. The marker embeds the
-    # target amount, so a row whose target is unreadable can't be matched to a marker at all —
-    # there is no honest answer, and the sweep keeps its original "not in the plan -> gone"
-    # behaviour. That means an unreadable targetBalance is still a route to a second
-    # celebration, where an unreadable label or date no longer is.
-    # Pinned so the asymmetry is a decision on record: if `_plan_marker` ever gains an id-only
-    # fallback, this table goes red and the trade-off gets re-made deliberately, not by accident.
+def test_an_unreadable_target_with_a_readable_id_keeps_its_marker(shared, recorder, why, broken):
+    # [L1] WHIT-424: a row whose target amount is unreadable but whose id we CAN read is still a
+    # row the user has — we just can't rebuild its exact marker (the marker embeds the amount). So
+    # every "id:<row id>:" marker it fired stays live via the id prefix rather than being swept as
+    # if the row were deleted, closing the double-celebration that a repair + re-cross would open.
+    # This is the case that USED to lose its record.
+    # Fail-on-revert (two ways): drop the _row_id_prefix registration in _resolve_plan's except
+    # branch, or rebuild liveness from `plan` — either makes every row here lose its marker.
     broken = dict(broken)
     drop = broken.pop("drop", False)
     bad = _row(id="x", **broken)
@@ -175,7 +177,41 @@ def test_a_row_we_cannot_key_at_all_still_loses_its_marker(shared, recorder, why
 
     notify = _sweep(shared, [_GOOD, bad], fired={_KEEP_MARKER, marker})
 
-    assert notify.removed == {marker}, why
+    assert notify.removed == set(), why
+    assert notify.fired == {_KEEP_MARKER, marker}, why
+
+
+# The other half of the WHIT-424 asymmetry: an unreadable target AND no readable id. There is no
+# exact key (target gone) and no "id:<id>:" prefix (id gone), so nothing matches — the marker is
+# swept, keeping the original "not in the plan -> gone" behaviour. The legacy amount-only marker
+# each row once wrote depends on its id shape, so it is spelled out per case rather than rebuilt.
+_UNKEYABLE_AND_UNNAMEABLE = [
+    ("no id key (legacy row)", {"pop_id": True}, "bal:250000.00"),
+    ("null id", {"id": None}, "bal:250000.00"),
+    ("blank id", {"id": ""}, "id::bal:250000.00"),
+    ("non-str id", {"id": 42}, "id:42:bal:250000.00"),
+]
+
+
+@pytest.mark.parametrize("why, id_shape, once_written", _UNKEYABLE_AND_UNNAMEABLE,
+                         ids=[c[0] for c in _UNKEYABLE_AND_UNNAMEABLE])
+def test_an_unreadable_target_with_no_readable_id_still_loses_its_marker(
+        shared, recorder, why, id_shape, once_written):
+    # [L1] The accepted cost, still pinned. A row that is BOTH unreadable-target and unnameable has
+    # no honest way to keep its record, so it is swept — the deliberate line WHIT-424 drew: keep it
+    # when the id reads, lose it when it doesn't. A readable id, per the save endpoint, is a
+    # non-empty string; None / blank / non-str all fall back to "gone".
+    # Fail-on-revert: if _row_id_prefix returned a prefix for one of these, its marker would
+    # survive and this goes red.
+    id_shape = dict(id_shape)
+    pop_id = id_shape.pop("pop_id", False)
+    bad = _row(targetBalance="oops", **id_shape)
+    if pop_id:
+        bad.pop("id")
+
+    notify = _sweep(shared, [_GOOD, bad], fired={_KEEP_MARKER, once_written})
+
+    assert notify.removed == {once_written}, why
     assert notify.fired == {_KEEP_MARKER}, why
 
 

@@ -26,8 +26,9 @@ dropped and every Lambda importing it would 500 on import.
 """
 
 import math
-from datetime import date
 from decimal import Decimal, InvalidOperation
+
+from iso_date import valid_iso_date
 
 
 class MalformedMilestoneRow(ValueError):
@@ -67,9 +68,12 @@ def row_text(row, name) -> str:
 def row_date(row, name) -> str:
     """A required date the consumer can actually parse, returned unchanged.
 
-    The bar is exactly `date.fromisoformat` — what lambda_api._review_candidates calls on
-    this field. A blank or unparsable stored date raises there, outside any per-row guard,
-    which 500s the review endpoint (WHIT-394).
+    The bar is exactly `valid_iso_date` — the one shared ISO YYYY-MM-DD rule the save endpoint
+    also enforces (WHIT-418). It is stricter than bare date.fromisoformat, which on Python 3.11+
+    also accepts "20300101" and "2030-W01-1": the app can't parse those as a date, and
+    lambda_api._review_candidates' date.fromisoformat would read "2030-W01-1" as a different day
+    than the screen shows. A blank or unparsable stored date raises there, outside any per-row
+    guard, which 500s the review endpoint (WHIT-394).
 
     Both read paths apply it. The poller has no use for the value, but WHIT-417 decided a row
     the plan screen hides must not still celebrate: the user would tap "🎉 Milestone reached"
@@ -78,10 +82,8 @@ def row_date(row, name) -> str:
     value = row_field(row, name)
     if not isinstance(value, str):
         raise MalformedMilestoneRow(f"milestone row has a non-text {name}: {row!r}")
-    try:
-        date.fromisoformat(value)
-    except ValueError as e:
-        raise MalformedMilestoneRow(f"milestone row has an unparsable {name}: {row!r}") from e
+    if not valid_iso_date(value):
+        raise MalformedMilestoneRow(f"milestone row has an unparsable {name}: {row!r}")
     return value
 
 
