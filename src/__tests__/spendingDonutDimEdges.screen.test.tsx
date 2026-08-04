@@ -12,9 +12,9 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 // The reduce-motion-OFF (animated) branch lives in spendingDonutDimMotion.screen.test.tsx.
 jest.mock('../motion/useReduceMotion', () => ({ useReduceMotion: () => true }));
 
-import { SpendingDonut, type DonutSlice } from '../components/SpendingDonut';
+import { SpendingDonut, WEDGE_DIM_FALLBACK, type DonutSlice } from '../components/SpendingDonut';
 import { OTHER_COLOR } from '../chartColors';
-import { WEDGE_DIM_MAX, wedgeDimOpacity } from '../contrast';
+import { wedgeDimOpacity } from '../contrast';
 import { opacityOf, ancestorProp, sl, DIM_BLUE, DIM_GREEN, DIM_OTHER } from './support/donut';
 
 const slice = (id: string, color: string, value: number): DonutSlice => ({ id, name: id, color, value });
@@ -67,19 +67,20 @@ describe('SpendingDonut — the fade must track the CURRENT colour, not a rememb
   });
 
   // [A59] An unusable colour string reaching the REAL component, not just the pure module. [Q33]
-  // proves wedgeDimOpacity clamps; nothing proved the clamp survives the render, and the clamp is
-  // the one path where a dimmed wedge is nearly indistinguishable from the picked one (0.85 vs 1).
-  // Empty string is the realistic shape — a category row whose colour never resolved.
-  it('[A59] a wedge with an unparseable colour still renders, and lands on the clamp', () => {
+  // proves wedgeDimOpacity returns null; nothing proved the render substitutes the fallback and that
+  // it survives the interpolation — and the fallback is the one path where a dimmed wedge is nearly
+  // indistinguishable from the picked one (0.85 vs 1). Empty string is the realistic shape — a
+  // category row whose colour never resolved.
+  it('[A59] a wedge with an unparseable colour still renders, and lands on the fallback', () => {
     render(<SpendingDonut slices={[sl('a', 60), slice('broken', '', 40)]} />);
     fireEvent.press(screen.getByTestId('donut-slice-a'));
 
-    expect(opacityOf('broken')).toBeCloseTo(WEDGE_DIM_MAX);
-    expect(opacityOf('broken')).toBeLessThan(1);          // it does step back, per contrast.ts:21-26
+    expect(opacityOf('broken')).toBeCloseTo(WEDGE_DIM_FALLBACK);
+    expect(opacityOf('broken')).toBeLessThan(1);          // it does step back, per WEDGE_DIM_FALLBACK
     expect(opacityOf('broken')).toBeGreaterThan(DIM_BLUE); // ...but far less than a measurable peer:
                                                            // an unresolved colour reads closest to
                                                            // "selected" of anything on the ring.
-    expect(wedgeDimOpacity('')).toBe(WEDGE_DIM_MAX);       // the module half, for the seam
+    expect(wedgeDimOpacity('')).toBeNull();               // the module half: it measures nothing here
   });
 });
 

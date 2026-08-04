@@ -18,14 +18,14 @@ export interface ParsedColor { rgb: Rgb; alpha: number }
 // implementation. The headroom costs about 0.02 of opacity.
 export const WEDGE_DIM_TARGET = 3.1;
 
-// Fallback for a colour we cannot measure, or one that cannot clear the bar at any opacity. NOT
-// 1: a wedge that does not fade at all reads as the picked one. This still steps visibly back.
-// Deliberately high — if we cannot measure a colour we cannot promise it is visible, so err toward
-// more opaque. Note it is NOT far above the real floors any more: the grey "Other" legitimately
-// measures 0.825. So "at the fallback" and "measured 0.85" are only 0.025 apart and cannot be told
-// apart by the value alone — see the WHIT-425 tech-debt card. [Q29] in otherColorToken.logic.test.ts
-// is what reddens if a palette change pushes a measured floor into that gap.
-export const WEDGE_DIM_MAX = 0.85;
+// A real fade must dim to below this to still read as "faded" rather than "picked" (WHIT-430).
+// Its own named number so the tests can pin "the fade really faded" WITHOUT reusing the drawing
+// fallback (SpendingDonut's WEDGE_DIM_FALLBACK). The two used to be one constant (WEDGE_DIM_MAX,
+// 0.85) doing both jobs — and a measured floor could sit right next to the fallback with no way to
+// tell "we measured this" from "we gave up". Now wedgeDimOpacity returns null when it cannot
+// measure, so the two are never conflated. The tightest real wedge (grey "Other") measures 0.825,
+// so this ceiling sits above every real fade; [Q29] in otherColorToken.logic.test.ts pins it.
+export const WEDGE_DIM_CEILING = 0.9;
 
 // #rgb, #rgba, #rrggbb, #rrggbbaa — every shape this codebase writes, in either case.
 const HEX = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -93,25 +93,29 @@ export function minOpacityForContrast(fg: Rgb, bg: Rgb, target: number): number 
   return high;
 }
 
-// How far one wedge fades when another is picked. Rounds UP to three decimals, so the shipped
-// value always clears the target and the screen tests can pin exact numbers.
-export function wedgeDimOpacity(color: string, background: string = CHART_BG): number {
+// How far one wedge fades when another is picked, or null when the colour cannot be measured — it
+// will not parse, the track is see-through, or it cannot clear the target at any opacity. The one
+// caller (SpendingDonut) substitutes WEDGE_DIM_FALLBACK for null: the "we gave up" opacity is a
+// drawing decision, not a measurement, so this function no longer bakes it in (WHIT-430). Rounds UP
+// to three decimals, so the shipped value always clears the target and the screen tests can pin
+// exact numbers.
+export function wedgeDimOpacity(color: string, background: string = CHART_BG): number | null {
   const wedge = parseHexColor(color);
   const backdrop = parseHexColor(background);
-  if (!wedge || !backdrop) return WEDGE_DIM_MAX;
+  if (!wedge || !backdrop) return null;
   // A see-through track would leave us guessing at what sits behind it. Refuse rather than guess.
-  if (backdrop.alpha !== 1) return WEDGE_DIM_MAX;
-  if (wedge.alpha === 0) return WEDGE_DIM_MAX;
+  if (backdrop.alpha !== 1) return null;
+  if (wedge.alpha === 0) return null;
 
   const floor = minOpacityForContrast(wedge.rgb, backdrop.rgb, WEDGE_DIM_TARGET);
-  if (floor === null) return WEDGE_DIM_MAX;
+  if (floor === null) return null;
 
   // SVG multiplies a stroke's own alpha by its group opacity, so a colour carrying alpha needs a
   // higher group value to reach the same composite. A measured floor is never trimmed to fit:
   // handing back less opacity than a colour needs returns a value that fails the target, the one
   // thing this function must not do. If even full opacity is not enough, the colour is unusable at
-  // any fade and takes the same fallback as one we cannot read at all.
+  // any fade and cannot be measured — null, the same as one we cannot read at all.
   const groupOpacity = Math.ceil((floor / wedge.alpha) * 1000) / 1000;
-  if (groupOpacity > 1) return WEDGE_DIM_MAX;
+  if (groupOpacity > 1) return null;
   return groupOpacity;
 }

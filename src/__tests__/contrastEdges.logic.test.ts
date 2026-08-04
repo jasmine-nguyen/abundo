@@ -3,47 +3,35 @@
 //
 // contrast.logic.test.ts tests the module's happy shapes and its two fallback paths.
 // otherColorToken.logic.test.ts measures the SHIPPED colours through it. Neither pins:
-//   • the input shapes that must degrade to the fallback rather than crash the screen;
+//   • the input shapes that must degrade to null (not crash the screen);
 //   • the bisection on a wedge LIGHTER than its backdrop — the app has one near-black track, so
 //     only the one direction is ever exercised in production;
 //   • the whitespace and near-miss-length edges of the hex regex.
-// Measurements are made with this file's own independently written helpers, never with
+// Measurements are made with the shared hand-written helper in ./support/wcag, never with
 // src/contrast.ts, so nothing here can pass by agreeing with the code it pins.
 import { describe, it, expect } from '@jest/globals';
 import {
   parseHexColor,
   minOpacityForContrast,
   wedgeDimOpacity,
-  WEDGE_DIM_MAX,
   WEDGE_DIM_TARGET,
 } from '../contrast';
-
-// --- independent WCAG helpers (deliberately NOT imported from src/contrast.ts) ---
-const rgb = (hex: string): [number, number, number] => {
-  const n = parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-};
-const lin = (v: number) => {
-  const s = v / 255;
-  return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-};
-const lum = (c: number[]) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
-const ratio = (a: number[], b: number[]) =>
-  (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
-const over = (fg: number[], bg: number[], alpha: number) =>
-  [0, 1, 2].map((i) => alpha * fg[i] + (1 - alpha) * bg[i]);
+// Independent WCAG maths, hand-written and shared (never imported from src/contrast.ts — see the
+// support/wcag header). Aliased to this file's short local names to keep the assertions below terse.
+import { hexToRgb as rgb, contrastRatio as ratio, compositeOver as over } from './support/wcag';
 
 describe('contrast — the input shapes that must degrade, not crash', () => {
-  it('[Q36] a non-string colour lands on the clamp instead of throwing', () => {
+  it('[Q36] a non-string colour returns null instead of throwing', () => {
     // DonutSlice.color is `string` to the compiler, but the value is network-derived and
     // chartColors.ts documents `undefined` reaching a wedge's stroke when a corrupt colorSlot comes
     // off the wire — calling it "an INVISIBLE slice - no crash". wedgeDimOpacity runs at RENDER
-    // time, so without the typeof guard that same row takes the whole Insights tab down.
-    expect(wedgeDimOpacity(undefined as unknown as string)).toBe(WEDGE_DIM_MAX);
-    expect(wedgeDimOpacity(null as unknown as string)).toBe(WEDGE_DIM_MAX);
+    // time, so without the typeof guard that same row takes the whole Insights tab down. It returns
+    // null when it cannot measure — the caller (SpendingDonut) substitutes the drawing fallback.
+    expect(wedgeDimOpacity(undefined as unknown as string)).toBeNull();
+    expect(wedgeDimOpacity(null as unknown as string)).toBeNull();
     // Everything that IS a string degrades the same way.
     for (const bad of ['', '   ', 'red', 'rgba(122,162,247,.4)', '#12345', '#1234567']) {
-      expect(wedgeDimOpacity(bad)).toBe(WEDGE_DIM_MAX);
+      expect(wedgeDimOpacity(bad)).toBeNull();
     }
   });
 });
