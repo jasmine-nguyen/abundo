@@ -90,6 +90,7 @@ from spend import (
 )
 from anthropic_client import AnthropicError
 from insights_ai import generate_suggestions
+from iso_date import ISO_DATE_RE, valid_iso_date
 from milestone_ai import review_pacing, suggest_pacing
 from paydown import (
     add_months,
@@ -1981,11 +1982,6 @@ def get_repayment(repo: TransactionRepository) -> dict:
 # The user-entered loan-facts fields, in the order the form + response use them.
 _LOANFACTS_FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
 
-# The optional target payoff date (WHIT-126), stored as an ISO "YYYY-MM-DD" string.
-# Kept here (not in shared/constants.py) so it can't drift from the lambda_api
-# constants shadow. Shape-checked here; the real-calendar-date check is date.fromisoformat.
-_GOAL_DATE_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
 
 def get_loanfacts(repo: LoanFactsRepository) -> dict:
     """GET /loanfacts — the user's saved home-loan facts (Loan facts card).
@@ -2043,11 +2039,12 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     if not (0 < values["ratePct"] <= 100):
         return _json_response(400, {"error": "ratePct must be between 0 and 100"})
 
-    # Optional target payoff date (WHIT-126): absent/None is fine (unset or cleared);
-    # when present it must be a real ISO YYYY-MM-DD calendar date.
+    # Optional target payoff date (WHIT-126): absent/None is fine (unset or cleared); when present
+    # it must be a real ISO YYYY-MM-DD calendar date. Shape and calendar are checked separately so
+    # the 400 says WHICH is wrong; the shape regex is the one shared source (ISO_DATE_RE, WHIT-418).
     goal_date = body.get("payoffGoalDate")
     if goal_date is not None:
-        if not isinstance(goal_date, str) or not _GOAL_DATE_ISO_RE.match(goal_date):
+        if not isinstance(goal_date, str) or not ISO_DATE_RE.match(goal_date):
             return _json_response(400, {"error": "payoffGoalDate must be an ISO YYYY-MM-DD date"})
         try:
             date.fromisoformat(goal_date)
@@ -2635,16 +2632,10 @@ _GOAL_AMOUNT_MAX = 1_000_000_000
 _SYNCED_ACCOUNT_IDS = frozenset(ACCOUNT_ID_MAP.values())
 
 
-def _valid_iso_date(value) -> bool:
-    """True when `value` is a real ISO YYYY-MM-DD calendar date string. The regex
-    checks shape (it would pass 2026-02-30); date.fromisoformat checks the calendar."""
-    if not isinstance(value, str) or not _GOAL_DATE_ISO_RE.match(value):
-        return False
-    try:
-        date.fromisoformat(value)
-    except ValueError:
-        return False
-    return True
+# The one shared ISO YYYY-MM-DD rule (WHIT-418), now also the milestone READ bar so the two
+# can't drift. Kept under the old name so every caller and the e2e tests' handler._valid_iso_date
+# reference are unchanged.
+_valid_iso_date = valid_iso_date
 
 
 def _validate_goal_body(event: dict):

@@ -95,7 +95,7 @@ _REIMPORT = (
     "repository_goals", "repository_category",
     "repository_errors", "repository_insight", "repository_device", "push",
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
-    "repository_paycycle", "goal_pace", "goal_nudge", "milestones", "milestone_rows",
+    "repository_paycycle", "goal_pace", "goal_nudge", "milestones", "milestone_rows", "iso_date",
     "repayment_alerts", "repayment_rules", "paydown",
 )
 

@@ -14,11 +14,11 @@ What none of them cover:
        Z-suffixed, a bool, a Decimal or bytes — every one of which must be rejected by BOTH
        paths, or the divergence WHIT-417 closed re-opens on a different shape. The MISSING
        targetDate KEY (vs a present null) is its own branch: row_field, not fromisoformat.
-  [E2] the shapes row_date is LENIENT about. date.fromisoformat accepts basic ISO ("20300101")
-       and week dates ("2030-W01-1") on python 3.11+, which the save endpoint's regex rejects.
-       Both read paths must agree on those too — tightening row_date is a both-paths decision,
-       and this is what makes a one-sided tightening go red instead of silently re-splitting
-       the screen from the push.
+  [E2] the shapes bare date.fromisoformat is LENIENT about — basic ISO ("20300101") and week
+       dates ("2030-W01-1"), accepted on python 3.11+ but rejected by the save endpoint's regex.
+       WHIT-418 made row_date use that same regex-plus-calendar validator, so both read paths now
+       reject them too. Both paths must stay in agreement — loosen one side and this goes red
+       instead of silently re-splitting the screen from the push.
   [E3] POSITION. _resolve_plan skips row-by-row; a bad row FIRST must cost no more than a bad
        row LAST. Guards the obvious "optimisation" — an early break/return in that loop — which
        would silently drop every row after the broken one from the celebration.
@@ -162,19 +162,19 @@ def test_a_row_with_no_target_date_key_at_all_is_dropped_by_both_read_paths(
 # --- [E2] the leniency is shared too ----------------------------------------
 
 @pytest.mark.parametrize("lenient_date", ["20300101", "2030-W01-1"])
-def test_a_date_only_fromisoformat_accepts_is_kept_by_both_read_paths(
+def test_a_date_only_fromisoformat_accepts_is_now_rejected_by_both_read_paths(
         shared, milestone_repo, lenient_date):
-    # [E2] The read bar is exactly date.fromisoformat, which on python 3.11+ (the lambdas run
-    # 3.12 — terraform/lambda.tf) accepts basic and week-date ISO forms. The SAVE endpoint's
-    # ^\d{4}-\d{2}-\d{2}$ regex rejects both, so these only reach the store by hand-edit — but
-    # while they are there the screen shows them, so the poller must celebrate them. Pinning
-    # the pair keeps any future tightening a both-paths change: tighten one and this goes red.
+    # [E2] WHIT-418 made the read bar the one shared validator (a ^\d{4}-\d{2}-\d{2}$ regex AND the
+    # calendar check), the same rule the save endpoint uses — no longer bare date.fromisoformat,
+    # which on python 3.11+ (the lambdas run 3.12 — terraform/lambda.tf) accepts these basic and
+    # week-date ISO forms. So a hand-edited row holding one is now dropped by BOTH read paths, the
+    # screen and the poller agreeing. Pinning the pair keeps the tightening a both-paths change:
+    # loosen one side and this goes red.
     stored = [_row(id="lenient", label="Lenient", targetDate=lenient_date)]
     _store_raw_row(milestone_repo, stored)
 
-    assert [m["targetDate"] for m in milestone_repo.get_milestones()] == [lenient_date]
-    assert [p.label for p in shared.milestones.resolve_plan(FakeMilestoneRepo(stored))] == [
-        "Lenient"]
+    assert milestone_repo.get_milestones() == []
+    assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored)) == []
 
 
 # --- [E3] a bad row FIRST costs no more than a bad row LAST -----------------

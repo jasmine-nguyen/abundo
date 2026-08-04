@@ -15,9 +15,9 @@ read (PUT -> GET). Nothing pins it for the path this card just changed.
   [F2] EVERY real calendar date the save endpoint accepts is accepted by row_date. A loop over
        every day of an 11-year span plus date.min/date.max, so the two rules can't part company
        on leap days, century years, or a boundary year.
-  [F3] the reverse direction, stated rather than assumed: the dates row_date is lenient about
-       ("20300101", "2030-W01-1") are exactly the ones the save endpoint REJECTS — which is why
-       the corrupt row this card is about can only arrive by hand-edit.
+  [F3] the two rules now AGREE on the forms bare date.fromisoformat is lenient about
+       ("20300101", "2030-W01-1"): the save endpoint rejects them and, since WHIT-418, so does
+       row_date — the read bar is the same shared validator as the write bar, not a looser one.
 
 The poller module is imported inside the `handler` fixture's sys.path window, where `milestones`
 resolves to shared/milestones.py (the deployed layer's copy) — the same module the balance
@@ -184,14 +184,15 @@ def test_every_date_the_save_endpoint_accepts_is_readable_by_the_poller(handler,
 
 
 @pytest.mark.parametrize("lenient", ["20300101", "2030-W01-1"])
-def test_the_read_rule_is_the_lenient_one_so_a_bad_row_is_hand_edit_only(handler, lenient):
-    # [F3] The gap between the two rules, stated. date.fromisoformat accepts these on python
-    # 3.11+ (the lambdas run 3.12), the save endpoint's ^\d{4}-\d{2}-\d{2}$ regex does not — so
-    # the read rule is strictly the looser of the two in every direction we can reach, which is
-    # what makes "this row can only exist by hand-editing the database" true. If the save
-    # endpoint ever loosened to match, THIS is the test that says so.
+def test_the_read_rule_now_matches_the_write_rule_rejecting_the_lenient_forms(handler, lenient):
+    # [F3] WHIT-418 unified the two rules on the one shared validator, so the read rule is no
+    # longer the looser one. date.fromisoformat alone accepts these basic/week ISO forms on python
+    # 3.11+ (the lambdas run 3.12); the save endpoint's ^\d{4}-\d{2}-\d{2}$ regex rejects them, and
+    # now so does row_date. Pinned in both directions: the WRITE bar rejects them AND the READ bar
+    # raises. If either rule ever loosened, THIS is the test that says so.
     import milestone_rows
 
     assert handler._valid_iso_date(lenient) is False
     row = {"id": "m", "label": "L", "targetBalance": Decimal("1"), "targetDate": lenient}
-    assert milestone_rows.row_date(row, "targetDate") == lenient
+    with pytest.raises(milestone_rows.MalformedMilestoneRow):
+        milestone_rows.row_date(row, "targetDate")
