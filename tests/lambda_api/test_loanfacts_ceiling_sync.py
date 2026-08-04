@@ -22,8 +22,12 @@ a typo in that file would ship green.
 
 import pathlib
 
+import pytest
+
 import _ts_const
 from _lambda_api_constants import api_constant
+
+pytestmark = pytest.mark.crosslang
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _CLIENT_LIMITS = _ROOT / "src" / "loanLimits.ts"

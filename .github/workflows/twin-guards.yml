@@ -1,0 +1,53 @@
+name: Twin-file drift guards
+
+# The cross-language "twin" guards (a pytest test that reads a client src/ or app/ file
+# and asserts it matches a server value) live in the pytest suite. python-tests.yml runs
+# on server paths and client-tests.yml can't run pytest — so a one-sided edit is exactly
+# the change that skips the guard built to catch it (WHIT-436, replacing the per-file
+# `paths:` pins WHIT-406 hand-maintained).
+#
+# This job runs ONLY those guards and fires on ANY client OR server source change.
+# Selection is the `crosslang` marker (pytest.ini) — no hand-maintained filename list;
+# tests/conftest.py fails an unmarked test that reads a client file, so the selector
+# can't rot. test_twin_guards_job.py pins this trigger + command so they can't drift.
+#
+# Caveat (same as the other two workflows): if branch protection marks this a REQUIRED
+# check, a path-skipped run reads "pending" and can block a PR that touches none of the
+# paths below — keep the paths broad and the job name (`crosslang`) stable if so.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"        # client source (tests/shared/_chart_ramp.py:_CLIENT_DIRS)
+      - "app/**"        # client source — the ramp file has moved dirs before (WHIT-408)
+      - "shared/**"     # server side of the twins
+      - "lambda*/**"    # server side of the twins
+      - "tests/**"      # the guards + their TS readers live here
+      - "pytest.ini"    # marker registration + collection config
+      - "**/requirements*.txt"
+      - ".github/workflows/twin-guards.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crosslang:
+    name: crosslang
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Match the Lambda runtime (terraform/lambda.tf: python3.12).
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install -r lambda_sync_trigger/requirements-dev.txt
+
+      # Only the twin guards, selected by marker — unscoped, so a marked guard in any
+      # directory is picked up. No --cov: this is a fast guard, the two suites own coverage.
+      - name: Run the cross-language twin guards
+        run: python -m pytest -m crosslang

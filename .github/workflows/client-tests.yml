@@ -29,12 +29,11 @@ on:
       - "metro.config.js"
       - "scripts/coverage-merge-check.js"
       - "scripts/coverage-run-local.sh"
-      # Half of a cross-language contract with src/chartColors.ts (WHIT-432):
-      # seedSlotSync.logic.test.ts reads this .py to catch a seed re-space, so a
-      # SERVER-only change is exactly the change that pin exists for — and without this
-      # entry it is also the change that skips this whole workflow. python-tests.yml
-      # carries the mirror-image entry for the same reason (WHIT-406).
-      - "shared/repository_category.py"
+      # No server-file (shared/) entry here: the cross-language twin guard for the seed
+      # re-space now runs on any shared/ change via twin-guards.yml (the `crosslang`
+      # marker's pytest-side [B6]), replacing the hand-maintained pin (WHIT-436). The
+      # Jest-side seedSlotSync pin no longer runs on a server-only change; [B6] is the
+      # single guard for that contract now — an accepted trade (WHIT-435).
       - ".github/workflows/client-tests.yml"
 
 # Cancel an in-progress run when a newer commit lands on the same branch/PR, so a

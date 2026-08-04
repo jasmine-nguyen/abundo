@@ -52,6 +52,7 @@ def _client_file(tmp_path, body: str) -> pathlib.Path:
     return path
 
 
+@pytest.mark.crosslang  # reads src/loanLimits.ts through the real guard
 def test_guard_is_green_as_shipped(sync_guard):
     """[D1] Baseline — the three real assertions pass against the real files. If this ever
     fails, the ceilings have genuinely drifted and the tests below prove nothing."""
@@ -60,6 +61,7 @@ def test_guard_is_green_as_shipped(sync_guard):
     sync_guard.test_client_and_server_loanfacts_ceilings_agree()
 
 
+@pytest.mark.crosslang  # reads src/loanLimits.ts before the monkeypatch
 def test_guard_goes_red_when_the_server_ceiling_drifts(sync_guard, monkeypatch):
     """[D2] Someone edits lambda_api/constants.py and forgets src/loanLimits.ts."""
     client = sync_guard._client_ceiling()

@@ -24,9 +24,11 @@ number to bump.
 The client half of this contract is guarded from Jest by
 src/__tests__/seedSlotSync.logic.test.ts, which reads the .py. That is NOT redundant with
 this file, it is the other direction: CI runs each suite on a different trigger, so a
-server-only change skips Jest and a client-only change skips pytest (hence the
-src/chartColors.ts entry in python-tests.yml). Only this side ties CATEGORY_COLORS itself
-to the slot count — the Jest side compares against ASSIGNMENT_ORDER.length.
+server-only change skips Jest and a client-only change skips pytest. This file reads a
+client file, so it is marked `crosslang` and the twin-guards.yml drift job runs it on any
+src/ change (WHIT-436, replacing the old src/chartColors.ts pin in python-tests.yml).
+Only this side ties CATEGORY_COLORS itself to the slot count — the Jest side compares
+against ASSIGNMENT_ORDER.length.
 
 There is deliberately NO pin on the value 20. Both sides agreeing on 25 is a correct
 state, so a pin would only cry wolf; the cross-check is self-sufficient. (The
@@ -49,6 +51,9 @@ _FABRICATED = (
     "export const CATEGORY_COLORS = [\n  '#000000', '#ffffff',\n] as const;\n"
     "export const ASSIGNMENT_ORDER = [\n  1, 0,\n] as const;\n"
 )
+
+
+pytestmark = pytest.mark.crosslang
 
 
 @pytest.fixture
