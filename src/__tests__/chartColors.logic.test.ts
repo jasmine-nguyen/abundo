@@ -33,11 +33,11 @@ describe('chartCategoryColor', () => {
   });
 
   it('maps each built-in id to its fixed ramp slot', () => {
-    expect(chartCategoryColor('eatingout')).toBe('#f98f98'); // slot 0
-    expect(chartCategoryColor('coffee')).toBe('#e8a24f');    // slot 3
-    expect(chartCategoryColor('groceries')).toBe('#8ec56f'); // slot 6
-    expect(chartCategoryColor('transport')).toBe('#82b4ff'); // slot 14
-    expect(chartCategoryColor('subs')).toBe('#d797e6');      // slot 18
+    expect(chartCategoryColor('eatingout')).toBe('#f98f98'); // ramp 0
+    expect(chartCategoryColor('coffee')).toBe('#e8a24f');    // ramp 3
+    expect(chartCategoryColor('groceries')).toBe('#8ec56f'); // ramp 6
+    expect(chartCategoryColor('transport')).toBe('#65baff'); // ramp 13
+    expect(chartCategoryColor('subs')).toBe('#d797e6');      // ramp 18
     // every built-in resolves to CATEGORY_COLORS[its mapped index]
     for (const id of BUILTIN_IDS) {
       expect(chartCategoryColor(id)).toBe(CATEGORY_COLORS[BUILTIN_CATEGORY_INDEX[id]]);
@@ -122,13 +122,10 @@ describe('chartCategoryColor — the stored slot', () => {
     for (const [id, [slot, hex]] of Object.entries(SEED_SLOT_HEX)) {
       expect(chartCategoryColor(id, { slot })).toBe(hex);
     }
-    // The built-ins that move off their id-derived colour, and the rest that do not. WHIT-415 took
-    // coffee OUT of this set: its slot now resolves to the same ramp entry as its fallback, so the
-    // set shrank from four to three.
-    const moved = Object.entries(SEED_SLOT_HEX)
-      .filter(([id, [slot]]) => chartCategoryColor(id, { slot }) !== chartCategoryColor(id))
-      .map(([id]) => id);
-    expect(moved.sort()).toEqual(['phonenet', 'shopping', 'transport']);
+    // WHIT-432 dropped a `moved` list from here: once BUILTIN_CATEGORY_INDEX mirrors the server it
+    // can only be empty, and seedSlotSync.logic.test.ts already asserts the equality against the
+    // real .py. The hex loop above still earns its keep — it pins ASSIGNMENT_ORDER and
+    // CATEGORY_COLORS against hand-written values.
   });
 
   it('treats slot 0 as a REAL slot, not as absent', () => {

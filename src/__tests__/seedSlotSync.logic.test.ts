@@ -75,30 +75,27 @@ describe('[A4] the seeded store paints 13 distinct, well-spaced colours', () => 
   });
 });
 
-describe('[A7] a half-migrated store still has exactly one ambiguous pair', () => {
-  it('adds no new slotted-vs-unslotted collision', () => {
-    // A store can be mixed (PATCH echoes a pre-backfill row uncleaned), so one category resolves
-    // via its slot and another via the id fallback. Moving a seed slot can silently land a
-    // built-in ON another built-in's fallback hue. Computed from the .py, so it re-checks itself.
-    const collisions: string[] = [];
-    for (const unslotted of Object.keys(BUILTIN_CATEGORY_INDEX)) {
-      for (const [slotted, slot] of Object.entries(SERVER_SLOTS)) {
-        if (unslotted === slotted) continue;
-        if (chartCategoryColor(unslotted) === chartCategoryColor(slotted, { slot })) {
-          collisions.push(`${unslotted}->${slotted}`);
-        }
-      }
+describe('[A7] a half-migrated store paints every built-in ONE hue, either way', () => {
+  // WHIT-432 replaced a collision inventory that could only ever be empty once the tables agree.
+  // The pin below reddens the moment they drift, in EITHER direction — which the inventory did not.
+  // It does NOT prove the resolver exists: both assertions are satisfied by a chartCategoryColor
+  // that ignores `slot` entirely, and the second never calls it at all. builtinFallbackMirror
+  // [B1] covers that, and the custom-category test below is the only thing here that does.
+  it('every built-in resolves to the same colour whether or not its slot has arrived', () => {
+    for (const [id, slot] of Object.entries(SERVER_SLOTS)) {
+      expect(chartCategoryColor(id)).toBe(chartCategoryColor(id, { slot }));
+      expect(BUILTIN_CATEGORY_INDEX[id]).toBe(ASSIGNMENT_ORDER[slot]);
     }
-    expect(collisions.sort()).toEqual(['transport->phonenet']);
+    // Non-vacuity: readServerSeedSlots throws on an empty parse, but a partially-matching regex
+    // would leave a short map and make the loop above prove almost nothing.
+    expect(Object.keys(SERVER_SLOTS)).toHaveLength(13);
   });
 
-  it('coffee now paints the SAME hue whether or not the store has been backfilled', () => {
-    // A side effect of the move worth locking: coffee's seeded slot resolves to ramp 3, which is
-    // also its id-derived fallback, so a mid-migration store cannot show coffee two colours.
-    // Utilities never moved, so it agrees too; shopping is one of the three that still differ.
-    expect(chartCategoryColor('coffee', { slot: SERVER_SLOTS.coffee })).toBe(chartCategoryColor('coffee'));
-    expect(chartCategoryColor('utilities', { slot: SERVER_SLOTS.utilities })).toBe(chartCategoryColor('utilities'));
-    expect(chartCategoryColor('shopping', { slot: SERVER_SLOTS.shopping }))
-      .not.toBe(chartCategoryColor('shopping'));
+  it('a CUSTOM category can differ across the two paths — the pin is built-ins only', () => {
+    // Not an oversight: the server hands out the least-held slot while the client hashes the id.
+    // Unrelated by construction, so a custom category CAN change hue once its slot arrives — it
+    // coincides roughly 1 time in 20. Pinned so nobody reads the built-in guarantee above as
+    // applying to every category.
+    expect(chartCategoryColor('wine', { slot: 3 })).not.toBe(chartCategoryColor('wine'));
   });
 });

@@ -1,19 +1,18 @@
 // WHIT-402 — [A14] [A15] [A16] [A17] the adversarial half of the stored-slot colour resolution:
 // the exotic values the existing 15-case reject list misses, the toCategory -> chartCategoryColor
-// hand-off (nothing pins that the value one produces is usable by the other), and the ONE
-// mixed-state collision a partially-slotted store can show.
+// hand-off (nothing pins that the value one produces is usable by the other), and the
+// mixed-state colours a partially-slotted store can show.
 import { describe, it, expect } from '@jest/globals';
 import {
   chartCategoryColor, normalizeColorSlot, ASSIGNMENT_ORDER, CATEGORY_COLORS,
-  OTHER_COLOR, BUILTIN_CATEGORY_INDEX,
+  OTHER_COLOR,
 } from '../chartColors';
 import { toCategory } from '../context';
+import { readServerSeedSlots } from './serverSeedSlots';
 
-// The server's seed slots, mirroring shared/repository_category.py SEED_CATEGORIES.
-const SEED_SLOTS: Record<string, number> = {
-  eatingout: 0, travel: 1, fitness: 6, gifts: 7, health: 8, coffee: 9, utilities: 10,
-  groceries: 11, shopping: 13, transport: 15, phonenet: 16, pets: 17, subs: 18,
-};
+// The server's seed slots, READ from shared/repository_category.py — not retyped. A hand copy
+// going stale is the whole reason WHIT-406/415/432 exist.
+const SEED_SLOTS = readServerSeedSlots();
 
 // chartCategoryColor's signature is `slot?: number` ON PURPOSE — a caller handing it a hex string is
 // a bug the compiler should catch. But the values below arrive from the network, where the compiler
@@ -85,26 +84,16 @@ describe('[A15] toCategory hands chartCategoryColor a value it can actually use'
   });
 });
 
-describe('[A16] a partially-slotted store: which categories can share a colour', () => {
-  it('exactly ONE built-in pair collides — un-slotted Transport vs slotted Phone & Internet', () => {
-    // A store can be mixed while the server's slot migration is still draining: a cached list
-    // fetched before a chunk landed sits alongside rows fetched after it. Two categories then
-    // resolve down different paths. This inventories every hue
-    // that can be reached BOTH ways, so a future edit to ASSIGNMENT_ORDER or BUILTIN_CATEGORY_INDEX
-    // cannot silently add a second ambiguous pair.
-    const collisions: string[] = [];
-    for (const unslotted of Object.keys(BUILTIN_CATEGORY_INDEX)) {
-      for (const [slotted, slot] of Object.entries(SEED_SLOTS)) {
-        if (unslotted === slotted) continue;
-        if (chartCategoryColor(unslotted) === chartCategoryColor(slotted, { slot })) {
-          collisions.push(`${unslotted}->${slotted}`);
-        }
-      }
-    }
-    expect(collisions).toEqual(['transport->phonenet']);
-    expect(chartCategoryColor('transport')).toBe('#82b4ff');
-    expect(chartCategoryColor('phonenet', { slot: 16 })).toBe('#82b4ff');
-  });
+describe('[A16] a partially-slotted store cannot show two BUILT-INS one colour', () => {
+  // A store can be mixed while the server's slot migration is still draining: a cached list fetched
+  // before a chunk landed sits alongside rows fetched after it, so two categories resolve down
+  // different paths.
+  //
+  // WHIT-432 removed the collision inventory that used to sit here (it asserted the clashes equalled
+  // ['transport->phonenet']). Once the fallback mirrors the server that list can only be empty.
+  // The pair below is stronger where it matters — it fails on table drift, which the inventory did
+  // not. Neither proves the resolver exists; builtinFallbackMirror [B1] and [A14]/[A15] do.
+  // Built-ins only: a hashed CUSTOM id can still land on a built-in's fallback hue.
 
   it('a FULLY slotted store gives all 13 built-ins 13 distinct colours', () => {
     const painted = Object.entries(SEED_SLOTS).map(([id, slot]) => chartCategoryColor(id, { slot }));
@@ -112,10 +101,14 @@ describe('[A16] a partially-slotted store: which categories can share a colour',
     expect(painted).not.toContain(OTHER_COLOR);
   });
 
-  it('a FULLY un-slotted store is byte-identical to today\'s chart', () => {
-    for (const id of Object.keys(SEED_SLOTS)) {
-      expect(chartCategoryColor(id, { slot: undefined })).toBe(CATEGORY_COLORS[BUILTIN_CATEGORY_INDEX[id]]);
+  it('an un-slotted store paints the SAME 13 colours a slotted one does', () => {
+    // Compared against the SLOTTED chart, not against BUILTIN_CATEGORY_INDEX — the old version did
+    // the latter, which is the implementation restated. Distinct + equal ⇒ no mixed-state pair of
+    // BUILT-INS can share a hue, which is what [A16] is for.
+    for (const [id, slot] of Object.entries(SEED_SLOTS)) {
+      expect(chartCategoryColor(id, { slot: undefined })).toBe(chartCategoryColor(id, { slot }));
     }
+    expect(Object.keys(SEED_SLOTS)).toHaveLength(13);
   });
 });
 
