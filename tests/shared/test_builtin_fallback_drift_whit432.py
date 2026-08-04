@@ -1,34 +1,28 @@
 """The OTHER direction of the WHIT-432 mirror: server -> client (WHIT-432 QA).
 
-WHIT-432's stated goal is that "a future server-side re-space reddens the client", and
-the pin it added — src/__tests__/seedSlotSync.logic.test.ts [A7] — does read the real
-.py. But that pin lives in JEST, and .github/workflows/client-tests.yml does NOT list
-shared/repository_category.py in its pull_request `paths:`. A server-only pull request
-that re-spaces a seed slot therefore skips the whole client workflow, and the guard
-built for exactly that pull request never runs on it.
+WHIT-432's stated goal is that "a future server-side re-space reddens the client". The
+pin it added — src/__tests__/seedSlotSync.logic.test.ts [A7] — reads the real .py, but
+lives in JEST, which a server-only pull request skips. So this file is the mirror image:
+the same comparison run from the pytest side, which a server change DOES reach.
 
-That asymmetry was already solved once in the opposite direction: python-tests.yml
-lists src/chartColors.ts so a client-only edit still wakes the pytest guard (WHIT-406),
-and test_chart_ramp_parser_edges.py [A17] keeps that entry alive. This file is the
-mirror image — the same comparison, run from the suite a SERVER change actually
-triggers, plus [B7] which names the missing trigger.
+WHIT-436 closed the trigger gap generally: this file reads a client file (via
+ramp_source_path), so it is marked `crosslang` and the twin-guards.yml drift job runs it
+on any src/ or shared/ change — a client-only OR server-only edit. That replaced the old
+per-file `paths:` pins (the [B7]/[B7b] trigger checks that used to live here, and the
+client-tests.yml `shared/repository_category.py` entry they policed).
 
 Covers, by checklist id:
   [B5]  BUILTIN_CATEGORY_INDEX parses out of the shipped client file
   [B6]  every seeded built-in's fallback position == ASSIGNMENT_ORDER[its seed slot]
-  [B7]  client-tests.yml wakes when shared/repository_category.py changes
 """
 
-import pathlib
 import re
 
 import pytest
 
 from _chart_ramp import assignment_order, category_colors, ramp_source_path
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_CLIENT_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "client-tests.yml"
-_SEED_MODULE = "shared/repository_category.py"
+pytestmark = pytest.mark.crosslang
 
 # `export const BUILTIN_CATEGORY_INDEX: Record<string, number> = { ... };` — anchored at
 # the start of a line so the several comment mentions of the name cannot match, and
@@ -135,79 +129,3 @@ def test_every_builtin_fallback_equals_its_seed_slots_ramp_position(slots):
         for category in slots.SEED_CATEGORIES.values()
     )
 
-
-# ------------------------------------------------------------------ the missing trigger
-
-# One list entry: a quoted or bare scalar, stopping before any inline `# comment`.
-# Same hand-parse as test_chart_ramp_parser_edges.py — PyYAML is not installed on the
-# runner (CI installs only lambda_sync_trigger/requirements-dev.txt).
-_ENTRY = re.compile(r"-\s*(?:\"([^\"]*)\"|'([^']*)'|([^#\s]+))")
-
-
-def _pull_request_paths(workflow: pathlib.Path) -> list:
-    """The LIVE `paths:` list of a workflow's pull_request trigger.
-
-    A `#`-commented line is NOT an entry — which is the whole point: a substring search
-    would find a commented-out path and report a trigger that GitHub ignores.
-    """
-    paths, in_pull_request, indent, pull_request_column = [], False, None, 0
-    for raw in workflow.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        column = len(raw) - len(raw.lstrip())
-        if not in_pull_request:
-            in_pull_request = line == "pull_request:"
-            pull_request_column = column
-            continue
-        if indent is None:
-            if column <= pull_request_column:
-                break
-            if line == "paths:":
-                indent = column
-            continue
-        if column <= indent and not line.startswith("-"):
-            break
-        match = _ENTRY.match(line)
-        if match:
-            paths.append(next(group for group in match.groups() if group is not None))
-    return paths
-
-
-def test_a_server_only_seed_change_still_wakes_the_client_guard():
-    """[B7] The Jest pin that reads this .py only protects anything if a pull request
-    touching this .py RUNS Jest. client-tests.yml filters on paths, and a server-only
-    change matches none of them — so the guard WHIT-432 built for a server-side re-space
-    is exactly the guard that server-side re-space skips.
-
-    python-tests.yml already carries the mirror-image entry (src/chartColors.ts) for the
-    same reason. Fix by adding `- "shared/repository_category.py"` to client-tests.yml's
-    pull_request paths, or by keeping [B6] above as the pytest-side guard and saying so."""
-    assert (_REPO_ROOT / _SEED_MODULE).exists(), (
-        f"{_SEED_MODULE} no longer exists — this test names a file that moved, so it "
-        "would stay green while nothing was guarded. Update the name."
-    )
-    paths = _pull_request_paths(_CLIENT_WORKFLOW)
-    assert paths, f"parsed no pull_request paths out of {_CLIENT_WORKFLOW.name}"
-    covered = any(
-        _SEED_MODULE.startswith(entry.rstrip("*").rstrip("/")) for entry in paths
-    )
-    assert covered, (
-        f"no live on.pull_request.paths entry in {_CLIENT_WORKFLOW.name} covers "
-        f"{_SEED_MODULE} — the entries actually present are {paths}. "
-        "src/__tests__/seedSlotSync.logic.test.ts reads that .py to catch a seed re-space, "
-        "but a server-only pull request skips the client workflow entirely, so the pin "
-        "never runs on the change it exists for."
-    )
-
-
-def test_the_guard_and_the_ramp_file_are_covered_by_the_python_trigger():
-    """[B7b] The counterpart: this file must itself run when either side moves. `tests/**`
-    covers it and `src/chartColors.ts` is listed explicitly (WHIT-406); if either entry is
-    ever narrowed, a re-space could pass unguarded from BOTH directions."""
-    paths = _pull_request_paths(_REPO_ROOT / ".github" / "workflows" / "python-tests.yml")
-    ramp = ramp_source_path().relative_to(_REPO_ROOT).as_posix()
-    for guarded in (ramp, _SEED_MODULE, "tests/shared/test_builtin_fallback_drift_whit432.py"):
-        assert any(
-            guarded.startswith(entry.rstrip("*").rstrip("/")) for entry in paths
-        ), f"no on.pull_request.paths entry in python-tests.yml covers {guarded}"

@@ -17,7 +17,11 @@ milestone PLAN rows across the two twins, not this cap.
 
 import pathlib
 
+import pytest
+
 import _ts_const
+
+pytestmark = pytest.mark.crosslang
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _CLIENT_MILESTONES = _ROOT / "src" / "milestones.ts"

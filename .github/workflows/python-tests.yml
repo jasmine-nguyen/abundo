@@ -15,12 +15,9 @@ on:
       - "shared/**"
       - "lambda*/**"
       - "tests/**"
-      # Half of a cross-language contract with shared/repository_category.py
-      # (_COLOR_SLOT_COUNT): the client ramp is what the server's permanent colour
-      # slots index into. tests/shared/test_color_slot_ramp_drift.py must run when it
-      # changes; test_chart_ramp_parser_edges.py asserts this entry is still a live
-      # trigger pointing at the real file, so it cannot rot into a dead line.
-      - "src/chartColors.ts"
+      # No client-file (src/) entry here: the cross-language twin guards that read a
+      # client file now run on any src/ change via twin-guards.yml (the `crosslang`
+      # marker), replacing the hand-maintained per-file pin WHIT-406 added (WHIT-436).
       - "pytest.ini"
       - "**/requirements*.txt"
       - ".github/workflows/python-tests.yml"

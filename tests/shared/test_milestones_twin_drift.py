@@ -19,6 +19,10 @@ so a simple regex over the `export const MILESTONES` block is enough.
 import pathlib
 import re
 
+import pytest
+
+pytestmark = pytest.mark.crosslang
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _TS_TWIN = _REPO_ROOT / "src" / "milestones.ts"
 

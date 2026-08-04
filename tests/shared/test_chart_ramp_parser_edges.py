@@ -11,8 +11,12 @@ Covers, by checklist id:
               these keep meaning after a legitimate palette change)
   [A13]-[A16] ramp_source_path() discovery: test-tree fixtures, ambiguity, a missing
               client dir, build artefacts
-  [A17]-[A18] the CI paths: entry is a LIVE trigger, and covers the guard's own files
   [A19]       tests/shared/conftest.py sheds every shared module this suite imports
+
+The old [A17]/[A18] pinned the hand-maintained `src/chartColors.ts` paths entry in
+python-tests.yml as a live trigger. WHIT-436 replaced that per-file pin with the
+twin-guards.yml drift job (this suite reads a client file, so it is marked `crosslang`
+and runs there on any src/ change), so those trigger pins are gone.
 """
 
 import ast
@@ -24,7 +28,6 @@ import pytest
 import _chart_ramp
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_PYTHON_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "python-tests.yml"
 _SHARED_DIR = _REPO_ROOT / "shared"
 _TESTS_SHARED_DIR = pathlib.Path(__file__).resolve().parent
 
@@ -255,87 +258,6 @@ def test_build_artefacts_beside_the_ramp_are_not_read_as_ramps(tmp_path, monkeyp
     monkeypatch.setattr(_chart_ramp, "_REPO_ROOT", tmp_path)
 
     assert _chart_ramp.ramp_source_path() == tmp_path / "src" / "chartColors.ts"
-
-
-# ------------------------------------------------------------------------- CI trigger
-
-
-# One list entry: a quoted or bare scalar, stopping before any inline `# comment`.
-_ENTRY = re.compile(r"-\s*(?:\"([^\"]*)\"|'([^']*)'|([^#\s]+))")
-
-
-def _pull_request_paths() -> list:
-    """The LIVE `paths:` list of the pull_request trigger.
-
-    Hand-parsed rather than via PyYAML on purpose: CI installs only
-    lambda_sync_trigger/requirements-dev.txt (pytest, pytest-cov, standardwebhooks), so
-    `import yaml` passes locally and ImportErrors on the runner. The one thing that
-    matters here is what YAML and a comment disagree about — a `#` line is not an entry
-    — so encode that rule directly.
-
-    Scoped to the `pull_request:` block, NOT simply the first `paths:` in the file:
-    `push:` is declared above it and could grow its own paths: filter. Reading the wrong
-    list could report the ramp entry present when pull_request had dropped it — a false
-    green on exactly the skipped-suite failure this guard exists to catch.
-    """
-    paths, in_pull_request, indent = [], False, None
-    for raw in _PYTHON_WORKFLOW.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):        # a commented-out entry is NOT an entry
-            continue
-        column = len(raw) - len(raw.lstrip())
-        if not in_pull_request:
-            in_pull_request = line == "pull_request:"
-            pull_request_column = column
-            continue
-        if indent is None:
-            if column <= pull_request_column:
-                break                                # left the block without a paths:
-            if line == "paths:":
-                indent = column
-            continue
-        if column <= indent or not line.startswith("- "):
-            break                                    # dedented out of the list
-        entry = _ENTRY.match(line)
-        if entry:
-            paths.append(next(group for group in entry.groups() if group is not None))
-
-    assert "shared/**" in paths, (
-        f"the paths: reader found {paths} in {_PYTHON_WORKFLOW.name} — it no longer "
-        "understands the file's shape, so every assertion built on it is vacuous"
-    )
-    return paths
-
-
-def test_the_ramp_is_a_live_paths_entry_not_a_mention_in_a_comment():
-    """[A17] test_color_slot_ramp_drift.py checks the path is SOMEWHERE in the file's
-    text. Comment the entry out — `# - "src/chartColors.ts"` — and the substring is
-    still there: that test stays green while a client-only pull request once again skips
-    this whole suite and merges against a server holding the old slot range. Read the
-    parsed trigger instead, so only a real entry counts."""
-    ramp = _chart_ramp.ramp_source_path().relative_to(_REPO_ROOT).as_posix()
-    paths = _pull_request_paths()
-    assert ramp in paths, (
-        f"{ramp} is not a live entry in on.pull_request.paths of "
-        f"{_PYTHON_WORKFLOW.name} — the entries actually present are {paths}. If it is "
-        "there but commented out, GitHub ignores it: a client-only ramp change skips "
-        "this suite entirely."
-    )
-
-
-def test_the_guard_and_its_helper_are_themselves_covered_by_the_trigger():
-    """[A18] The guard is only as good as its own trigger. `tests/**` covers both this
-    file and _chart_ramp.py today; if that broad entry is ever narrowed, editing the
-    reader would no longer run it."""
-    paths = _pull_request_paths()
-    for guarded in ("tests/shared/_chart_ramp.py", "tests/shared/test_color_slot_ramp_drift.py"):
-        assert (_REPO_ROOT / guarded).exists(), (
-            f"{guarded} no longer exists — this test is naming a file that moved, so it "
-            "would stay green while the real guard went uncovered. Update the name."
-        )
-        assert any(
-            guarded.startswith(entry.rstrip("*").rstrip("/")) for entry in paths
-        ), f"no on.pull_request.paths entry in {_PYTHON_WORKFLOW.name} covers {guarded}"
 
 
 # ------------------------------------------------------------- module-leak regression

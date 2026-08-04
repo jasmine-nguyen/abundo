@@ -1882,6 +1882,7 @@ def test_colorslot_never_reaches_the_ai_model_input_hash(handler):
     assert "colorSlot" not in json.dumps(rows_with, sort_keys=True)
 
 
+@pytest.mark.crosslang  # reads src/chartColors.ts (ASSIGNMENT_ORDER) via _chart_ramp
 def test_seed_slots_are_spread_across_the_colour_ramp(handler):
     """The property the seed table was solved for — and the one two reviewers misread.
 
