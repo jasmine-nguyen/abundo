@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, TextInput, ScrollView } from 'react-native';
 import { C, FONT, tint } from '../theme';
 import { Icon, ICON_KEYS } from '../icons';
-import { BUCKETS, Bucket, Category, eligibleParents } from '../context';
+import { BUCKETS, Bucket, Category, eligibleParents, childCount, MAX_CHILDREN_PER_CATEGORY } from '../context';
 import { BUCKET_COLOR } from '../categoryColors';
 
 // WHIT-239: the ONE implementation of the category field controls (name / bucket / parent /
@@ -35,6 +35,7 @@ export function CategoryFields({
   parentPicker = false,
   categories,
   editId,
+  heldParentId = null,
   noneLabel,
 }: {
   variant: CategoryFieldsVariant;
@@ -54,6 +55,10 @@ export function CategoryFields({
   // Feeds the parent eligibility filter: null when creating (QuickCreate), the category's own
   // id when editing (so it can't be offered as its own parent). Same set the host effects use.
   editId: string | null;
+  // The category's ALREADY-SAVED parent (edit screen), or null when creating. A full parent is
+  // greyed out — EXCEPT this one: re-selecting the parent a category already sits under adds no
+  // child, and greying it out would make a plain rename silently detach the category (WHIT-441).
+  heldParentId?: string | null;
   noneLabel: string;
 }) {
   const s = variant === 'screen' ? screenStyles : compactStyles;
@@ -127,13 +132,19 @@ export function CategoryFields({
             </Pressable>
             {parentOptions.map((p) => {
               const sel = parent === p.id;
+              // Full parents can't take another child, so grey them out rather than let the user
+              // pick one the server will only refuse (WHIT-441). The category's own held parent is
+              // never full FROM ITS SIDE (re-saving under it adds nothing), so it stays selectable.
+              const full = p.id !== heldParentId && childCount(categories, p.id) >= MAX_CHILDREN_PER_CATEGORY;
               return (
                 <Pressable
                   key={p.id}
+                  testID={`parent-${p.id}`}
+                  disabled={full}
                   onPress={() => onParentChange(p.id)}
-                  style={[s.chip, { borderColor: sel ? p.color : 'rgba(255,255,255,.07)', backgroundColor: sel ? tint(p.color, 0.14) : unselectedBg }]}
+                  style={[s.chip, { borderColor: sel ? p.color : 'rgba(255,255,255,.07)', backgroundColor: sel ? tint(p.color, 0.14) : unselectedBg, opacity: full ? 0.4 : 1 }]}
                 >
-                  <Text style={[s.chipText, { color: sel ? p.color : C.textMid }]} numberOfLines={1}>{p.name}</Text>
+                  <Text style={[s.chipText, { color: sel ? p.color : C.textMid }]} numberOfLines={1}>{p.name}{full ? ' · full' : ''}</Text>
                 </Pressable>
               );
             })}

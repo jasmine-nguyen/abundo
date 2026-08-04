@@ -52,6 +52,23 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const AI_GENERATE_TIMEOUT_MS = 60_000;
 
 /**
+ * Read a promise under a timeout, rejecting if it hasn't settled in `timeoutMs`. `failed()` reads
+ * the error body AFTER apiFetch has already cleared its abort timer, so without this a not-OK
+ * response whose body never finishes streaming would hang `failed()` — and the failed-save writer,
+ * so the Save button spins forever (WHIT-441). On timeout the still-pending read is left with a
+ * no-op catch so an orphaned rejection can't surface as an unhandled rejection (which flakes the
+ * RN runtime and jest); failed()'s own catch turns the timeout into a status-only ApiError.
+ */
+function withBodyTimeout<T>(read: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("body read timed out")), timeoutMs);
+  });
+  read.catch(() => {});   // the losing arm's rejection is expected; swallow it, don't leak it
+  return Promise.race([read, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Build the rejection for a not-OK response, carrying the server's stated reason (WHIT-437).
  *
  * TOTAL BY CONSTRUCTION: it RETURNS an error, it never throws one. An HTML gateway 403/502, an
@@ -60,16 +77,18 @@ const AI_GENERATE_TIMEOUT_MS = 60_000;
  * breaks the message contract the suite pins.
  *
  * Used by the three category writes only. The other 30 not-OK guards still throw a plain Error;
- * widening one is a one-line swap (see WHIT-437's follow-up card).
+ * widening one is a one-line swap (see WHIT-437's follow-up card). The error-body read runs under
+ * withBodyTimeout so a stalled body can't hang the failed-save writer (WHIT-441).
  */
-async function failed(response: Response): Promise<ApiError> {
+async function failed(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<ApiError> {
   let serverMessage: string | null = null;
   try {
-    const body = await response.json();
+    const body = await withBodyTimeout(response.json(), timeoutMs);
     const raw = (body as { error?: unknown } | null)?.error;
     if (typeof raw === "string" && raw.trim()) serverMessage = raw.trim();
   } catch {
-    // non-JSON, empty, or no json() — a status-only error is the right answer
+    // non-JSON, empty, no json(), OR a body that stalled past the timeout — a status-only error
+    // is the right answer, and keeps failed() TOTAL (it returns an ApiError, never throws).
   }
   return new ApiError(response.status, serverMessage);
 }

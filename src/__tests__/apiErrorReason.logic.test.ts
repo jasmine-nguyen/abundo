@@ -74,6 +74,30 @@ describe('writeFailureReason — the length bound truncates, never discards', ()
   });
 });
 
+describe('writeFailureReason — WHIT-441: an emoji on the cut is never split into `�`', () => {
+  // A lone surrogate — a high surrogate not followed by a low, or vice versa — is what renders as
+  // the `�` replacement glyph. The old code-unit `.slice` could leave one; the fix must not.
+  const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+  it('cuts on a whole-character boundary when an emoji straddles char 160', () => {
+    // '😀' (U+1F600) is a surrogate pair sitting at code units 158–159 — exactly where the old
+    // .slice(0, 159) cut, keeping the lone high surrogate. Total length 170 > 160 → truncates.
+    const reason = 'a'.repeat(158) + '😀' + 'b'.repeat(10);
+    const got = writeFailureReason(new ApiError(400, reason))!;
+    expect(got.endsWith('…')).toBe(true);
+    // Fail-on-revert: the old .slice leaves a lone high surrogate here → this matches → fails.
+    expect(loneSurrogate.test(got)).toBe(false);
+    expect(got).toContain('😀');   // the whole emoji survived, not half of it
+  });
+
+  it('counts an all-emoji reason by whole characters, not code units', () => {
+    // 160 emoji = 320 UTF-16 code units but 160 CHARACTERS, so it is within the bound and passes
+    // through verbatim. The old `.length` sees 320, truncates, and splits the last emoji.
+    const allEmoji = '😀'.repeat(160);
+    expect(writeFailureReason(new ApiError(400, allEmoji))).toBe(allEmoji);
+  });
+});
+
 describe('writeFailureMessage — a standalone sentence, or the fallback', () => {
   it('capitalises and terminates the reason', () => {
     expect(writeFailureMessage(new ApiError(400, CAP), 'fallback'))

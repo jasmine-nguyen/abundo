@@ -1864,6 +1864,18 @@ export function eligibleParents(categories: Category[], editId: string | null, b
 // two ever drift the server wins (a too-deep attach is rejected with a toast).
 export const MAX_CATEGORY_DEPTH = 5;
 
+// Client mirror of the server's per-parent sub-category cap (shared/repository_category.py
+// _MAX_CHILDREN_PER_CATEGORY). Advisory like MAX_CATEGORY_DEPTH — the server re-validates on
+// write and wins if the two ever drift. Used to grey out a full parent in the picker (WHIT-441)
+// before the user tries an attach the server would refuse.
+export const MAX_CHILDREN_PER_CATEGORY = 50;
+
+// How many categories are nested directly under `parentId`. The client mirror of the count the
+// server caps at MAX_CHILDREN_PER_CATEGORY, so the picker can tell a full parent from a spare one.
+export function childCount(categories: Category[], parentId: string): number {
+  return categories.reduce((total, c) => (c.parent === parentId ? total + 1 : total), 0);
+}
+
 // The level of `id` in the tree: nodes from it up to and including its root (root = 1), or 0
 // for null. Cycle-safe. Mirrors the server's _ancestor_depth.
 function ancestorDepth(byId: Map<string, Category>, id: string | null): number {

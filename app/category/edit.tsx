@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { writeFailureReason, writeFailureMessage, endSentence } from '../../src/apiError';
 import { Icon } from '../../src/icons';
-import { useAppContext, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, MAX_CATEGORY_DEPTH } from '../../src/context';
+import { useAppContext, Bucket, Category, eligibleParents, eligibleChildren, categoryDepth, childCount, MAX_CATEGORY_DEPTH, MAX_CHILDREN_PER_CATEGORY } from '../../src/context';
 import { useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { CategoryFields } from '../../src/components/CategoryFields';
@@ -152,7 +152,16 @@ export default function CategoryEdit() {
       const verb = categoryId ? 'updated' : 'created';
       const subCount = (n: number) => `${n} sub-categor${n === 1 ? 'y' : 'ies'}`;
       if (failed > 0) {
-        const tail = sharedReason ?? `add ${failed === 1 ? 'it' : 'them'} from its page`;
+        // WHIT-441/438: when the destination is ALREADY at its child cap, "add them from its page"
+        // is circular — that page refuses them for the very same reason. Name the cap instead.
+        // Any other failure (network, 5xx, a mixed cause) keeps the original advice — that page
+        // may well accept a retry. The server's shared words, when there are any, still win.
+        const attachParent = parentId ? categories.find((c) => c.id === parentId) : undefined;
+        const parentFull = !!attachParent && childCount(categories, attachParent.id) >= MAX_CHILDREN_PER_CATEGORY;
+        const tail = sharedReason
+          ?? (parentFull
+              ? `${attachParent!.name} already has the most sub-categories allowed (${MAX_CHILDREN_PER_CATEGORY})`
+              : `add ${failed === 1 ? 'it' : 'them'} from its page`);
         s.showToast(`Category ${verb}, but ${subCount(failed)} couldn't be attached — ${endSentence(tail)}`);
       } else if (ops.length > 0) {
         s.showToast(`Category ${verb}, with ${subCount(ops.length)}.`);
@@ -211,6 +220,7 @@ export default function CategoryEdit() {
           parentPicker
           categories={categories}
           editId={categoryId ?? null}
+          heldParentId={existing?.parent ?? null}
           noneLabel="None (top-level)"
         />
 

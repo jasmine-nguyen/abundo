@@ -33,8 +33,12 @@ export function writeFailureReason(error: unknown): string | null {
   if (error.status < 400 || error.status >= 500) return null;  // our fault — retrying may work
   if (error.status === 401 || error.status === 403) return null;  // the auth gate owns these
   if (!error.serverMessage) return null;
-  if (error.serverMessage.length <= MAX_REASON_CHARS) return error.serverMessage;
-  return `${error.serverMessage.slice(0, MAX_REASON_CHARS - 1).trimEnd()}…`;
+  // Count WHOLE characters, not UTF-16 code units: a `.slice` boundary can fall between an
+  // emoji's two surrogate halves and leave a lone surrogate that renders as `�` (WHIT-441).
+  // Array.from splits on code points, so the cut always lands on a whole-character boundary.
+  const chars = Array.from(error.serverMessage);
+  if (chars.length <= MAX_REASON_CHARS) return error.serverMessage;
+  return `${chars.slice(0, MAX_REASON_CHARS - 1).join('').trimEnd()}…`;
 }
 
 /** Give a clause a full stop unless it already ends in terminal punctuation. */
