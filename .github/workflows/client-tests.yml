@@ -117,16 +117,22 @@ jobs:
           path: coverage-screen/coverage-final.json
           if-no-files-found: error
 
-  # WHIT-411. Neither the tests nor the typecheck BUILD the app, so a break in how modules
-  # resolve at bundle time — a bad babel alias, a package that only ships an ESM entry, a
-  # dependency only Jest's mocks were covering — passes both and surfaces at release, where
-  # it is most expensive.
+  # WHIT-411 / WHIT-414. Neither the tests nor the typecheck BUILD the app, so a break in how
+  # modules resolve at bundle time — a bad babel alias, a package that only ships an ESM entry, a
+  # dependency only Jest's mocks were covering — passes both and surfaces at release, where it is
+  # most expensive.
   # NOT in that set: a file shadowing a same-named folder. Metro resolves that one silently
   # (verified — the WHIT-408 collision exports clean), so it is guarded by
   # src/__tests__/themeLayout.logic.test.ts instead, not here.
-  # This exports the WEB target: the same Metro resolver, web-flavoured — react-native-web
-  # substitutes in and .web.ts wins over .native.ts — so native-only resolution breaks still
-  # reach only the tag-time build in ios-testflight.yml. This does not replace it.
+  # Two exports, one Metro resolver, two flavours:
+  #   - WEB (WHIT-411): react-native-web substitutes in and .web.ts wins over .native.ts.
+  #   - PHONE (WHIT-414): the native resolver — react-native, and .native.ts/.ios.ts win — so a
+  #     native-only package or a phone file variant the web export can't see is caught here on
+  #     every PR, not first at the tag-time build in ios-testflight.yml.
+  # Both are JS-bundle exports: Metro only, no native toolchain, no EAS build credits or token
+  # (~20s each; `npm ci` dominates the job's wall time). ios is the representative phone target —
+  # there are no .ios/.android divergent files today, so one native platform covers the phone
+  # graph; add the other platform here if that ever changes.
   bundle:
     name: bundle
     runs-on: ubuntu-latest
@@ -141,9 +147,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The export itself is a few seconds; `npm ci` above dominates the job's wall time.
       - name: Build the web bundle
         run: npx expo export -p web --output-dir "$RUNNER_TEMP/expo-web-export"
+
+      - name: Build the phone bundle
+        run: npx expo export -p ios --output-dir "$RUNNER_TEMP/expo-ios-export"
 
   coverage:
     name: coverage
