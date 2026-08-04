@@ -23,6 +23,8 @@ import pytest
 
 import _ts_array
 
+pytestmark = pytest.mark.crosslang
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _TS_TWIN = _REPO_ROOT / "src" / "milestones.ts"
 

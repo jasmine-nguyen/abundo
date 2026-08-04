@@ -8,9 +8,9 @@ tests/shared/test_milestones_twin_drift.py parses its twin that way.
 
 It DISCOVERS the ramp file by content rather than hard-coding a path: that file has
 already moved once (src/theme/chartColors.ts -> src/chartColors.ts, WHIT-408). Finding
-it by what it declares means a move costs one edit — the `paths:` entry in
-.github/workflows/python-tests.yml, which the guard makes you make — instead of
-silently unhooking the reader.
+it by what it declares means a move within src/ or app/ needs no workflow edit at all —
+twin-guards.yml runs the drift job on any src/**/app/** change (WHIT-436), so the
+colour-slot guard still runs after a move instead of silently unhooking the reader.
 
 The parsers take TEXT, not a path, so a guard can drive them against fabricated
 source and prove they still report drift instead of shrugging.
