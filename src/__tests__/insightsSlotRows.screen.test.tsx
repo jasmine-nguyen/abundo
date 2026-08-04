@@ -7,7 +7,10 @@
 // so reverting that wrapper to `chartCategoryColor(id)` reddens every assertion here.
 //
 // Colour map used below (all six hexes distinct, so no assertion can pass by accident):
-//   shopping  slot 13 -> #25cdbd   id-derived fallback -> #4ccda3
+//   shopping  slot  2 -> #b5bb51   id-derived fallback -> #25cdbd
+// shopping carries a slot it does NOT own (2, not its seed 13). WHIT-432 aligned every built-in's
+// fallback with its seed slot, so a seed-slot fixture would make the two paths identical here and
+// these assertions would pass even with the slot wiring deleted.
 //   shoes     slot  5 -> #6eca89   id-derived fallback -> #e991cc
 //   clothes   slot  9 -> #e8a24f   id-derived fallback -> #bf9ff8
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -51,7 +54,7 @@ import Insights from '../../app/(tabs)/insights';
 // net-refunded child (-> a refund line). Every mock category carries a WRONG app-wide colour, so a
 // screen that forgot to wrap the accessor at all also fails.
 const CATS = [
-  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#111111', bucket: 'Lifestyle', recent: 0, parent: null, colorSlot: 13 },
+  { id: 'shopping', name: 'Shopping', icon: 'bag', color: '#111111', bucket: 'Lifestyle', recent: 0, parent: null, colorSlot: 2 },
   { id: 'shoes', name: 'Shoes', icon: 'bag', color: '#222222', bucket: 'Lifestyle', recent: 0, parent: 'shopping', colorSlot: 5 },
   { id: 'clothes', name: 'Clothes', icon: 'bag', color: '#333333', bucket: 'Lifestyle', recent: 0, parent: 'shopping', colorSlot: 9 },
 ] as const;
@@ -120,17 +123,17 @@ beforeEach(() => {
 describe('WHIT-402 — nested + synthetic Insights rows paint from the stored slot', () => {
   it('[A9] the "Directly in X" row inherits its PARENT\'s slot colour, not the parent\'s id fallback', () => {
     render(<Insights />);
-    // The parent slice itself first: slot 13, never shopping's id-derived #4ccda3.
-    expect(capturedSlices.find((s) => s.id === 'shopping')?.color).toBe('#25cdbd');
+    // The parent slice itself first: slot 2, never shopping's id-derived #25cdbd.
+    expect(capturedSlices.find((s) => s.id === 'shopping')?.color).toBe('#b5bb51');
     fireEvent.press(screen.getByText('Shopping'));     // expand to reveal the subtree
 
     const tree = screen.toJSON();
     // The indent stripe on the synthetic row is its colour, and it must equal the PARENT's slot hue.
-    expect(rowStyle(tree, 'Directly in Shopping', 'borderLeftColor')).toBe('#25cdbd');
-    expect(rowStyle(tree, 'Directly in Shopping', 'borderLeftColor')).toBe(chartCategoryColor('shopping', { slot: 13 }));
+    expect(rowStyle(tree, 'Directly in Shopping', 'borderLeftColor')).toBe('#b5bb51');
+    expect(rowStyle(tree, 'Directly in Shopping', 'borderLeftColor')).toBe(chartCategoryColor('shopping', { slot: 2 }));
     // never a hash of the SYNTHETIC id, and never the parent's slot-less fallback
     expect(rowStyle(tree, 'Directly in Shopping', 'borderLeftColor')).not.toBe(chartCategoryColor('shopping__direct'));
-    expect(styleValues(tree, 'borderLeftColor')).not.toContain('#4ccda3');
+    expect(styleValues(tree, 'borderLeftColor')).not.toContain('#25cdbd');
   });
 
   it('[A10] a refund line takes the refunded member\'s OWN slot colour', () => {
@@ -152,12 +155,12 @@ describe('WHIT-402 — nested + synthetic Insights rows paint from the stored sl
     expect(rowStyle(tree, 'Shoes', 'borderLeftColor')).toBe('#6eca89');       // shoes slot 5
     expect(styleValues(tree, 'borderLeftColor')).not.toContain('#e991cc');     // shoes' id fallback
     // and the three rows are three different colours
-    expect(new Set(['#25cdbd', '#6eca89', '#e8a24f']).size).toBe(3);
+    expect(new Set(['#b5bb51', '#6eca89', '#e8a24f']).size).toBe(3);
     // no row is ever painted with an undefined / missing colour
     for (const value of styleValues(tree, 'borderLeftColor')) expect(value).toMatch(/^#|^rgba/);
   });
 
-  it('[A12] every one of these rows still falls back to today\'s colours when the server has no slots', () => {
+  it('[A12] every one of these rows still falls back to the id-derived colours when the server has no slots', () => {
     // Same tree, slots stripped — the deploy-ordering guarantee has to hold for the NESTED rows too,
     // not just the flat top-level ones the existing suite covers.
     mockInsights = insightsData({
@@ -170,10 +173,10 @@ describe('WHIT-402 — nested + synthetic Insights rows paint from the stored sl
       },
     });
     render(<Insights />);
-    expect(capturedSlices.find((s) => s.id === 'shopping')?.color).toBe('#4ccda3'); // id-derived
+    expect(capturedSlices.find((s) => s.id === 'shopping')?.color).toBe('#25cdbd'); // id-derived
     fireEvent.press(screen.getByText('Shopping'));
     const tree = screen.toJSON();
-    expect(rowStyle(tree, 'Directly in Shopping', 'borderLeftColor')).toBe('#4ccda3');
+    expect(rowStyle(tree, 'Directly in Shopping', 'borderLeftColor')).toBe('#25cdbd');
     expect(rowStyle(tree, 'Shoes', 'borderLeftColor')).toBe('#e991cc');
     expect(rowStyle(tree, 'Clothes', 'borderLeftColor')).toBe('#bf9ff8');
     // the "absent slot means slot 0" bug would paint all three the same pink
@@ -182,8 +185,8 @@ describe('WHIT-402 — nested + synthetic Insights rows paint from the stored sl
 });
 
 describe('WHIT-402 — the Earning tab falls back when a source has no slot', () => {
-  it('[A13] a slot-less income source keeps EXACTLY today\'s colour, never slot 0\'s pink', () => {
-    // The Spending side has this test (insightsChartPalette "falls back to today's colours"); the
+  it('[A13] a slot-less income source keeps its id-derived colour, never slot 0\'s pink', () => {
+    // The Spending side has this test (insightsChartPalette "falls back to the id-derived colours"); the
     // Earning side only ever asserts the slot path, so an un-migrated server is unpinned there.
     const INCOME_CATS = [
       // NOT C.good ('#2ac3de'): the EarnedVsSpent card legitimately paints a C.good bar, so an
@@ -199,7 +202,7 @@ describe('WHIT-402 — the Earning tab falls back when a source has no slot', ()
     fireEvent.press(screen.getByTestId('insights-side-earning'));
     const backgrounds = styleValues(screen.toJSON(), 'backgroundColor');
 
-    expect(backgrounds).toContain(chartCategoryColor('salary'));  // #25cdbd — today's chart
+    expect(backgrounds).toContain(chartCategoryColor('salary'));  // #25cdbd — salary's id-derived hue
     expect(backgrounds).toContain('#25cdbd');
     expect(backgrounds).not.toContain('#123456');                 // never the old app-wide hue
     expect(backgrounds).not.toContain('#f98f98');                 // never "no slot == slot 0"

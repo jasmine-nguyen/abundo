@@ -65,14 +65,23 @@ export function normalizeColorSlot(raw: unknown): number | undefined {
   return raw >= 0 && raw < ASSIGNMENT_ORDER.length ? raw : undefined;
 }
 
-// The 13 built-in category ids → a DISTINCT ramp slot each, hue-ordered so warm categories
+// The 13 built-in category ids → a DISTINCT ramp position each, hue-ordered so warm categories
 // (eating out, coffee, utilities) sit on the warm end and cool ones (transport, travel) on the cool
 // end. Distinct indices ⇒ 13 distinct colours, forever — never the deterministic hash collision a
-// blind djb2 % 20 would create (coffee/health/utilities would all land on one slot). Ids mirror the
-// server's built-in category seed (shared/repository_category.py).
+// blind djb2 % 20 would create (coffee/health/utilities would all land on one slot).
+//
+// This is a MIRROR, not an independent choice: each value is ASSIGNMENT_ORDER[seed colorSlot] for
+// that id in shared/repository_category.py. Do not hand-tune an entry, and move this table whenever
+// the server re-spaces a seed slot — otherwise a category paints one colour from its stored slot and
+// a different one from this fallback. seedSlotSync.logic.test.ts reads the real .py and fails if the
+// two drift (WHIT-432).
+//
+// It was NOT always a mirror. This table predates colorSlot entirely and was the only palette
+// mapping; the server seed was then solved against the ramp to cut the longest run of neighbouring
+// hues from 5 to 3, which moved shopping/transport/phonenet and left this table behind.
 export const BUILTIN_CATEGORY_INDEX: Record<string, number> = {
-  eatingout: 0, health: 1, coffee: 3, utilities: 4, groceries: 6, shopping: 8,
-  travel: 10, fitness: 12, transport: 14, phonenet: 15, pets: 16, gifts: 17, subs: 18,
+  eatingout: 0, health: 1, coffee: 3, utilities: 4, groceries: 6, shopping: 9,
+  travel: 10, fitness: 12, transport: 13, phonenet: 14, pets: 16, gifts: 17, subs: 18,
 };
 
 // Stable djb2 hash → a ramp slot for an UNKNOWN (user-created) id. Two custom ids can collide (rare,
@@ -89,10 +98,15 @@ function categoryColorHash(id: string): number {
 // server-side, so adding or deleting a category can never repaint another one. ONE exception,
 // once per account: accounts that migrated before the server spread its colours are levelled a
 // single time (WHIT-428), so a few categories change colour once and then never again.
-// FALLBACK (slot absent or unusable): the id-derived colour — built-in → its fixed slot, unknown id
-// → a stable hashed slot, null/blank id → the first ramp colour. Kept ON PURPOSE: it makes deploy
-// ordering a preference rather than a hard gate, so a client running ahead of the server degrades
-// to EXACTLY today's colours instead of a broken chart.
+// FALLBACK (slot absent or unusable): the id-derived colour — built-in → its fixed ramp position,
+// unknown id → a stable hashed position, null/blank id → the first ramp colour. Kept ON PURPOSE: it
+// makes deploy ordering a preference rather than a hard gate, so a client running ahead of the
+// server degrades to a sensible chart instead of a broken one.
+// For the 13 BUILT-INS the fallback now paints exactly the hue the stored slot would (pinned by
+// seedSlotSync.logic.test.ts). For a CUSTOM category it cannot: the server hands out the least-held
+// slot while the client hashes the id, and those are unrelated by construction — so a custom
+// category can change hue once its slot arrives (they coincide about 1 time in 20). That is the
+// honest limit of this promise.
 // Never returns OTHER_COLOR — that grey is reserved for the donut's grouped "Other". A negative or
 // out-of-range slot therefore falls back rather than going grey: painting a real category the
 // reserved grey would read as a lumped-together bucket rather than a category of its own.
