@@ -87,6 +87,8 @@ SEED_CATEGORIES = {
 }
 
 # How many slots the client ramp exposes. A slot is always in [0, _COLOR_SLOT_COUNT).
+# Pinned against the real client ramp by tests/shared/test_color_slot_ramp_drift.py —
+# changing this alone fails there, naming src/chartColors.ts.
 _COLOR_SLOT_COUNT = 20
 _COLOR_SLOT_FIELD = "colorSlot"
 # Marker on the CONFIG ITEM saying every stored category has been stamped. Its presence is
@@ -474,6 +476,33 @@ _MAX_CATEGORY_DEPTH = 5
 # A SEPARATE, larger cycle bound: it only stops the ancestor walk from looping forever
 # on a corrupt cycle in stored data, and never fires before the depth cap on legit data.
 _MAX_PARENT_WALK = 100
+# Breadth is capped too (WHIT-426), and unlike depth the reason is mechanical rather than
+# a product judgement: delete_category detaches every child in ONE conditional write, and
+# DynamoDB rejects an UpdateExpression over 4KB. Each child costs a `, #items.#childN
+# .#parent = :null` clause; 122 children = 4070 bytes is the last that fits and 123 = 4104
+# is rejected, which made DELETE /categories/{id} 500 for that parent. The clause cost is
+# independent of the id length — only the #childN alias appears in the expression — so 122
+# is a hard universal ceiling, not a typical case. 50 children = 1672 bytes, ~41% of the
+# cap, the same headroom _COLOR_SLOT_WRITE_CHUNK was chosen for, so the clause shape can
+# grow without silently re-breaking.
+#
+# This bound is only sufficient because delete promotes children to TOP LEVEL, never to the
+# grandparent (pinned by test_repo_delete_middle_node_promotes_only_direct_children). If a
+# delete ever re-homed children onto the grandparent it could push THAT parent past the cap
+# and reopen this bug one level up.
+#
+# Enforced on the same writes as the depth cap — create-with-parent and re-parent — so data
+# written before the cap existed stays readable and editable. delete_category does NOT use
+# this number: it measures the expression it actually built, so a grandfathered parent that
+# still fits (51-122 children) deletes exactly as it does today.
+_MAX_CHILDREN_PER_CATEGORY = 50
+# DynamoDB's documented UpdateExpression ceiling. The delete path measures against this
+# directly rather than against a child count, so it can't drift from the clause shape.
+# tests/lambda_api/test_categories.py keeps its OWN copy of this number, which FakeTable
+# enforces — do NOT make the test import this one. The test copy is the oracle (what the
+# service does); this one is the belief under test. Merged, an inflated value would move both
+# and every size assertion would stop being able to fail.
+_MAX_UPDATE_EXPRESSION_BYTES = 4096
 
 # Sentinel for update_category's `parent`: distinguishes "caller omitted parent,
 # leave the stored link untouched" from "caller passed parent=None, detach to
@@ -558,6 +587,19 @@ def _subtree_height(items: dict, root_id: str) -> int:
     return height(root_id, set())
 
 
+def _is_a_no_op_reparent(items: dict, cat_id: str, parent_id: str) -> bool:
+    """True when cat_id ALREADY sits under parent_id, so the link adds neither depth nor a
+    child. Both caps skip it: a client resubmitting the stored parent on a name/icon edit
+    must not be blocked, including on grandfathered data already over a cap (WHIT-223
+    Decision 2, WHIT-426). On create, cat_id is absent from items, so this never fires.
+
+    NOT shared with validate_category_parent, which has no skip and must keep none — a
+    no-op re-parent still has to be bucket-checked.
+    """
+    existing = items.get(cat_id)
+    return existing is not None and existing.get("parent") == parent_id
+
+
 def validate_category_depth(items: dict, cat_id: str, parent_id: str) -> None:
     """Raise InvalidCategoryParentError if nesting `cat_id` (together with any subtree
     it already has) under `parent_id` would exceed _MAX_CATEGORY_DEPTH levels. Pure —
@@ -570,19 +612,29 @@ def validate_category_depth(items: dict, cat_id: str, parent_id: str) -> None:
     depth(parent) + height(cat_id's subtree): the parent's own level plus the tallest
     chain below cat_id (cat_id itself is one level). On create, cat_id has no subtree
     yet, so its height is 1 and the rule reduces to depth(parent) + 1 <= max."""
-    # A no-op re-parent (cat_id already sits under parent_id) adds no depth — the tree is
-    # unchanged — so it can never breach the cap. Skip the check, so re-saving a category
-    # whose parent is unchanged is never rejected. This matters for a grandfathered chain
-    # deeper than the cap: a client that resubmits the (unchanged) stored parent must not be
-    # blocked, matching the name/icon-edit grandfather guarantee (WHIT-223 Decision 2). On
-    # create, cat_id is absent from items, so this never short-circuits a real new link.
-    existing = items.get(cat_id)
-    if existing is not None and existing.get("parent") == parent_id:
+    if _is_a_no_op_reparent(items, cat_id, parent_id):
         return
     resulting_depth = _ancestor_depth(items, parent_id) + _subtree_height(items, cat_id)
     if resulting_depth > _MAX_CATEGORY_DEPTH:
         raise InvalidCategoryParentError(
             f"categories can be nested at most {_MAX_CATEGORY_DEPTH} levels deep")
+
+
+def validate_category_breadth(items: dict, cat_id: str, parent_id: str) -> None:
+    """Raise InvalidCategoryParentError if giving `parent_id` one more child would exceed
+    _MAX_CHILDREN_PER_CATEGORY. Pure — reads only `items` — so it is unit-testable and
+    shared by the create and re-parent paths (the only two writes that ADD a child link;
+    delete only ever detaches).
+
+    The cap exists so delete_category's single detach write can never outgrow DynamoDB's
+    4KB expression limit — see the _MAX_CHILDREN_PER_CATEGORY comment.
+    """
+    if _is_a_no_op_reparent(items, cat_id, parent_id):
+        return
+    children = sum(1 for child in items.values() if child.get("parent") == parent_id)
+    if children >= _MAX_CHILDREN_PER_CATEGORY:
+        raise InvalidCategoryParentError(
+            f"a category can have at most {_MAX_CHILDREN_PER_CATEGORY} sub-categories")
 
 
 class CategoryRepository:
@@ -783,6 +835,10 @@ class CategoryRepository:
             if parent is not None:
                 validate_category_parent(items, cat_id, parent, bucket)
                 validate_category_depth(items, cat_id, parent)
+                # Inside the retry loop, which re-reads `items`, so two racing creates can't
+                # both slip past the cap: the loser's conditional write fails and it
+                # re-validates against the winner's state.
+                validate_category_breadth(items, cat_id, parent)
 
             # Count taken AFTER seeding, so a new category never reuses a seed's index.
             color = CATEGORY_PALETTE[len(items) % len(CATEGORY_PALETTE)]
@@ -848,6 +904,7 @@ class CategoryRepository:
             if changing_parent and parent is not None:
                 validate_category_parent(items, cat_id, parent, bucket)
                 validate_category_depth(items, cat_id, parent)
+                validate_category_breadth(items, cat_id, parent)
             elif not changing_parent and bucket_changing:
                 # A plain edit can flip the bucket without touching the parent link;
                 # if this row IS a sub, it must stay in its parent's bucket.
@@ -919,6 +976,11 @@ class CategoryRepository:
         is cleared) in the SAME atomic write, so deleting a parent never strands
         its children pointing at a gone id. Raises CategoryNotFoundError if the id
         is absent.
+
+        One write stays safe because the expression is MEASURED before it is sent (below) —
+        the breadth cap is the margin that keeps new data far away from the limit, not the
+        mechanism. Data written before that cap can still be over-wide, and is refused with a
+        400 rather than left to fail as an uncaught 500 (WHIT-426).
         """
         self._ensure_seeded()
         for _attempt in range(2):
@@ -940,12 +1002,22 @@ class CategoryRepository:
                     alias = f"#child{index}"
                     names[alias] = child_id
                     set_clause += f", #items.{alias}.#parent = :null"
+            # REMOVE drops the deleted key; SET bumps the version (and clears any children's
+            # parent). The config item itself stays.
+            expression = f"REMOVE #items.#id SET {set_clause}"
+            # Measure the real expression rather than counting children against the breadth
+            # cap (WHIT-426). New data can't get here — the cap keeps it far under — but data
+            # written before the cap can, and a parent with 51-122 children still FITS. Sizing
+            # the guard by the product cap would refuse a delete that works today. Measuring
+            # also can't drift: add a second clause per child and this stays correct.
+            if len(expression.encode()) > _MAX_UPDATE_EXPRESSION_BYTES:
+                raise InvalidCategoryParentError(
+                    f"'{cat_id}' has {len(child_ids)} sub-categories — too many to detach in "
+                    f"one write; move some out from under it first")
             try:
                 self._get_table().update_item(
                     Key=_CATEGORIES_KEY,
-                    # REMOVE drops the deleted key; SET bumps the version (and clears
-                    # any children's parent). The config item itself stays.
-                    UpdateExpression=f"REMOVE #items.#id SET {set_clause}",
+                    UpdateExpression=expression,
                     ConditionExpression=(
                         "attribute_exists(pk) AND #v = :expected "
                         "AND attribute_exists(#items.#id)"
