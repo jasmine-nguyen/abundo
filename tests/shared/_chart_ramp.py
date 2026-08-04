@@ -19,28 +19,24 @@ source and prove they still report drift instead of shrugging.
 import pathlib
 import re
 
+import _ts_array
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Where shipped client source lives. Test trees are excluded below: a fixture
 # declaring its own ramp must not be mistaken for the app's.
 _CLIENT_DIRS = ("src", "app")
 
-# The ramp is `export const CATEGORY_COLORS = [ ... ] as const;`. Anchored at the start
-# of a line so the several comment mentions of the name (src/chartColors.ts:41-110)
-# cannot match — a comment line starts with `//` or whitespace.
-_DECLARATION = r"^export const {name}\s*=\s*\[(.*?)\]"
-# Both comment forms, stripped BEFORE the array body is located. Order matters: a `]`
-# inside a comment inside the array would otherwise end the body early and read the ramp
-# short, and a `/* '#e991cc', */` would be counted as a live colour — the second is the
-# dangerous one, because it makes the guard agree with a ramp the app no longer paints.
-_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
 _HEX = re.compile(r"#[0-9a-fA-F]{3,8}")
 _INT = re.compile(r"-?\d+")
 
 
 def _declaration_bodies(text: str, name: str) -> list:
-    """The bracketed body of every `export const <name> = [...]` in `text`."""
-    pattern = re.compile(_DECLARATION.format(name=name), re.MULTILINE | re.DOTALL)
-    return pattern.findall(_COMMENT.sub("", text))
+    """The bracketed body of every `export const <name> = [...]` in `text`.
+
+    The ramp has no type annotation and an annotated form must fail loudly, so the shared
+    reader is called without `allow_type_annotation` — reproducing the old regex exactly.
+    """
+    return _ts_array.array_bodies(text, name)
 
 
 def _one_body(text: str, name: str) -> str:
@@ -50,13 +46,7 @@ def _one_body(text: str, name: str) -> str:
     old ramp left above the live one) would otherwise be parsed instead, and could hide
     a real drift by happening to agree with the server.
     """
-    bodies = _declaration_bodies(text, name)
-    assert len(bodies) == 1, (
-        f"expected exactly one `export const {name} = [...]` declaration, "
-        f"found {len(bodies)} — if the declaration was renamed or reshaped, update the "
-        "parser in tests/shared/_chart_ramp.py; if there are two, delete the dead one."
-    )
-    return bodies[0]
+    return _ts_array.one_array_body(text, name)
 
 
 def parse_ramp(text: str) -> list:
