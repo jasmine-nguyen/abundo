@@ -112,7 +112,7 @@ describe('[A21][A22] a blank name is a validation bail, never a rejection', () =
     expect(mockApi.createCategory).not.toHaveBeenCalled();
   });
 
-  it('saveCategory("gym", { name: "" }, { silent: true }) resolves false and never calls the API', async () => {
+  it('saveCategory("gym", { name: "   " }, { silent: true }) resolves false and never calls the API', async () => {
     const { result } = renderHook(() => useAppContext(), { wrapper });
     let returned: unknown = 'unset';
     await act(async () => {
