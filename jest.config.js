@@ -65,6 +65,16 @@ module.exports = {
       setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
       transformIgnorePatterns: RN_TRANSFORM_IGNORE,
       clearMocks: true,
+      // WHIT-433: the flaky-screen-suite fix. These full-provider tests drive real RN
+      // Animated springs (sheet/toast slide-in) that settle over many setTimeout-driven
+      // frames. Under the v8 COVERAGE run every frame is instrumented and slow, so a heavy
+      // test's async settle occasionally crosses Jest's 5s default and times out — only
+      // under coverage, and worse in a long-lived worker (whichever suite is mid-flight
+      // fails, so "different tests fail on different runs"). It is slowness, not a hang:
+      // the same run passes at a higher ceiling. 15s gives headroom without masking a real
+      // deadlock (which would still fail). The regression gate is fail-on-revert: drop this
+      // back to the default and `--runInBand --coverage` reddens deterministically.
+      testTimeout: 15000,
     },
   ],
 };
