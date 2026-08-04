@@ -33,6 +33,17 @@ class FakeMilestoneRepo:
         return [{**m, "targetBalance": float(m["targetBalance"])} for m in milestones]
 
 
+class FakeNotifyRepo:
+    """Handler-level stand-in for NotifyRepository (WHIT-447) — empty fired set, so the
+    mint-migration is a no-op for these validation-edge tests."""
+
+    def fired_milestones(self, scope=None):
+        return set()
+
+    def migrate_milestone_markers(self, migrations, scope=None):
+        pass
+
+
 def _put_event(body):
     return {
         "rawPath": "/milestones",
@@ -44,7 +55,7 @@ def _put_event(body):
 
 def _put_plan(handler, milestones, repo=None):
     repo = repo or FakeMilestoneRepo()
-    return handler.set_milestones(_put_event({"milestones": milestones}), repo), repo
+    return handler.set_milestones(_put_event({"milestones": milestones}), repo, FakeNotifyRepo()), repo
 
 
 # --- [A-EX] extra keys whitelisted away -------------------------------------
