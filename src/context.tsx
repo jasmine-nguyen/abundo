@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { normalizeColorSlot } from './chartColors';
+import { writeFailureMessage } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
 import * as Crypto from 'expo-crypto';
@@ -1241,8 +1242,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         queryClient.invalidateQueries({ queryKey: ['categories'] });
         if (!opts?.silent) showToast('Category created.');
         return created;
-      } catch {
-        if (!opts?.silent && epoch === sessionEpoch.current) showToast('Could not save category. Please try again.');
+      } catch (error) {
+        // WHIT-271/282: a session change mid-flight is not a failure to report — neither toast
+        // nor throw; the caller's own epoch check owns the bail.
+        if (epoch !== sessionEpoch.current) return null;
+        // WHIT-437: `silent` means "I don't toast" — so hand the caller the error to speak with.
+        // app/category/edit.tsx folds the reason into its one summary toast.
+        if (opts?.silent) throw error;
+        showToast(writeFailureMessage(error, 'Could not save category. Please try again.'));
         return null;
       }
     },
@@ -1274,8 +1281,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         queryClient.invalidateQueries({ queryKey: ['categories'] });
         if (!opts?.silent) showToast('Category updated.');
         return true;
-      } catch {
-        if (!opts?.silent && epoch === sessionEpoch.current) showToast('Could not save category. Please try again.');
+      } catch (error) {
+        if (epoch !== sessionEpoch.current) return false;   // WHIT-271/282, as above
+        if (opts?.silent) throw error;                      // WHIT-437, as above
+        showToast(writeFailureMessage(error, 'Could not save category. Please try again.'));
         return false;
       }
     },
@@ -1313,8 +1322,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
       showToast('Category deleted.');
       return true;
-    } catch {
-      if (epoch === sessionEpoch.current) showToast('Could not delete category. Please try again.');
+    } catch (error) {
+      if (epoch === sessionEpoch.current)
+        showToast(writeFailureMessage(error, 'Could not delete category. Please try again.'));
       return false;
     }
   }, [showToast, patchRules]);

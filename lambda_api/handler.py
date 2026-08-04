@@ -903,7 +903,7 @@ def create_category(
 
     cat_id = _slugify(name)
     if not cat_id:
-        return _json_response(400, {"error": "name has no slug-safe characters"})
+        return _json_response(400, {"error": "name must include at least one letter or number"})
 
     if bucket == SAVINGS_BUCKET and cat_id in budget_repo.list_budgets():
         return _json_response(

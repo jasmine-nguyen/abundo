@@ -1,5 +1,10 @@
 import { Transaction, Category, Bucket } from "./context";
+import { ApiError } from "./apiError";
 import { getAuthToken } from "./auth";
+
+// Re-exported for the api-level tests, which assert the thrown shape alongside the fetchers.
+// Production callers import it from ./apiError directly.
+export { ApiError } from "./apiError";
 const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
 
 /**
@@ -45,6 +50,29 @@ const REQUEST_TIMEOUT_MS = 15_000;
  * server caches the generation, so even a rare timeout here self-heals on the next read.
  */
 const AI_GENERATE_TIMEOUT_MS = 60_000;
+
+/**
+ * Build the rejection for a not-OK response, carrying the server's stated reason (WHIT-437).
+ *
+ * TOTAL BY CONSTRUCTION: it RETURNS an error, it never throws one. An HTML gateway 403/502, an
+ * empty body, or a mock Response without .json() must still yield `API error: N` — a SyntaxError
+ * escaping here would carry no status, which defeats src/queryClient.ts's auth detection and
+ * breaks the message contract the suite pins.
+ *
+ * Used by the three category writes only. The other 30 not-OK guards still throw a plain Error;
+ * widening one is a one-line swap (see WHIT-437's follow-up card).
+ */
+async function failed(response: Response): Promise<ApiError> {
+  let serverMessage: string | null = null;
+  try {
+    const body = await response.json();
+    const raw = (body as { error?: unknown } | null)?.error;
+    if (typeof raw === "string" && raw.trim()) serverMessage = raw.trim();
+  } catch {
+    // non-JSON, empty, or no json() — a status-only error is the right answer
+  }
+  return new ApiError(response.status, serverMessage);
+}
 
 /**
  * The single fetch choke point: every API call runs through here so it inherits a request
@@ -146,7 +174,7 @@ export async function createCategory(
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
   });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+  if (response.ok == false) throw await failed(response);
 
   return response.json();
 }
@@ -169,7 +197,7 @@ export async function updateCategory(
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
   });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+  if (response.ok == false) throw await failed(response);
 
   return response.json();
 }
@@ -187,7 +215,7 @@ export async function deleteCategory(id: string): Promise<{ id: string }> {
     method: "DELETE",
     headers: await buildHeaders(),
   });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+  if (response.ok == false) throw await failed(response);
 
   return response.json();
 }
