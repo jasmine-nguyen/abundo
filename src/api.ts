@@ -1,6 +1,7 @@
 import { Transaction, Category, Bucket } from "./context";
 import { ApiError } from "./apiError";
 import { getAuthToken } from "./auth";
+import { withBodyTimeout } from "./httpTimeout";
 
 // Re-exported for the api-level tests, which assert the thrown shape alongside the fetchers.
 // Production callers import it from ./apiError directly.
@@ -52,20 +53,16 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const AI_GENERATE_TIMEOUT_MS = 60_000;
 
 /**
- * Read a promise under a timeout, rejecting if it hasn't settled in `timeoutMs`. `failed()` reads
- * the error body AFTER apiFetch has already cleared its abort timer, so without this a not-OK
- * response whose body never finishes streaming would hang `failed()` — and the failed-save writer,
- * so the Save button spins forever (WHIT-441). On timeout the still-pending read is left with a
- * no-op catch so an orphaned rejection can't surface as an unhandled rejection (which flakes the
- * RN runtime and jest); failed()'s own catch turns the timeout into a status-only ApiError.
+ * Read a SUCCESS response's JSON body under the same stall timeout `failed()` gives the error body.
+ * apiFetch's abort timer only bounds the HEADERS (cleared the instant they resolve), so a 2xx whose
+ * body never finishes streaming would hang the read — and the query/writer behind it — leaving the
+ * Save button spinning forever (WHIT-448, the success-path twin of WHIT-441). Defaults to the 15s
+ * read budget; the long-running paid generation passes AI_GENERATE_TIMEOUT_MS. Return type is
+ * inferred Promise<any>, exactly like the bare response.json() it replaces, so every typed return
+ * stays assignable with no call-site change.
  */
-function withBodyTimeout<T>(read: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("body read timed out")), timeoutMs);
-  });
-  read.catch(() => {});   // the losing arm's rejection is expected; swallow it, don't leak it
-  return Promise.race([read, timeout]).finally(() => clearTimeout(timer));
+function readJson(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<any> {
+  return withBodyTimeout(response.json(), timeoutMs);
 }
 
 /**
@@ -133,7 +130,7 @@ export async function fetchTransactions(): Promise<Transaction[]> {
   const response = await apiFetch(`${API_BASE}/transactions`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /** One page of the all-accounts transaction feed (the Transactions tab's "Load More"). */
@@ -161,7 +158,7 @@ export async function fetchTransactionsFeed(cursor?: string, limit?: number): Pr
   const response = await apiFetch(`${API_BASE}/transactions/feed${qs}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -174,7 +171,7 @@ export async function fetchCategories(): Promise<Category[]> {
   const response = await apiFetch(`${API_BASE}/categories`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -195,7 +192,7 @@ export async function createCategory(
   });
   if (response.ok == false) throw await failed(response);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -218,7 +215,7 @@ export async function updateCategory(
   });
   if (response.ok == false) throw await failed(response);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -236,7 +233,7 @@ export async function deleteCategory(id: string): Promise<{ id: string }> {
   });
   if (response.ok == false) throw await failed(response);
 
-  return response.json();
+  return readJson(response);
 }
 
 /** A budget's target plus its computed spend for the current window. */
@@ -259,7 +256,7 @@ export async function fetchBudgets(days: number): Promise<Record<string, BudgetR
   const response = await apiFetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -277,7 +274,7 @@ export async function fetchBudgetTransactions(categoryId: string): Promise<Trans
   const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/transactions`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /** A category's computed spend for the current pay cycle. */
@@ -323,7 +320,7 @@ export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<st
   const response = await apiFetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}${cycleParam}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -344,7 +341,7 @@ export async function fetchCategoryTransactions(categoryId: string, cycle = 0): 
   const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(categoryId)}/transactions${cycleParam}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -384,7 +381,7 @@ export async function setTransactionFields(
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /** One transaction's outcome in a batch category update (WHIT-70). */
@@ -412,7 +409,7 @@ export async function setTransactionCategories(
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -438,7 +435,7 @@ export async function fetchHomeLoan(): Promise<HomeLoan> {
   const response = await apiFetch(`${API_BASE}/homeloan`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -468,7 +465,7 @@ export async function fetchAccountBalances(): Promise<AccountBalance[]> {
   const response = await apiFetch(`${API_BASE}/accounts/balances`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -529,7 +526,7 @@ export async function fetchGoals(): Promise<GoalRecord[]> {
   const response = await apiFetch(`${API_BASE}/goals`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -554,7 +551,7 @@ export async function fetchMilestones(): Promise<MilestoneRecord[]> {
   const response = await apiFetch(`${API_BASE}/milestones`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -572,7 +569,7 @@ export async function setMilestones(milestones: MilestoneRecord[]): Promise<Mile
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -593,7 +590,7 @@ export async function saveGoal(id: string, body: GoalWriteBody): Promise<GoalRec
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -611,7 +608,7 @@ export async function deleteGoal(id: string): Promise<{ id: string }> {
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -637,7 +634,7 @@ export async function fetchRepayment(): Promise<Repayment> {
   const response = await apiFetch(`${API_BASE}/repayment`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -682,7 +679,7 @@ export async function fetchLoanFacts(): Promise<LoanFacts> {
   const response = await apiFetch(`${API_BASE}/loanfacts`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -700,7 +697,7 @@ export async function setLoanFacts(facts: LoanFactsInput): Promise<LoanFactsInpu
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /** The persisted pay cycle: window length in days + the last pay date. */
@@ -724,7 +721,7 @@ export async function fetchPayCycle(): Promise<PayCycle> {
   const response = await apiFetch(`${API_BASE}/paycycle`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -744,7 +741,7 @@ export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -767,7 +764,7 @@ export async function setBudget(
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -786,7 +783,7 @@ export async function deleteBudget(categoryId: string): Promise<{ id: string }> 
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -799,7 +796,7 @@ export async function listEnrichments(): Promise<EnrichmentRule[]> {
   const response = await apiFetch(`${API_BASE}/enrichments`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -821,7 +818,7 @@ export async function createEnrichment(
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -844,7 +841,7 @@ export async function updateEnrichment(
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -862,7 +859,7 @@ export async function deleteEnrichment(id: string): Promise<{ id: string }> {
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -927,7 +924,7 @@ export async function fetchAiInsights(): Promise<AiInsights> {
   const response = await apiFetch(`${API_BASE}/insights/ai`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }
 
 /**
@@ -950,7 +947,7 @@ export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<Ai
   }, AI_GENERATE_TIMEOUT_MS); // the paid generation runs long — don't cap it at the 15s read budget
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response, AI_GENERATE_TIMEOUT_MS); // the long body budget too, not just the headers
 }
 
 /**
@@ -971,5 +968,5 @@ export async function registerDevice(token: string): Promise<{ token: string }> 
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
-  return response.json();
+  return readJson(response);
 }

@@ -33,6 +33,15 @@ import type { CognitoUser, CognitoUserSession } from "amazon-cognito-identity-js
 // @tanstack/react-query (pure JS, no native module), so this keeps auth.ts node-safe
 // on import and adds no import cycle.
 import { queryClient } from "./queryClient";
+// Node-safe (pure setTimeout/Promise, no native module), so it keeps auth.ts importable in the
+// node `logic` jest project and adds no import cycle.
+import { withBodyTimeout } from "./httpTimeout";
+
+// The InitiateAuth refresh reads its body with no fetch-level timeout, so a 2xx whose body never
+// finishes streaming would hang token refresh forever (the getAuthToken promise never settles).
+// Bound the body read the same way the API readers are bounded (WHIT-448). 15s matches the app's
+// default read budget (src/api.ts REQUEST_TIMEOUT_MS).
+const REFRESH_BODY_TIMEOUT_MS = 15_000;
 
 /**
  * Where the returning-user auth state can be, from the gate's point of view.
@@ -679,7 +688,7 @@ async function refreshViaInitiateAuth(refreshToken: string): Promise<string | un
       }),
     });
     if (!res.ok) return undefined;
-    const data = (await res.json()) as {
+    const data = (await withBodyTimeout(res.json(), REFRESH_BODY_TIMEOUT_MS)) as {
       AuthenticationResult?: { IdToken?: string; AccessToken?: string; RefreshToken?: string; ExpiresIn?: number };
     };
     const r = data.AuthenticationResult;
