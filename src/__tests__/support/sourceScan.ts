@@ -49,6 +49,49 @@ export function shippedCode(): Map<string, string> {
   return new Map(shippedSourceFiles().map((abs) => [repoPath(abs), stripComments(readFileSync(abs, 'utf8'))]));
 }
 
+// WHIT-423 — read every `name: { … }` style block by balancing braces, so a nested value
+// (shadowOffset: { … }, transform: [{ … }]) sitting before the props of interest no longer
+// truncates the read the way a `[^}]*` regex does — it stops at the first `}`. String literals
+// are skipped so a brace inside a quoted value (a template `${…}`, a `'}'`) can't unbalance the
+// count. Comments are stripped first, as the other scanners do, so a commented brace can't fool it.
+export function styleBlocks(src: string): { name: string; body: string }[] {
+  const code = stripComments(src);
+  const opener = /([A-Za-z_$][\w$]*)\s*:\s*\{/g;
+  const blocks: { name: string; body: string }[] = [];
+  for (let match = opener.exec(code); match; match = opener.exec(code)) {
+    const open = match.index + match[0].length - 1; // index of the block's '{'
+    const close = matchingBrace(code, open);
+    if (close === -1) continue; // no matching '}' — a real style block always closes
+    blocks.push({ name: match[1], body: code.slice(open + 1, close) });
+  }
+  return blocks;
+}
+
+// Index of the '}' that closes the '{' at `open`, or -1. Skips string literals whole.
+function matchingBrace(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const char = src[i];
+    if (char === "'" || char === '"' || char === '`') {
+      i = skipString(src, i);
+      continue;
+    }
+    if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) return i;
+  }
+  return -1;
+}
+
+// Index of the closing quote of the string opened at `start`, honouring backslash escapes.
+function skipString(src: string, start: number): number {
+  const quote = src[start];
+  for (let i = start + 1; i < src.length; i++) {
+    if (src[i] === '\\') { i++; continue; }
+    if (src[i] === quote) return i;
+  }
+  return src.length - 1;
+}
+
 // WHIT-413 — the shadowed-folder walk, kept here (a root param, not a hard-coded SRC_DIR) so it
 // can be driven over a synthetic fixture tree as well as the real src/. In each directory a
 // subfolder shadows a module when a same-named code file (.ts/.tsx/.js/.jsx) sits beside it and the
