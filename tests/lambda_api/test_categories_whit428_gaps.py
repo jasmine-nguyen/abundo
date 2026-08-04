@@ -345,11 +345,12 @@ def test_protected_only_bites_once_every_slot_is_owed(handler):
     counts = Counter({slot: 1 for slot in range(20)})
     every_slot = frozenset(range(20))
 
-    # Nothing is reserved, so protected is irrelevant and the ordinary least-held answer wins.
-    assert (repository.least_held_color_slot(counts, frozenset(), every_slot)
-            == repository.least_held_color_slot(counts, frozenset()))
+    # Nothing is excluded, so protected is irrelevant and the ordinary least-held answer wins.
+    assert (repository.least_held_color_slot(counts, repository.SlotPreference(protected=every_slot))
+            == repository.least_held_color_slot(counts, repository.SlotPreference()))
     # Every slot owed AND every slot protected: defensive, but it must not raise.
-    slot = repository.least_held_color_slot(counts, every_slot, every_slot)
+    slot = repository.least_held_color_slot(
+        counts, repository.SlotPreference(excluded=every_slot, protected=every_slot))
     assert isinstance(slot, int) and 0 <= slot < 20
 
 

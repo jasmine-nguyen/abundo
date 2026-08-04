@@ -236,3 +236,35 @@ def _piled_store(repo, repository, count, *, slot=0, schema=1):
             "colorSlotSchema": Decimal(schema)}
     repo._table.store[_CFG] = item
     return item
+
+
+def _random_legacy_store(repository, rng):
+    """A plausible legacy store: some built-ins deleted, some already slotted (not always on
+    their designated slot), plus 0-260 custom rows, some slotted, some CORRUPT. Custom ids are
+    random lowercase words so the built-ins land at random positions in the alphabetical
+    chunk order — the one thing the committed 'cat0000..cat0199' shape never varies.
+
+    Lives here, in the shared fakes, so the impl suite AND the reservation-property suite draw
+    the SAME store shapes from one definition (WHIT-427/429)."""
+    items = {}
+    for cat_id, seed in repository.SEED_CATEGORIES.items():
+        roll = rng.random()
+        if roll < 0.25:
+            continue                                     # built-in deleted before the backfill
+        row = {k: v for k, v in seed.items() if k != _SLOT}
+        if roll < 0.45:
+            row[_SLOT] = Decimal(rng.randrange(20))      # already slotted, maybe not its own
+        items[seed["id"]] = row
+    for _ in range(rng.randrange(0, 260)):
+        cat_id = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(6))
+        if cat_id in repository.SEED_CATEGORIES:
+            continue
+        row = {"id": cat_id, "name": cat_id, "icon": "tag", "color": "#888888",
+               "bucket": "Lifestyle", "parent": None}
+        roll = rng.random()
+        if roll < 0.15:
+            row[_SLOT] = Decimal(rng.randrange(20))
+        elif roll < 0.22:
+            row[_SLOT] = rng.choice(["7", 7.5, -1, 99, True])   # corrupt -> must be reassigned
+        items[cat_id] = row
+    return items

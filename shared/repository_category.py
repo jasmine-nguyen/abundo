@@ -4,7 +4,7 @@ config item, with the seed taxonomy and colour palette kept local to this module
 import logging
 from collections import Counter
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -162,8 +162,28 @@ _NON_SEED_COLOR_SLOTS = frozenset(range(_COLOR_SLOT_COUNT)) - {
 }
 
 
-def least_held_color_slot(counts: Counter, reserved: frozenset,
-                          protected: frozenset = frozenset()) -> int:
+class SlotPreference(NamedTuple):
+    """How a caller wants least_held_color_slot to treat each slot (WHIT-439).
+
+    Three independent levers, where the assigner used to cram four meanings into two frozensets:
+
+      excluded    — HARD: never a candidate. A slot the pending backfill owes; handing it out
+                    would permanently steal a built-in's designated colour.
+      discouraged — SOFT CAP: kept out of the ordinary candidates like `excluded`, but honoured
+                    as a ranking PENALTY in the all-owed fallback, so a capped slot survives as
+                    "picked last" instead of vanishing exactly when the store is most crowded —
+                    which is the bug this structure fixes (the cap used to be unioned into
+                    `excluded` and then dropped wholesale by the fallback).
+      protected   — FALLBACK-ONLY: excluded only once every slot is already owed and one must be
+                    taken back. Keeps a built-in's OWN designated hue off the chopping block; a
+                    custom row's slot is taken instead and simply re-planned.
+    """
+    excluded: frozenset = frozenset()
+    discouraged: frozenset = frozenset()
+    protected: frozenset = frozenset()
+
+
+def least_held_color_slot(counts: Counter, preference: SlotPreference) -> int:
     """The slot to give a category needing one: the least-held one, preferring slots no
     built-in owns, with the lowest slot number breaking any remaining tie.
 
@@ -184,47 +204,53 @@ def least_held_color_slot(counts: Counter, reserved: frozenset,
     on a custom category's colour rather than on Eating Out's — the first built-in clash moves
     from the 21st category to the 28th.
 
-    `reserved` is a HARD exclusion, not a weight. Slots the pending backfill owes must not be
-    candidates at all: an owed slot is held by nobody, so counting it as merely +1 would leave
-    it tied with a singly-held slot and the tie-break would hand it straight over — stealing a
-    built-in's designated colour permanently.
+    `preference.excluded` is a HARD exclusion, not a weight. Slots the pending backfill owes
+    must not be candidates at all: an owed slot is held by nobody, so counting it as merely +1
+    would leave it tied with a singly-held slot and the tie-break would hand it straight over —
+    stealing a built-in's designated colour permanently.
 
-    NOTE what the fallback drops. When `reserved` covers all 20 slots the fallback re-derives
-    its candidates from `range`, so ONLY `protected` still applies — a caller that folded a
-    soft cap into `reserved` (as plan_new_category_slot does with `crowded`) loses that cap
-    exactly when the store is most crowded. Benign in practice: the backfill hands its pending
-    slots to the emptiest slots while a capped slot is by definition among the fullest, so the
-    least-held tie-break avoids them anyway. Carded rather than patched — the fix is to give
-    this function one preference structure instead of two overloaded frozensets.
+    `preference.discouraged` is a SOFT CAP. It is kept out of the ordinary candidates just like
+    `excluded`, so the common path is unchanged — but unlike `excluded` it survives the all-owed
+    fallback as a ranking PENALTY (a capped slot ranks after an equally-held uncapped one), so a
+    cap is honoured exactly when the store is most crowded instead of vanishing there (WHIT-439).
+    The penalty ranks BELOW the held count and ABOVE the non-seed preference: avoiding an
+    over-cap slot matters more than which colour family a repeat doubles up on.
 
-    `protected` is the SECOND tier, and only matters once every slot is owed and something has
-    to be taken back. Those are the slots owed to a BUILT-IN for its OWN designated hue. Taking
-    a custom row's owed slot is harmless — the next re-plan simply moves that row — but a
-    built-in robbed of its designation never gets it back, because pass 1 only entitles it
-    while the slot is free. Once the backfill spreads (WHIT-428) a saturated store's plan can
-    own all 20 slots, so this branch became reachable on real stores rather than theoretical.
+    `preference.protected` is the LAST tier, and only matters once every slot is owed and
+    something has to be taken back. Those are the slots owed to a BUILT-IN for its OWN designated
+    hue. Taking a custom row's owed slot is harmless — the next re-plan simply moves that row —
+    but a built-in robbed of its designation never gets it back, because pass 1 only entitles it
+    while the slot is free. Once the backfill spreads (WHIT-428) a saturated store's plan can own
+    all 20 slots, so this branch became reachable on real stores rather than theoretical.
 
     Iterates `range`, never the Counter, so the answer never depends on insertion order: two
     concurrent creates must compute the same slot.
     """
     def least_held(slots) -> int:
-        """Fewest holders wins; among equals a slot no built-in owns; then the lowest number.
-        False sorts before True, so the non-seed test reads as "seed slots go last"."""
+        """Fewest holders wins; among equals an UNCAPPED slot; then a slot no built-in owns;
+        then the lowest number. False sorts before True, so each test reads as "these go last"."""
         return min(slots,
-                   key=lambda slot: (counts[slot], slot not in _NON_SEED_COLOR_SLOTS, slot))
+                   key=lambda slot: (counts[slot],
+                                     slot in preference.discouraged,
+                                     slot not in _NON_SEED_COLOR_SLOTS,
+                                     slot))
 
-    candidates = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in reserved]
+    candidates = [slot for slot in range(_COLOR_SLOT_COUNT)
+                  if slot not in preference.excluded and slot not in preference.discouraged]
     if not candidates:
-        # Every slot is owed, so something must be taken back. Take it from a slot owed to a
-        # CUSTOM row: that row is simply re-planned onto another slot, while a built-in robbed
-        # of its designated hue never gets it back. NOT the free-slot branch, which would hand
-        # over the lowest owed slot — usually eatingout's slot 0.
-        spare = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in protected]
+        # Every slot is owed (or capped), so something must be taken back. Take it from a slot
+        # owed to a CUSTOM row: that row is simply re-planned onto another slot, while a built-in
+        # robbed of its designated hue never gets it back. NOT the free-slot branch, which would
+        # hand over the lowest owed slot — usually eatingout's slot 0. `least_held` still applies
+        # the cap penalty here, so a discouraged slot is taken back only as a last resort.
+        spare = [slot for slot in range(_COLOR_SLOT_COUNT) if slot not in preference.protected]
         # `protected` is a subset of the 13 seed slots, so `spare` always has the 7 non-seed
         # slots in it. The fallback is defensive only, for a caller that protects all 20.
         return least_held(spare or range(_COLOR_SLOT_COUNT))
     free = [slot for slot in candidates if counts[slot] == 0]
     if free:
+        # `free` is drawn from `candidates`, which already drops every `discouraged` slot, so the
+        # lowest free slot is never a capped one — no need to re-check the cap here.
         return min(free)
     return least_held(candidates)  # saturated: a duplicate is unavoidable, so spread it
 
@@ -261,7 +287,7 @@ def plan_color_slot_backfill(items: dict) -> dict:
             counts[plan[cat_id]] += 1
     for cat_id in missing:  # pass 2: everything else, least-held, alphabetical
         if cat_id not in plan:
-            plan[cat_id] = least_held_color_slot(counts, frozenset())
+            plan[cat_id] = least_held_color_slot(counts, SlotPreference())
             counts[plan[cat_id]] += 1
     return plan
 
@@ -358,7 +384,7 @@ def plan_color_slot_repaint(items: dict) -> dict:
     )
     plan = {}
     for cat_id in movers:
-        plan[cat_id] = least_held_color_slot(counts, frozenset())
+        plan[cat_id] = least_held_color_slot(counts, SlotPreference())
         counts[plan[cat_id]] += 1
     return plan
 
@@ -423,6 +449,9 @@ def plan_new_category_slot(items: dict) -> int:
     the row the POST had already told the client about. Projection caps; stored counts rank.
     Once a store is fully stamped this is provably a no-op: sum(counts) == rows, so the
     least-held slot is always under the allowance and the choice is unchanged.
+
+    The cap rides in as `discouraged`, not folded into `excluded`, so it survives the all-owed
+    fallback as a ranking penalty instead of being dropped there (WHIT-439).
     """
     pending = plan_color_slot_backfill(items)
     counts = color_slot_counts(items)
@@ -431,7 +460,8 @@ def plan_new_category_slot(items: dict) -> int:
     crowded = frozenset(slot for slot in range(_COLOR_SLOT_COUNT)
                         if projected[slot] >= allowance)
     reserved = frozenset(pending.values())
-    return least_held_color_slot(counts, reserved | crowded, _designated_builtin_slots(pending))
+    return least_held_color_slot(counts, SlotPreference(
+        excluded=reserved, discouraged=crowded, protected=_designated_builtin_slots(pending)))
 
 
 def _previewed_slot(plan: dict, cat_id: str, cat: dict) -> Optional[int]:
@@ -461,6 +491,49 @@ _CATEGORIES_KEY = {"pk": "CATEGORIES", "sk": "CATEGORIES"}
 
 # Same stream as repository_base, so a deferred backfill is visible next to DB errors.
 logger = logging.getLogger("repository")
+
+
+def _backfill_expression(version: Any, plan: dict, *, settled: bool) -> tuple:
+    """The (UpdateExpression, names, values, drained) for one colour-slot write — pure, no table.
+
+    Slices the chunk, decides `drained`, and builds the SET clause plus the name/value maps the
+    conditional write hands to DynamoDB. `_write_color_slots` calls this and then only persists,
+    so the 4KB bound, the `drained` rule and the empty-plan case are properties of the returned
+    expression ALONE — testable without driving a fake table (WHIT-427). The chunk cap lives
+    HERE, which is why an unbounded plan can never build an over-4KB expression.
+
+    `settled` is an input because `drained` is `len(chunk) == len(plan) and settled`. Keeping it
+    here makes the drained rule a plain unit test rather than a write-policy decision left to the
+    caller; it is NOT leaked I/O — the value only shapes the expression.
+
+    Names are built INCREMENTALLY: DynamoDB rejects an ExpressionAttributeName the expression
+    never references, the same technique delete_category uses for #childN. With an EMPTY plan we
+    still write the marker (names = version + schema only, never #items), so a store whose
+    categories were all deleted stops re-planning forever.
+
+    Stamp the migrated marker only once this write drains the plan AND no further stage follows
+    it. A partial write must NOT stamp it, or the remaining categories would never be revisited;
+    nor may the backfill's last chunk stamp it while a repaint is still owed. An empty plan
+    counts as drained: the "all categories deleted" case, which must still stamp.
+    """
+    chunk = color_slot_plan_order(plan)[:_COLOR_SLOT_WRITE_CHUNK]
+    drained = len(chunk) == len(plan) and settled
+    names = {"#v": "version"}
+    values = {":expected": version, ":next": version + Decimal(1)}
+    set_parts = ["#v = :next"]
+    if drained:
+        names["#schema"] = _COLOR_SLOT_SCHEMA_FIELD
+        values[":schema"] = Decimal(_COLOR_SLOT_SCHEMA)
+        set_parts.append("#schema = :schema")
+    if plan:
+        names["#items"] = "items"
+        names["#slot"] = _COLOR_SLOT_FIELD
+        for index, cat_id in enumerate(chunk):
+            alias = f"#cat{index}"
+            names[alias] = cat_id
+            values[f":slot{index}"] = Decimal(plan[cat_id])
+            set_parts.append(f"#items.{alias}.#slot = :slot{index}")
+    return "SET " + ", ".join(set_parts), names, values, drained
 
 # Sub-category (parent link) support. `parent` is optional on a category: None
 # (or absent, on rows written before this field existed) means a top-level
@@ -721,41 +794,18 @@ class CategoryRepository:
 
         FAIL-CLOSED on the create path (strict=True): a real DB fault there is not something
         to paper over, and create's own conditional write is about to hit it anyway.
+
+        The expression itself — chunk cap, drained rule, incremental names — is built by the
+        pure _backfill_expression, so this method holds only the write policy. The chunk is a
+        prefix of the DRAIN ORDER, which is what keeps chunking equivalent to one shot (see
+        color_slot_plan_order and _backfill_expression).
         """
-        # Names are built INCREMENTALLY: DynamoDB rejects an ExpressionAttributeName the
-        # expression never references. Same technique delete_category uses for #childN.
-        # With an EMPTY plan we still write the marker (names = version + schema only, never
-        # #items), so a store whose categories were all deleted stops re-planning forever.
-        # At most _COLOR_SLOT_WRITE_CHUNK categories per write, so the expression can never
-        # exceed DynamoDB's 4KB cap. The chunk is a prefix of the DRAIN ORDER, which is what
-        # keeps chunking equivalent to one shot (see color_slot_plan_order and the docstring).
-        chunk = color_slot_plan_order(plan)[:_COLOR_SLOT_WRITE_CHUNK]
-        # Stamp the migrated marker only once this write drains the plan AND no further stage
-        # follows it. A partial write must NOT stamp it, or the remaining categories would
-        # never be revisited; nor may the backfill's last chunk stamp it while a repaint is
-        # still owed. An empty plan counts as drained: that is the "all categories deleted"
-        # case, which must still stamp so the store stops re-planning forever.
-        drained = len(chunk) == len(plan) and settled
-        names = {"#v": "version"}
-        values = {":expected": version, ":next": version + Decimal(1)}
-        set_parts = ["#v = :next"]
-        if drained:
-            names["#schema"] = _COLOR_SLOT_SCHEMA_FIELD
-            values[":schema"] = Decimal(_COLOR_SLOT_SCHEMA)
-            set_parts.append("#schema = :schema")
-        if plan:
-            names["#items"] = "items"
-            names["#slot"] = _COLOR_SLOT_FIELD
-            for index, cat_id in enumerate(chunk):
-                alias = f"#cat{index}"
-                names[alias] = cat_id
-                values[f":slot{index}"] = Decimal(plan[cat_id])
-                set_parts.append(f"#items.{alias}.#slot = :slot{index}")
+        expression, names, values, _drained = _backfill_expression(version, plan, settled=settled)
         try:
             self._get_table().update_item(
                 Key=_CATEGORIES_KEY,
                 # Nested SET stamps ONE field per category — never rewrites the items map.
-                UpdateExpression="SET " + ", ".join(set_parts),
+                UpdateExpression=expression,
                 ConditionExpression="attribute_exists(pk) AND #v = :expected",
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
