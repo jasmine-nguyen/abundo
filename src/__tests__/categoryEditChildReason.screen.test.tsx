@@ -139,3 +139,20 @@ it('keeps the generic tail for a 500', async () => {
     "Category updated, but 1 sub-category couldn't be attached — add it from its page."));
   expect(mockShowToast).toHaveBeenCalledTimes(1);
 });
+
+// [C7] WHIT-441/438 — when the destination is ALREADY at its child cap, "add it from its page" is
+// circular: that page refuses for the very same reason. Name the cap instead. A failure with no
+// stated reason (a bare falsy result) is what routes here rather than to the server's own words.
+it('names the child cap instead of the circular advice when the parent is full', async () => {
+  const kids = Array.from({ length: 50 }, (_, i) => LIVING(`kid${i}`, `Kid ${i}`, 'transport'));
+  mockCategories = [LIVING('transport', 'Transport'), LIVING('spare', 'Spare'), ...kids];
+  mockSaveCategory.mockImplementation(async (id) => id === 'transport');  // the 'spare' attach fails, no reason
+  render(<CategoryEdit />);
+  fireEvent.press(screen.getByTestId('attachChild-spare'));
+  await act(async () => { fireEvent.press(screen.getByText('Save category')); });
+
+  // Fail-on-revert: restore the unconditional `add … from its page` tail → this reddens.
+  await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith(
+    'Category updated, but 1 sub-category couldn\'t be attached — Transport already has the most sub-categories allowed (50).'));
+  expect(mockShowToast).toHaveBeenCalledTimes(1);
+});
