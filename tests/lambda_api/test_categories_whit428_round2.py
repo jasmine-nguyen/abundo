@@ -20,29 +20,19 @@ code did not exist yet:
     all-corrupt store, 600 rows, mid-backfill — and the reachable path to the empty one;
   * _repaint_allowance at row_count 0.
 
-Fakes are LOADED from the impl suite by path (same as the round-1 file): a re-implemented
-FakeTable would drift and start passing what the real one rejects.
+Fakes live in tests/shared/_category_fakes.py, imported here as everywhere else (WHIT-440):
+one definition, so a re-implemented FakeTable can't drift and start passing what the real one
+rejects. Before WHIT-440 this suite re-exec'd the impl module by path.
 """
 
-import importlib.util
-import pathlib
 import random
 from decimal import Decimal
 
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "_whit428_impl_suite_r2", pathlib.Path(__file__).with_name("test_categories.py"))
-_IMPL = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_IMPL)
-
-_CFG = _IMPL._CFG
-_SLOT = _IMPL._SLOT
-_cat = _IMPL._cat
-_drain = _IMPL._drain
-_piled_store = _IMPL._piled_store
-_repo_with_fake_table = _IMPL._repo_with_fake_table
-_schema = _IMPL._schema
+from _category_fakes import (
+    _CFG, _SLOT, _cat, _drain, _piled_store, _repo_with_fake_table, _schema,
+)
 
 _SEED = 428_2
 

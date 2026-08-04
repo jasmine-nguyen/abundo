@@ -90,7 +90,7 @@ def _ensure_boto3_botocore():
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
 # shared/ modules whose bare names collide with the sibling suites.
 _REIMPORT = (
-    "constants", "models", "encoders", "repository_base", "repository_transaction",
+    "constants", "models", "encoders", "repository", "repository_base", "repository_transaction",
     "repository_balance", "repository_loanfacts", "repository_milestone", "repository_budget",
     "repository_goals", "repository_category",
     "repository_errors", "repository_insight", "repository_device", "push",

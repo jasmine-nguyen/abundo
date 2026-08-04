@@ -20,37 +20,24 @@ all reached THROUGH the repaint stage rather than the backfill stage:
   * a version race landing between a repaint chunk's read and its write;
   * handler level (GET/POST /categories) mid-repaint — criterion 6, "no new way to 500".
 
-The impl suite owns the fakes (FakeTable, _piled_store, _drain, ...). They are LOADED from
-it by path rather than re-implemented: a re-implemented FakeTable would drift and start
-passing tests the real one rejects (its 4KB guard is what makes [A8] mean anything).
+The fakes (FakeTable, _piled_store, _drain, ...) live in tests/shared/_category_fakes.py,
+imported by this suite AND the impl suite AND round2 — ONE definition, so a re-implemented
+FakeTable can't drift and start passing tests the real one rejects (its 4KB guard is what
+makes [A8] mean anything). Before WHIT-440 this suite re-exec'd the impl module by path.
 """
 
-import copy
-import importlib.util
 import inspect
 import json
-import pathlib
 from collections import Counter
 from decimal import Decimal
 
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "_whit428_impl_suite", pathlib.Path(__file__).with_name("test_categories.py"))
-_IMPL = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_IMPL)
-
-_CFG = _IMPL._CFG
-_SLOT = _IMPL._SLOT
-_MAX_UPDATE_EXPRESSION_BYTES = _IMPL._MAX_UPDATE_EXPRESSION_BYTES
-_cat = _IMPL._cat
-_categories_event = _IMPL._categories_event
-_drain = _IMPL._drain
-_piled_store = _IMPL._piled_store
-_repo_with_fake_table = _IMPL._repo_with_fake_table
-_schema = _IMPL._schema
-_slot_histogram = _IMPL._slot_histogram
-_throttle = _IMPL._throttle
+from _category_fakes import (
+    _CFG, _SLOT, _MAX_UPDATE_EXPRESSION_BYTES, _cat, _categories_event,
+    _drain, _piled_store, _repo_with_fake_table, _schema, _slot_histogram,
+    _throttle, FakeBudgetRepo,
+)
 
 
 class _NetworkError(Exception):
@@ -463,7 +450,7 @@ def test_post_categories_mid_repaint_returns_201_and_a_plain_integer_slot(handle
     repository, repo = _repo_with_fake_table(handler)
     _piled_store(repo, repository, 60)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: repo)
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: _IMPL.FakeBudgetRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
 
     response = handler.lambda_handler(_categories_event(), None)
 
