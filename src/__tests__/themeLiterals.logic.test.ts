@@ -16,16 +16,14 @@
 import { describe, it, expect } from '@jest/globals';
 import { RAW_COLOR_SOURCE, shippedCode, stripComments } from './support/sourceScan';
 
-// src/theme.ts and src/chartColors.ts are pure palettes — colour is their JOB, so a literal there
-// is the source of truth, not a copy of one.
+// src/theme.ts, src/categoryColors.ts and src/chartColors.ts are pure palettes — colour is their
+// JOB, so a literal there is the source of truth, not a copy of one.
 //
-// src/context.tsx is a PARTIAL exemption and the comment should say so: ~40 of its literals are
-// the category palette (BUCKET_COLOR / PALETTE / CATEGORY_BASE / CATEGORY_SIBLINGS), but ~12 are
-// plain UI colours far below it — including seven copies of '#cfd2ff', which is exactly the
-// duplication this ratchet exists to stop. It is exempt wholesale only because the palette and the
-// UI colours share a file; ratcheting it now would falsely redden on a legitimate new category
-// colour. Splitting the palette out is its own card.
-const PALETTE_HOMES = new Set(['src/theme.ts', 'src/context.tsx', 'src/chartColors.ts']);
+// src/categoryColors.ts holds the app-wide category palette (BUCKET_COLOR / PALETTE / CATEGORY_BASE
+// / CATEGORY_SIBLINGS), moved out of src/context.tsx by WHIT-422. That move ended context.tsx's
+// wholesale exemption: it is now scanned like any other file, at an honest baseline of its residual
+// UI colours (the seven copies of '#cfd2ff' folded into C.textInfo at the same time).
+const PALETTE_HOMES = new Set(['src/theme.ts', 'src/categoryColors.ts', 'src/chartColors.ts']);
 
 const RAW_COLOR = new RegExp(RAW_COLOR_SOURCE, 'g');
 
@@ -57,6 +55,7 @@ const BASELINE: Record<string, number> = {
   'src/components/QuickCreateCategory.tsx': 3,
   'src/components/TransactionRow.tsx': 3,
   'src/components/ui.tsx': 3,
+  'src/context.tsx': 5,
   'src/icons.tsx': 2,
   'src/motion/ScrollChromeHeader.tsx': 1,
 };

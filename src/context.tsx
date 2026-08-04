@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { normalizeColorSlot } from './chartColors';
+import { colorForCategory } from './categoryColors';
 import { writeFailureMessage } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
@@ -105,47 +106,6 @@ export type Sheet =
   | null;
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
-export const BUCKET_COLOR: Record<Bucket, string> = {
-  Living: '#7aa2f7', Lifestyle: '#bb9af7', Income: C.good, Savings: '#73daca',
-};
-// Warm/cool-alternating so consecutively-created categories never land on two neighbouring cool
-// hues (the old order clustered cyan/teal/sky). PALETTE[0] stays '#ff9e64' — the fallback default.
-export const PALETTE = ['#ff9e64', '#7aa2f7', '#f7768e', '#73daca', '#e0af68', '#bb9af7', '#ff75a0', '#2ac3de', '#9ece6a', '#b4a5f7'];
-
-// Category colours (WHIT-320). A category's display colour is a deterministic function of its id,
-// so it's stable across cycles and identical everywhere (pie slice, legend row, budgets, txns).
-// The 13 built-in categories have fixed Tokyo Night hues (CATEGORY_BASE) — these are the app's
-// CURRENT colours, unchanged. A category BEYOND the built-ins (a user-created one) gets a darker
-// "sibling" of one of those hues (OKLCH: lightness −15%, chroma −10%), chosen by hashing its id —
-// so extra categories stay on-palette and read as a distinct shade instead of repeating a base
-// colour. Design's scheme; extends the palette from 13 to a durable ~26 before anything folds to
-// the neutral "Other" grey the donut already uses.
-export const CATEGORY_BASE: Record<string, string> = {
-  coffee: '#ff9e64', groceries: '#9ece6a', eatingout: '#e5495f', transport: '#7aa2f7',
-  health: '#ff75a0', pets: '#bb9af7', utilities: '#e0af68', shopping: '#73daca',
-  fitness: '#7dcfff', subs: '#cba6f7', travel: '#2ac3de', gifts: '#9d7cd8', phonenet: '#b4a5f7',
-};
-
-// Darker sibling of each CATEGORY_BASE value, in the same order. Static tokens (no runtime colour
-// library); the OKLCH relationship to the base is pinned by a test so the two can't drift.
-export const CATEGORY_SIBLINGS = [
-  '#d17d4a', '#7da64f', '#bc3349', '#5f81cb', '#d15980', '#977aca', '#b68c4d',
-  '#56b0a3', '#5fa7d0', '#a484ca', '#039db5', '#7e61b1', '#9083ca',
-];
-
-// A small stable string hash (djb2), so a non-seed category's sibling is deterministic from its id.
-function categoryColorHash(id: string): number {
-  let h = 5381;
-  for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-// The display colour for a category id: a built-in's fixed base, else a deterministic darker
-// sibling. Null/blank id falls back to the palette default.
-export function colorForCategory(id: string | null | undefined): string {
-  if (!id) return PALETTE[0];
-  return CATEGORY_BASE[id] ?? CATEGORY_SIBLINGS[categoryColorHash(id) % CATEGORY_SIBLINGS.length];
-}
 
 // Max charges per batch category write. Mirrors the server's TRANSACTION_BATCH_MAX
 // (lambda_api/constants.py) — the "All from this merchant" sweep splits into chunks
@@ -1808,11 +1768,11 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
       const pendingPct = Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
       let paceLabel: string, paceColor: string;
       // Same hierarchy as spend rows: the remaining amount is the cyan highlight, the pace
-      // sub-label is the muted #cfd2ff.
-      if (met) { paceLabel = fmtExact(actual - b.budget) + ' over target'; paceColor = '#cfd2ff'; }
-      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = '#cfd2ff'; }
-      else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = '#cfd2ff'; }
-      else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
+      // sub-label is the muted C.textInfo lavender.
+      if (met) { paceLabel = fmtExact(actual - b.budget) + ' over target'; paceColor = C.textInfo; }
+      else if (actual - target > 0.5) { paceLabel = fmt(actual - target) + ' ahead of pace'; paceColor = C.textInfo; }
+      else if (target - actual > 0.5) { paceLabel = fmt(target - actual) + ' to go'; paceColor = C.textInfo; }
+      else { paceLabel = 'on pace'; paceColor = C.textInfo; }
       // `actual` already includes pending, so the single "earned of budget" line counts it
       // without the separate "(… pending)" breakout.
       const spentLabel = `${fmtExact(actual)} earned of ${fmt(b.budget)}`;
@@ -1840,12 +1800,12 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const over = spent > b.budget;
     const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
     let paceLabel: string, paceColor: string;
-    // The "left" amount is the row's cyan highlight; the pace sub-label is the muted #cfd2ff.
+    // The "left" amount is the row's cyan highlight; the pace sub-label is the muted C.textInfo.
     // Warnings keep their own colour (over pace = amber, over budget = red).
     if (over) { paceLabel = fmtExact(spent - b.budget) + ' over budget'; paceColor = C.bad; }
     else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
-    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = '#cfd2ff'; }
-    else { paceLabel = 'on pace'; paceColor = '#cfd2ff'; }
+    else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = C.textInfo; }
+    else { paceLabel = 'on pace'; paceColor = C.textInfo; }
     // `spent` (= posted + pending) already counts pending, so a single "spent of budget" line
     // is enough — no separate "(… pending)" breakout.
     const spentLabel = `${fmtExact(spent)} spent of ${fmt(b.budget)}`;
@@ -2698,7 +2658,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
       ...common,
       spentBig: fmtExact(actual), ofBudget: 'of ' + fmt(b.budget),
       statusLabel: met ? 'Target reached — nice' : 'On track — keep earning',
-      statusColor: met ? C.good : '#cfd2ff',
+      statusColor: met ? C.good : C.textInfo,
       postedPct, pendingPct,
       postedColor: c.color, pendingTint: tint(c.color, 0.45),
       dailyLabel: met ? 'Target reached' : `${fmt(perDay)}/day to target`,

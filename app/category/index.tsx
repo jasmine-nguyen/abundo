@@ -4,7 +4,8 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
-import { BUCKETS, BUCKET_COLOR } from '../../src/context';
+import { BUCKETS } from '../../src/context';
+import { BUCKET_COLOR } from '../../src/categoryColors';
 import { useBudgetsScreenData, useCategories } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 
