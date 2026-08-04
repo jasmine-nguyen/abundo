@@ -31,78 +31,11 @@ from decimal import Decimal
 
 import pytest
 
-
-FACTS = {"original": 600000.0, "homeValue": 770000.0, "lvr": 0.8,
-         "ratePct": 5.95, "baseRepay": 3570.0, "extra": 12000.0, "payoffGoalDate": None}
-
-
-def _row(label, balance, id="m1", date="2027-01-01"):
-    return {"id": id, "label": label, "targetBalance": Decimal(str(balance)), "targetDate": date}
-
-
-class FakeDeviceRepo:
-    def __init__(self, tokens=("tok",)):
-        self._tokens = tokens
-
-    def list_tokens(self):
-        return list(self._tokens)
-
-
-class FakeLoanFactsRepo:
-    def __init__(self, facts=None):
-        self._facts = facts
-
-    def get_loanfacts(self):
-        return self._facts
-
-
-class FakeNotifyRepo:
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.removed = set()
-
-    def fired_milestones(self, scope=None):
-        return set(self.fired)
-
-    def mark_milestone_fired(self, key, scope=None):
-        assert isinstance(key, str), "marker must be a string (String Set)"
-        self.fired.add(key)
-
-    def remove_milestone_markers(self, keys, scope=None):
-        assert keys, "must guard empty before calling remove_milestone_markers"
-        self.removed |= set(keys)
-        self.fired -= set(keys)
-
-
-class FakeMilestoneRepo:
-    """Scope-aware stand-in for MilestoneRepository. `stored` is the RAW list for the default
-    (None) scope; `by_scope` maps a non-None scope to its own raw list. Records every scope it
-    was read with so the multi-tenant seam can be asserted."""
-    def __init__(self, stored=None, raises=None, by_scope=None):
-        self._stored = stored
-        self._raises = raises
-        self._by_scope = by_scope or {}
-        self.scopes_read = []
-
-    def get_milestones_raw(self, scope=None):
-        self.scopes_read.append(scope)
-        if self._raises is not None:
-            raise self._raises
-        if scope is not None and scope in self._by_scope:
-            return self._by_scope[scope]
-        return self._stored
-
-
-@pytest.fixture
-def recorder(shared, monkeypatch):
-    calls = []
-
-    def fake(title, body, tokens, **kw):
-        calls.append((title, body, tokens))
-        return {"sent": len(tokens), "ok": len(tokens), "pruned": []}
-
-    monkeypatch.setattr(shared.milestones, "send_push", fake)
-    return calls
+# Shared milestone fakes + FACTS + _row + recorder (WHIT-445). FakeMilestoneRepo here is the
+# scope-aware superset this suite's multi-tenant tests need.
+from _milestone_fakes import (
+    FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, FakeNotifyRepo, _row, recorder,
+)
 
 
 def _notify(shared, *, old, new, milestone_repo, notify=None, scope=None):

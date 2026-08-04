@@ -16,38 +16,10 @@ from decimal import Decimal
 
 import pytest
 
-_UNSET = object()
-
-
-class FakeRepo:
-    """Stand-in for TransactionRepository that records the field write it's asked to do.
-
-    Records each update as (pk, sk, {only the provided fields}), mirroring
-    update_transaction_fields' keyword-only, sentinel-gated signature."""
-
-    def __init__(self, keys=None, update_result=True):
-        self._keys = keys
-        self._update_result = update_result
-        self.update_calls = []
-
-    def get_transaction_keys_by_id(self, transaction_id):
-        return self._keys
-
-    def update_transaction_fields(
-        self, pk, sk, *, category=_UNSET, notes=_UNSET, tags=_UNSET, budget_excluded=_UNSET
-    ):
-        provided = {
-            field: value
-            for field, value in (
-                ("category", category),
-                ("notes", notes),
-                ("tags", tags),
-                ("budget_excluded", budget_excluded),
-            )
-            if value is not _UNSET
-        }
-        self.update_calls.append((pk, sk, provided))
-        return self._update_result
+# _UNSET / FakeRepo / _patch_event live in tests/shared/_handler_patch_fakes.py so this impl
+# suite and the two PATCH gap suites share ONE definition (WHIT-445); the batch/recent-feed
+# fakes below are used only here and stay local.
+from _handler_patch_fakes import FakeRepo, _patch_event
 
 
 class FakeBatchRepo:
@@ -107,16 +79,6 @@ def _row(account_id, date, txn_id, **extra):
     return {
         "pk": f"ACCOUNT#{account_id}", "sk": f"TXN#{txn_id}",
         "transaction_id": txn_id, "account_id": account_id, "date": date, **extra,
-    }
-
-
-def _patch_event(transaction_id="txn-1", body='{"category": "groceries"}', is_b64=False):
-    return {
-        "rawPath": f"/transactions/{transaction_id}",
-        "requestContext": {"http": {"method": "PATCH"}},
-        "pathParameters": {"id": transaction_id},
-        "body": body,
-        "isBase64Encoded": is_b64,
     }
 
 

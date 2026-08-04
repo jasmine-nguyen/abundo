@@ -20,61 +20,11 @@ prefix is "id:<id>:" WITH a trailing colon precisely so "id:a:" does not swallow
 
 from decimal import Decimal
 
-import pytest
-
-
-_GOOD = {"id": "keep", "label": "Halfway", "targetBalance": Decimal("300000"),
-         "targetDate": "2030-01-01"}
-_KEEP_MARKER = "id:keep:bal:300000.00"
-
-
-def _row(**overrides):
-    return {**_GOOD, **overrides}
-
-
-class FakeMilestoneRepo:
-    def __init__(self, stored):
-        self._stored = stored
-
-    def get_milestones_raw(self, scope=None):
-        return self._stored
-
-
-class FakeDeviceRepo:
-    def list_tokens(self):
-        return ["tok"]
-
-
-class FakeLoanFactsRepo:
-    def get_loanfacts(self):
-        return None
-
-
-class FakeNotifyRepo:
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.removed = set()
-        self.reads = 0
-
-    def fired_milestones(self, scope=None):
-        self.reads += 1
-        return set(self.fired)
-
-    def mark_milestone_fired(self, key, scope=None):
-        self.fired.add(key)
-
-    def remove_milestone_markers(self, keys, scope=None):
-        assert keys, "must guard empty before calling remove_milestone_markers"
-        self.removed |= set(keys)
-        self.fired -= set(keys)
-
-
-@pytest.fixture
-def recorder(shared, monkeypatch):
-    calls = []
-    monkeypatch.setattr(shared.milestones, "send_push",
-                        lambda title, body, tokens, **kw: calls.append((title, body, tokens)))
-    return calls
+# Shared milestone fakes + row fixtures (WHIT-445).
+from _milestone_fakes import (
+    FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, FakeNotifyRepo, recorder,
+)
+from _milestone_row_fakes import _GOOD, _KEEP_MARKER, _row
 
 
 def _sweep(shared, stored, fired):

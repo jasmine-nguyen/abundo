@@ -21,31 +21,10 @@ from decimal import Decimal
 
 import pytest
 
-
-def _store_raw_row(milestone_repo, milestones, scope="SHARED"):
-    """Inject a stored row directly, bypassing set_milestones' validation, to mimic a legacy
-    or partially-written row (mirrors tests/shared/test_repository_milestone_edges.py)."""
-    milestone_repo._table.store[("MILESTONES", scope)] = {
-        "pk": "MILESTONES", "sk": scope, "milestones": milestones,
-    }
-
-
-_GOOD = {"id": "m1", "label": "Halfway", "targetBalance": Decimal("300000"),
-         "targetDate": "2030-01-01"}
-
-
-def _row(**overrides):
-    return {**_GOOD, **overrides}
-
-
-class FakeMilestoneRepo:
-    """The poller's read surface: get_milestones_raw returns the stored list verbatim."""
-
-    def __init__(self, stored):
-        self._stored = stored
-
-    def get_milestones_raw(self, scope=None):
-        return self._stored
+# Shared milestone fakes + row fixtures (WHIT-445). The one good stored row (_GOOD) and the
+# raw-row injector are shared so the row shape can't drift between the parity suites.
+from _milestone_fakes import FakeMilestoneRepo
+from _milestone_row_fakes import _GOOD, _row, _store_raw_row
 
 
 # --- [U] the shared validator, directly -------------------------------------------------

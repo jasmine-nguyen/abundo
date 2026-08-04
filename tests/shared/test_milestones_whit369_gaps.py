@@ -17,75 +17,15 @@ ADVERSARIAL half:
 
 from decimal import Decimal
 
-import pytest
-
-
-class FakeLoanFactsRepo:
-    def __init__(self, facts=None):
-        self._facts = facts
-
-    def get_loanfacts(self):
-        return self._facts
-
-
-class FakeDeviceRepo:
-    def __init__(self, tokens=("tok",)):
-        self._tokens = tokens
-
-    def list_tokens(self):
-        return list(self._tokens)
-
-
-class RecordingNotifyRepo:
-    """Records the `scope` threaded into each fired-state call, so a test can prove the seam
-    reaches the read AND the mark — not just that a marker round-trips."""
-
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.fired_scopes = []
-        self.mark_scopes = []
-
-    def fired_milestones(self, scope=None):
-        self.fired_scopes.append(scope)
-        return set(self.fired)
-
-    def mark_milestone_fired(self, key, scope=None):
-        assert isinstance(key, str), "marker must be a string (String Set)"
-        self.mark_scopes.append(scope)
-        self.fired.add(key)
-
-
-class RecordingMilestoneRepo:
-    """Stands in for MilestoneRepository, but records the `scope` resolve_plan passes to the
-    plan read. `stored` is the RAW list (targetBalance as Decimal), None when unset."""
-
-    def __init__(self, stored=None):
-        self._stored = stored
-        self.read_scopes = []
-
-    def get_milestones_raw(self, scope=None):
-        self.read_scopes.append(scope)
-        return self._stored
-
-
-FACTS = {"original": 600000.0, "homeValue": 770000.0, "lvr": 0.8,
-         "ratePct": 5.95, "baseRepay": 3570.0, "extra": 12000.0, "payoffGoalDate": None}
-
-
-def _row(label, balance, id="m1", date="2027-01-01"):
-    return {"id": id, "label": label, "targetBalance": Decimal(str(balance)), "targetDate": date}
-
-
-@pytest.fixture
-def recorder(shared, monkeypatch):
-    calls = []
-
-    def fake(title, body, tokens, **kw):
-        calls.append((title, body, tokens))
-        return {"sent": len(tokens), "ok": len(tokens), "pruned": []}
-
-    monkeypatch.setattr(shared.milestones, "send_push", fake)
-    return calls
+# Shared milestone fakes (WHIT-445). The shared FakeNotifyRepo / FakeMilestoneRepo already
+# record the scope of each call (as fired_scopes / mark_scopes / scopes_read), which is exactly
+# what this suite's scope-seam tests assert on — so they're aliased to the Recording* names the
+# tests use. The shared FakeMilestoneRepo logs the plan-read scope as `scopes_read`.
+from _milestone_fakes import (
+    FACTS, FakeDeviceRepo, FakeLoanFactsRepo, _row, recorder,
+    FakeNotifyRepo as RecordingNotifyRepo,
+    FakeMilestoneRepo as RecordingMilestoneRepo,
+)
 
 
 # --- the scope seam is threaded end-to-end at the notify level -----------------------------
@@ -101,7 +41,7 @@ def test_scope_is_threaded_to_plan_read_fired_state_and_mark(shared, recorder):
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=milestone_repo, scope="user-42")
     assert sent == 1
-    assert milestone_repo.read_scopes == ["user-42"]     # resolve_plan threaded scope
+    assert milestone_repo.scopes_read == ["user-42"]     # resolve_plan threaded scope
     assert notify.fired_scopes == ["user-42"]            # dedup read threaded scope
     assert notify.mark_scopes == ["user-42"]             # mark threaded the SAME scope
     assert notify.fired == {"id:m1:bal:480000.00"}
@@ -117,7 +57,7 @@ def test_scope_none_default_threads_none_to_every_seam(shared, recorder):
         Decimal("490000"), Decimal("480000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=milestone_repo)  # no scope
-    assert milestone_repo.read_scopes == [None]
+    assert milestone_repo.scopes_read == [None]
     assert notify.fired_scopes == [None]
     assert notify.mark_scopes == [None]
 
