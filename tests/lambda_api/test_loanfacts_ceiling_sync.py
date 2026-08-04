@@ -12,8 +12,8 @@ too-large ones).
 
 This reads BOTH values and asserts they match, so editing one side without the
 other fails loudly. It parses the TypeScript client as TEXT (no JS runtime in
-the pytest suite) via a simple regex over the `const LOANFACTS_FIELD_MAX = ...`
-declaration — same approach as tests/shared/test_milestones_twin_drift.py.
+the pytest suite) via the shared `const NAME = <number>` reader in
+tests/shared/_ts_const.py — the same reader the milestone-cap guard uses.
 
 WHIT-393 added one more assertion here: a pin on the ceiling's actual VALUE.
 Every test mirror now derives from lambda_api/constants.py, so without the pin
@@ -21,16 +21,12 @@ a typo in that file would ship green.
 """
 
 import pathlib
-import re
 
+import _ts_const
 from _lambda_api_constants import api_constant
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _CLIENT_LIMITS = _ROOT / "src" / "loanLimits.ts"
-
-# The client declaration, e.g. `export const LOANFACTS_FIELD_MAX = 1_000_000_000;`. Anchored
-# on `const` so a mention of the name in a comment can't match.
-_CLIENT_CEILING = re.compile(r"const\s+LOANFACTS_FIELD_MAX\s*=\s*([\d_]+)")
 
 
 def _server_ceiling() -> int:
@@ -42,9 +38,7 @@ def _server_ceiling() -> int:
 
 def _client_ceiling() -> int:
     """The LOANFACTS_FIELD_MAX const parsed out of src/loanLimits.ts."""
-    match = _CLIENT_CEILING.search(_CLIENT_LIMITS.read_text())
-    assert match, "could not locate `const LOANFACTS_FIELD_MAX = ...` in src/loanLimits.ts"
-    return int(match.group(1).replace("_", ""))
+    return _ts_const.number_const(_CLIENT_LIMITS.read_text(), "LOANFACTS_FIELD_MAX")
 
 
 def test_client_ceiling_parses_to_a_positive_int():
@@ -60,12 +54,7 @@ def test_exactly_one_client_ceiling_declaration():
     `const LOANFACTS_FIELD_MAX = <number>` (e.g. a commented-out old value left
     above the live line) would silently be compared instead — and could hide a
     real drift if it happened to equal the server. Pin exactly one declaration."""
-    matches = _CLIENT_CEILING.findall(_CLIENT_LIMITS.read_text())
-    assert len(matches) == 1, (
-        f"expected exactly one `const LOANFACTS_FIELD_MAX = <number>` in "
-        f"src/loanLimits.ts, found {len(matches)}: {matches} — a shadowing/commented "
-        "copy makes the sync guard compare the wrong (first-matched) value"
-    )
+    _ts_const.assert_one_number_const(_CLIENT_LIMITS.read_text(), "LOANFACTS_FIELD_MAX")
 
 
 def test_the_loanfacts_ceiling_value_is_pinned():
