@@ -6,30 +6,26 @@ target balance before saving, the server rejects it again on the way in. Nothing
 they agree. A one-sided edit drifts silently: the client either blocks balances the
 server would accept, or waves through balances the server 400s on.
 
-Same shape as the loan-facts guard (test_loanfacts_ceiling_sync.py), with one
-difference — the server value lives in handler.py, which has real imports, so it is read
-through the `handler` fixture rather than exec'd.
+Same shape as the loan-facts guard (test_loanfacts_ceiling_sync.py): both read the
+client `const NAME = <number>` through the shared reader in tests/shared/_ts_const.py.
+One difference — the server value lives in handler.py, which has real imports, so it is
+read through the `handler` fixture rather than exec'd.
 
 tests/shared/test_milestones_twin_drift.py is a different guard: it compares the
 milestone PLAN rows across the two twins, not this cap.
 """
 
 import pathlib
-import re
+
+import _ts_const
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _CLIENT_MILESTONES = _ROOT / "src" / "milestones.ts"
 
-# e.g. `export const MILESTONE_BALANCE_MAX = 1_000_000_000;`. Anchored on `const` so a
-# mention of the name in a comment can't match.
-_CLIENT_CAP = re.compile(r"const\s+MILESTONE_BALANCE_MAX\s*=\s*([\d_]+)")
-
 
 def _client_cap() -> int:
     """The MILESTONE_BALANCE_MAX const parsed out of src/milestones.ts."""
-    match = _CLIENT_CAP.search(_CLIENT_MILESTONES.read_text())
-    assert match, "could not locate `const MILESTONE_BALANCE_MAX = ...` in src/milestones.ts"
-    return int(match.group(1).replace("_", ""))
+    return _ts_const.number_const(_CLIENT_MILESTONES.read_text(), "MILESTONE_BALANCE_MAX")
 
 
 def test_client_cap_parses_to_a_positive_int():
@@ -42,12 +38,7 @@ def test_client_cap_parses_to_a_positive_int():
 def test_exactly_one_client_cap_declaration():
     """The parser takes the FIRST match, so a shadowing second declaration (a
     commented-out old value above the live line) would be compared instead."""
-    matches = _CLIENT_CAP.findall(_CLIENT_MILESTONES.read_text())
-    assert len(matches) == 1, (
-        f"expected exactly one `const MILESTONE_BALANCE_MAX = <number>` in "
-        f"src/milestones.ts, found {len(matches)}: {matches} — a shadowing/commented "
-        "copy makes this guard compare the wrong (first-matched) value"
-    )
+    _ts_const.assert_one_number_const(_CLIENT_MILESTONES.read_text(), "MILESTONE_BALANCE_MAX")
 
 
 def test_the_milestone_cap_value_is_pinned(handler):

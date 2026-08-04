@@ -17,6 +17,12 @@ server value and assert it FAILS:
   [D7] the number the helper reads is the number the deployed handler actually enforces —
        i.e. the guard is guarding the right file.
 
+The client-side read now delegates to the shared reader in tests/shared/_ts_const.py
+(WHIT-420). Its parser edges are covered directly, against fabricated text, by
+tests/shared/test_ts_const_parser_edges.py — but [D4]-[D6] stay HERE too: they drive this
+guard's OWN functions, proving they are still WIRED to that reader. A green [D1] alone
+can't — a delegation stubbed to a no-op would keep [D1] green.
+
 The guard module is loaded by PATH into a throwaway module name so its own test functions
 can be called directly here without pytest collecting them twice.
 """
