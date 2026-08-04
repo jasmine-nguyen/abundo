@@ -22,37 +22,14 @@
 // Pinning the coincidence would now fight the fix.
 import { describe, it, expect } from '@jest/globals';
 import { OTHER_COLOR, CATEGORY_COLORS, CHART_BG } from '../chartColors';
-import { wedgeDimOpacity } from '../contrast';
+import { wedgeDimOpacity, WEDGE_DIM_CEILING } from '../contrast';
 import { C } from '../theme';
+import { contrastHex, contrastRatio, fadedOver, hexToRgb } from './support/wcag';
 
-// WCAG 2.x relative luminance + contrast ratio. Inlined rather than imported: the point is to
-// measure the shipped constants independently, and the app has no contrast helper to reuse.
-function luminance(hex: string): number {
-  const n = parseInt(hex.slice(1), 16);
-  return [16, 8, 0]
-    .map((shift) => ((n >> shift) & 255) / 255)
-    .map((c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)))
-    .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
-}
-
-function contrast(a: string, b: string): number {
-  const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
-// A faded wedge's colour as it actually reaches the eye: blended over the opaque track behind it.
-// Inlined for the same reason as luminance() above — measuring src/contrast.ts with src/contrast.ts
-// would only prove it agrees with itself.
-function faded(hex: string, alpha: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  const bg = parseInt(CHART_BG.slice(1), 16);
-  const mix = (shift: number) => {
-    const f = (n >> shift) & 255;
-    const b = (bg >> shift) & 255;
-    return Math.round(alpha * f + (1 - alpha) * b);
-  };
-  return `#${((mix(16) << 16) | (mix(8) << 8) | mix(0)).toString(16).padStart(6, '0')}`;
-}
+// The WCAG maths is hand-written and lives in ./support/wcag — deliberately NOT imported from
+// src/contrast.ts, so measuring the shipped colours through it can never pass by agreeing with the
+// code it pins. See that file's header for why it stays hand-written and unrounded.
+const bg = hexToRgb(CHART_BG);
 
 // Every colour a donut wedge can actually be painted. Three sources, all real: the Insights ramp,
 // OTHER_COLOR for the fold bucket, and C.purple for the Uncategorized row (src/context.tsx builds it
@@ -66,28 +43,28 @@ describe('the "Other" wedge stays visible and stays un-category-like', () => {
   it('[Q19] OTHER_COLOR clears the 3:1 minimum against the chart background', () => {
     // The bar is WCAG 1.4.11 non-text contrast: a graphic you need to understand the content.
     // At rest this is the only thing separating the wedge from the ring track behind it.
-    expect(contrast(OTHER_COLOR, CHART_BG)).toBeGreaterThanOrEqual(3);
+    expect(contrastHex(OTHER_COLOR, CHART_BG)).toBeGreaterThanOrEqual(3);
   });
 
   it('[Q25] OTHER_COLOR stays clearly distinct from every category colour', () => {
     // The ramp is equi-luminant (every entry at OKLCH L 0.765); the wedge sits well below it, so a
     // brightening retune is the way this would break. 1.5:1 is the floor — below that the grey
     // starts reading as just another slice, which is the one thing "Other" must never do.
-    const nearest = Math.min(...CATEGORY_COLORS.map((c) => contrast(OTHER_COLOR, c)));
+    const nearest = Math.min(...CATEGORY_COLORS.map((c) => contrastHex(OTHER_COLOR, c)));
     expect(nearest).toBeGreaterThanOrEqual(1.5);
   });
 
   it('[Q26] the contrast helper agrees with known values, so the two guards above mean something', () => {
     // Without this, a broken luminance() could return a constant and both guards would pass on
     // anything. Black-on-white is 21:1 by definition; a colour against itself is 1:1.
-    expect(contrast('#ffffff', '#000000')).toBeCloseTo(21, 5);
-    expect(contrast(OTHER_COLOR, OTHER_COLOR)).toBeCloseTo(1, 5);
+    expect(contrastHex('#ffffff', '#000000')).toBeCloseTo(21, 5);
+    expect(contrastHex(OTHER_COLOR, OTHER_COLOR)).toBeCloseTo(1, 5);
     // And the old grey really did fail the [Q19] bar — this is the regression being fixed.
-    expect(contrast('#565f89', CHART_BG)).toBeLessThan(3);
+    expect(contrastHex('#565f89', CHART_BG)).toBeLessThan(3);
     // Same self-check for the blend the WHIT-425 guards below lean on: fully opaque is the wedge,
     // fully transparent is the track. A blend that ignored alpha would make [Q27] meaningless.
-    expect(faded(OTHER_COLOR, 1)).toBe(OTHER_COLOR);
-    expect(faded(OTHER_COLOR, 0)).toBe(CHART_BG);
+    expect(fadedOver(OTHER_COLOR, 1, CHART_BG)).toEqual(hexToRgb(OTHER_COLOR));
+    expect(fadedOver(OTHER_COLOR, 0, CHART_BG)).toEqual(bg);
   });
 });
 
@@ -96,8 +73,10 @@ describe('a faded wedge stays visible (WHIT-425)', () => {
     // The bug: a flat 0.4 fade put these at 1.65–2.46:1, under the same bar [Q19] holds the resting
     // wedge to. FAIL-ON-REVERT: restore a flat 0.4 and this reddens on every colour in the list.
     for (const color of WEDGE_COLORS) {
-      expect(contrast(faded(color, wedgeDimOpacity(color)), CHART_BG)).toBeGreaterThanOrEqual(3);
-      expect(contrast(faded(color, 0.4), CHART_BG)).toBeLessThan(3); // what the old flat fade did
+      const fade = wedgeDimOpacity(color);
+      expect(fade).not.toBeNull();
+      expect(contrastRatio(fadedOver(color, fade!, CHART_BG), bg)).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(fadedOver(color, 0.4, CHART_BG), bg)).toBeLessThan(3); // the old flat fade
     }
   });
 
@@ -107,22 +86,28 @@ describe('a faded wedge stays visible (WHIT-425)', () => {
     // roughly a stop darker than the rest, which is the bug. Pinning the SPREAD (not just the floor)
     // is what stops a future "simplification" back to one number passing [Q27] on the bright colours
     // while the grey quietly fails.
-    const measured = WEDGE_COLORS.map((c) => contrast(faded(c, wedgeDimOpacity(c)), CHART_BG));
+    const fades = WEDGE_COLORS.map((c) => {
+      const fade = wedgeDimOpacity(c);
+      expect(fade).not.toBeNull();
+      return fade!;
+    });
+    const measured = WEDGE_COLORS.map((c, i) => contrastRatio(fadedOver(c, fades[i], CHART_BG), bg));
     expect(Math.max(...measured) - Math.min(...measured)).toBeLessThan(0.2);
     // And the fades really do differ — otherwise the above passes trivially on a flat value.
-    const fades = WEDGE_COLORS.map((c) => wedgeDimOpacity(c));
     expect(Math.max(...fades) - Math.min(...fades)).toBeGreaterThan(0.25);
   });
 
   it('[Q29] the fade is still a fade — no wedge buys its contrast by not fading', () => {
-    // The cheap way to pass [Q27] is to stop fading. This is a VISIBILITY ceiling, deliberately not
-    // written as "below WEDGE_DIM_MAX": measured floors are no longer trimmed to that value, so the
-    // fallback and a legitimate measurement can now sit on either side of it and the two must not be
-    // conflated. The grey is the tightest real colour at 0.825, so the slack here is on the ramp —
-    // which is exactly where a brightening retune would show up.
-    const MUST_FADE_BELOW = 0.9;
+    // The cheap way to pass [Q27] is to stop fading. This is a VISIBILITY ceiling (WEDGE_DIM_CEILING),
+    // deliberately NOT the drawing fallback: a measured floor and the "we gave up" fallback are now
+    // different things — wedgeDimOpacity returns null when it cannot measure, and the caller
+    // substitutes WEDGE_DIM_FALLBACK for that. So the two can never be conflated by value the way the
+    // old single WEDGE_DIM_MAX conflated them. The grey is the tightest real colour at 0.825, so the
+    // slack here is on the ramp — which is exactly where a brightening retune would show up.
     for (const color of WEDGE_COLORS) {
-      expect(wedgeDimOpacity(color)).toBeLessThan(MUST_FADE_BELOW);
+      const fade = wedgeDimOpacity(color);
+      expect(fade).not.toBeNull();
+      expect(fade!).toBeLessThan(WEDGE_DIM_CEILING);
     }
   });
 });

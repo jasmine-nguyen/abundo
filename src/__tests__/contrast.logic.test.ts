@@ -13,7 +13,6 @@ import {
   compositeOver,
   wedgeDimOpacity,
   WEDGE_DIM_TARGET,
-  WEDGE_DIM_MAX,
 } from '../contrast';
 import { CHART_BG } from '../chartColors';
 
@@ -71,25 +70,26 @@ describe('contrast — the fade a wedge is given', () => {
     // the actual contract: fade as far as possible, but no further.
     for (const color of ['#7aa2f7', '#7FD49B', '#6b74a0', '#bb9af7']) {
       const dim = wedgeDimOpacity(color);
-      expect(contrastAt(color, dim)).toBeGreaterThanOrEqual(WEDGE_DIM_TARGET);
-      expect(contrastAt(color, dim - 0.005)).toBeLessThan(WEDGE_DIM_TARGET);
+      expect(dim).not.toBeNull();
+      expect(contrastAt(color, dim!)).toBeGreaterThanOrEqual(WEDGE_DIM_TARGET);
+      expect(contrastAt(color, dim! - 0.005)).toBeLessThan(WEDGE_DIM_TARGET);
       // Rounded UP to 3 decimals, so the shipped value always clears and the screen tests can pin
       // exact numbers rather than chasing float noise.
-      expect(dim).toBeCloseTo(Math.ceil(dim * 1000) / 1000, 10);
+      expect(dim!).toBeCloseTo(Math.ceil(dim! * 1000) / 1000, 10);
     }
   });
 
-  it('[Q33] both failure paths fall back to a visible step-back, never to "no fade"', () => {
-    // The dangerous failure is silent: a wedge that does not fade reads as the selected one. So an
-    // unmeasurable colour, and a colour that cannot clear the bar at ANY opacity, must both land on
-    // the clamp — and the clamp must be below 1.
-    expect(WEDGE_DIM_MAX).toBeLessThan(1);
-    expect(wedgeDimOpacity('not-a-colour')).toBe(WEDGE_DIM_MAX);
+  it('[Q33] both failure paths return null — the module measures, or admits it cannot', () => {
+    // The module no longer bakes in a fallback: it returns null both for a colour it cannot measure
+    // and for one that cannot clear the bar at ANY opacity. The caller (SpendingDonut) substitutes
+    // the visible step-back, WEDGE_DIM_FALLBACK — that seam is pinned by the screen test [A59]. The
+    // dangerous silent "no fade" (returning 1) is impossible from here.
+    expect(wedgeDimOpacity('not-a-colour')).toBeNull();
     // #565f89 is the pre-WHIT-400 grey: it tops out at 2.91:1 even fully opaque, so no fade saves it.
     expect(contrastAt('#565f89', 1)).toBeLessThan(WEDGE_DIM_TARGET);
-    expect(wedgeDimOpacity('#565f89')).toBe(WEDGE_DIM_MAX);
+    expect(wedgeDimOpacity('#565f89')).toBeNull();
     // A see-through track leaves us guessing at what sits behind it — refuse rather than guess.
-    expect(wedgeDimOpacity('#7aa2f7', '#16161e80')).toBe(WEDGE_DIM_MAX);
+    expect(wedgeDimOpacity('#7aa2f7', '#16161e80')).toBeNull();
   });
 
   it('[Q34] a colour carrying its own alpha needs a higher group opacity, or takes the fallback', () => {
@@ -97,17 +97,19 @@ describe('contrast — the fade a wedge is given', () => {
     // translucent wedge into invisibility while the maths reported success.
     const opaque = wedgeDimOpacity('#7aa2f7');
     const slightAlpha = wedgeDimOpacity('#7aa2f7f0'); // 94% alpha: still reachable
-    expect(slightAlpha).toBeGreaterThan(opaque);
+    expect(opaque).not.toBeNull();
+    expect(slightAlpha).not.toBeNull();
+    expect(slightAlpha!).toBeGreaterThan(opaque!);
     // ...and it must genuinely still be a fade that clears the bar, not a degenerate 1. Asserting
     // only "higher than opaque" would be satisfied by returning 1, which is the no-fade result the
     // whole module exists to avoid.
-    expect(slightAlpha).toBeLessThan(1);
+    expect(slightAlpha!).toBeLessThan(1);
     const parsed = parseHexColor('#7aa2f7f0')!;
-    expect(contrastAt('#7aa2f7', parsed.alpha * slightAlpha)).toBeGreaterThanOrEqual(WEDGE_DIM_TARGET);
+    expect(contrastAt('#7aa2f7', parsed.alpha * slightAlpha!)).toBeGreaterThanOrEqual(WEDGE_DIM_TARGET);
 
-    // Half alpha cannot reach the target even at full group opacity, so it takes the fallback
-    // rather than silently painting at 2.73:1 with no fade at all.
-    expect(wedgeDimOpacity('#7aa2f780')).toBe(WEDGE_DIM_MAX);
-    expect(wedgeDimOpacity('#7aa2f700')).toBe(WEDGE_DIM_MAX); // fully transparent: nothing to fade
+    // Half alpha cannot reach the target even at full group opacity, so it returns null (the caller
+    // substitutes the fallback) rather than silently painting at 2.73:1 with no fade at all.
+    expect(wedgeDimOpacity('#7aa2f780')).toBeNull();
+    expect(wedgeDimOpacity('#7aa2f700')).toBeNull(); // fully transparent: nothing to fade
   });
 });

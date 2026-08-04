@@ -6,6 +6,13 @@ import { CHART_BG, OTHER_COLOR } from '../chartColors';
 import { wedgeDimOpacity } from '../contrast';
 import { useReduceMotion } from '../motion/useReduceMotion';
 
+// The opacity a dimmed wedge takes when its colour cannot be measured (wedgeDimOpacity returns
+// null). A drawing decision, so it lives here at the draw site rather than in the contrast maths
+// (WHIT-430). NOT 1: a wedge that does not fade at all reads as the picked one, so this still steps
+// visibly back. Deliberately high — if we cannot measure a colour we cannot promise it is visible,
+// so err toward more opaque. No shipped colour hits this; it is the guard for a colour off the wire.
+export const WEDGE_DIM_FALLBACK = 0.85;
+
 // WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
 // category, sized by its share of the total, painted in that category's own colour so the
 // ring and the rows below it read as one legend. The category rows underneath double as the
@@ -244,7 +251,7 @@ export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID
     // origin, so this scales it in place; the static parent <G> shifts it to the box centre.
     const v = emphasisOf(s.id);
     const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
-    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [wedgeDimOpacity(s.color), 1, 1], extrapolate: 'clamp' });
+    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [wedgeDimOpacity(s.color) ?? WEDGE_DIM_FALLBACK, 1, 1], extrapolate: 'clamp' });
 
     const isSel = s.id === activeId;
     const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
