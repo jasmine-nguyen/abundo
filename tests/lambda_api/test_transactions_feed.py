@@ -15,66 +15,9 @@ import json
 
 import pytest
 
-# The three internal account ids, in ACCOUNT_ID_MAP order.
-ANZ = "anz-rewards-black-visa"
-SPENDING = "up-spending"
-HOMELOAN = "up-homeloan"
-
-
-def _row(account_id, date, txn_id, **extra):
-    """A stored transaction row as the date-index query returns it (with pk/sk)."""
-    return {
-        "pk": f"ACCOUNT#{account_id}", "sk": f"TXN#{txn_id}",
-        "transaction_id": txn_id, "account_id": account_id, "date": date, **extra,
-    }
-
-
-class FakeFeedRepo:
-    """Realistic stand-in modelling a date-index newest-first query with ExclusiveStartKey.
-
-    Holds each account's rows sorted newest-first (date desc, sk desc as the intra-date
-    tiebreak, mirroring how DynamoDB disambiguates equal sort-key values by the base key)
-    and resumes STRICTLY AFTER the row a cursor names. Returns a LastEvaluatedKey only when
-    genuine rows remain past the page, and hands out deep copies (the handler mutates rows
-    in place: pop pk/sk, setdefault category)."""
-
-    def __init__(self, rows_by_account):
-        self._rows = {
-            account_id: sorted(rows, key=lambda r: (r["date"], r["sk"]), reverse=True)
-            for account_id, rows in rows_by_account.items()
-        }
-        self.calls = []
-
-    @staticmethod
-    def _key(row):
-        return {
-            "account_id": row["account_id"], "date": row["date"],
-            "pk": row["pk"], "sk": row["sk"],
-        }
-
-    def get_transactions_by_date_range(
-        self, account_id, start_date, end_date, limit=20, cursor=None
-    ):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        rows = self._rows.get(account_id, [])
-        start = 0
-        if cursor is not None:
-            for index, row in enumerate(rows):
-                if row["pk"] == cursor["pk"] and row["sk"] == cursor["sk"]:
-                    start = index + 1
-                    break
-        page = rows[start:start + limit]
-        has_more = (start + limit) < len(rows) and bool(page)
-        next_key = self._key(page[-1]) if has_more else None
-        return copy.deepcopy(page), next_key
-
-
-def _feed_event(params=None):
-    return {
-        "rawPath": "/transactions/feed",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": params,
-    }
+# FakeFeedRepo and friends live in tests/shared/_feed_fakes.py so this impl suite and its
+# gap suite share ONE definition (WHIT-445); resolved via pytest.ini's pythonpath.
+from _feed_fakes import ANZ, SPENDING, HOMELOAN, _row, FakeFeedRepo, _feed_event
 
 
 def _drain_feed(handler, repo, limit=None):

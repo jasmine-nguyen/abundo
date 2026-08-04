@@ -13,74 +13,11 @@ re-arm, and a cent boundary. This file adds ONLY the gaps it left:
 import logging
 from decimal import Decimal
 
-import pytest
 
-
-class FakeLoanFactsRepo:
-    def __init__(self, facts=None):
-        self._facts = facts
-
-    def get_loanfacts(self):
-        return self._facts
-
-
-class FakeDeviceRepo:
-    def __init__(self, tokens=("tok",)):
-        self._tokens = tokens
-
-    def list_tokens(self):
-        return list(self._tokens)
-
-
-class FakeNotifyRepo:
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.removed = set()
-
-    def fired_milestones(self, scope=None):
-        return set(self.fired)
-
-    def mark_milestone_fired(self, key, scope=None):
-        assert isinstance(key, str), "marker must be a string (String Set)"
-        self.fired.add(key)
-
-    def remove_milestone_markers(self, keys, scope=None):
-        assert keys, "must guard empty before calling remove_milestone_markers"
-        self.removed |= set(keys)
-        self.fired -= set(keys)
-
-
-class FakeMilestoneRepo:
-    """Stands in for MilestoneRepository. `stored` is the RAW list (targetBalance Decimal,
-    like get_milestones_raw); None = unset; `raises` simulates a read failure."""
-    def __init__(self, stored=None, raises=None):
-        self._stored = stored
-        self._raises = raises
-
-    def get_milestones_raw(self):
-        if self._raises is not None:
-            raise self._raises
-        return self._stored
-
-
-FACTS = {"original": 600000.0, "homeValue": 770000.0, "lvr": 0.8,
-         "ratePct": 5.95, "baseRepay": 3570.0, "extra": 12000.0, "payoffGoalDate": None}
-
-
-def _row(label, balance, id="m1", date="2027-01-01"):
-    return {"id": id, "label": label, "targetBalance": Decimal(str(balance)), "targetDate": date}
-
-
-@pytest.fixture
-def recorder(shared, monkeypatch):
-    calls = []
-
-    def fake(title, body, tokens, **kw):
-        calls.append((title, body, tokens))
-        return {"sent": len(tokens), "ok": len(tokens), "pruned": []}
-
-    monkeypatch.setattr(shared.milestones, "send_push", fake)
-    return calls
+# Shared milestone fakes + FACTS + _row + recorder (WHIT-445).
+from _milestone_fakes import (
+    FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeMilestoneRepo, FakeNotifyRepo, _row, recorder,
+)
 
 
 def _notify(shared, *, old, new, milestone_repo, notify=None):

@@ -23,27 +23,9 @@ def _today_utc():
     return datetime.now(timezone.utc).date()
 
 
-# --- handler-level fake ------------------------------------------------------
-
-
-class FakePayCycleRepo:
-    """Handler-level stand-in for PayCycleRepository (records calls)."""
-
-    def __init__(self, cycle=None, conflict_exc=None):
-        self._cycle = cycle or {"length": 14, "last_pay_date": "2024-01-03"}
-        self._conflict_exc = conflict_exc
-        self.set_calls = []
-        self.get_calls = 0
-
-    def get_paycycle(self):
-        self.get_calls += 1
-        return dict(self._cycle)
-
-    def set_paycycle(self, length, last_pay_date):
-        self.set_calls.append((length, last_pay_date))
-        if self._conflict_exc is not None:
-            raise self._conflict_exc("boom")
-        return {"length": length, "last_pay_date": last_pay_date}
+# FakePayCycleRepo lives in tests/shared/_paycycle_fakes.py so this impl suite and the parity
+# gap suite share ONE definition (WHIT-445); resolved via pytest.ini's pythonpath.
+from _paycycle_fakes import FakePayCycleRepo
 
 
 def _put_paycycle_event(body='{"length": 7, "last_pay_date": "2024-06-05"}', is_b64=False):

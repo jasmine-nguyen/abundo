@@ -20,68 +20,18 @@ Gaps hunted here:
   [G7] a large, validly-shaped resume map naming UNKNOWN account ids -> tolerated (200)
   [G8] Decimal amounts serialise through the feed -> 200, JSON number, no 500
 
-FakeFeedRepo / helpers are copied from test_transactions_feed.py because importlib
-mode gives each test file its own module namespace (no cross-file import resolves).
+FakeFeedRepo / _row / _feed_event are imported from the shared tests/shared/_feed_fakes.py
+so this gap suite and the impl suite share ONE definition — a copy could drift and start
+passing what the real feed rejects (WHIT-445). The gap-only paging helpers stay local.
 """
 
 import base64
-import copy
 import json
 from decimal import Decimal
 
 import pytest
 
-ANZ = "anz-rewards-black-visa"
-SPENDING = "up-spending"
-HOMELOAN = "up-homeloan"
-
-
-def _row(account_id, date, txn_id, **extra):
-    return {
-        "pk": f"ACCOUNT#{account_id}", "sk": f"TXN#{txn_id}",
-        "transaction_id": txn_id, "account_id": account_id, "date": date, **extra,
-    }
-
-
-class FakeFeedRepo:
-    """Realistic date-index newest-first query with ExclusiveStartKey resume-strictly-after.
-    Copied verbatim from test_transactions_feed.py (importlib isolates test modules)."""
-
-    def __init__(self, rows_by_account):
-        self._rows = {
-            account_id: sorted(rows, key=lambda r: (r["date"], r["sk"]), reverse=True)
-            for account_id, rows in rows_by_account.items()
-        }
-        self.calls = []
-
-    @staticmethod
-    def _key(row):
-        return {
-            "account_id": row["account_id"], "date": row["date"],
-            "pk": row["pk"], "sk": row["sk"],
-        }
-
-    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
-        self.calls.append((account_id, start_date, end_date, limit, cursor))
-        rows = self._rows.get(account_id, [])
-        start = 0
-        if cursor is not None:
-            for index, row in enumerate(rows):
-                if row["pk"] == cursor["pk"] and row["sk"] == cursor["sk"]:
-                    start = index + 1
-                    break
-        page = rows[start:start + limit]
-        has_more = (start + limit) < len(rows) and bool(page)
-        next_key = self._key(page[-1]) if has_more else None
-        return copy.deepcopy(page), next_key
-
-
-def _feed_event(params=None):
-    return {
-        "rawPath": "/transactions/feed",
-        "requestContext": {"http": {"method": "GET"}},
-        "queryStringParameters": params,
-    }
+from _feed_fakes import ANZ, SPENDING, HOMELOAN, _row, FakeFeedRepo, _feed_event
 
 
 def _one_page(handler, repo, cursor=None, limit=None):

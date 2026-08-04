@@ -20,51 +20,10 @@ Mirrors test_milestones.py's fake-repo + send_push-recorder pattern.
 
 from decimal import Decimal
 
-import pytest
-
-
-class FakeLoanFactsRepo:
-    def __init__(self, facts=None):
-        self._facts = facts
-
-    def get_loanfacts(self):
-        return self._facts
-
-
-class FakeDeviceRepo:
-    def __init__(self, tokens):
-        self._tokens = tokens
-
-    def list_tokens(self):
-        return list(self._tokens)
-
-
-class FakeNotifyRepo:
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-
-    def fired_milestones(self, scope=None):
-        return set(self.fired)
-
-    def mark_milestone_fired(self, sprint, scope=None):
-        assert isinstance(sprint, str), "sprint marker must be a string (String Set)"
-        self.fired.add(sprint)
-
-
-@pytest.fixture
-def recorder(shared, monkeypatch):
-    calls = []
-
-    def fake(title, body, tokens, **kw):
-        calls.append((title, body, tokens))
-        return {"sent": len(tokens), "ok": len(tokens), "pruned": []}
-
-    monkeypatch.setattr(shared.milestones, "send_push", fake)
-    return calls
-
-
-FACTS = {"original": 600000.0, "homeValue": 770000.0, "lvr": 0.8,
-         "ratePct": 5.95, "baseRepay": 3570.0, "extra": 12000.0, "payoffGoalDate": None}
+# Shared milestone fakes + FACTS + recorder (WHIT-445).
+from _milestone_fakes import (
+    FACTS, FakeDeviceRepo, FakeLoanFactsRepo, FakeNotifyRepo, recorder,
+)
 
 
 def _notify(shared, *, old, new, repo, facts=FACTS, tokens=("tok",)):

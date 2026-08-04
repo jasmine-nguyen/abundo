@@ -20,16 +20,12 @@ from datetime import date, timedelta
 
 import pytest
 
-
-class FakePayCycleRepo:
-    """Minimal handler-level stand-in — get_paycycle_view only reads the cycle.
-    (importlib import-mode blocks importing the sibling test module's copy by name.)"""
-
-    def __init__(self, cycle):
-        self._cycle = dict(cycle)
-
-    def get_paycycle(self):
-        return dict(self._cycle)
+# FakePayCycleRepo is imported from the shared tests/shared/_paycycle_fakes.py so this parity
+# suite and the impl suite share ONE definition (WHIT-445). get_paycycle_view only reads the
+# cycle, so the shared fake's call recorders are unused here. `_client_days_left` below stays
+# LOCAL on purpose: it is a deliberately INDEPENDENT re-implementation of the client's clock —
+# sharing it would defeat the parity check (see module docstring).
+from _paycycle_fakes import FakePayCycleRepo
 
 
 def _client_days_left(last_pay_date: str, length: int, today: date) -> int:

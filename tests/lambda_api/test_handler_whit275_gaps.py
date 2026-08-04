@@ -6,50 +6,14 @@ passes (== the cap must be accepted), the dedupe-then-cap ordering (>20 raw entr
 that dedupe down to <=20 are accepted), and the partial-write guard (a blank
 `category` alongside a valid `notes` must 400 the WHOLE request and write NOTHING).
 
-FakeRepo/_patch_event are re-declared here (the sibling test_handler.py isn't an
-importable module under --import-mode=importlib); they mirror that file's fakes,
-recording the field write as (pk, sk, {only provided fields}).
+FakeRepo / _patch_event are imported from the shared tests/shared/_handler_patch_fakes.py
+so this gap suite and the impl suite share ONE definition — a copy could drift from the
+real sentinel-gated update_transaction_fields (WHIT-445).
 """
 
 import json
 
-_UNSET = object()
-
-
-class FakeRepo:
-    def __init__(self, keys=None, update_result=True):
-        self._keys = keys
-        self._update_result = update_result
-        self.update_calls = []
-
-    def get_transaction_keys_by_id(self, transaction_id):
-        return self._keys
-
-    def update_transaction_fields(
-        self, pk, sk, *, category=_UNSET, notes=_UNSET, tags=_UNSET, budget_excluded=_UNSET
-    ):
-        provided = {
-            field: value
-            for field, value in (
-                ("category", category),
-                ("notes", notes),
-                ("tags", tags),
-                ("budget_excluded", budget_excluded),
-            )
-            if value is not _UNSET
-        }
-        self.update_calls.append((pk, sk, provided))
-        return self._update_result
-
-
-def _patch_event(transaction_id="txn-1", body='{"category": "groceries"}', is_b64=False):
-    return {
-        "rawPath": f"/transactions/{transaction_id}",
-        "requestContext": {"http": {"method": "PATCH"}},
-        "pathParameters": {"id": transaction_id},
-        "body": body,
-        "isBase64Encoded": is_b64,
-    }
+from _handler_patch_fakes import FakeRepo, _patch_event
 
 
 # --- exact-boundary passes (implementer only tests one-over) -----------------
