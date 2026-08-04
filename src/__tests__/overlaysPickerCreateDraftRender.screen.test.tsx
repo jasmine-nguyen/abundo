@@ -8,7 +8,7 @@ import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals
 import React from 'react';
 import { Text } from 'react-native';
 import { render, act, screen, fireEvent } from '@testing-library/react-native';
-import { BUCKET_COLOR } from '../context';
+import { BUCKET_COLOR } from '../categoryColors';
 import { C } from '../theme';
 
 let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';

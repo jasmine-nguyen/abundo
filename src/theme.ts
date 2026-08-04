@@ -30,6 +30,8 @@ export const C = {
 
   text: '#c0caf5',
   textBright: '#d5daf5',
+  // A muted lavender sub-label ink, used for budget "pace" lines and the income status colour.
+  textInfo: '#cfd2ff',
   textMid: '#a9b1d6',
   textDim: '#8f97c0',
   textFaint: '#565f89',

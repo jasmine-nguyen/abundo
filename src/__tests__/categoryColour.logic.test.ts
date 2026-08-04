@@ -8,9 +8,10 @@
 //   • the OKLCH relationship (L×0.85, C×0.90) between each base and its sibling, so a hand-edited
 //     token that drifts off that curve fails here rather than shipping a mismatched shade.
 import { describe, it, expect } from '@jest/globals';
+import { toCategory } from '../context';
 import {
-  colorForCategory, CATEGORY_BASE, CATEGORY_SIBLINGS, PALETTE, toCategory,
-} from '../context';
+  colorForCategory, CATEGORY_BASE, CATEGORY_SIBLINGS, PALETTE,
+} from '../categoryColors';
 
 // A local sRGB↔OKLab pair so the sibling relationship is recomputed from scratch, independent of
 // how the tokens were generated. If CATEGORY_SIBLINGS is edited by hand off the curve, [PIN] fails.

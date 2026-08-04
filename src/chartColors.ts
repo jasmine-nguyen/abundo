@@ -4,7 +4,7 @@
 // Design; do NOT hand-tune individual hexes (they are a computed set — changing one breaks parity).
 //
 // Scope: this recolours the Insights pie + its category rows only. Budgets / Transactions still read
-// the app-wide `colorForCategory` (src/context.tsx); rolling this out everywhere is a follow-up.
+// the app-wide `colorForCategory` (src/categoryColors.ts); rolling this out everywhere is a follow-up.
 export const CATEGORY_COLORS = [
   '#f98f98', '#f9927e', '#f49964', '#e8a24f', '#d2ae45', '#b5bb51', '#8ec56f',
   '#6eca89', '#4ccda3', '#25cdbd', '#0bcbd3', '#25c7e6', '#47c1f5', '#65baff',
