@@ -1,5 +1,6 @@
 // WHIT-357 — QA GAP tests for the synthetic "Other" remainder plug in categoryBreakdown.
-// The implementer's breakdownRollupGaps.logic.test.ts already locks:
+// The implementer's breakdownRollup.logic.test.ts already locks (WHIT-459 folded the former
+// breakdownRollupGaps file into it):
 //   [G1] posted-surplus/pending-refund plugged (+30) AND both refund + remainder under one parent,
 //   [G8] a dropped net-negative mid-parent plugged (-40) at its grandparent,
 //   [G9] a subtree that already sums gets NO plug (the fix is inert on the happy path).

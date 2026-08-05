@@ -4,7 +4,7 @@
 // them (no client-side window/category filtering — that moved to the server, tested in pytest).
 // Pure over { transactions, category }, so it runs headlessly via makeState.
 import { describe, it, expect } from '@jest/globals';
-import { categoryTransactions, categoryBreakdown, UNCATEGORIZED_KEY } from '../context';
+import { categoryTransactions, categoryBreakdown, UNCATEGORIZED_KEY, type Transaction } from '../context';
 import { makeState, cat, txn, spend, withRollup } from './factory';
 
 const cats = [
@@ -179,5 +179,51 @@ describe('categoryBreakdown drillId', () => {
     const detail = categoryTransactions(s, 'coffee')!;
     expect(detail.posted).toBe(0);   // max(0, 20 - 50) = 0 — NOT a positive 30 an income sign would give
     expect(detail.total).toBe(0);
+  });
+});
+
+// WHIT-308/WHIT-342 adversarial gaps — client total math over server-scoped rows: a runtime-stray
+// status is listed but adds 0; a refund netting BOTH buckets negative is non-null with total 0
+// (NOT the null empty state). (Exact-id-match on the returned rows is a server concern — pytest.)
+const gapsCats = [cat({ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle' })];
+
+describe('categoryTransactions — adversarial gaps', () => {
+  // [A-G1] The total loop is `if posted … else if pending …` — a stray status contributes to
+  // neither bucket. It's LISTED (count) but not TOTALLED. Fail-on-revert: turning the
+  // `else if (t.status === 'pending')` into a bare `else` would fold the stray into pending.
+  it('lists a stray-status transaction but does not add it to the total', () => {
+    const s = makeState({
+      categories: gapsCats,
+      transactions: [
+        txn({ transaction_id: 'p1', category: 'coffee', amount: -10, status: 'posted', date: '2026-06-10' }),
+        txn({ transaction_id: 's1', category: 'coffee', amount: -99, status: 'removed' as unknown as Transaction['status'], date: '2026-06-11' }),
+      ],
+    });
+    const detail = categoryTransactions(s, 'coffee')!;
+    expect(detail.count).toBe(2);     // the stray row is still shown
+    expect(detail.total).toBe(10);    // …but only the posted spend counts
+    expect(detail.pending).toBe(0);
+  });
+
+  // [A-G2] A refund larger than spend in BOTH buckets clamps each to 0 → total 0. Because rows
+  // still exist, the result is NON-NULL (a $0 card over a real list), not the null empty state.
+  // Fail-on-revert: a `if (total === 0) return null` shortcut, or dropping the per-bucket clamp,
+  // both break this.
+  it('returns a non-null $0 detail (not the empty state) when refunds net both buckets negative', () => {
+    const s = makeState({
+      categories: gapsCats,
+      transactions: [
+        txn({ transaction_id: 'sp', category: 'coffee', amount: -10, status: 'posted', date: '2026-06-10' }),
+        txn({ transaction_id: 'rf', category: 'coffee', amount: 25, status: 'posted', date: '2026-06-11' }),  // big refund
+        txn({ transaction_id: 'qp', category: 'coffee', amount: -5, status: 'pending', date: '2026-06-12' }),
+        txn({ transaction_id: 'qr', category: 'coffee', amount: 20, status: 'pending', date: '2026-06-13' }), // pending reversal
+      ],
+    });
+    const detail = categoryTransactions(s, 'coffee');
+    expect(detail).not.toBeNull();
+    expect(detail!.count).toBe(4);
+    expect(detail!.posted).toBe(0);
+    expect(detail!.pending).toBe(0);
+    expect(detail!.total).toBe(0);
   });
 });
