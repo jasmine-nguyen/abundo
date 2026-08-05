@@ -108,3 +108,31 @@ it('rolls budget_excluded back to absent on failure when it was unset before', a
   expect(cached('t1')?.budget_excluded).toBeUndefined(); // restored to absent, not true
   expect(result.current.toast).toMatch(/could not save/i);
 });
+
+// WHIT-275 adversarial gaps — two SEQUENTIAL edits where the second reads the cache the first
+// patched (neither field clobbers the other), and clearing a note writes "" via a { notes: "" } PATCH.
+it('a note edit then a tags edit both land — the tags call does not drop the note', async () => { // [A20]
+  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1' });
+  const result = mount([txn()]); // starts with neither note nor tags
+
+  await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch' }); });
+  await act(async () => { await result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
+
+  // The second edit read the cache the first patched, so BOTH survive.
+  expect(cached('t1')?.notes).toBe('lunch');
+  expect(cached('t1')?.tags).toEqual(['work']);
+  // Each PATCH carried only its own field (never re-sent the other).
+  expect(mockApi.setTransactionFields).toHaveBeenNthCalledWith(1, 't1', { notes: 'lunch' });
+  expect(mockApi.setTransactionFields).toHaveBeenNthCalledWith(2, 't1', { tags: ['work'] });
+});
+
+it('clearing a note writes "" optimistically and PATCHes only { notes: "" }', async () => { // [A21]
+  mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1' });
+  const result = mount([txn({ notes: 'old', tags: ['keep'] })]);
+
+  await act(async () => { await result.current.applyTransactionEdit('t1', { notes: '' }); });
+
+  expect(cached('t1')?.notes).toBe('');           // cleared in the cache
+  expect(cached('t1')?.tags).toEqual(['keep']);   // tags untouched
+  expect(mockApi.setTransactionFields).toHaveBeenCalledWith('t1', { notes: '' });
+});
