@@ -1,6 +1,6 @@
 """Shared fakes + helpers for the goal-nudge suites (WHIT-258).
 
-The behind-pace nudge tests (``test_goal_nudge.py`` + ``test_goal_nudge_edges.py``) both
+The behind-pace nudge tests (``test_goal_nudge.py``) both
 drive ``shared/goal_nudge.notify_behind_goals`` through in-memory repo fakes. These were
 copy-pasted into both files and had already drifted (counters, ``seed=``, ``_run`` arity), so
 this is the single source — the SUPERSET that satisfies both suites. Leading underscore keeps

@@ -610,3 +610,35 @@ def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, shared, monkeyp
     assert item["failed_at"] == frozen.isoformat()
     assert item["expires_at"] == int(frozen.timestamp()) + 30 * 24 * 60 * 60
     assert isinstance(item["expires_at"], int)   # TTL must be a Number, not a string
+
+
+# --- folded from test_repository_transaction_whit275_gaps.py (WHIT-463) ---
+
+
+def test_update_fields_clears_category_when_passed_falsy(repo):  # [A12]
+    # The repo REMOVEs category on "" (the #f0 alias REMOVE branch). The handler
+    # blocks this at the edge; the repo itself does not — this pins that split.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES", "notes": "n"}}
+    assert repo.update_transaction_fields(key[0], key[1], category="") is True
+    row = repo._table.store[key]
+    assert "category" not in row   # category REMOVEd via the #f0 branch
+    assert row["notes"] == "n"     # an unpassed field is untouched
+
+
+def test_update_fields_remove_only_omits_expression_attribute_values(repo, monkeypatch):  # [A13]
+    # A REMOVE-only update (clear category) must NOT send ExpressionAttributeValues —
+    # DynamoDB rejects an UpdateItem carrying an empty values map. Capture the kwargs
+    # the repo hands the table and assert the key is absent entirely.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "X"}}
+    captured = {}
+    original = repo._table.update_item
+    def spy(**kwargs):
+        captured.update(kwargs)
+        return original(**kwargs)
+    monkeypatch.setattr(repo._table, "update_item", spy)
+
+    assert repo.update_transaction_fields(key[0], key[1], category="") is True
+    assert "ExpressionAttributeValues" not in captured
+    assert captured["UpdateExpression"].strip().startswith("REMOVE")

@@ -139,3 +139,40 @@ def test_bool_amount_above_zero_is_accepted_as_repayment_credit_characterization
     # is numeric but not > 0, so it is rejected like a zero.
     assert shared.repayment_rules.is_repayment_credit(_row(amount=True)) is True
     assert shared.repayment_rules.is_repayment_credit(_row(amount=False)) is False
+
+
+# --- folded from test_repayment_rules_nonfinite_gaps.py (WHIT-463) ---
+
+
+def test_is_repayment_credit_rejects_infinite_amount(shared):
+    # [A_INF] (P0) The behaviour change PART B exists for: before, inf > 0 was True and
+    # Decimal('Infinity') > 0 was True, so an infinite amount was accepted as a repayment
+    # credit. Now it is rejected. [fail-on-revert] reverting is_number's finiteness
+    # branches makes both of these True again.
+    is_repayment_credit = shared.repayment_rules.is_repayment_credit
+    assert is_repayment_credit(_row(amount=float("inf"))) is False
+    assert is_repayment_credit(_row(amount=Decimal("Infinity"))) is False
+
+
+def test_is_repayment_credit_survives_decimal_nan_without_raising(shared):
+    # [A_NANRULE] (P0) A stored Decimal('NaN') amount used to reach `amount > 0` and raise
+    # decimal.InvalidOperation (a 500). The rule must now return False WITHOUT raising.
+    # [fail-on-revert] reverting the finiteness branches makes this raise InvalidOperation.
+    is_repayment_credit = shared.repayment_rules.is_repayment_credit
+    assert is_repayment_credit(_row(amount=Decimal("NaN"))) is False
+
+
+def test_is_number_rejects_signalling_nan(shared):
+    # [A_SNAN] (P1) The implementer only tested quiet Decimal('NaN'). Signalling NaN is a
+    # distinct value that raises InvalidOperation on comparison even more aggressively;
+    # is_finite() screens it (returns False, doesn't itself raise), so is_number rejects it.
+    assert shared.repayment_rules.is_number(Decimal("sNaN")) is False
+
+
+def test_is_number_accepts_huge_finite_decimal(shared):
+    # [A_HUGE] (P1) Finiteness must not become a magnitude cap: a real (if large) finite
+    # amount is still a number. Guards against a "fix" that wrongly rejects legitimate
+    # big finite values. [fail-on-revert] flipping is_number to `return False` reddens this.
+    is_number = shared.repayment_rules.is_number
+    assert is_number(Decimal("1E20")) is True
+    assert is_number(Decimal("-1E20")) is True
