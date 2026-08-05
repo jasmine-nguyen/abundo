@@ -7,6 +7,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { routerSpies, resetRouter } from './support/routerMock';
 
 // auth: controllable status + a real subscribe, so the "fires on login" test can flip it.
 let mockAuthStatus = 'authed';
@@ -35,14 +36,7 @@ jest.mock('../api', () => ({
   fetchPayCycle: () => mockFetchPayCycle(),
 }));
 
-const mockPush = jest.fn();
-jest.mock('expo-router', () => {
-  const ReactLib = require('react');
-  return {
-    useRouter: () => ({ push: mockPush }),
-    useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]),
-  };
-});
+jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Budgets from '../../app/(tabs)/budgets';
 
@@ -68,7 +62,7 @@ beforeEach(() => {
   mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
   mockFetchCategories.mockReset().mockResolvedValue(CATS);
   mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
-  mockPush.mockReset();
+  resetRouter();
 });
 
 it('renders budget rows from the queries, fetched in parallel with the pay cycle', async () => {
@@ -157,7 +151,7 @@ it('the add-budget button navigates to the picker', async () => {
   renderBudgets();
   await screen.findByText('Cafes & Coffee');
   fireEvent.press(screen.getByText('Add a budget'));
-  expect(mockPush).toHaveBeenCalledWith('/budget/pick');
+  expect(routerSpies.push).toHaveBeenCalledWith('/budget/pick');
 });
 
 it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total (WHIT-201)', async () => {
