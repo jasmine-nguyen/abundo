@@ -2225,3 +2225,245 @@ def test_near_miss_logs_only_the_amount_and_date_matched_pendings(lam, repo, cap
             if "twin rejected on merchant" in r.getMessage()]
     assert len(near) == 2
     assert {m.rsplit("pending=", 1)[1] for m in near} == {"P1", "P2"}
+
+
+# ======================================================================================
+# Folded from per-ticket reconcile satellites (WHIT-452 Slice 1). Bodies moved verbatim;
+# the duplicated local _bank_row/_norm/_acc copies were dropped in favour of this file's
+# canonical helpers above (identical defaults).
+# ======================================================================================
+
+
+# --- WHIT-275: _with_carried_category tag/note conflict resolution --------------------
+# (was test_reconcile_whit275_gaps.py) Carry guard is `if value:` — a truthy SOURCE
+# (pending) value overwrites the posted's own; a falsy/absent source never clobbers.
+
+
+def test_carried_source_tags_overwrite_the_posted_existing_tags(lam, repo):  # [A14]
+    posted = {"transaction_id": "B", "category": "FOOD", "tags": ["stale"], "notes": "stale note"}
+    source = {"category": "coffee", "tags": ["work", "travel"], "notes": "reimburse"}
+
+    carried = repo._with_carried_category(posted, source)
+
+    # Truthy source value overwrites the posted's own — the pending user edit wins.
+    assert carried["tags"] == ["work", "travel"]
+    assert carried["notes"] == "reimburse"
+    assert carried["category"] == "coffee"
+    # And the original posted dict is not mutated (it's a copy).
+    assert posted["tags"] == ["stale"]
+
+
+def test_carried_absent_source_tags_keep_the_posted_existing_tags(lam, repo):  # [A15]
+    # The mirror: when the source has NO tags, the posted's own survive (falsy/absent
+    # source never clobbers a real value).
+    posted = {"transaction_id": "B", "category": "FOOD", "tags": ["keep"]}
+    source = {"category": "coffee"}  # no tags/notes
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["tags"] == ["keep"]
+    assert carried["category"] == "coffee"
+
+
+# --- WHIT-296/300: the budget_excluded override rides the same carry (static helper) --
+# (was test_reconcile_whit296.py) Survives re-sync like notes/tags; the dedupe sweep is
+# posted-authoritative for the exclude override.
+
+
+def test_carry_brings_budget_excluded_onto_a_fresh_posted(lam, repo):
+    # The pending leg the user marked as a transfer; the freshly-normalised posted has
+    # no override yet. The carry moves it across so the exclusion survives settlement.
+    posted = {"transaction_id": "B", "category": "FOOD", "counts_to_budget": True}
+    source = {"category": "coffee", "budget_excluded": True}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["budget_excluded"] is True
+    assert posted.get("budget_excluded") is None  # original not mutated (it's a copy)
+
+
+def test_bank_recompute_of_counts_to_budget_does_not_wipe_the_override(lam, repo):
+    # The re-imported posted carries the bank's own counts_to_budget=True; the override
+    # lives in a SEPARATE field, so the recompute leaves it untouched — the whole point
+    # of storing budget_excluded apart from counts_to_budget.
+    posted = {"transaction_id": "B", "category": "coffee", "counts_to_budget": True}
+    source = {"category": "coffee", "budget_excluded": True}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["counts_to_budget"] is True  # bank value intact
+    assert carried["budget_excluded"] is True    # user override intact
+
+
+def test_absent_source_override_keeps_the_posted_own_override(lam, repo):
+    # A source with no override never clobbers an override the posted already holds
+    # (falsy/absent source is skipped) — mirrors the notes/tags carry rule.
+    posted = {"transaction_id": "B", "category": "coffee", "budget_excluded": True}
+    source = {"category": "coffee"}  # no override
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["budget_excluded"] is True
+
+
+def test_dedupe_guard_keeps_a_post_settlement_override(lam, repo):
+    # dedupe_sweep (the dedupe sweep): the user excluded the POSTED after
+    # settlement; a stale pending twin without the override must not un-exclude it.
+    posted = {"transaction_id": "B", "category": "coffee", "budget_excluded": True}
+    source = {"category": "coffee"}  # stale pending, no override
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried["budget_excluded"] is True
+
+
+def test_dedupe_guard_does_not_carry_a_stale_exclude_onto_a_reincluded_posted(lam, repo):
+    # The user RE-INCLUDED the posted (override cleared -> absent). On the sweep a stale
+    # pending twin still marked excluded must NOT re-exclude it — that's the WHIT-300 bug.
+    # Fail-on-revert: restore the old fill-if-absent carry and budget_excluded reappears.
+    # (The live path staying intact — the sweep-only scope of this change — is guarded by
+    # test_carry_brings_budget_excluded_onto_a_fresh_posted above.)
+    posted = {"transaction_id": "B", "category": "coffee"}  # re-included: no override
+    source = {"category": "coffee", "budget_excluded": True}  # stale pending
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried.get("budget_excluded") is None  # stays included
+
+
+# --- WHIT-296: budget_excluded survives the LIVE reconcile (insert_or_reconcile) ------
+# (was test_reconcile_whit296_live.py) budget_excluded is not a bank field (normalise
+# strips it), so — like the note/tag reconcile tests — it's injected onto the stored row.
+# Fail-on-revert: drop "budget_excluded" from the carry tuple in _with_carried_category.
+
+
+def test_reconcile_carries_budget_excluded_onto_posted(lam, repo):
+    # WHIT-296 — [A-R1] the user marked the PENDING leg as a transfer; on settlement the
+    # override must ride onto the new posted row (whose bank feed knows nothing of it),
+    # and the stale pending must be deleted.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="coffee")
+    repo.insert_transactions([pending])
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["budget_excluded"] = True
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["budget_excluded"] is True            # override carried onto the posted
+    assert (acc, "TXN#A") not in repo._table.store   # stale pending removed
+    assert len(repo._table.store) == 1               # no duplicate
+
+
+def test_reconcile_resync_preserves_override_on_existing_posted(lam, repo):
+    # WHIT-296 — [A-R2] a plain re-import (no pending twin) of an already-stored posted the
+    # user excluded AFTER it settled must keep the override — the read-then-carry branch
+    # (repository.py:300). The bank's re-imported row carries no override; the existing
+    # one must not be wiped by the recompute.
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="coffee")
+    repo.insert_transactions([posted])
+    acc = _acc(posted)
+    repo._table.store[(acc, "TXN#B")]["budget_excluded"] = True
+
+    reimport = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([reimport])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["budget_excluded"] is True   # survived the re-sync recompute
+    assert row["category"] == "coffee"      # (user category still carried too)
+
+
+def test_reconcile_does_not_carry_a_falsy_override_onto_posted(lam, repo):
+    # WHIT-296 — [A-R3] edge: a stored budget_excluded=False on the pending is falsy, so the
+    # truthy carry guard skips it — the posted stays absent (not excluded), never storing a
+    # read-back-as-excluded value. Mirrors the "cleared note not carried" rule.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="coffee")
+    repo.insert_transactions([pending])
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["budget_excluded"] = False  # falsy
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    assert "budget_excluded" not in repo._table.store[(acc, "TXN#B")]
+
+
+# --- WHIT-333: the four twin-matching tiers share their candidate-pick / pop tail -----
+# (was test_reconcile_whit333.py + _e2e.py) _pop_lowest_id is the money-safety core that
+# DELETES a financial row; _select_twin is the shared predicate->pick->pop tail. Each is
+# fail-on-revert: break the extracted behaviour and the named assert goes red.
+
+
+def _row(txn_id, amount=Decimal("-9.00")):
+    return {"transaction_id": txn_id, "amount": amount, "authorized_date": "2026-06-29"}
+
+
+def test_pop_lowest_id_picks_lowest_among_indices_and_pops_it(repo):
+    # Only indices 0 and 2 are offered; the helper must pick the lower transaction_id
+    # BETWEEN THEM ("A") and pop just it — the un-offered lower id at index 1 ("0") and
+    # the loser both survive. min->max or the wrong pop target fails an assert.
+    pool = [_row("A"), _row("0"), _row("C")]
+    picked = repo._pop_lowest_id(pool, [0, 2])
+    assert picked["transaction_id"] == "A"
+    assert [r["transaction_id"] for r in pool] == ["0", "C"]
+
+
+def test_pop_lowest_id_missing_transaction_id_sorts_first(repo):
+    # `.get("transaction_id", "")` defaults a keyless row to "" so it wins the min
+    # instead of raising. Drop the default and this raises KeyError.
+    keyless = {"amount": Decimal("-9.00")}
+    pool = [_row("A"), keyless]
+    picked = repo._pop_lowest_id(pool, [0, 1])
+    assert "transaction_id" not in picked
+    assert [r.get("transaction_id") for r in pool] == ["A"]
+
+
+def test_select_twin_filters_then_picks_lowest_and_pops(repo):
+    # The predicate rejects the lowest-id row ("A"); among the matches ("M","N") the
+    # helper picks the lower id and pops only it. A regression that min'd over the whole
+    # pool would pick "A"; one that popped a candidate-list position not the pool index
+    # would drop the wrong row.
+    pool = [_row("A", Decimal("-1.00")), _row("M"), _row("N")]
+    picked = repo._select_twin(pool, lambda item: item.get("amount") == Decimal("-9.00"))
+    assert picked["transaction_id"] == "M"
+    assert [r["transaction_id"] for r in pool] == ["A", "N"]
+
+
+def test_select_twin_no_candidate_returns_none_and_keeps_pool(repo):
+    pool = [_row("A")]
+    assert repo._select_twin(pool, lambda item: False) is None
+    assert len(pool) == 1
+
+
+def test_exact_tier_matches_a_null_amount_pair(repo):
+    # The exact tier deliberately has NO `amount is not None` guard, so a posted row with
+    # a null amount still pairs with a null-amount pending on an equal date. Add a guard
+    # "to clean up" and this goes red.
+    pending = {"transaction_id": "A", "amount": None, "authorized_date": "2026-06-29"}
+    posted = {"account_id": "ACC", "amount": None, "authorized_date": "2026-06-29",
+              "transaction_id": "P"}
+    twin = repo._find_exact_twin(posted, {"ACC": [pending]})
+    assert twin is not None
+    assert twin["transaction_id"] == "A"
+
+
+def test_blank_auth_tie_break_consumes_lowest_transaction_id(lam, repo):
+    # WHIT-333 e2e (was test_reconcile_whit333_e2e.py): two indistinguishable blank-auth
+    # pendings (same amount, >=2-word merchant, in-window date). Exactly one may die and it
+    # must be the lowest id (A1) — the deterministic pick the shared _pop_lowest_id makes.
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="", pending=True, category="treats")
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A1") not in store              # lowest id consumed via _select_twin
+    assert (acc, "TXN#A2") in store                  # the other survives untouched
+    assert store[(acc, "TXN#A2")]["category"] == "treats"
+    assert store[(acc, "TXN#B")]["category"] == "coffee"   # A1's category carried across
+    assert len(store) == 2                                  # exactly one pending consumed

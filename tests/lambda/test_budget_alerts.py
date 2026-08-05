@@ -1654,3 +1654,140 @@ def test_wh343_gap_tip_settlement_crossing_cancelled_by_sibling_refund(alerts, r
                          before=list(repo._table.store.values()), normalised=[ctrl_posted],
                          webhook_repo=repo, cats=_CAR_TREE)
     assert len(control) == 1 and control[0][1] == "Car is at 80% of its budget this cycle."
+
+
+# ======================================================================================
+# Folded from per-ticket budget-alert satellites (WHIT-452 Slice 1). Bodies moved
+# verbatim; budget_296's copy of the fake repos / alerts fixture / NoTwinRepo was dropped
+# in favour of this file's harness above.
+# ======================================================================================
+
+
+# --- WHIT-350: the _combined_target wrapper (posted + pending, Decimal) ---------------
+# (was test_budget_alerts_fold_gaps.py) Pure function; the `lam` fixture only makes
+# shared/ (spend + budget_alerts) importable exactly as the sibling tests do.
+
+
+def test_combined_target_adds_posted_and_pending_both_nonzero(lam):
+    # [A_CT_ADD] (P0) posted nets +40 (petrol -60 spend, tolls +20 refund) and pending
+    # nets +15 (a separate pending leg), each survives its independent clamp, so the alert
+    # combined target = 40 + 15 = 55 — the SAME figure /budgets' posted+pending shows for
+    # this subtree. The clamps-to-0 test never exercises this addition. [fail-on-revert]
+    # a wrapper returning only folded["posted"] gives 40; a per-id clamp gives 60+0.
+    import spend, budget_alerts
+    ids = {"car", "petrol", "tolls"}
+    per_id = spend.summarise_transactions([
+        {"transaction_id": "a", "account_id": "up-spending", "category": "petrol",
+         "amount": Decimal("-60"), "status": "posted", "date": "2026-07-10",
+         "counts_to_budget": True},
+        {"transaction_id": "b", "account_id": "up-spending", "category": "tolls",
+         "amount": Decimal("20"), "status": "posted", "date": "2026-07-10",
+         "counts_to_budget": True},
+        {"transaction_id": "c", "account_id": "up-spending", "category": "petrol",
+         "amount": Decimal("-15"), "status": "pending", "date": "2026-07-10",
+         "counts_to_budget": True},
+    ], ids, clamp=False)
+    assert budget_alerts._combined_target(per_id, ids) == Decimal("55")
+
+
+def test_combined_target_negative_posted_does_not_drag_pending(lam):
+    # [A_CT_INDEP] (P0) posted nets NEGATIVE (-30, floored to 0) while pending nets +25.
+    # Independent clamp: the negative posted must not cancel the pending. Combined = 0 + 25.
+    # [fail-on-revert] clamping the COMBINED sum (max(0, -30+25)) would give 0, not 25.
+    import spend, budget_alerts
+    ids = {"car", "petrol"}
+    per_id = spend.summarise_transactions([
+        {"transaction_id": "a", "account_id": "up-spending", "category": "petrol",
+         "amount": Decimal("-10"), "status": "posted", "date": "2026-07-10",
+         "counts_to_budget": True},
+        {"transaction_id": "b", "account_id": "up-spending", "category": "petrol",
+         "amount": Decimal("40"), "status": "posted", "date": "2026-07-10",
+         "counts_to_budget": True},   # posted nets -30 -> floor 0
+        {"transaction_id": "c", "account_id": "up-spending", "category": "petrol",
+         "amount": Decimal("-25"), "status": "pending", "date": "2026-07-10",
+         "counts_to_budget": True},   # pending nets +25, must survive
+    ], ids, clamp=False)
+    assert budget_alerts._combined_target(per_id, ids) == Decimal("25")
+
+
+def test_combined_target_empty_ids_returns_decimal_not_int(lam):
+    # [A_CT_EMPTY] (P1) A corrupt/empty subtree must yield a Decimal, not int — the named
+    # docstring contract ("Seed Decimal(0) so an empty set yields Decimal, not int"). The
+    # implementer's == 0 check passes for int 0 too, so the TYPE was never locked.
+    # [fail-on-revert] a fold seeded with int 0 + max(0, ...) would return int 0 here.
+    import budget_alerts
+    result = budget_alerts._combined_target({"a": {"posted": Decimal("9"), "pending": Decimal("3")}}, set())
+    assert result == Decimal("0")
+    assert isinstance(result, Decimal)
+
+
+def test_combined_target_net_zero_present_entry_contributes_zero_decimal(lam):
+    # [A_CT_ZERODICT] (P2) With clamp=False a category can net to {posted:0, pending:0}
+    # (a refund exactly cancels its spend) and still be PRESENT in per_id. fold_subtree must
+    # treat that present-zero entry the same as absence: 0, and the result stays Decimal.
+    import spend, budget_alerts
+    ids = {"car", "petrol"}
+    per_id = spend.summarise_transactions([
+        {"transaction_id": "a", "account_id": "up-spending", "category": "petrol",
+         "amount": Decimal("-30"), "status": "posted", "date": "2026-07-10",
+         "counts_to_budget": True},
+        {"transaction_id": "b", "account_id": "up-spending", "category": "petrol",
+         "amount": Decimal("30"), "status": "posted", "date": "2026-07-10",
+         "counts_to_budget": True},   # exactly cancels -> present entry {0, 0}
+    ], ids, clamp=False)
+    assert per_id["petrol"] == {"posted": Decimal("0"), "pending": Decimal("0")}  # precondition
+    result = budget_alerts._combined_target(per_id, ids)
+    assert result == Decimal("0")
+    assert isinstance(result, Decimal)
+
+
+# --- WHIT-296: the over-budget push honours the budget_excluded override --------------
+# (was test_budget_alerts_whit296.py) Reuses this file's fake repos + NoTwinRepo above.
+# [A-P1] drives the REAL webhook repo through the carry + spend gate; [A-P2] the gate alone.
+
+
+def _posted(txn_id, category, amount, budget_excluded=None, date="2026-07-10"):
+    row = {
+        "transaction_id": txn_id, "account_id": _ACCT, "category": category,
+        "amount": Decimal(str(amount)), "status": "posted", "date": date,
+        "counts_to_budget": True, "authorized_date": date,
+    }
+    if budget_excluded is not None:
+        row["budget_excluded"] = budget_excluded
+    return row
+
+
+def test_excluded_settling_twin_does_not_fire_over_budget_alert(alerts, repo, monkeypatch):
+    # [A-P1] The pending groceries -85 (85% of a 100 budget) was marked "exclude". On
+    # settlement the posted twin carries the override, so the Δ sees $0 of groceries
+    # spend and no threshold is crossed. Uses the REAL webhook repo for the carry.
+    # Fail-on-revert: revert the carry OR the spend gate and after jumps to $85 -> the
+    # 80% push fires and this goes red.
+    acc = "ACCOUNT#" + _ACCT
+    repo._table.store[(acc, "TXN#pend1")] = {
+        "pk": acc, "sk": "TXN#pend1", "transaction_id": "pend1", "account_id": _ACCT,
+        "category": "groceries", "amount": Decimal("-85"), "status": "pending",
+        "date": "2026-07-10", "authorized_date": "2026-07-10",
+        "counts_to_budget": True, "budget_excluded": True,
+    }
+    before = [dict(repo._table.store[(acc, "TXN#pend1")])]  # window read sees the pending
+    posted = _posted("post1", "groceries", -85)             # bank feed: no override
+
+    sent, notify, _ = _run(alerts, monkeypatch,
+                           budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[posted], webhook_repo=repo)
+
+    assert sent == []
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_excluded_charge_in_batch_never_crosses_threshold(alerts, monkeypatch):
+    # [A-P2] The gate alone: a lone excluded groceries -85 in the batch (no twin) must
+    # not push. Fail-on-revert: revert the spend gate and the 80% push fires.
+    posted = _posted("g1", "groceries", -85, budget_excluded=True)
+
+    sent, _, _ = _run(alerts, monkeypatch,
+                      budgets={"groceries": {"target": Decimal("100")}},
+                      before=[], normalised=[posted], webhook_repo=NoTwinRepo())
+
+    assert sent == []
