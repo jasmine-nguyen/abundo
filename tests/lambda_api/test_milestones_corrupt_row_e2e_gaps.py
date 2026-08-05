@@ -1,33 +1,24 @@
-"""WHIT-394 — [A1]-[A8] the API READ paths end-to-end over the REAL MilestoneRepository.
+"""WHIT-394 — the milestones READ/SAVE paths end-to-end over the REAL MilestoneRepository.
 
 The implementer's tests/shared/test_milestone_rows.py stops at the repository: it proves
-_to_client drops a corrupt row. Nothing proves what the card is actually FOR — that the
-endpoints downstream of that read stop falling over. POST /milestones/review is the sharp
-one: lambda_api/handler.py:2420-2428 calls float(), math.ceil() and date.fromisoformat()
-on every row _to_client hands back, OUTSIDE any per-row guard, and lambda_handler only
-catches VersionConflictError (handler.py:293) — so one corrupt stored row was an uncaught
-Lambda error, i.e. a hard 500 on "Review my plan".
+_to_client drops a corrupt row. These prove the endpoints downstream of that read stay
+strict-JSON and don't over-reject a legitimately saved row.
 
-Every test here drives the REAL repository (real _to_client) behind an in-memory table, and
-several go through lambda_handler so the asserted body is the literal JSON the app receives.
+(WHIT-450 removed the AI review endpoint, so this suite's original [A1]-[A5] review cases —
+which drove POST /milestones/review — went with it. The GET/PUT cases below cover the kept
+read + save paths.)
 
-  [A1] review: a NULL stored targetDate -> 200, not a 500 (date.fromisoformat(None)).
-  [A2] review: a blank / unparsable stored targetDate -> 200, not a 500.
-  [A3] review: a NaN stored target -> 200 and the healthy row is still reviewed
-       (math.ceil(nan) raised ValueError before).
-  [A4] review: a -Infinity stored target never reaches the model blob, which must stay
-       strict-JSON encodable (a bare -Infinity token is not JSON).
-  [A5] review: EVERY stored row corrupt -> 409 "save a plan first", and NO AI call
-       (no spend, no 502, no 500).
+Every test drives the REAL repository (real _to_client) behind an in-memory table, and goes
+through lambda_handler so the asserted body is the literal JSON the app receives.
+
   [A6] GET /milestones: the response body is strict-parsable JSON with no NaN/Infinity
        token, and the corrupt row is absent.
   [A7] over-rejection guard: every row PUT /milestones ACCEPTS must survive GET
-       /milestones — the new read validation must not silently eat a legitimately
+       /milestones — the read validation must not silently eat a legitimately
        saved row (cap balance, 0 balance, 100-char label, unicode label, leap day).
   [A8] GET /milestones with every row corrupt -> 200 [], never null and never a 500.
 """
 
-import datetime
 import json
 from decimal import Decimal
 
@@ -75,31 +66,6 @@ def _row(**overrides):
     return {**GOOD, **overrides}
 
 
-class FixedDate(datetime.date):
-    @classmethod
-    def today(cls):
-        return datetime.date(2026, 1, 15)
-
-
-FACTS = {"original": 550000, "homeValue": 800000, "lvr": 68,
-         "ratePct": 5.74, "baseRepay": 3000, "extra": 0}
-
-
-class FakeLoanFactsRepo:
-    def get_loanfacts(self):
-        return dict(FACTS)
-
-
-class FakeHomeLoanRepo:
-    def get_balance(self, account_id):
-        return {"balance": Decimal("500000"), "as_at": "2026-01-10"}
-
-
-def _review_event():
-    return {"rawPath": "/milestones/review",
-            "requestContext": {"http": {"method": "POST"}}, "body": ""}
-
-
 def _get_event():
     return {"rawPath": "/milestones",
             "requestContext": {"http": {"method": "GET"}}, "body": ""}
@@ -108,100 +74,6 @@ def _get_event():
 def _put_event(rows):
     return {"rawPath": "/milestones", "requestContext": {"http": {"method": "PUT"}},
             "body": json.dumps({"milestones": rows}), "isBase64Encoded": False}
-
-
-@pytest.fixture
-def review(handler, monkeypatch):
-    """Drive review_milestones against the REAL repository, with the model call captured.
-    Returns (response, captured_model_inputs)."""
-    monkeypatch.setattr(handler, "date", FixedDate)
-    captured = []
-
-    def fake_review_pacing(model_input):
-        captured.append(model_input)
-        return [{"index": 0, "reason": "running behind your plan"}]
-
-    monkeypatch.setattr(handler, "review_pacing", fake_review_pacing)
-
-    def run(repo):
-        resp = handler.review_milestones(
-            _review_event(), repo, FakeHomeLoanRepo(), FakeLoanFactsRepo())
-        return resp, captured
-
-    return run
-
-
-# --- [A1]/[A2] a corrupt stored targetDate no longer 500s "Review my plan" ---
-
-def test_null_target_date_no_longer_crashes_the_review_endpoint(milestone_repo, review):
-    # [A1] date.fromisoformat(None) raises TypeError at handler.py:2428, OUTSIDE any guard,
-    # and lambda_handler catches only VersionConflictError -> an uncaught Lambda error.
-    # Fail-on-revert: put `"targetDate": m["targetDate"]` back in _to_client -> TypeError.
-    _store_raw(milestone_repo, [_row(id="bad", targetDate=None), GOOD])
-    resp, captured = review(milestone_repo)
-    assert resp["statusCode"] == 200
-    body = json.loads(resp["body"])
-    assert [a["milestoneId"] for a in body["adjustments"]] == ["good"]
-    assert captured, "the healthy row still reached the model"
-
-
-@pytest.mark.parametrize("bad_date", ["", "not-a-date", "2026-02-30", 20300101])
-def test_unparsable_stored_target_date_no_longer_crashes_the_review_endpoint(
-        milestone_repo, review, bad_date):
-    # [A2] Same crash, ValueError flavour (and TypeError for the int). The four distinct
-    # branches: empty, unparsable text, right SHAPE but not a real calendar day, and non-text.
-    # 2026-02-30 is the one a shape-only regex would let through — only a fromisoformat bar
-    # catches it on read. (The save endpoint does BOTH, so it rejects all four; these reach
-    # the store as a legacy or hand-written row.)
-    _store_raw(milestone_repo, [_row(id="bad", targetDate=bad_date), GOOD])
-    resp, _ = review(milestone_repo)
-    assert resp["statusCode"] == 200
-    assert [a["milestoneId"] for a in json.loads(resp["body"])["adjustments"]] == ["good"]
-
-
-# --- [A3]/[A4] a non-finite stored target through the review maths ----------
-
-def test_nan_target_no_longer_crashes_the_review_endpoint(milestone_repo, review):
-    # [A3] float(Decimal("NaN")) is nan; `nan >= balance` is False so the row was NOT
-    # skipped at handler.py:2421, months_to_payoff returned nan, and math.ceil(nan) raised
-    # "cannot convert float NaN to integer" (handler.py:2426) -> 500.
-    # Fail-on-revert: put `float(m["targetBalance"])` back in _to_client.
-    _store_raw(milestone_repo, [_row(id="bad", targetBalance=Decimal("NaN")), GOOD])
-    resp, _ = review(milestone_repo)
-    assert resp["statusCode"] == 200
-    assert [a["milestoneId"] for a in json.loads(resp["body"])["adjustments"]] == ["good"]
-
-
-def test_negative_infinity_target_never_reaches_the_model_blob(milestone_repo, review):
-    # [A4] -inf does NOT crash review: it sails past both guards (-inf < balance, and
-    # months_to_payoff treats a <=0 balance as 0 months), so it became a real CANDIDATE and
-    # rode into _review_model_input -> the Anthropic request body. json.dumps emits a bare
-    # `-Infinity` token there, which is not valid JSON. Silent corruption, not a crash — the
-    # nastiest of the four. Fail-on-revert: restore float(m["targetBalance"]) in _to_client.
-    _store_raw(milestone_repo, [_row(id="bad", targetBalance=Decimal("-Infinity")), GOOD])
-    resp, captured = review(milestone_repo)
-    assert resp["statusCode"] == 200
-    assert captured, "the model was called"
-    json.dumps(captured[0], allow_nan=False)   # raises ValueError if any inf/nan leaked
-    assert [m["targetBalance"] for m in captured[0]["milestones"]] == [400000.0]
-
-
-# --- [A5] a wholly-corrupt plan is a clean 409, not a 500 and not AI spend ---
-
-def test_every_row_corrupt_is_a_clean_409_with_no_ai_call(milestone_repo, review):
-    # [A5] _to_client drops them all -> `stored` is [] -> the falsy check at handler.py:2500
-    # returns 409 "save a plan first". Must never 500, and must never pay for an AI call on
-    # an empty candidate set.
-    _store_raw(milestone_repo, [
-        _row(id="a", targetDate=None),
-        _row(id="b", targetBalance=Decimal("NaN")),
-        _row(id="c", label="   "),
-        "a bare string row",
-    ])
-    resp, captured = review(milestone_repo)
-    assert resp["statusCode"] == 409
-    assert json.loads(resp["body"])["error"] == "save a plan first"
-    assert captured == [], "no AI call for a plan with nothing usable in it"
 
 
 # --- [A6]/[A8] GET /milestones through lambda_handler ------------------------
