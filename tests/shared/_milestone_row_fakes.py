@@ -28,7 +28,7 @@ def _row(**overrides):
 
 def _store_raw_row(milestone_repo, milestones, scope="SHARED"):
     """Inject a stored row directly, bypassing set_milestones' validation, to mimic a legacy
-    or partially-written row (mirrors tests/shared/test_repository_milestone_edges.py)."""
+    or partially-written row (mirrors tests/shared/test_repository_milestone.py)."""
     milestone_repo._table.store[("MILESTONES", scope)] = {
         "pk": "MILESTONES", "sk": scope, "milestones": milestones,
     }

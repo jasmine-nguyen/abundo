@@ -52,7 +52,7 @@ def milestone_repo(handler):
 
 def _store_raw(repo, rows, scope="SHARED"):
     """Inject stored rows directly, bypassing set_milestones' validation — a legacy or
-    directly-written row (mirrors tests/shared/test_repository_milestone_edges.py)."""
+    directly-written row (mirrors tests/shared/test_repository_milestone.py)."""
     repo._table.store[("MILESTONES", scope)] = {
         "pk": "MILESTONES", "sk": scope, "milestones": rows,
     }

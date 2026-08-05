@@ -1,6 +1,6 @@
 """WHIT-387 — adversarial GAP tests for the per-row malformed-plan skip in
 shared/milestones._resolve_plan, INDEPENDENT of the implementer's
-test_milestones_custom_plan_gaps.py / test_repository_milestone_edges.py.
+test_milestones_custom_plan_gaps.py / test_repository_milestone.py.
 
 The implementer already locks: missing-label / missing-target skipped, good+bad+good
 skip-and-celebrate, the alarm token, all-rows-bad -> empty + no marker sweep,

@@ -7,6 +7,7 @@ shape. Different cycle keys map to different items, so a new cycle re-arms.
 """
 
 import pytest
+from decimal import Decimal
 
 
 class FakeNotifyTable:
@@ -497,3 +498,149 @@ def test_migrate_writes_no_ttl(shared):
     r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
     stored = r._table.store[("NOTIFY#MILESTONE", "FIRED")]
     assert "expires_at" not in stored
+
+
+# --- folded from test_repository_notify_gaps.py (WHIT-463) ---
+
+
+_KEY = ("NOTIFY#REPAYMENT", "FIRED")
+
+
+class _DecimalTable:
+    """Returns the last_fired_at as a boto3-style Decimal, the way DynamoDB really does."""
+
+    def __init__(self, stored):
+        self._item = {"pk": _KEY[0], "sk": _KEY[1], "last_fired_at": stored}
+
+    def get_item(self, Key):
+        return {"Item": dict(self._item)}
+
+
+def test_last_fired_at_decimal_from_dynamo_returns_int(shared):
+    r = shared.notify.NotifyRepository()
+    r._table = _DecimalTable(Decimal("1752000000"))
+    result = r.last_repayment_fired_at()
+    assert result == 1752000000
+    assert type(result) is int  # not Decimal -> the int() cast is load-bearing
+
+
+# --- folded from test_repository_notify_whit317_gaps.py (WHIT-463) ---
+
+
+def test_push_exactly_at_cutoff_is_included(shared):
+    # WHIT-317 — [A20] fired_at == cutoff is INSIDE the window (>=), not dropped.
+    r = _repo(shared)
+    r.mark_repayment_push(300000, "txn-1", fired_at=1000)
+    assert r.repayment_push_amounts_since(1000) == [300000]
+
+
+def test_push_one_second_below_cutoff_is_excluded(shared):
+    # WHIT-317 — [A20] fired_at == cutoff-1 is OUTSIDE the window.
+    r = _repo(shared)
+    r.mark_repayment_push(300000, "txn-1", fired_at=999)
+    assert r.repayment_push_amounts_since(1000) == []
+
+
+def test_mixed_window_keeps_only_the_in_window_amounts(shared):
+    # Three pushes straddling the cutoff → only the two at/after cutoff survive.
+    r = _repo(shared)
+    r.mark_repayment_push(100000, "a", fired_at=500)   # out
+    r.mark_repayment_push(200000, "b", fired_at=1000)  # in (==cutoff)
+    r.mark_repayment_push(300000, "c", fired_at=1500)  # in
+    assert sorted(r.repayment_push_amounts_since(1000)) == [200000, 300000]
+
+
+def test_hash_in_txn_id_does_not_corrupt_amount(shared):
+    # split('#', 2) caps at 2 splits → the amount field is always the 2nd token, even
+    # if the id itself carries '#'. Up ids are UUIDs (no '#'), but the maxsplit is the
+    # only thing protecting the amount, so prove it.
+    r = _repo(shared)
+    r.mark_repayment_push(357300, "weird#id#with#hashes", fired_at=1000)
+    assert r.repayment_push_amounts_since(0) == [357300]
+
+
+# --- folded from test_repository_notify_whit447_gaps.py (WHIT-463) ---
+
+
+class _MilestoneTable:
+    """Models ADD/DELETE on the `fired` String Set (no TTL), keyed by (pk, sk)."""
+
+    def __init__(self):
+        self.store = {}
+
+    def get_item(self, Key):
+        item = self.store.get((Key["pk"], Key["sk"]))
+        return {"Item": dict(item)} if item is not None else {}
+
+    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
+        assert UpdateExpression in ("ADD #f :m", "DELETE #f :m"), UpdateExpression
+        member = ExpressionAttributeValues[":m"]
+        assert isinstance(member, set)
+        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
+        current = set(item.get("fired", set()))
+        if UpdateExpression == "ADD #f :m":
+            item["fired"] = current | member
+            return
+        remaining = current - member
+        if remaining:
+            item["fired"] = remaining
+        else:
+            item.pop("fired", None)
+
+
+def _repo_with(shared, table):
+    r = shared.notify.NotifyRepository()
+    r._table = table
+    return r
+
+
+def test_add_failing_leaves_the_old_marker_intact_never_zero(shared, client_error, database_error):
+    # WHIT-447 — hunt#7 (mirror of the covered DELETE-fails case): if the ADD fails, the DELETE
+    # never runs (it is second), so the OLD marker survives. The one thing that must never happen
+    # — zero markers for a still-live celebrated milestone — is impossible from EITHER failure.
+    class _AddFailsTable(_MilestoneTable):
+        armed = False  # so the seed ADD below still lands; only the migrate ADD fails
+
+        def update_item(self, **kwargs):
+            if self.armed and kwargs["UpdateExpression"] == "ADD #f :m":
+                raise client_error("InternalServerError")
+            return super().update_item(**kwargs)
+
+    table = _AddFailsTable()
+    r = _repo_with(shared, table)
+    r.mark_milestone_fired("bal:400000.00")
+    table.armed = True
+    with pytest.raises(database_error):
+        r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    assert r.fired_milestones() == {"bal:400000.00"}  # old kept, new never added → never zero
+
+
+def test_migrating_an_already_migrated_pair_is_a_safe_noop(shared):
+    # WHIT-447 — hunt#5 at the repo level: after the marker is on the id, its bare `old` is gone,
+    # so a second migrate finds `old` not in the fired set → nothing to add → returns without
+    # touching the table, and the idd marker is neither lost nor duplicated.
+    table = _MilestoneTable()
+    r = _repo_with(shared, table)
+    r.mark_milestone_fired("bal:400000.00")
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    assert r.fired_milestones() == {"id:u1:bal:400000.00"}
+
+    # Arm a tripwire: a second migrate of the SAME pair must not touch the table at all.
+    def boom(**kwargs):
+        raise AssertionError("update_item must not run — old marker already migrated")
+
+    table.update_item = boom
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])  # no raise
+    assert r.fired_milestones() == {"id:u1:bal:400000.00"}
+
+
+def test_a_migration_does_not_disturb_an_unrelated_fired_marker(shared):
+    # WHIT-447: a batch that migrates one pair must leave every OTHER celebrated marker (here a
+    # built-in sprint "0" and an unrelated saved marker) exactly as it was — no collateral ADD or
+    # DELETE beyond the migrated pair.
+    r = _repo_with(shared, _MilestoneTable())
+    r.mark_milestone_fired("bal:400000.00")
+    r.mark_milestone_fired("0")
+    r.mark_milestone_fired("id:other:bal:250000.00")
+    r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
+    assert r.fired_milestones() == {"id:u1:bal:400000.00", "0", "id:other:bal:250000.00"}
