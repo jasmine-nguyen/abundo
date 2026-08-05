@@ -75,7 +75,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
     "banksync_enrichments", "insights_ai", "anthropic_client",
-    "spend", "repayment_rules",
+    "spend", "repayment_rules", "api_key",
 )
 
 
@@ -118,9 +118,10 @@ def insights_ai():
     saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
     import insights_ai as ia
     import anthropic_client as ac
+    import api_key
 
-    ac._api_key = None  # never leak a cached key across tests
-    ac.get_param = lambda path: "test-anthropic-key"
+    api_key._cache.clear()  # never leak a cached key across tests
+    api_key.get_param = lambda path: "test-anthropic-key"
     try:
         yield ia
     finally:
@@ -143,9 +144,10 @@ def anthropic_client():
 
     saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
     import anthropic_client as ac
+    import api_key
 
-    ac._api_key = None  # never leak a cached key across tests
-    ac.get_param = lambda path: "test-anthropic-key"
+    api_key._cache.clear()  # never leak a cached key across tests
+    api_key.get_param = lambda path: "test-anthropic-key"
     try:
         yield ac
     finally:
@@ -168,12 +170,13 @@ def enrichments():
 
     saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
     import banksync_enrichments as be
+    import api_key
 
-    be._api_key = None  # never leak a cached key across tests
+    api_key._cache.clear()  # never leak a cached key across tests
     # Pin the key deterministically instead of leaning on whichever suite's
     # module-level `ssm` fake won collection order — otherwise value-sensitive tests
-    # are order-dependent. Tests that care about caching monkeypatch this themselves.
-    be.get_param = lambda path: "test-api-key"
+    # are order-dependent. Tests that care about the fetch monkeypatch api_key.get_param.
+    api_key.get_param = lambda path: "test-api-key"
     try:
         yield be
     finally:

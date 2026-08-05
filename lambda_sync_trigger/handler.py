@@ -29,20 +29,15 @@ from constants import (
     SYNC_FEED_IDS,
     SYNC_TIMEOUT_SECONDS,
 )
-from ssm import get_param
+from api_key import get_api_key as _fetch_api_key
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-_api_key = None
-
 
 def get_api_key() -> str:
-    """Fetch and cache the BankSync API key from SSM for the life of the container."""
-    global _api_key
-    if _api_key is None:
-        _api_key = get_param(BANKSYNC_API_KEY_PATH)
-    return _api_key
+    """The BankSync API key (fetched + cached in shared/api_key.py, keyed by path)."""
+    return _fetch_api_key(BANKSYNC_API_KEY_PATH)
 
 
 def trigger_sync(feed_id: str, api_key: str) -> None:

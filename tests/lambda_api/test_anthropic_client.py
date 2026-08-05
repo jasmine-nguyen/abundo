@@ -121,26 +121,28 @@ def test_post_ssm_failure_degrades_to_anthropic_error(anthropic_client, monkeypa
     def unreachable(req, timeout=None):
         raise AssertionError("urlopen must not run when the key can't be read")
 
+    import api_key
     monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", unreachable)
-    monkeypatch.setattr(anthropic_client, "get_param",
+    monkeypatch.setattr(api_key, "get_param",
                         lambda path: (_ for _ in ()).throw(ValueError("no such param")))
-    anthropic_client._api_key = None
 
     with pytest.raises(anthropic_client.AnthropicError) as ei:
         anthropic_client.post("s", "p", {})
     assert ei.value.upstream_status is None
 
 
-# --- get_api_key: caching ----------------------------------------------------
+# --- get_api_key -------------------------------------------------------------
 
 
-def test_get_api_key_is_cached(anthropic_client, monkeypatch):
+def test_get_api_key_reads_the_anthropic_path(anthropic_client, monkeypatch):
+    # The wrapper must pass the ANTHROPIC key path to the shared fetch — the two
+    # lambda_api callers share one process, so the wrong path would fetch the
+    # BankSync key instead (WHIT-454). Caching itself is covered in tests/shared.
+    import api_key
     calls = []
-    monkeypatch.setattr(anthropic_client, "get_param", lambda path: calls.append(path) or "k")
-    anthropic_client._api_key = None
+    monkeypatch.setattr(api_key, "get_param", lambda path: calls.append(path) or "k")
     assert anthropic_client.get_api_key() == "k"
-    anthropic_client.get_api_key()
-    assert len(calls) == 1  # SSM read once, then served from the module cache
+    assert calls == [anthropic_client.ANTHROPIC_API_KEY_PATH]
 
 
 # --- extract_first_json ------------------------------------------------------

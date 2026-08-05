@@ -222,13 +222,26 @@ def test_normalise_account_balance_raises_on_failure_and_missing_fields(handler)
             handler.normalise_account_balance(bad)
 
 
+# --- get_api_key -------------------------------------------------------------
+
+
+def test_get_api_key_reads_the_banksync_path(handler, monkeypatch):
+    # The wrapper must hand the BankSync key path to the shared fetch (WHIT-454).
+    # Caching itself is covered in tests/shared/test_api_key.py.
+    import api_key
+    calls = []
+    monkeypatch.setattr(api_key, "get_param", lambda path: calls.append(path) or "k")
+    assert handler.get_api_key() == "k"
+    assert calls == [handler.BANKSYNC_API_KEY_PATH]
+
+
 # --- lambda_handler ----------------------------------------------------------
 
 
 def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, monkeypatch):
     homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
-    monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
@@ -258,7 +271,7 @@ def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, mo
 def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeypatch):
     homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
-    monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
@@ -277,7 +290,7 @@ def test_lambda_handler_swallows_http_error_and_keeps_last_good(handler, monkeyp
 def test_lambda_handler_swallows_failure_payload_without_writing(handler, monkeypatch):
     homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
-    monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     fail = {"success": False, "error": "Provider fiskil:au does not support loans"}
@@ -296,10 +309,10 @@ def test_lambda_handler_swallows_an_api_key_fetch_failure(handler, monkeypatch):
     homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
 
-    def boom(path):
+    def boom():
         raise RuntimeError("SSM throttled")
 
-    monkeypatch.setattr(handler, "get_param", boom)
+    monkeypatch.setattr(handler, "get_api_key", boom)
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 

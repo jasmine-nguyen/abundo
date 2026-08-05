@@ -1,8 +1,10 @@
-"""Unit tests for the webhook TransactionRepository's failure-path methods:
-the WHIT-83 idempotency marker (`has_event` / `mark_event`, save-then-mark) and
-the WHIT-84 uuid in the dead-letter sort key. Backed by the in-memory FakeTable."""
+"""Unit tests for the webhook TransactionRepository's failure-path methods: the
+WHIT-83 idempotency marker (`has_event` / `mark_event`, save-then-mark) and the
+webhook-only reconcile/pagination behaviour. Backed by the in-memory FakeTable.
 
-from datetime import datetime, timezone
+The dead-letter write helper (save_failed_transactions: WHIT-84 uuid sort key,
+WHIT-54 TTL) is inherited from shared/repository_transaction.py and covered by
+tests/shared/test_repository_transaction.py (WHIT-454)."""
 
 
 def test_mark_event_makes_has_event_true(repo):
@@ -20,25 +22,6 @@ def test_has_event_is_false_for_an_unmarked_event(repo):
     # retry re-processes rather than being skipped as a duplicate.
     assert repo.has_event("never_marked") is False
     assert repo._table.store == {}
-
-
-def test_save_failed_transactions_survive_same_microsecond(repo, lam, monkeypatch):
-    # WHIT-84: force both failed rows to the SAME timestamp. Only the uuid in the
-    # sort key keeps them from collapsing into one overwritten row. Without the uuid
-    # the two SKs are identical -> FakeTable stores one -> this assertion fails.
-    frozen = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)
-
-    class _FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return frozen
-
-    monkeypatch.setattr(lam.repository, "datetime", _FrozenDatetime)
-
-    repo.save_failed_transactions([{"id": "a"}, {"id": "b"}])
-
-    failed = [key for key in repo._table.store if key[0] == "FAILED"]
-    assert len(failed) == 2
 
 
 def test_double_processing_same_posted_is_idempotent(repo, lam):
@@ -129,23 +112,3 @@ def test_get_pending_single_page_returns_all_and_queries_once(repo):
 
     assert sorted(t["transaction_id"] for t in pendings) == ["a", "c"]
     assert repo._table.query_calls == 1
-
-
-def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, lam, monkeypatch):
-    # WHIT-54: dead-letter rows carry a readable failed_at (ISO) + an expires_at
-    # DynamoDB TTL (epoch seconds) 30 days out. Matches the shared copy.
-    frozen = datetime(2026, 6, 29, 12, 0, 0, tzinfo=timezone.utc)
-
-    class _FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return frozen
-
-    monkeypatch.setattr(lam.repository, "datetime", _FrozenDatetime)
-
-    repo.save_failed_transactions([{"id": "a"}])
-
-    (_, item), = [(k, v) for k, v in repo._table.store.items() if k[0] == "FAILED"]
-    assert item["failed_at"] == frozen.isoformat()
-    assert item["expires_at"] == int(frozen.timestamp()) + 30 * 24 * 60 * 60
-    assert isinstance(item["expires_at"], int)

@@ -1,53 +1,29 @@
-import boto3
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal
-import json
 import logging
 import re
-import uuid
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
-from typing import Any, Callable, NoReturn, Optional
+from typing import Any, Callable, Optional
 from merchant import clean_merchant, is_anz_pending, pending_merchant_column
 from models import Transaction
 from constants import (
     AUTH_DATE_SKEW_DAYS,
-    DEAD_LETTER_TTL_SECONDS,
     FEED_WINDOW_DAYS,
     PENDING_STATUS,
     TIP_HEADROOM,
 )
-from repository_errors import DatabaseError
-
-REGION_NAME = "ap-southeast-2"
-RESOURCE_NAME = "dynamodb"
-TABLE_NAME = "abundo-dynamodb-table"
+from repository_base import handle_database_error
+from repository_transaction import (
+    TransactionRepository as _SharedTransactionRepository,
+    _build_pk,
+    _build_sk,
+)
 
 logger = logging.getLogger(__name__)
 # The Text-format Lambda runtime leaves the root logger at WARNING, so INFO logs are
 # dropped unless we opt in — matching lambda/handler.py.
 logger.setLevel(logging.INFO)
-
-
-def handle_database_error(e: ClientError, action: str) -> NoReturn:
-    """Logs an AWS client error and re-raises it as a DatabaseError (WHIT-127)."""
-    error_code = e.response["Error"]["Code"]
-    error_message = e.response["Error"]["Message"]
-    print(f"DynamoDB Error [{error_code}]: {error_message}")
-    raise DatabaseError(f"Database {action} failed: {error_message}") from e
-
-
-def sanitise_transaction(txn: Transaction) -> dict[str, Any]:
-    """Strips out unassigned None properties to keep DynamoDB documents sparse."""
-    return {k: v for k, v in txn.items() if v is not None}
-
-
-def _build_pk(account_id: str) -> str:
-    return f"ACCOUNT#{account_id}"
-
-
-def _build_sk(transaction_id: Optional[str]) -> str:
-    return f"TXN#{transaction_id}"
 
 
 _WORD = re.compile(r"[a-z0-9]+")
@@ -202,70 +178,11 @@ def _settles_after(pending_date: Optional[str], posted_date: Optional[str]) -> b
     return 0 <= (qd - pd).days <= FEED_WINDOW_DAYS
 
 
-class TransactionRepository:
-    def __init__(self) -> None:
-        self._dynamodb = None
-        self._table = None
-
-    def _get_table(self):
-        """Lazy-loads and buffers the connection to the physical DynamoDB table resource."""
-        if self._table is None:
-            self._dynamodb: Any = boto3.resource(RESOURCE_NAME, region_name=REGION_NAME)
-            self._table = self._dynamodb.Table(TABLE_NAME)
-        return self._table
-
-    def insert_transactions(self, transactions: list[Transaction]) -> None:
-        """Inserts multiple transactions efficiently using DynamoDB Batch Write."""
-
-        if not transactions:
-            return
-        items = []
-
-        for transaction in transactions:
-            # Ensure each transaction has the correct DynamoDB schema keys
-            item = {
-                "pk": _build_pk(transaction["account_id"]),
-                "sk": _build_sk(transaction["transaction_id"]),
-                **sanitise_transaction(transaction),
-            }
-            items.append(item)
-
-        self._batch_put(items, "batch_write")
-
-    def save_failed_transactions(self, failed_transactions: list[dict]) -> None:
-        """Inserts failed transactions using DynamoDB Batch Write."""
-
-        if not failed_transactions:
-            return
-
-        items = []
-        for transaction in failed_transactions:
-            now = datetime.now(timezone.utc)
-            item = {
-                "pk": "FAILED",
-                # A uuid disambiguates two failures written in the same microsecond,
-                # whose isoformat timestamps would otherwise collide and overwrite
-                # each other (WHIT-84) — matches shared/repository_transaction.py.
-                "sk": f"{now.isoformat()}#{uuid.uuid4()}",
-                "raw": json.dumps(transaction),
-                # failed_at: readable "how long stuck". expires_at: DynamoDB TTL
-                # (epoch seconds) so old dead-letter rows auto-expire (WHIT-54).
-                "failed_at": now.isoformat(),
-                "expires_at": int(now.timestamp()) + DEAD_LETTER_TTL_SECONDS,
-            }
-            items.append(item)
-        self._batch_put(items, "save_failed_transactions")
-
-    def _batch_put(self, items: list[dict], action: str) -> None:
-        if not items:
-            return
-        try:
-            table = self._get_table()
-            with table.batch_writer() as batch:
-                for item in items:
-                    batch.put_item(Item=item)
-        except ClientError as e:
-            handle_database_error(e, action)
+class TransactionRepository(_SharedTransactionRepository):
+    """The webhook's transaction store. Inherits the generic CRUD (table config,
+    insert/batch/failed-record writes) from shared/repository_transaction.py and
+    adds the webhook-only reconcile pipeline below (WHIT-454 removed the duplicated
+    copies of the inherited methods)."""
 
     def get_transaction(self, pk: str, sk: str) -> Optional[dict[str, Any]]:
         """Retrieves a single record document. Returns None if it is missing."""

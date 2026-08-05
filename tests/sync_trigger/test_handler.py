@@ -1,7 +1,7 @@
 """Unit tests for the scheduled BankSync sync-trigger Lambda.
 
 Covers the three functions in ``lambda_sync_trigger/handler.py``:
-    - get_api_key   : SSM fetch + per-container caching
+    - get_api_key   : delegates to the shared per-container key cache
     - trigger_sync  : the per-feed POST, incl. the 409 "already running" skip
     - lambda_handler: per-feed failure isolation + final RuntimeError
 
@@ -56,32 +56,27 @@ def _http_error(code):
 
 
 @pytest.fixture(autouse=True)
-def _reset_api_key_cache(monkeypatch):
-    """Clear the module-global api-key cache before each test so caching tests
-    are deterministic. monkeypatch auto-restores after the test."""
-    monkeypatch.setattr(handler, "_api_key", None)
+def _reset_api_key_cache():
+    """Clear the shared api-key cache around each test so the fetch test is
+    deterministic (the cache now lives in shared/api_key.py — WHIT-454)."""
+    import api_key
+    api_key._cache.clear()
+    yield
+    api_key._cache.clear()
 
 
 # --- get_api_key -------------------------------------------------------------
 
 
-def test_get_api_key_fetches_from_ssm(monkeypatch):
+def test_get_api_key_reads_the_banksync_path(monkeypatch):
+    # The wrapper delegates to the shared cache with the BankSync path. Caching
+    # itself is covered in tests/shared/test_api_key.py.
+    import api_key
     calls = []
-    monkeypatch.setattr(handler, "get_param", lambda path: calls.append(path) or "secret")
+    monkeypatch.setattr(api_key, "get_param", lambda path: calls.append(path) or "secret")
 
     assert handler.get_api_key() == "secret"
     assert calls == [handler.BANKSYNC_API_KEY_PATH]
-
-
-def test_get_api_key_is_cached(monkeypatch):
-    calls = []
-    monkeypatch.setattr(handler, "get_param", lambda path: calls.append(path) or "secret")
-
-    handler.get_api_key()
-    handler.get_api_key()
-
-    # Second call must hit the cache, not SSM again.
-    assert len(calls) == 1
 
 
 # --- trigger_sync ------------------------------------------------------------
@@ -133,7 +128,7 @@ def test_trigger_sync_non_409_http_error_is_raised(monkeypatch):
 
 
 def test_lambda_handler_all_feeds_succeed(monkeypatch):
-    monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     calls = []
 
     def fake_urlopen(req, timeout=None):
@@ -149,7 +144,7 @@ def test_lambda_handler_all_feeds_succeed(monkeypatch):
 
 
 def test_lambda_handler_isolates_per_feed_failure(monkeypatch):
-    monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     feed_ids = list(handler.SYNC_FEED_IDS)
     calls = []
 
@@ -170,7 +165,7 @@ def test_lambda_handler_isolates_per_feed_failure(monkeypatch):
 
 
 def test_lambda_handler_all_409_is_not_a_failure(monkeypatch):
-    monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
 
     def fake_urlopen(req, timeout=None):
         raise _http_error(409)
@@ -183,7 +178,7 @@ def test_lambda_handler_all_409_is_not_a_failure(monkeypatch):
 
 
 def test_lambda_handler_url_error_counts_as_failure(monkeypatch):
-    monkeypatch.setattr(handler, "get_param", lambda path: "the-key")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
 
     def fake_urlopen(req, timeout=None):
         # A timeout/DNS failure is a URLError, not HTTPError, so trigger_sync does

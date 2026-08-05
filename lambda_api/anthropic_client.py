@@ -28,9 +28,7 @@ from constants import (
     ANTHROPIC_USER_AGENT,
     ANTHROPIC_VERSION,
 )
-from ssm import get_param
-
-_api_key = None
+from api_key import get_api_key as _fetch_api_key
 
 
 class AnthropicError(Exception):
@@ -43,11 +41,8 @@ class AnthropicError(Exception):
 
 
 def get_api_key() -> str:
-    """Fetch + cache the Anthropic API key from SSM for the life of the container."""
-    global _api_key
-    if _api_key is None:
-        _api_key = get_param(ANTHROPIC_API_KEY_PATH)
-    return _api_key
+    """The Anthropic API key (fetched + cached in shared/api_key.py, keyed by path)."""
+    return _fetch_api_key(ANTHROPIC_API_KEY_PATH)
 
 
 def post(system: str, user_prefix: str, model_input: dict) -> str:

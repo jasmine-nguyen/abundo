@@ -181,14 +181,15 @@ def test_request_url_error_is_none_status(enrichments, monkeypatch):
     assert excinfo.value.upstream_status is None
 
 
-def test_get_api_key_is_cached(enrichments, monkeypatch):
+def test_get_api_key_reads_the_banksync_path(enrichments, monkeypatch):
+    # The wrapper must pass the BankSync key path to the shared fetch (WHIT-454).
+    # Caching itself is covered in tests/shared/test_api_key.py.
+    import api_key
     calls = []
-    monkeypatch.setattr(enrichments, "get_param", lambda path: calls.append(path) or "k")
+    monkeypatch.setattr(api_key, "get_param", lambda path: calls.append(path) or "k")
 
-    enrichments.get_api_key()
-    enrichments.get_api_key()
-
-    assert len(calls) == 1  # second call hits the cache, not SSM
+    assert enrichments.get_api_key() == "k"
+    assert calls == [enrichments.BANKSYNC_API_KEY_PATH]
 
 
 # --- handler routes ----------------------------------------------------------
