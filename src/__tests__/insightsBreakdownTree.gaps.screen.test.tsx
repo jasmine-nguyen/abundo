@@ -10,9 +10,13 @@
 //   [A13] a parent's accessibilityState.expanded tracks the open/closed state (a11y)
 // Same harness as insightsBreakdownQuery.screen.test.tsx: ../api + ../auth + expo-router
 // mocked; ../context PARTIALLY mocked (real categoryBreakdown, stub useAppContext).
-import { it, expect, jest, beforeEach } from '@jest/globals';
+//
+// WHIT-467 folded in insightsPayCycleParallel (WHIT-72 GAP) — same mock map + timer regime.
+// Its coffee fixtures differ from this file's tree fixtures, so it lives in its own describe
+// with a nested beforeEach that re-seeds all three fetchers (runs after the outer one → wins).
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StyleSheet } from 'react-native';
 
@@ -161,4 +165,37 @@ it('[A13] a parent accessibilityState.expanded tracks open/closed', async () => 
   const foodRow2 = screen.getAllByRole('button', { name: /Food/i })
     .find((b: any) => b.props.accessibilityState && 'expanded' in b.props.accessibilityState)!;
   expect(foodRow2.props.accessibilityState.expanded).toBe(true);
+});
+
+// --- WHIT-72 GAP (qa's adversarial half, folded in by WHIT-467) ---------------
+// The Insights exclusion is only safe if the hero is genuinely cycle-INDEPENDENT
+// (categoryBreakdown takes {breakdown, category} only). This locks that: with the pay cycle
+// held unresolved, the breakdown hero still paints its total. Fail-on-revert: re-gating the
+// breakdown/hero behind the pay cycle strands this on "Loading…".
+// Its own coffee fixtures + nested beforeEach (re-seeds ALL three fetchers) keep it isolated
+// from this file's tree fixtures.
+describe('cycle-independent hero (pay cycle pending)', () => {
+  const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+  const BREAKDOWN = { coffee: { posted: 40, pending: 10 } };
+
+  beforeEach(() => {
+    mockFetchBreakdown.mockReset().mockResolvedValue(BREAKDOWN);
+    mockFetchCategories.mockReset().mockResolvedValue(CATS);
+    mockFetchPayCycle.mockReset().mockResolvedValue({ length: 30, last_pay_date: '2026-07-01' });
+  });
+
+  it('renders the breakdown hero while the pay cycle is STILL pending (cycle-independent hero → Insights exclusion is safe)', async () => {
+    // Hold the pay cycle unresolved; breakdown + categories resolve. The hero must paint its
+    // total anyway — it reads breakdown, never the cycle. On a payCycle-gated hero it would sit
+    // on "Loading…" until the (never-resolving) cycle landed.
+    let resolvePayCycle: (v: unknown) => void = () => {};
+    mockFetchPayCycle.mockReset().mockReturnValue(new Promise((r) => { resolvePayCycle = r; }));
+    render(React.createElement(QueryClientProvider, { client: makeClient() }, React.createElement(Insights)));
+
+    expect(await screen.findByText('spent across 1 category')).toBeTruthy(); // hero painted from breakdown
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(mockFetchBreakdown).toHaveBeenCalledWith(14, 0); // parallel, default length, current cycle (WHIT-68); server derives the window
+
+    await act(async () => { resolvePayCycle({ length: 30, last_pay_date: '2026-07-01' }); }); // settle to avoid act() leak
+  });
 });

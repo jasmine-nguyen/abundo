@@ -6,7 +6,11 @@
 // isError (nothing to OR) nor isLoading — stranding the user on an empty screen with no Retry.
 // Fail-on-revert: dropping payCycleQuery from the Insights array flips isError to false here.
 // ../api + ../auth mocked; real QueryClientProvider drives the hook (mirrors goalScreenData.edges).
-import { it, expect, jest, beforeEach } from '@jest/globals';
+//
+// WHIT-467 folded in insightsIncomeEpsilon.edges (WHIT-380 QA gap) — identical mock map + timer
+// regime. It wants NO default breakdown (each test seeds its own), so it lives in its own describe
+// with a nested beforeEach that resets ONLY breakdown and inherits categories/payCycle/budgets.
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -152,4 +156,39 @@ it('re-derives earned from the selected cycle (no stale carry-over on cycle swit
   rerender({ cycle: 1 });
   await waitFor(() => expect(result.current.earned).toBe(1000)); // last cycle: its OWN __earned__
   expect(result.current.breakdown.coffee).toEqual({ posted: 5, pending: 0 });
+});
+
+// --- WHIT-380 QA gap (folded in by WHIT-467) ----------------------------------
+// The income-source filter's RECONCILE_EPSILON boundary in useInsightsScreenData. The COARSE
+// cases above lock an exact-$0 drop and a −$150 keep; neither brackets the half-cent threshold —
+// a mutation from `>= RECONCILE_EPSILON` to a bare `!== 0` would still pass them. These bracket
+// 0.005: a sub-half-cent net (either sign) is DROPPED as dust; a net just OVER it is KEPT.
+// Fail-on-revert (proven): `>= RECONCILE_EPSILON` → `!== 0` keeps the dust (length 4) → reddens;
+// bump RECONCILE_EPSILON to 0.01 drops the −0.006 source → reddens.
+// Its own nested beforeEach resets breakdown to NO default (each test seeds its own).
+describe('RECONCILE_EPSILON income-dust boundary', () => {
+  beforeEach(() => {
+    mockFetchBreakdown.mockReset(); // no default breakdown — the test below seeds its own
+  });
+
+  it('drops a sub-half-cent net source (either sign) as float dust but keeps a net just OVER the half-cent', () => {
+    mockFetchBreakdown.mockResolvedValue({
+      coffee: { posted: 40, pending: 10 },
+      __earned__: { posted: 5000, pending: 0 },
+      __income__: {
+        salary: { posted: 5000, pending: 0 },   // real → kept, first
+        dustpos: { posted: 0.004, pending: 0 }, // |0.004| < 0.005 → dropped
+        dustneg: { posted: -0.003, pending: 0 },// |0.003| < 0.005 → dropped (a tiny-negative is NOT kept)
+        keepneg: { posted: -0.006, pending: 0 },// |0.006| >= 0.005 → kept, sorts last (negative)
+      },
+    });
+    const { result } = renderHook(() => useInsightsScreenData(), { wrapper: wrapper(makeClient()) });
+
+    return waitFor(() => expect(result.current.incomeSources.length).toBe(2)).then(() => {
+      // Only salary and keepneg survive; both dust sources are gone.
+      expect(result.current.incomeSources.map((s) => s.id)).toEqual(['salary', 'keepneg']);
+      expect(result.current.incomeSources.find((s) => s.id === 'keepneg')?.amount).toBeCloseTo(-0.006, 6);
+      expect(result.current.incomeSources.some((s) => s.id === 'dustpos' || s.id === 'dustneg')).toBe(false);
+    });
+  });
 });
