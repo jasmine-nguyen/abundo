@@ -4,6 +4,10 @@
 // shows an inline Retry — and crucially the breakdown failure is scoped to Insights.
 // ../api + ../auth + expo-router mocked; ../context PARTIALLY mocked (real selectors,
 // stubbed useAppContext for the AI card) so ../queries' real imports still resolve.
+//
+// WHIT-467 folded in the WHIT-189 GAPS suite (qa's adversarial half — partial failure,
+// focus-refetch storm, authed→locked mid-session) that carried a byte-identical mock map
+// + timer/setup regime. Those three describe blocks sit at the end of the file.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
@@ -56,6 +60,7 @@ jest.mock('expo-router', () => {
 });
 
 import Insights from '../../app/(tabs)/insights';
+import { UNCATEGORIZED_KEY } from '../context';
 
 const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
 const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
@@ -155,4 +160,63 @@ it('an empty past cycle shows "No spending in that pay cycle" (not "this pay cyc
   fireEvent.press(screen.getByTestId('insights-cycle-prev'));
   expect(await screen.findByText('No spending in that pay cycle.')).toBeTruthy();
   expect(screen.queryByText('No spending yet this pay cycle.')).toBeNull();
+});
+
+// --- WHIT-189 GAPS (qa's adversarial half, folded in by WHIT-467) -------------
+
+describe('partial failure: categories down while breakdown succeeds', () => {
+  // WHIT-194: with no taxonomy (categories failed on first load), categoryBreakdown drops
+  // every REAL-category row but the Uncategorized bucket survives (needs no taxonomy). That
+  // surviving row used to make rows.length > 0 and SUPPRESS the inline error, showing a hero
+  // total that silently omitted the real categories. The fix surfaces the error via the
+  // composite's `categoriesError` (categoriesQuery errored with no cached data), and gates
+  // the row list on !showError so the partial uncat row can't leak under the error card.
+  it('breakdown has real + uncategorized spend, categories failed on first load → the inline error IS shown (no partial hero)', async () => {
+    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    mockFetchBreakdown.mockReset().mockResolvedValue({ coffee: { posted: 40, pending: 0 }, [UNCATEGORIZED_KEY]: { posted: 25, pending: 0 } });
+    renderInsights(makeClient(false));
+    expect(await screen.findByTestId('insights-error')).toBeTruthy();     // error surfaces now
+    expect(screen.getByText("Couldn't load")).toBeTruthy();               // ...and the hero says so
+    expect(screen.queryByText('Cafes & Coffee')).toBeNull();             // real row dropped (no taxonomy)
+    expect(screen.queryByText('Uncategorized')).toBeNull();              // surviving uncat row suppressed under the error
+    expect(screen.queryByText('$25')).toBeNull();                        // no partial hero/row total
+    expect(screen.queryByText('$65')).toBeNull();
+  });
+
+  it('breakdown has ONLY real-category spend → all rows drop → the inline error DOES surface', async () => {
+    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    // breakdown resolves fine but every id needs the (failed) taxonomy → zero rows.
+    renderInsights(makeClient(false));
+    expect(await screen.findByTestId('insights-error')).toBeTruthy();
+    expect(screen.queryByText('Cafes & Coffee')).toBeNull();
+    expect(screen.queryByText('$0')).toBeNull(); // hero must not lie with a confident $0
+  });
+});
+
+describe('focus refetch does not storm', () => {
+  it('fresh data + focus effect (staleTime 60s) → each fetcher called exactly once', async () => {
+    renderInsights();
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockFetchPayCycle).toHaveBeenCalledTimes(1);
+    expect(mockFetchBreakdown).toHaveBeenCalledTimes(1);
+    expect(mockFetchCategories).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('auth transition mid-session on Insights', () => {
+  it('authed→locked keeps cached rows, shows no error, and fires no doomed refetch', async () => {
+    renderInsights();
+    expect(await screen.findByText('Cafes & Coffee')).toBeTruthy();
+    const before = mockFetchBreakdown.mock.calls.length;
+
+    await act(async () => {
+      setAuth('locked');
+    });
+    expect(screen.getByText('Cafes & Coffee')).toBeTruthy(); // cache survives
+    expect(screen.queryByTestId('insights-error')).toBeNull();
+    expect(mockFetchBreakdown).toHaveBeenCalledTimes(before); // no new fetch while locked
+  });
 });
