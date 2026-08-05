@@ -3,27 +3,21 @@
 // the draft is stashed in the always-mounted AppProvider and restored on the unlock remount.
 // These pin: draft survives authed→locked→authed; nothing sheet-related renders while locked
 // (WHIT-268 intact); draft cleared on sign-out AND on close (no stale restore / cross-user leak).
-// Harness mirrors overlaysAuthClear.screen.test.tsx: live mini auth store, useIsAuthed LIVE.
+// Harness mirrors overlaysAuthClear.screen.test.tsx: live mini auth store (support/authMock),
+// useIsAuthed LIVE.
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React from 'react';
 import { Text } from 'react-native';
 import { render, act, screen, fireEvent } from '@testing-library/react-native';
+import { setAuthStatus, resetAuth } from './support/authMock';
 
-let mockStatus: 'loading' | 'authed' | 'anon' | 'locked' = 'authed';
-const mockListeners = new Set<() => void>();
-const mockSetStatus = (s: typeof mockStatus) => { mockStatus = s; mockListeners.forEach((l) => l()); };
-const mockSubscribe = (l: () => void) => { mockListeners.add(l); return () => mockListeners.delete(l); };
-
-jest.mock('../auth', () => ({ getStatus: () => mockStatus, subscribe: (l: () => void) => mockSubscribe(l) }));
+jest.mock('../auth', () => require('./support/authMock').authMockModule());
 jest.mock('../api');
 
 let mockState: { goals?: unknown[] } = {};
 jest.mock('../queries', () => ({
   ...require('./support/screenQueryMocks').queryMocksFromState(() => mockState),
-  useIsAuthed: () => {
-    const ReactActual = require('react') as typeof React;
-    return ReactActual.useSyncExternalStore(mockSubscribe, () => mockStatus === 'authed');
-  },
+  useIsAuthed: () => require('./support/authMock').useIsAuthedMock(),
   // GoalBalanceSheet reads the live goal via useGoalsQuery (not in the shared support mock).
   useGoalsQuery: () => ({ data: mockState.goals ?? [] }),
 }));
@@ -45,8 +39,7 @@ function renderOverlays() {
 }
 
 beforeEach(() => {
-  mockStatus = 'authed';
-  mockListeners.clear();
+  resetAuth();
   mockState = { goals: [{ id: 'g1', name: 'Emergency fund', icon: 'star', direction: 'save', target_amount: 1000, target_date: null, baseline: null, manual_balance: null }] };
   queryClient.clear();
 });
@@ -62,12 +55,12 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
 
     // Lock: the whole overlay layer unmounts (WHIT-268 privacy shield) — the input is gone.
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByPlaceholderText(RULE_INPUT)).toBeNull();
     expect(screen.queryByText('New rule')).toBeNull();
 
     // Unlock: the sheet remounts and restores the stashed text.
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
   });
 
@@ -77,10 +70,10 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     fireEvent.changeText(screen.getByTestId('goal-balance-input'), '2500');
     expect(screen.getByTestId('goal-balance-input').props.value).toBe('2500');
 
-    act(() => mockSetStatus('locked'));
+    act(() => setAuthStatus('locked'));
     expect(screen.queryByTestId('goal-balance-input')).toBeNull();
 
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('authed'));
     expect(screen.getByTestId('goal-balance-input').props.value).toBe('2500');
   });
 
@@ -89,8 +82,8 @@ describe('WHIT-277 — pop-up sheet drafts survive a Face ID lock', () => {
     act(() => ctx.setSheet({ mode: 'addrule' }));
     fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
 
-    act(() => mockSetStatus('anon')); // sign-out: hard-clears drafts + the sheet descriptor
-    act(() => mockSetStatus('authed'));
+    act(() => setAuthStatus('anon')); // sign-out: hard-clears drafts + the sheet descriptor
+    act(() => setAuthStatus('authed'));
     act(() => ctx.setSheet({ mode: 'addrule' }));
     expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('');
   });
