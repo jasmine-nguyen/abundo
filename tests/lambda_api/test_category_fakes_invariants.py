@@ -23,8 +23,7 @@ _TESTS = pathlib.Path(__file__).resolve().parent
 _MODULE = _TESTS.parent / "shared" / "_category_fakes.py"
 _CATEGORY_SUITES = (
     _TESTS / "test_categories.py",
-    _TESTS / "test_categories_whit428_gaps.py",
-    _TESTS / "test_categories_whit428_round2.py",
+    _TESTS / "test_category_color_slots.py",
 )
 
 # Every fake WHIT-440 centralised. If a name is added to _category_fakes it should join this
