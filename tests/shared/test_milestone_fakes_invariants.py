@@ -44,8 +44,6 @@ _MILESTONE_SUITES = tuple(_SHARED_TESTS / name for name in (
     "test_milestones_whit385_gaps.py",
     "test_milestones_whit386_gaps.py",
     "test_milestone_rows.py",
-    "test_milestone_rows_gaps.py",
-    "test_milestones_whit417_gaps.py",
     "test_milestones_whit424_covers_gaps.py",
     "test_milestones_live_keys_gaps.py",
 ))

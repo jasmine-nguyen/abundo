@@ -2,7 +2,7 @@
 set _resolve_plan gained so the WHIT-385 sweep can tell an UNREADABLE row from a DELETED one.
 
 Already locked elsewhere, NOT repeated here: an unreadable row keeps its marker while a
-genuinely gone one is swept in the same poll ([B3], test_milestone_rows_gaps.py); a repaired
+genuinely gone one is swept in the same poll ([B3], test_milestone_rows.py); a repaired
 date is silent ([B1b]); sweep + real celebration in one poll ([E4]); a row whose target is
 unreadable but whose id still reads keeps its record while the sweep runs
 (test_previously_fired_row_now_unreadable_target_keeps_its_record, WHIT-424); the sweep still
