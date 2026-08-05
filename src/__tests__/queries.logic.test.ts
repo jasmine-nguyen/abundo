@@ -94,3 +94,21 @@ describe('selectCategories', () => {
     expect(() => selectCategories(undefined as unknown as unknown[])).toThrow(/expected an array/);
   });
 });
+
+// WHIT-188 GAPS (authored by qa) — selector boundaries beyond the target:0 case above.
+describe('selectBudgets boundaries', () => {
+  it('drops a NEGATIVE target and keeps a tiny positive one', () => {
+    const out = selectBudgets({
+      neg: { target: -5, posted: 0, pending: 0 },
+      tiny: { target: 0.01, posted: 0, pending: 0 },
+    });
+    expect(out.map((b) => b.id)).toEqual(['tiny']);
+    expect(out[0]).toEqual({ id: 'tiny', budget: 0.01, posted: 0, pending: 0 });
+  });
+});
+
+describe('selectCategories boundaries', () => {
+  it('is empty for an empty list', () => {
+    expect(selectCategories([])).toEqual([]);
+  });
+});
