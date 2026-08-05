@@ -14,20 +14,13 @@ MAX_PAGE_SIZE = 100
 # to shared/constants.py (WHIT-54). 30 days.
 DEAD_LETTER_TTL_SECONDS = 30 * 24 * 60 * 60
 TRANSACTION_PATH = "/transactions"
-# API Gateway route path for the date-range transactions query (WHIT-34). A distinct
-# path from the /transactions feed: unlike the feed (a fixed rolling window that returns
-# a bare array and drops the cursor), this takes client from/to + account_id and returns
-# {transactions, nextCursor} so a wide window can be paged. Only lambda_api/handler.py
-# consumes it (no shared repository_* imports it), so the WHIT-136 sync guard doesn't
-# require the shared mirror — kept equal in shared/constants.py for hygiene only.
-TRANSACTIONS_RANGE_PATH = "/transactions/range"
 # API Gateway route path for the all-accounts transactions feed (Load More over full
-# history). Unlike the /transactions feed (a fixed 7-day rolling window returning a bare
-# array) and /transactions/range (single-account, requires from), this merges EVERY
-# account newest-first with NO date floor and returns {transactions, nextCursor} so the
-# app can page back through all history. Only lambda_api/handler.py consumes it (no shared
-# repository_* imports it), so the WHIT-136 sync guard doesn't require the shared mirror —
-# kept equal in shared/constants.py for hygiene only, like TRANSACTIONS_RANGE_PATH.
+# history). Unlike the /transactions recent route (a fixed 7-day rolling window returning
+# a bare array), this merges EVERY account newest-first with NO date floor and returns
+# {transactions, nextCursor} so the app can page back through all history. Only
+# lambda_api/handler.py consumes it (no shared repository_* imports it), so the WHIT-136
+# sync guard doesn't require the shared mirror — kept equal in shared/constants.py for
+# hygiene only.
 TRANSACTIONS_FEED_PATH = "/transactions/feed"
 # Default page size for the transactions feed when a request sends no ?limit=. Smaller
 # than MAX_PAGE_SIZE: the feed fans out one query PER account per page, so a modest page

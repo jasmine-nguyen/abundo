@@ -16,7 +16,7 @@
 //     invariant is already crossed once inside [G5]/[G6]; a third crossing is near-zero
 //     added signal for the cost.
 //   - "seed cleared on logout": signOut()'s FIRST statement is clearSession() (auth.ts:775
-//     → 180, session=null), and signIn ALREADY seeds session.refreshToken via cacheToken, so
+//     → 180, session=null), and the Hosted UI sign-in ALREADY seeds session.refreshToken via cacheToken, so
 //     "a session's in-memory refresh token is dropped on logout" is a pre-existing invariant
 //     covered by auth.logic.test.ts's signOut suite — the seed adds no new leak surface.
 // Same mock harness shape as authPasswordEdges.logic.test.ts (adds the fetch + pool-id setup

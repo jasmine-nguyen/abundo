@@ -1,9 +1,9 @@
 // WHIT-179 — native "Continue with Google": the Hosted-UI PKCE flow with
 // identity_provider=Google so Cognito jumps STRAIGHT to Google's sheet (no chooser
-// page). Asserts the request pins identity_provider=Google, that a successful code
-// exchange seats an OAuth session (so it refreshes via /oauth2/token, not InitiateAuth),
-// and — fail-on-revert — that plain signIn() does NOT pin the provider. expo-auth-session
-// + expo-secure-store mocked.
+// page). Asserts — fail-on-revert — that the request pins identity_provider=Google
+// (drop the pin and the first test goes red), and that a successful code exchange
+// seats an OAuth session (so it refreshes via /oauth2/token, not InitiateAuth).
+// expo-auth-session + expo-secure-store mocked.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
@@ -91,15 +91,5 @@ describe('signInWithGoogle', () => {
     await expect(auth.signInWithGoogle()).resolves.toBe(false);
     expect(auth.getStatus()).not.toBe('authed');
     expect(mockSetItem.mock.calls.some((c) => c[0] === REFRESH_KEY)).toBe(false);
-  });
-});
-
-describe('plain signIn (chooser) is unchanged', () => {
-  it('does NOT pin identity_provider — proves signInWithGoogle is Google-specific', async () => {
-    promptOkExchangeOk();
-    const auth = loadAuth();
-    await auth.signIn();
-    const cfg = mockAuthRequestCfg.mock.calls[0][0] as { extraParams?: unknown };
-    expect(cfg.extraParams).toBeUndefined();
   });
 });

@@ -2,7 +2,7 @@
 // Covers: session present but idToken undefined (openid scope missing) -> refresh path;
 // rotated refresh-token IS persisted, non-rotated leaves the stored token untouched;
 // single-flight guard is CLEARED after a failed refresh so a later call retries (no
-// wedge); signIn where exchangeCodeAsync throws leaves nothing stored.
+// wedge); signInWithGoogle where exchangeCodeAsync throws leaves nothing stored.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 const mockPromptAsync = jest.fn<() => Promise<unknown>>();
@@ -51,11 +51,11 @@ afterEach(() => {
 
 describe('getAuthToken — session present but no idToken (openid scope missing)', () => {
   it('does NOT return an undefined idToken; falls through to a refresh', async () => {
-    // signIn with a token that carries NO idToken (e.g. openid scope dropped).
+    // signInWithGoogle with a token that carries NO idToken (e.g. openid scope dropped).
     mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'C' } });
     mockExchange.mockResolvedValue({ accessToken: 'ACC', refreshToken: 'R', issuedAt: nowSec(), expiresIn: 3600 });
     const auth = loadAuth();
-    await auth.signIn();
+    await auth.signInWithGoogle();
 
     mockRefresh.mockResolvedValue({ idToken: 'RECOVERED_ID', accessToken: 'a2', issuedAt: nowSec(), expiresIn: 3600 });
     // The cached session has idToken===undefined, so getAuthToken must not hand it
@@ -100,12 +100,12 @@ describe('single-flight is cleared after a failure (no wedge)', () => {
   });
 });
 
-describe('signIn — exchange throws after a successful prompt', () => {
+describe('signInWithGoogle — exchange throws after a successful prompt', () => {
   it('returns false and stores nothing when exchangeCodeAsync rejects', async () => {
     mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'C' } });
     mockExchange.mockRejectedValue(new Error('token endpoint 500'));
     const auth = loadAuth();
-    await expect(auth.signIn()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toBe(false);
     expect(mockStore.size).toBe(0);
     await expect(auth.getAuthToken()).resolves.toBeUndefined();
   });

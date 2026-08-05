@@ -72,7 +72,10 @@ afterEach(() => {
   delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
 });
 
-describe('signIn', () => {
+// signInWithGoogle is the sole remaining entry into the Hosted UI PKCE flow (the neutral
+// signIn() was removed with WHIT-449 — it had no production caller). These cover the shared
+// hostedUiAuthorize behaviour: code exchange, cancel, error, and the missing-config bail.
+describe('signInWithGoogle (Hosted UI PKCE flow)', () => {
   it('exchanges the code (with the PKCE verifier), stores the refresh token, returns true', async () => {
     mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'AUTH_CODE' } });
     mockExchange.mockResolvedValue({
@@ -81,7 +84,7 @@ describe('signIn', () => {
     });
     const auth = loadAuth();
 
-    await expect(auth.signIn()).resolves.toBe(true);
+    await expect(auth.signInWithGoogle()).resolves.toBe(true);
     expect(mockExchange).toHaveBeenCalledWith(
       expect.objectContaining({ clientId: 'client123', code: 'AUTH_CODE', extraParams: { code_verifier: 'test-verifier' } }),
       expect.objectContaining({ tokenEndpoint: `${DOMAIN}/oauth2/token` }),
@@ -94,7 +97,7 @@ describe('signIn', () => {
     mockPromptAsync.mockResolvedValue({ type: 'cancel' });
     const auth = loadAuth();
 
-    await expect(auth.signIn()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toBe(false);
     expect(mockExchange).not.toHaveBeenCalled();
     expect(mockStore.size).toBe(0);
   });
@@ -102,13 +105,13 @@ describe('signIn', () => {
   it('never throws when promptAsync rejects', async () => {
     mockPromptAsync.mockRejectedValue(new Error('boom'));
     const auth = loadAuth();
-    await expect(auth.signIn()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toBe(false);
   });
 
   it('bails (returns false, no browser) when config is missing', async () => {
     delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
     const auth = loadAuth();
-    await expect(auth.signIn()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toBe(false);
     expect(mockPromptAsync).not.toHaveBeenCalled();
   });
 });
@@ -118,7 +121,7 @@ describe('getAuthToken', () => {
     mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'C' } });
     mockExchange.mockResolvedValue(token);
     const auth = loadAuth();
-    await auth.signIn();
+    await auth.signInWithGoogle();
     return auth;
   }
 

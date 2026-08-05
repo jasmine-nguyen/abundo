@@ -2,7 +2,7 @@
 
 **A budget tracker that's accurate (pending spend counted), a pleasure to look at, and built to actually motivate you to pay down your mortgage — right down to the equity you're unlocking for the next place.**
 
-> *Renamed from the working title “Whittle”. The app and its screens are now Abundo; some backend/infra names still carry the old name and are migrated separately.*
+> *Renamed from the working title “Whittle” — now Abundo throughout, across the app and its backend/infra.*
 
 ---
 
@@ -119,5 +119,4 @@ python -m pytest          # backend (Lambda) tests
 Actively built and running on TestFlight.
 
 On the list:
-- **Finish the rename** — the app is now **Abundo** (screens, name, icon). The remaining backend/infra names still carry the old "Whittle" and get migrated next.
 - **A milestone-crossing celebration push** — today you get a cheer on every repayment; the natural next step is a bigger one the moment you *cross a payoff milestone*.

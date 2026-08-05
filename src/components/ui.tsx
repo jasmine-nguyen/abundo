@@ -73,29 +73,11 @@ export function Bar({ pct, color, track = 'rgba(255,255,255,.07)', height = 10 }
   );
 }
 
-export function Chip({ bg, color, size = 42, radius = 13, children }: { bg: string; color?: string; size?: number; radius?: number; children: React.ReactNode }) {
-  return (
-    <View style={{ width: size, height: size, borderRadius: radius, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
-      {children}
-    </View>
-  );
-}
-
-export function Card({ style, children }: { style?: ViewStyle; children: React.ReactNode }) {
-  return <View style={[styles.card, style]}>{children}</View>;
-}
-
 export function SectionLabel({ children, style }: { children: React.ReactNode; style?: TextStyle }) {
   return <Text style={[styles.sectionLabel, style]}>{children}</Text>;
 }
 
-export const T = StyleSheet.create({
-  display: { fontFamily: FONT.display, color: C.text },
-  body: { fontFamily: FONT.body, color: C.text },
-});
-
 const styles = StyleSheet.create({
   track: { position: 'relative', backgroundColor: 'rgba(255,255,255,.07)', overflow: 'hidden' },
-  card: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 18 },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginHorizontal: 4, marginBottom: 8 },
 });

@@ -3,7 +3,7 @@
 // handful of AppContext fields, so we build just those and cast — no provider,
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName, ROLLUP_KEY } from '../context';
-import type { Category, Transaction, Budget, Goal, HomeLoanState } from '../context';
+import type { Category, Transaction, Budget, HomeLoanState } from '../context';
 import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
 
@@ -56,12 +56,6 @@ export function withRollup(breakdown: Record<string, CategorySpend>, rollup: Bre
   return breakdown;
 }
 
-const GOAL: Goal = {
-  original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
-  ratePct: 5.74, baseRepay: 1240, extra: 200,
-  lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
-};
-
 // A fully-set loan-facts fixture (the default). property value 770000 + LVR 0.8
 // keep milestoneView's equity numbers matching the milestone-plan reference; pass
 // EMPTY_LOAN_FACTS explicitly to exercise the "not set yet" empty state.
@@ -78,7 +72,6 @@ interface StateOver {
   budgets?: Budget[];
   transactions?: Transaction[];
   breakdown?: Record<string, CategorySpend>;
-  goal?: Goal;
   homeLoan?: HomeLoanState;
   loanFacts?: LoanFacts;
   repayment?: Repayment;
@@ -122,7 +115,6 @@ export function makeState(over: StateOver = {}) {
     budgets: over.budgets ?? [],
     transactions: over.transactions ?? [],
     breakdown: over.breakdown ?? {},
-    goal: over.goal ?? GOAL,
     homeLoan: over.homeLoan ?? { balance: null, asOf: null },
     loanFacts: over.loanFacts ?? LOAN_FACTS,
     repayment: over.repayment ?? NO_REPAYMENT,
