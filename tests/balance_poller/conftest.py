@@ -53,7 +53,8 @@ if "botocore" not in sys.modules:
     sys.modules.update({"botocore": _botocore, "botocore.exceptions": _exceptions})
 
 # Fake `ssm` so `from ssm import get_param` succeeds without boto3/AWS. Tests that
-# care about SSM monkeypatch handler.get_param / handler._api_key directly.
+# need a key stub monkeypatch handler.get_api_key (the wrapper) directly; the fetch+
+# cache now lives in shared/api_key.py (WHIT-454).
 if "ssm" not in sys.modules:
     _ssm = types.ModuleType("ssm")
     _ssm.get_param = lambda parameter_name: "test-api-key"
@@ -67,7 +68,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository", "repository_base",
     "repository_transaction", "repository_category", "repository_budget",
-    "repository_paycycle", "repository_balance", "repayment_rules",
+    "repository_paycycle", "repository_balance", "repayment_rules", "api_key",
 )
 
 
@@ -84,7 +85,6 @@ def handler():
     saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
     import handler as h
 
-    h._api_key = None  # never leak a cached key across tests
     try:
         yield h
     finally:

@@ -96,9 +96,15 @@ Recurring traps — check these before changing the touched area:
   shared `repository_*` module imports at load MUST also exist (with an equal value)
   in `lambda_api/constants.py`, or the deployed API 500s on import. Guarded by the
   WHIT-136 constants-sync test — run it after touching `shared/constants.py`.
-- **Two `handle_database_error` / repository copies** — `shared/repository_base.py`
-  - the webhook `lambda/repository.py`; `shared/repository_transaction.py` methods
-    are duplicated in `lambda/repository.py`. Until the WHIT-88 dedup lands, change
-    both copies in lockstep.
+- **The webhook repository subclasses the shared one** — `lambda/repository.py`'s
+  `TransactionRepository` extends `shared/repository_transaction.py` and imports
+  `handle_database_error` from `shared/repository_base.py` (WHIT-454 removed the old
+  duplicated copies). CRUD/error code lives in one place; only the webhook-only
+  reconcile pipeline is local. Don't reintroduce a local copy of an inherited method —
+  override only to change behaviour.
+- **`get_api_key()` lives once in `shared/api_key.py`** (WHIT-454), cached by SSM path
+  so two callers in one process (lambda_api reads the BankSync AND Anthropic keys)
+  never collide. Each lambda keeps a one-line wrapper passing its own path — don't
+  re-copy the SSM fetch.
 - **The shared layer is staged with a non-recursive `cp shared/*.py`** — a new
   shared _package directory_ (not a flat top-level module) is silently dropped.

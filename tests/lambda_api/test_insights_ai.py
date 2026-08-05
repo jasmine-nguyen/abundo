@@ -136,10 +136,10 @@ def test_generate_suggestions_ssm_failure_degrades_to_anthropic_error(insights_a
     def unreachable(req, timeout=None):
         raise AssertionError("urlopen must not run when the key can't be read")
 
+    import api_key
     monkeypatch.setattr(ac.urllib.request, "urlopen", unreachable)
-    monkeypatch.setattr(ac, "get_param",
+    monkeypatch.setattr(api_key, "get_param",
                         lambda path: (_ for _ in ()).throw(ValueError("no such param")))
-    ac._api_key = None
 
     with pytest.raises(ac.AnthropicError) as ei:
         insights_ai.generate_suggestions({})

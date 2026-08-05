@@ -32,8 +32,8 @@ sys.path.insert(0, str(_REPO_ROOT / "shared"))
 sys.path.insert(0, str(_REPO_ROOT / "lambda_sync_trigger"))
 
 # 2. Stand in a fake `ssm` so `from ssm import get_param` succeeds without boto3.
-#    Individual tests override handler.get_param / handler._api_key via monkeypatch
-#    when they care about SSM behaviour; this default just keeps the import clean.
+#    Tests that care about SSM override api_key.get_param via monkeypatch (the key
+#    fetch+cache now lives in shared/api_key.py); this default just keeps imports clean.
 _fake_ssm = types.ModuleType("ssm")
 _fake_ssm.get_param = lambda parameter_name: "test-api-key"
 sys.modules["ssm"] = _fake_ssm

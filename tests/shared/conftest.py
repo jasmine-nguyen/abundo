@@ -29,6 +29,13 @@ import pytest
 os.environ.setdefault("AWS_REGION", "ap-southeast-2")
 os.environ.setdefault("TABLE_NAME", "test-table")
 
+# Fake `ssm` so shared/api_key.py's `from ssm import get_param` imports without
+# boto3/AWS. Tests that exercise the fetch monkeypatch api_key.get_param.
+if "ssm" not in sys.modules:
+    _fake_ssm = types.ModuleType("ssm")
+    _fake_ssm.get_param = lambda parameter_name: "shared-fake-key"
+    sys.modules["ssm"] = _fake_ssm
+
 
 class _Predicate:
     """A boto3 condition stand-in a fake table can evaluate against an item."""
@@ -96,8 +103,28 @@ _REIMPORT = (
     "repository_errors", "repository_insight", "repository_device", "push",
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "milestones", "milestone_rows", "iso_date",
-    "repayment_alerts", "repayment_rules",
+    "repayment_alerts", "repayment_rules", "api_key",
 )
+
+
+@pytest.fixture
+def api_key_module():
+    """shared/api_key.py imported in isolation with an empty path-keyed cache."""
+    while _SHARED_DIR in sys.path:
+        sys.path.remove(_SHARED_DIR)
+    sys.path.insert(0, _SHARED_DIR)
+    saved = sys.modules.pop("api_key", None)
+    import api_key
+
+    api_key._cache.clear()
+    try:
+        yield api_key
+    finally:
+        sys.modules.pop("api_key", None)
+        if saved is not None:
+            sys.modules["api_key"] = saved
+        while _SHARED_DIR in sys.path:
+            sys.path.remove(_SHARED_DIR)
 
 
 @pytest.fixture

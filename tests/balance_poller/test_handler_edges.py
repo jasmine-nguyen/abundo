@@ -112,7 +112,7 @@ def test_lambda_handler_stores_a_zero_balance_on_a_paid_off_loan(handler, monkey
     # Contrast with the "never writes a zero" failure comment: a REAL 0 reading is
     # written; only failure paths avoid zeroing.
     repo = _FakeRepo()
-    monkeypatch.setattr(handler, "get_param", lambda path: "k")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
     monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_mortgage(0)))
@@ -124,7 +124,7 @@ def test_lambda_handler_stores_a_zero_balance_on_a_paid_off_loan(handler, monkey
 def test_lambda_handler_swallows_a_repository_upsert_failure(handler, monkeypatch):
     # The DynamoDB write itself failing must not raise out of the poller.
     repo = _FakeRepo(raise_on_upsert=True)
-    monkeypatch.setattr(handler, "get_param", lambda path: "k")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
     monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_mortgage(-400000)))
@@ -137,7 +137,7 @@ def test_lambda_handler_swallows_a_garbage_amount_without_writing(handler, monke
     # A malformed amount (now a BalanceError) is isolated by the failure handling —
     # no upsert, no raise, last-good row untouched.
     repo = _FakeRepo()
-    monkeypatch.setattr(handler, "get_param", lambda path: "k")
+    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: _FakeAccountRepo())
     monkeypatch.setattr(handler.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse(_mortgage("not-a-number")))
