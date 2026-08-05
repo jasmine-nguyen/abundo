@@ -80,14 +80,9 @@ export interface Transaction {
 // surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
 // is client-only (server rules load as isNew:false).
 export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; }
-export interface Goal {
-  original: number; balance: number; homeValue: number; startYear: string;
-  ratePct: number; baseRepay: number; extra: number;
-  lastRepay: { amount: number; principal: number; interest: number; date: string };
-}
-// The live home-loan balance from BankSync (WHIT-8), kept SEPARATE from `goal`
-// (which is illustrative seed data). `balance` is the outstanding mortgage
-// principal as a positive number, null until the balance poller's first run lands.
+// The live home-loan balance from BankSync (WHIT-8). `balance` is the outstanding
+// mortgage principal as a positive number, null until the balance poller's first
+// run lands.
 export interface HomeLoanState { balance: number | null; asOf: string | null; }
 export type Sheet =
   // WHIT-324: the detail screen and the Transactions list share ONE categorize flow — picker →
@@ -140,18 +135,6 @@ export async function persistCategoryBatch(
   const failedIds = ids.filter((id) => !savedIds.has(id));
   return { savedIds, failedIds };
 }
-
-// ---------------------------------------------------------------------------
-// Seed data (ported verbatim from Whittle.dc.html)
-// ---------------------------------------------------------------------------
-// WHIT-192: the old SEED_CATEGORIES fallback list is gone with the eager store — the
-// category taxonomy now loads from the ['categories'] query (which shows its own empty/
-// error states) rather than a fabricated seed. Only the illustrative demo goal remains.
-const SEED_GOAL: Goal = {
-  original: 500000, balance: 432900, homeValue: 640000, startYear: 'Mar 2021',
-  ratePct: 5.74, baseRepay: 1240, extra: 200,
-  lastRepay: { amount: 1440, principal: 1208, interest: 232, date: 'Today · 9:02am' },
-};
 
 export const CLEAN_NAME: Record<string, string> = {
   'DD *DOORDASH HUTIEUGOO': 'DoorDash',
@@ -402,12 +385,12 @@ export function groupTransactionsByDate(items: Transaction[]): { label: string; 
 // ---------------------------------------------------------------------------
 // WHIT-192: the eager server-data store is gone — every screen reads the TanStack
 // Query layer (src/queries) directly. AppContext now carries only what the query
-// layer can't: the demo goal + alerts toggle, ephemeral UI (sheet/toast), the
+// layer can't: the alerts toggle, ephemeral UI (sheet/toast), the
 // write actions (which source their reads from the query cache), and the AI-insights
 // slice (still store-held pending its own migration).
 export interface AppContext {
-  // data (client-only demo/seed state — not server reads)
-  goal: Goal; alerts: boolean;
+  // client-only UI state (not a server read)
+  alerts: boolean;
   // ephemeral ui
   sheet: Sheet; toast: string | null;
   // actions
@@ -526,7 +509,6 @@ function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): voi
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [goal] = useState<Goal>(SEED_GOAL);
   const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -1438,14 +1420,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [showToast]);
 
   const value = useMemo<AppContext>(() => ({
-    goal, alerts,
+    alerts,
     sheet, toast,
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
     openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [goal, alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -74,7 +74,7 @@ afterEach(() => {
 });
 
 // --- guarded WRITE path on a biometric device -----------------------------------
-describe('signIn guarded-write path', () => {
+describe('signInWithGoogle guarded-write path', () => {
   it('a keychain write FAILURE leaves a clean signed-out state: returns false, NO orphan sentinel, not authed', async () => {
     process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
@@ -86,7 +86,7 @@ describe('signIn guarded-write path', () => {
     mockExchange.mockResolvedValue({ idToken: 'ID', accessToken: 'A', refreshToken: 'R', issuedAt: nowSec(), expiresIn: 3600 });
     const auth = loadAuth();
 
-    await expect(auth.signIn()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toBe(false);
     // Token written FIRST, sentinel AFTER: a failed token write must never leave a
     // "session exists" marker pointing at a token that isn't there.
     expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
@@ -333,8 +333,8 @@ describe('unlockOrRestore migration — adversarial gaps (WHIT-172 qa)', () => {
   });
 });
 
-// --- WHIT-172: signIn partial-persist rollback (keeps the invariant airtight) ---
-describe('signIn partial-persist rollback', () => {
+// --- WHIT-172: signInWithGoogle partial-persist rollback (keeps the invariant airtight) ---
+describe('signInWithGoogle partial-persist rollback', () => {
   it('rolls back when the sentinel write fails AFTER the guarded token write, so no guarded-token-without-sentinel orphan survives', async () => {
     process.env.EXPO_PUBLIC_AUTH_BIOMETRIC_ENABLED = 'true';
     mockCanUseBiometric.mockReturnValue(true);
@@ -347,7 +347,7 @@ describe('signIn partial-persist rollback', () => {
     });
     const auth = loadAuth();
 
-    await expect(auth.signIn()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toBe(false);
     // The rollback deletes the auth-method key, which the normal persist path only ever
     // WRITES (never deletes) — so a method-key DELETE binds that clearStoredSession ran.
     // Fail-on-revert: without the rollback the outer catch just returns false and the

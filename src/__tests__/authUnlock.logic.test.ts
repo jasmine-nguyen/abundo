@@ -64,7 +64,7 @@ afterEach(() => {
 async function signInOk(auth: typeof import('../auth')) {
   mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'C' } });
   mockExchange.mockResolvedValue({ idToken: 'ID', accessToken: 'A', refreshToken: 'R', issuedAt: nowSec(), expiresIn: 3600 });
-  await auth.signIn();
+  await auth.signInWithGoogle();
 }
 
 describe('guarded storage options', () => {
@@ -98,7 +98,7 @@ describe('guarded storage options', () => {
 });
 
 describe('sentinel lockstep', () => {
-  it('signIn writes the token AND the unguarded sentinel; hasStoredSession reads the sentinel key (never the guarded key)', async () => {
+  it('signInWithGoogle writes the token AND the unguarded sentinel; hasStoredSession reads the sentinel key (never the guarded key)', async () => {
     const auth = loadAuth();
     await signInOk(auth);
     expect(mockSetItem.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining([REFRESH_KEY, SENTINEL_KEY]));

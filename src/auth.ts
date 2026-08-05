@@ -127,8 +127,8 @@ let completeInFlight: Promise<CompletePasswordResult> | null = null;
 let pendingChallengeUser: CognitoUser | null = null;
 // WHIT-178: the live session's mint surface, cached in memory so an hourly refresh
 // routes to the right endpoint even if the unguarded method-key read transiently
-// fails; a cold launch (null) falls back to the stored value. Set on seat / signIn,
-// cleared on clearSession.
+// fails; a cold launch (null) falls back to the stored value. Set on seat / Hosted
+// UI sign-in, cleared on clearSession.
 let sessionAuthMethod: "srp" | "oauth" | null = null;
 const listeners = new Set<() => void>();
 
@@ -316,15 +316,6 @@ async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<
 }
 
 /**
- * Hosted UI sign-in showing the full chooser (Cognito login + any federated IdPs).
- * KEPT so the current login screen keeps working; WHIT-180 replaces it with the
- * native form + signInWithGoogle. Never throws.
- */
-export async function signIn(): Promise<boolean> {
-  return hostedUiAuthorize();
-}
-
-/**
  * Sign in with Google (WHIT-179): the same Hosted UI PKCE flow, but with
  * `identity_provider=Google` so Cognito redirects STRAIGHT to Google's own consent
  * sheet — the user never sees the Cognito chooser page. Federated → provenance
@@ -434,7 +425,7 @@ async function runPasswordSignIn(email: string, password: string): Promise<SignI
 }
 
 // Seat a Cognito SDK session into the in-memory + persisted machinery, exactly like
-// the Hosted UI path (signIn, above): refresh token FIRST, then the sentinel (the
+// the Hosted UI path (hostedUiAuthorize, above): refresh token FIRST, then the sentinel (the
 // "token before sentinel" landmine), record the SRP auth method (so refresh uses the
 // matching surface), cache the tokens, go 'authed'. WHIT-178.
 async function seatCognitoSession(cognitoSession: CognitoUserSession): Promise<void> {
@@ -716,7 +707,7 @@ async function refreshViaInitiateAuth(refreshToken: string): Promise<string | un
 // on any failure → clearSession() ('anon', so the gate sends the user to login). The
 // biometric unlock path does NOT use this — it owns 'locked' on failure (WHIT-171).
 async function refreshFromStoredToken(): Promise<string | undefined> {
-  // Prefer the in-memory refresh token (seeded by signIn or by the one-time
+  // Prefer the in-memory refresh token (seeded by the Hosted UI sign-in or by the one-time
   // biometric unlock): this keeps hourly refreshes from re-reading the guarded
   // keychain and re-prompting Face ID. Only fall back to a keychain read (which,
   // when guarded, IS the prompt) when memory is empty — a cold, non-biometric

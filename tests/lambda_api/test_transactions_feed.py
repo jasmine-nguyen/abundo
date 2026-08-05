@@ -1,8 +1,8 @@
 """Tests for GET /transactions/feed — the all-accounts feed paged back through FULL
 history (get_transactions_feed + _fetch_feed_page).
 
-Unlike test_handler.py's /range tests (which use a queued-pages fake), most of these use
-FakeFeedRepo, a realistic stand-in that models DynamoDB's date-index newest-first query
+Unlike test_handler.py's recent-feed tests (which use a queued-pages fake), most of these
+use FakeFeedRepo, a realistic stand-in that models DynamoDB's date-index newest-first query
 with ExclusiveStartKey — resuming STRICTLY AFTER a cursor key. That is what makes the
 multi-page merge assertions meaningful: the feed re-queries each account from its own
 resume position every page, so a fake that just pops pre-canned pages could not exercise

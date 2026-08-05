@@ -156,14 +156,9 @@ assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
 
 # API Gateway route path for the read API that the abundo app calls.
 TRANSACTION_PATH = "/transactions"
-# Date-range transactions query route (WHIT-34). Consumed only by lambda_api/handler.py
-# (which imports the shadowing lambda_api/constants.py at runtime); mirrored here for
-# parity with that copy. Distinct from the /transactions feed — see lambda_api/constants.py.
-TRANSACTIONS_RANGE_PATH = "/transactions/range"
 # All-accounts transactions feed route (Load More over full history). Consumed only by
 # lambda_api/handler.py (which imports the shadowing lambda_api/constants.py at runtime);
-# mirrored here for parity with that copy. Distinct from the /transactions feed and
-# /transactions/range — see lambda_api/constants.py.
+# mirrored here for parity with that copy. See lambda_api/constants.py.
 TRANSACTIONS_FEED_PATH = "/transactions/feed"
 
 # Retention window for FAILED# dead-letter items (WHIT-54). Written as a DynamoDB
