@@ -229,3 +229,29 @@ it('keeps the manual toggle (and no read-only note) on a normal counted charge',
   expect(screen.getByRole('switch', { name: 'Exclude from budgets' })).toBeTruthy();
   expect(screen.queryByText('Excluded (transfer)')).toBeNull();
 });
+
+// WHIT-275 adversarial gaps — the edges the suite above misses: whitespace-only / bare-comma tag
+// submits are no-ops; leaving without Save discards an unsaved note; Save trims whitespace.
+it('does NOT commit a whitespace-only tag on submit', () => { // [A16]
+  render(<TransactionDetail />);
+  const input = screen.getByTestId('tag-input');
+  fireEvent.changeText(input, '   ');
+  fireEvent(input, 'submitEditing');
+  expect(mockEdit).not.toHaveBeenCalled(); // trimmed-empty tag is dropped, not persisted
+});
+
+it('does NOT commit a bare-comma tag input', () => { // [A17]
+  render(<TransactionDetail />);
+  // A lone "," commits an empty candidate → trimmed-empty → dropped.
+  fireEvent.changeText(screen.getByTestId('tag-input'), ',');
+  expect(mockEdit).not.toHaveBeenCalled();
+});
+
+// Note [A18]/[A19] (discard-on-unmount) intentionally NOT folded in: the survivor's
+// "discards an unsaved note edit on unmount" test above already covers both (WHIT-459).
+it('Save trims surrounding whitespace before persisting', () => { // [A20]
+  render(<TransactionDetail />);
+  fireEvent.changeText(screen.getByTestId('note-input'), '  padded note  ');
+  fireEvent.press(screen.getByTestId('note-save'));
+  expect(mockEdit).toHaveBeenCalledWith('t1', { notes: 'padded note' });
+});

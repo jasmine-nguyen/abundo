@@ -1,6 +1,6 @@
 // WHIT-276 (adversarial GAP) — the transaction/[id] screen after the cache-first scaffold
-// moved into DetailStates. transactionDetail.screen.test.tsx pins error+retry and cache-first;
-// transactionDetailGaps.screen.test.tsx pins the pure-loading gate. This adds the concurrent
+// moved into DetailStates. transactionDetail.screen.test.tsx pins error+retry, cache-first, AND
+// the pure-loading gate (WHIT-459 folded the former transactionDetailGaps file into it). This adds the concurrent
 // loading+error state observed THROUGH the real screen (not just the isolated component):
 // both queries can be loading AND errored with an empty cache, and both the spinner and error
 // must render stacked while the "not found" empty message stays hidden.

@@ -86,3 +86,14 @@ it('does NOT show the error when a background refetch fails over cached rows (ca
   expect(screen.queryByTestId('transaction-error')).toBeNull();
   expect(screen.getByText('Woolworths')).toBeTruthy();
 });
+
+// [A-loading-gate] (adversarial gap) Genuinely loading with an EMPTY cache: showSpinner is true, so
+// the "not found" branch (which also matches when transaction is undefined) MUST stay hidden.
+// A revert that drops the `!showSpinner` guard on the empty state would flash "not found" under
+// every cold load — this test fails if that happens.
+it('while loading with nothing cached, shows the spinner and NOT the not-found state', () => {
+  mockTx = txData({ transactions: [], isLoading: true });
+  render(<TransactionDetail />);
+  expect(screen.getByTestId('transaction-loading')).toBeTruthy();
+  expect(screen.queryByText('Transaction not found')).toBeNull();
+});
