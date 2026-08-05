@@ -96,7 +96,7 @@ _REIMPORT = (
     "repository_errors", "repository_insight", "repository_device", "push",
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "milestones", "milestone_rows", "iso_date",
-    "repayment_alerts", "repayment_rules", "paydown",
+    "repayment_alerts", "repayment_rules",
 )
 
 
@@ -134,7 +134,6 @@ def shared():
     import milestones
     import repayment_alerts
     import repayment_rules
-    import paydown
 
     ns = types.SimpleNamespace(
         encoders=encoders, repository=repository_transaction,
@@ -146,7 +145,6 @@ def shared():
         goal_pace=goal_pace, goal_nudge=goal_nudge, milestones=milestones,
         milestone_rows=milestone_rows,
         repayment_alerts=repayment_alerts, repayment_rules=repayment_rules,
-        paydown=paydown,
     )
     try:
         yield ns

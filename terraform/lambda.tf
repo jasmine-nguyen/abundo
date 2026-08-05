@@ -171,40 +171,11 @@ resource "aws_lambda_function" "transaction_reprocess" {
   }
 }
 
-# One-time dedupe cleanup lambda (WHIT-80): reconciles pre-reconciliation
-# pending/posted twins that settled before WHIT-77 deployed. Like reprocess, it
-# reuses the webhook zip (../lambda already contains dedupe_cleanup.py) and the
-# transaction_exec role (Query / DeleteItem / BatchWriteItem / GetItem already granted),
-# so NO IAM change. Invoked manually; dry-run unless the event says
-# {"dry_run": false}. No event source/schedule/API, so nothing triggers it.
-resource "aws_lambda_function" "transaction_dedupe" {
-  function_name    = "${var.project_name}-transaction-dedupe"
-  role             = aws_iam_role.transaction_exec.arn
-  handler          = "dedupe_cleanup.lambda_handler"
-  runtime          = "python3.12"
-  timeout          = 300
-  memory_size      = 128
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  layers           = [aws_lambda_layer_version.shared.arn]
-
-  environment {
-    variables = {
-      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
-    }
-  }
-
-  logging_config {
-    log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.transaction_dedupe.name
-  }
-}
-
 # Stale-pending age-out sweep (WHIT-79): a daily scheduled reaper that deletes pending
 # rows older than PENDING_AGE_OUT_DAYS that never got a matching posted (reversed
-# pre-auth / unbalanced count). Like reprocess/dedupe it reuses the webhook zip
+# pre-auth / unbalanced count). Like reprocess it reuses the webhook zip
 # (../lambda already contains age_out.py) and the transaction_exec role (Query / DeleteItem
-# already granted). UNLIKE those two it IS scheduled (see scheduler.tf), and the schedule
+# already granted). UNLIKE reprocess it IS scheduled (see scheduler.tf), and the schedule
 # passes {"dry_run": false} so it runs live; a manual/empty invoke stays dry-run-safe.
 resource "aws_lambda_function" "transaction_age_out" {
   function_name    = "${var.project_name}-transaction-age-out"
@@ -226,35 +197,6 @@ resource "aws_lambda_function" "transaction_age_out" {
   logging_config {
     log_format = "Text"
     log_group  = aws_cloudwatch_log_group.transaction_age_out.name
-  }
-}
-
-# One-time swipe-date backfill: re-anchors stored transaction `date`s to the swipe day
-# (authorized_date) for rows written before the webhook started doing so on ingest. Like
-# dedupe it reuses the webhook zip (../lambda already contains backfill_swipe_dates.py) and
-# the transaction_exec role (Query / BatchWriteItem already granted), so NO IAM change beyond
-# its own log group. Invoked manually; dry-run unless the event says {"dry_run": false}. No
-# event source/schedule/API, so nothing triggers it.
-resource "aws_lambda_function" "transaction_date_backfill" {
-  function_name    = "${var.project_name}-transaction-date-backfill"
-  role             = aws_iam_role.transaction_exec.arn
-  handler          = "backfill_swipe_dates.lambda_handler"
-  runtime          = "python3.12"
-  timeout          = 300
-  memory_size      = 128
-  filename         = data.archive_file.lambda_zip.output_path
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  layers           = [aws_lambda_layer_version.shared.arn]
-
-  environment {
-    variables = {
-      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
-    }
-  }
-
-  logging_config {
-    log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.transaction_date_backfill.name
   }
 }
 
@@ -399,10 +341,6 @@ moved {
   to   = aws_lambda_function.transaction_reprocess
 }
 moved {
-  from = aws_lambda_function.dedupe
-  to   = aws_lambda_function.transaction_dedupe
-}
-moved {
   from = aws_lambda_function.age_out
   to   = aws_lambda_function.transaction_age_out
 }
@@ -439,18 +377,8 @@ resource "aws_cloudwatch_log_group" "transaction_reprocess" {
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "transaction_dedupe" {
-  name              = "/aws/lambda/${var.project_name}-transaction-dedupe"
-  retention_in_days = 30
-}
-
 resource "aws_cloudwatch_log_group" "transaction_age_out" {
   name              = "/aws/lambda/${var.project_name}-transaction-age-out"
-  retention_in_days = 30
-}
-
-resource "aws_cloudwatch_log_group" "transaction_date_backfill" {
-  name              = "/aws/lambda/${var.project_name}-transaction-date-backfill"
   retention_in_days = 30
 }
 

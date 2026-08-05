@@ -97,15 +97,13 @@ def test_extract_first_json_array_wrapped_object_is_none(anthropic_client):
 # --- done-criterion: one file owns AnthropicError ----------------------------
 # [A-G7] "handler.py imports AnthropicError from the new module." The class the handler
 # catches must BE the class the shared client raises, else a real upstream error would
-# escape the except and 500. insights_ai / milestone_ai must not re-derive their own.
+# escape the except and 500. insights_ai must not re-derive its own.
 
 
 def test_handler_shares_the_shared_anthropic_error(handler):
     import anthropic_client as ac
     import insights_ai
-    import milestone_ai
 
     assert handler.AnthropicError is ac.AnthropicError
-    # Neither caller re-declares its own copy (they delegate to the shared one).
+    # The caller doesn't re-declare its own copy (it delegates to the shared one).
     assert getattr(insights_ai, "AnthropicError", ac.AnthropicError) is ac.AnthropicError
-    assert getattr(milestone_ai, "AnthropicError", ac.AnthropicError) is ac.AnthropicError
