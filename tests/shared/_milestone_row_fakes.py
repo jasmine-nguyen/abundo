@@ -1,9 +1,9 @@
 """Shared stored-row fixtures for the milestone-row validity suites (WHIT-445).
 
-The row-shape suites (test_milestone_rows*, test_milestones_whit417/424_gaps,
-test_milestones_live_keys_gaps) each carried their own copy of the same "one good stored
-row" builder and the raw-row store injector. They live here now, in ONE definition, so the
-row shape can't drift between the suites that assert parity across the two read paths.
+The row-shape suites (test_milestone_rows.py and test_milestones_custom_plan.py, after the
+WHIT-464/472 folds) each carried their own copy of the same "one good stored row" builder and
+the raw-row store injector. They live here now, in ONE definition, so the row shape can't
+drift between the suites that assert parity across the two read paths.
 
 The repo/notify class fakes those suites use come from the sibling _milestone_fakes.py.
 Resolved by pytest.ini's `pythonpath = tests/shared`; pure stdlib, no shared/-layer import.

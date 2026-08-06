@@ -1,7 +1,7 @@
 """WHIT-424 — the "keep the marker of an unreadable-but-identifiable row" fix, END TO END,
 at the level Jasmine would actually see it.
 
-The unit tests (test_milestones_live_keys_gaps.py, test_milestones_custom_plan_gaps.py) drive
+The unit tests (folded into test_milestones_custom_plan.py, WHIT-472) drive
 _resolve_plan / notify with a hand-built FakeMilestoneRepo. Nothing proves the fix through the
 REAL path: a plan saved by PUT /milestones, stored, read back by the real MilestoneRepository
 and the real _resolve_plan the balance poller runs — the seam where a store-shaped surprise
