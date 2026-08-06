@@ -17,6 +17,7 @@ import copy
 import json
 from decimal import Decimal
 
+import pytest
 from botocore.exceptions import ClientError
 
 
@@ -104,67 +105,25 @@ def test_set_budget_unknown_category_accepted(handler):
     assert repo.set_calls == [("doesnotexist", Decimal("58"))]
 
 
-def test_set_budget_missing_target_400(handler):
-    repo = FakeBudgetRepo()
-
-    resp = handler.set_budget(_put_budget_event(body='{"note": "x"}'), repo, FakeCategoryRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
-
-
-def test_set_budget_string_target_400(handler):
-    repo = FakeBudgetRepo()
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": "58"}'), repo, FakeCategoryRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
-
-
-def test_set_budget_bool_target_400(handler):
+# Bodies are RAW wire strings (the event body is passed verbatim; the handler does its own
+# json.loads), so the NaN/Infinity/1e40 tokens must stay literal — do NOT rebuild them from
+# Python floats. Each case: bad target value -> 400 and nothing persisted.
+@pytest.mark.parametrize("body", [
+    pytest.param('{"note": "x"}',        id="missing_target"),
+    pytest.param('{"target": "58"}',     id="string_target"),
     # bool is an int subclass; must be rejected, not treated as 1/0.
-    repo = FakeBudgetRepo()
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": true}'), repo, FakeCategoryRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
-
-
-def test_set_budget_negative_400(handler):
-    repo = FakeBudgetRepo()
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": -5}'), repo, FakeCategoryRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
-
-
-def test_set_budget_nan_400(handler):
+    pytest.param('{"target": true}',     id="bool_target"),
+    pytest.param('{"target": -5}',       id="negative"),
     # json.loads accepts the NaN token; must be rejected before hitting DynamoDB.
+    pytest.param('{"target": NaN}',      id="nan"),
+    pytest.param('{"target": Infinity}', id="infinity"),
+    # past the sane ceiling is bad input (400), not a write-time 500.
+    pytest.param('{"target": 1e40}',     id="too_large"),
+])
+def test_set_budget_bad_target_400(handler, body):
     repo = FakeBudgetRepo()
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": NaN}'), repo, FakeCategoryRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
-
-
-def test_set_budget_infinity_400(handler):
-    repo = FakeBudgetRepo()
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": Infinity}'), repo, FakeCategoryRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.set_calls == []
-
-
-def test_set_budget_too_large_400(handler):
-    # A value past the sane ceiling is bad input (400), not a write-time 500.
-    repo = FakeBudgetRepo()
-
-    resp = handler.set_budget(_put_budget_event(body='{"target": 1e40}'), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(body=body), repo, FakeCategoryRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []

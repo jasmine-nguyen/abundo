@@ -161,31 +161,19 @@ def test_create_icon_optional_defaults(handler):
     assert repo.create_calls[0][3] == "tag"  # DEFAULT_CATEGORY_ICON
 
 
-def test_create_invalid_bucket_400(handler):
-    repo = FakeCategoryRepo()
-
-    resp = handler.create_category(
-        _categories_event('{"name": "Gym", "bucket": "Fun", "icon": "x"}'), repo, FakeBudgetRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.create_calls == []
-
-
-def test_create_missing_name_400(handler):
-    repo = FakeCategoryRepo()
-
-    resp = handler.create_category(_categories_event('{"bucket": "Living", "icon": "x"}'), repo, FakeBudgetRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.create_calls == []
-
-
-def test_create_empty_slug_400(handler):
+# Each case: bad create body -> 400 and nothing persisted. Bodies are raw wire strings
+# (the event body is passed verbatim; the handler does its own json.loads).
+@pytest.mark.parametrize("body", [
+    pytest.param('{"name": "Gym", "bucket": "Fun", "icon": "x"}',   id="invalid_bucket"),
+    pytest.param('{"bucket": "Living", "icon": "x"}',               id="missing_name"),
     # non-empty name, but no slug-safe characters -> empty id -> 400
+    pytest.param('{"name": "!!!", "bucket": "Living", "icon": "x"}', id="empty_slug"),
+    pytest.param("not json",                                        id="invalid_json"),
+])
+def test_create_bad_body_400(handler, body):
     repo = FakeCategoryRepo()
 
-    resp = handler.create_category(
-        _categories_event('{"name": "!!!", "bucket": "Living", "icon": "x"}'), repo, FakeBudgetRepo())
+    resp = handler.create_category(_categories_event(body), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.create_calls == []
@@ -197,15 +185,6 @@ def test_create_duplicate_409(handler):
     resp = handler.create_category(_categories_event(), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 409
-
-
-def test_create_invalid_json_400(handler):
-    repo = FakeCategoryRepo()
-
-    resp = handler.create_category(_categories_event("not json"), repo, FakeBudgetRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.create_calls == []
 
 
 def test_create_base64_body(handler):
@@ -298,30 +277,17 @@ def test_update_missing_id_returns_404(handler):
     assert repo.update_calls == []
 
 
-def test_update_blank_name_returns_400(handler):
+# Each case: bad update body -> 400 and nothing persisted. Bodies are raw wire strings
+# (the event body is passed verbatim; the handler does its own json.loads).
+@pytest.mark.parametrize("body", [
+    pytest.param('{"name": "   ", "bucket": "Living"}',   id="blank_name"),
+    pytest.param('{"name": "Coffee", "bucket": "Fun"}',   id="invalid_bucket"),
+    pytest.param("not json",                              id="invalid_json"),
+])
+def test_update_bad_body_400(handler, body):
     repo = FakeCategoryRepo()
 
-    resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "   ", "bucket": "Living"}'), repo, FakeBudgetRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.update_calls == []
-
-
-def test_update_invalid_bucket_returns_400(handler):
-    repo = FakeCategoryRepo()
-
-    resp = handler.update_category(
-        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Fun"}'), repo, FakeBudgetRepo())
-
-    assert resp["statusCode"] == 400
-    assert repo.update_calls == []
-
-
-def test_update_invalid_json_returns_400(handler):
-    repo = FakeCategoryRepo()
-
-    resp = handler.update_category(_category_item_event("PATCH", body="not json"), repo, FakeBudgetRepo())
+    resp = handler.update_category(_category_item_event("PATCH", body=body), repo, FakeBudgetRepo())
 
     assert resp["statusCode"] == 400
     assert repo.update_calls == []
