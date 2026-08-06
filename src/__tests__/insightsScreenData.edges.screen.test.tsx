@@ -1,6 +1,7 @@
 // WHIT-204 GAP (composite) — the Insights status array's payCycle membership, which no
-// existing test locks (Budgets has the equivalent lock in screenQueryHooks/budgetsQueryGaps;
-// Insights did not). Insights windows its breakdown on payCycleQuery.isSuccess, so a
+// existing test locks (Budgets has the equivalent lock in budgetsQuery.screen.test.tsx — WHIT-459
+// folded the former budgetsQueryGaps file into it; Insights did not). Insights windows its
+// breakdown on payCycleQuery.isSuccess, so a
 // pay-cycle failure leaves breakdown DISABLED (isPending:true, isLoading:false). If payCycle
 // were dropped from useCombineScreenQueries([...]), a pay-cycle outage would surface neither
 // isError (nothing to OR) nor isLoading — stranding the user on an empty screen with no Retry.
