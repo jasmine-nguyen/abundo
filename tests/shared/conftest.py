@@ -17,7 +17,6 @@ record conditions that ``FakeTable`` can evaluate against a stored item.
 """
 
 import copy
-import os
 import pathlib
 import sys
 import types
@@ -25,73 +24,13 @@ from decimal import Decimal
 
 import pytest
 
-# Env vars repository_base.py reads at import time.
-os.environ.setdefault("AWS_REGION", "ap-southeast-2")
-os.environ.setdefault("TABLE_NAME", "test-table")
+from _boto_stubs import install_import_satisfiers, use_condition_fields
 
-# Fake `ssm` so shared/api_key.py's `from ssm import get_param` imports without
-# boto3/AWS. Tests that exercise the fetch monkeypatch api_key.get_param.
-if "ssm" not in sys.modules:
-    _fake_ssm = types.ModuleType("ssm")
-    _fake_ssm.get_param = lambda parameter_name: "shared-fake-key"
-    sys.modules["ssm"] = _fake_ssm
-
-
-class _Predicate:
-    """A boto3 condition stand-in a fake table can evaluate against an item."""
-
-    def __init__(self, fn):
-        self._fn = fn
-
-    def evaluate(self, item) -> bool:
-        return self._fn(item)
-
-    def __and__(self, other):
-        return _Predicate(lambda item: self._fn(item) and other.evaluate(item))
-
-
-class _Field:
-    """Fake boto3 Key/Attr: ``_Field(name).eq(v)`` / ``.between`` / ``.gte`` → _Predicate."""
-
-    def __init__(self, name):
-        self._name = name
-
-    def eq(self, value):
-        name = self._name
-        return _Predicate(lambda item: item.get(name) == value)
-
-    def gte(self, lo):
-        name = self._name
-        return _Predicate(lambda item: item.get(name, "") >= lo)
-
-    def between(self, lo, hi):
-        name = self._name
-        return _Predicate(lambda item: lo <= item.get(name, "") <= hi)
-
-
-def _ensure_boto3_botocore():
-    if "boto3" not in sys.modules:
-        boto3 = types.ModuleType("boto3")
-        boto3.resource = lambda *a, **k: None  # never called: repo._table is injected
-        conditions = types.ModuleType("boto3.dynamodb.conditions")
-        dynamodb = types.ModuleType("boto3.dynamodb")
-        dynamodb.conditions = conditions
-        boto3.dynamodb = dynamodb
-        sys.modules.update({
-            "boto3": boto3,
-            "boto3.dynamodb": dynamodb,
-            "boto3.dynamodb.conditions": conditions,
-        })
-    if "botocore" not in sys.modules:
-        botocore = types.ModuleType("botocore")
-        exceptions = types.ModuleType("botocore.exceptions")
-
-        class ClientError(Exception):
-            pass
-
-        exceptions.ClientError = ClientError
-        botocore.exceptions = exceptions
-        sys.modules.update({"botocore": botocore, "botocore.exceptions": exceptions})
+# Set the env vars + install fake boto3/botocore/ssm at module load, so
+# shared/api_key.py's `from ssm import get_param` (and the repositories' boto imports)
+# resolve. Tests that exercise the key fetch monkeypatch api_key.get_param. The `shared`
+# fixture additionally swaps in the condition-recording Key/Attr via use_condition_fields.
+install_import_satisfiers(ssm_default="shared-fake-key")
 
 
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
@@ -129,61 +68,57 @@ def api_key_module():
 
 @pytest.fixture
 def shared():
-    """Import the shared layer's modules in isolation; yield the ones tests use."""
-    _ensure_boto3_botocore()
-    conds = sys.modules["boto3.dynamodb.conditions"]
-    saved_key = getattr(conds, "Key", None)
-    saved_attr = getattr(conds, "Attr", None)
-    conds.Key = _Field
-    conds.Attr = _Field
+    """Import the shared layer's modules in isolation; yield the ones tests use.
 
-    while _SHARED_DIR in sys.path:
-        sys.path.remove(_SHARED_DIR)
-    sys.path.insert(0, _SHARED_DIR)
-    saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
-
-    import encoders
-    import repository_transaction
-    import repository_balance
-    import repository_loanfacts
-    import repository_milestone
-    import repository_budget
-    import repository_goals
-    import repository_insight
-    import repository_device
-    import push
-    import repository_push_receipt
-    import repository_notify
-    import spend
-    import goal_pace
-    import goal_nudge
-    import milestone_rows
-    import milestones
-    import repayment_alerts
-    import repayment_rules
-
-    ns = types.SimpleNamespace(
-        encoders=encoders, repository=repository_transaction,
-        balance=repository_balance, loanfacts=repository_loanfacts,
-        milestone=repository_milestone,
-        budget=repository_budget, goals=repository_goals, insight=repository_insight,
-        device=repository_device, push=push, push_receipt=repository_push_receipt,
-        notify=repository_notify, spend=spend,
-        goal_pace=goal_pace, goal_nudge=goal_nudge, milestones=milestones,
-        milestone_rows=milestone_rows,
-        repayment_alerts=repayment_alerts, repayment_rules=repayment_rules,
-    )
-    try:
-        yield ns
-    finally:
-        for name in _REIMPORT:
-            sys.modules.pop(name, None)
-            if saved_real[name] is not None:
-                sys.modules[name] = saved_real[name]
-        conds.Key = saved_key
-        conds.Attr = saved_attr
+    ``use_condition_fields`` installs the fake boto3/botocore and swaps in the
+    condition-recording Key/Attr for the whole fixture, so the repositories bind
+    ``_Field`` at import and FakeTable can evaluate their queries."""
+    with use_condition_fields():
         while _SHARED_DIR in sys.path:
             sys.path.remove(_SHARED_DIR)
+        sys.path.insert(0, _SHARED_DIR)
+        saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
+
+        import encoders
+        import repository_transaction
+        import repository_balance
+        import repository_loanfacts
+        import repository_milestone
+        import repository_budget
+        import repository_goals
+        import repository_insight
+        import repository_device
+        import push
+        import repository_push_receipt
+        import repository_notify
+        import spend
+        import goal_pace
+        import goal_nudge
+        import milestone_rows
+        import milestones
+        import repayment_alerts
+        import repayment_rules
+
+        ns = types.SimpleNamespace(
+            encoders=encoders, repository=repository_transaction,
+            balance=repository_balance, loanfacts=repository_loanfacts,
+            milestone=repository_milestone,
+            budget=repository_budget, goals=repository_goals, insight=repository_insight,
+            device=repository_device, push=push, push_receipt=repository_push_receipt,
+            notify=repository_notify, spend=spend,
+            goal_pace=goal_pace, goal_nudge=goal_nudge, milestones=milestones,
+            milestone_rows=milestone_rows,
+            repayment_alerts=repayment_alerts, repayment_rules=repayment_rules,
+        )
+        try:
+            yield ns
+        finally:
+            for name in _REIMPORT:
+                sys.modules.pop(name, None)
+                if saved_real[name] is not None:
+                    sys.modules[name] = saved_real[name]
+            while _SHARED_DIR in sys.path:
+                sys.path.remove(_SHARED_DIR)
 
 
 def _client_error(code: str, message: str = "boom"):
