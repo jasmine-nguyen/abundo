@@ -5,7 +5,7 @@
 // (its optimistic cache write + rollback are saveMilestones.provider's own tests).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import type { MilestoneRecord } from '../api';
 
 const mockSaveMilestones = jest.fn(async (_next: MilestoneRecord[]) => true);
@@ -116,4 +116,65 @@ it('a valid save hands the full plan to saveMilestones and navigates back', asyn
   expect(sent.map((m) => m.targetBalance)).toEqual([300000, 200000, 100000]);
   await Promise.resolve();
   expect(mockBack).toHaveBeenCalled();
+});
+
+// ===== WHIT-377 adversarial gaps (folded in) — cold-cache hydrate race + reorder bounds =====
+
+describe('cold-cache hydrate race', () => {
+  it('while the read is still loading: shows the built-in DEFAULT and blocks save', async () => {
+    mockSaved = undefined;      // cold cache — nothing resolved yet
+    mockIsLoading = true;
+    render(<MilestoneEdit />);
+
+    // The default plan (src/milestones.ts) is shown — NOT a blank form.
+    expect(labelAt(0)).toBe('Kickoff');
+    expect(labelAt(4)).toBe('Target');
+
+    // Save is blocked: pressing it must NOT hand the default plan to the writer.
+    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    expect(mockSaveMilestones).not.toHaveBeenCalled();
+  });
+
+  it('when the real saved plan resolves: the seeded latch re-seeds the rows AND unblocks save', async () => {
+    mockSaved = undefined;
+    mockIsLoading = true;
+    const { rerender } = render(<MilestoneEdit />);
+    expect(labelAt(0)).toBe('Kickoff'); // default first
+
+    // The read resolves with the user's actual plan.
+    mockSaved = SAVED;
+    mockIsLoading = false;
+    act(() => { rerender(<MilestoneEdit />); });
+
+    // Re-seeded to the real plan (not left on the default).
+    expect(labelAt(0)).toBe('Start');
+    expect(labelAt(1)).toBe('Midway');
+    expect(labelAt(2)).toBe('Payoff');
+
+    // And save now goes through (a valid plan) — the block lifted with the load.
+    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    expect(mockSaveMilestones).toHaveBeenCalledTimes(1);
+    expect(mockSaveMilestones.mock.calls[0][0].map((m) => m.label)).toEqual(['Start', 'Midway', 'Payoff']);
+  });
+});
+
+describe('reorder bounds are unreachable', () => {
+  // The swap can never go out of bounds because the boundary arrows are DISABLED — that's the
+  // honest, testable contract (a disabled Pressable swallows the press, so a "press does nothing"
+  // test would pass even with moveRow's guard removed). moveRow keeps a bounds guard as cheap
+  // defence, but it's UI-unreachable, so we assert the disabled state that makes it so.
+  it('↑ on the first row is disabled', () => {
+    render(<MilestoneEdit />);
+    expect(screen.getByTestId('milestone-up-0')).toBeDisabled();
+  });
+
+  it('↓ on the last row is disabled', () => {
+    render(<MilestoneEdit />);
+    expect(screen.getByTestId('milestone-down-2')).toBeDisabled();
+  });
+
+  it('a mid-list arrow is enabled (the disable is boundary-specific, not blanket)', () => {
+    render(<MilestoneEdit />);
+    expect(screen.getByTestId('milestone-up-1')).not.toBeDisabled();
+  });
 });
