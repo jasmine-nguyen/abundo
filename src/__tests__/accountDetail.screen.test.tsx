@@ -36,7 +36,7 @@ const bal = (over: Record<string, unknown> = {}) => ({
   as_of: '2026-07-08T09:32:37.337Z', account_type: 'unknown', ...over,
 });
 
-function txData(over: Partial<{ transactions: unknown[]; balances: Map<string, unknown>; isError: boolean; refetch: () => void }> = {}) {
+function txData(over: Partial<{ transactions: unknown[]; balances: Map<string, unknown>; isLoading: boolean; isError: boolean; refetch: () => void }> = {}) {
   return {
     transactions: [ROW], category: (_id: string | null) => undefined, balances: new Map(),
     isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
@@ -92,8 +92,29 @@ it('a hard read failure with nothing cached shows the inline error + an accessib
   expect(refetch).toHaveBeenCalledTimes(1);
 });
 
-it('does NOT show the error when a background refetch fails over cached rows (cache-first)', () => {
-  mockTx = txData({ transactions: [ROW], isError: true }); // errored, but rows are cached
+// WHIT-276 adversarial gaps (folded in) — the states that only appear when DetailStates is
+// wired to the REAL account screen's data: a cold load hides the empty message, isLoading &&
+// isError stacks both spinner and error, and a refetch failure over cached rows keeps the LIST.
+// [A-acct-cache] below supersedes the old "cache-first" test (dropped WHIT-459): same setup, but
+// it additionally asserts the cached list content stays on screen, not just that the error hides.
+it('while loading with nothing cached, shows the spinner and NOT the empty "No transactions" message', () => {
+  mockTx = txData({ transactions: [], isLoading: true });
   render(<AccountDetail />);
-  expect(screen.queryByTestId('account-error')).toBeNull(); // keep rendering the cached list
+  expect(screen.getByTestId('account-loading')).toBeTruthy();
+  expect(screen.queryByText('No transactions')).toBeNull();
+});
+
+it('with an empty cache, isLoading && isError renders BOTH the spinner and the error, no content', () => {
+  mockTx = txData({ transactions: [], isLoading: true, isError: true });
+  render(<AccountDetail />);
+  expect(screen.getByTestId('account-loading')).toBeTruthy();
+  expect(screen.getByTestId('account-error')).toBeTruthy();
+  expect(screen.queryByText('No transactions')).toBeNull();
+});
+
+it('a background refetch failure over cached rows keeps the transaction list rendered', () => {
+  mockTx = txData({ transactions: [ROW], isError: true });
+  render(<AccountDetail />);
+  expect(screen.queryByTestId('account-error')).toBeNull();
+  expect(screen.getByText('1 transaction')).toBeTruthy(); // cached content still on screen
 });

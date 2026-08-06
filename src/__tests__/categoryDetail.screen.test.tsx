@@ -188,3 +188,28 @@ it('does NOT show the error when a background refetch fails over cached rows (ca
   render(<CategoryDetail />);
   expect(screen.queryByTestId('category-error')).toBeNull();
 });
+
+// WHIT-308 adversarial gaps (folded in) — the header-title fallback and the non-null $0 detail
+// path, both distinct from the detail===null empty state above.
+// [A-S1] detail is null (empty cycle / stale deep-link) → the header must still read a sensible
+// title. Fail-on-revert: dropping the `?? 'Category'` fallback makes the title `undefined`.
+it('shows the fallback header title "Category" when detail is null', () => {
+  mockDetail = null;
+  render(<CategoryDetail />);
+  expect(screen.getByText('Category')).toBeTruthy();
+});
+
+// [A-S2] A non-null detail whose total clamped to 0 must still render the total card + list, NOT
+// the empty state — the screen branches on `detail` truthiness, not on total > 0.
+it('renders the $0 total card and list (not the empty state) for a non-null zero-total detail', () => {
+  mockDetail = {
+    id: 'coffee', name: 'Cafes & Coffee',
+    groups: [{ label: 'Jul 1', items: [ROW] }],
+    count: 2, total: 0, posted: 0, pending: 0,
+  };
+  render(<CategoryDetail />);
+  expect(screen.getByTestId('category-total')).toBeTruthy();
+  expect(screen.getByText('$0')).toBeTruthy();
+  expect(screen.getByText('ST Ali')).toBeTruthy();       // the list still renders
+  expect(screen.queryByText('No transactions')).toBeNull();
+});
