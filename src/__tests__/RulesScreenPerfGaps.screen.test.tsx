@@ -1,5 +1,5 @@
 // WHIT-354 — Rules screen SectionList/debounce perf change. Adversarial GAPS not in
-// RulesScreen.screen.test.tsx / RulesScreenGaps.screen.test.tsx:
+// RulesScreen.screen.test.tsx (WHIT-459 folded the former RulesScreenGaps file into it):
 //   [G1] large list: windowing keeps the top (first row + header + footer + intro) usable
 //   [G4] an orphan-only list renders under exactly one "Uncategorized" SectionList section
 //   [G5] intro + "Add a rule" footer render in the error / loading / no-match states
