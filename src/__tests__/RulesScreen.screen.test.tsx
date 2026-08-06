@@ -200,3 +200,44 @@ it('degrades gracefully when the taxonomy is cold: rules list under Uncategorize
   fireEvent.press(screen.getByTestId('delete-rule-e1'));
   expect(fns.deleteRule).toHaveBeenCalledWith('e1');
 });
+
+// ===== adversarial gaps (folded in): search-box show/hide, intro count, "Uncategorized" collision =====
+
+// [A24] With zero rules and no query the pinned search box is hidden (nothing to search);
+// it must appear once rules exist. Guards the `rules.length > 0 || query.length > 0` gate.
+it('[A24] hides the search box when there are no rules, shows it once rules load', () => {
+  mockRules = rulesData({ rules: [] });
+  const { rerender } = render(<Rules />);
+  expect(screen.queryByLabelText('Search rules')).toBeNull();
+
+  mockRules = rulesData({ rules: TWO_RULES });
+  rerender(<Rules />);
+  expect(screen.getByLabelText('Search rules')).toBeTruthy();
+});
+
+// [A25] The intro line reports the TOTAL rule count and must not shrink when a search
+// filters the visible list — it reads `rules` (raw), not the filtered groups.
+it('[A25] intro count stays the total (2) even when the filter hides one rule', () => {
+  mockRules = rulesData({ rules: TWO_RULES });
+  render(<Rules />);
+  expect(screen.getByText(/You have 2 active rules/)).toBeTruthy();
+
+  fireEvent.changeText(screen.getByLabelText('Search rules'), 'netflix');
+  settle();
+  expect(screen.queryByText('STARBUCKS')).toBeNull(); // list filtered to one
+  expect(screen.getByText(/You have 2 active rules/)).toBeTruthy(); // count unchanged
+});
+
+// [A26] A user-named "Uncategorized" category plus a genuinely orphaned rule renders TWO
+// separate headers with that label — documents the collision the grouping doesn't merge.
+it('[A26] renders two "Uncategorized" headers when a real category collides with orphans', () => {
+  mockCategories = [{ id: 'real', name: 'Uncategorized', icon: 'tag', color: '#abc', bucket: 'Lifestyle', recent: 0 }];
+  mockRules = rulesData({ rules: [
+    { id: 'r1', pattern: 'REALONE', categoryId: 'real', isNew: false },
+    { id: 'r2', pattern: 'GHOST', categoryId: 'deleted', isNew: false },
+  ] as Rule[] });
+  render(<Rules />);
+  expect(screen.getAllByText('Uncategorized')).toHaveLength(2);
+  expect(screen.getByText('REALONE')).toBeTruthy();
+  expect(screen.getByText('GHOST')).toBeTruthy();
+});

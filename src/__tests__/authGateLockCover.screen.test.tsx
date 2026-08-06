@@ -9,7 +9,7 @@
 import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
 import React, { useEffect } from 'react';
 import { Text, StyleSheet, Keyboard, AppState } from 'react-native';
-import { render, screen, act } from '@testing-library/react-native';
+import { render, screen, act, fireEvent } from '@testing-library/react-native';
 import { C } from '../theme';
 
 const mockRedirectSpy = jest.fn();
@@ -59,6 +59,7 @@ beforeEach(() => {
   mockRedirectSpy.mockClear();
   mockUnlock.mockReset().mockImplementation(async () => { setStatus('authed'); return true; });
   mockLock.mockClear();
+  mockSignOut.mockReset().mockImplementation(async () => setStatus('anon')); // defensive: keeps parity with the folded [G2] setup (clearMocks already zeroes the count)
   mockListeners.clear();
   mockStatus = 'authed';
   mockSegments = ['(tabs)', 'budgets']; // a deep route — NOT the index
@@ -150,5 +151,78 @@ describe('WHIT-266 lock cover', () => {
     mockSegments = []; // the index route (cold launch, before landing)
     renderGate();
     expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
+  });
+});
+
+// ===== WHIT-266 adversarial gaps (folded in): index-route mutual exclusion, sign-in-again, 3× cycle =====
+describe('WHIT-266 lock cover — adversarial gaps', () => {
+  // [G1] locked on the INDEX route: the two covers never co-occur, and unlock releases the
+  // legitimate authed+index → budgets redirect. gateRedirect returns null while locked, so even
+  // sitting where an authed user WOULD be bounced, no redirect cover competes with the lock.
+  it('[G1] locked on index: only the lock cover (no redirect cover / no redirect); unlock releases the budgets redirect', () => {
+    mockSegments = []; // the index route — where an AUTHED user is redirected to budgets
+    mockStatus = 'locked'; // cold launch straight into a locked session
+    renderGate();
+
+    // While locked: lock cover up, NO redirect cover, and gateRedirect emitted NOTHING —
+    // the lock status suppresses the redirect so the two covers are mutually exclusive.
+    expect(screen.getByTestId('lock-cover')).toBeTruthy();
+    expect(screen.queryByTestId('gate-cover')).toBeNull();
+    expect(mockRedirectSpy).not.toHaveBeenCalled();
+    // App is mounted underneath (hidden from screen readers), not replaced by the lock screen.
+    expect(screen.queryByTestId('child')).toBeNull();
+    expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
+
+    // Unlock: authed + on index → the SUPPRESSED redirect is now released.
+    act(() => setStatus('authed'));
+    expect(screen.queryByTestId('lock-cover')).toBeNull();
+    expect(mockRedirectSpy).toHaveBeenCalledWith('/(tabs)/budgets');
+    expect(screen.getByTestId('gate-cover')).toBeTruthy();
+  });
+
+  // [G2] Sign-in-again from the lock screen (anon). A signed-out user must be COVERED and
+  // redirected to login — never left mounted-and-visible — and the app must not be rebuilt.
+  it('[G2] sign-in-again from lock: app never remounts, lock cover → opaque login-redirect cover, redirect to /', () => {
+    mockSegments = ['(tabs)', 'settings']; // deep protected route
+    mockStatus = 'authed';
+    renderGate();
+    expect(childMounts).toBe(1);
+
+    act(() => setStatus('locked'));
+    expect(screen.getByTestId('lock-cover')).toBeTruthy();
+    mockRedirectSpy.mockClear();
+
+    // Press "Sign in again" on the lock screen → signOut → anon.
+    fireEvent.press(screen.getByText('Sign in again'));
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+
+    // anon on a protected route: lock cover gone, the opaque login-redirect cover is up, and
+    // exactly one redirect to the login screen fired.
+    expect(screen.queryByTestId('lock-cover')).toBeNull();
+    const cover = screen.getByTestId('gate-cover');
+    expect(mockRedirectSpy).toHaveBeenCalledWith('/');
+    // The cover is opaque (C.bg) so the signed-out app is not visible behind it.
+    const coverStyle = StyleSheet.flatten(cover.props.style);
+    expect(coverStyle.backgroundColor).toBe(C.bg);
+    // The app was covered/redirected, NOT torn down and rebuilt (state preserved end-to-end).
+    expect(childMounts).toBe(1);
+  });
+
+  // [G4] Repeated lock→unlock cycles: the app instance is built exactly once. A per-cycle
+  // remount bug (e.g. re-introducing the unmount-on-locked branch) bumps this past 1.
+  it('[G4] repeated lock→unlock→lock→unlock keeps the same app instance (mount counter stays 1)', () => {
+    mockStatus = 'authed';
+    renderGate();
+    expect(childMounts).toBe(1);
+
+    for (let i = 0; i < 3; i += 1) {
+      act(() => setStatus('locked'));
+      expect(screen.getByTestId('lock-cover')).toBeTruthy();
+      expect(screen.getByTestId('child', { includeHiddenElements: true })).toBeTruthy();
+      act(() => setStatus('authed'));
+      expect(screen.queryByTestId('lock-cover')).toBeNull();
+      expect(screen.getByTestId('child')).toBeTruthy();
+    }
+    expect(childMounts).toBe(1); // one build, zero rebuilds across all three cycles
   });
 });
