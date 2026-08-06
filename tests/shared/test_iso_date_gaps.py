@@ -3,7 +3,7 @@ rule the save endpoint AND both milestone read paths now share.
 
 Already locked elsewhere, NOT repeated here: the lenient basic/week forms ("20300101",
 "2030-W01-1") rejected by both read paths ([E2]/[F3]); the "2026-02-30" impossible day rejected
-by the save endpoint (test_milestones_api.py) and the client read (test_milestones_corrupt_row_e2e_gaps.py);
+by the save endpoint (test_milestones_api.py) and the client read (test_milestones_e2e.py);
 the datetime / whitespace / Z-suffix / bytes / bool shapes dropped by both read paths ([E1]).
 
 What none of them cover — the inputs where ISO_DATE_RE's `\d` / `$` are LOOSER than "an ASCII
