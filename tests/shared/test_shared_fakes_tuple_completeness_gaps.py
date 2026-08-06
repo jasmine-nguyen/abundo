@@ -1,10 +1,10 @@
 """WHIT-445 gap coverage — keep each invariants guard's CLOSED suite tuple complete.
 
-The four invariants guards each iterate a HARD-CODED tuple of suites (_MILESTONE_SUITES,
-_FEED_SUITES, _HANDLER_SUITES, _PAYCYCLE_SUITES) when proving "no suite re-defines the shared
-fake" ([G1]). That is a closed list: a NEW suite added later that IMPORTS the shared fake but is
-never added to the tuple is invisible to [G1] — it could later paste a divergent copy of the
-fake and stay green forever.
+The consolidated invariants guard (``test_fakes_invariants.py``) iterates a HARD-CODED registry
+of suites per domain (feed / handler_patch / paycycle / category / milestone) when proving "no
+suite re-defines the shared fake" ([G1]). That is a closed list: a NEW suite added later that
+IMPORTS the shared fake but is never added to the registry is invisible to [G1] — it could later
+paste a divergent copy of the fake and stay green forever.
 
 This meta-guard closes that hole without the false-positives a tree-wide "single definition"
 scan would hit (FakeNotifyRepo / FakeMilestoneRepo / FakePayCycleRepo are legitimately
@@ -31,6 +31,7 @@ _API = _TESTS / "lambda_api"
 # rather than added to every domain tuple. Any OTHER new importer is a real consuming suite and
 # must be registered — that is the property under test.
 _GUARD_FILES = frozenset({
+    "test_fakes_invariants.py",
     "test_shared_fakes_contract_gaps.py",
     "test_shared_fakes_tuple_completeness_gaps.py",
 })
@@ -63,16 +64,18 @@ def _importers(search_dir: pathlib.Path, modules) -> set:
     return found
 
 
-# (search dir, imported shared modules, the guard file whose tuple must cover the importers)
+# WHIT-466 folded the five per-domain invariants files into this one; its registry lists every
+# domain's suites, so all domains point at it. category joins now that it lives there too.
+_CONSOLIDATED_GUARD = _SHARED / "test_fakes_invariants.py"
+
+# (search dir, imported shared modules, the guard file whose registry must cover the importers)
 _DOMAINS = [
     pytest.param(_SHARED, {"_milestone_fakes", "_milestone_row_fakes"},
-                 _SHARED / "test_milestone_fakes_invariants.py", id="milestone"),
-    pytest.param(_API, {"_feed_fakes"},
-                 _API / "test_feed_fakes_invariants.py", id="feed"),
-    pytest.param(_API, {"_handler_patch_fakes"},
-                 _API / "test_handler_patch_fakes_invariants.py", id="handler_patch"),
-    pytest.param(_API, {"_paycycle_fakes"},
-                 _API / "test_paycycle_fakes_invariants.py", id="paycycle"),
+                 _CONSOLIDATED_GUARD, id="milestone"),
+    pytest.param(_API, {"_feed_fakes"}, _CONSOLIDATED_GUARD, id="feed"),
+    pytest.param(_API, {"_handler_patch_fakes"}, _CONSOLIDATED_GUARD, id="handler_patch"),
+    pytest.param(_API, {"_paycycle_fakes"}, _CONSOLIDATED_GUARD, id="paycycle"),
+    pytest.param(_API, {"_category_fakes"}, _CONSOLIDATED_GUARD, id="category"),
 ]
 
 

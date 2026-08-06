@@ -23,63 +23,12 @@ import types
 
 import pytest
 
+from _boto_stubs import use_condition_fields
+
 # The webhook now imports the SHARED repository_transaction / repository_base
 # (for the budget-alert windowed read, WHIT-22), which read these at import time.
 os.environ.setdefault("AWS_REGION", "ap-southeast-2")
 os.environ.setdefault("TABLE_NAME", "test-table")
-
-
-class _Predicate:
-    """A boto3 condition stand-in a fake table can evaluate against an item."""
-
-    def __init__(self, fn):
-        self._fn = fn
-
-    def evaluate(self, item) -> bool:
-        return self._fn(item)
-
-    def __and__(self, other):
-        return _Predicate(lambda item: self._fn(item) and other.evaluate(item))
-
-
-class _Field:
-    """Fake boto3 Key/Attr: ``_Field(name).eq(v)`` / ``.between(lo, hi)`` → _Predicate."""
-
-    def __init__(self, name):
-        self._name = name
-
-    def eq(self, value):
-        name = self._name
-        return _Predicate(lambda item: item.get(name) == value)
-
-    def between(self, lo, hi):
-        name = self._name
-        return _Predicate(lambda item: lo <= item.get(name, "") <= hi)
-
-
-def _ensure_boto3_botocore():
-    if "boto3" not in sys.modules:
-        boto3 = types.ModuleType("boto3")
-        boto3.resource = lambda *a, **k: None  # never called: tests inject repo._table
-        conditions = types.ModuleType("boto3.dynamodb.conditions")
-        dynamodb = types.ModuleType("boto3.dynamodb")
-        dynamodb.conditions = conditions
-        boto3.dynamodb = dynamodb
-        sys.modules.update({
-            "boto3": boto3,
-            "boto3.dynamodb": dynamodb,
-            "boto3.dynamodb.conditions": conditions,
-        })
-    if "botocore" not in sys.modules:
-        botocore = types.ModuleType("botocore")
-        exceptions = types.ModuleType("botocore.exceptions")
-
-        class ClientError(Exception):
-            pass
-
-        exceptions.ClientError = ClientError
-        botocore.exceptions = exceptions
-        sys.modules.update({"botocore": botocore, "botocore.exceptions": exceptions})
 
 
 def _fake_import_satisfiers() -> dict:
@@ -119,63 +68,59 @@ _REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "bank
 
 @pytest.fixture
 def lam():
-    """Import the webhook lambda's modules in isolation; yield the ones tests use."""
-    _ensure_boto3_botocore()
-    conds = sys.modules["boto3.dynamodb.conditions"]
-    saved_key = getattr(conds, "Key", None)
-    saved_attr = getattr(conds, "Attr", None)
-    conds.Key = _Field
-    conds.Attr = _Field
+    """Import the webhook lambda's modules in isolation; yield the ones tests use.
 
-    saved_fakes = {}
-    for name, mod in _fake_import_satisfiers().items():
-        saved_fakes[name] = sys.modules.get(name)
-        sys.modules[name] = mod
+    Unlike the handler suites, this one queries, so ``use_condition_fields`` swaps in
+    the condition-recording Key/Attr while the repositories are imported (they bind it
+    via ``from boto3.dynamodb.conditions import Key``) and FakeTable can evaluate them."""
+    with use_condition_fields():
+        saved_fakes = {}
+        for name, mod in _fake_import_satisfiers().items():
+            saved_fakes[name] = sys.modules.get(name)
+            sys.modules[name] = mod
 
-    for d in (_LAMBDA_DIR, _SHARED_DIR):
-        while d in sys.path:
-            sys.path.remove(d)
-    # shared/ first, then lambda/ on top: lambda/ wins for its own modules, and the
-    # folded ones (constants / models / encoders) fall through to shared/.
-    sys.path.insert(0, _SHARED_DIR)
-    sys.path.insert(0, _LAMBDA_DIR)
-    saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
-
-    import banksync
-    import handler
-    import up_webhook
-    import merchant
-    import models
-    import repository
-    import reprocess
-    import age_out
-    import budget_alerts
-    import repayment_alerts
-
-    ns = types.SimpleNamespace(
-        repository=repository, banksync=banksync, handler=handler, models=models,
-        merchant=merchant, reprocess=reprocess,
-        age_out=age_out,
-        budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,
-        up_webhook=up_webhook,
-    )
-    try:
-        yield ns
-    finally:
-        for name in _REIMPORT:
-            sys.modules.pop(name, None)
-            if saved_real[name] is not None:
-                sys.modules[name] = saved_real[name]
-        for name, orig in saved_fakes.items():
-            if orig is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = orig
-        conds.Key = saved_key
-        conds.Attr = saved_attr
         for d in (_LAMBDA_DIR, _SHARED_DIR):
             while d in sys.path:
                 sys.path.remove(d)
+        # shared/ first, then lambda/ on top: lambda/ wins for its own modules, and the
+        # folded ones (constants / models / encoders) fall through to shared/.
+        sys.path.insert(0, _SHARED_DIR)
+        sys.path.insert(0, _LAMBDA_DIR)
+        saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
+
+        import banksync
+        import handler
+        import up_webhook
+        import merchant
+        import models
+        import repository
+        import reprocess
+        import age_out
+        import budget_alerts
+        import repayment_alerts
+
+        ns = types.SimpleNamespace(
+            repository=repository, banksync=banksync, handler=handler, models=models,
+            merchant=merchant, reprocess=reprocess,
+            age_out=age_out,
+            budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,
+            up_webhook=up_webhook,
+        )
+        try:
+            yield ns
+        finally:
+            for name in _REIMPORT:
+                sys.modules.pop(name, None)
+                if saved_real[name] is not None:
+                    sys.modules[name] = saved_real[name]
+            for name, orig in saved_fakes.items():
+                if orig is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = orig
+            for d in (_LAMBDA_DIR, _SHARED_DIR):
+                while d in sys.path:
+                    sys.path.remove(d)
 
 
 class FakeTable:
