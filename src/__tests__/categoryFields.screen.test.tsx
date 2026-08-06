@@ -11,6 +11,7 @@ import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { CategoryFields } from '../components/CategoryFields';
+import { ICON_KEYS } from '../icons';
 import { Bucket, Category } from '../context';
 import { cat } from './factory';
 
@@ -151,4 +152,30 @@ it('hides the parent block on BOTH variants when parentPicker is on but no paren
   renderFields({ variant: 'compact', parentPicker: true, categories: [], noneLabel: 'None', namePlaceholder: 'Category name' });
   expect(screen.queryByText('PARENT (OPTIONAL)')).toBeNull();
   expect(screen.queryByText('None')).toBeNull();
+});
+
+// --- WHIT-239 adversarial gaps (folded in): the icon-grid wiring + per-surface autoFocus -----
+
+// [G1] Every icon in the grid is wired to onIconChange(thatKey), and every ICON_KEYS icon
+// renders. WHIT-247: each cell carries an `icon-<key>` testID, so we tap it directly instead of
+// walking the render tree. Fail-on-revert: mis-wire the grid (onIconChange(icon) instead of
+// onIconChange(k), or drop the handler) → red.
+it('the icon grid reports the tapped icon key via onIconChange', () => {
+  renderFields({ variant: 'compact', lockBucket: true, parentPicker: false });
+  expect(screen.getAllByTestId(/^icon-/)).toHaveLength(ICON_KEYS.length);   // every icon renders
+  fireEvent.press(screen.getByTestId('icon-car'));
+  expect(handlers.onIconChange).toHaveBeenCalledWith('car');
+  expect(handlers.onIconChange).toHaveBeenCalledTimes(1);
+});
+
+// [G2] The compact form (categorise sheet / inline sub) auto-focuses the name so you can type
+// immediately; the full edit screen must NOT (autoFocus would fight the scroll + hide the preview).
+it('compact auto-focuses the name input', () => {
+  renderFields({ variant: 'compact', autoFocusName: true, namePlaceholder: 'Category name' });
+  expect(screen.getByPlaceholderText('Category name').props.autoFocus).toBe(true);
+});
+
+it('screen does NOT auto-focus the name input', () => {
+  renderFields({ variant: 'screen' }); // edit screen passes no autoFocusName → defaults false
+  expect(screen.getByPlaceholderText('e.g. Coffee runs').props.autoFocus).toBe(false);
 });
