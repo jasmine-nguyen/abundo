@@ -36,13 +36,9 @@ _ALL_SHARED_NAMES = _FAKES_NAMES | _ROW_FAKES_NAMES
 # suite that pastes a fake instead of importing should join this tuple (and be caught by [G1]).
 _MILESTONE_SUITES = tuple(_SHARED_TESTS / name for name in (
     "test_milestones.py",
-    "test_milestones_gaps.py",
     "test_milestones_custom_plan.py",
     "test_milestones_custom_plan_gaps.py",
     "test_milestones_resolve_gaps.py",
-    "test_milestones_whit369_gaps.py",
-    "test_milestones_whit385_gaps.py",
-    "test_milestones_whit386_gaps.py",
     "test_milestone_rows.py",
     "test_milestones_whit424_covers_gaps.py",
     "test_milestones_live_keys_gaps.py",
@@ -54,15 +50,22 @@ _SHARED_LAYER = frozenset(
 
 
 def _top_level_bindings(path: pathlib.Path) -> set:
+    # The deduped view of the binding list — one AST walk, shared with the list version below.
+    return set(_top_level_binding_list(path))
+
+
+def _top_level_binding_list(path: pathlib.Path) -> list:
+    """Every top-level def/class/assignment name AS A LIST (dups preserved). The set-returning
+    _top_level_bindings above silently collapses a duplicate; this keeps it visible."""
     tree = ast.parse(path.read_text())
-    names = set()
+    names = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
+            names.append(node.name)
         elif isinstance(node, ast.Assign):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)  # annotated form, e.g. `_UNSET: object = object()`
+            names.append(node.target.id)
     return names
 
 
@@ -105,6 +108,22 @@ def test_no_milestone_suite_re_defines_a_shared_fake(suite):
         f"{suite.name} re-defines shared milestone fakes {redefined} that live in "
         "_milestone_fakes.py / _milestone_row_fakes.py. Delete the local copy and import it — a "
         "second definition drifts and starts passing what the shared fake rejects (WHIT-445)."
+    )
+
+
+@pytest.mark.parametrize("suite", _MILESTONE_SUITES, ids=lambda p: p.name)
+def test_no_milestone_suite_shadows_a_top_level_name(suite):
+    # [G3] fail-on-revert for fold-drift (WHIT-471): folding N files into one can land two
+    # top-level defs/consts with the SAME name (e.g. two `_run` helpers, two data consts). Python
+    # keeps only the last; pytest still collects, and tests silently cross-bind to the survivor —
+    # with NO linter in this repo to flag F811. [G1] deliberately ignores local helpers, so it
+    # can't see this. A duplicate name here means a rename was missed in the fold: rename it.
+    names = _top_level_binding_list(suite)
+    dups = sorted({n for n in names if names.count(n) > 1})
+    assert not dups, (
+        f"{suite.name} defines these top-level names more than once: {dups}. A fold/merge left "
+        "two same-named defs or consts; Python keeps only the last and tests silently bind the "
+        "survivor. Rename the collision (per WHIT-471's _run_whit385 / _run_whit386 pattern)."
     )
 
 
