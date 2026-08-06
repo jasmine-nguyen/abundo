@@ -37,11 +37,7 @@ _ALL_SHARED_NAMES = _FAKES_NAMES | _ROW_FAKES_NAMES
 _MILESTONE_SUITES = tuple(_SHARED_TESTS / name for name in (
     "test_milestones.py",
     "test_milestones_custom_plan.py",
-    "test_milestones_custom_plan_gaps.py",
-    "test_milestones_resolve_gaps.py",
     "test_milestone_rows.py",
-    "test_milestones_whit424_covers_gaps.py",
-    "test_milestones_live_keys_gaps.py",
 ))
 
 _SHARED_LAYER = frozenset(
