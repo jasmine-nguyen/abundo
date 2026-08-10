@@ -103,14 +103,14 @@ _REGISTRY = [
         "feed",
         [_Module("_feed_fakes",
                  {"ANZ", "SPENDING", "HOMELOAN", "_row", "FakeFeedRepo", "_feed_event"})],
-        (_API_TESTS / "test_transactions_feed.py", _API_TESTS / "test_transactions_feed_gaps.py"),
+        # WHIT-469 folded test_transactions_feed_gaps.py into the main.
+        (_API_TESTS / "test_transactions_feed.py",),
     ),
     _Domain(
         "handler_patch",
         [_Module("_handler_patch_fakes", {"_UNSET", "FakeRepo", "_patch_event"})],
-        (_API_TESTS / "test_handler.py",
-         _API_TESTS / "test_handler_whit275_gaps.py",
-         _API_TESTS / "test_handler_whit296_gaps.py"),
+        # WHIT-469 folded test_handler_whit275_gaps.py / test_handler_whit296_gaps.py into the main.
+        (_API_TESTS / "test_handler.py",),
     ),
     _Domain(
         "paycycle",

@@ -10,8 +10,13 @@ import json
 
 import pytest
 
+from _lambda_api_constants import api_constant
+
 VALID = {"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, "baseRepay": 1240, "extra": 200}
 _FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
+# Read from lambda_api/constants.py rather than hand-copied (WHIT-393), bound at import time so the
+# folded boundary parametrize tables (built at collection time) can use it (WHIT-469).
+CEILING = api_constant("LOANFACTS_FIELD_MAX")
 
 
 class FakeLoanFactsRepo:
@@ -177,3 +182,95 @@ def test_set_loanfacts_rejects_bad_fields(handler, body, needle):
 def test_set_loanfacts_rejects_invalid_json(handler):
     resp = handler.set_loanfacts(_put_event("{not json"), FakeLoanFactsRepo())
     assert resp["statusCode"] == 400
+
+
+# === boundary + non-finite gaps (folded from test_loanfacts_edges.py) — inclusive upper
+# bounds accepted, deposit-target boundaries, and the math.isfinite gate. The drifted repo
+# is kept renamed (FakeLoanFactsRepo_edges: a set_calls variant vs the get_calls one above). =
+
+
+class FakeLoanFactsRepo_edges:
+    def __init__(self, facts=None):
+        self._facts = facts
+        self.set_calls = []
+
+    def get_loanfacts(self):
+        return dict(self._facts) if self._facts is not None else None
+
+    def set_loanfacts(self, payoffGoalDate=None, depositTarget=None, **kwargs):
+        self.set_calls.append({**kwargs, "payoffGoalDate": payoffGoalDate, "depositTarget": depositTarget})
+        return {
+            **{k: float(v) for k, v in kwargs.items()},
+            "payoffGoalDate": payoffGoalDate,
+            "depositTarget": float(depositTarget) if depositTarget is not None else None,
+        }
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"lvr": 1},                 # inclusive top of (0, 1]
+        {"ratePct": 100},           # inclusive top of (0, 100]
+        {"original": CEILING},      # exactly at the ceiling (guard is strict >)
+        {"extra": CEILING},         # extra also shares the ceiling
+    ],
+)
+def test_set_loanfacts_accepts_inclusive_upper_bounds(handler, over):
+    repo = FakeLoanFactsRepo_edges()
+    resp = handler.set_loanfacts(_put_event({**VALID, **over}), repo)
+    assert resp["statusCode"] == 200
+    assert len(repo.set_calls) == 1
+
+
+# --- deposit target (WHIT-378) boundaries ------------------------------------
+
+
+def test_set_loanfacts_accepts_deposit_target_at_the_ceiling(handler):
+    # Shares the dollar ceiling with the other amounts; the guard is strict >, so == is fine.
+    repo = FakeLoanFactsRepo_edges()
+    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": CEILING}), repo)
+    assert resp["statusCode"] == 200
+    assert len(repo.set_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "bad, needle",
+    [
+        (True, "number"),          # bool is rejected before the numeric check
+        (0, "> 0"),                # zero is not a real target
+        (-100, "> 0"),             # negative
+        (CEILING + 1, "too large"),
+    ],
+)
+def test_set_loanfacts_rejects_a_bad_deposit_target(handler, bad, needle):
+    repo = FakeLoanFactsRepo_edges()
+    resp = handler.set_loanfacts(_put_event({**VALID, "depositTarget": bad}), repo)
+    assert resp["statusCode"] == 400
+    assert needle in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []   # nothing persisted on a rejected write
+
+
+def test_set_loanfacts_rejects_non_finite_deposit_target(handler):
+    body = (
+        '{"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, '
+        '"baseRepay": 1240, "extra": 200, "depositTarget": Infinity}'
+    )
+    repo = FakeLoanFactsRepo_edges()
+    resp = handler.set_loanfacts(_put_event(body), repo)
+    assert resp["statusCode"] == 400
+    assert "finite" in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []
+
+
+@pytest.mark.parametrize("token", ["Infinity", "-Infinity", "NaN"])
+def test_set_loanfacts_rejects_non_finite_numbers(handler, token):
+    # json.loads accepts these bare tokens; the handler's math.isfinite gate must catch them.
+    body = (
+        '{"original": %s, "homeValue": 770000, "lvr": 0.8, '
+        '"ratePct": 5.74, "baseRepay": 1240, "extra": 200}' % token
+    )
+    repo = FakeLoanFactsRepo_edges()
+    resp = handler.set_loanfacts(_put_event(body), repo)
+    assert resp["statusCode"] == 400
+    assert "finite" in json.loads(resp["body"])["error"]
+    assert repo.set_calls == []
