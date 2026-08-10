@@ -19,10 +19,11 @@ does not cover most of them; and its [G3] shadow-check covers only the milestone
          re-duplicates a harness fake that can then drift from its twin — the drift WHIT-469 closed.
 """
 
-import ast
 import pathlib
 
 import pytest
+
+from _ast_bindings import _top_level_binding_list
 
 _TESTS = pathlib.Path(__file__).resolve().parent.parent          # tests/
 _API = _TESTS / "lambda_api"
@@ -57,22 +58,6 @@ _DELETED = [
     "lambda_api/test_repayment_nonfinite_gaps.py",
     "lambda_api/test_transactions_feed_gaps.py",
 ]
-
-
-def _top_level_binding_list(path: pathlib.Path) -> list:
-    """Every top-level def/class/assignment name AS A LIST (dups preserved) — the set form would
-    collapse the very duplicate [G4] hunts for. Mirrors tests/shared/test_fakes_invariants.py and
-    tests/shared/test_milestone_consolidation_invariants.py."""
-    tree = ast.parse(path.read_text())
-    names: list = []
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.append(node.name)
-        elif isinstance(node, ast.Assign):
-            names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.append(node.target.id)
-    return names
 
 
 # A main that got renamed/moved would make [G4] scan a missing file and error loudly rather than pass
