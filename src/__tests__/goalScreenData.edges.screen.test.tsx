@@ -4,7 +4,7 @@
 // the old store's behaviour); (2) a loan-facts read failure is aggregate-error-but-not-a-
 // balance-error and the facts fall back to EMPTY_LOAN_FACTS; (3) refetchStale is stale-gated
 // (no request storm). ../api + ../auth mocked; real QueryClientProvider drives the hook.
-import { it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -19,10 +19,12 @@ jest.mock('../auth', () => ({
 const mockFetchHomeLoan = jest.fn<() => Promise<unknown>>();
 const mockFetchRepayment = jest.fn<() => Promise<unknown>>();
 const mockFetchLoanFacts = jest.fn<() => Promise<unknown>>();
+const mockFetchMilestones = jest.fn<() => Promise<unknown>>(); // WHIT-367 (folded): the secondary milestones read
 jest.mock('../api', () => ({
   fetchHomeLoan: () => mockFetchHomeLoan(),
   fetchRepayment: () => mockFetchRepayment(),
   fetchLoanFacts: () => mockFetchLoanFacts(),
+  fetchMilestones: () => mockFetchMilestones(),
 }));
 
 import { useGoalScreenData } from '../queries';
@@ -47,6 +49,7 @@ beforeEach(() => {
   mockFetchHomeLoan.mockReset().mockResolvedValue(HOME_LOAN);
   mockFetchRepayment.mockReset().mockResolvedValue(REPAYMENT);
   mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
+  mockFetchMilestones.mockReset().mockResolvedValue([]); // WHIT-367 (folded): default to the empty plan
 });
 
 it('a null balance on a LATER refetch KEEPS the loaded balance (keep-last-good, WHIT-204)', async () => {
@@ -107,4 +110,54 @@ it('refetchStale refetches all three reads exactly once when they are stale', as
   await waitFor(() => expect(mockFetchHomeLoan).toHaveBeenCalledTimes(2));
   expect(mockFetchRepayment).toHaveBeenCalledTimes(2);
   expect(mockFetchLoanFacts).toHaveBeenCalledTimes(2);
+});
+
+// ===== WHIT-367 GAPS (folded from goalScreenDataMilestones.gaps) — the milestones query is
+// SECONDARY: deliberately kept OUT of useGoalScreenData's combined isLoading/isError (queries.ts)
+// so a milestones read hiccup degrades to the built-in default plan instead of blanking/erroring the
+// balance hero. Locks: (1) a REJECT leaves isError/isLoading untouched, milestones → []; (2) that []
+// keeps a STABLE reference (frozen EMPTY_MILESTONES, WHIT-244 identity trap); (3) a real saved list
+// flows through unchanged. Reuses the module wrapper + HOME_LOAN/REPAYMENT/READY_FACTS + the module
+// beforeEach (which now seeds mockFetchMilestones → []); its own fixed-stale makeClient is block-scoped.
+describe('goalScreenData — milestones secondary query (WHIT-367)', () => {
+  function makeClient() {
+    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
+  }
+  const SAVED_PLAN = [
+    { id: 'a', label: 'Start',  targetBalance: 300000, targetDate: '2026-01-01' },
+    { id: 'b', label: 'Midway', targetBalance: 200000, targetDate: '2027-01-01' },
+  ];
+
+  it('a milestones read FAILURE does not flip isError/isLoading and falls back to []', async () => {
+    mockFetchMilestones.mockReset().mockRejectedValue(new Error('API error: 500'));
+    const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+
+    // The three primary reads all succeed; the milestones failure must NOT surface in the aggregate.
+    await waitFor(() => expect(result.current.homeLoan.balance).toBe(596642.43));
+    await waitFor(() => expect(mockFetchMilestones).toHaveBeenCalled());
+    expect(result.current.isError).toBe(false);          // milestones is OUT of the combine
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.homeLoanError).toBe(false);
+    expect(result.current.milestones).toEqual([]);       // degrades to the empty (→ default plan) list
+  });
+
+  it('the empty-milestones fallback keeps a STABLE reference across renders (frozen EMPTY_MILESTONES)', async () => {
+    // Never resolves → the query stays cold → milestones is the `?? EMPTY_MILESTONES` fallback the
+    // whole time. A `?? []` regression would hand back a fresh array per render (new reference).
+    mockFetchMilestones.mockReset().mockReturnValue(new Promise(() => {}));
+    const { result, rerender } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false)); // primaries done; milestones still cold
+    const first = result.current.milestones;
+    expect(first).toEqual([]);
+    rerender({});
+    expect(result.current.milestones).toBe(first);       // same reference — stable identity
+  });
+
+  it('a real saved milestone list flows through the composite unchanged', async () => {
+    mockFetchMilestones.mockReset().mockResolvedValue(SAVED_PLAN);
+    const { result } = renderHook(() => useGoalScreenData(), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.milestones).toHaveLength(2));
+    expect(result.current.milestones).toEqual(SAVED_PLAN);
+    expect(result.current.isError).toBe(false);
+  });
 });

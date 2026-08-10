@@ -15,15 +15,17 @@ const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
 const mockFetchBudgets = jest.fn<() => Promise<unknown>>();
 const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
 const mockFetchBudgetTransactions = jest.fn<(id: string) => Promise<unknown>>();
+const mockFetchCategoryTransactions = jest.fn<(id: string, cycle: number) => Promise<unknown>>(); // WHIT-342/374 (folded)
 jest.mock('../api', () => ({
   fetchCategories: () => mockFetchCategories(),
   fetchPayCycle: () => mockFetchPayCycle(),
   fetchBudgets: () => mockFetchBudgets(),
   fetchTransactions: () => mockFetchTransactions(),
   fetchBudgetTransactions: (id: string) => mockFetchBudgetTransactions(id),
+  fetchCategoryTransactions: (id: string, cycle: number) => mockFetchCategoryTransactions(id, cycle),
 }));
 
-import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData } from '../queries';
+import { useCategories, usePayCycle, useBudgetDetailScreenData, useBudgetsScreenData, useCategoryCycleTransactionsQuery, useCategoryTransactionsScreenData, categoriesKey } from '../queries';
 
 const CATS = [{ id: 'coffee', name: 'Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
 
@@ -117,4 +119,124 @@ it('useBudgetDetailScreenData: a payCycle failure surfaces as isError, not a str
   const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
   await waitFor(() => expect(result.current.isError).toBe(true)); // payCycleQuery IS in the OR
   expect(result.current.isLoading).toBe(false);
+});
+
+// ===== WHIT-342 GAP (folded from categoryDrillQuery.gaps) — useCategoryCycleTransactionsQuery, the
+// drill-in's data hook: no fetch before login (enabled=false), no fetch on empty categoryId, and the
+// cycle is part of the query key so cycle 0 and cycle 1 for the same category cache INDEPENDENTLY.
+// Own beforeEach seeds cycle-tagged rows (the module beforeEach doesn't touch this mock).
+describe('useCategoryCycleTransactionsQuery (WHIT-342)', () => {
+  beforeEach(() => {
+    mockFetchCategoryTransactions.mockReset()
+      // return rows tagged by the cycle asked for, so a key collision would surface as wrong rows.
+      .mockImplementation((id, cycle) => Promise.resolve([{ transaction_id: `${id}-c${cycle}` }]));
+  });
+
+  // [A-hook1]
+  it('does not fetch before login (enabled=false)', () => {
+    renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, false), { wrapper: wrapper(makeClient()) });
+    expect(mockFetchCategoryTransactions).not.toHaveBeenCalled();
+  });
+
+  // [A-hook2] — the `enabled && !!categoryId` guard: an absent id (a route mounted before params
+  // resolve) must not fire a `/categories//transactions` request.
+  it('does not fetch when categoryId is empty, even when enabled', () => {
+    renderHook(() => useCategoryCycleTransactionsQuery('', 0, true), { wrapper: wrapper(makeClient()) });
+    expect(mockFetchCategoryTransactions).not.toHaveBeenCalled();
+  });
+
+  // [A-hook4]
+  it('fetches with (categoryId, cycle) when enabled and id present', async () => {
+    const { result } = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(mockFetchCategoryTransactions).toHaveBeenCalledWith('coffee', 1);
+  });
+
+  // [A-hook3] — the headline cache-key gap: cycle 0 and cycle 1 for the SAME category must not
+  // collide. Both hooks share ONE client; each must resolve to ITS OWN cycle's rows.
+  it('caches cycle 0 and cycle 1 independently for the same category (no collision)', async () => {
+    const client = makeClient();
+    const c0 = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 0, true), { wrapper: wrapper(client) });
+    const c1 = renderHook(() => useCategoryCycleTransactionsQuery('coffee', 1, true), { wrapper: wrapper(client) });
+
+    await waitFor(() => expect(c0.result.current.data).toBeDefined());
+    await waitFor(() => expect(c1.result.current.data).toBeDefined());
+
+    expect(c0.result.current.data).toEqual([{ transaction_id: 'coffee-c0' }]);
+    expect(c1.result.current.data).toEqual([{ transaction_id: 'coffee-c1' }]);
+    // both cycles were actually fetched — a collided key would fetch once and share.
+    expect(mockFetchCategoryTransactions).toHaveBeenCalledWith('coffee', 0);
+    expect(mockFetchCategoryTransactions).toHaveBeenCalledWith('coffee', 1);
+  });
+});
+
+// ===== WHIT-374 GAP (folded from categoryTransactionsScreenData.gaps) — useCategoryTransactionsScreenData,
+// the drill-in composite that feeds `categoriesReady` to app/category/[id].tsx. Locks the warm/cold/
+// empty/error/retry derivation of that flag from a real cache. Own consts (a DIFFERENT CATS/ROWS) +
+// beforeEach block-scoped so they don't perturb the survivor's coffee fixture above.
+describe('useCategoryTransactionsScreenData (WHIT-374)', () => {
+  const CATS = [{ id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de', recent: 0 }];
+  const ROWS = [{ transaction_id: 'salary-c0' }];
+
+  beforeEach(() => {
+    mockAuthStatus = 'authed';
+    mockFetchCategories.mockReset().mockResolvedValue(CATS);
+    mockFetchCategoryTransactions.mockReset().mockResolvedValue(ROWS);
+  });
+
+  // [A-warm] — the warm path: Insights already loaded the taxonomy, so drilling in must NOT flash a
+  // spinner. Pre-seed the categories cache, then the FIRST synchronous render already has
+  // categoriesReady === true. FAIL-ON-REVERT: hard-coding categoriesReady to false makes this fail.
+  it('categoriesReady is true on the first render when the taxonomy is already cached', async () => {
+    const client = makeClient();
+    client.setQueryData(categoriesKey, CATS); // taxonomy warmed by an earlier screen
+    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(client) });
+    expect(result.current.categoriesReady).toBe(true);        // warm on mount → no cold gate
+    expect(result.current.category('salary')?.bucket).toBe('Income');
+    await waitFor(() => expect(result.current.transactions).toHaveLength(1)); // flush the txn fetch
+  });
+
+  // [A-cold] — the cold path the fix exists for: taxonomy in flight → categoriesReady false first
+  // (the screen holds the spinner), then true once it lands. FAIL-ON-REVERT: hard-coding true skips
+  // the false phase and this first assertion fails.
+  it('categoriesReady is false while the taxonomy loads, then true once it lands', async () => {
+    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    expect(result.current.categoriesReady).toBe(false);       // cold: categories still fetching
+    await waitFor(() => expect(result.current.categoriesReady).toBe(true));
+  });
+
+  // [A-empty] — an empty taxonomy is still "loaded" (data === []), so categoriesReady must be true
+  // and the screen renders (everything Uncategorized), not stall on a spinner forever. No crash.
+  it('treats an empty taxonomy ([]) as ready (true), not as never-loaded', async () => {
+    mockFetchCategories.mockReset().mockResolvedValue([]);
+    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.categoriesReady).toBe(true));
+    expect(result.current.category('salary')).toBeUndefined(); // empty taxonomy → no match, no throw
+  });
+
+  // [A-err] — the categories-error-with-cached-transactions path: transactions resolve but the
+  // taxonomy read fails. isError must be true and categoriesReady false, so the screen shows the
+  // error card (it can't label/sign the rows) instead of a cold "$0" detail.
+  it('a taxonomy read failure (transactions cached) surfaces isError with categoriesReady false', async () => {
+    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.categoriesReady).toBe(false);       // never loaded → screen must gate
+    expect(result.current.transactions).toHaveLength(1);       // the txns DID land
+    expect(result.current.isLoading).toBe(false);              // errored dep → not a stranded spinner
+  });
+
+  // [A-retry] — the inline Retry (refetch) must re-fire BOTH reads, so a taxonomy failure can
+  // actually recover. FAIL-ON-REVERT: dropping categoriesQuery from useCombineScreenQueries' array
+  // leaves fetchCategories at 1 call.
+  it('refetch re-fires both the transactions and the categories reads', async () => {
+    const { result } = renderHook(() => useCategoryTransactionsScreenData('salary', 0), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(mockFetchCategoryTransactions).toHaveBeenCalledTimes(1);
+    expect(mockFetchCategories).toHaveBeenCalledTimes(1);
+
+    await act(async () => { result.current.refetch(); });
+    await waitFor(() => expect(mockFetchCategoryTransactions).toHaveBeenCalledTimes(2));
+    expect(mockFetchCategories).toHaveBeenCalledTimes(2);       // BOTH reads re-fired
+  });
 });
