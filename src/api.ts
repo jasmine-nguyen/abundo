@@ -241,6 +241,11 @@ export interface BudgetRollup {
   target: number;
   posted: number;   // settled (posted) spend
   pending: number;  // not-yet-settled (pending) spend
+  // Rollover (envelope carryover): present only for a rollover category. `carryover` is the
+  // signed accumulated buffer (positive = saved up, negative = a spike cycle's overspend
+  // carried as a deficit). Absent on a non-rollover/legacy budget — the client defaults them.
+  rollover?: boolean;
+  carryover?: number;
 }
 
 /**
@@ -755,12 +760,16 @@ export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
  */
 export async function setBudget(
   categoryId: string,
-  target: number
+  target: number,
+  rollover?: boolean
 ): Promise<{ id: string; target: number }> {
+  // Send `rollover` only when the caller passes it, so a plain amount edit leaves the
+  // stored flag untouched (the server treats an absent `rollover` as "no change").
+  const body = rollover === undefined ? { target } : { target, rollover };
   const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ target }),
+    body: JSON.stringify(body),
   });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 

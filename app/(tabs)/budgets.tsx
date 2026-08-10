@@ -90,6 +90,7 @@ export default function Budgets() {
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={styles.rowName}>{b.name}</Text>
                 <Text style={styles.rowSub}>{b.spentLabel}</Text>
+                {b.carryoverLabel ? <Text style={styles.rowRollover}>{b.carryoverLabel}</Text> : null}
               </View>
               <View style={{ alignItems: 'flex-end' }}>
                 <Text style={[styles.rowRemain, { color: b.remainColor }]}>{b.remainAmount}</Text>
@@ -142,6 +143,7 @@ const styles = StyleSheet.create({
   chip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   rowName: { fontFamily: FONT.body, fontSize: 16, fontWeight: '600', color: C.textBright, letterSpacing: -0.2 },
   rowSub: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, marginTop: 2 },
+  rowRollover: { fontFamily: FONT.body, fontSize: 12, fontWeight: '600', color: C.accentSoft, marginTop: 3 },
   rowRemain: { fontFamily: FONT.display, fontSize: 20, fontWeight: '700', letterSpacing: -0.5 },
   rowRemainLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim, fontWeight: '500', marginTop: 1 },
   // WHIT-281: the "today's pace" tick is labelled once in the legend up top; a per-row

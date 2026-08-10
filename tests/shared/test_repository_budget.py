@@ -79,3 +79,76 @@ def test_delete_budget_raises_a_conflict_when_it_cannot_converge(shared, budget_
     with pytest.raises(VersionConflictError):
         budget_repo.delete_budget("groceries")
     assert "groceries" in table.item["items"]        # never removed
+
+
+# --- set_budget preserves rollover fields + settle_carryover (budget rollover) ---
+
+
+def test_set_budget_preserves_rollover_fields_on_an_amount_edit(shared, budget_repo, config_item_table):
+    # FAIL-ON-REVERT for the clobber fix: a plain amount edit must merge onto the existing
+    # entry, never replace it — a stored carryover/rollover survives untouched.
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(300), "rollover": True, "carryover": Decimal(40),
+        "carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01",
+    }})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_budget("groceries", Decimal(350))
+
+    entry = table.item["items"]["groceries"]
+    assert entry["target"] == Decimal(350)            # amount updated
+    assert entry["rollover"] is True                  # NOT clobbered
+    assert entry["carryover"] == Decimal(40)          # accumulated buffer preserved
+    assert entry["carryover_from"] == "2026-08-06"
+
+
+def test_set_budget_creates_a_brand_new_entry(shared, budget_repo, config_item_table):
+    # The items.<id> map key doesn't exist yet — the whole-entry SET must create it cleanly
+    # (a nested per-field SET would error on the missing parent map).
+    table = config_item_table("BUDGETS", items={})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_budget("coffee", Decimal(58))
+
+    assert table.item["items"]["coffee"] == {"target": Decimal(58)}
+
+
+def test_set_budget_with_rollover_and_anchor_writes_the_anchor_fields(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(58)}})
+    _with_table(budget_repo, table)
+    anchor = {"carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01"}
+
+    budget_repo.set_budget("coffee", Decimal(60), rollover=True, anchor=anchor)
+
+    entry = table.item["items"]["coffee"]
+    assert entry["target"] == Decimal(60)
+    assert entry["rollover"] is True
+    assert entry["carryover_from"] == "2026-08-06"
+    assert entry["carryover_len"] == Decimal(30)
+    assert entry["carryover_paydate"] == "2026-01-01"
+
+
+def test_settle_carryover_persists_balance_and_anchor_preserving_target(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(58), "rollover": True}})
+    _with_table(budget_repo, table)
+
+    budget_repo.settle_carryover("coffee", Decimal(200), "2026-07-07", 30, "2026-01-01")
+
+    entry = table.item["items"]["coffee"]
+    assert entry["carryover"] == Decimal(200)
+    assert entry["carryover_from"] == "2026-07-07"
+    assert entry["carryover_len"] == Decimal(30)
+    assert entry["carryover_paydate"] == "2026-01-01"
+    assert entry["target"] == Decimal(58)   # not wiped by the settle
+    assert entry["rollover"] is True         # flag preserved
+
+
+def test_settle_carryover_retries_once_under_a_version_race(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(58), "rollover": True}})
+    table.race_next_update()   # first update loses the lock; repo re-reads + retries
+    _with_table(budget_repo, table)
+
+    budget_repo.settle_carryover("coffee", Decimal(-25), "2026-07-07", 30, "2026-01-01")
+
+    assert table.item["items"]["coffee"]["carryover"] == Decimal(-25)  # negative buffer converges
+    assert table.update_calls == 2

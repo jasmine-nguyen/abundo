@@ -94,6 +94,45 @@ def nth_prior_cycle_window(cycle_start: str, length: int, n: int) -> tuple[str, 
     return prior_start.isoformat(), prior_end.isoformat()
 
 
+def completed_cycle_windows(anchor_start: str, current_start: str, length: int,
+                            max_cycles: int) -> list[tuple[str, str]]:
+    """The FULLY-COMPLETED pay cycles between `anchor_start` (inclusive) and the current
+    cycle `current_start` (exclusive), oldest-first, capped to the most recent `max_cycles`.
+
+    Each window is one `length`-day span `[s, s + length - 1]`, abutting the next with no
+    gap or overlap (the same stepping as `nth_prior_cycle_window`), so bucketing a
+    transaction by its inclusive date lands it in exactly one. Used by the rollover
+    settlement to fold each elapsed cycle's leftover once.
+
+    Returns [] when no full cycle has elapsed since the anchor (`current_start <=
+    anchor_start`). The `max_cycles` cap bounds a first-open-after-a-long-gap read: only
+    the most recent `max_cycles` cycles are returned (older leftovers are dropped, and the
+    caller advances its anchor past them — an accepted cold-start limit).
+    """
+    anchor = date.fromisoformat(anchor_start)
+    current = date.fromisoformat(current_start)
+    starts = []
+    step = anchor
+    while step < current:
+        starts.append(step)
+        step = step + timedelta(days=length)
+    if len(starts) > max_cycles:
+        starts = starts[-max_cycles:]
+    return [(s.isoformat(), (s + timedelta(days=length - 1)).isoformat()) for s in starts]
+
+
+def transactions_in_window(transactions: list[dict], start: str, end: str) -> list[dict]:
+    """The subset of `transactions` whose date-only `date` falls in the inclusive
+    [start, end] window. ISO YYYY-MM-DD strings compare lexicographically, matching the
+    DynamoDB `between` the fetch uses. A row with no `date` is skipped (can't be placed).
+
+    Kept separate so the rollover settlement can split ONE widened fetch into per-cycle
+    slices before summarising — the `summarise_*` functions take a flat list and sum ALL
+    of it, so the caller must pre-filter to a single cycle.
+    """
+    return [t for t in transactions if start <= t.get("date", "") <= end]
+
+
 def contributes_to_budget(transaction: dict) -> bool:
     """Whether a transaction counts toward a budget summary: it's flagged to count
     (`counts_to_budget`), the user hasn't manually excluded it (`budget_excluded`,

@@ -39,11 +39,20 @@ class FakeBudgetRepo:
         self.list_calls += 1
         return {k: dict(v) for k, v in self._budgets.items()}
 
-    def set_budget(self, cat_id, target):
+    def set_budget(self, cat_id, target, rollover=None, anchor=None):
         self.set_calls.append((cat_id, target))
+        self.set_kwargs = {"rollover": rollover, "anchor": anchor}
         if self._conflict_exc is not None:
             raise self._conflict_exc("boom")
         return {"id": cat_id, "target": target}
+
+    def settle_carryover(self, cat_id, carryover, carryover_from, carryover_len, carryover_paydate):
+        # Rollover seal write-on-read (best-effort). Records the sealed balance/anchor.
+        self._budgets.setdefault(cat_id, {}).update({
+            "carryover": carryover, "carryover_from": carryover_from,
+            "carryover_len": carryover_len, "carryover_paydate": carryover_paydate,
+        })
+        return {"id": cat_id}
 
     def delete_budget(self, cat_id):
         self.delete_calls.append(cat_id)
@@ -69,7 +78,7 @@ def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
 def test_set_budget_success(handler):
     repo = FakeBudgetRepo()
 
-    resp = handler.set_budget(_put_budget_event(), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"id": "coffee", "target": 58}
@@ -79,7 +88,7 @@ def test_set_budget_success(handler):
 def test_set_budget_zero_accepted(handler):
     repo = FakeBudgetRepo()
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("coffee", Decimal("0"))]
@@ -89,7 +98,7 @@ def test_set_budget_decimal_precision(handler):
     # Decimal(str(12.34)) stores exactly, never binary-float drift.
     repo = FakeBudgetRepo()
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": 12.34}'), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(body='{"target": 12.34}'), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("coffee", Decimal("12.34"))]
@@ -99,7 +108,7 @@ def test_set_budget_unknown_category_accepted(handler):
     # Unknown ids are accepted (stored as an orphan the client ignores).
     repo = FakeBudgetRepo()
 
-    resp = handler.set_budget(_put_budget_event(category="doesnotexist"), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(category="doesnotexist"), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("doesnotexist", Decimal("58"))]
@@ -123,7 +132,7 @@ def test_set_budget_unknown_category_accepted(handler):
 def test_set_budget_bad_target_400(handler, body):
     repo = FakeBudgetRepo()
 
-    resp = handler.set_budget(_put_budget_event(body=body), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(body=body), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
@@ -143,12 +152,12 @@ def test_the_budget_target_cap_is_pinned_and_its_boundary_holds(handler):
     )
 
     at_cap = handler.set_budget(
-        _put_budget_event(body=json.dumps({"target": cap})), FakeBudgetRepo(), FakeCategoryRepo())
+        _put_budget_event(body=json.dumps({"target": cap})), FakeBudgetRepo(), FakeCategoryRepo(), FakePayCycleRepo())
     assert at_cap["statusCode"] == 200, "the cap itself must be accepted (the guard is strict >)"
 
     over_repo = FakeBudgetRepo()
     over = handler.set_budget(
-        _put_budget_event(body=json.dumps({"target": cap + 1})), over_repo, FakeCategoryRepo())
+        _put_budget_event(body=json.dumps({"target": cap + 1})), over_repo, FakeCategoryRepo(), FakePayCycleRepo())
     assert over["statusCode"] == 400
     assert over_repo.set_calls == []
 
@@ -158,7 +167,7 @@ def test_set_budget_missing_path_param_404(handler):
     event = _put_budget_event()
     event["pathParameters"] = {}
 
-    resp = handler.set_budget(event, repo, FakeCategoryRepo())
+    resp = handler.set_budget(event, repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 404
     assert repo.set_calls == []
@@ -167,7 +176,7 @@ def test_set_budget_missing_path_param_404(handler):
 def test_set_budget_invalid_json_400(handler):
     repo = FakeBudgetRepo()
 
-    resp = handler.set_budget(_put_budget_event(body="not json"), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(body="not json"), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []
@@ -177,7 +186,7 @@ def test_set_budget_base64_body(handler):
     repo = FakeBudgetRepo()
     encoded = base64.b64encode(b'{"target": 58}').decode()
 
-    resp = handler.set_budget(_put_budget_event(body=encoded, is_b64=True), repo, FakeCategoryRepo())
+    resp = handler.set_budget(_put_budget_event(body=encoded, is_b64=True), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("coffee", Decimal("58"))]
@@ -190,7 +199,7 @@ def test_set_budget_savings_category_rejected_400(handler):
     repo = FakeBudgetRepo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
-    resp = handler.set_budget(_put_budget_event(), repo, category_repo)
+    resp = handler.set_budget(_put_budget_event(), repo, category_repo, FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []            # never written
@@ -203,7 +212,7 @@ def test_set_budget_non_savings_category_accepted(handler):
     repo = FakeBudgetRepo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
 
-    resp = handler.set_budget(_put_budget_event(), repo, category_repo)
+    resp = handler.set_budget(_put_budget_event(), repo, category_repo, FakePayCycleRepo())
 
     assert resp["statusCode"] == 200
     assert repo.set_calls == [("coffee", Decimal("58"))]
@@ -215,7 +224,7 @@ def test_set_budget_savings_guard_runs_after_numeric_validation(handler):
     repo = FakeBudgetRepo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": -5}'), repo, category_repo)
+    resp = handler.set_budget(_put_budget_event(body='{"target": -5}'), repo, category_repo, FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert category_repo.list_calls == 0   # numeric reject came first, no taxonomy read
@@ -228,7 +237,7 @@ def test_set_budget_zero_target_savings_still_rejected(handler):
     repo = FakeBudgetRepo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
-    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, category_repo)
+    resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, category_repo, FakePayCycleRepo())
 
     assert resp["statusCode"] == 400
     assert repo.set_calls == []

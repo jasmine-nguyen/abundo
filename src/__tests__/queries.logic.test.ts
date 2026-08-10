@@ -28,8 +28,8 @@ describe('selectBudgets', () => {
       food: { target: 250, posted: 60, pending: 5 },
     });
     expect(out).toEqual([
-      { id: 'coffee', budget: 100, posted: 40, pending: 10 },
-      { id: 'food', budget: 250, posted: 60, pending: 5 },
+      { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0 },
+      { id: 'food', budget: 250, posted: 60, pending: 5, rollover: false, carryover: 0 },
     ]);
     expect(out.some((b) => b.id === 'rent')).toBe(false);
   });
@@ -103,7 +103,7 @@ describe('selectBudgets boundaries', () => {
       tiny: { target: 0.01, posted: 0, pending: 0 },
     });
     expect(out.map((b) => b.id)).toEqual(['tiny']);
-    expect(out[0]).toEqual({ id: 'tiny', budget: 0.01, posted: 0, pending: 0 });
+    expect(out[0]).toEqual({ id: 'tiny', budget: 0.01, posted: 0, pending: 0, rollover: false, carryover: 0 });
   });
 });
 

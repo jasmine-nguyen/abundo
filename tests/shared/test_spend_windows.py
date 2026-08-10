@@ -47,3 +47,51 @@ def test_n_below_one_raises(shared):
         shared.spend.nth_prior_cycle_window("2024-01-31", 14, 0)
     with pytest.raises(ValueError):
         shared.spend.nth_prior_cycle_window("2024-01-31", 14, -1)
+
+
+# --- completed_cycle_windows + transactions_in_window (budget rollover) -------
+
+
+def test_completed_cycle_windows_are_the_full_cycles_between_anchor_and_now(shared):
+    # Anchor 90 days before the current cycle_start, monthly (30) → exactly 3 completed
+    # cycles, oldest-first, each a 30-day inclusive span abutting the next with no gap.
+    windows = shared.spend.completed_cycle_windows("2026-05-08", "2026-08-06", 30, max_cycles=12)
+    assert windows == [
+        ("2026-05-08", "2026-06-06"),
+        ("2026-06-07", "2026-07-06"),
+        ("2026-07-07", "2026-08-05"),
+    ]
+    # Each window's end is the day before the next window's start (no overlap, no gap).
+    for (s1, e1), (s2, _e2) in zip(windows, windows[1:]):
+        assert (date.fromisoformat(s2) - date.fromisoformat(e1)).days == 1
+    # The last completed window ends the day before the current cycle_start.
+    assert (date.fromisoformat("2026-08-06") - date.fromisoformat(windows[-1][1])).days == 1
+
+
+def test_completed_cycle_windows_empty_when_no_full_cycle_elapsed(shared):
+    # current_start == anchor (still in the first cycle) → nothing to fold.
+    assert shared.spend.completed_cycle_windows("2026-08-06", "2026-08-06", 30, max_cycles=12) == []
+    # A current_start BEFORE the anchor (defensive) also yields nothing, never an inverted window.
+    assert shared.spend.completed_cycle_windows("2026-08-06", "2026-07-01", 30, max_cycles=12) == []
+
+
+def test_completed_cycle_windows_caps_to_the_most_recent_max_cycles(shared):
+    # 6 full cycles have elapsed but the cap is 2 → only the 2 most-recent are returned
+    # (the older leftovers are dropped; the caller advances its anchor past them).
+    windows = shared.spend.completed_cycle_windows("2026-02-07", "2026-08-06", 30, max_cycles=2)
+    assert windows == [
+        ("2026-06-07", "2026-07-06"),
+        ("2026-07-07", "2026-08-05"),
+    ]
+
+
+def test_transactions_in_window_filters_inclusive_by_date(shared):
+    txns = [
+        {"date": "2026-06-06", "id": "before-end"},   # on the end boundary -> kept
+        {"date": "2026-06-07", "id": "after-end"},    # past the end -> dropped
+        {"date": "2026-05-08", "id": "on-start"},     # on the start boundary -> kept
+        {"date": "2026-05-07", "id": "before-start"}, # before the start -> dropped
+        {"id": "no-date"},                            # no date -> can't place -> dropped
+    ]
+    kept = shared.spend.transactions_in_window(txns, "2026-05-08", "2026-06-06")
+    assert [t["id"] for t in kept] == ["before-end", "on-start"]
