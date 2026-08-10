@@ -12,6 +12,8 @@ from decimal import Decimal
 
 MARKER = "UP_WEBHOOK_REPAYMENT_MISSED"
 _DAY = 24 * 60 * 60
+_LOOKBACK = 7
+_NOW = 1_752_000_000  # fixed epoch for the pinned-clock lookback-edge tests
 
 
 class _FakeNotify:
@@ -67,6 +69,37 @@ def test_zero_drop_is_silent(handler, caplog):
 def test_boundary_exactly_threshold_alarms(handler, caplog):
     # Exactly $3,000 counts (>= threshold).
     assert _check(handler, caplog, old=Decimal("599000"), new=Decimal("596000"), last_fired_at=None)
+
+
+# --- the 7-day lookback edge (wall-clock PINNED so +/-1s can't flake) --------
+
+
+def _run_pinned_clock(handler, monkeypatch, caplog, *, last_fired_at):
+    monkeypatch.setattr(handler.time, "time", lambda: _NOW)
+    caplog.set_level(logging.ERROR)
+    handler.check_repayment_landed_but_no_push(
+        Decimal("600000"), Decimal("596000"), _FakeNotify(last_fired_at),
+    )
+    return MARKER in caplog.text
+
+
+def test_push_exactly_on_lookback_edge_is_healthy(handler, monkeypatch, caplog):
+    # last_fired_at == cutoff (exactly 7 days ago) counts as recent -> silent (>=).
+    edge = _NOW - _LOOKBACK * _DAY
+    assert not _run_pinned_clock(handler, monkeypatch, caplog, last_fired_at=edge)
+
+
+def test_push_one_second_past_lookback_alarms(handler, monkeypatch, caplog):
+    # One second older than the 7-day window -> stale -> alarm. Guards the day-arithmetic
+    # (7*24*60*60) and the >= boundary: flipping >= to > would make the edge case above
+    # alarm, and shrinking the window would move this seam.
+    just_stale = _NOW - _LOOKBACK * _DAY - 1
+    assert _run_pinned_clock(handler, monkeypatch, caplog, last_fired_at=just_stale)
+
+
+def test_push_one_second_inside_lookback_is_healthy(handler, monkeypatch, caplog):
+    fresh = _NOW - _LOOKBACK * _DAY + 1
+    assert not _run_pinned_clock(handler, monkeypatch, caplog, last_fired_at=fresh)
 
 
 # --- integration with _poll_homeloan --------------------------------------

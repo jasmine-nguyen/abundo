@@ -37,10 +37,13 @@ class _FakeDeviceRepo:
         self.removed.append(token)
 
 
-def _wire(handler, monkeypatch, *, pending, receipts, token="token"):
-    """Install fake stores + a canned get_receipts, and return (receipt_repo, device_repo)."""
+def _wire(handler, monkeypatch, *, pending, receipts, device_repo=None, token="token"):
+    """Install fake stores + a canned get_receipts, and return (receipt_repo, device_repo).
+
+    Pass `device_repo` to inject a custom one (e.g. a prune-that-raises); it defaults to a
+    fresh recording _FakeDeviceRepo."""
     receipt_repo = _FakeReceiptRepo(pending)
-    device_repo = _FakeDeviceRepo()
+    device_repo = device_repo or _FakeDeviceRepo()
     monkeypatch.setattr(handler, "PushReceiptRepository", lambda: receipt_repo)
     monkeypatch.setattr(handler, "DeviceRepository", lambda: device_repo)
     monkeypatch.setattr(handler, "get_access_token", lambda: token)
@@ -198,3 +201,80 @@ def test_top_level_sweep_exception_is_swallowed(handler, monkeypatch):
     out = handler.lambda_handler({}, None)
 
     assert out == _ZERO                          # never raised
+
+
+# --- adversarial malformed-receipt + ordering edges -------------------------
+
+
+def test_error_status_without_details_is_a_failure(handler, monkeypatch, caplog):
+    # status=="error" but NO details key → error code is None → failed + delete.
+    receipt_repo, device_repo = _wire(
+        handler, monkeypatch,
+        pending=[("r1", "tok1")], receipts={"r1": {"status": "error"}})
+
+    with caplog.at_level(logging.ERROR):
+        out = handler.lambda_handler({}, None)
+
+    assert "PUSH_DELIVERY_FAILED" in caplog.text
+    assert "error=None" in caplog.text           # no details → error code is None
+    assert receipt_repo.deleted == ["r1"]        # still terminal → cleared
+    assert device_repo.removed == []             # not a DNR → nothing pruned
+    assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 1}
+
+
+def test_receipt_missing_status_key_is_a_failure(handler, monkeypatch, caplog):
+    # A receipt dict with no `status` key at all → failed (not left pending forever).
+    receipt_repo, device_repo = _wire(
+        handler, monkeypatch,
+        pending=[("r1", "tok1")], receipts={"r1": {}})
+
+    with caplog.at_level(logging.ERROR):
+        out = handler.lambda_handler({}, None)
+
+    assert "PUSH_DELIVERY_FAILED" in caplog.text
+    assert receipt_repo.deleted == ["r1"]        # cleared, not silently left forever
+    assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 1}
+
+
+def test_dnr_prune_failure_leaves_the_row_pending(handler, monkeypatch, caplog):
+    # In the DNR branch remove(token) runs BEFORE delete(rid); if remove raises, the
+    # per-receipt try/except swallows it and delete never runs → the row survives for a
+    # later sweep (TTL is the backstop). Locks that remove-before-delete ordering.
+    class _AngryDeviceRepo(_FakeDeviceRepo):
+        def remove(self, token):
+            raise RuntimeError("dynamo down")
+
+    angry = _AngryDeviceRepo()
+    receipt_repo, device_repo = _wire(
+        handler, monkeypatch,
+        pending=[("r1", "tok-dead")],
+        receipts={"r1": {"status": "error", "details": {"error": "DeviceNotRegistered"}}},
+        device_repo=angry)
+
+    with caplog.at_level(logging.ERROR):
+        out = handler.lambda_handler({}, None)
+
+    assert receipt_repo.deleted == []            # row NOT cleared — prune blocked the delete
+    assert angry.removed == []                   # remove raised, nothing recorded
+    assert out == {"pending": 1, "ok": 0, "pruned": 0, "failed": 0}  # not counted pruned
+
+
+def test_mixed_outcomes_counts_are_order_independent(handler, monkeypatch):
+    # One sweep with an ok, a DNR, a hard error, and an unresolved (absent) id — the
+    # summary counts must be exact and independent of dict iteration order.
+    receipt_repo, device_repo = _wire(
+        handler, monkeypatch,
+        pending=[("ok1", "t-ok"), ("dnr1", "t-dead"), ("err1", "t-err"),
+                 ("wait1", "t-wait")],
+        receipts={
+            "err1": {"status": "error", "details": {"error": "MessageTooBig"}},
+            "ok1": {"status": "ok"},
+            "dnr1": {"status": "error", "details": {"error": "DeviceNotRegistered"}},
+            # wait1 deliberately absent → still in flight
+        })
+
+    out = handler.lambda_handler({}, None)
+
+    assert out == {"pending": 4, "ok": 1, "pruned": 1, "failed": 1}
+    assert device_repo.removed == ["t-dead"]                 # only the DNR token
+    assert sorted(receipt_repo.deleted) == ["dnr1", "err1", "ok1"]  # wait1 left pending
