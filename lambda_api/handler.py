@@ -828,6 +828,17 @@ def update_category(
     except InvalidCategoryParentError as e:
         return _json_response(400, {"error": str(e)})
 
+    # Rollover is spend-only. Reclassifying a category OUT of a spend bucket must clear its
+    # rollover fields (keeping the target) so a stale carryover anchor can't re-fold on a
+    # later move back to spend (WHIT-474). Best-effort, category-first — like the delete
+    # cascade below: a failed clear only leaves a recoverable stale anchor (inert while the
+    # category is non-spend), never a corrupt entry, so it must not fail the bucket edit.
+    if bucket in (INCOME_BUCKET, SAVINGS_BUCKET):
+        try:
+            budget_repo.clear_rollover(cat_id)
+        except (VersionConflictError, DatabaseError) as e:
+            logger.warning("rollover clear failed for re-bucketed category %s: %s", cat_id, e)
+
     return _json_response(200, {**updated, "recent": 0})
 
 

@@ -13,6 +13,11 @@ from repository_errors import VersionConflictError
 
 _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 
+# The rollover-only fields on a budget entry (everything but `target`). Cleared when a
+# category is reclassified out of a spend bucket (rollover is spend-only). Kept local —
+# NOT imported from shared/constants.py — so the WHIT-136 constants-sync guard is untouched.
+_ROLLOVER_FIELDS = ("rollover", "carryover", "carryover_from", "carryover_len", "carryover_paydate")
+
 
 class BudgetRepository:
     """Stores per-category budget targets as a single DynamoDB config item.
@@ -180,3 +185,46 @@ class BudgetRepository:
                     handle_database_error(e, "delete budget")
                 # The version moved under us; loop re-reads and retries once.
         raise VersionConflictError("delete_budget: exhausted retries under write contention")
+
+    def clear_rollover(self, cat_id: str) -> None:
+        """Strip the rollover fields (see _ROLLOVER_FIELDS) from a category's budget entry,
+        KEEPING its `target` — run when the category is reclassified out of a spend bucket
+        (rollover is spend-only). Without this a stale carryover anchor lingers and, on a
+        later move back to spend under the same pay cycle, `list_budgets` would re-fold every
+        cycle since — inflating the buffer with money that was never budgeted (WHIT-474).
+
+        Idempotent no-op (no seed, no version bump) when the category has no budget entry or
+        the entry carries no rollover fields — the common case, so a plain edit of an
+        Income/Savings category is cheap. Writes the whole stripped entry back (a plain
+        `{"target": ...}`) under the same optimistic-lock guard as set_budget, retrying once
+        on a race. The buffer itself is discarded: it is meaningless on an Income earn-target,
+        and re-enabling rollover later starts fresh.
+        """
+        for _attempt in range(2):
+            item = self._get_config()
+            if item is None or cat_id not in item["items"]:
+                return  # no budget for this id -> nothing to clear
+            entry = item["items"][cat_id]
+            stripped = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
+            if stripped == entry:
+                return  # no rollover fields -> no-op, don't bump the version
+            version = item["version"]
+            try:
+                self._get_table().update_item(
+                    Key=_BUDGETS_KEY,
+                    # Rewrite ONE entry (target only); SET bumps the version. Other ids untouched.
+                    UpdateExpression="SET #items.#id = :val, #v = :next",
+                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
+                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
+                    ExpressionAttributeValues={
+                        ":val": stripped,
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                return
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "clear rollover")
+                # The version moved under us; loop re-reads and retries once.
+        raise VersionConflictError("clear_rollover: exhausted retries under write contention")
