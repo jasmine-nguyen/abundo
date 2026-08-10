@@ -17,8 +17,13 @@ _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 class BudgetRepository:
     """Stores per-category budget targets as a single DynamoDB config item.
 
-    The item at pk=sk="BUDGETS" holds an `items` map (category id -> {"target":
-    Decimal}) plus a numeric `version` for optimistic locking. Kept separate from
+    The item at pk=sk="BUDGETS" holds an `items` map (category id -> entry) plus a
+    numeric `version` for optimistic locking. An entry is `{"target": Decimal}` plus,
+    once a category opts into rollover (WHIT budget-rollover), the optional fields
+    `rollover` (bool), `carryover` (signed Decimal buffer), `carryover_from` (ISO cycle
+    start the buffer is sealed as of), `carryover_len`/`carryover_paydate` (the pay-cycle
+    the buffer was sealed under, so a cycle-config change can re-anchor). All optional
+    fields are absent on a legacy/non-rollover budget and default to off/0. Kept separate from
     the CATEGORIES item on purpose: an independent version means budget writes and
     category edits never contend on the same lock. Unlike the taxonomy there is no
     server seed — a target exists only once the user sets one, so the map seeds
@@ -66,39 +71,81 @@ class BudgetRepository:
             item = self._get_config()  # re-read so a concurrent set is reflected
         return dict(item["items"])
 
-    def set_budget(self, cat_id: str, target: Decimal) -> dict:
-        """Set (upsert) a category's budget target under an optimistic-lock guard.
+    def _merge_entry(self, cat_id: str, fields: dict) -> dict:
+        """Read-modify-write ONE category entry: merge `fields` over the existing entry
+        (or an empty one) and write the whole entry back under the optimistic-lock guard.
 
-        Idempotent: succeeds whether or not the id already had a target — no
-        attribute_(not_)exists guard on the map key, unlike create/update category.
-        The id is not validated against the taxonomy: an unknown id just stores an
-        orphan target, which the client ignores (same tolerance as a transaction
-        pointing at a deleted category). Raises VersionConflictError if it can't
-        converge within the retry budget.
+        Merge — not a per-field nested SET — for two reasons: it PRESERVES the entry's
+        other fields (so an amount edit can't wipe a stored `carryover`/`rollover`, and a
+        settle can't wipe `target`), and it works when the entry doesn't exist yet (a
+        nested `SET #items.#id.#field` errors on a missing parent map, but `SET #items.#id
+        = :val` is valid because the `items` map itself is always seeded). Retries once on
+        a version race; raises VersionConflictError if it can't converge.
         """
         self._ensure_seeded()
         for _attempt in range(2):
             item = self._get_config()
             version = item["version"]
+            entry = {**item["items"].get(cat_id, {}), **fields}
             try:
                 self._get_table().update_item(
                     Key=_BUDGETS_KEY,
-                    # Nested SET adds/overwrites ONE map key — never rewrites the whole map.
+                    # SET the whole entry for ONE map key — never rewrites the other keys.
                     UpdateExpression="SET #items.#id = :val, #v = :next",
                     ConditionExpression="attribute_exists(pk) AND #v = :expected",
                     ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
                     ExpressionAttributeValues={
-                        ":val": {"target": target},
+                        ":val": entry,
                         ":expected": version,
                         ":next": version + Decimal(1),
                     },
                 )
-                return {"id": cat_id, "target": target}
+                return {"id": cat_id, **entry}
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     handle_database_error(e, "set budget")
                 # The version moved under us; loop retries once.
         raise VersionConflictError("set_budget: exhausted retries under write contention")
+
+    def set_budget(self, cat_id: str, target: Decimal,
+                   rollover: Optional[bool] = None, anchor: Optional[dict] = None) -> dict:
+        """Set (upsert) a category's budget target, optionally its rollover flag.
+
+        Idempotent: succeeds whether or not the id already had a target. The id is not
+        validated against the taxonomy: an unknown id just stores an orphan target, which
+        the client ignores. Preserves any stored rollover/carryover fields (read-modify-
+        write), so a plain amount edit never wipes a category's accumulated buffer.
+
+        `rollover` (when given) sets the flag. `anchor` (a {carryover_from, carryover_len,
+        carryover_paydate} dict) is supplied by the handler when rollover turns ON, to
+        (re)start accumulation from the current cycle — the stored `carryover` balance is
+        left untouched (frozen-then-resumed), so toggling OFF then ON keeps the buffer but
+        never seals the cycles that elapsed while it was off. Raises VersionConflictError
+        if it can't converge within the retry budget.
+        """
+        fields: dict = {"target": target}
+        if rollover is not None:
+            fields["rollover"] = rollover
+        if anchor is not None:
+            fields.update(anchor)
+        entry = self._merge_entry(cat_id, fields)
+        return {"id": cat_id, "target": entry["target"]}
+
+    def settle_carryover(self, cat_id: str, carryover: Decimal, carryover_from: str,
+                         carryover_len: int, carryover_paydate: str) -> dict:
+        """Persist a rollover category's sealed carryover balance + anchor (the write-on-read
+        step of the /budgets settlement). Preserves `target`/`rollover` via _merge_entry.
+
+        Called best-effort from the read path: the caller swallows a VersionConflictError so
+        a settle that loses the race never fails the GET — the balance simply re-seals on the
+        next read (the displayed number is always recomputed live, not read from the store).
+        """
+        return self._merge_entry(cat_id, {
+            "carryover": carryover,
+            "carryover_from": carryover_from,
+            "carryover_len": Decimal(carryover_len),
+            "carryover_paydate": carryover_paydate,
+        })
 
     def delete_budget(self, cat_id: str) -> None:
         """Remove a category's budget target, if any — the cascade run when a

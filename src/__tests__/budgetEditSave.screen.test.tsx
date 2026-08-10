@@ -10,7 +10,7 @@ import type { AppContext } from '../context';
 
 // Hoisted module-scope mocks so replace() + the writer are assertable across renders
 // (see the delete test — useRouter() returns a fresh object each render).
-const mockSaveBudget = jest.fn(async (_id: string, _amount: number) => true);
+const mockSaveBudget = jest.fn(async (_id: string, _amount: number, _rollover?: boolean) => true);
 const mockReplace = jest.fn();
 
 const SPEND = { id: 'coffee', name: 'Cafes & Coffee', icon: 'coffee', color: '#E8A87C', bucket: 'Lifestyle', recent: 52 };
@@ -48,9 +48,10 @@ it('pressing Add budget saves the amount once and navigates to the budgets tab',
   fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
   await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
 
-  // The real onPress→save()→saveBudget chain fired with the parsed number, then navigated.
+  // The real onPress→save()→saveBudget chain fired with the parsed number + the rollover
+  // toggle (spend category → the flag is sent; default off), then navigated.
   expect(mockSaveBudget).toHaveBeenCalledTimes(1);
-  expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 300);
+  expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 300, false);
   await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 

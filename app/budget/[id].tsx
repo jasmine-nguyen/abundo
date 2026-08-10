@@ -94,6 +94,13 @@ export default function BudgetDetail() {
             <Glyph name="clock" size={20} color={C.accentSoft} />
             <Text style={styles.dailyText}>{bd.dailyLabel}</Text>
           </View>
+
+          {bd.carryoverLine ? (
+            <View style={styles.carryoverBox}>
+              <Glyph name="refresh" size={18} color={C.accentSoft} />
+              <Text style={styles.carryoverText}>{bd.carryoverLine}</Text>
+            </View>
+          ) : null}
         </View>
 
         <Text style={styles.sectionLabel}>RELATED TRANSACTIONS</Text>
@@ -132,6 +139,8 @@ const styles = StyleSheet.create({
   targetLabel: { position: 'absolute', top: 4, transform: [{ translateX: -32 }], fontFamily: FONT.body, fontSize: 10, color: '#73737d', fontWeight: '500' },
   dailyBox: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: tint(C.accentAlt, 0.1), borderRadius: 13, paddingVertical: 11, paddingHorizontal: 13, marginTop: 16 },
   dailyText: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '600', color: C.accentSofter },
+  carryoverBox: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: tint(C.accentAlt, 0.1), borderRadius: 13, paddingVertical: 11, paddingHorizontal: 13, marginTop: 10 },
+  carryoverText: { flex: 1, fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.accentSofter },
   sectionLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 22, marginBottom: 4, marginHorizontal: 4 },
   groupLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginHorizontal: 4, marginBottom: 2, marginTop: 8 },
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },

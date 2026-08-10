@@ -53,7 +53,13 @@ export interface Category {
   // Insights chart falls back to the id-derived colour.
   colorSlot?: number;
 }
-export interface Budget { id: string; budget: number; posted: number; pending: number; }
+export interface Budget {
+  id: string; budget: number; posted: number; pending: number;
+  // Rollover (envelope carryover). `rollover` off => `carryover` is ignored. `carryover` is
+  // the signed buffer this cycle adds to the target (positive = saved up, negative = a prior
+  // spike's overspend carried as a deficit). Default off/0 for a non-rollover/legacy budget.
+  rollover: boolean; carryover: number;
+}
 export interface Transaction {
   transaction_id: string;
   date: string;            // "YYYY-MM-DD"
@@ -414,7 +420,7 @@ export interface AppContext {
   // WHIT-291: re-file every id under one category in a single batch (partial rollback on failure).
   applyCategoryToMany: (txIds: string[], categoryId: string) => Promise<void>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
-  saveBudget: (categoryId: string, value: number) => Promise<boolean>;
+  saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
@@ -468,7 +474,12 @@ export function toCategory(raw: any): Category {
 // straight from it. Module-level + exported so the ['budgets'] query's selectBudgets
 // reuses the exact same mapping.
 export function toBudget(id: string, rollup: BudgetRollup): Budget {
-  return { id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending };
+  // rollover/carryover are absent on a non-rollover/legacy budget — default them so every
+  // Budget has a concrete shape (no `undefined` leaking into the available/remain math).
+  return {
+    id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending,
+    rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
+  };
 }
 
 // Map a server enrichment rule into the client `Rule` shape. `value` -> `pattern`
@@ -1075,7 +1086,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const saveBudget = useCallback(
-    async (categoryId: string, value: number): Promise<boolean> => {
+    async (categoryId: string, value: number, rollover?: boolean): Promise<boolean> => {
       if (value <= 0) return false;
       // WHIT-192: the toast copy needs the category name + whether a budget already
       // existed — both sourced from the query cache the screens read (the store is gone).
@@ -1103,7 +1114,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // them to the next signed-in user. Gate every post-await toast on the session epoch.
       const epoch = sessionEpoch.current;
       try {
-        const saved = await apiSetBudget(categoryId, value);
+        // Pass rollover only when the caller supplied it — a plain amount save (no rollover
+        // arg) leaves the stored flag untouched, so the API omits it from the body.
+        const saved = rollover === undefined
+          ? await apiSetBudget(categoryId, value)
+          : await apiSetBudget(categoryId, value, rollover);
         // WHIT-271: return false (not just skip the toast) so app/budget/edit.tsx's `if (ok)`
         // doesn't invalidate + navigate the NEXT session after a mid-save sign-out.
         if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
@@ -1656,6 +1671,8 @@ export interface BudgetView {
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
+  // Rollover chip: "+$40 rolled over" / "$20 borrowed", or '' when off / near zero.
+  carryoverLabel: string;
   // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
   // row's ancestors that are ALSO budgeted rows (0 = top-level or a sub whose parent
   // isn't budgeted). `parentId` is the nearest budgeted ancestor's id (the row it
@@ -1737,8 +1754,20 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // posted/pending come from the server rollup (computed over the window). For an
     // Income category the rollup is positive EARNINGS, not spend.
     const pending = b.pending, posted = b.posted, actual = posted + pending;
+    // Rollover: this cycle's spendable is the target PLUS the accumulated buffer (a sinking
+    // fund adds room; a prior spike's deficit removes it). Non-rollover/Income => carryover
+    // is 0, so available == budget and nothing below changes.
+    const available = b.budget + (b.rollover ? b.carryover : 0);
+    // Bars/remain divide by `available`, but it can be 0 or negative (a drained/borrowed
+    // envelope) — fall back to the base target, then 1, so a percentage is never NaN.
+    const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
+    // Pace stays on the base per-cycle target: "should I have spent this much of THIS
+    // cycle's plan by now" — the buffer isn't part of the cycle's pace.
     const target = b.budget * elapsed;
-    const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
+    const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
+    let carryoverLabel = '';
+    if (b.rollover && b.carryover > 0.5) carryoverLabel = `+${fmt(b.carryover)} rolled over`;
+    else if (b.rollover && b.carryover < -0.5) carryoverLabel = `${fmt(-b.carryover)} borrowed`;
 
     if (c.bucket === 'Income') {
       // Earn-target (floor): over-is-good, so the direction and colours invert —
@@ -1766,37 +1795,40 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
         remainColor: C.good,
         postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: c.color,
         pendingTint: tint(c.color, 0.45), paceLabel, paceColor, over: false,
-        depth, parentId,
+        carryoverLabel, depth, parentId,
       });
       group(parentId, b.id);
       continue;
     }
 
-    // Spend budget (ceiling): under-is-good, over is red.
-    const spent = actual, remain = b.budget - spent;
+    // Spend budget (ceiling): under-is-good, over is red. With rollover, the ceiling is the
+    // AVAILABLE envelope (target + buffer), so drawing down a sinking fund reads calm, not
+    // red; the hero totals count `available` too so the top number matches the rows.
+    const spent = actual, remain = available - spent;
     // De-dup the hero totals: count only the TOP-MOST budgeted spend row per family
     // (depth 0). A budgeted sub is already inside its parent's rolled-up spend, so
     // adding it again would double-count (WHIT-221). Same-bucket means a spend row's
     // budgeted ancestors are all spend, so depth 0 == no budgeted spend ancestor.
-    if (depth === 0) { totBudget += b.budget; totSpent += spent; totRemain += remain; }
-    const over = spent > b.budget;
-    const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
+    if (depth === 0) { totBudget += available; totSpent += spent; totRemain += remain; }
+    const over = spent > available;
+    const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
     let paceLabel: string, paceColor: string;
     // The "left" amount is the row's cyan highlight; the pace sub-label is the muted C.textInfo.
     // Warnings keep their own colour (over pace = amber, over budget = red).
-    if (over) { paceLabel = fmtExact(spent - b.budget) + ' over budget'; paceColor = C.bad; }
+    if (over) { paceLabel = fmtExact(spent - available) + ' over budget'; paceColor = C.bad; }
     else if (spent - target > 0.5) { paceLabel = fmt(spent - target) + ' over pace'; paceColor = C.warn; }
     else if (target - spent > 0.5) { paceLabel = fmt(target - spent) + ' under pace'; paceColor = C.textInfo; }
     else { paceLabel = 'on pace'; paceColor = C.textInfo; }
     // `spent` (= posted + pending) already counts pending, so a single "spent of budget" line
-    // is enough — no separate "(… pending)" breakout.
-    const spentLabel = `${fmtExact(spent)} spent of ${fmt(b.budget)}`;
+    // is enough — no separate "(… pending)" breakout. "of" shows the AVAILABLE envelope so it
+    // reconciles with the remaining amount (which is available − spent).
+    const spentLabel = `${fmtExact(spent)} spent of ${fmt(available)}`;
     viewById.set(b.id, {
       id: b.id, name: c.name, color: c.color, icon: c.icon, chipBg: tint(c.color, 0.15),
       spentLabel, remainAmount: fmtExact(remain), remainLabel: over ? 'over' : 'left', remainColor: over ? C.bad : C.good,
       postedPct, pendingPct, targetPct: Math.round(elapsed * 100), postedColor: over ? C.bad : c.color,
       pendingTint: tint(over ? C.bad : c.color, 0.45), paceLabel, paceColor, over,
-      depth, parentId,
+      carryoverLabel, depth, parentId,
     });
     group(parentId, b.id);
   }
@@ -2632,14 +2664,23 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // posted/pending come from the server rollup (computed over the window). For an
   // Income category this is positive EARNINGS toward an earn-target, not spend.
   const pending = b.pending, posted = b.posted, actual = posted + pending;
-  const postedPct = Math.max(0, Math.min(100, (posted / b.budget) * 100));
+  // Rollover: the spendable envelope this cycle is target + buffer (see budgetViews). `den`
+  // guards the bar percentages against a 0/negative envelope. Non-rollover/Income => buffer
+  // is 0, so available == budget and the math is unchanged.
+  const available = b.budget + (b.rollover ? b.carryover : 0);
+  const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
+  const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
   // The list is already the cycle's whole subtree, contributing rows only, newest-first
   // (server-filtered), so it sums to the header. No client-side filtering — the screen
   // groups a paged slice of relItems by date for display.
   const relItems = s.transactions;
   const daysLeftLabel = `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`;
   const targetPct = Math.round(elapsed * 100);
-  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relItems, relEmpty: relItems.length === 0 };
+  // One line for the accumulated buffer, shown only when rollover is on and it's non-trivial.
+  let carryoverLine = '';
+  if (b.rollover && b.carryover > 0.5) carryoverLine = `Includes ${fmt(b.carryover)} rolled over from past cycles`;
+  else if (b.rollover && b.carryover < -0.5) carryoverLine = `Includes ${fmt(-b.carryover)} borrowed from this cycle`;
+  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relItems, relEmpty: relItems.length === 0, carryoverLine };
 
   if (isIncome) {
     // Earn-target (floor): over-is-good, so the status is never red. Under target
@@ -2659,15 +2700,16 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     };
   }
 
-  // Spend budget (ceiling): under-is-good, over is red.
+  // Spend budget (ceiling): under-is-good, over is red — measured against the AVAILABLE
+  // envelope (target + buffer), so a sinking-fund draw-down isn't flagged over.
   const spent = actual;
-  const over = spent > b.budget;
-  const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / b.budget) * 100, 100 - postedPct));
-  const remain = b.budget - spent;
+  const over = spent > available;
+  const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
+  const remain = available - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
   return {
     ...common,
-    spentBig: fmtExact(spent), ofBudget: 'of ' + fmt(b.budget),
+    spentBig: fmtExact(spent), ofBudget: 'of ' + fmt(available),
     statusLabel: over ? 'Over budget — ease up' : 'On target — keep it up',
     statusColor: over ? C.bad : C.good,
     postedPct, pendingPct,
@@ -2706,6 +2748,10 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
     histBars,
     title: existing ? 'Edit budget' : 'Set budget',
     saveText: existing ? 'Update budget' : 'Add budget',
+    // Rollover: spend-only (never Income earn-targets or Savings). `rolloverOn` seeds the
+    // editor toggle from the stored flag.
+    rolloverAllowed: !isIncome && c?.bucket !== 'Savings',
+    rolloverOn: existing?.rollover ?? false,
   };
 }
 

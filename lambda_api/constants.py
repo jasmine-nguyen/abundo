@@ -241,6 +241,21 @@ EXPO_TOKEN_MAX_LEN = 256
 # with any other length is rejected 400 — the window math assumes one of these.
 PAYCYCLE_LENGTHS = frozenset({7, 14, 30})
 
+# --- Budget rollover (envelope carryover) -----------------------------------
+# A completed pay cycle's leftover is SEALED into the stored carryover balance only once
+# the cycle ended at least this many days ago. Transactions keep moving (pendings settle,
+# refunds land, rows get re-categorised) for a while after their date, so sealing sooner
+# would bake in a spend figure that later changes; until then the leftover is recomputed
+# live on each read. Kept equal to shared PENDING_AGE_OUT_DAYS (the point past which
+# BankSync no longer re-sends a transaction — it is genuinely frozen); a test asserts the
+# two stay in lockstep. Handler-only, so it lives here, not in shared/constants.py.
+ROLLOVER_SETTLE_LAG_DAYS = 10
+
+# Upper bound on how many completed cycles one /budgets read folds. Bounds a first-open-
+# after-a-long-gap read to ~this many cycles of history instead of an unbounded year-scan;
+# older leftovers are dropped and the anchor jumps forward (an accepted cold-start limit).
+ROLLOVER_MAX_LOOKBACK_CYCLES = 12
+
 # Seed until the user sets their real payday: a fixed past date (a Wednesday, the
 # app's original default last_pay_date) + a fortnightly length. Any past date works —
 # the window math walks forward from it in `length`-day steps (P14/Slice 2).

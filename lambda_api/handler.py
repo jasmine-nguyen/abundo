@@ -31,6 +31,8 @@ from constants import (
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
     REPAYMENT_PATH,
+    ROLLOVER_MAX_LOOKBACK_CYCLES,
+    ROLLOVER_SETTLE_LAG_DAYS,
     RULE_FIELDS,
     RULE_OPERATORS,
     SAVINGS_BUCKET,
@@ -75,6 +77,7 @@ from spend import (
     _melbourne_today,
     _spend_contribution,
     build_category_children,
+    completed_cycle_windows,
     contributes_to_budget,
     current_cycle_window,
     fold_subtree,
@@ -84,6 +87,7 @@ from spend import (
     summarise_income,
     summarise_transactions,
     summarise_uncategorized,
+    transactions_in_window,
 )
 from anthropic_client import AnthropicError
 from insights_ai import generate_suggestions
@@ -167,7 +171,7 @@ def lambda_handler(event, context):
                 CategoryRepository())
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "PUT":
-            return set_budget(event, BudgetRepository(), CategoryRepository())
+            return set_budget(event, BudgetRepository(), CategoryRepository(), PayCycleRepository())
 
         if path.startswith(f"{BUDGET_PATH}/") and method == "DELETE":
             return delete_budget(event, BudgetRepository())
@@ -1068,6 +1072,85 @@ def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
     return {**cycle, "days_left": (next_payday - date.fromisoformat(today)).days}
 
 
+def _rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: str):
+    """Pure date math for one rollover category: the completed pay cycles to fold this
+    read, and a re-anchor payload if accumulation must restart.
+
+    Returns (windows, reanchor). `windows` is the completed-cycle [(start, end), ...] since
+    the stored anchor (oldest-first, capped). `reanchor` is a {carryover, carryover_from}
+    payload — freeze the balance and re-anchor to the current cycle — when the stored anchor
+    is missing or was sealed under a DIFFERENT pay cycle (length or payday changed); in that
+    case `windows` is [] (a changed cycle makes the old windows fictional, so nothing is
+    folded that read). Alignment is checked on the exact length+payday, NOT a modular test:
+    e.g. 14->7 keeps `% length == 0` yet doubles the cycles.
+    """
+    anchor = entry.get("carryover_from")
+    aligned = (
+        anchor is not None
+        and int(entry.get("carryover_len", 0)) == length
+        and entry.get("carryover_paydate") == last_pay_date
+    )
+    if not aligned:
+        reanchor = {"carryover": entry.get("carryover", Decimal(0)), "carryover_from": cycle_start}
+        return [], reanchor
+    windows = completed_cycle_windows(anchor, cycle_start, length, ROLLOVER_MAX_LOOKBACK_CYCLES)
+    return windows, None
+
+
+def _seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
+                   length: int, today: str):
+    """Fold each completed cycle's leftover (target - spend) for one rollover category,
+    sealing cycles older than the settle lag into the stored balance.
+
+    Returns (display_carryover, persist). `display_carryover` is the full buffer to show =
+    sealed balance + not-yet-sealed completed-cycle leftovers (signed — a spike cycle's
+    overspend carries as a deficit). `persist` is a {carryover, carryover_from} payload when
+    the sealed balance or anchor advanced, else None. The current in-progress cycle is NOT
+    in `windows`, so its spend is never double-counted here (it shows as posted/pending).
+
+    Leftover uses the category's CURRENT target (no per-cycle target history is stored); the
+    ~10-day lag means a regularly-opened app seals each cycle with the target in force around
+    then, and a later target edit only moves the not-yet-sealed cycles.
+    """
+    stored_carryover = entry.get("carryover", Decimal(0))
+    target = entry["target"]
+    lag_cutoff = date.fromisoformat(today) - timedelta(days=ROLLOVER_SETTLE_LAG_DAYS)
+    sealed = stored_carryover
+    unsealed = Decimal(0)
+    # Floor the anchor at the oldest window we actually fetched: if the cap dropped older
+    # cycles, advance past them rather than re-scanning them forever.
+    new_anchor = windows[0][0] if windows else entry.get("carryover_from")
+    for window_start, window_end in windows:
+        cycle_txns = transactions_in_window(transactions, window_start, window_end)
+        per_id = summarise_transactions(cycle_txns, subtree, clamp=False)
+        spend = fold_subtree(per_id, subtree)
+        leftover = target - (spend["posted"] + spend["pending"])
+        if date.fromisoformat(window_end) < lag_cutoff:
+            sealed += leftover
+            new_anchor = (date.fromisoformat(window_start) + timedelta(days=length)).isoformat()
+        else:
+            unsealed += leftover
+    persist = None
+    if sealed != stored_carryover or new_anchor != entry.get("carryover_from"):
+        persist = {"carryover": sealed, "carryover_from": new_anchor}
+    return sealed + unsealed, persist
+
+
+def _persist_rollover_settlements(budget_repo: BudgetRepository, settlements: dict,
+                                  length: int, last_pay_date: str) -> None:
+    """Write each rollover seal/re-anchor back — BEST-EFFORT. The displayed carryover is
+    always recomputed live, so persistence is only a cost bound (it lets the next read skip
+    already-sealed cycles). A lost version race or any DB blip must never 500 the GET, so
+    every write is swallowed-and-logged (same posture as the WHIT-447 mint-migration)."""
+    for cat_id, payload in settlements.items():
+        try:
+            budget_repo.settle_carryover(
+                cat_id, payload["carryover"], payload["carryover_from"], length, last_pay_date
+            )
+        except Exception as e:
+            logger.warning("rollover settle failed for %s (recomputes next read): %s", cat_id, e)
+
+
 def list_budgets(
     budget_repo: BudgetRepository,
     transaction_repo: TransactionRepository,
@@ -1095,15 +1178,28 @@ def list_budgets(
     over its WHOLE SUBTREE for the window — the parent itself plus every descendant at
     any depth, including subs that carry no target of their own. Summing the parent id
     too counts a transaction tagged directly onto the parent (the picker allows it),
-    so the bar agrees with the /breakdown screen. The wire shape is unchanged: every
-    budgeted id (parent or leaf) still returns {target, posted, pending}. A leaf target
-    with no children rolls up only itself, byte-identical to the pre-rollup behaviour.
+    so the bar agrees with the /breakdown screen. Every budgeted id (parent or leaf)
+    returns {target, posted, pending, rollover, carryover}. A leaf target with no children
+    rolls up only itself, byte-identical to the pre-rollup behaviour.
+
+    Rollover (envelope carryover): a category with `rollover` on accumulates each cycle's
+    leftover (target - spend) into a signed `carryover` buffer, so a sinking-fund category
+    builds up until a bill lands and a spike cycle carries its overspend as a deficit. The
+    buffer is SEALED lazily here (write-on-read, best-effort): completed cycles older than
+    the settle lag fold into the stored balance; the recent unsealed cycles are recomputed
+    live, so the returned `carryover` is stable across the sealing write. `carryover` is 0
+    for a non-rollover budget — a legacy budget with no rollover field is byte-identical to
+    before (bar the two always-present keys). Rollover applies to SPEND categories only: a
+    flag left on a category later re-bucketed to Income/Savings is ignored (its earnings are
+    never folded as a spend buffer).
     """
-    targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
+    targets = budget_repo.list_budgets()  # {id: entry}
     if not targets:
         return {}
-    start, end = _cycle_window_for(paycycle_repo)
-    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+    pay_cycle = paycycle_repo.get_paycycle()
+    length = pay_cycle["length"]
+    last_pay_date = pay_cycle["last_pay_date"]
+    cycle_start, today = current_cycle_window(last_pay_date, length)
 
     categories = category_repo.list_categories()
     bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
@@ -1114,27 +1210,73 @@ def list_budgets(
     # budget too (WHIT-228). A leaf/orphan target maps to just itself, byte-identical
     # to the pre-rollup behaviour.
     ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in targets}
-    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
+
+    # Rollover only for a flagged category that is STILL a spend category — a re-bucket to
+    # Income/Savings after the flag was set falls back to plain output (the write guard only
+    # blocks the flag going on; the bucket can change later on a different endpoint).
+    rollover_ids = {
+        cat_id for cat_id, entry in targets.items()
+        if entry.get("rollover") and bucket_by_id.get(cat_id) not in (INCOME_BUCKET, SAVINGS_BUCKET)
+    }
+
+    # Pure date math up front: the completed cycles each rollover target must fold (and any
+    # re-anchor). This drives how far back to widen the ONE transaction fetch — a non-rollover
+    # read still fetches just the current cycle, unchanged.
+    windows_by_id = {}
+    reanchor_by_id = {}
+    fetch_start = cycle_start
+    for cat_id in rollover_ids:
+        windows, reanchor = _rollover_windows(targets[cat_id], cycle_start, length, last_pay_date)
+        windows_by_id[cat_id] = windows
+        if reanchor is not None:
+            reanchor_by_id[cat_id] = reanchor
+        if windows:
+            fetch_start = min(fetch_start, windows[0][0])
+
+    transactions = _fetch_windowed_transactions(transaction_repo, fetch_start, today)
+    # posted/pending are always the CURRENT cycle only. When no rollover widened the fetch,
+    # it already IS the current window (byte-identical to before); when it was widened for
+    # sealing, slice back to the current cycle by transaction date.
+    current = transactions if fetch_start == cycle_start else transactions_in_window(transactions, cycle_start, today)
 
     # Split by each id's own bucket (the same-bucket rule keeps a subtree single-
     # bucket, so a parent and its descendants all land on one side). Sum every needed
     # id once (UNCLAMPED), fold per target, then clamp the target total once — so a
     # net-negative sibling nets against the rest before the floor, and the header can't
     # read higher than its own signed transaction list (aggregate-then-clamp, WHIT-343).
+    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
     income_ids = {cid for cid in needed_ids if bucket_by_id.get(cid) == INCOME_BUCKET}
     spend_ids = needed_ids - income_ids
 
-    per_id = summarise_transactions(transactions, spend_ids, clamp=False)
-    per_id.update(summarise_income(transactions, income_ids, clamp=False))
+    per_id = summarise_transactions(current, spend_ids, clamp=False)
+    per_id.update(summarise_income(current, income_ids, clamp=False))
 
+    settlements = {}  # cat_id -> {carryover, carryover_from}, written best-effort after the loop
     result = {}
     for cat_id, entry in targets.items():
         folded = fold_subtree(per_id, ids_by_target[cat_id])
-        result[cat_id] = {
+        row = {
             "target": entry["target"],
             "posted": folded["posted"],
             "pending": folded["pending"],
         }
+        # Only a rollover category carries the extra keys — a non-rollover (or legacy)
+        # budget's wire shape stays byte-identical; the client defaults rollover/carryover.
+        if cat_id in rollover_ids:
+            if cat_id in reanchor_by_id:
+                carryover = reanchor_by_id[cat_id]["carryover"]
+                settlements[cat_id] = reanchor_by_id[cat_id]
+            else:
+                carryover, persist = _seal_rollover(
+                    entry, windows_by_id[cat_id], ids_by_target[cat_id], transactions, length, today
+                )
+                if persist is not None:
+                    settlements[cat_id] = persist
+            row["rollover"] = True
+            row["carryover"] = carryover
+        result[cat_id] = row
+
+    _persist_rollover_settlements(budget_repo, settlements, length, last_pay_date)
     return result
 
 
@@ -2065,19 +2207,23 @@ _BUDGET_TARGET_MAX = 1_000_000_000
 
 
 def set_budget(
-    event: dict, repo: BudgetRepository, category_repo: CategoryRepository
+    event: dict, repo: BudgetRepository, category_repo: CategoryRepository,
+    paycycle_repo: PayCycleRepository,
 ) -> dict:
-    """PUT /budgets/{category} — set (upsert) a category's budget target.
+    """PUT /budgets/{category} — set (upsert) a category's budget target, optionally its
+    rollover flag.
 
-    Body: {"target": <number >= 0>} — the user-set pay-cycle amount (spent/pending
-    are derived elsewhere, not here). The target is stored as a Decimal via
-    Decimal(str(...)) so a JSON float never introduces binary-float drift.
+    Body: {"target": <number >= 0>, "rollover"?: bool} — the user-set pay-cycle amount and
+    (optionally) whether unused budget accumulates into next cycle. `target` is stored as a
+    Decimal via Decimal(str(...)) so a JSON float never introduces binary-float drift. Omit
+    `rollover` to leave the flag untouched (a plain amount edit never changes it).
 
     An UNKNOWN category id is still accepted (stored as an orphan the client ignores).
     A KNOWN Savings-bucket category is rejected (WHIT-202): the client can't render a
     target on it, so a stored one is an invisible phantom — this is the server backstop
-    for the deep-link/back-door write the picker already blocks. The bucket read runs
-    only after the cheap numeric checks pass.
+    for the deep-link/back-door write the picker already blocks. Rollover is SPEND-only, so
+    `rollover: true` is rejected on an Income earn-target too. The bucket read runs only
+    after the cheap numeric checks pass.
     """
     cat_id = (event.get("pathParameters") or {}).get("category")
     if not cat_id:
@@ -2099,13 +2245,36 @@ def set_budget(
     if target > _BUDGET_TARGET_MAX:
         return _json_response(400, {"error": "target too large"})
 
+    rollover = body.get("rollover")
+    if rollover is not None and not isinstance(rollover, bool):
+        return _json_response(400, {"error": "rollover must be a boolean"})
+
     # WHIT-202: reject a Savings-bucket target (an unknown id stays accepted — .get is
     # None → not Savings). Same bucket-by-id idiom list_budgets uses.
     bucket_by_id = {c["id"]: c.get("bucket") for c in category_repo.list_categories()}
-    if bucket_by_id.get(cat_id) == SAVINGS_BUCKET:
+    bucket = bucket_by_id.get(cat_id)
+    if bucket == SAVINGS_BUCKET:
         return _json_response(400, {"error": "cannot budget a Savings category"})
+    if rollover and bucket == INCOME_BUCKET:
+        return _json_response(400, {"error": "rollover is only for spend categories"})
 
-    saved = repo.set_budget(cat_id, Decimal(str(target)))
+    # Turning rollover ON (from off/unset) (re)starts accumulation at the current cycle,
+    # keeping any frozen balance but never sealing the cycles that elapsed while it was off.
+    # An amount edit that re-sends rollover:true while it's already on carries no anchor, so
+    # a not-yet-sealed cycle isn't dropped.
+    anchor = None
+    if rollover:
+        existing = repo.list_budgets().get(cat_id)
+        if not (existing and existing.get("rollover")):
+            cycle = paycycle_repo.get_paycycle()
+            cycle_start, _ = current_cycle_window(cycle["last_pay_date"], cycle["length"])
+            anchor = {
+                "carryover_from": cycle_start,
+                "carryover_len": Decimal(cycle["length"]),
+                "carryover_paydate": cycle["last_pay_date"],
+            }
+
+    saved = repo.set_budget(cat_id, Decimal(str(target)), rollover=rollover, anchor=anchor)
     return _json_response(200, saved)
 
 

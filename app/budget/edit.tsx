@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, Switch } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
@@ -19,11 +19,17 @@ export default function BudgetEdit() {
   const { budgets, category, cycleLen } = useBudgetsScreenData();
   const info = budgetEditInfo({ budgets, category, cycleName: () => cycleName(cycleLen) }, categoryId);
   const [input, setInput] = useState(info.existing ? String(info.existing.budget) : '');
+  // Rollover toggle, seeded from the stored flag. Like the amount, `budgets` may resolve
+  // after mount (cold cache), so re-seed when the existing budget arrives.
+  const [rollover, setRollover] = useState(info.rolloverOn);
   // WHIT-203: `budgets` may resolve after mount (cold cache), so the useState seed above can
   // miss an existing budget — re-seed the amount when it arrives.
   useEffect(() => {
     if (info.existing) setInput(String(info.existing.budget));
   }, [info.existing?.budget]);
+  useEffect(() => {
+    setRollover(info.rolloverOn);
+  }, [info.rolloverOn]);
   const [histOpen, setHistOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // WHIT-241: same-frame double-tap guard on Save (must be declared with the other hooks,
@@ -55,7 +61,8 @@ export default function BudgetEdit() {
     if (!canSave) return;
     setSubmitting(true);
     try {
-      const ok = await s.saveBudget(categoryId, num);
+      // Rollover is spend-only — pass the flag only when it applies (else leave it untouched).
+      const ok = await s.saveBudget(categoryId, num, info.rolloverAllowed ? rollover : undefined);
       if (ok) {
         // WHIT-188: the Budgets tab now reads the query cache, so mark budgets stale —
         // otherwise the just-saved change wouldn't show until the 45s staleTime elapsed.
@@ -127,6 +134,22 @@ export default function BudgetEdit() {
           </View>
         )}
 
+        {info.rolloverAllowed && (
+          <View style={styles.rolloverRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={styles.rolloverTitle}>Roll over unused budget</Text>
+              <Text style={styles.rolloverHelp}>
+                Leftover builds up for next cycle — great for saving toward a bigger, less-frequent bill. Overspending is paid back from the cycles around it.
+              </Text>
+            </View>
+            <Switch
+              value={rollover}
+              onValueChange={setRollover}
+              trackColor={{ true: C.accent, false: tint(C.accentAlt, 0.25) }}
+            />
+          </View>
+        )}
+
         <Pressable onPress={save} style={[styles.saveBtn, { backgroundColor: canSave ? C.accent : tint(C.accentAlt, 0.25) }]}>
           <Text style={[styles.saveText, { color: canSave ? C.accentInk : '#6a6a90' }]}>{info.saveText}</Text>
         </Pressable>
@@ -156,6 +179,9 @@ const styles = StyleSheet.create({
   hist: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 120, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, paddingHorizontal: 18, paddingVertical: 14 },
   histCol: { alignItems: 'center', gap: 8 },
   histLabel: { fontFamily: FONT.body, fontSize: 11, color: C.textDim },
+  rolloverRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 16, marginTop: 18 },
+  rolloverTitle: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.textBright },
+  rolloverHelp: { fontFamily: FONT.body, fontSize: 12.5, lineHeight: 17, color: C.textDim, marginTop: 4 },
   saveBtn: { marginTop: 20, paddingVertical: 16, borderRadius: 15, alignItems: 'center' },
   saveText: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700' },
 });
