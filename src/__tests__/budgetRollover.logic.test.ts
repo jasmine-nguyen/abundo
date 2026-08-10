@@ -120,3 +120,37 @@ describe('toBudget — rollover fields', () => {
     });
   });
 });
+
+// ===== WHIT-459 carryover label deadband (folded from budgetRolloverGaps.logic.test.ts, describe b)
+describe('carryover chip/line deadband (|value| must EXCEED 0.5 to show)', () => {
+  const sink = cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle' });
+  const rowFor = (carryover: number) =>
+    budgetViews(makeState({
+      categories: [sink], cycleLen: 14, daysLeft: 7,
+      budgets: [budget({ id: 'sink', budget: 100, posted: 0, pending: 0, rollover: true, carryover })],
+    })).rows[0];
+  const detailFor = (carryover: number) =>
+    budgetDetail(makeState({
+      categories: [sink], cycleLen: 14, daysLeft: 7,
+      budgets: [budget({ id: 'sink', budget: 100, posted: 0, pending: 0, rollover: true, carryover })],
+    }), 'sink')!;
+
+  it('exactly +0.5 shows no chip and no detail line (boundary is strict >)', () => {
+    expect(rowFor(0.5).carryoverLabel).toBe('');
+    expect(detailFor(0.5).carryoverLine).toBe('');
+  });
+
+  it('exactly -0.5 shows no chip (boundary is strict <)', () => {
+    expect(rowFor(-0.5).carryoverLabel).toBe('');
+  });
+
+  it('just past +0.5 shows the rolled-over chip + line', () => {
+    expect(rowFor(0.51).carryoverLabel.startsWith('+')).toBe(true);
+    expect(rowFor(0.51).carryoverLabel).toContain('rolled over');
+    expect(detailFor(0.51).carryoverLine).toContain('rolled over');
+  });
+
+  it('just past -0.5 shows the borrowed chip', () => {
+    expect(rowFor(-0.51).carryoverLabel).toContain('borrowed');
+  });
+});
