@@ -1239,3 +1239,226 @@ def test_breakdown_rollup_no_refund_line_for_a_still_shown_member(handler):
     assert result["tolls"] == {"posted": Decimal("0"), "pending": Decimal("30")}   # still a flat row
     assert result["__rollup__"]["nodes"]["car"] == {"posted": Decimal("10"), "pending": Decimal("30")}
     assert "refunds" not in result["__rollup__"]                                   # tolls not double-rendered
+
+
+# === WHIT-366/376 income per-source GAP tests (folded from test_breakdown_income_gaps.py) —
+# __income__ carries the SIGNED per-source net (clamp=False): a clawed-back source survives as a
+# negative row and only an exact-$0-net source is dropped. Reuses the fakes/builders above. =====
+
+
+def test_income_source_keeps_signed_posted_when_pending_positive(handler):
+    # A source whose SETTLED bucket nets negative (a settled clawback bigger than the settled pay)
+    # but which also has a POSITIVE PENDING (a new pay run not yet settled) SURVIVES with its raw
+    # SIGNED buckets — posted -100, pending 300 (WHIT-376) — never floored, never dropped. This is
+    # the sign-split case whose client-side residual the "adjustment" plug fills.
+    # Fail-on-revert: revert summarise_income to clamp=True and posted floors to 0 -> {0,300}.
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 100, "posted"),
+        _transaction("salary", -200, "posted"),   # settled clawback > the settled pay -> posted nets -100
+        _transaction("salary", 300, "pending"),    # a new pending pay run
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {"salary": {"posted": Decimal("-100"), "pending": Decimal("300")}}
+
+
+def test_income_source_kept_signed_even_when_net_negative(handler):
+    # A source whose posted AND pending both net negative (a full clawback across both) now SURVIVES
+    # as a signed negative row (net -340), so the drill screen can show it as a "−$340" reversal and
+    # the rows still reconcile to __earned__ — a healthy sibling keeps the aggregate positive so
+    # __earned__/__income__ are emitted. Fail-on-revert: revert to clamp=True + the `> 0` filter and
+    # "clawed" floors to {0,0} and is dropped.
+    cats = FakeCategoryRepo([_category("salary", "Income"), _category("clawed", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2000, "posted"),
+        _transaction("clawed", 100, "posted"),
+        _transaction("clawed", -400, "posted"),    # posted nets -300
+        _transaction("clawed", 50, "pending"),
+        _transaction("clawed", -90, "pending"),      # pending nets -40
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {
+        "salary": {"posted": Decimal("2000"), "pending": Decimal("0")},
+        "clawed": {"posted": Decimal("-300"), "pending": Decimal("-40")},  # kept, signed
+    }
+
+
+def test_income_source_keeps_signed_negative_pending_earned_clamps_that_bucket(handler):
+    # WHIT-376 gap: the existing sign-split test clamps the SETTLED bucket. The mirror case — a
+    # PENDING reversal (a pending pay run pulled back) larger than nothing, with settled positive —
+    # must keep the source's raw SIGNED pending (-100), while __earned__ (aggregate clamp) floors
+    # its pending bucket to 0. So __earned__ (2000) EXCEEDS the source net (1900) by the clamped-away
+    # pending reversal — the residual the client's "adjustment" plug fills in the pending direction.
+    # Fail-on-revert: revert summarise_income to clamp=True and pending floors to 0 -> {2000, 0}.
+    cats = FakeCategoryRepo([_category("salary", "Income")])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2000, "posted"),
+        _transaction("salary", -100, "pending"),  # a pending clawback -> pending nets -100
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {"salary": {"posted": Decimal("2000"), "pending": Decimal("-100")}}
+    assert result["__earned__"] == {"posted": Decimal("2000"), "pending": Decimal("0")}  # pending clamped
+    earned_total = result["__earned__"]["posted"] + result["__earned__"]["pending"]  # 2000
+    source_total = result["__income__"]["salary"]["posted"] + result["__income__"]["salary"]["pending"]  # 1900
+    assert earned_total - source_total == Decimal("100")  # the residual, in the pending bucket
+
+
+def test_income_multiple_reversed_sources_all_survive_and_reconcile(handler):
+    # WHIT-376 invariant with MORE THAN ONE reversal: two distinct sources clawed back this cycle
+    # must BOTH survive as signed negative rows, and the per-source list must still reconcile to
+    # __earned__ (2000 - 100 - 50 == 1850). Guards against a per-source clamp reappearing that only
+    # shows up once several negatives exist. Fail-on-revert: revert to clamp=True + the `> 0` filter
+    # and both bonus rows drop, so the sources sum to 2000 (not 1850) and the __income__ map shrinks.
+    cats = FakeCategoryRepo([
+        _category("salary", "Income"),
+        _category("bonus_a", "Income"),
+        _category("bonus_b", "Income"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("salary", 2000, "posted"),
+        _transaction("bonus_a", 40, "posted"),
+        _transaction("bonus_a", -140, "posted"),  # nets -100
+        _transaction("bonus_b", -50, "posted"),   # nets -50
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+
+    assert result["__income__"] == {
+        "salary": {"posted": Decimal("2000"), "pending": Decimal("0")},
+        "bonus_a": {"posted": Decimal("-100"), "pending": Decimal("0")},
+        "bonus_b": {"posted": Decimal("-50"), "pending": Decimal("0")},
+    }
+    assert result["__earned__"] == {"posted": Decimal("1850"), "pending": Decimal("0")}
+    total_sources = sum(
+        (v["posted"] + v["pending"] for v in result["__income__"].values()), Decimal("0")
+    )
+    earned = result["__earned__"]
+    assert total_sources == earned["posted"] + earned["pending"]  # rows reconcile to the headline
+
+
+# === WHIT-349 refund __rollup__ GAP tests (folded from test_breakdown_refund_gaps.py) — the
+# independent posted/pending clamp gap, a grandchild refund under a net-positive mid-parent, a
+# refunded sub-parent, and income/savings never leaking into refunds. Reuses the fakes above. ===
+
+
+def test_rollup_posted_surplus_with_pending_refund_cannot_reconcile(handler):
+    # GAP: petrol has a POSTED spend of 100; tolls has a PENDING refund of 30. The node
+    # folds posted and pending INDEPENDENTLY (fold_subtree), so the -30 pending floors to 0
+    # at the node -> node = {posted 100, pending 0} = 100. But tolls' COMBINED net is -30, so
+    # it's emitted as a refund line of -30. The expanded list (petrol 100 + refund -30 = 70)
+    # therefore does NOT equal the node (100): off by the clamped pending remainder (30).
+    # This pins the ACTUAL behaviour — an emitted rollup the client can't reconcile.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -100, "posted"),   # +100 posted spend
+        _transaction("tolls", 30, "pending"),      # -30 pending refund (positive amount)
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    rollup = result["__rollup__"]
+
+    assert rollup["nodes"]["car"] == {"posted": Decimal("100"), "pending": Decimal("0")}
+    assert rollup["refunds"] == {"car": [{"id": "tolls", "amount": Decimal("-30")}]}
+
+    node_total = rollup["nodes"]["car"]["posted"] + rollup["nodes"]["car"]["pending"]   # 100
+    shown_petrol = result["petrol"]["posted"] + result["petrol"]["pending"]             # 100
+    refund_sum = sum(r["amount"] for r in rollup["refunds"]["car"])                     # -30
+    reconciled = shown_petrol + refund_sum                                              # 70
+    assert node_total == Decimal("100")
+    assert reconciled == Decimal("70")
+    assert reconciled != node_total   # <-- the gap: the expanded list under-sums by 30
+
+
+def test_rollup_grandchild_refund_attaches_to_positive_mid_parent_not_top(handler):
+    # car > travel(own +50) > tolls(-30 refund); a sibling petrol(+60) directly under car.
+    # travel's subtree nets +20 (positive) -> travel HAS a node and is NOT a refund under car.
+    # The tolls refund attaches to travel (its direct parent), so travel reconciles as
+    # "Directly in travel" 50 + refund -30 = 20 == travel node. car lists NO refund.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("travel", "Living", "car"),
+        _child("tolls", "Living", "travel"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("travel", -50, "posted"),   # travel's own direct spend
+        _transaction("tolls", 30, "posted"),      # -30 refund two levels down
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    rollup = result["__rollup__"]
+
+    assert rollup["nodes"]["car"] == {"posted": Decimal("80"), "pending": Decimal("0")}   # 60+50-30
+    assert rollup["nodes"]["travel"] == {"posted": Decimal("20"), "pending": Decimal("0")}
+    # The refund lands on travel (the parent in nodes with the negative child), NOT on car.
+    assert rollup["refunds"] == {"travel": [{"id": "tolls", "amount": Decimal("-30")}]}
+
+
+def test_rollup_refunded_subparent_reported_by_child_id_with_whole_subtree_net(handler):
+    # car > petrol(+200); car > shopping(sub-parent) > {shoes(+40), clothes(-120)}.
+    # shopping's whole subtree nets -80 (< 0) -> shopping COLLAPSES (no node) and is reported
+    # as a single refund line under car keyed by shopping with amount -80 (its subtree net),
+    # even though shopping is itself a parent. car node = 200 + (-80) = 120.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("shopping", "Living", "car"),
+        _child("shoes", "Living", "shopping"),
+        _child("clothes", "Living", "shopping"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -200, "posted"),
+        _transaction("shoes", -40, "posted"),
+        _transaction("clothes", 120, "posted"),   # -120 refund
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    rollup = result["__rollup__"]
+
+    assert rollup["nodes"]["car"] == {"posted": Decimal("120"), "pending": Decimal("0")}
+    assert "shopping" not in rollup["nodes"]   # collapsed sub-parent, no node
+    assert rollup["refunds"] == {"car": [{"id": "shopping", "amount": Decimal("-80")}]}
+
+
+def test_rollup_income_and_savings_never_in_nodes_or_refunds(handler):
+    # A spend parent with a refunded child, PLUS an Income earn and a net-negative Savings
+    # subtree and a raw uncategorized charge. The rollup must carry ONLY the spend parent:
+    # income/savings are never spend_ids, so they can't inflate nodes NOR appear as refunds,
+    # even when the savings subtree nets negative. __earned__/__uncategorized__ still ride along.
+    cats = FakeCategoryRepo([
+        _category("car", "Living"),
+        _child("petrol", "Living", "car"),
+        _child("tolls", "Living", "car"),
+        _category("salary", "Income"),
+        _category("vault", "Savings"),
+        _child("vault_sub", "Savings", "vault"),
+    ])
+    txns = FakeTransactionRepo([
+        _transaction("petrol", -60, "posted"),
+        _transaction("tolls", 30, "posted"),        # -30 spend refund
+        _transaction("salary", 2000, "posted"),      # income (earned)
+        _transaction("vault_sub", -100, "posted"),
+        _transaction("vault_sub", 250, "posted"),    # savings subtree nets negative
+        _transaction("MEDICAL", -20, "posted"),      # raw uncategorized
+    ])
+
+    result = handler.list_category_breakdown(cats, txns, FakePayCycleRepo())
+    rollup = result["__rollup__"]
+
+    assert set(rollup["nodes"].keys()) == {"car"}                 # no salary/vault node
+    assert rollup["refunds"] == {"car": [{"id": "tolls", "amount": Decimal("-30")}]}
+    assert "salary" not in rollup["refunds"] and "vault" not in rollup["refunds"]
+    assert "vault_sub" not in rollup["refunds"]
+    assert result["__earned__"]["posted"] == Decimal("2000")     # earned still emitted
+    assert "__uncategorized__" in result                          # raw charge still bucketed

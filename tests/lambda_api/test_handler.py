@@ -751,3 +751,98 @@ def test_fetch_windowed_transactions_terminates_normally_within_the_cap(handler)
     result = handler._fetch_windowed_transactions(repo, "2026-06-26", "2026-07-04")
 
     assert {t["transaction_id"] for t in result} == {"p1", "p2"}
+
+
+# === WHIT-275 adversarial gaps: patch_transaction notes/tags boundaries (folded from
+# test_handler_whit275_gaps.py) — the EXACT-boundary passes, dedupe-then-cap ordering, and
+# the partial-write guard the over-limit rejection tests above don't cover. =================
+
+
+# --- exact-boundary passes (implementer only tests one-over) -----------------
+
+
+def test_patch_note_exactly_at_max_len_is_accepted(handler):  # [A6]
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    note = "x" * handler.NOTE_MAX_LEN
+    resp = handler.patch_transaction(_patch_event(body=json.dumps({"notes": note})), repo)
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("p", "s", {"notes": note})]
+
+
+def test_patch_tag_exactly_at_max_len_is_accepted(handler):  # [A7]
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    tag = "y" * handler.TAG_MAX_LEN
+    resp = handler.patch_transaction(_patch_event(body=json.dumps({"tags": [tag]})), repo)
+    assert resp["statusCode"] == 200
+    assert repo.update_calls == [("p", "s", {"tags": [tag]})]
+
+
+def test_patch_exactly_max_count_tags_is_accepted(handler):  # [A8]
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    tags = [f"t{i}" for i in range(handler.TAG_MAX_COUNT)]
+    resp = handler.patch_transaction(_patch_event(body=json.dumps({"tags": tags})), repo)
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["tags"] == tags
+
+
+# --- dedupe happens BEFORE the count cap -------------------------------------
+
+
+def test_patch_over_max_raw_tags_that_dedupe_under_the_cap_are_accepted(handler):  # [A9]
+    # 20 unique + 10 case-insensitive dups = 30 raw, 20 survive dedupe. The cap is on
+    # the CLEANED count, so this is a 200 — proving the count check runs after dedupe.
+    unique = [f"t{i}" for i in range(handler.TAG_MAX_COUNT)]
+    raw = unique + [t.upper() for t in unique[:10]]
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body=json.dumps({"tags": raw})), repo)
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["tags"] == unique  # first-seen casing kept
+
+
+# --- partial-write guard: one bad field rejects the WHOLE request ------------
+
+
+def test_patch_blank_category_with_valid_notes_400s_and_writes_nothing(handler):  # [A10]
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(
+        _patch_event(body='{"category": "  ", "notes": "keep me"}'), repo)
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []  # the good note must NOT be partially persisted
+
+
+def test_patch_bad_tag_with_valid_notes_400s_and_writes_nothing(handler):  # [A11]
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(
+        _patch_event(body='{"notes": "keep me", "tags": [1]}'), repo)
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []
+
+
+# === WHIT-296 adversarial gaps: PATCH budget_excluded validation (folded from
+# test_handler_whit296_gaps.py) — a JSON null override, and budget_excluded co-present with
+# category in one write. (true/false/string/int are covered above, not duplicated.) ========
+
+
+def test_patch_budget_excluded_null_returns_400(handler):
+    # [A-H1] JSON null is not a bool -> 400, never written (someone might expect null
+    # to clear; the API's clear signal is `false`, and null must not slip through as
+    # a stored None). isinstance(None, bool) is False, so the guard rejects it.
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(_patch_event(body='{"budget_excluded": null}'), repo)
+    assert resp["statusCode"] == 400
+    assert repo.update_calls == []
+
+
+def test_patch_budget_excluded_alongside_category_applies_both(handler):
+    # [A-H2] A single PATCH carrying category AND budget_excluded writes both in one
+    # call and echoes both — adding the override branch to the validator must not drop
+    # a co-present field. Fail-on-revert: remove the budget_excluded validator block
+    # and the echo/write loses it.
+    repo = FakeRepo(keys={"pk": "p", "sk": "s"})
+    resp = handler.patch_transaction(
+        _patch_event(body='{"category": "groceries", "budget_excluded": true}'), repo)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["category"] == "groceries"
+    assert body["budget_excluded"] is True
+    assert repo.update_calls == [("p", "s", {"category": "groceries", "budget_excluded": True})]
