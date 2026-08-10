@@ -3,7 +3,7 @@
 // body/method/url shape (incl. encodeURIComponent + server-default field/operator
 // omission), and the not-OK throw. fetch is mocked; no network. (WHIT-52, WHIT-162)
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice } from '../api';
+import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice, fetchCategoryTransactions, fetchTransactionsFeed } from '../api';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
 import { getAuthToken } from '../auth';
@@ -175,5 +175,121 @@ describe('auth + error handling', () => {
   it('throws on a not-OK response', async () => {
     fetchMock.mockReturnValue(notOk(401));
     await expect(createEnrichment({ value: 'X', categoryId: 'c' })).rejects.toThrow('API error: 401');
+  });
+});
+
+// ===== WHIT-342 fetchCategoryTransactions URL shaping (folded from categoryTransactionsApi.gaps.logic.test.ts)
+// gaps-only helper (survivor already has okJson/notOk/API/preamble/beforeEach)
+function calledUrl(): string {
+  return (fetchMock.mock.calls[0] as [string, unknown])[0];
+}
+
+describe('fetchCategoryTransactions — URL shaping', () => {
+  // [A-api1] cycle 0 -> no query string at all. FAIL-ON-REVERT: dropping the `cycle > 0` guard
+  // (always appending) makes this `?cycle=0`.
+  it('omits ?cycle= for the current cycle (0)', async () => {
+    fetchMock.mockReturnValue(okJson([]));
+    await fetchCategoryTransactions('coffee', 0);
+    expect(calledUrl()).toBe(`${API}/categories/coffee/transactions`);
+  });
+
+  it('omits ?cycle= when cycle defaults (not passed)', async () => {
+    fetchMock.mockReturnValue(okJson([]));
+    await fetchCategoryTransactions('coffee');
+    expect(calledUrl()).toBe(`${API}/categories/coffee/transactions`);
+  });
+
+  // [A-api2] cycle > 0 -> appended. FAIL-ON-REVERT: dropping the append sends the current window
+  // for a "last cycle" drill (the exact bug WHIT-342 fixes).
+  it('appends ?cycle=n for a prior cycle', async () => {
+    fetchMock.mockReturnValue(okJson([]));
+    await fetchCategoryTransactions('coffee', 1);
+    expect(calledUrl()).toBe(`${API}/categories/coffee/transactions?cycle=1`);
+  });
+
+  // [A-api3] the sentinel + a slash-bearing id are percent-encoded so the path can't fork.
+  // FAIL-ON-REVERT: dropping encodeURIComponent lets the raw '__uncategorized__' (fine) but a
+  // '/' id (e.g. 'food/drink') would inject a path segment — asserted via the encoded form.
+  it('encodes the __uncategorized__ sentinel into the path', async () => {
+    fetchMock.mockReturnValue(okJson([]));
+    await fetchCategoryTransactions('__uncategorized__', 0);
+    expect(calledUrl()).toBe(`${API}/categories/__uncategorized__/transactions`);
+  });
+
+  it('percent-encodes a slash-bearing id so it cannot fork the path', async () => {
+    fetchMock.mockReturnValue(okJson([]));
+    await fetchCategoryTransactions('food/drink', 2);
+    expect(calledUrl()).toBe(`${API}/categories/food%2Fdrink/transactions?cycle=2`);
+  });
+
+  // [A-api4] a not-OK response throws — the drill screen must see an error, not an empty list.
+  // FAIL-ON-REVERT: removing the `response.ok == false` guard returns undefined/[] silently.
+  it('throws on a not-OK response', async () => {
+    fetchMock.mockReturnValue(notOk(500));
+    await expect(fetchCategoryTransactions('coffee', 0)).rejects.toThrow('API error: 500');
+  });
+
+  it('sends the Bearer token', async () => {
+    fetchMock.mockReturnValue(okJson([]));
+    await fetchCategoryTransactions('coffee', 0);
+    const opts = (fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }])[1];
+    expect(opts.headers.Authorization).toBe('Bearer test-token');
+  });
+});
+
+// ===== fetchTransactionsFeed URL shaping (folded from transactionsFeedApi.gaps.logic.test.ts)
+describe('fetchTransactionsFeed — URL shaping', () => {
+  // [A-feed1] no cursor, no limit -> no query string. FAIL-ON-REVERT: always appending makes
+  // this `?cursor=undefined` and the server pages from the wrong place.
+  it('omits the query string for the newest page (no cursor, no limit)', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchTransactionsFeed();
+    expect(calledUrl()).toBe(`${API}/transactions/feed`);
+  });
+
+  // [A-feed2] a cursor is appended, percent-encoded.
+  it('appends ?cursor= for the next page', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchTransactionsFeed('abc123');
+    expect(calledUrl()).toBe(`${API}/transactions/feed?cursor=abc123`);
+  });
+
+  it('percent-encodes an opaque cursor so it cannot fork the URL', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchTransactionsFeed('a/b c&d=e');
+    expect(calledUrl()).toBe(`${API}/transactions/feed?cursor=a%2Fb%20c%26d%3De`);
+  });
+
+  // [A-feed3] limit appended; cursor + limit join with &.
+  it('appends ?limit= when a page size is given', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchTransactionsFeed(undefined, 50);
+    expect(calledUrl()).toBe(`${API}/transactions/feed?limit=50`);
+  });
+
+  it('joins cursor and limit with &', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchTransactionsFeed('cur', 50);
+    expect(calledUrl()).toBe(`${API}/transactions/feed?cursor=cur&limit=50`);
+  });
+
+  // [A-feed4] a not-OK response throws — the tab must see an error, not an empty page.
+  it('throws on a not-OK response', async () => {
+    fetchMock.mockReturnValue(notOk(500));
+    await expect(fetchTransactionsFeed()).rejects.toThrow('API error: 500');
+  });
+
+  it('sends the Bearer token', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchTransactionsFeed();
+    const opts = (fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }])[1];
+    expect(opts.headers.Authorization).toBe('Bearer test-token');
+  });
+
+  // [A-feed5] the page body round-trips unchanged (transactions + the next cursor).
+  it('returns the { transactions, nextCursor } page', async () => {
+    const page = { transactions: [{ transaction_id: 't1' }], nextCursor: 'next-cur' };
+    fetchMock.mockReturnValue(okJson(page));
+    await expect(fetchTransactionsFeed()).resolves.toEqual(page);
   });
 });

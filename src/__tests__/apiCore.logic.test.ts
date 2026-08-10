@@ -8,6 +8,7 @@ import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories, fetchPayCycle,
   setPayCycle, setBudget, deleteBudget, fetchHomeLoan, fetchLoanFacts, setLoanFacts, fetchRepayment,
+  setTransactionFields,
 } from '../api';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
@@ -252,5 +253,70 @@ describe('auth token required', () => {
     mockGetAuthToken.mockResolvedValue(undefined);
     await expect(fetchTransactions()).rejects.toThrow('Not signed in');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ===== WHIT-275 setTransactionFields wire behaviour (folded from setTransactionFieldsGaps.logic.test.ts)
+describe('setTransactionFields (WHIT-275)', () => {
+  it('PATCHes /transactions/{id} (url-encoded) with only the note field + the Bearer token', async () => { // [A22]
+    fetchMock.mockReturnValue(okJson({ transaction_id: 't 1', notes: 'lunch' }));
+    await setTransactionFields('t 1', { notes: 'lunch' });
+    const [url, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe(`${API}/transactions/t%201`);        // id url-encoded
+    expect(opts.method).toBe('PATCH');
+    expect(opts.headers.Authorization).toBe('Bearer test-token');
+    expect(JSON.parse(opts.body)).toEqual({ notes: 'lunch' }); // ONLY the changed field
+  });
+
+  it('sends a [] tags body verbatim when clearing (never omitted)', async () => { // [A23]
+    fetchMock.mockReturnValue(okJson({ transaction_id: 't1' }));
+    await setTransactionFields('t1', { tags: [] });
+    const [, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(JSON.parse(opts.body)).toEqual({ tags: [] }); // empty list must reach the server (clear)
+  });
+
+  it('throws on a non-OK response (e.g. 404 unknown id)', async () => { // [A24]
+    fetchMock.mockReturnValue(notOk(404));
+    await expect(setTransactionFields('t1', { notes: 'x' })).rejects.toThrow('API error: 404');
+  });
+
+  // WHIT-296: the budget-exclude override travels on the same PATCH body.
+  it('sends the budget_excluded override verbatim (true and false both reach the server)', async () => {
+    fetchMock.mockReturnValue(okJson({ transaction_id: 't1', budget_excluded: true }));
+    await setTransactionFields('t1', { budget_excluded: true });
+    expect(JSON.parse((fetchMock.mock.calls[0] as [string, any])[1].body)).toEqual({ budget_excluded: true });
+
+    fetchMock.mockReturnValue(okJson({ transaction_id: 't1' }));
+    await setTransactionFields('t1', { budget_excluded: false }); // false clears — must not be omitted
+    expect(JSON.parse((fetchMock.mock.calls[1] as [string, any])[1].body)).toEqual({ budget_excluded: false });
+  });
+});
+
+// ===== WHIT-459 setBudget rollover request body (folded from budgetRolloverGaps.logic.test.ts, describe a)
+describe('setBudget — rollover in the request body', () => {
+  it('OMITS rollover when the caller does not pass it (leave the stored flag untouched)', async () => {
+    fetchMock.mockReturnValue(okJson({ id: 'coffee', target: 58 }));
+    await setBudget('coffee', 58);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe(`${API}/budgets/coffee`);
+    expect(opts.method).toBe('PUT');
+    const body = JSON.parse(opts.body);
+    expect(body).toEqual({ target: 58 });
+    expect('rollover' in body).toBe(false);  // NOT sent — an absent flag means "no change"
+  });
+
+  it('INCLUDES rollover: true when passed true', async () => {
+    fetchMock.mockReturnValue(okJson({ id: 'coffee', target: 58 }));
+    await setBudget('coffee', 58, true);
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, any])[1].body);
+    expect(body).toEqual({ target: 58, rollover: true });
+  });
+
+  it('INCLUDES rollover: false when passed false (an explicit turn-off, not an omission)', async () => {
+    fetchMock.mockReturnValue(okJson({ id: 'coffee', target: 58 }));
+    await setBudget('coffee', 58, false);
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, any])[1].body);
+    expect(body).toEqual({ target: 58, rollover: false });
+    expect('rollover' in body).toBe(true);
   });
 });
