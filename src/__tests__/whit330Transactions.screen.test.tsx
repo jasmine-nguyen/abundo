@@ -8,22 +8,41 @@
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
+import { makeState, cat, txn } from './factory';
 
 let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+// WHIT-459 fold: superset of both sources' ../queries factory — the list screen reads
+// useTransactionsScreenData; the folded WHIT-328 detail test also imports (but does not
+// depend on) useRecentTransactionsScreenData, so it's exported here harmlessly.
+jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx, useRecentTransactionsScreenData: () => ({ transactions: [] }) }));
 
+// WHIT-459 fold: superset useAppContext serving both regimes. The list screen asserts on
+// openMultiPicker; the folded detail test asserts on openPicker and needs applyTransactionEdit
+// + showToast present. Every key below is harmless to the screen that doesn't use it.
+const mockOpenPicker = jest.fn();
 const mockOpenMultiPicker = jest.fn();
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ openPicker: jest.fn(), openMultiPicker: mockOpenMultiPicker }) };
+  return { ...actual, useAppContext: () => ({ openPicker: mockOpenPicker, openMultiPicker: mockOpenMultiPicker, applyTransactionEdit: jest.fn(), showToast: jest.fn() }) };
 });
 
+// WHIT-459 fold: superset expo-router — useFocusEffect (list screen) + useLocalSearchParams
+// (detail screen deep-link to id 't1') + useRouter with back+push (union). Each screen ignores
+// the hooks it doesn't call.
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
-  return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
+  return {
+    useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]),
+    useLocalSearchParams: () => ({ id: 't1' }),
+    useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
+  };
 });
+// WHIT-459 fold: added from whit328Gaps for the folded detail screen (verbatim). Harmless to
+// the list screen, which renders fine with zeroed insets.
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
 import Transactions from '../../app/(tabs)/transactions';
+import TransactionDetail from '../../app/transaction/[id]';
 
 // A not-in-budget uncategorized transfer: null category, counts_to_budget false.
 const transfer = {
@@ -65,5 +84,38 @@ describe('WHIT-330 [A-file] — the transfer is bulk-fileable from the Uncategor
     expect(screen.getByText('1 selected')).toBeTruthy();
     fireEvent.press(screen.getByLabelText('Re-categorize selected transactions'));
     expect(mockOpenMultiPicker).toHaveBeenCalledWith(['xfer1']);
+  });
+});
+
+// ===== WHIT-328 (folded from whit328Gaps.screen.test.tsx) =====
+// The DETAIL screen (a surface OTHER than the list row). WHIT-287 lets ANY charge be re-filed
+// from the detail screen, so the single-tap list gate does NOT apply here. Module mocks above
+// were reconciled to supersets serving both screens; this block re-seeds the shared mockTx via
+// its own txData (block-scoped, shadowing the list screen's) and clears mockOpenPicker.
+describe('WHIT-328 — detail screen re-file for an uncategorized charge', () => {
+  const category = makeState({ categories: [cat()] }).category;
+  function txData(over: Partial<{ transactions: unknown[] }> = {}) {
+    return {
+      transactions: [txn({ transaction_id: 't1', category: null, counts_to_budget: false })],
+      category, balances: new Map(),
+      isLoading: false, isError: false, isFetching: false,
+      refetch: jest.fn(), refetchStale: jest.fn(),
+      ...over,
+    };
+  }
+  // The shared module `mockTx` is typed off the list screen's txData (whose `category` stub returns
+  // undefined); this block's txData uses the real `makeState(...).category` (Category | undefined).
+  // The shapes are otherwise identical and the detail tx has category:null (→ undefined either way),
+  // so cast at the assignment boundary rather than widen the module type.
+  beforeEach(() => { mockOpenPicker.mockClear(); mockTx = txData() as typeof mockTx; });
+
+  // [A-detail] The detail screen for a not-in-budget uncategorized charge still labels the Category
+  // field "Uncategorized" and keeps it tappable — the re-file picker still opens. (Contrast the list
+  // row, which is now quiet + non-tappable.) Documents the intentional divergence; see critique.
+  it('detail screen labels the Category "Uncategorized" and re-opens the picker on tap', () => {
+    render(<TransactionDetail />);
+    expect(screen.getByText('Uncategorized')).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('Change category, currently Uncategorized'));
+    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
   });
 });

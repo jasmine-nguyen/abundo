@@ -5,7 +5,7 @@
 // the cycle param was clamped to {0,1} before the fetch. ../context is partially mocked (real
 // selectors, a stubbed categoryTransactions for determinism). The categoryTransactions MATH is
 // covered by the logic tests. Post-WHIT-342 the window is server-owned — no payCycle here.
-import { it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 
@@ -212,4 +212,37 @@ it('renders the $0 total card and list (not the empty state) for a non-null zero
   expect(screen.getByText('$0')).toBeTruthy();
   expect(screen.getByText('ST Ali')).toBeTruthy();       // the list still renders
   expect(screen.queryByText('No transactions')).toBeNull();
+});
+
+// ===== WHIT-374 (folded from categoryDetailColdError.gaps.screen.test.tsx) =====
+// The cold-taxonomy-FAILS-over-cached-transactions gap. Same three module mocks as above
+// serve this test: this file's ../queries factory (which also captures the cycle) and its
+// ../context factory (categoryTransactions accepting args) are supersets of the gaps file's;
+// expo-router reads `mockParams`, so the gaps' salary deep-link is reproduced by seeding
+// mockParams in this block's beforeEach. The salary ROW/DETAIL are block-scoped here so the
+// module-level coffee fixtures are untouched.
+describe('WHIT-374 gap — cold taxonomy over cached transactions', () => {
+  const ROW = {
+    transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
+    description: 'Payroll', merchant_name: 'Payroll', amount: 4200, account_id: 'a1',
+    account_name: 'Everyday', category: null, status: 'posted', type: 'deposit', counts_to_budget: false,
+  };
+  const DETAIL = { id: 'salary', name: 'Salary', groups: [{ label: 'Jul 1', items: [ROW] }], count: 1, total: 4200, posted: 4200, pending: 0 };
+
+  beforeEach(() => { mockData = screenData({ transactions: [ROW] }); mockDetail = DETAIL; mockParams = { id: 'salary', cycle: '0' }; });
+
+  // WHIT-374 [A-CE1] (P0) — taxonomy read failed but transactions are cached. Because categoriesReady
+  // is false, hasCache is false, so the error card (which needs the taxonomy to label/sign rows)
+  // wins over rendering a cold detail. FAIL-ON-REVERT: dropping `&& categoriesReady` from hasCache
+  // makes hasCache true → showError false → the cold detail renders and this assertion fails.
+  it('shows the error+retry (not a cold detail) when the taxonomy fails over cached transactions', () => {
+    const refetch = jest.fn();
+    mockData = screenData({ transactions: [ROW], categoriesReady: false, isError: true, refetch });
+    render(<CategoryDetail />);
+    expect(screen.getByTestId('category-error')).toBeTruthy();
+    expect(screen.queryByTestId('category-total')).toBeNull(); // no cold "$0" total card
+    const retry = screen.getByTestId('category-retry');
+    fireEvent.press(retry);
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
 });

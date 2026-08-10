@@ -3,7 +3,7 @@
 // through AppProvider (../api + ../auth mocked). The sibling budgetTxInvalidation suite proves
 // the invalidate keys fire; these prove the synchronous ['budgetTransactions', *] setQueryData
 // patch + its rollback. Removal only — re-including relies on the invalidate (no optimistic add).
-import { it, expect, jest, beforeEach, afterEach, describe } from '@jest/globals';
+import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';

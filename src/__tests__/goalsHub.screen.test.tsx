@@ -277,3 +277,121 @@ describe('manual goal balance (WHIT-235)', () => {
     expect(within(screen.getByTestId('goal-card-g2')).queryByText('Haven’t updated in a while')).toBeNull();
   });
 });
+
+// ===== WHIT-235 (folded from goalsHubBalanceGaps.screen.test.tsx) =====
+// GAP tests for the manual-balance affordance: the stale BOUNDARY (30 vs 31 days), a manual goal
+// with NO as-of date ("Balance not set"), and the regression that tapping the card BODY of a
+// manual goal still routes to edit despite the nested "Update balance" button. Same harness
+// (identical mocks + baseData), so these run at module scope alongside the suite above.
+
+// [A14] the stale threshold is "> 30 days". Exactly 30 days old must NOT flag; 31 days must. The
+// implementer only tested 71 days (stale) and 10 days (fresh) — neither pins the boundary, so an
+// off-by-one (>= vs >) would pass their suite. 2026-06-11 is 30 days before the pinned clock.
+it('does NOT flag a balance exactly 30 days old (boundary, not > 30)', () => {
+  mockData = baseData({ goals: [{ ...PAYDOWN, id: 'g30', manual_as_of: '2026-06-11' }] });
+  render(<Goals />);
+  expect(within(screen.getByTestId('goal-card-g30')).queryByText('Haven’t updated in a while')).toBeNull();
+});
+
+// [A15] the matching over-boundary case.
+it('flags a balance 31 days old (just over the boundary)', () => {
+  mockData = baseData({ goals: [{ ...PAYDOWN, id: 'g31', manual_as_of: '2026-06-10' }] });
+  render(<Goals />);
+  expect(within(screen.getByTestId('goal-card-g31')).getByText('Haven’t updated in a while')).toBeTruthy();
+});
+
+// [A16] a manual goal with NO as-of date shows "Balance not set" (never a crash / blank / "as of
+// undefined") and is not flagged stale. balanceIsStale(null) short-circuits to false.
+it('a manual goal with a null as-of shows "Balance not set" and no stale tag', () => {
+  mockData = baseData({ goals: [{ ...PAYDOWN, id: 'gnull', manual_as_of: null }] });
+  render(<Goals />);
+  const card = within(screen.getByTestId('goal-card-gnull'));
+  expect(card.getByText('Balance not set')).toBeTruthy();
+  expect(card.queryByText(/Balance as of/)).toBeNull();
+  expect(card.queryByText('Haven’t updated in a while')).toBeNull();
+});
+
+// [A17] REGRESSION: adding the nested "Update balance" button inside the card must not steal taps
+// on the card body — tapping the card (not the button) still routes to the edit screen, and the
+// sheet does NOT open. Mirrors the existing synced-card nav test, but for a MANUAL card.
+it('tapping a manual goal card body still routes to edit (not the sheet)', () => {
+  mockData = baseData({ goals: [PAYDOWN] });
+  render(<Goals />);
+  fireEvent.press(screen.getByTestId('goal-card-g2'));
+  expect(mockPush).toHaveBeenCalledWith('/goal/edit?id=g2');
+  expect(mockOpenGoalBalance).not.toHaveBeenCalled();
+});
+
+// ===== WHIT-296 (folded from goalsHubRichGaps.screen.test.tsx) =====
+// GAP tests for the rich-payoff mortgage card: adversarial boundaries the implementer's
+// `describe('the mortgage card — rich payoff state')` leaves open. Same harness (identical mocks +
+// baseData, REAL goalView), so every payoff number is computed for real.
+describe('WHIT-296 rich mortgage card — gap boundaries', () => {
+  // [G2] balance EXACTLY equal to the original: the natural zero boundary — paidOff is genuinely 0,
+  // so there's no honest paydown to headline. The card must fall through to the plain "owing" line,
+  // not show an empty "$0 / 0% gone" rich card. This is the exact edge of the `paidDown > 0` gate.
+  it('[G2] balance exactly equal to original → the plain "owing" line, not an empty rich card', () => {
+    mockData = baseData({ loanFacts: { ...READY_FACTS, original: 596642.43 } }); // == default balance
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('$596,642 owing')).toBeTruthy();
+    expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
+  });
+
+  // [G3] "% gone" must ROUND, not floor/truncate. 205,000 / 800,000 = 25.625% → 26%. A floor or
+  // trunc would render "25% gone", so this reddens if Math.round is swapped for Math.floor.
+  it('[G3] paidPct that lands on x.625 rounds UP to the next whole percent', () => {
+    mockData = baseData({ loanFacts: READY_FACTS, homeLoan: { balance: 595000, asOf: '2026-07-04T00:00:00Z' } });
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('$205,000')).toBeTruthy();       // 800,000 − 595,000
+    expect(card.getByText('26% gone')).toBeTruthy();        // 25.625 → 26 (round, not 25)
+    expect(card.getByText('$595,000 to go')).toBeTruthy();
+  });
+
+  // [G4] with real goals present the rich mortgage must still LEAD the list (it's the headline
+  // goal). Compare serialized render order — React renders children in array order, so the
+  // mortgage-link testID must appear before goal-card-g1's.
+  it('[G4] the rich mortgage card renders BEFORE the real goal cards', () => {
+    mockData = baseData({ loanFacts: READY_FACTS, goals: [GROW] });
+    render(<Goals />);
+    // both present
+    expect(within(screen.getByTestId('mortgage-link')).getByText('PAID DOWN SO FAR')).toBeTruthy();
+    expect(screen.getByTestId('goal-card-g1')).toBeTruthy();
+    // ordering
+    const tree = JSON.stringify(screen.toJSON());
+    expect(tree.indexOf('"mortgage-link"')).toBeGreaterThanOrEqual(0);
+    expect(tree.indexOf('"mortgage-link"')).toBeLessThan(tree.indexOf('"goal-card-g1"'));
+  });
+
+  // [G5] rich mortgage + an EMPTY goals list: the additive invite (goals-empty-hint) must still
+  // coexist — entering the rich state must not suppress it or resurrect "No goals yet".
+  it('[G5] rich mortgage coexists with the empty-list invite (never "No goals yet")', () => {
+    mockData = baseData({ loanFacts: READY_FACTS, goals: [] });
+    render(<Goals />);
+    expect(within(screen.getByTestId('mortgage-link')).getByText('PAID DOWN SO FAR')).toBeTruthy();
+    expect(screen.getByTestId('goals-empty-hint')).toBeTruthy();
+    expect(screen.queryByText('No goals yet')).toBeNull();
+  });
+
+  // [G6] a SUB-DOLLAR paydown must NOT headline the rich card: paidOff = 0.30 would pass a raw
+  // `paidDown > 0` gate, but fmt(0.30) rounds to "$0" → the "$0 paid down" nonsense. The gate
+  // rounds to whole dollars (like fmt), so a 30c paydown stays on the plain "owing" line.
+  it('[G6] a 30c paydown shows the plain owing line, not a "$0 paid down" rich card', () => {
+    mockData = baseData({ loanFacts: READY_FACTS, homeLoan: { balance: 799999.70, asOf: '2026-07-04T00:00:00Z' } });
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
+    expect(card.getByText('$800,000 owing')).toBeTruthy();
+  });
+
+  // [G7] a residual-cents balance that DISPLAYS as "$0 to go" must read "100% gone", not 99 — the
+  // 100% branch keys off the rounded balance so the label agrees with the "$0 to go" figure.
+  it('[G7] a 43c residual balance ("$0 to go") reads 100% gone, not 99%', () => {
+    mockData = baseData({ loanFacts: READY_FACTS, homeLoan: { balance: 0.43, asOf: '2026-07-04T00:00:00Z' } });
+    render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('$0 to go')).toBeTruthy();
+    expect(card.getByText('100% gone')).toBeTruthy();
+  });
+});
