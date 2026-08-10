@@ -19,13 +19,14 @@ NOW = 1_800_000_000  # fixed epoch so the window is deterministic
 
 
 class _FakeTxnRepo:
-    def __init__(self, rows):
+    def __init__(self, rows, cursor=None):
         self._rows = rows
+        self._cursor = cursor
         self.calls = []
 
     def get_transactions_by_date_range(self, account_id, start_date, end_date, limit):
         self.calls.append((account_id, start_date, end_date, limit))
-        return list(self._rows), None
+        return list(self._rows), self._cursor
 
 
 class _FakeNotify:
@@ -172,3 +173,103 @@ def test_push_window_cutoff_is_midnight_of_the_oldest_day(handler, caplog):
     notify = _FakeNotify([357300])
     _run(handler, caplog, rows=[_row("3573.00")], notify=notify)
     assert notify.since_cutoff == calendar.timegm(time.strptime("2027-01-08", "%Y-%m-%d"))
+
+
+# --- adversarial edges: floor, mixed match/unmatch, rounding, pagination -----
+
+
+def test_exactly_ten_dollars_is_a_qualifying_repayment(handler, caplog):
+    # $10.00 == MIN_REPAYMENT_NOTIFY → NOT below the floor → alarms if unpushed.
+    # Mirrors the webhook floor (valueInBaseUnits >= 1000).
+    text = _run(handler, caplog, rows=[_row("10.00")], push_amounts=[])
+    assert _alarm_count(text) == 1
+    assert "1000 cents" in text
+
+
+def test_just_below_ten_dollars_is_ignored(handler, caplog):
+    # $9.99 < floor → not a repayment, no alarm even with zero pushes.
+    text = _run(handler, caplog, rows=[_row("9.99")], push_amounts=[])
+    assert MARKER not in text
+
+
+def test_alarm_count_equals_unmatched_count(handler, caplog):
+    # Three distinct repayments; only the middle one has a push. Exactly two alarms,
+    # and the pushed amount is NOT among them.
+    rows = [_row("3573.00"), _row("4000.00"), _row("5000.00")]
+    text = _run(handler, caplog, rows=rows, push_amounts=[400000])
+    assert _alarm_count(text) == 2
+    assert "357300 cents" in text
+    assert "500000 cents" in text
+    assert "400000 cents" not in text  # consumed by its matching push
+
+
+def test_more_pushes_than_repayments_never_alarms(handler, caplog):
+    # Leftover pushes (an earlier repayment already rolled off the store window but its
+    # push is still in the marker window) must not manufacture an alarm.
+    rows = [_row("3573.00")]
+    text = _run(handler, caplog, rows=rows, push_amounts=[357300, 357300, 400000])
+    assert MARKER not in text
+
+
+def test_odd_cent_amount_matches_its_cent_marker(handler, caplog):
+    # $3,573.33 → 357333 cents (round, not truncate). A matching marker keeps it silent.
+    text = _run(handler, caplog, rows=[_row("3573.33")], push_amounts=[357333])
+    assert MARKER not in text
+
+
+def test_odd_cent_amount_without_push_reports_exact_cents(handler, caplog):
+    text = _run(handler, caplog, rows=[_row("3573.33")], push_amounts=[])
+    assert "357333 cents" in text
+
+
+def test_detector_requests_max_page_size_and_ignores_the_cursor(handler, caplog):
+    # The detector calls get_transactions_by_date_range with MAX_PAGE_SIZE and never
+    # re-queries with the returned LastEvaluatedKey. This pins the single-page behaviour
+    # so a >100-row 7-day window would silently drop the oldest repayments.
+    repo = _FakeTxnRepo([_row("3573.00")], cursor={"pk": "more", "sk": "pages"})
+    handler.check_ingested_repayment_without_push(_FakeNotify([357300]), repo, NOW)
+    assert len(repo.calls) == 1  # cursor dropped: no second page fetched
+    _account, _start, _end, limit = repo.calls[0]
+    assert limit == handler.MAX_PAGE_SIZE
+
+
+def test_non_numeric_amount_row_is_skipped_not_crashing_the_scan(handler, caplog):
+    # A row with a non-numeric amount is skipped, so one garbled row can't abort the whole
+    # miss-scan (the old `amount <= 0` would have raised TypeError). The valid repayment
+    # beside it still alarms.
+    garbled = {"type": "TRANSFER_INCOMING", "amount": "not-a-number", "date": "2026-07-04"}
+    text = _run(handler, caplog, rows=[garbled, _row("3573.00")], push_amounts=[])
+    assert _alarm_count(text) == 1
+    assert "357300 cents" in text
+
+
+# --- non-finite amounts: the detector's distinct crash mode (WHIT-327 B) -----
+# These inject a RAW amount (no Decimal(str(...)) wrap). Keeping float("inf") a genuine
+# float exercises is_number's float branch (math.isfinite); the Decimal-wrapping _row would
+# turn it into Decimal("Infinity") and route both non-finite legs through the Decimal branch
+# instead. is_number skips the bad leg either way, so the valid repayment beside it still
+# alarms — but the raw passthrough keeps the float path honest. [fail-on-revert] reverting
+# the finiteness guard makes int(round(inf*100)) raise OverflowError (and Decimal('NaN') > 0
+# raise InvalidOperation).
+
+
+def _raw_amount_row(amount, *, date="2026-07-04", type_="TRANSFER_INCOMING"):
+    return {"type": type_, "amount": amount, "date": date}
+
+
+def test_infinite_ingested_amount_does_not_crash_detector_and_valid_miss_still_alarms(handler, caplog):
+    # A float('inf') repayment amount would (pre-PART-B) pass is_repayment_credit and blow up
+    # at int(round(inf*100)) → OverflowError, killing the miss detector. is_number now skips
+    # it; the scan continues and the valid $3573 repayment with no matching push still alarms.
+    rows = [_raw_amount_row(float("inf")), _raw_amount_row(Decimal("3573.00"))]
+    text = _run(handler, caplog, rows=rows, push_amounts=[])
+    assert _alarm_count(text) == 1   # only the valid repayment; the inf leg was skipped
+
+
+def test_decimal_nan_ingested_amount_does_not_crash_detector(handler, caplog):
+    # A Decimal('NaN') repayment amount raised InvalidOperation inside is_repayment_credit's
+    # `> 0` before PART B → the detector threw. Now skipped cleanly; a valid repayment in the
+    # same page still alarms.
+    rows = [_raw_amount_row(Decimal("NaN")), _raw_amount_row(Decimal("3573.00"))]
+    text = _run(handler, caplog, rows=rows, push_amounts=[])
+    assert _alarm_count(text) == 1
