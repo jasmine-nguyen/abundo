@@ -17,10 +17,11 @@ does not cover them):
          re-duplicates a harness fake that can then drift from its twin — the drift WHIT-465 closed.
 """
 
-import ast
 import pathlib
 
 import pytest
+
+from _ast_bindings import _top_level_binding_list
 
 _TESTS = pathlib.Path(__file__).resolve().parent.parent          # tests/
 
@@ -44,21 +45,6 @@ _DELETED = [
     "balance_poller/test_handler_milestone_repo_wiring_gaps.py",
     "balance_poller/test_handler_milestone_scope_gaps.py",
 ]
-
-
-def _top_level_binding_list(path: pathlib.Path) -> list:
-    """Every top-level def/class/assignment name AS A LIST (dups preserved) — the set form would
-    collapse the very duplicate [C1] hunts for. Mirrors tests/shared/test_fakes_invariants.py."""
-    tree = ast.parse(path.read_text())
-    names: list = []
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.append(node.name)
-        elif isinstance(node, ast.Assign):
-            names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.append(node.target.id)
-    return names
 
 
 # A survivor that got renamed/moved would make [C1] scan a missing file and error loudly rather
