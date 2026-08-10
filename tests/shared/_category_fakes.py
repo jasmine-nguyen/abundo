@@ -167,6 +167,7 @@ class FakeBudgetRepo:
         self._raises = raises
         self._budgets = budgets or {}  # {id: {"target": Decimal}}
         self.delete_calls = []
+        self.clear_rollover_calls = []
         self.list_calls = 0
 
     def list_budgets(self):
@@ -175,6 +176,13 @@ class FakeBudgetRepo:
 
     def delete_budget(self, cat_id):
         self.delete_calls.append(cat_id)
+        if self._raises is not None:
+            raise self._raises
+
+    def clear_rollover(self, cat_id):
+        # The rollover-clear cascade on a re-bucket out of spend (WHIT-474). Records the
+        # call; honours the same `raises` arm so a test can exercise the best-effort swallow.
+        self.clear_rollover_calls.append(cat_id)
         if self._raises is not None:
             raise self._raises
 

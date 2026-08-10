@@ -364,6 +364,48 @@ def test_update_budgeted_category_to_non_savings_bucket_unaffected(handler):
     assert repo.update_calls == [("coffee", "Coffee", "Lifestyle", "tag")]
 
 
+def test_update_rebucket_to_income_clears_rollover(handler):
+    # WHIT-474: rollover is spend-only. Reclassifying a category to Income must clear its
+    # rollover fields so a stale carryover anchor can't re-fold on a later move back to spend.
+    # The target itself is kept (an Income budget is a valid earn-target) — that is
+    # clear_rollover's job, tested at the repo level; here we prove the cascade fires.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
+
+    assert resp["statusCode"] == 200
+    assert budget.clear_rollover_calls == ["coffee"]
+
+
+def test_update_within_spend_bucket_does_not_clear_rollover(handler):
+    # A plain edit that stays in a spend bucket (Living) must NOT clear rollover — the buffer
+    # is still valid. Fail-on-revert: gating the cascade on "any edit" would wrongly wipe it.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58}})
+
+    resp = handler.update_category(_category_item_event("PATCH"), repo, budget)  # bucket "Living"
+
+    assert resp["statusCode"] == 200
+    assert budget.clear_rollover_calls == []
+
+
+def test_update_rebucket_clear_rollover_is_best_effort(handler):
+    # The clear is best-effort (category-first, like the delete cascade): a version race or
+    # DB fault must not fail the bucket edit — a stale anchor is inert while non-spend and
+    # recoverable, never corruption. Armed to raise VersionConflictError; still 200.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(raises=handler.VersionConflictError("contention"))
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
+
+    assert resp["statusCode"] == 200
+    assert budget.clear_rollover_calls == ["coffee"]  # it attempted the clear
+    assert repo.update_calls == [("coffee", "Coffee", "Income", "tag")]  # the re-bucket stuck
+
+
 def test_update_rebucket_to_savings_with_zero_target_still_rejected(handler):
     # The guard keys on `cat_id in list_budgets()`; a stored target of 0 is still a KEY
     # there, so a 0-target category is NOT a hole — re-bucketing it into Savings is blocked,
