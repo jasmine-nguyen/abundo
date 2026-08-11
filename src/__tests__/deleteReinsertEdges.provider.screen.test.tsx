@@ -113,3 +113,55 @@ describe('deleteRule — cache evicted mid-flight is a NO-OP (asymmetry vs delet
     expect(ruleIds()).toBeUndefined(); // rule NOT restored — cache stays evicted
   });
 });
+
+// ===== WHIT-254 (folded from deleteReinsert.provider.screen.test.tsx) =====
+// The WIRING guard: two FAILED deletes fired concurrently through the REAL deleteGoal/deleteRule
+// writers must restore cache order. Fail-on-revert of the production change — the old code
+// reinserted at a saved integer index, which misplaces a row when the sibling delete already
+// shortened the list, so these go red if the writers revert to index-splice. Same AppProvider +
+// singleton queryClient + helpers as above; the module-scope beforeEach/afterEach clear the cache
+// between these too. (Reuses this file's goalIds/ruleIds — the `?.map` form covers the same asserts.)
+
+describe('deleteGoal — two failed deletes at once restore order', () => {
+  beforeEach(() => { mockApi.deleteGoal.mockRejectedValue(new Error('API error: 500')); });
+
+  it('a GAP pair (g1 + g3) rolls back to [g1,g2,g3,g4]', async () => {
+    queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2'), goal('g3'), goal('g4')]);
+    const result = mountAppContext();
+    await act(async () => {
+      await Promise.all([result.current.deleteGoal('g1'), result.current.deleteGoal('g3')]);
+    });
+    expect(goalIds()).toEqual(['g1', 'g2', 'g3', 'g4']);
+  });
+
+  it('an ADJACENT pair (g2 + g3) rolls back to [g1,g2,g3,g4]', async () => {
+    queryClient.setQueryData<GoalRecord[]>(['goals'], [goal('g1'), goal('g2'), goal('g3'), goal('g4')]);
+    const result = mountAppContext();
+    await act(async () => {
+      await Promise.all([result.current.deleteGoal('g2'), result.current.deleteGoal('g3')]);
+    });
+    expect(goalIds()).toEqual(['g1', 'g2', 'g3', 'g4']);
+  });
+});
+
+describe('deleteRule — two failed deletes at once restore order', () => {
+  beforeEach(() => { mockApi.deleteEnrichment.mockRejectedValue(new Error('API error: 500')); });
+
+  it('a GAP pair (r1 + r3) rolls back to [r1,r2,r3,r4]', async () => {
+    queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2'), rule('r3'), rule('r4')]);
+    const result = mountAppContext();
+    await act(async () => {
+      await Promise.all([result.current.deleteRule('r1'), result.current.deleteRule('r3')]);
+    });
+    expect(ruleIds()).toEqual(['r1', 'r2', 'r3', 'r4']);
+  });
+
+  it('an ADJACENT pair (r2 + r3) rolls back to [r1,r2,r3,r4]', async () => {
+    queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2'), rule('r3'), rule('r4')]);
+    const result = mountAppContext();
+    await act(async () => {
+      await Promise.all([result.current.deleteRule('r2'), result.current.deleteRule('r3')]);
+    });
+    expect(ruleIds()).toEqual(['r1', 'r2', 'r3', 'r4']);
+  });
+});
