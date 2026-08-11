@@ -5,7 +5,7 @@
 // screen renders under a real QueryClientProvider so the actual query behaviour runs.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, act, waitFor, renderHook } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { routerSpies, resetRouter } from './support/routerMock';
 
@@ -24,21 +24,30 @@ function setAuth(next: string) {
   mockAuthListeners.forEach((l) => l());
 }
 
-// api: controllable fetchers. Only the three Budgets reads exist — a call to any other
-// endpoint would be an undefined function and throw, so a green render proves the
-// screen fetches ONLY its own reads.
+// api: controllable fetchers. The three Budgets reads (fetchBudgets/Categories/PayCycle) drive
+// the screen; a call to any OTHER screen endpoint would throw, so a green render proves the
+// screen fetches ONLY its own reads. fetchTransactions + fetchBudgetTransactions are part of the
+// mocked-module UNION added for the folded WHIT-72 detail-hook tests (useBudgetDetailScreenData);
+// the Budgets screen never calls them, so they are inert for every non-detail test here.
 const mockFetchBudgets = jest.fn<(days: number) => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchPayCycle = jest.fn<() => Promise<unknown>>();
+const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
+const mockFetchBudgetTransactions = jest.fn<(id: string) => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchBudgets: (...a: unknown[]) => mockFetchBudgets(...(a as [number])),
   fetchCategories: () => mockFetchCategories(),
   fetchPayCycle: () => mockFetchPayCycle(),
+  fetchTransactions: () => mockFetchTransactions(),
+  fetchBudgetTransactions: (id: string) => mockFetchBudgetTransactions(id),
 }));
 
 jest.mock('expo-router', () => require('./support/routerMock').routerMockModule());
 
 import Budgets from '../../app/(tabs)/budgets';
+// The REAL query hooks (../api + ../auth mocked above) — driven directly by the folded WHIT-72
+// tests via renderHook; the same regime the screen renders under.
+import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
 
 // length 30 (NOT the default 14) so "windowed on the real length" genuinely proves
 // budgets waited for the pay cycle rather than fetching with the seeded default.
@@ -311,5 +320,152 @@ describe('payCycle failure must show the error, not budgets on a wrong cycle', (
     expect(await screen.findByTestId('budgets-error')).toBeTruthy();
     expect(screen.getByTestId('budgets-retry')).toBeTruthy();
     expect(screen.queryByTestId('budgets-loading')).toBeNull();
+  });
+});
+
+// ===== WHIT-221 (folded from budgetsSubcategory.screen.test.tsx) — same ../auth/../api/expo-router
+// regime (real QueryClient). Divergent fixtures (car/parent + parking/sub, PAY_CYCLE len 14) and the
+// indent-style helpers are block-scoped here so they shadow the module coffee fixtures for these two. =====
+describe('WHIT-221 parent→sub tree + de-duped hero (folded from budgetsSubcategory)', () => {
+  // Car (parent) rolled-up spend 75 of 200; Parking (sub of Car) 30 of 50. Same bucket.
+  const PAY_CYCLE = { length: 14, last_pay_date: '2026-07-01' };
+  const CATS = [
+    { id: 'car', name: 'Car', bucket: 'Living', icon: 'car', color: '#7fd1b9', recent: 3, parent: null },
+    { id: 'parking', name: 'Parking', bucket: 'Living', icon: 'car', color: '#7fd1b9', recent: 1, parent: 'car' },
+  ];
+  const BUDGETS = {
+    car: { target: 200, posted: 75, pending: 0 },
+    parking: { target: 50, posted: 30, pending: 0 },
+  };
+
+  // Flatten a host element's style prop (array | object | StyleSheet-ref) into one object.
+  // StyleSheet.create refs spread to nothing; only inline objects (the indent block) carry
+  // through — exactly what we want to detect.
+  function flatStyle(node: any): Record<string, unknown> {
+    const s = node?.props?.style;
+    const arr = Array.isArray(s) ? s : [s];
+    return arr.reduce((acc, cur) => (cur && typeof cur === 'object' ? { ...acc, ...cur } : acc), {} as Record<string, unknown>);
+  }
+  // Walk up from a text node and return the first ancestor inline style carrying a numeric
+  // marginLeft (the depth indent block), or {} if none — the parent row has no indent block.
+  function indentStyleFor(name: string): Record<string, unknown> {
+    let node: any = screen.getByText(name);
+    for (let i = 0; i < 8 && node; i++) {
+      const st = flatStyle(node);
+      if (typeof st.marginLeft === 'number') return st;
+      node = node.parent;
+    }
+    return {};
+  }
+
+  beforeEach(() => {
+    mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
+    mockFetchCategories.mockReset().mockResolvedValue(CATS);
+    mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+  });
+
+  it('[A26] hero de-dups: the "of" pill counts the parent cap once, not parent + sub', async () => {
+    renderBudgets();
+    expect(await screen.findByText('Car')).toBeTruthy();
+    expect(screen.getByText('Parking')).toBeTruthy();      // both rows render
+    expect(screen.getByText('of $200')).toBeTruthy();      // Car only
+    expect(screen.queryByText('of $250')).toBeNull();      // NOT Car + Parking
+    // Reverting the `depth === 0` guard makes totBudget 250 -> the pill flips to "of $250".
+  });
+
+  it('[A27] the child row is indented and the parent row is not', async () => {
+    renderBudgets();
+    await screen.findByText('Car');
+    expect(indentStyleFor('Car').marginLeft ?? 0).toBe(0);   // depth 0 -> no indent block
+    const child = indentStyleFor('Parking');
+    expect(child.marginLeft).toBe(18);                       // depth 1 -> 1 * 18
+    expect(child.borderLeftWidth).toBe(2);                   // indent rail present
+  });
+});
+
+// ===== WHIT-72 (folded from budgetsPayCycleError.screen.test.tsx) — the payCycleError guard,
+// driven via renderHook on the REAL hooks (../api + ../auth mocked; NO expo-router mock originally —
+// the shared module-scope expo-router mock is inert here because ../queries never imports it).
+// makeClient/wrapper/fixtures block-scoped so they don't collide with the module helpers. =====
+describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () => {
+  const CATS = [{ id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 0 }];
+  const PAY_CYCLE = { length: 30, last_pay_date: '2026-07-01' };
+  const BUDGETS = { coffee: { target: 100, posted: 40, pending: 10 } };
+
+  function makeClient() {
+    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
+  }
+  const wrapper = (client: QueryClient) =>
+    ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+
+  beforeEach(() => {
+    mockFetchBudgets.mockReset().mockResolvedValue(BUDGETS);
+    mockFetchCategories.mockReset().mockResolvedValue(CATS);
+    mockFetchPayCycle.mockReset().mockResolvedValue(PAY_CYCLE);
+    mockFetchTransactions.mockReset().mockResolvedValue([]);
+    mockFetchBudgetTransactions.mockReset().mockResolvedValue([]);
+  });
+
+  describe('useBudgetsScreenData — payCycleError guard (WHIT-72)', () => {
+    it('first-load payCycle failure (never-succeeded → data undefined) → payCycleError is TRUE', async () => {
+      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      // The signal the screen keys its error card on — locked directly (existing tests only
+      // assert the aggregate isError). data===undefined ⇒ no cached cycle to trust.
+      expect(result.current.payCycleError).toBe(true);
+    });
+
+    it('BACKGROUND payCycle refetch failure over a cached cycle → payCycleError stays FALSE, rows + last-good cycle survive (cache-first)', async () => {
+      // First load succeeds → cycle (len 30) + budgets cached. Then a refetch of the pay cycle
+      // fails: TanStack v5 RETAINS the last-good data, so data!==undefined ⇒ payCycleError must
+      // stay FALSE and the rows keep rendering against the last-good cycle. A bare `.isError`
+      // (no data guard) would flip this true and blank cached budgets — the exact regression.
+      const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
+      await waitFor(() => expect(result.current.budgets).toHaveLength(1));
+      expect(result.current.cycleLen).toBe(30);
+
+      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      await act(async () => { result.current.refetch(); });
+      await waitFor(() => expect(result.current.isError).toBe(true)); // the failed payCycle refetch propagates
+
+      expect(result.current.payCycleError).toBe(false); // <-- data retained → NOT a first-load error
+      expect(result.current.cycleLen).toBe(30);         // last-good cycle still drives the hero
+      expect(result.current.budgets).toHaveLength(1);   // cached rows survive
+    });
+
+    it('BOTH payCycle AND budgets fail on first load → error via both paths (payCycleError AND isError)', async () => {
+      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      mockFetchBudgets.mockReset().mockRejectedValue(new Error('API error: 500'));
+      const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(result.current.payCycleError).toBe(true);
+      expect(result.current.budgets).toHaveLength(0);
+    });
+  });
+
+  describe('useBudgetDetailScreenData — payCycleError guard (WHIT-72)', () => {
+    it('BACKGROUND payCycle refetch failure over a cached cycle → payCycleError stays FALSE (cache-first, same guard as Budgets)', async () => {
+      const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
+      await waitFor(() => expect(result.current.budgets).toHaveLength(1));
+      expect(result.current.cycleLen).toBe(30);
+
+      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      await act(async () => { result.current.refetch(); });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+
+      expect(result.current.payCycleError).toBe(false);
+      expect(result.current.cycleLen).toBe(30);
+      expect(result.current.budgets).toHaveLength(1);
+    });
+
+    it('first-load payCycle failure → payCycleError is TRUE (detail blanks on it)', async () => {
+      mockFetchPayCycle.mockReset().mockRejectedValue(new Error('API error: 503'));
+      const { result } = renderHook(() => useBudgetDetailScreenData('coffee'), { wrapper: wrapper(makeClient()) });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(result.current.payCycleError).toBe(true);
+    });
   });
 });
