@@ -70,7 +70,6 @@ lambda_api/*
 !lambda_api/constants.py
 !lambda_api/banksync_enrichments.py
 !lambda_api/insights_ai.py
-!lambda_api/milestone_ai.py
 !lambda_api/anthropic_client.py
 
 # terraform
