@@ -3,7 +3,7 @@
 // query the lists use (mocked here), found by id. Verifies the fields render, the pending
 // label, the "not found" state for a stale id, and cache-first error handling. The next
 // slice adds the editable note + tags.
-import { it, expect, jest, beforeEach } from '@jest/globals';
+import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
@@ -13,9 +13,23 @@ jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx, useRec
 
 // WHIT-275: the screen's note/tags editor reads applyTransactionEdit from the context; stub
 // it (real selectors kept) so these read-path tests render without an AppProvider.
+// WHIT-459: the context stub is the SUPERSET of the folded siblings' stubs — applyTransactionEdit
+// (all four), showToast (from transactionDetailExcludedEdges), and openPicker (from
+// transactionRecategorize). The extra members are inert for read-path tests: the ExcludedEdges and
+// Recategorize files each rendered the screen with these present and stayed green.
+const mockApplyTransactionEdit = jest.fn();
+const mockToast = jest.fn();
+const mockOpenPicker = jest.fn();
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
-  return { ...actual, useAppContext: () => ({ applyTransactionEdit: jest.fn() }) };
+  return {
+    ...actual,
+    useAppContext: () => ({
+      applyTransactionEdit: mockApplyTransactionEdit,
+      showToast: mockToast,
+      openPicker: mockOpenPicker,
+    }),
+  };
 });
 
 let mockId = 't1';
@@ -42,6 +56,9 @@ function txData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isE
 beforeEach(() => {
   mockId = 't1';
   mockTx = txData();
+  mockApplyTransactionEdit.mockClear();
+  mockToast.mockClear();
+  mockOpenPicker.mockClear();
 });
 
 it('renders the transaction fields (merchant, amount, date, account, category, status)', () => {
@@ -96,4 +113,94 @@ it('while loading with nothing cached, shows the spinner and NOT the not-found s
   render(<TransactionDetail />);
   expect(screen.getByTestId('transaction-loading')).toBeTruthy();
   expect(screen.queryByText('Transaction not found')).toBeNull();
+});
+
+// ===== WHIT-298 (folded from transactionDetailExcludedEdges.screen.test.tsx)
+// Original mocked ../queries + ../context + expo-router + react-native-safe-area-context with the
+// same factory bodies as this survivor, except its context stub added showToast (now in the shared
+// superset above) and hardcoded the route id 't1' (equivalent to the module-level mockId reset).
+
+// [A-detail-combo] the bank flag wins: even with the user's budget_excluded also set, the screen
+// shows the read-only note and hides the (would-be inert) manual toggle.
+it('shows the read-only note and NO toggle when bank-excluded AND user-excluded', () => {
+  mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: false, budget_excluded: true })] });
+  render(<TransactionDetail />);
+  expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
+  expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
+});
+
+// [A-detail-undef] CONSISTENCY: when the server omits counts_to_budget, the detail screen shows
+// the read-only "Excluded (transfer)" note and hides the toggle (it gates on the falsy
+// counts_to_budget test), rather than a contradictory OFF switch. Fails if the gate reverts to a
+// strict `=== false` (which would fall through to the toggle for undefined). (The list row's
+// "Not in budget" tag was removed in WHIT-330, so this is now purely a detail-screen guard.)
+it('shows the read-only note (not the toggle) when counts_to_budget is undefined — matching the list tag', () => {
+  mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', counts_to_budget: undefined })] });
+  render(<TransactionDetail />);
+  expect(screen.getByText('Excluded (transfer)')).toBeTruthy();
+  expect(screen.queryByRole('switch', { name: 'Exclude from budgets' })).toBeNull();
+});
+
+// ===== WHIT-276 (folded from transactionDetailStates.screen.test.tsx)
+// Original mocked ../queries + ../context + expo-router + react-native-safe-area-context with
+// factory bodies byte-identical to this survivor's; reuses the shared mockId/mockTx/txData/category.
+
+// [A-txn-both] Empty cache, isLoading && isError both true: through the real screen both the
+// spinner and the error render stacked and the "not found" empty message stays hidden. A
+// collapse to either/or, or dropping the hasCache gate, breaks this.
+it('with an empty cache, isLoading && isError renders BOTH the spinner and the error, not the not-found state', () => {
+  mockTx = txData({ transactions: [], isLoading: true, isError: true });
+  render(<TransactionDetail />);
+  expect(screen.getByTestId('transaction-loading')).toBeTruthy();
+  expect(screen.getByTestId('transaction-error')).toBeTruthy();
+  expect(screen.queryByText('Transaction not found')).toBeNull();
+});
+
+// ===== WHIT-287 (folded from transactionRecategorize.screen.test.tsx)
+// Original mocked ../queries + ../context + expo-router + react-native-safe-area-context. Its
+// context stub added openPicker (now in the shared superset above, cleared per-test in beforeEach);
+// factory bodies otherwise byte-identical to this survivor's.
+
+it('tapping the Category row opens the picker for this transaction', () => {
+  render(<TransactionDetail />);
+  // The row is a button labelled with the current category so it reads as "tap to change".
+  const row = screen.getByLabelText('Change category, currently Cafes & Coffee');
+  expect(row.props.accessibilityRole).toBe('button');
+
+  fireEvent.press(row);
+  expect(mockOpenPicker).toHaveBeenCalledTimes(1);
+  expect(mockOpenPicker).toHaveBeenCalledWith('t1');
+});
+
+// The top-level test above already covers the already-categorized (coffee) case; these cover
+// the states a LIST row would NOT make tappable — proving the detail row re-files regardless.
+describe('re-categorize is offered regardless of the current category', () => {
+  it('an income-tagged transaction is re-filable', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'income', amount: 2500 })] });
+    render(<TransactionDetail />);
+    fireEvent.press(screen.getByLabelText('Change category, currently Income'));
+    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
+  });
+
+  it('an uncategorized transaction is re-filable', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: null })] });
+    render(<TransactionDetail />);
+    fireEvent.press(screen.getByLabelText('Change category, currently Uncategorized'));
+    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
+  });
+
+  it('a pending transaction is re-filable', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', status: 'pending' })] });
+    render(<TransactionDetail />);
+    fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
+    expect(mockOpenPicker).toHaveBeenCalledWith('t1');
+  });
+});
+
+it('the picker targets the routed transaction id (not a hardcoded one)', () => {
+  mockId = 't2';
+  mockTx = txData({ transactions: [txn({ transaction_id: 't2', category: 'coffee' })] });
+  render(<TransactionDetail />);
+  fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
+  expect(mockOpenPicker).toHaveBeenCalledWith('t2');
 });
