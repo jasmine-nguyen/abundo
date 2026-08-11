@@ -41,12 +41,11 @@ resource "null_resource" "prepare_lambda_api" {
     constants        = filesha256("${path.module}/../lambda_api/constants.py")
     enrichments      = filesha256("${path.module}/../lambda_api/banksync_enrichments.py")
     insights         = filesha256("${path.module}/../lambda_api/insights_ai.py")
-    milestone        = filesha256("${path.module}/../lambda_api/milestone_ai.py")
     anthropic_client = filesha256("${path.module}/../lambda_api/anthropic_client.py")
   }
 
   provisioner "local-exec" {
-    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/../lambda_api/banksync_enrichments.py ${path.module}/../lambda_api/insights_ai.py ${path.module}/../lambda_api/milestone_ai.py ${path.module}/../lambda_api/anthropic_client.py ${path.module}/build/lambda_api/"
+    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/../lambda_api/banksync_enrichments.py ${path.module}/../lambda_api/insights_ai.py ${path.module}/../lambda_api/anthropic_client.py ${path.module}/build/lambda_api/"
   }
 }
 
