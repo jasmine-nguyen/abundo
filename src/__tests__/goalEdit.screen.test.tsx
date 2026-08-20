@@ -698,12 +698,10 @@ describe('WHIT-257 QA gaps: guard ordering', () => {
   });
 });
 
-// WHIT-476 — the add/edit form builds the write body from its OWN fields. It has no checkpoint
-// UI yet (slice 1 is data-only), so the ladder it never renders must still ride back out, or the
-// instant on-screen update would blank it on save. (The server keeps an omitted ladder under
-// option B, so the data is safe either way — this is about the optimistic view staying correct.)
-// Twin of the fix in the WHIT-235 balance sheet (goalBalanceSheet.screen.test.tsx).
-describe('WHIT-476: an edit must not drop the goal checkpoints', () => {
+// WHIT-477 — the checkpoint editor on the goal form: add / edit / delete rows, sorted into the
+// goal's direction on save, validated client-side before any 400. RAINY_DAY is a grow goal with a
+// $10k target, so a valid rung sits in (0, 10000).
+describe('WHIT-477: the checkpoint editor', () => {
   const LADDER = [
     { id: 'cp-1', label: 'First $1k', amount: 1000 },
     { id: 'cp-2', label: 'Halfway', amount: 5000 },
@@ -711,7 +709,7 @@ describe('WHIT-476: an edit must not drop the goal checkpoints', () => {
 
   beforeEach(() => { mockParams = { id: 'g1' }; mockGoals = [{ ...RAINY_DAY, checkpoints: LADDER }]; });
 
-  it('carries the saved ladder through an unrelated edit, ids intact', async () => {
+  it('carries a saved ladder through an unrelated edit, ids intact', async () => {
     render(<GoalEdit />);
     fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Rainy day fund');
     await press('goal-save');
@@ -719,6 +717,78 @@ describe('WHIT-476: an edit must not drop the goal checkpoints', () => {
     const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
     expect(body).toMatchObject({ name: 'Rainy day fund' });
     expect(body.checkpoints).toEqual(LADDER);   // same rows, same permanent ids
+  });
+
+  it('adds a rung and saves it sorted, with a minted id', async () => {
+    mockGoals = [RAINY_DAY]; // no existing ladder
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Halfway');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '5000');
+    await press('goal-save');
+
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    const rungs = body.checkpoints as { id: string; label: string; amount: number }[];
+    expect(rungs).toHaveLength(1);
+    expect(rungs[0]).toMatchObject({ label: 'Halfway', amount: 5000 });
+    expect(rungs[0].id).toMatch(/^test-uuid-/);   // client-minted (auto-mocked randomUUID)
+  });
+
+  it('editing a rung label keeps its id', async () => {
+    render(<GoalEdit />);
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'First grand');
+    await press('goal-save');
+
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    const rungs = body.checkpoints as { id: string; label: string; amount: number }[];
+    expect(rungs[0]).toEqual({ id: 'cp-1', label: 'First grand', amount: 1000 });
+  });
+
+  it('saves rungs SORTED even when entered out of order', async () => {
+    mockGoals = [RAINY_DAY];
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Later');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '4000');
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-1'), 'Earlier');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-1'), '1000');
+    await press('goal-save');
+
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    const rungs = body.checkpoints as { amount: number }[];
+    expect(rungs.map((r) => r.amount)).toEqual([1000, 4000]);   // grow → ascending
+  });
+
+  it('deleting every rung of a saved ladder sends [] to clear it', async () => {
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-delete-0'));
+    fireEvent.press(screen.getByTestId('goal-cp-delete-0'));   // indices shift after each delete
+    await press('goal-save');
+
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(body.checkpoints).toEqual([]);
+  });
+
+  it('blocks save with a toast when a rung is out of bounds (grow rung ≥ target)', async () => {
+    mockGoals = [RAINY_DAY];
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Too big');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '15000');   // ≥ 10000 target
+    await press('goal-save');
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/below the target/i));
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  it('flags rungs and blocks save after a grow→paydown flip leaves them invalid', async () => {
+    render(<GoalEdit />);   // LADDER 1000/5000, valid for grow with target 10000
+    fireEvent.press(screen.getByTestId('goal-direction-paydown'));  // now needs amount > 10000
+    await press('goal-save');
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/above the target/i));
+    expect(mockSaveGoal).not.toHaveBeenCalled();
   });
 
   it('sends no checkpoints for a goal that has none (no empty array smuggled in)', async () => {
@@ -731,7 +801,7 @@ describe('WHIT-476: an edit must not drop the goal checkpoints', () => {
     expect(body.checkpoints).toBeUndefined();
   });
 
-  it('a CREATE sends no checkpoints (there is no ladder UI in slice 1)', async () => {
+  it('a create with no rungs sends no checkpoints', async () => {
     mockParams = {};
     mockGoals = [];
     render(<GoalEdit />);
@@ -745,5 +815,134 @@ describe('WHIT-476: an edit must not drop the goal checkpoints', () => {
     const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
     expect(editId).toBeNull();
     expect(body.checkpoints).toBeUndefined();
+  });
+});
+
+// WHIT-477 QA gaps — adversarial screen edges the implementer's "checkpoint editor" describe
+// leaves open: the re-seed latch on the rung list, the MANUAL body-assembly arm carrying rungs,
+// clearing the target while rungs exist (the hidden section must not silently send them), and the
+// parseAmount contract on a rung amount (comma-thousands vs surrounding whitespace).
+describe('WHIT-477 QA gaps: checkpoint editor edges', () => {
+  const LADDER = [
+    { id: 'cp-1', label: 'First $1k', amount: 1000 },
+    { id: 'cp-2', label: 'Halfway', amount: 5000 },
+  ];
+
+  // [A-G11] The re-seed latch covers the RUNG list too: a background cache refetch after the user
+  // has edited a rung must not clobber the in-progress edit. Fail-on-revert: drop the `seeded`
+  // latch guard on the checkpoint re-seed and the refetch overwrites 'My rung' with 'Server label'.
+  it('a background refetch does NOT clobber a rung the user is mid-editing', () => {
+    mockParams = { id: 'g1' };
+    mockGoals = [{ ...RAINY_DAY, checkpoints: LADDER }];
+    const { rerender } = render(<GoalEdit />);
+
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'My rung');
+
+    // A later refetch hands back fresh rung objects with server-side labels.
+    mockGoals = [{ ...RAINY_DAY, checkpoints: [
+      { id: 'cp-1', label: 'Server label', amount: 1000 },
+      { id: 'cp-2', label: 'Halfway', amount: 5000 },
+    ] }];
+    rerender(<GoalEdit />);
+
+    expect(screen.getByDisplayValue('My rung')).toBeTruthy();
+    expect(screen.queryByDisplayValue('Server label')).toBeNull();
+  });
+
+  // [A-G12] The MANUAL arm of the body assembly must carry the sorted ladder (it spreads `common`,
+  // which now holds `checkpoints`). Fail-on-revert: if the manual branch stopped spreading the
+  // checkpoint field, the ladder would vanish for manual goals only.
+  it('a manual-goal edit that adds a rung sends BOTH the ladder and the manual arm', async () => {
+    mockParams = { id: 'g2' };
+    mockGoals = [CASH_POT]; // manual grow, target 5000, no ladder
+    render(<GoalEdit />);
+
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Half');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '2500');
+    await press('goal-save');
+
+    const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(editId).toBe('g2');
+    const rungs = body.checkpoints as { label: string; amount: number }[];
+    expect(rungs).toHaveLength(1);
+    expect(rungs[0]).toMatchObject({ label: 'Half', amount: 2500 });
+    // still the manual arm, not smuggled into a synced body
+    expect(body.manual_balance).toBe(800);
+    expect(body.account_id).toBeUndefined();
+  });
+
+  // [A-G13] Clearing the target hides the checkpoint section but keeps the rows in state. A save
+  // must block on the TARGET guard (not silently send the now-unvalidated rungs). Fail-on-revert:
+  // if the target guard were dropped, the ladder would ride out against a NaN target and 400.
+  it('clearing the target with rungs present blocks on the target guard, sends nothing', async () => {
+    mockParams = { id: 'g1' };
+    mockGoals = [{ ...RAINY_DAY, checkpoints: LADDER }];
+    render(<GoalEdit />);
+
+    fireEvent.changeText(screen.getByDisplayValue('10000'), ''); // wipe target → section hides
+    await press('goal-save');
+
+    expect(mockShowToast).toHaveBeenCalledWith('Enter a target amount above $0.');
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  // [A-G14] A rung amount goes through parseAmount: comma-thousands is rejected (NaN → out of
+  // bounds) and blocks save, the same way the goal's own amount fields treat it.
+  it('a comma-thousands rung amount ("1,000") is out of bounds and blocks save', async () => {
+    mockParams = { id: 'g1' };
+    mockGoals = [RAINY_DAY]; // no ladder, target 10000
+    render(<GoalEdit />);
+
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Comma');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '1,000');
+    await press('goal-save');
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/below the target/i));
+    expect(mockSaveGoal).not.toHaveBeenCalled();
+  });
+
+  // [A-G15] Surrounding whitespace on a rung amount is trimmed by parseAmount, so " 1000 " saves
+  // as the number 1000 (not NaN, not a string).
+  it('a whitespace-padded rung amount (" 1000 ") saves as the number 1000', async () => {
+    mockParams = { id: 'g1' };
+    mockGoals = [RAINY_DAY];
+    render(<GoalEdit />);
+
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Spaces');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), ' 1000 ');
+    await press('goal-save');
+
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    const rungs = body.checkpoints as { amount: number }[];
+    expect(rungs[0].amount).toBe(1000);
+  });
+});
+
+// WHIT-477 folded-in UX (from the QA review): the Add button disappears at the 20-rung cap, and
+// a freshly-added blank row isn't accused with the out-of-bounds warning until it has an amount.
+describe('WHIT-477: add-cap + blank-row warning suppression', () => {
+  beforeEach(() => { mockParams = { id: 'g1' }; mockGoals = [RAINY_DAY]; }); // grow, target 10000
+
+  it('hides the Add button once 20 checkpoints exist', () => {
+    render(<GoalEdit />);
+    for (let n = 0; n < 20; n++) fireEvent.press(screen.getByTestId('goal-cp-add'));
+
+    expect(screen.queryByTestId('goal-cp-add')).toBeNull();
+    expect(screen.getByText(/at most 20 checkpoints/i)).toBeTruthy();
+  });
+
+  it('does not warn on a brand-new blank row, but warns once an out-of-bounds amount is typed', () => {
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    expect(screen.queryByText(/Must be above/i)).toBeNull();   // pristine row: no accusation
+
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '15000'); // ≥ 10000 target
+    expect(screen.getByText(/Must be above/i)).toBeTruthy();
+
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '5000');  // fixed
+    expect(screen.queryByText(/Must be above/i)).toBeNull();
   });
 });
