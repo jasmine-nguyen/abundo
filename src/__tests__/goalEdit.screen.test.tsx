@@ -590,7 +590,9 @@ describe('WHIT-257: save-time guard on the manual as-of date', () => {
     setPickedDate(FUTURE); // future — drives BOTH pickers; target stays valid
     render(<GoalEdit />);
     fillManual();
-    // The AS OF field is seeded to today, so on iOS its pill is the first inline picker.
+    // AS OF is seeded to today → shows a "Change" affordance now; open it (the first date field),
+    // then tap its picker → future.
+    fireEvent.press(screen.getAllByTestId('date-open')[0]);
     fireEvent.press(screen.getAllByTestId('mock-datepicker')[0]); // as-of → future
     setTargetDate();                                              // target → future (valid)
     await press('goal-save');
