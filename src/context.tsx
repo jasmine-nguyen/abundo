@@ -1376,7 +1376,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // Snapshot the pre-edit record (for the rollback) from the ['goals'] query cache the hub
     // reads, not a store useState — same source-of-truth choice as the rule writers (WHIT-192).
     const before = queryClient.getQueryData<GoalRecord[]>(['goals'])?.find((g) => g.id === id) ?? null;
-    const optimistic: GoalRecord = { id, ...body };
+    // Checkpoints need their permanent ids BEFORE the optimistic row lands in the cache: a
+    // GoalRecord promises every checkpoint has one, and the celebration keys on it. Mint any
+    // missing id here (like the goal id above) and send the SAME ids on, so the optimistic row
+    // and the saved row can't disagree. The server still mints for a body that omits them.
+    const checkpoints = body.checkpoints?.map((cp) => ({ ...cp, id: cp.id ?? Crypto.randomUUID() }));
+    const optimistic: GoalRecord = { id, ...body, checkpoints };
     // Upsert into the cache: replace the id in place if present, else append.
     queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
       const list = prev ?? [];
@@ -1389,7 +1394,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // the next session. Return false so the edit form's router.back() doesn't fire post-redirect.
     const epoch = sessionEpoch.current;
     try {
-      const saved = await apiSaveGoal(id, body);
+      const saved = await apiSaveGoal(id, { ...body, checkpoints });
       if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
       // Swap the optimistic row for the server's authoritative one (same id).
       queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) =>

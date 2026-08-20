@@ -674,6 +674,9 @@ function GoalBalanceSheet() {
       name: goal.name, icon: goal.icon, direction: goal.direction,
       target_amount: goal.target_amount, target_date: goal.target_date,
       baseline: goal.baseline ?? null,
+      // Carry the ladder through so the instant on-screen update keeps showing it (the server
+      // keeps an omitted ladder, but the optimistic row wouldn't) — WHIT-476.
+      checkpoints: goal.checkpoints ?? undefined,
       manual_balance: amount, manual_as_of: asOf,
     });
     setSaving(false);

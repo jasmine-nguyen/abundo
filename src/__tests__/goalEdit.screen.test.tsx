@@ -697,3 +697,53 @@ describe('WHIT-257 QA gaps: guard ordering', () => {
     expect(mockSaveGoal).not.toHaveBeenCalled();
   });
 });
+
+// WHIT-476 — the add/edit form builds the write body from its OWN fields. It has no checkpoint
+// UI yet (slice 1 is data-only), so the ladder it never renders must still ride back out, or the
+// instant on-screen update would blank it on save. (The server keeps an omitted ladder under
+// option B, so the data is safe either way — this is about the optimistic view staying correct.)
+// Twin of the fix in the WHIT-235 balance sheet (goalBalanceSheet.screen.test.tsx).
+describe('WHIT-476: an edit must not drop the goal checkpoints', () => {
+  const LADDER = [
+    { id: 'cp-1', label: 'First $1k', amount: 1000 },
+    { id: 'cp-2', label: 'Halfway', amount: 5000 },
+  ];
+
+  beforeEach(() => { mockParams = { id: 'g1' }; mockGoals = [{ ...RAINY_DAY, checkpoints: LADDER }]; });
+
+  it('carries the saved ladder through an unrelated edit, ids intact', async () => {
+    render(<GoalEdit />);
+    fireEvent.changeText(screen.getByDisplayValue('Rainy day'), 'Rainy day fund');
+    await press('goal-save');
+
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(body).toMatchObject({ name: 'Rainy day fund' });
+    expect(body.checkpoints).toEqual(LADDER);   // same rows, same permanent ids
+  });
+
+  it('sends no checkpoints for a goal that has none (no empty array smuggled in)', async () => {
+    mockGoals = [RAINY_DAY];
+    render(<GoalEdit />);
+    fireEvent.changeText(screen.getByDisplayValue('10000'), '20000');
+    await press('goal-save');
+
+    const [, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(body.checkpoints).toBeUndefined();
+  });
+
+  it('a CREATE sends no checkpoints (there is no ladder UI in slice 1)', async () => {
+    mockParams = {};
+    mockGoals = [];
+    render(<GoalEdit />);
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. Emergency fund'), 'New goal');
+    fireEvent.press(screen.getByTestId('goal-source-synced'));
+    fireEvent.press(screen.getByTestId('goal-account-acc-1'));
+    fireEvent.changeText(screen.getByPlaceholderText('e.g. 10000'), '4000');
+    setTargetDate();
+    await press('goal-save');
+
+    const [editId, body] = mockSaveGoal.mock.calls[0] as [string | null, Record<string, unknown>];
+    expect(editId).toBeNull();
+    expect(body.checkpoints).toBeUndefined();
+  });
+});

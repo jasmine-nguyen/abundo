@@ -452,3 +452,60 @@ def test_upsert_stores_a_dotted_id_as_one_literal_key(shared, goals_repo):
     goals_repo.upsert_goal("a.b.c", _goal())
 
     assert list(table.item["items"]) == ["a.b.c"]
+
+
+# --- WHIT-476 QA GAP: the checkpoint ladder through the REAL write path ---------------
+
+
+_LADDER = [
+    {"id": "cp-1", "label": "First $1k", "amount": Decimal("1000")},
+    {"id": "cp-2", "label": "Halfway", "amount": Decimal("2500.50")},
+]
+
+
+def test_upsert_stores_the_checkpoint_ladder_as_a_nested_list(shared, goals_repo, config_item_table):
+    # [A14] A goal's checkpoints are a LIST of maps -- the only nested-collection field a goal
+    # has. Prove the real nested SET writes it whole (order, ids and Decimal cents intact),
+    # rather than the repo flattening or dropping it.
+    table = config_item_table("GOALS", items={})
+    _with_table(goals_repo, table)
+
+    result = goals_repo.upsert_goal("g1", _goal(checkpoints=copy.deepcopy(_LADDER)))
+
+    assert table.item["items"]["g1"]["checkpoints"] == _LADDER
+    assert result["checkpoints"] == _LADDER
+    # Decimal("2500.50") == Decimal("2500.5"), so compare the STRING to pin the scale too.
+    assert str(table.item["items"]["g1"]["checkpoints"][1]["amount"]) == "2500.50"
+
+
+def test_upsert_omitting_checkpoints_keeps_the_ladder_and_the_frozen_start(shared, goals_repo, config_item_table):
+    # [A15] WHIT-476 option B. A re-save that OMITS `checkpoints` keeps the stored ladder --
+    # a writer that doesn't know about them can't wipe them -- while the frozen start survives
+    # the same write (WHIT-252) and the other fields update.
+    stored = _goal(checkpoints=copy.deepcopy(_LADDER), **_START)
+    table = config_item_table("GOALS", items={"g1": stored}, version=2)
+    _with_table(goals_repo, table)
+
+    goals_repo.upsert_goal("g1", _goal(name="Bigger holiday"),
+                           start_candidate={"start_date": "2027-01-01", "start_balance": Decimal(9)})
+
+    after = table.item["items"]["g1"]
+    assert after["checkpoints"] == _LADDER            # kept across an omitting write
+    assert after["name"] == "Bigger holiday"
+    assert after["start_date"] == "2026-07-11"        # start still frozen across the same write
+    assert after["start_balance"] == Decimal(3200)
+
+
+def test_upsert_an_explicit_ladder_replaces_the_stored_one(shared, goals_repo, config_item_table):
+    # [A15b] A provided ladder is NOT immutable like the start -- it replaces wholesale, and a
+    # provided empty list clears. Only omission is protected.
+    stored = _goal(checkpoints=copy.deepcopy(_LADDER))
+    table = config_item_table("GOALS", items={"g1": stored}, version=2)
+    _with_table(goals_repo, table)
+
+    new_ladder = [{"id": "cp-9", "label": "Only rung", "amount": Decimal("2600")}]
+    goals_repo.upsert_goal("g1", _goal(checkpoints=copy.deepcopy(new_ladder)))
+    assert table.item["items"]["g1"]["checkpoints"] == new_ladder     # replaced, not merged
+
+    goals_repo.upsert_goal("g1", _goal(checkpoints=[]))
+    assert "checkpoints" not in table.item["items"]["g1"]             # [] clears

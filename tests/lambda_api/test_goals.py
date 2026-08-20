@@ -611,7 +611,19 @@ class PersistingGoalsRepo:
         return {k: dict(v) for k, v in self.store.items()}
 
     def upsert_goal(self, goal_id, goal, start_candidate=None):
+        existing = self.store.get(goal_id)
+        # Mirror the real repo's WHIT-476 carry-forward: an omitted ladder keeps the stored
+        # one, an explicit list replaces, an explicit empty list clears.
+        if "checkpoints" in goal:
+            ladder = goal["checkpoints"]
+        elif existing:
+            ladder = existing.get("checkpoints")
+        else:
+            ladder = None
         merged = {**goal, **(start_candidate or {})}
+        merged.pop("checkpoints", None)
+        if ladder:
+            merged["checkpoints"] = ladder
         self.store[goal_id] = dict(merged)
         return {"id": goal_id, **merged}
 
@@ -682,3 +694,350 @@ def test_get_after_put_carries_start_pair_as_json(handler, monkeypatch):
     # bool is a subclass of int -- exclude it so a stray True can't masquerade as a number.
     assert isinstance(saved["start_balance"], (int, float)) and not isinstance(saved["start_balance"], bool)
     assert saved["start_balance"] == -3200                 # live SIGNED balance, as a number
+
+
+# --- WHIT-476: the optional checkpoint ladder --------------------------------
+# A goal may carry `checkpoints` -- {id, label, amount} steps on the way to target_amount,
+# ordered in the goal's OWN direction. The id is permanent and kept as sent -- the client
+# normally mints it, the server mints only for a row that arrives without -- because the
+# once-ever celebration (a later slice) keys on it. Absent stays absent, so goals saved
+# before this feature are stored byte-identical.
+
+
+def _cp(label, amount, **over):
+    cp = {"label": label, "amount": amount}
+    cp.update(over)
+    return cp
+
+
+def _saved_goal(handler, body):
+    """PUT the body, assert 200, return the goal dict handed to the repo."""
+    repo = FakeGoalsRepo()
+    resp = handler.upsert_goal(_put_event(body=body), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 200, json.loads(resp["body"])
+    return repo.upsert_calls[0][1]
+
+
+def test_grow_checkpoints_saved_in_order_with_minted_ids(handler):
+    goal = _saved_goal(handler, _grow_body(
+        checkpoints=[_cp("First £1k", 1000), _cp("Halfway", 2500), _cp("Nearly", 4000)]))
+
+    assert [c["label"] for c in goal["checkpoints"]] == ["First £1k", "Halfway", "Nearly"]
+    # Stored as Decimals (no float reaches boto3), like every other goal number.
+    assert [c["amount"] for c in goal["checkpoints"]] == [Decimal("1000"), Decimal("2500"), Decimal("4000")]
+    ids = [c["id"] for c in goal["checkpoints"]]
+    assert all(isinstance(i, str) and i for i in ids)
+    assert len(set(ids)) == 3                        # minted ids are unique
+
+
+def test_paydown_checkpoints_descend_toward_the_target(handler):
+    goal = _saved_goal(handler, _manual_paydown_body(
+        checkpoints=[_cp("Under 6k", 6000), _cp("Under 3k", 3000), _cp("Nearly clear", 500)]))
+
+    assert [c["amount"] for c in goal["checkpoints"]] == [Decimal("6000"), Decimal("3000"), Decimal("500")]
+
+
+def test_a_single_checkpoint_is_fine(handler):
+    goal = _saved_goal(handler, _grow_body(checkpoints=[_cp("Halfway", 2500)]))
+    assert len(goal["checkpoints"]) == 1
+
+
+def test_omitted_checkpoints_store_no_key_at_all(handler):
+    # Existing-goal compatibility: a goal saved without a ladder is stored exactly as before.
+    goal = _saved_goal(handler, _grow_body())
+    assert "checkpoints" not in goal
+
+
+def test_empty_checkpoint_list_is_the_explicit_clear_signal(handler):
+    # WHIT-476 option B: an omitted field keeps the stored ladder, so [] is the ONLY way to
+    # ask for it gone. The handler keeps the key (as []) so the repo can tell "clear me" from
+    # "I didn't mention it".
+    goal = _saved_goal(handler, _grow_body(checkpoints=[]))
+    assert goal["checkpoints"] == []
+
+
+def test_client_supplied_id_is_kept_and_trimmed(handler):
+    goal = _saved_goal(handler, _grow_body(
+        checkpoints=[_cp("Kept", 1000, id="  cp-1  "), _cp("Minted", 2000)]))
+
+    assert goal["checkpoints"][0]["id"] == "cp-1"     # trimmed, not re-minted
+    assert goal["checkpoints"][1]["id"] != "cp-1"     # the id-less row got its own
+
+
+def test_label_is_trimmed_and_max_length_is_allowed(handler):
+    goal = _saved_goal(handler, _grow_body(
+        checkpoints=[_cp("  Trim me  ", 1000), _cp("x" * 100, 2000)]))
+
+    assert goal["checkpoints"][0]["label"] == "Trim me"
+    assert len(goal["checkpoints"][1]["label"]) == 100
+
+
+def test_exactly_the_max_number_of_checkpoints_is_allowed(handler):
+    ladder = [_cp(f"Step {n}", n * 100) for n in range(1, 21)]      # 20 rungs, all under 5000
+    goal = _saved_goal(handler, _grow_body(checkpoints=ladder))
+    assert len(goal["checkpoints"]) == 20
+
+
+# --- WHIT-476 rejections -----------------------------------------------------
+
+
+def test_400_checkpoints_not_a_list(handler):
+    # A scalar, not a dict: iterating a dict yields its keys, which the per-item object check
+    # would reject with a DIFFERENT 400 -- so a dict here can't tell the two rules apart. A
+    # scalar reaches len() instead, which without this rule is a 500, and the message pins
+    # which rule fired.
+    body = _assert_400(handler, _grow_body(checkpoints=5))
+    assert body["error"] == "checkpoints must be a list"
+
+
+def test_400_checkpoint_not_an_object(handler):
+    _assert_400(handler, _grow_body(checkpoints=["halfway"]))
+
+
+def test_400_checkpoint_blank_label(handler):
+    _assert_400(handler, _grow_body(checkpoints=[_cp("   ", 1000)]))
+
+
+def test_400_checkpoint_label_too_long(handler):
+    _assert_400(handler, _grow_body(checkpoints=[_cp("x" * 101, 1000)]))
+
+
+def test_400_checkpoint_amount_not_a_number(handler):
+    _assert_400(handler, _grow_body(checkpoints=[_cp("Some", "lots")]))
+
+
+def test_400_checkpoint_amount_bool(handler):
+    # bool is an int subclass -- True must not sneak through as 1.
+    _assert_400(handler, _grow_body(checkpoints=[_cp("Some", True)]))
+
+
+def test_400_checkpoint_amount_negative(handler):
+    _assert_400(handler, _grow_body(checkpoints=[_cp("Some", -100)]))
+
+
+def test_400_checkpoint_amount_not_finite(handler):
+    repo = FakeGoalsRepo()
+    raw = '{"name":"H","icon":"palm","direction":"grow","target_amount":5000,' \
+          '"target_date":"2026-12-01","account_id":"up-spending",' \
+          '"checkpoints":[{"label":"Some","amount":NaN}]}'
+    resp = handler.upsert_goal(_put_event(raw=raw), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 400
+    assert repo.upsert_calls == []
+
+
+def test_400_grow_checkpoint_of_zero(handler):
+    # 0 isn't a step toward a positive target.
+    _assert_400(handler, _grow_body(checkpoints=[_cp("Nothing", 0)]))
+
+
+def test_400_grow_checkpoint_at_or_past_the_target(handler):
+    _assert_400(handler, _grow_body(checkpoints=[_cp("The goal itself", 5000)]))
+    _assert_400(handler, _grow_body(checkpoints=[_cp("Past it", 5001)]))
+
+
+def test_400_paydown_checkpoint_at_or_below_the_target(handler):
+    # target_amount is 0 here, so a 0 rung IS the goal, not a step toward it.
+    _assert_400(handler, _manual_paydown_body(checkpoints=[_cp("Cleared", 0)]))
+
+
+def test_400_grow_checkpoints_not_increasing(handler):
+    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 2000), _cp("B", 1000)]))
+    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 2000), _cp("B", 2000)]))
+
+
+def test_400_paydown_checkpoints_not_decreasing(handler):
+    _assert_400(handler, _manual_paydown_body(checkpoints=[_cp("A", 3000), _cp("B", 6000)]))
+    _assert_400(handler, _manual_paydown_body(checkpoints=[_cp("A", 3000), _cp("B", 3000)]))
+
+
+def test_400_duplicate_checkpoint_ids(handler):
+    _assert_400(handler, _grow_body(
+        checkpoints=[_cp("A", 1000, id="dup"), _cp("B", 2000, id="dup")]))
+
+
+def test_400_duplicate_ids_that_differ_only_by_whitespace(handler):
+    _assert_400(handler, _grow_body(
+        checkpoints=[_cp("A", 1000, id="dup"), _cp("B", 2000, id="  dup  ")]))
+
+
+def test_400_blank_or_non_string_checkpoint_id(handler):
+    # A supplied-but-empty id is a bug, not a request to mint one.
+    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 1000, id="   ")]))
+    _assert_400(handler, _grow_body(checkpoints=[_cp("A", 1000, id=7)]))
+
+
+def test_400_too_many_checkpoints(handler):
+    ladder = [_cp(f"Step {n}", n * 100) for n in range(1, 22)]      # 21 rungs
+    _assert_400(handler, _grow_body(checkpoints=ladder))
+
+
+# --- WHIT-476 QA GAPS: round trip, replace semantics, precision, ordering depth ------
+# The implementer's block above locks the validator's own rules (shape, bounds, ordering
+# of a 2-rung ladder, ids). These cover what it does NOT: the ladder surviving the real
+# store -> list -> JSON encode path, the whole-object REPLACE semantics an edit inherits,
+# Decimal precision, unicode, and the deliberate slice-4 deferral.
+
+
+def _ladder_round_trip(handler, monkeypatch, goal_id, body):
+    """PUT `body` through the real lambda_handler into a persisting repo, then GET, and
+    return the goal as the CLIENT sees it (post JSON encode)."""
+    repo = PersistingGoalsRepo()
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
+    put = handler.lambda_handler(_put_event_gaps(goal_id=goal_id, body=body), None)
+    assert put["statusCode"] == 200, json.loads(put["body"])
+    got = handler.lambda_handler(
+        {"rawPath": "/goals", "requestContext": {"http": {"method": "GET"}}}, None)
+    assert got["statusCode"] == 200
+    return {g["id"]: g for g in json.loads(got["body"])}[goal_id]
+
+
+def test_checkpoint_ladder_survives_the_put_get_round_trip_as_json(handler, monkeypatch):
+    # [A1] The ladder is a list of nested Decimals -- the one shape nothing else on a goal
+    # has. Prove it survives store -> list_goals -> DecimalEncoder: order kept, amounts are
+    # JSON NUMBERS (a Decimal that leaked as a string would fail the client's `amount: number`),
+    # ids are non-empty strings, and no extra key rides along.
+    saved = _ladder_round_trip(handler, monkeypatch, "hol1", _grow_body(
+        checkpoints=[_cp("First $1k", 1000), _cp("Halfway", 2500.5), _cp("Nearly", 4000)]))
+
+    ladder = saved["checkpoints"]
+    assert [c["label"] for c in ladder] == ["First $1k", "Halfway", "Nearly"]
+    for c in ladder:
+        assert set(c) == {"id", "label", "amount"}
+        assert isinstance(c["amount"], (int, float)) and not isinstance(c["amount"], bool)
+        assert isinstance(c["id"], str) and c["id"].strip()
+    assert [c["amount"] for c in ladder] == [1000, 2500.5, 4000]   # cents intact, order intact
+    assert len({c["id"] for c in ladder}) == 3
+
+
+def test_a_goal_without_checkpoints_reads_back_with_no_checkpoints_key(handler, monkeypatch):
+    # [A2] Existing goals must be untouched by this slice: no backfill, no `checkpoints: null`
+    # (the client's field is OPTIONAL, and a null would make "has a ladder" ambiguous).
+    saved = _ladder_round_trip(handler, monkeypatch, "old1", _grow_body())
+    assert "checkpoints" not in saved
+
+
+def test_an_edit_that_omits_checkpoints_keeps_the_saved_ladder(handler, monkeypatch):
+    # [A3] WHIT-476 option B. A save that does NOT mention checkpoints keeps the stored ladder,
+    # so a writer that doesn't know about them (an old app build, a new code path) can't wipe
+    # them. Renaming a goal must leave its ladder intact.
+    repo = PersistingGoalsRepo()
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
+
+    handler.lambda_handler(_put_event_gaps(
+        goal_id="hol1", body=_grow_body(checkpoints=[_cp("Halfway", 2500)])), None)
+
+    second = handler.lambda_handler(_put_event_gaps(
+        goal_id="hol1", body=_grow_body(name="Bigger holiday")), None)   # no checkpoints sent
+    assert second["statusCode"] == 200
+    ladder = repo.store["hol1"]["checkpoints"]
+    assert [c["label"] for c in ladder] == ["Halfway"]        # kept, not wiped
+    assert json.loads(second["body"])["name"] == "Bigger holiday"
+
+
+def test_an_explicit_empty_list_clears_the_saved_ladder(handler, monkeypatch):
+    # [A3b] The one deliberate way to remove a ladder: send [] (the edit UI does this when the
+    # user deletes every rung). Unlike an omission, [] is honoured -- the stored ladder goes.
+    repo = PersistingGoalsRepo()
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", FakeBalanceRepo_gaps)
+
+    handler.lambda_handler(_put_event_gaps(
+        goal_id="hol1", body=_grow_body(checkpoints=[_cp("Halfway", 2500)])), None)
+
+    handler.lambda_handler(_put_event_gaps(
+        goal_id="hol1", body=_grow_body(checkpoints=[])), None)
+    assert "checkpoints" not in repo.store["hol1"]            # cleared, stored as no key
+
+
+def test_explicit_null_checkpoints_is_accepted_and_stores_no_key(handler):
+    # [A4] A client that always sends the field will send `null` for "no ladder" (the
+    # GoalRecord type allows `checkpoints?: GoalCheckpoint[] | null`). Null must mean absent,
+    # not a 400 and not a stored null.
+    goal = _saved_goal(handler, _grow_body(checkpoints=None))
+    assert "checkpoints" not in goal
+
+
+def test_checkpoint_amount_keeps_its_cents_exactly(handler):
+    # [A5] Every goal number goes through Decimal(str(x)) so no binary float reaches boto3.
+    # Decimal(1234.56) would store 1234.5599999999999454...; assert the exact string.
+    goal = _saved_goal(handler, _grow_body(checkpoints=[_cp("Cents", 1234.56)]))
+    amount = goal["checkpoints"][0]["amount"]
+    assert isinstance(amount, Decimal)
+    assert str(amount) == "1234.56"
+
+
+def test_unknown_checkpoint_fields_are_stripped(handler):
+    # [A6] The validator rebuilds each rung from scratch, so a client-invented field can't be
+    # stored. Matters most for `reached`/`celebrated`: the once-ever marker is SERVER-owned in
+    # a later slice, and a client-supplied one would let the phone mark its own celebration done.
+    goal = _saved_goal(handler, _grow_body(
+        checkpoints=[_cp("Halfway", 2500, reached=True, celebrated_at="2026-01-01", sneaky="x")]))
+    assert set(goal["checkpoints"][0]) == {"id", "label", "amount"}
+
+
+def test_explicit_null_checkpoint_id_is_minted_not_rejected(handler):
+    # [A7] JSON has no "absent" for a client that always serialises the key: `"id": null` must
+    # mint (like an omitted id), while a blank STRING id stays a 400 (locked above).
+    goal = _saved_goal(handler, _grow_body(checkpoints=[_cp("Halfway", 2500, id=None)]))
+    minted = goal["checkpoints"][0]["id"]
+    assert isinstance(minted, str) and minted.strip()
+
+
+def test_unicode_and_emoji_labels_survive_intact(handler, monkeypatch):
+    # [A8] Labels are free text. An emoji/accented label must round-trip byte-for-byte through
+    # the JSON body and the response encoder -- not be mangled or rejected by the length rule.
+    saved = _ladder_round_trip(handler, monkeypatch, "hol1", _grow_body(
+        checkpoints=[_cp("Halfway \U0001F389", 1000), _cp("Caf\u00e9 fund \u2014 \u00be there", 2500)]))
+    assert [c["label"] for c in saved["checkpoints"]] == ["Halfway \U0001F389", "Caf\u00e9 fund \u2014 \u00be there"]
+
+
+def test_label_length_counts_characters_not_bytes(handler):
+    # [A9] 100 emoji is 100 CHARACTERS but 400 UTF-8 bytes. The cap is a character cap, so
+    # the 100 pass and the 101st fails -- a byte-based cap would reject both.
+    goal = _saved_goal(handler, _grow_body(checkpoints=[_cp("\U0001F389" * 100, 1000)]))
+    assert len(goal["checkpoints"][0]["label"]) == 100
+    _assert_400(handler, _grow_body(checkpoints=[_cp("\U0001F389" * 101, 1000)]))
+
+
+def test_a_middle_rung_out_of_order_in_a_full_ladder_is_rejected(handler):
+    # [A10] The ordering rule is checked on every ADJACENT pair, not just the first two and not
+    # just first-vs-last: a 20-rung ladder that dips at rung 10 and recovers must still 400.
+    ladder = [_cp(f"Step {n}", n * 100) for n in range(1, 21)]
+    ladder[9]["amount"] = 50                       # rung 10 dips below rung 9, then rung 11 recovers
+    _assert_400(handler, _grow_body(checkpoints=ladder))
+
+
+def test_a_middle_rung_out_of_order_in_a_full_paydown_ladder_is_rejected(handler):
+    ladder = [_cp(f"Step {n}", 10000 - n * 100) for n in range(1, 21)]
+    ladder[9]["amount"] = 9999                     # rung 10 jumps back up
+    _assert_400(handler, _manual_paydown_body(checkpoints=ladder))
+
+
+def test_a_tiny_grow_target_leaves_only_fractional_room(handler):
+    # [A11] target_amount 1: the open interval (0, 1) has no whole dollar in it, so the only
+    # legal rung is fractional. Proves the bound is strict-open on BOTH ends, not rounded.
+    _assert_400(handler, _grow_body(target_amount=1, checkpoints=[_cp("At the target", 1)]))
+    goal = _saved_goal(handler, _grow_body(target_amount=1, checkpoints=[_cp("Halfway", 0.5)]))
+    assert goal["checkpoints"][0]["amount"] == Decimal("0.5")
+
+
+def test_checkpoints_below_the_baseline_are_accepted_today(handler):
+    # [A12] TRIPWIRE for a DELIBERATE deferral. Nothing bounds a rung against the goal's
+    # baseline/start yet (slice 4 owns "can it still fire?"), so a grow goal that counts from
+    # $3,000 can store a $1,000 rung the balance has ALREADY passed -- it can never celebrate.
+    # If you add that bound, this is the one test that should go red; update it honestly.
+    goal = _saved_goal(handler, _grow_body(
+        baseline=3000, checkpoints=[_cp("Already behind us", 1000), _cp("Real step", 4000)]))
+    assert [c["amount"] for c in goal["checkpoints"]] == [Decimal("1000"), Decimal("4000")]
+
+
+def test_the_checkpoint_caps_are_pinned(handler):
+    """[A13] The count/label caps have no client twin, so nothing else asserts their VALUES:
+    quietly lowering the max to 5 would leave every test above green while a 6-rung ladder
+    400'd in the user's face. Changing a cap should cost exactly one honest edit, here.
+
+    If you are deliberately changing a cap, this is the ONE test that should go red."""
+    assert handler._GOAL_CHECKPOINT_MAX_COUNT == 20, "checkpoint count cap changed -- update this pin on purpose"
+    assert handler._GOAL_CHECKPOINT_LABEL_MAX_LEN == 100, "checkpoint label cap changed -- update this pin on purpose"

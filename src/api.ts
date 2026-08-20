@@ -474,6 +474,24 @@ export async function fetchAccountBalances(): Promise<AccountBalance[]> {
 }
 
 /**
+ * One step on the way to a goal's target (WHIT-476) — a labelled amount the balance passes
+ * through. Amounts are ABSOLUTE (not deltas), ordered in the goal's own direction: a grow
+ * ladder climbs toward the target, a paydown ladder falls toward it.
+ *
+ * `id` is permanent: the once-ever celebration keys on it, so it has to survive a rename or a
+ * reorder. Like the goal's own id the client mints it; the server mints one for any row that
+ * arrives without, and rejects a blank.
+ */
+export interface GoalCheckpoint {
+  id: string;
+  label: string;
+  amount: number;
+}
+
+/** A checkpoint on a WRITE: omit `id` for a new row and the server mints a permanent one. */
+export type GoalCheckpointInput = Omit<GoalCheckpoint, "id"> & { id?: string };
+
+/**
  * A saved goal record as served by the /goals API (WHIT-231/233). A "grow" goal is a
  * savings target (balance should RISE to target_amount); a "paydown" goal is a debt
  * target (balance should FALL to target_amount, usually 0). EXACTLY ONE balance source:
@@ -490,6 +508,7 @@ export interface GoalRecord {
   target_amount: number;
   target_date: string;            // ISO "YYYY-MM-DD"
   baseline?: number | null;       // optional "count from £X" start
+  checkpoints?: GoalCheckpoint[] | null; // optional ladder of steps toward the target
   account_id?: string | null;     // present => synced source (the live account balance)
   manual_balance?: number | null; // present => manual source (this value IS the balance)
   manual_as_of?: string | null;   // ISO date the manual balance was true
@@ -508,6 +527,10 @@ interface GoalWriteCommon {
   target_amount: number;
   target_date: string;
   baseline?: number | null;
+  // Omitting this KEEPS the server's saved ladder (WHIT-476 option B); an explicit list
+  // replaces it, and an explicit [] clears it. Writers still re-send the full list so the
+  // instant on-screen update stays correct — the server protects the data, not the UI.
+  checkpoints?: GoalCheckpointInput[];
 }
 
 /**

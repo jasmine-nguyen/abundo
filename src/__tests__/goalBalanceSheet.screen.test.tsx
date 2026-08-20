@@ -182,3 +182,34 @@ describe('goal-balance sheet — adversarial gaps (WHIT-235)', () => {
     expect(fns.setSheet).toHaveBeenCalledWith(null);
   });
 });
+
+// WHIT-476 — this sheet re-sends the whole goal, so it carries the checkpoint ladder through to
+// keep the instant on-screen update correct. (The server keeps an omitted ladder under option B,
+// so the data is safe regardless — this is about the optimistic view, not data loss.)
+it('Save carries a saved checkpoint ladder through untouched', async () => {
+  mockGoals = [{
+    ...CAR_LOAN,
+    checkpoints: [
+      { id: 'cp-1', label: 'Under 10k', amount: 10000 },
+      { id: 'cp-2', label: 'Under 5k', amount: 5000 },
+    ],
+  }];
+  render(<Overlays />);
+  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+
+  const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
+  expect(body.checkpoints).toEqual([
+    { id: 'cp-1', label: 'Under 10k', amount: 10000 },
+    { id: 'cp-2', label: 'Under 5k', amount: 5000 },
+  ]);
+});
+
+it('Save omits checkpoints entirely for a goal that has none', async () => {
+  render(<Overlays />);                       // CAR_LOAN has no ladder
+  fireEvent.changeText(screen.getByTestId('goal-balance-input'), '9500');
+  await act(async () => { fireEvent.press(screen.getByTestId('goal-balance-save')); });
+
+  const [, body] = fns.saveGoal.mock.calls[0] as [string, Record<string, unknown>];
+  expect(body.checkpoints).toBeUndefined();   // no empty array smuggled in
+});
