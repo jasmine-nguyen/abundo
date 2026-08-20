@@ -164,6 +164,12 @@ export default function Goals() {
                     <Bar pct={pct ?? 0} color={grow ? C.goodBright : C.purple} height={10} />
                   </View>
 
+                  {v.checkpointsTotal > 0 && v.checkpointsReached != null && (
+                    <Text testID={`goal-checkpoints-${goal.id}`} style={styles.goalCheckpoints}>
+                      {v.checkpointsReached} of {v.checkpointsTotal} reached
+                    </Text>
+                  )}
+
                   <View style={styles.goalFoot}>
                     <Text style={styles.goalFootL}>
                       {v.pacePerPayday != null ? `${fmt(v.pacePerPayday)} / payday` : 'Waiting on your balance'}
@@ -231,6 +237,7 @@ const styles = StyleSheet.create({
   goalName: { fontFamily: FONT.body, fontSize: 15.5, fontWeight: '700', color: C.textBright, letterSpacing: -0.2 },
   goalSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   goalPct: { fontFamily: FONT.display, fontSize: 18, fontWeight: '800', color: C.text, letterSpacing: -0.5 },
+  goalCheckpoints: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim, marginTop: 8 },
   goalFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 11 },
   goalFootL: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.accentSoft },
   goalFootR: { fontFamily: FONT.body, fontSize: 11.5, fontWeight: '600', color: C.textDim },

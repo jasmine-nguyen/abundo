@@ -118,6 +118,58 @@ describe('goal cards (real balanceGoalView)', () => {
     expect(card.getByText('—')).toBeTruthy();
     expect(card.getByText('Waiting on your balance')).toBeTruthy();
   });
+
+  // WHIT-478: the "N of M reached" checkpoint line.
+  it('shows "N of M reached" for a goal with checkpoints (grow, balance 4000)', () => {
+    // GROW balance 4000; rungs 2000/4000/6000/8000 → 2000 and 4000 reached.
+    const withLadder = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }, { id: 'b', label: 'B', amount: 4000 }, { id: 'c', label: 'C', amount: 6000 }, { id: 'd', label: 'D', amount: 8000 }] };
+    mockData = baseData({ goals: [withLadder] });
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 reached');
+  });
+
+  it('a goal with no checkpoints renders NO checkpoint line (unchanged from today)', () => {
+    render(<Goals />); // GROW + PAYDOWN, neither has a ladder
+    expect(screen.queryByTestId('goal-checkpoints-g1')).toBeNull();
+    expect(screen.queryByTestId('goal-checkpoints-g2')).toBeNull();
+    // and the existing card content is untouched
+    expect(within(screen.getByTestId('goal-card-g1')).getByText('$2,000 / payday')).toBeTruthy();
+  });
+
+  it('hides the checkpoint line for a synced goal whose balance is not polled yet', () => {
+    const withLadder = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }] };
+    mockData = baseData({ goals: [withLadder], balanceFor: () => null });
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.queryByTestId('goal-checkpoints-g1')).toBeNull();
+    expect(card.getByText('Waiting on your balance')).toBeTruthy();
+  });
+
+  // WHIT-478 QA gaps: the "0 of N" and "N of N" ends, and coexistence with the Update-balance row.
+  it('shows "0 of N reached" when the balance has passed no rungs yet', () => {
+    const g = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 5000 }, { id: 'b', label: 'B', amount: 8000 }] };
+    mockData = baseData({ goals: [g] }); // balance 4000, both rungs above → 0 reached
+    render(<Goals />);
+    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 2 reached');
+  });
+
+  it('shows "N of N reached" when every rung is passed', () => {
+    const g = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }, { id: 'b', label: 'B', amount: 3000 }] };
+    mockData = baseData({ goals: [g] }); // balance 4000, both below → 2 of 2
+    render(<Goals />);
+    expect(within(screen.getByTestId('goal-card-g1')).getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 2 reached');
+  });
+
+  it('a manual paydown shows the reached-count AND keeps the "Update balance" row', () => {
+    const g = { ...PAYDOWN, checkpoints: [{ id: 'a', label: 'A', amount: 15000 }, { id: 'b', label: 'B', amount: 10000 }] };
+    mockData = baseData({ goals: [g] }); // owed 12000 → ≤15000 reached, ≤10000 not → 1 of 2
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g2'));
+    expect(card.getByTestId('goal-checkpoints-g2')).toHaveTextContent('1 of 2 reached');
+    expect(card.getByTestId('goal-balance-g2')).toBeTruthy();
+    expect(card.getByText('Update balance')).toBeTruthy();
+  });
 });
 
 describe('the mortgage card', () => {

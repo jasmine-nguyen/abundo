@@ -541,3 +541,143 @@ it('paydown with start fields but NO baseline: progress null (no bar) yet status
   expect(v.progress).toBeNull();
   expect(v.status).toBe('behind');
 });
+
+// --- WHIT-478: checkpoints reached-count ------------------------------------
+// How many checkpoint amounts the CURRENT normalised balance has passed. grow reaches AT/above
+// the amount, paydown AT/below. Uses the same normalised `current` as the bar, so the count can
+// never disagree with it. `total` is 0 with no ladder; `reached` is null when the balance is
+// unknown (a synced goal not yet polled).
+describe('balanceGoalView — checkpoints reached-count', () => {
+  const CPS = (...amounts: number[]) => amounts.map((amount) => ({ amount }));
+
+  it('grow: counts the rungs at or below the balance (>=), boundary counts as reached', () => {
+    // synced grow, balance 4000, rungs 2000/4000/6000/8000 → 2000 and 4000 reached (4000 is AT).
+    const g = goal({ checkpoints: CPS(2000, 4000, 6000, 8000) });
+    const v = balanceGoalView({ goal: g, balance: 4000, payCycle: CYCLE }, TODAY);
+    expect(v.checkpointsReached).toBe(2);
+    expect(v.checkpointsTotal).toBe(4);
+  });
+
+  it('grow: a rung one dollar above the balance is NOT reached', () => {
+    const g = goal({ checkpoints: CPS(4000) });
+    expect(balanceGoalView({ goal: g, balance: 3999, payCycle: CYCLE }, TODAY).checkpointsReached).toBe(0);
+  });
+
+  it('paydown: counts the rungs at or above the owed balance (<=), boundary counts', () => {
+    // manual paydown, owed 10000, rungs 15000/10000/5000 → 15000 and 10000 reached (10000 is AT).
+    const g = goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 10000 });
+    const v = balanceGoalView({ goal: { ...g, checkpoints: CPS(15000, 10000, 5000) }, balance: null, payCycle: CYCLE }, TODAY);
+    expect(v.checkpointsReached).toBe(2);
+    expect(v.checkpointsTotal).toBe(3);
+  });
+
+  it('uses the NORMALISED current, not the raw signed balance (synced paydown fail-on-revert)', () => {
+    // synced paydown, loan stored NEGATIVE (-4000 → owed 4000). Rung 3000: owed 4000 <= 3000 is
+    // FALSE → not reached. Raw -4000 <= 3000 would be TRUE → wrongly reached. Locks the use of
+    // `current` over the raw balance.
+    const g = goal({ direction: 'paydown', target_amount: 0, checkpoints: CPS(3000) });
+    expect(balanceGoalView({ goal: g, balance: -4000, payCycle: CYCLE }, TODAY).checkpointsReached).toBe(0);
+  });
+
+  it('a below-baseline rung still counts as reached (checkpoints are absolute, not baseline-relative)', () => {
+    // grow, baseline 2000, balance 2000, rung 1000: absolute 2000 >= 1000 → reached, even though
+    // the % bar (which counts from baseline) reads 0%. Checkpoints are absolute milestones.
+    const g = goal({ baseline: 2000, checkpoints: CPS(1000) });
+    const v = balanceGoalView({ goal: g, balance: 2000, payCycle: CYCLE }, TODAY);
+    expect(v.checkpointsReached).toBe(1);
+    expect(v.progress).toBe(0); // bar reads 0% from the baseline; the count still says reached
+  });
+
+  it('a known balance with none reached is 0, not null (the "0 of N" line still shows)', () => {
+    const g = goal({ checkpoints: CPS(5000, 8000) });
+    expect(balanceGoalView({ goal: g, balance: 1000, payCycle: CYCLE }, TODAY).checkpointsReached).toBe(0);
+  });
+
+  it('an unknown (not-yet-polled synced) balance leaves reached null but keeps the total', () => {
+    const g = goal({ checkpoints: CPS(2000, 4000) });
+    const v = balanceGoalView({ goal: g, balance: null, payCycle: CYCLE }, TODAY);
+    expect(v.checkpointsReached).toBeNull();
+    expect(v.checkpointsTotal).toBe(2);
+  });
+
+  it('a goal with no checkpoints reports total 0 and reached null (card renders nothing)', () => {
+    const v = balanceGoalView({ goal: goal(), balance: 4000, payCycle: CYCLE }, TODAY);
+    expect(v.checkpointsTotal).toBe(0);
+    expect(v.checkpointsReached).toBeNull();
+  });
+});
+
+// --- WHIT-478 QA gaps (adversarial): boundaries, overdrawn clamp, order-independence, paydown
+// with/without baseline, non-finite balance. Dropped the below-baseline case — the implementer's
+// suite above already locks it. ---
+describe('WHIT-478 gaps — checkpoints reached-count', () => {
+  const CPS = (...amounts: number[]) => amounts.map((amount) => ({ amount }));
+  const view = (g: BalanceGoal, balance: number | null) =>
+    balanceGoalView({ goal: g, balance, payCycle: CYCLE }, TODAY);
+
+  it('overdrawn synced grow (balance −50 → current 0) reaches 0 rungs, never negative', () => {
+    const g = goal({ checkpoints: CPS(1000, 4000) });
+    const v = view(g, -50);
+    expect(v.checkpointsReached).toBe(0);
+    expect(v.progress).toBe(0); // bar clamps to 0 too → count and bar agree at the floor
+  });
+
+  it('grow at target: all rungs reached (N of N) and the bar is full — they agree at the top', () => {
+    const g = goal({ checkpoints: CPS(2500, 5000, 7500) });
+    const v = view(g, 10000);
+    expect(v.checkpointsReached).toBe(3);
+    expect(v.checkpointsTotal).toBe(3);
+    expect(v.progress).toBe(1);
+  });
+
+  it('single-rung ladder: 1 of 1 when reached, 0 of 1 just below (boundary is inclusive)', () => {
+    const g = goal({ checkpoints: CPS(4000) });
+    expect(view(g, 4000).checkpointsReached).toBe(1);
+    expect(view(g, 3999).checkpointsReached).toBe(0);
+    expect(view(g, 4000).checkpointsTotal).toBe(1);
+  });
+
+  it('a full 20-rung ladder partially reached counts the passed rungs exactly', () => {
+    const rungs = Array.from({ length: 20 }, (_, i) => (i + 1) * 500);
+    const g = goal({ target_amount: 100000, checkpoints: CPS(...rungs) });
+    expect(view(g, 5250).checkpointsReached).toBe(10);
+    expect(view(g, 5250).checkpointsTotal).toBe(20);
+  });
+
+  it('an unsorted checkpoints array counts the same as the sorted one (order-independent)', () => {
+    const sorted = view(goal({ checkpoints: CPS(2000, 4000, 6000, 8000) }), 4000).checkpointsReached;
+    const shuffled = view(goal({ checkpoints: CPS(8000, 2000, 6000, 4000) }), 4000).checkpointsReached;
+    expect(shuffled).toBe(2);
+    expect(shuffled).toBe(sorted);
+  });
+
+  it('paydown WITH a baseline: progress bar and reached-count coexist and agree', () => {
+    const g = goal({ direction: 'paydown', target_amount: 0, baseline: 20000, account_id: null, manual_balance: 10000, manual_as_of: '2026-07-01', checkpoints: CPS(15000, 10000, 5000) });
+    const v = view(g, null);
+    expect(v.progress).toBeCloseTo(0.5, 10);
+    expect(v.checkpointsReached).toBe(2);
+    expect(v.checkpointsTotal).toBe(3);
+  });
+
+  it('paydown without a baseline: progress null (no bar) yet the reached-count still computes', () => {
+    const g = goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 8000, manual_as_of: '2026-07-01', checkpoints: CPS(12000, 6000) });
+    const v = view(g, null);
+    expect(v.progress).toBeNull();
+    expect(v.checkpointsReached).toBe(1);
+    expect(v.checkpointsTotal).toBe(2);
+  });
+
+  it('manual paydown owed exactly on a rung counts it (inclusive ≤ boundary)', () => {
+    const g = goal({ direction: 'paydown', target_amount: 0, account_id: null, manual_balance: 5000, manual_as_of: '2026-07-01', checkpoints: CPS(5000) });
+    expect(view(g, null).checkpointsReached).toBe(1);
+  });
+
+  it('a non-finite synced balance is unknown → reached null (line hides), total preserved', () => {
+    const g = goal({ checkpoints: CPS(2000, 4000) });
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      const v = view(g, bad);
+      expect(v.checkpointsReached).toBeNull();
+      expect(v.checkpointsTotal).toBe(2);
+    }
+  });
+});
