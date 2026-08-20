@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as Crypto from 'expo-crypto';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon, ICON_KEYS } from '../../src/icons';
 import { useAppContext, accountSummaries } from '../../src/context';
@@ -11,10 +12,22 @@ import { NativeDateField } from '../../src/components/NativeDateField';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
 import { toISODate } from '../../src/dateutil';
 import { parseAmount, numText } from '../../src/numutil';
-import type { GoalWriteBody } from '../../src/api';
+import { sortCheckpointsForDirection, checkpointsError, checkpointOutOfBoundsRows, CHECKPOINT_MAX_COUNT } from '../../src/checkpoints';
+import type { GoalWriteBody, GoalCheckpoint, GoalCheckpointInput } from '../../src/api';
 
 type Direction = 'grow' | 'paydown';
 type Source = 'synced' | 'manual';
+
+// A checkpoint row while editing: the amount is raw input text (parsed on save), like the goal's
+// own amount fields, so a mid-edit blank/partial value doesn't corrupt a number.
+interface CpRow { id: string; label: string; amountText: string }
+
+// The rows the editor opens with: each saved checkpoint mapped to a row, or [] when the goal has
+// none. A cold cache re-seeds via the `seeded` effect.
+function seedCpRows(checkpoints: GoalCheckpoint[] | null | undefined): CpRow[] {
+  if (!checkpoints) return [];
+  return checkpoints.map((cp) => ({ id: cp.id, label: cp.label, amountText: numText(cp.amount) }));
+}
 
 // The add/edit goal form (WHIT-234). Fleshes out the WHIT-233 stub. A pushed screen reached
 // from the Goals hub: `/goal/edit` to create, `/goal/edit?id=<goal>` to edit. Mirrors the
@@ -44,6 +57,10 @@ export default function GoalEdit() {
   const [targetAmount, setTargetAmount] = useState(numText(existing?.target_amount));
   const [targetDate, setTargetDate] = useState<string | null>(existing?.target_date ?? null);
   const [baseline, setBaseline] = useState(numText(existing?.baseline));
+  // Checkpoint rows kept as raw text (parsed on save), like the milestone editor — a mid-edit
+  // blank/partial amount can't corrupt a number. Each row's id is permanent (the celebration
+  // keys on it), minted for a new row and carried for a saved one.
+  const [cpRows, setCpRows] = useState<CpRow[]>(() => seedCpRows(existing?.checkpoints));
   const [saving, setSaving] = useState(false);
 
   // The useState seeds run once, but on the query layer `existing` may resolve a beat AFTER
@@ -64,6 +81,7 @@ export default function GoalEdit() {
     setTargetAmount(numText(existing.target_amount));
     setTargetDate(existing.target_date);
     setBaseline(numText(existing.baseline));
+    setCpRows(seedCpRows(existing.checkpoints));
   }, [existing, todayISO]);
 
   // The synced-account options: the linked accounts we actually hold a live balance for (the
@@ -98,6 +116,21 @@ export default function GoalEdit() {
   // write the default fields back over the real ones (mirrors category/edit.tsx:77).
   const editingUnloaded = editing && !existing;
 
+  const addCpRow = () => setCpRows((prev) => [...prev, { id: Crypto.randomUUID(), label: '', amountText: '' }]);
+  const updateCpRow = (rowId: string, patch: Partial<CpRow>) =>
+    setCpRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+  const deleteCpRow = (rowId: string) => setCpRows((prev) => prev.filter((row) => row.id !== rowId));
+
+  // The rows parsed to the shape the checkpoint helpers + saveGoal consume. Checkpoints measure
+  // against the target, so a blank/invalid target isn't ready for them yet (grow needs > 0; a
+  // paydown target may be 0 = "pay it off"). Both are recomputed each render — cheap, pure.
+  const checkpointTarget = parseAmount(targetAmount);
+  const checkpointInputs: GoalCheckpointInput[] = cpRows.map((row) => ({
+    id: row.id, label: row.label.trim(), amount: parseAmount(row.amountText),
+  }));
+  const checkpointOutOfBounds = checkpointOutOfBoundsRows(checkpointInputs, direction, checkpointTarget);
+  const targetReadyForCheckpoints = direction === 'grow' ? checkpointTarget > 0 : checkpointTarget >= 0;
+
   // One in-flight latch shared by Save AND Delete: a same-frame Delete-then-Save (or vice
   // versa) on the same goal fires only the first, so the two writers can't race each other.
   const runAction = useInFlightGuard();
@@ -130,11 +163,21 @@ export default function GoalEdit() {
       if (direction === 'paydown' && !(baselineValue > amount)) return s.showToast('The starting amount should be above your target.');
     }
 
-    // Re-send the checkpoint ladder this form has no UI for, so the instant on-screen update
-    // keeps showing it (the server keeps an omitted ladder, but the optimistic row wouldn't) — WHIT-476.
+    // Checkpoints (WHIT-477): block a bad ladder with a friendly message before any 400, then
+    // send it sorted into the goal's direction. Deleting every rung of a saved ladder sends [] to
+    // clear it; a goal that never had one still sends nothing (the server keeps an omitted ladder).
+    const checkpointError = checkpointsError(checkpointInputs, direction, amount);
+    if (checkpointError) return s.showToast(checkpointError);
+    let checkpoints: GoalCheckpointInput[] | undefined;
+    if (checkpointInputs.length > 0) {
+      checkpoints = sortCheckpointsForDirection(checkpointInputs, direction);
+    } else if ((existing?.checkpoints?.length ?? 0) > 0) {
+      checkpoints = [];
+    }
+
     const common = {
       name: name.trim(), icon, direction, target_amount: amount, target_date: targetDate,
-      baseline: baselineValue, checkpoints: existing?.checkpoints ?? undefined,
+      baseline: baselineValue, checkpoints,
     };
 
     let body: GoalWriteBody;
@@ -267,6 +310,71 @@ export default function GoalEdit() {
           hint={grow ? 'What you want to save up to.' : 'What you want the balance to fall to — $0 clears it.'}
         />
 
+        <Text style={styles.label}>CHECKPOINTS (OPTIONAL)</Text>
+        {targetReadyForCheckpoints ? (
+          <>
+            {cpRows.map((row, index) => {
+              // Don't flag a row until it has an amount — a freshly-added blank row shouldn't warn.
+              const showWarn = checkpointOutOfBounds[index] && row.amountText.trim() !== '';
+              return (
+              <View key={row.id} style={[styles.cpRow, showWarn && styles.cpRowWarn]}>
+                <View style={styles.cpRowTop}>
+                  <View style={styles.cpFields}>
+                    <TextInput
+                      testID={`goal-cp-label-${index}`}
+                      style={styles.cpLabelInput}
+                      value={row.label}
+                      onChangeText={(label) => updateCpRow(row.id, { label })}
+                      placeholder="e.g. Halfway"
+                      placeholderTextColor={C.placeholder}
+                    />
+                    <View style={styles.cpAmountRow}>
+                      <Text style={styles.affix}>$</Text>
+                      <TextInput
+                        testID={`goal-cp-amount-${index}`}
+                        style={styles.rowInput}
+                        value={row.amountText}
+                        onChangeText={(amountText) => updateCpRow(row.id, { amountText })}
+                        placeholder={grow ? 'e.g. 2500' : 'e.g. 3000'}
+                        placeholderTextColor={C.placeholder}
+                        keyboardType="decimal-pad"
+                        inputMode="decimal"
+                      />
+                    </View>
+                  </View>
+                  <Pressable
+                    testID={`goal-cp-delete-${index}`}
+                    onPress={() => deleteCpRow(row.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Delete checkpoint"
+                    style={styles.cpDelete}
+                  >
+                    <Text style={styles.cpDeleteText}>✕</Text>
+                  </Pressable>
+                </View>
+                {showWarn && (
+                  <Text style={styles.cpWarn} accessibilityLiveRegion="polite">
+                    {grow ? 'Must be above $0 and below the target amount.' : 'Must be above the target amount.'}
+                  </Text>
+                )}
+              </View>
+              );
+            })}
+            {cpRows.length < CHECKPOINT_MAX_COUNT ? (
+              <Pressable testID="goal-cp-add" onPress={addCpRow} style={styles.addBtn} accessibilityRole="button">
+                <Text style={styles.addText}>+ Add checkpoint</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.hint}>You can have at most {CHECKPOINT_MAX_COUNT} checkpoints.</Text>
+            )}
+            <Text style={styles.hint}>
+              {grow ? 'Milestones on the way up — we’ll celebrate each one.' : 'Milestones on the way down — we’ll celebrate each one.'}
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.hint}>Set a target amount first to add checkpoints.</Text>
+        )}
+
         <Text style={styles.label}>TARGET DATE</Text>
         <NativeDateField value={targetDate} onChange={setTargetDate} minimumDate={tomorrowOf(today)} placeholder="Pick a date" />
 
@@ -361,6 +469,18 @@ const styles = StyleSheet.create({
   accountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingVertical: 13, paddingHorizontal: 14, borderRadius: 13, borderWidth: 1 },
   accountName: { flex: 1, fontFamily: FONT.body, fontSize: 14, fontWeight: '600' },
   accountBalance: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.textDim },
+
+  cpRow: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, padding: 12, marginTop: 8 },
+  cpRowWarn: { borderColor: tint(C.warn, 0.5) },
+  cpRowTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cpWarn: { fontFamily: FONT.body, fontSize: 11.5, color: C.warn, marginTop: 8 },
+  cpFields: { flex: 1, gap: 8 },
+  cpLabelInput: { fontFamily: FONT.body, fontSize: 15, color: C.text, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingHorizontal: 12, height: 44 },
+  cpAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingHorizontal: 12, height: 44 },
+  cpDelete: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: C.hairline, alignItems: 'center', justifyContent: 'center' },
+  cpDeleteText: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.bad },
+  addBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 14, borderWidth: 1, borderColor: C.hairline, borderStyle: 'dashed', alignItems: 'center' },
+  addText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accent },
 
   deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
   deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
