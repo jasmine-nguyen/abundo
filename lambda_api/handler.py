@@ -2316,12 +2316,93 @@ _GOAL_AMOUNT_MAX = 1_000_000_000
 # A goal's balance source, when synced, must name one of the real synced accounts —
 # the client picker only offers these three, so a phantom id is a bug caught here.
 _SYNCED_ACCOUNT_IDS = frozenset(ACCOUNT_ID_MAP.values())
+# A goal's checkpoint ladder (WHIT-476): a few "you're a step closer" markers between the
+# start and the target. Deliberately smaller than the mortgage plan's 50 — a goal ladder is
+# a handful of steps, not a schedule.
+_GOAL_CHECKPOINT_MAX_COUNT = 20
+_GOAL_CHECKPOINT_LABEL_MAX_LEN = 100
 
 
 # The one shared ISO YYYY-MM-DD rule (WHIT-418), now also the milestone READ bar so the two
 # can't drift. Kept under the old name so every caller and the e2e tests' handler._valid_iso_date
 # reference are unchanged.
 _valid_iso_date = valid_iso_date
+
+
+def _validate_goal_checkpoints(raw, direction: str, target_amount: Decimal):
+    """Validate a goal's optional `checkpoints` ladder (WHIT-476).
+
+    Returns (checkpoints, None), or ([], error_response) with a 400. A checkpoint is
+    {id, label, amount}: a step the balance passes on the way to target_amount, ordered in
+    the goal's OWN direction — a grow ladder climbs (each above the last, under the target),
+    a paydown ladder falls (each below the last, above the target).
+
+    `id` is permanent and preserved as sent: the client normally mints it (like the goal's own
+    id) and this only mints one for a row that arrives without, exactly like set_milestones. The
+    once-ever celebration marker keys on it, so it has to outlive a rename or a reorder.
+    """
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list):
+        return [], _json_response(400, {"error": "checkpoints must be a list"})
+    if len(raw) > _GOAL_CHECKPOINT_MAX_COUNT:
+        return [], _json_response(
+            400, {"error": f"a goal can have at most {_GOAL_CHECKPOINT_MAX_COUNT} checkpoints"})
+
+    grow = direction == "grow"
+    cleaned = []
+    ids = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            return [], _json_response(400, {"error": "each checkpoint must be an object"})
+
+        label = item.get("label")
+        if not isinstance(label, str) or not label.strip():
+            return [], _json_response(400, {"error": "each checkpoint needs a non-empty label"})
+        label = label.strip()
+        if len(label) > _GOAL_CHECKPOINT_LABEL_MAX_LEN:
+            return [], _json_response(400, {"error": "checkpoint label too long"})
+
+        amount = item.get("amount")
+        if not _finite_number(amount, low=0, high=_GOAL_AMOUNT_MAX):
+            return [], _json_response(
+                400, {"error": f"checkpoint amount must be a number between 0 and {_GOAL_AMOUNT_MAX}"})
+        amount = Decimal(str(amount))
+
+        # Strictly INSIDE the goal: a checkpoint at or past the target is the goal itself,
+        # not a step toward it. A grow rung of 0 isn't a step toward a positive target either.
+        # (A paydown target may be 0, so `> target` covers that end.)
+        if grow and not (0 < amount < target_amount):
+            return [], _json_response(
+                400, {"error": "a savings checkpoint must be above 0 and below the target amount"})
+        if not grow and amount <= target_amount:
+            return [], _json_response(
+                400, {"error": "a paydown checkpoint must be above the target amount"})
+
+        checkpoint_id = item.get("id")
+        if checkpoint_id is None:
+            checkpoint_id = str(uuid.uuid4())
+        elif not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
+            return [], _json_response(400, {"error": "checkpoint id must be a non-empty string"})
+        else:
+            # Trim like the label, so a round-tripped id with stray whitespace stores clean
+            # and " a "/"a" collide in the uniqueness check (mirrors set_milestones).
+            checkpoint_id = checkpoint_id.strip()
+        if checkpoint_id in ids:
+            return [], _json_response(400, {"error": "checkpoint ids must be unique"})
+        ids.add(checkpoint_id)
+
+        cleaned.append({"id": checkpoint_id, "label": label, "amount": amount})
+
+    for prev, cur in zip(cleaned, cleaned[1:]):
+        if grow and cur["amount"] <= prev["amount"]:
+            return [], _json_response(
+                400, {"error": "savings checkpoints must be ordered by strictly increasing amount"})
+        if not grow and cur["amount"] >= prev["amount"]:
+            return [], _json_response(
+                400, {"error": "paydown checkpoints must be ordered by strictly decreasing amount"})
+
+    return cleaned, None
 
 
 def _validate_goal_body(event: dict):
@@ -2331,7 +2412,8 @@ def _validate_goal_body(event: dict):
     name, icon (defaults like a category), direction (grow|paydown), target_amount
     (> 0 to save toward; a paydown may target 0 = pay it off), target_date (real ISO
     date), and EXACTLY ONE balance source — a synced account_id OR a manual pair
-    (manual_balance + manual_as_of) — plus an optional baseline ("count from £X").
+    (manual_balance + manual_as_of) — plus an optional baseline ("count from £X") and an
+    optional checkpoints ladder (see _validate_goal_checkpoints).
     Every numeric is stored as Decimal(str(...)) so no float reaches boto3.
     """
     body, error = _parse_json_body(event)
@@ -2403,6 +2485,18 @@ def _validate_goal_body(event: dict):
             return None, _json_response(400, {"error": "baseline must be a number >= 0"})
         goal["baseline"] = Decimal(str(baseline))
 
+    # Optional checkpoint ladder (WHIT-476, option B). The key is set only when the writer
+    # actually SENT a list — an omitted (or null) field leaves it off, and the repository then
+    # keeps the stored ladder, so a writer that doesn't know about checkpoints can't wipe them.
+    # An explicit list replaces; an explicit empty list clears (the repo drops the key).
+    raw_checkpoints = body.get("checkpoints")
+    checkpoints, error = _validate_goal_checkpoints(
+        raw_checkpoints, direction, goal["target_amount"])
+    if error:
+        return None, error
+    if isinstance(raw_checkpoints, list):
+        goal["checkpoints"] = checkpoints
+
     return goal, None
 
 
@@ -2442,7 +2536,9 @@ def upsert_goal(event: dict, repo: GoalsRepository, balance_repo: AccountBalance
     missing/blank id (an empty map key would 500 at DynamoDB), 400 on a bad body.
 
     On the FIRST write for an id, an immutable start (date + balance) is stamped; every
-    later replace carries the existing start forward (WHIT-252) — see repository_goals.
+    later replace carries the existing start forward (WHIT-252). An omitted `checkpoints`
+    keeps the stored ladder, while an explicit list replaces it and `[]` clears it
+    (WHIT-476) — both carry-forwards live in repository_goals.
     """
     goal_id = (event.get("pathParameters") or {}).get("id")
     if not goal_id:

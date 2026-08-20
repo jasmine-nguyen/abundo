@@ -33,10 +33,16 @@ const cacheGoals = () => queryClient.getQueryData<GoalRecord[]>(['goals']);
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
-// The real server echoes the id back into the saved goal; mirror that so the reconcile step
-// replaces the optimistic row with an equivalent authoritative one.
+// The real server echoes the id back into the saved goal, and returns every checkpoint WITH an
+// id (minting any the client omitted — WHIT-476). Mirror both so the reconcile step replaces the
+// optimistic row with an equivalent authoritative one.
+function serverEcho(id: string, body: GoalWriteBody, extra: Partial<GoalRecord> = {}): GoalRecord {
+  const checkpoints = body.checkpoints?.map((cp) => ({ ...cp, id: cp.id ?? 'server-minted' }));
+  return { id, ...body, checkpoints, ...extra };
+}
+
 function echoSave() {
-  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) => Promise.resolve({ id, ...body }));
+  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) => Promise.resolve(serverEcho(id, body)));
 }
 
 function mountWithSeededCache(goals: GoalRecord[] = [GOAL_G1]) {
@@ -188,7 +194,7 @@ it('saveGoal(null) into an EMPTY/undefined cache seeds a one-item list (prev ?? 
 it('create reconciles the optimistic row to the server row by id (no duplicate, server fields win)', async () => {
   // Server echoes the id but returns an authoritative row that DIFFERS from the optimistic one.
   mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) =>
-    Promise.resolve({ id, ...body, name: 'Server Holiday', baseline: 250 }));
+    Promise.resolve(serverEcho(id, body, { name: 'Server Holiday', baseline: 250 })));
   const result = mount([GOAL_G1]);
 
   let ok: boolean | undefined;
@@ -274,4 +280,142 @@ it('two concurrent deletes both remove their goal (second delete sees the first\
   expect(a).toBe(true);
   expect(b).toBe(true);
   expect(cacheGoals()).toEqual([G2]); // both removed, the middle survives
+});
+
+// WHIT-476 — checkpoint ids must exist BEFORE the optimistic row lands in the cache. A
+// GoalRecord promises every checkpoint has a permanent id and the celebration keys on it, so
+// the writer mints any the caller omitted (like the goal id) and sends the SAME ids on — the
+// optimistic row and the row the server saves can never disagree about them.
+it('saveGoal mints ids for id-less checkpoints, in the cache AND in the body it sends', async () => {
+  echoSave();
+  const result = mount([GOAL_G1]);
+
+  // Read the cache MID-FLIGHT (before the server replies) — that optimistic row is the one
+  // that must already carry ids; by the time the save resolves it has been replaced.
+  let midIds: (string | undefined)[] | undefined;
+  await act(async () => {
+    const pending = result.current.saveGoal(null, {
+      ...NEW_BODY,
+      checkpoints: [{ label: 'First £1k', amount: 1000 }, { label: 'Halfway', amount: 2500, id: 'kept-1' }],
+    });
+    midIds = cacheGoals()!.find((g) => g.name === 'Holiday')!.checkpoints!.map((cp) => cp.id);
+    await pending;
+  });
+
+  const [, sentBody] = mockApi.saveGoal.mock.calls[0] as [string, GoalWriteBody];
+  const sent = sentBody.checkpoints!;
+  expect(sent[0].id).toMatch(/^test-uuid-/);    // client-minted (the auto-mocked randomUUID)
+  expect(sent[1].id).toBe('kept-1');            // a supplied id is never re-minted
+
+  // The ids the OPTIMISTIC row carried mid-flight are the same ones sent — the cache must
+  // never hold an id-less checkpoint, even for the instant before the server replies.
+  expect(midIds).toEqual(sent.map((cp) => cp.id));
+});
+
+// ===== WHIT-476 QA GAPS — the checkpoint ladder through saveGoal =====
+// The implementer's test above locks "an id-less rung gets a minted id, a supplied id is kept,
+// and the cache row and the sent body agree". These lock what it does not: the mint being
+// PER-RUNG, the server's ladder winning at reconcile, the rollback restoring the OLD ladder,
+// and the whole-record REPLACE dropping a ladder the caller didn't resend.
+
+// A goal already carrying a saved ladder — the "edit an existing goal" starting point.
+const GOAL_WITH_LADDER: GoalRecord = {
+  ...GOAL_G1,
+  checkpoints: [
+    { id: 'saved-1', label: 'First $1k', amount: 1000 },
+    { id: 'saved-2', label: 'Halfway', amount: 5000 },
+  ],
+};
+
+// [B1] Two id-less rungs must get two DIFFERENT ids. A single mint hoisted out of the map
+// would give both the same id, and the once-ever celebration marker (a later slice) keys on
+// it — one rung would silently mark the other's celebration done.
+it('mints a SEPARATE id for every id-less checkpoint', async () => {
+  echoSave();
+  const result = mount([GOAL_G1]);
+
+  await act(async () => {
+    await result.current.saveGoal(null, {
+      ...NEW_BODY,
+      checkpoints: [{ label: 'First', amount: 1000 }, { label: 'Second', amount: 2000 }, { label: 'Third', amount: 3000 }],
+    });
+  });
+
+  const [, sentBody] = mockApi.saveGoal.mock.calls[0] as [string, GoalWriteBody];
+  const ids = sentBody.checkpoints!.map((cp) => cp.id);
+  expect(new Set(ids).size).toBe(3);
+  ids.forEach((id) => expect(id).toMatch(/^test-uuid-/));
+});
+
+// [B2] The server owns the ids. If it returns a ladder that DIFFERS from the optimistic mint
+// (it minted its own, or dropped one), the reconcile must leave the SERVER's ladder in the
+// cache — not the client's guess, which would make the celebration key on an id that was
+// never stored.
+it('reconcile replaces the optimistically minted ladder with the SERVER ladder', async () => {
+  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) =>
+    Promise.resolve({
+      ...serverEcho(id, body),
+      checkpoints: [{ id: 'srv-1', label: 'First', amount: 1000 }],   // server's own ids, one rung
+    }));
+  const result = mount([GOAL_G1]);
+
+  await act(async () => {
+    await result.current.saveGoal(null, {
+      ...NEW_BODY,
+      checkpoints: [{ label: 'First', amount: 1000 }, { label: 'Second', amount: 2000 }],
+    });
+  });
+
+  const created = cacheGoals()!.find((g) => g.name === 'Holiday')!;
+  expect(created.checkpoints).toEqual([{ id: 'srv-1', label: 'First', amount: 1000 }]);
+});
+
+// [B3] A failed save must restore the PRE-EDIT ladder, not leave the optimistic one (whose
+// freshly minted ids the server never saw) sitting in the cache.
+it('a failed edit rolls the ladder back to the previously SAVED checkpoints', async () => {
+  mockApi.saveGoal.mockRejectedValue(new Error('API error: 500'));
+  const result = mountWithSeededCache([GOAL_WITH_LADDER]);
+
+  let midIds: (string | undefined)[] | undefined;
+  let ok: boolean | undefined;
+  await act(async () => {
+    const p = result.current.saveGoal('g1', {
+      ...NEW_BODY,
+      checkpoints: [{ label: 'Brand new rung', amount: 2000 }],
+    });
+    midIds = cacheGoals()![0].checkpoints?.map((cp) => cp.id);   // optimistic ladder mid-flight
+    ok = await p;
+  });
+
+  expect(midIds).toEqual([expect.stringMatching(/^test-uuid-/)]);  // the optimistic write happened
+  expect(ok).toBe(false);
+  expect(cacheGoals()).toEqual([GOAL_WITH_LADDER]);                // old ladder + ids restored whole
+});
+
+// [B4] TRIPWIRE. A goal save is a whole-record REPLACE (server side too — see
+// tests/lambda_api/test_goals.py [A3]), so an edit that does NOT resend `checkpoints` drops the
+// saved ladder from the cached row — the writer never carries one forward on the caller's
+// behalf. EVERY caller must therefore resend the full list. This is the one test that pins
+// that division of labour.
+it('an edit that omits checkpoints: client drops them optimistically, the server (B) restores them', async () => {
+  // WHIT-476 option B: saveGoal is a passthrough — it sends exactly what the caller gave and
+  // does NOT carry the ladder forward, so an omitting edit blanks it in the instant on-screen
+  // row. But the server keeps an omitted ladder and echoes it back, so the reconcile restores
+  // it. (Simulate the B server here: when the body omits checkpoints, return the stored ones.)
+  mockApi.saveGoal.mockImplementation((id: string, body: GoalWriteBody) =>
+    Promise.resolve({ ...serverEcho(id, body), checkpoints: GOAL_WITH_LADDER.checkpoints }));
+  const result = mountWithSeededCache([GOAL_WITH_LADDER]);
+
+  let midLadder: unknown;
+  await act(async () => {
+    const p = result.current.saveGoal('g1', { ...NEW_BODY, name: 'Renamed' });
+    midLadder = cacheGoals()![0].checkpoints;   // the OPTIMISTIC row, before the server answers
+    await p;
+  });
+
+  const [, sentBody] = mockApi.saveGoal.mock.calls[0] as [string, GoalWriteBody];
+  expect(sentBody.checkpoints).toBeUndefined();          // client invents nothing on the way out
+  expect(midLadder).toBeUndefined();                     // and carries nothing forward optimistically
+  expect(cacheGoals()![0].name).toBe('Renamed');
+  expect(cacheGoals()![0].checkpoints).toEqual(GOAL_WITH_LADDER.checkpoints);  // server restored it
 });

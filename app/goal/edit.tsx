@@ -130,7 +130,12 @@ export default function GoalEdit() {
       if (direction === 'paydown' && !(baselineValue > amount)) return s.showToast('The starting amount should be above your target.');
     }
 
-    const common = { name: name.trim(), icon, direction, target_amount: amount, target_date: targetDate, baseline: baselineValue };
+    // Re-send the checkpoint ladder this form has no UI for, so the instant on-screen update
+    // keeps showing it (the server keeps an omitted ladder, but the optimistic row wouldn't) — WHIT-476.
+    const common = {
+      name: name.trim(), icon, direction, target_amount: amount, target_date: targetDate,
+      baseline: baselineValue, checkpoints: existing?.checkpoints ?? undefined,
+    };
 
     let body: GoalWriteBody;
     if (source === 'synced') {

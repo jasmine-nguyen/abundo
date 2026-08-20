@@ -76,8 +76,15 @@ class GoalsRepository:
         if the stored goal already has a start it wins (a later edit or balance update can
         never move it); otherwise `start_candidate` (the create-time pair, possibly empty
         for a synced goal not yet polled) is stamped. The pair moves together, so both
-        fields always describe the same moment. The merge is redone inside the retry loop
-        against a fresh read, so a version race can't lose or duplicate the start.
+        fields always describe the same moment.
+
+        The checkpoint ladder (WHIT-476) is carried forward too, but the INCOMING value wins
+        whenever the writer sent one: an omitted `checkpoints` keeps the stored ladder, an
+        explicit list replaces it, an explicit empty list clears it. Unlike the start, a
+        provided value is not immutable — only omission is protected.
+
+        Both merges are redone inside the retry loop against a fresh read, so a version race
+        can't lose or duplicate either.
         """
         start_candidate = start_candidate or {}
         self._ensure_seeded()
@@ -94,7 +101,20 @@ class GoalsRepository:
                 start = {"start_date": existing["start_date"], "start_balance": existing["start_balance"]}
             else:
                 start = dict(start_candidate)
+            # Checkpoint ladder (WHIT-476, option B): the INCOMING value wins whenever the
+            # writer sent one — a non-empty list replaces, an empty list clears. When the write
+            # omits checkpoints entirely, keep whatever's stored, so a writer that doesn't know
+            # about them (an old app build, a new code path) can't silently delete the ladder.
+            if "checkpoints" in goal:
+                ladder = goal["checkpoints"]
+            elif existing:
+                ladder = existing.get("checkpoints")
+            else:
+                ladder = None
             goal_to_write = {**goal, **start}
+            goal_to_write.pop("checkpoints", None)
+            if ladder:
+                goal_to_write["checkpoints"] = ladder
             try:
                 self._get_table().update_item(
                     Key=_GOALS_KEY,
