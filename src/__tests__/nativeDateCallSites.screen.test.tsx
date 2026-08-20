@@ -99,11 +99,12 @@ describe('the goal call-sites forward their date constraints', () => {
   // illegal days — the isolation forwarding test can't catch a call-site that stops passing them.
   it('[Q3] AS OF picker gets maximumDate only; TARGET DATE picker gets minimumDate only', () => {
     render(<GoalEdit />);
-    fireEvent.press(screen.getByTestId('goal-source-manual')); // reveal AS OF (seeded today → iOS pill mounts)
-    // AS OF: a value is set → its pill is inline with maximumDate (today) and no minimumDate.
+    fireEvent.press(screen.getByTestId('goal-source-manual')); // reveal AS OF (seeded today → "Change")
+    // AS OF is the first date field; open it so its pill mounts with maximumDate (today), no minimumDate.
+    fireEvent.press(screen.getAllByTestId('date-open')[0]);
     expect(mockPickerProps.some((p) => p.maximumDate != null && p.minimumDate == null)).toBe(true);
 
-    // Open the still-unset TARGET DATE so its pill mounts, then assert the opposite constraint.
+    // TARGET DATE is now the only remaining affordance — open it and assert the opposite constraint.
     fireEvent.press(screen.getByTestId('date-open'));
     expect(mockPickerProps.some((p) => p.minimumDate != null && p.maximumDate == null)).toBe(true);
   });

@@ -1,7 +1,8 @@
 // WHIT-255 — the shared native date field. Locks the drift-prone bits the four call-sites used
 // to each own: the pick-vs-dismiss quirk (Android fires onChange on BOTH; commit only on a real
-// Date), the iOS pill gate (loan shows it even when unset via alwaysShowPillIOS; goal only once
-// set), the Clear affordance, and min/max forwarding.
+// Date), the iOS pill gate (loan shows it always via alwaysShowPillIOS; everywhere else the pill
+// shows ONLY while picking — a set value renders as text + a "Change" affordance, not a duplicate
+// pill), the Clear affordance, and min/max forwarding.
 //
 // This file OVERRIDES the global datetimepicker mock (jest.setup.js always emits a Date, so it
 // can't exercise the dismiss path). The override emits whatever mock* vars say and captures the
@@ -82,8 +83,12 @@ describe('the iOS pill gate', () => {
     expect(screen.queryByTestId('date-open')).toBeNull();
   });
 
-  it('once a value is set, the pill shows even without alwaysShowPillIOS', () => {
+  it('a set value shows "Change" not a duplicate pill; the pill appears only once you tap it', () => {
     render(<NativeDateField value="2026-01-15" onChange={jest.fn()} />);
+    // The value already renders as the row text — showing the pill too would print the date twice.
+    expect(screen.queryByTestId('mock-datepicker')).toBeNull();
+    expect(screen.getByText('Change')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('date-open'));
     expect(screen.getByTestId('mock-datepicker')).toBeTruthy();
   });
 });
@@ -118,6 +123,8 @@ describe('min / max forwarding', () => {
     const min = new Date(2026, 0, 1);
     const max = new Date(2026, 11, 31);
     render(<NativeDateField value="2026-06-01" onChange={jest.fn()} minimumDate={min} maximumDate={max} />);
+    // A set value hides the pill behind "Change" now — open it so the picker mounts and forwards.
+    fireEvent.press(screen.getByTestId('date-open'));
     expect(mockLastProps?.minimumDate).toBe(min);
     expect(mockLastProps?.maximumDate).toBe(max);
   });

@@ -37,7 +37,7 @@ export interface NativeDateFieldProps {
   maximumDate?: Date;
   placeholder?: string;                      // shown when unset (defaults to "Not set")
   clearable?: boolean;                       // render a "Clear" affordance once a value is set
-  alwaysShowPillIOS?: boolean;               // iOS: show the pill even when unset (loan) vs only once set (goal)
+  alwaysShowPillIOS?: boolean;               // iOS: show the pill always (loan) vs only while picking (everywhere else)
 }
 
 // The inline field row: the current value (or placeholder), an optional Clear, and the
@@ -47,9 +47,12 @@ export function NativeDateField({
   value, onChange, minimumDate, maximumDate, placeholder, clearable, alwaysShowPillIOS,
 }: NativeDateFieldProps) {
   const { isIOS, showPicker, openPicker, commit } = useNativeDate((iso) => onChange(iso));
-  // iOS shows the compact pill inline; loan shows it even when unset, goal only once a value
-  // exists (or the picker's been opened) so an empty REQUIRED field doesn't read as pre-set.
-  const showInlinePill = alwaysShowPillIOS ? isIOS : isIOS && (value != null || showPicker);
+  // iOS shows the compact pill inline. Loan shows it always (alwaysShowPillIOS). Everywhere else
+  // the pill appears ONLY while actively picking: once a value is set we show it as the row text
+  // with a "Change" affordance, so the same date isn't printed twice (the row text AND the pill
+  // both showed it before). An unset field still shows "Set date", never a pre-filled pill that
+  // reads as already-set.
+  const showInlinePill = alwaysShowPillIOS ? isIOS : isIOS && showPicker;
   const pickerValue = value ? parseISODate(value) : (minimumDate ?? new Date());
 
   return (
@@ -97,6 +100,9 @@ export function NativeDateField({
 // Copied verbatim from the (byte-identical) row styles the two forms shared.
 const styles = StyleSheet.create({
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 14, paddingHorizontal: 14, height: 50 },
-  rowInput: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text, height: '100%', textAlignVertical: 'center' },
+  // No forced height here: the row is alignItems:'center', so a natural-height single-line Text
+  // sits vertically centred. (A copied-over height:'100%' + Android-only textAlignVertical left
+  // the date text top-aligned on iOS.)
+  rowInput: { flex: 1, fontFamily: FONT.body, fontSize: 16, color: C.text },
   affordance: { fontFamily: FONT.body, fontSize: 13.5, fontWeight: '700', color: C.accent, paddingHorizontal: 4 },
 });
