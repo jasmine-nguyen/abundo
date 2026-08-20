@@ -35,17 +35,33 @@ data "archive_file" "lambda_zip" {
 # predating CategoryNotFoundError landed in /var/task, shadowed the layer's fresh
 # copy, and 500'd every route on import. Staging a clean dir makes the package
 # deterministic regardless of local cruft.
+#
+# The true-source files are listed ONCE in local.lambda_api_sources below and
+# consumed by both the hash trigger and the cp, so adding/removing a source file
+# is a single-line edit — no more keeping a trigger map and a cp list in lockstep
+# (the drift that left dead milestone_ai.py references and broke `tf apply`). This
+# stays an explicit allowlist rather than a fileset("lambda_api","*.py") glob on
+# purpose: lambda_api/ is a gitignored build dir, so a glob would re-ship exactly
+# the on-disk cruft this staging exists to keep out. Keep the list in sync with
+# the !lambda_api/* allowlist in .gitignore (git's own copy of the same set).
+locals {
+  lambda_api_sources = [
+    "handler.py",
+    "constants.py",
+    "banksync_enrichments.py",
+    "insights_ai.py",
+    "anthropic_client.py",
+  ]
+  lambda_api_source_paths = [for f in local.lambda_api_sources : "${path.module}/../lambda_api/${f}"]
+}
+
 resource "null_resource" "prepare_lambda_api" {
   triggers = {
-    handler          = filesha256("${path.module}/../lambda_api/handler.py")
-    constants        = filesha256("${path.module}/../lambda_api/constants.py")
-    enrichments      = filesha256("${path.module}/../lambda_api/banksync_enrichments.py")
-    insights         = filesha256("${path.module}/../lambda_api/insights_ai.py")
-    anthropic_client = filesha256("${path.module}/../lambda_api/anthropic_client.py")
+    sources = sha256(join("", [for p in local.lambda_api_source_paths : filesha256(p)]))
   }
 
   provisioner "local-exec" {
-    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${path.module}/../lambda_api/handler.py ${path.module}/../lambda_api/constants.py ${path.module}/../lambda_api/banksync_enrichments.py ${path.module}/../lambda_api/insights_ai.py ${path.module}/../lambda_api/anthropic_client.py ${path.module}/build/lambda_api/"
+    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${join(" ", local.lambda_api_source_paths)} ${path.module}/build/lambda_api/"
   }
 }
 
