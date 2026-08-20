@@ -1524,6 +1524,9 @@ export interface BalanceGoal {
   // deferred ahead/behind card reads these to draw expected pace. `status` stays null until then.
   start_date?: string | null;
   start_balance?: number | null;
+  // WHIT-478: the checkpoint ladder (absolute amounts). Only the amount is needed to count how
+  // many the current balance has passed; the labels/ids belong to the editor, not this selector.
+  checkpoints?: { amount: number }[] | null;
 }
 
 export interface BalanceGoalInput {
@@ -1543,6 +1546,11 @@ export interface BalanceGoalView {
   // on start_balance, NOT the display baseline, so the progress bar and this label can measure
   // from slightly different starting points by design.
   status: BalanceGoalStatus | null;
+  // WHIT-478: how many checkpoints the current balance has passed, out of how many. `total` is 0
+  // when the goal has no ladder (the card renders nothing). `reached` is null when the balance
+  // isn't known yet (a synced goal not yet polled — degrade like the rest of the card).
+  checkpointsTotal: number;
+  checkpointsReached: number | null;
 }
 
 // Count the paydays remaining before a target date: the payday dates `last_pay_date +
@@ -1668,7 +1676,20 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   // Status only when the balance is known; goalPaceStatus guards the rest (no start, span, etc).
   const status = known ? goalPaceStatus(goal, current, today) : null;
 
-  return { progress, pacePerPayday, paydaysLeft, status };
+  // Checkpoints reached (WHIT-478): count the absolute amounts the CURRENT normalised balance has
+  // passed — grow reaches AT/above the amount, paydown AT/below. Uses `current`, the same balance
+  // the bar measures, so the count can never disagree with the bar. `reached` stays null while the
+  // balance is unknown so the card hides the line; `total` is 0 when there's no ladder.
+  const checkpoints = goal.checkpoints ?? [];
+  const checkpointsTotal = checkpoints.length;
+  let checkpointsReached: number | null = null;
+  if (known && checkpointsTotal > 0) {
+    checkpointsReached = checkpoints.filter((cp) =>
+      goal.direction === 'grow' ? current >= cp.amount : current <= cp.amount,
+    ).length;
+  }
+
+  return { progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached };
 }
 
 export interface BudgetView {
