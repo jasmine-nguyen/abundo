@@ -8,8 +8,8 @@
 // date on press. Platform defaults to iOS, so each DateField renders its picker inline.
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
-import { ScrollView } from 'react-native';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 import type { GoalRecord, AccountBalance } from '../api';
 
 // WHIT-257/264 — override the global fixed-past picker mock (jest.setup fires 20 Jun 2026, which
@@ -719,6 +719,34 @@ describe('WHIT-477: the checkpoint editor', () => {
     expect(body.checkpoints).toEqual(LADDER);   // same rows, same permanent ids
   });
 
+  it('lays the label and amount out on one row, both still editable (WHIT-485)', () => {
+    // WHIT-485: label + amount share ONE container laid out horizontally (not stacked). RN Testing
+    // Library can't assert pixel layout, so the lock is: the SMALLEST container holding both inputs
+    // (cpFields) has flexDirection 'row'. Reverting cpFields to a column drops flexDirection (RN
+    // default column) and reddens this. (TextInput wraps in an internal node, so walk up to the
+    // first ancestor that contains the amount input, rather than trusting a fixed .parent depth.)
+    mockGoals = [RAINY_DAY];
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+
+    const label = screen.getByTestId('goal-cp-label-0');
+    let rowContainer = label.parent;
+    while (rowContainer && !within(rowContainer).queryByTestId('goal-cp-amount-0')) {
+      rowContainer = rowContainer.parent;
+    }
+    expect(rowContainer).toBeTruthy();
+    expect(StyleSheet.flatten(rowContainer!.props.style)?.flexDirection).toBe('row');
+    expect(within(rowContainer!).getByText('$')).toBeTruthy(); // amount keeps its currency affix
+
+    // behaviour unchanged: both inputs edit, delete still removes the row.
+    fireEvent.changeText(label, 'Halfway');
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '5000');
+    expect(screen.getByDisplayValue('Halfway')).toBeTruthy();
+    expect(screen.getByDisplayValue('5000')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('goal-cp-delete-0'));
+    expect(screen.queryByTestId('goal-cp-label-0')).toBeNull();
+  });
+
   it('adds a rung and saves it sorted, with a minted id', async () => {
     mockGoals = [RAINY_DAY]; // no existing ladder
     render(<GoalEdit />);
@@ -944,5 +972,102 @@ describe('WHIT-477: add-cap + blank-row warning suppression', () => {
 
     fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '5000');  // fixed
     expect(screen.queryByText(/Must be above/i)).toBeNull();
+  });
+});
+
+// WHIT-485 QA gaps — the one-row reflow (label input | $amount | ✕) must NOT swallow the
+// out-of-bounds warning into the row, must apply per-row (every rung its own one-row block),
+// must keep the amount's decimal keyboard, and must survive a very long label. The implementer's
+// "lays the label and amount out on one row" test covers a SINGLE row's flexDirection + $ affix +
+// edit/delete; these are the independent edges it leaves open. Note: JSX is unchanged by WHIT-485,
+// so the warning-placement + keyboardType checks are CHARACTERIZATION guards (they bite a future
+// layout regression that pulls the warning inline or drops the prop, not a revert of this diff);
+// the per-row flexDirection check IS fail-on-revert against this diff (cpFields row→column).
+describe('WHIT-485 QA gaps: one-row reflow edges', () => {
+  beforeEach(() => { mockParams = { id: 'g1' }; mockGoals = [RAINY_DAY]; }); // grow, target 10000
+
+  // The smallest ancestor of a rung's label that also contains that rung's amount input — i.e. the
+  // cpFields container the reflow turns into a horizontal row. Walk up rather than trust a fixed
+  // .parent depth (TextInput wraps in an internal host node).
+  function cpFieldsFor(index: number) {
+    let c = screen.getByTestId(`goal-cp-label-${index}`).parent;
+    while (c && !within(c).queryByTestId(`goal-cp-amount-${index}`)) c = c.parent;
+    return c;
+  }
+
+  // [A-L1] When a rung is out of bounds the warning still renders BELOW the one-row layout on its
+  // own line — NOT pulled inline into the label|amount|✕ row. Assert it is not a descendant of the
+  // row block (cpRowTop, which wholly contains label+amount+delete) but IS a sibling below it in the
+  // card. Characterization guard: a regression moving the warning inside the row would redden it.
+  it('keeps the out-of-bounds warning on its own line below the row, not inside it', () => {
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '15000'); // >= 10000 target → warns
+    expect(screen.getByText(/Must be above/i)).toBeTruthy();
+
+    // rowBlock = smallest ancestor of the label that also holds the delete button = cpRowTop; the
+    // entire one-row layout (label, amount, ✕) lives inside it.
+    let rowBlock = screen.getByTestId('goal-cp-label-0').parent;
+    while (rowBlock && !within(rowBlock).queryByTestId('goal-cp-delete-0')) rowBlock = rowBlock.parent;
+    expect(rowBlock).toBeTruthy();
+    // the warning is NOT inside that one-row block…
+    expect(within(rowBlock!).queryByText(/Must be above/i)).toBeNull();
+    // …but IS present in an ancestor card that also contains the row block → it's a sibling below.
+    let card = rowBlock!.parent;
+    while (card && !within(card).queryByText(/Must be above/i)) card = card.parent;
+    expect(card).toBeTruthy();
+    expect(within(card!).queryByTestId('goal-cp-delete-0')).toBeTruthy(); // same card holds the row
+  });
+
+  // [A-L2] Each rung is its own one-row block: add two, and BOTH cpFields containers are laid out
+  // horizontally, each holding only its OWN amount input. Fail-on-revert: reverting cpFields to a
+  // column (the pre-WHIT-485 style) drops flexDirection on BOTH and reddens this.
+  it('lays every rung out as its own horizontal row (two rungs, both flexDirection row)', () => {
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+
+    for (const index of [0, 1]) {
+      const fields = cpFieldsFor(index);
+      expect(fields).toBeTruthy();
+      expect(StyleSheet.flatten(fields!.props.style)?.flexDirection).toBe('row');
+      // each row's cpFields holds ITS amount input but not the sibling row's
+      expect(within(fields!).queryByTestId(`goal-cp-amount-${index}`)).toBeTruthy();
+      expect(within(fields!).queryByTestId(`goal-cp-amount-${1 - index}`)).toBeNull();
+    }
+    // both rows edit independently after the reflow
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), 'Row zero');
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-1'), 'Row one');
+    expect(screen.getByDisplayValue('Row zero')).toBeTruthy();
+    expect(screen.getByDisplayValue('Row one')).toBeTruthy();
+  });
+
+  // [A-L3] The amount input keeps its decimal keyboard after the reflow (the fixed-width box still
+  // opens the number pad, not a full keyboard). Characterization guard on the props the reflow
+  // must not have disturbed.
+  it('the amount input still requests the decimal keyboard after the reflow', () => {
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    const amount = screen.getByTestId('goal-cp-amount-0');
+    expect(amount.props.keyboardType).toBe('decimal-pad');
+    expect(amount.props.inputMode).toBe('decimal');
+  });
+
+  // [A-L4] A very long (60+char) label doesn't break the row: both inputs stay independently
+  // addressable and carry their own values. NOTE characterization only — RN Testing Library does no
+  // real layout, so it CANNOT prove the label truncates instead of squashing the amount box (that's
+  // the Manual check). It locks that a long label doesn't collapse the fields into one / drop a
+  // testID / bleed into the amount's value.
+  it('a long label leaves both inputs independently editable (no state bleed)', () => {
+    render(<GoalEdit />);
+    fireEvent.press(screen.getByTestId('goal-cp-add'));
+    const longLabel = 'A really long checkpoint label that should truncate not squash!!';
+    expect(longLabel.length).toBeGreaterThanOrEqual(60);
+    fireEvent.changeText(screen.getByTestId('goal-cp-label-0'), longLabel);
+    fireEvent.changeText(screen.getByTestId('goal-cp-amount-0'), '2500');
+
+    expect(screen.getByDisplayValue(longLabel)).toBeTruthy();
+    expect(screen.getByDisplayValue('2500')).toBeTruthy();          // amount unaffected by the label
+    expect(screen.getByTestId('goal-cp-amount-0').props.value).toBe('2500');
   });
 });

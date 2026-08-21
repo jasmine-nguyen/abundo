@@ -474,9 +474,10 @@ const styles = StyleSheet.create({
   cpRowWarn: { borderColor: tint(C.warn, 0.5) },
   cpRowTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   cpWarn: { fontFamily: FONT.body, fontSize: 11.5, color: C.warn, marginTop: 8 },
-  cpFields: { flex: 1, gap: 8 },
-  cpLabelInput: { fontFamily: FONT.body, fontSize: 15, color: C.text, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingHorizontal: 12, height: 44 },
-  cpAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingHorizontal: 12, height: 44 },
+  // WHIT-485: label + amount on one row — label takes the space left of the fixed-width amount box.
+  cpFields: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cpLabelInput: { flex: 1, minWidth: 0, fontFamily: FONT.body, fontSize: 15, color: C.text, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingHorizontal: 12, height: 44 },
+  cpAmountRow: { width: 120, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.bg, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingHorizontal: 12, height: 44 },
   cpDelete: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, borderColor: C.hairline, alignItems: 'center', justifyContent: 'center' },
   cpDeleteText: { fontFamily: FONT.body, fontSize: 16, fontWeight: '700', color: C.bad },
   addBtn: { marginTop: 10, paddingVertical: 13, borderRadius: 14, borderWidth: 1, borderColor: C.hairline, borderStyle: 'dashed', alignItems: 'center' },
