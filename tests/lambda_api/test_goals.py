@@ -439,6 +439,9 @@ class FakeGoalsRepo_gaps:
     def __init__(self):
         self.upsert_calls = []
 
+    def list_goals(self):
+        return {}  # non-persisting: no prior goal → no crossing (WHIT-479)
+
     def upsert_goal(self, goal_id, goal, start_candidate=None):
         self.upsert_calls.append((goal_id, goal))
         return {"id": goal_id, **goal, **(start_candidate or {})}
@@ -1041,3 +1044,72 @@ def test_the_checkpoint_caps_are_pinned(handler):
     If you are deliberately changing a cap, this is the ONE test that should go red."""
     assert handler._GOAL_CHECKPOINT_MAX_COUNT == 20, "checkpoint count cap changed -- update this pin on purpose"
     assert handler._GOAL_CHECKPOINT_LABEL_MAX_LEN == 100, "checkpoint label cap changed -- update this pin on purpose"
+
+
+# --- WHIT-479: a manual goal's saved balance crossing a checkpoint celebrates -----------------
+# upsert_goal reads the OLD stored balance, saves, then fires the crossing check for MANUAL goals
+# (synced goals cross on the daily poll). notify_goal_checkpoint_crossing is monkeypatched to a
+# recorder — the crossing math is unit-tested in tests/shared/test_goal_checkpoints.py.
+
+def _grow_manual_body(**over):
+    body = {
+        "name": "Holiday", "icon": "palm", "direction": "grow",
+        "target_amount": 10000, "target_date": "2026-12-01",
+        "manual_balance": 5000, "manual_as_of": "2026-07-01",
+        "checkpoints": [{"label": "Halfway", "amount": 4000}],
+    }
+    body.update(over)
+    return body
+
+
+_MANUAL_G1 = {
+    "id": "g1", "name": "Holiday", "icon": "palm", "direction": "grow",
+    "target_amount": 10000, "target_date": "2026-12-01",
+    "manual_balance": Decimal("1000"), "manual_as_of": "2026-07-01",
+    "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("4000")}],
+}
+
+
+def test_manual_save_fires_the_crossing_check_with_old_then_new(handler, monkeypatch):
+    repo = FakeGoalsRepo(goals={"g1": dict(_MANUAL_G1)})
+    seen = []
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing",
+                        lambda old, new, **kw: seen.append((old, new, kw["goal_id"], kw["synced"])) or 1)
+
+    resp = handler.upsert_goal(_put_event(body=_grow_manual_body(manual_balance=5000)), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 200
+    assert seen == [(Decimal("1000"), Decimal("5000"), "g1", False)]   # old vs new, manual (synced=False)
+
+
+def test_synced_save_does_NOT_fire_the_manual_crossing_check(handler, monkeypatch):
+    # A synced goal (account_id) is the poller's job — the save path must not double-fire.
+    repo = FakeGoalsRepo()
+    seen = []
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", lambda *a, **k: seen.append(1) or 1)
+
+    resp = handler.upsert_goal(_put_event(body=_grow_body(checkpoints=[_cp("Halfway", 4000)])), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 200
+    assert seen == []
+
+
+def test_manual_save_push_failure_never_fails_the_save(handler, monkeypatch):
+    repo = FakeGoalsRepo(goals={"g1": dict(_MANUAL_G1)})
+
+    def boom(*a, **k):
+        raise RuntimeError("expo down")
+
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", boom)
+    resp = handler.upsert_goal(_put_event(body=_grow_manual_body(manual_balance=5000)), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 200   # saved despite the push blowing up
+
+
+def test_a_brand_new_manual_goal_first_save_passes_none_as_old(handler, monkeypatch):
+    # No existing goal → old balance is None → the seed guard (no retroactive burst).
+    repo = FakeGoalsRepo()  # empty
+    seen = []
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing",
+                        lambda old, new, **kw: seen.append(old) or 0)
+
+    resp = handler.upsert_goal(_put_event(body=_grow_manual_body(manual_balance=5000)), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 200
+    assert seen == [None]
