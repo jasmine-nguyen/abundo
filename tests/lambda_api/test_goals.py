@@ -529,17 +529,19 @@ def test_manual_balance_exactly_zero_is_accepted(handler):
     assert repo.upsert_calls[0][1]["manual_balance"] == Decimal("0")
 
 
-def test_manual_balance_negative_is_accepted_as_a_debt_snapshot(handler):
-    # [G7] negative manual_balance is deliberately allowed (low=-1e9). Locks that design
-    # choice: a `low=0` regression would redden here.
+def test_manual_balance_negative_is_rejected(handler):
+    # [G7] WHIT-483: a negative manual_balance is now a 400 (low=0), matching the goal editor. A
+    # `low=-1e9` regression would redden here — a negative owed would normalise to £0 and
+    # false-celebrate every paydown rung.
     resp, repo = _put(handler, _manual_paydown_body(manual_balance=-8400))
-    assert resp["statusCode"] == 200, json.loads(resp["body"])
-    assert repo.upsert_calls[0][1]["manual_balance"] == Decimal("-8400")
+    assert resp["statusCode"] == 400
+    assert repo.upsert_calls == []
 
 
-def test_manual_balance_below_negative_ceiling_rejected(handler):
-    # [G8] magnitude is still bounded -> a huge negative is a 400.
-    resp, repo = _put(handler, _manual_paydown_body(manual_balance=-2_000_000_000))
+def test_manual_balance_above_positive_ceiling_rejected(handler):
+    # [G8] the positive upper bound stays enforced after WHIT-483 flipped the low bound to 0.
+    # (The old huge-negative case is now covered by [G7] — same `value < 0` branch.)
+    resp, repo = _put(handler, _manual_paydown_body(manual_balance=1_000_000_001))
     assert resp["statusCode"] == 400
     assert repo.upsert_calls == []
 
@@ -1113,3 +1115,171 @@ def test_a_brand_new_manual_goal_first_save_passes_none_as_old(handler, monkeypa
     resp = handler.upsert_goal(_put_event(body=_grow_manual_body(manual_balance=5000)), repo, FakeBalanceRepo())
     assert resp["statusCode"] == 200
     assert seen == [None]
+
+
+def test_negative_manual_paydown_is_rejected_before_any_celebration(handler, monkeypatch):
+    # WHIT-483: the true regression lock — a negative owed on a manual paydown goal with a PRIOR
+    # balance (the burst scenario) is a 400 at validation, so the crossing check is never reached.
+    # Reverting low=0 → low=-1e9 makes the save a 200 that celebrates every rung, reddening here.
+    paydown = {
+        "id": "g1", "name": "Car loan", "icon": "car", "direction": "paydown",
+        "target_amount": Decimal("0"), "target_date": "2027-06-01",
+        "manual_balance": Decimal("8400"), "manual_as_of": "2026-07-01",
+        "checkpoints": [{"id": "cp1", "label": "Under 5k", "amount": Decimal("5000")},
+                        {"id": "cp2", "label": "Under 3k", "amount": Decimal("3000")}],
+    }
+    repo = FakeGoalsRepo(goals={"g1": dict(paydown)})
+    fired = []
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", lambda *a, **k: fired.append(1) or 1)
+
+    resp = handler.upsert_goal(_put_event(body=_manual_paydown_body(manual_balance=-3000)), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 400
+    assert repo.upsert_calls == []   # nothing saved
+    assert fired == []               # celebration never reached
+
+
+# === WHIT-483 QA gap tests (adversarial; do not duplicate the implementer's [G7]/[G8]/[G8b]) ====
+# The fix flips manual_balance's low bound to 0 for BOTH directions. Gaps below: grow-side negative,
+# the exact message wording, the -0.0 / tiny-negative boundary, non-numeric/NaN/bool pins on the
+# changed branch, and the legacy stored-negative caveat (paydown safe, grow == 0).
+
+
+def test_negative_grow_manual_balance_is_rejected(handler):
+    # [G9] WHIT-483 is BOTH directions — existing [G7] only exercises paydown. A negative
+    # manual_balance on a GROW (savings) goal must ALSO 400. Reverting low=0 -> low=-1e9 reddens.
+    body = _assert_400(handler, _grow_manual_body(manual_balance=-5000))
+    assert body["error"] == f"manual_balance must be a number between 0 and {handler._GOAL_AMOUNT_MAX}"
+
+
+def test_negative_manual_balance_message_is_the_target_amount_twin(handler):
+    # [G10] lock the exact wording: it quotes the cap from _GOAL_AMOUNT_MAX (no stale literal) and is
+    # the field-name sibling of the target_amount message. A reworded/ hardcoded message reddens.
+    neg = _assert_400(handler, _manual_paydown_body(manual_balance=-1))
+    tgt = _assert_400(handler, _grow_body(target_amount=-1))
+    assert neg["error"] == f"manual_balance must be a number between 0 and {handler._GOAL_AMOUNT_MAX}"
+    assert tgt["error"] == f"target_amount must be a number between 0 and {handler._GOAL_AMOUNT_MAX}"
+    assert neg["error"].replace("manual_balance", "X") == tgt["error"].replace("target_amount", "X")
+
+
+def test_manual_balance_negative_zero_is_accepted_and_stores_zero(handler):
+    # [G11] boundary: -0.0 is NOT < 0 (equals 0.0), so _finite_number(low=0) lets it through and it
+    # stores as 0. Pins the low=0 edge is inclusive — a `value <= low` reject regression reddens.
+    resp, repo = _put(handler, _manual_paydown_body(manual_balance=-0.0))
+    assert resp["statusCode"] == 200, json.loads(resp["body"])
+    assert repo.upsert_calls[0][1]["manual_balance"] == Decimal("0")
+
+
+def test_manual_balance_tiny_negative_below_zero_is_rejected(handler):
+    # [G12] boundary just below 0: -0.01 must 400. Bound is strict at 0, not "approximately 0".
+    resp, repo = _put(handler, _manual_paydown_body(manual_balance=-0.01))
+    assert resp["statusCode"] == 400
+    assert repo.upsert_calls == []
+
+
+def test_manual_balance_non_numeric_string_is_rejected(handler):
+    # [G13] regression pin on the changed branch: a non-numeric manual_balance still 400s.
+    resp, repo = _put(handler, _manual_paydown_body(manual_balance="lots"))
+    assert resp["statusCode"] == 400
+    assert repo.upsert_calls == []
+
+
+def test_manual_balance_bool_is_rejected(handler):
+    # [G14] bool is an int subclass; the isinstance(bool) guard must reject True/False as a balance.
+    resp, repo = _put(handler, _manual_paydown_body(manual_balance=True))
+    assert resp["statusCode"] == 400
+    assert repo.upsert_calls == []
+
+
+def test_manual_balance_nan_is_rejected(handler):
+    # [G15] NaN slips past json.loads (which accepts NaN) but must be caught by math.isfinite, or a
+    # manual goal could store NaN and poison the crossing math. Raw body carries the JSON NaN token.
+    raw = ('{"name":"Car loan","icon":"car","direction":"paydown","target_amount":0,'
+           '"target_date":"2027-06-01","manual_balance":NaN,"manual_as_of":"2026-07-01"}')
+    repo = FakeGoalsRepo()
+    resp = handler.upsert_goal(_put_event(raw=raw), repo, FakeBalanceRepo())
+    assert resp["statusCode"] == 400
+    assert repo.upsert_calls == []
+
+
+# --- legacy stored-negative caveat: an old goal saved NEGATIVE before the fix, on a later valid save
+
+class _FakeNotifyRepo:
+    def __init__(self, fired=()):
+        self._fired = set(fired)
+        self.marked = []
+
+    def fired_goal_checkpoints(self, scope=None):
+        return set(self._fired)
+
+    def mark_goal_checkpoint_fired(self, key, scope=None):
+        self.marked.append(key)
+        self._fired.add(key)
+
+
+class _FakeDeviceRepo:
+    def __init__(self, tokens=("ExpoTok",)):
+        self._tokens = list(tokens)
+
+    def list_tokens(self):
+        return self._tokens
+
+
+def _run_manual_crossing(handler, monkeypatch, *, old_goal, new_body):
+    """Drive upsert_goal through the REAL notify_goal_checkpoint_crossing with fake notify/device
+    repos, capturing any push. Proves the legacy old-balance flows through the real crossing math."""
+    import sys
+    gc_mod = sys.modules[handler.notify_goal_checkpoint_crossing.__module__]
+    sent = []
+    monkeypatch.setattr(
+        gc_mod, "send_push",
+        lambda title, body, toks, data=None: sent.append((title, body, toks, data)) or {"ok": 1})
+    repo = FakeGoalsRepo(goals={"g1": dict(old_goal)})
+    notify = _FakeNotifyRepo()
+    resp = handler.upsert_goal(
+        _put_event(body=new_body), repo, FakeBalanceRepo(),
+        notify_repo=notify, device_repo=_FakeDeviceRepo())
+    return resp, notify, sent
+
+
+def test_legacy_negative_paydown_later_valid_save_fires_no_burst(handler, monkeypatch):
+    # [G16] WHIT-483 legacy caveat (paydown, the burn scenario). A goal saved with a NEGATIVE owed
+    # BEFORE the fix, then a later valid (>=0) save. The old owed normalises to £0 (max(0,value)), so
+    # a DOWNWARD crossing (old_norm > amount) can never fire against it -> no spurious burst.
+    old = {
+        "id": "g1", "name": "Car loan", "icon": "car", "direction": "paydown",
+        "target_amount": Decimal("0"), "target_date": "2027-06-01",
+        "manual_balance": Decimal("-8400"), "manual_as_of": "2026-06-01",
+        "checkpoints": [{"id": "cp1", "label": "Under 5k", "amount": Decimal("5000")},
+                        {"id": "cp2", "label": "Under 3k", "amount": Decimal("3000")}],
+    }
+    new = _manual_paydown_body(
+        manual_balance=4000,
+        checkpoints=[_cp("Under 5k", 5000, id="cp1"), _cp("Under 3k", 3000, id="cp2")])
+    resp, notify, sent = _run_manual_crossing(handler, monkeypatch, old_goal=old, new_body=new)
+    assert resp["statusCode"] == 200
+    assert sent == []             # no push
+    assert notify.marked == []    # no rung burned
+
+
+def test_legacy_negative_grow_later_valid_save_treats_it_as_zero(handler, monkeypatch):
+    # [G17] WHIT-483 legacy caveat (grow, critic-flagged). A grow goal stored NEGATIVE before the fix
+    # normalises to £0, so a later valid save crosses ONLY the rungs genuinely between 0 and the new
+    # balance (a real crossing) -- the rung ABOVE the new balance stays unfired. NOT an all-rungs burst.
+    old = {
+        "id": "g1", "name": "Holiday", "icon": "palm", "direction": "grow",
+        "target_amount": Decimal("10000"), "target_date": "2026-12-01",
+        "manual_balance": Decimal("-3000"), "manual_as_of": "2026-06-01",
+        "checkpoints": [{"id": "cp1", "label": "First", "amount": Decimal("2000")},
+                        {"id": "cp2", "label": "Halfway", "amount": Decimal("4000")},
+                        {"id": "cp3", "label": "Almost", "amount": Decimal("8000")}],
+    }
+    new = _grow_manual_body(
+        manual_balance=5000,
+        checkpoints=[_cp("First", 2000, id="cp1"), _cp("Halfway", 4000, id="cp2"),
+                     _cp("Almost", 8000, id="cp3")])
+    resp, notify, sent = _run_manual_crossing(handler, monkeypatch, old_goal=old, new_body=new)
+    assert resp["statusCode"] == 200
+    assert len(sent) == 1                         # one push (the furthest GENUINE rung)
+    assert "Halfway" in sent[0][0]                # 4000 is furthest crossed (0 -> 5000), not 8000
+    assert set(notify.marked) == {"g:g1:cp:cp1:bal:2000.00", "g:g1:cp:cp2:bal:4000.00"}
+    assert "g:g1:cp:cp3:bal:8000.00" not in notify.marked   # 8000 above new -> not crossed, no burst
