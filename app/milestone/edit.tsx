@@ -41,7 +41,7 @@ export default function MilestoneEdit() {
   const [saving, setSaving] = useState(false);
 
   // Re-seed ONCE when the query first resolves (cold cache / deep-link), so the editor never shows
-  // — or SAVES — the default plan over a real saved one. The `seeded` latch means a LATER
+  // — or SAVES — the blank seed over a real saved one. The `seeded` latch means a LATER
   // background refetch can't clobber what the user is mid-editing (mirrors goal/edit.tsx:53-67).
   const seeded = useRef(saved !== undefined);
   useEffect(() => {
@@ -51,10 +51,11 @@ export default function MilestoneEdit() {
   }, [saved]);
 
   // Block save until the plan has actually resolved: while `saved` is undefined (a cold load OR a
-  // settled read error with nothing cached) the editor is showing the DEFAULT, and saving now would
-  // write it over a real saved plan the user has. Gate on data-absence, not isLoading, so the error
-  // case is covered too — mirrors goal/edit.tsx's `editingUnloaded = editing && !existing`. Once the
-  // query resolves to [] (new user → the default IS the intended save) or real rows, save unlocks.
+  // settled read error with nothing cached) the editor is showing the blank seed, and saving now
+  // would write it over a real saved plan the user has. Gate on data-absence, not isLoading, so the
+  // error case is covered too — mirrors goal/edit.tsx's `editingUnloaded = editing && !existing`.
+  // Once the query resolves to [] (new user → whatever they build, or the opt-in template, is the
+  // intended save) or real rows, save unlocks.
   const unloaded = saved === undefined;
 
   const records = toRecords(rows);
@@ -63,8 +64,13 @@ export default function MilestoneEdit() {
   const updateRow = (id: string, patch: Partial<DraftRow>) =>
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
 
-  const addRow = () =>
-    setRows((prev) => [...prev, { id: Crypto.randomUUID(), label: '', balanceText: '', targetDate: null }]);
+  const addRow = () => setRows((prev) => [...prev, blankRow()]);
+
+  // Load the built-in suggested plan as an editable starting point. Offered only to a resolved
+  // new user (no saved plan) so it can't wipe a real plan — and by then the re-seed latch has
+  // fired, so this selection isn't overwritten when the query settles.
+  const showSuggestedPlan = saved !== undefined && saved.length === 0;
+  const loadSuggestedPlan = () => setRows(templateRows());
 
   const deleteRow = (id: string) => setRows((prev) => prev.filter((row) => row.id !== id));
 
@@ -190,6 +196,12 @@ export default function MilestoneEdit() {
           </View>
         ))}
 
+        {showSuggestedPlan && (
+          <Pressable testID="milestone-use-template" onPress={loadSuggestedPlan} style={styles.addBtn} accessibilityRole="button">
+            <Text style={styles.addText}>Use a suggested plan</Text>
+          </Pressable>
+        )}
+
         <Pressable testID="milestone-add" onPress={addRow} style={styles.addBtn} accessibilityRole="button">
           <Text style={styles.addText}>+ Add milestone</Text>
         </Pressable>
@@ -207,19 +219,30 @@ export default function MilestoneEdit() {
   );
 }
 
-// The rows the editor opens with: the user's saved plan, or the built-in default (with client ids
-// minted) when they've never saved one. A cold cache (undefined) also starts from the default
-// until the re-seed effect swaps the real plan in.
-function seedRows(saved: MilestoneRecord[] | undefined): DraftRow[] {
-  if (saved && saved.length > 0) {
-    return saved.map((m) => ({ id: m.id, label: m.label, balanceText: numText(m.targetBalance), targetDate: m.targetDate }));
-  }
+// One empty editable row (shared by the blank seed and the "+ Add milestone" button).
+function blankRow(): DraftRow {
+  return { id: Crypto.randomUUID(), label: '', balanceText: '', targetDate: null };
+}
+
+// The built-in suggested plan as editable rows (fresh client ids). Loaded on demand by the
+// "Use a suggested plan" button — NOT auto-applied. MILESTONES is now just this opt-in template.
+function templateRows(): DraftRow[] {
   return MILESTONES.map((m) => ({
     id: Crypto.randomUUID(),
     label: m.label,
     balanceText: numText(m.targetBalance),
     targetDate: m.targetDate,
   }));
+}
+
+// The rows the editor opens with: the user's saved plan, or ONE blank row when they've never
+// saved one (no hardcoded default — they build their own, or tap "Use a suggested plan"). A cold
+// cache (undefined) also starts blank until the re-seed effect swaps the real plan in.
+function seedRows(saved: MilestoneRecord[] | undefined): DraftRow[] {
+  if (saved && saved.length > 0) {
+    return saved.map((m) => ({ id: m.id, label: m.label, balanceText: numText(m.targetBalance), targetDate: m.targetDate }));
+  }
+  return [blankRow()];
 }
 
 // Draft rows -> the MilestoneRecord list the guard checks and saveMilestones sends. An empty or

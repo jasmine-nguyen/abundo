@@ -52,13 +52,17 @@ export default function Milestone() {
                   <Text style={styles.pillText}>{v.schedule.label}</Text>
                 </View>
               )}
-              <View style={{ marginTop: 16 }}>
-                <Bar pct={v.overallPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={12} />
-              </View>
-              <View style={styles.heroRow}>
-                <Text style={styles.heroRowL}>{v.clearedCount} of {v.total} milestones reached</Text>
-                <Text style={styles.heroRowR}>target {fmt(v.rows[v.rows.length - 1].targetBalance)}</Text>
-              </View>
+              {v.hasPlan && (
+                <>
+                  <View style={{ marginTop: 16 }}>
+                    <Bar pct={v.overallPct} color={C.goodBright} track="rgba(21,18,58,.18)" height={12} />
+                  </View>
+                  <View style={styles.heroRow}>
+                    <Text style={styles.heroRowL}>{v.clearedCount} of {v.total} milestones reached</Text>
+                    <Text style={styles.heroRowR}>target {fmt(v.rows[v.rows.length - 1].targetBalance)}</Text>
+                  </View>
+                </>
+              )}
               {v.asOf && (
                 <View style={styles.syncPill}>
                   <View style={styles.syncDot} />
@@ -93,38 +97,57 @@ export default function Milestone() {
           </View>
         )}
 
-        {/* sprint track */}
-        <View style={styles.card}>
-          <View style={styles.planHeader}>
-            <Text style={styles.cardTitle}>The 36-month plan</Text>
+        {/* sprint track — or an empty-state invite when the user hasn't set a plan */}
+        {v.hasPlan ? (
+          <View style={styles.card}>
+            <View style={styles.planHeader}>
+              <Text style={styles.cardTitle}>Your payoff plan</Text>
+              <Pressable
+                testID="milestone-edit-plan"
+                onPress={() => router.push('/milestone/edit')}
+                accessibilityRole="button"
+                accessibilityLabel="Edit your milestone plan"
+              >
+                <Text style={styles.editPlan}>Edit plan</Text>
+              </Pressable>
+            </View>
+            {v.rows.map((r) => (
+              <View key={r.sprint} style={styles.row}>
+                <View style={[styles.check, { backgroundColor: r.cleared ? tint(C.good, 0.16) : 'rgba(255,255,255,.06)' }]}>
+                  <Glyph name={r.cleared ? 'check' : 'target'} size={16} color={r.cleared ? C.good : C.textFaint} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowTitle}>Sprint {r.sprint} · {r.label}</Text>
+                  <Text style={styles.rowSub}>under {fmt(r.targetBalance)} · {monthYear(r.targetDate)}</Text>
+                </View>
+                {/* per-sprint equity only once the property value + LVR are set */}
+                {r.targetEquity != null && (
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.rowEquity}>{fmt(r.targetEquity)}</Text>
+                    <Text style={styles.rowEquityLabel}>equity</Text>
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Your payoff milestones</Text>
+            <Text style={styles.emptyBody}>
+              You haven't set any milestones yet. Add your own balance targets to track your progress to a paid-off home.
+            </Text>
             <Pressable
-              testID="milestone-edit-plan"
+              testID="milestone-add-plan"
               onPress={() => router.push('/milestone/edit')}
               accessibilityRole="button"
-              accessibilityLabel="Edit your milestone plan"
+              accessibilityLabel="Add your milestone plan"
+              style={styles.addPlanBtn}
             >
-              <Text style={styles.editPlan}>Edit plan</Text>
+              <Glyph name="plus" size={16} color={C.accentInk} />
+              <Text style={styles.addPlanText}>Add milestones</Text>
             </Pressable>
           </View>
-          {v.rows.map((r) => (
-            <View key={r.sprint} style={styles.row}>
-              <View style={[styles.check, { backgroundColor: r.cleared ? tint(C.good, 0.16) : 'rgba(255,255,255,.06)' }]}>
-                <Glyph name={r.cleared ? 'check' : 'target'} size={16} color={r.cleared ? C.good : C.textFaint} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>Sprint {r.sprint} · {r.label}</Text>
-                <Text style={styles.rowSub}>under {fmt(r.targetBalance)} · {monthYear(r.targetDate)}</Text>
-              </View>
-              {/* per-sprint equity only once the property value + LVR are set */}
-              {r.targetEquity != null && (
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.rowEquity}>{fmt(r.targetEquity)}</Text>
-                  <Text style={styles.rowEquityLabel}>equity</Text>
-                </View>
-              )}
-            </View>
-          ))}
-        </View>
+        )}
 
         {/* usable equity from the home — real once the value is set, else a prompt */}
         <View style={[styles.card, { marginBottom: 6 }]}>
@@ -192,6 +215,9 @@ const styles = StyleSheet.create({
   rowSub: { fontFamily: FONT.body, fontSize: 12, color: C.textDim, marginTop: 2 },
   rowEquity: { fontFamily: FONT.display, fontSize: 15, fontWeight: '800', color: C.purple },
   rowEquityLabel: { fontFamily: FONT.body, fontSize: 10.5, color: C.textFaint, marginTop: 1 },
+  emptyBody: { fontFamily: FONT.body, fontSize: 13, lineHeight: 19, color: C.textDim, marginBottom: 14 },
+  addPlanBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: C.accent, borderRadius: 12, paddingVertical: 12 },
+  addPlanText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentInk },
 
   ipChip: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(201,179,245,.16)', alignItems: 'center', justifyContent: 'center' },
   equityHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
