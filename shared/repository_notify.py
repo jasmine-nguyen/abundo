@@ -58,6 +58,19 @@ def _milestone_key(scope: Optional[str] = None) -> dict:
     None → shared default so every accessor stays consistent."""
     return {"pk": "NOTIFY#MILESTONE", "sk": _MILESTONE_SCOPE if scope is None else scope}
 
+
+# The already-celebrated goal-checkpoint markers (WHIT-479), a SEPARATE item from
+# NOTIFY#MILESTONE so the mortgage feature is untouched. Same once-ever, no-TTL contract: a goal
+# balance isn't monotonic (a grow balance rises and falls, a debt is redrawn), so a crossed
+# checkpoint can be re-crossed — the marker, not monotonicity, dedups it. A module literal, not a
+# shared constant, so it never crosses the lambda_api constants shadow (WHIT-136).
+_GOALCHECKPOINT_SCOPE = "FIRED"
+
+
+def _goalcheckpoint_key(scope: Optional[str] = None) -> dict:
+    """The goal-checkpoint marker item's key for `scope`; None is the shared tenant."""
+    return {"pk": "NOTIFY#GOALCHECKPOINT", "sk": _GOALCHECKPOINT_SCOPE if scope is None else scope}
+
 # The single marker item for the precise repayment-miss detector (WHIT-317): a String Set
 # of "<fired_at>#<amount_cents>#<txn_id>" tokens, one per repayment push. Separate from
 # NOTIFY#REPAYMENT (which only dedups by txn id) because the detector needs the push AMOUNT
@@ -209,6 +222,33 @@ class NotifyRepository:
             )
         except ClientError as e:
             handle_database_error(e, "mark milestone celebrated")
+
+    def fired_goal_checkpoints(self, scope: Optional[str] = None) -> set:
+        """The set of already-celebrated goal-checkpoint markers for `scope` (WHIT-479). A marker
+        is a checkpoint's dedup key "g:<goal>:cp:<id>:bal:<amount>" (goal_checkpoints._checkpoint_marker).
+        `scope` selects the owner; None is the shared tenant."""
+        try:
+            item = self._get_table().get_item(Key=_goalcheckpoint_key(scope)).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read goal-checkpoint markers")
+        if item is None:
+            return set()
+        return set(item.get("fired", set()))
+
+    def mark_goal_checkpoint_fired(self, key: str, scope: Optional[str] = None) -> None:
+        """Record that the goal checkpoint with dedup marker `key` has been celebrated for `scope`
+        (WHIT-479). Deliberately NO TTL: a checkpoint crossing is a once-ever event that must never
+        expire and re-fire (the balance isn't monotonic, so it could be re-crossed). `scope`
+        selects the owner; None is the shared tenant."""
+        try:
+            self._get_table().update_item(
+                Key=_goalcheckpoint_key(scope),
+                UpdateExpression="ADD #f :m",
+                ExpressionAttributeNames={"#f": "fired"},
+                ExpressionAttributeValues={":m": {key}},
+            )
+        except ClientError as e:
+            handle_database_error(e, "mark goal checkpoint celebrated")
 
     def remove_milestone_markers(self, keys: set, scope: Optional[str] = None) -> None:
         """Drop dead milestone markers from the String Set (WHIT-385): a re-targeted or deleted

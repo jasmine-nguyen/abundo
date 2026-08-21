@@ -94,6 +94,7 @@ from insights_ai import generate_suggestions
 from iso_date import ISO_DATE_RE, valid_iso_date
 from milestones import mint_migration_markers
 from repository_notify import NotifyRepository
+from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
 import base64
 import hashlib
@@ -2531,7 +2532,8 @@ def _goal_start_candidate(goal: dict, balance_repo: AccountBalanceRepository) ->
     return {}
 
 
-def upsert_goal(event: dict, repo: GoalsRepository, balance_repo: AccountBalanceRepository) -> dict:
+def upsert_goal(event: dict, repo: GoalsRepository, balance_repo: AccountBalanceRepository,
+                notify_repo=None, device_repo=None) -> dict:
     """PUT /goals/{id} — create or replace a goal (idempotent upsert). 404 on a
     missing/blank id (an empty map key would 500 at DynamoDB), 400 on a bad body.
 
@@ -2539,6 +2541,9 @@ def upsert_goal(event: dict, repo: GoalsRepository, balance_repo: AccountBalance
     later replace carries the existing start forward (WHIT-252). An omitted `checkpoints`
     keeps the stored ladder, while an explicit list replaces it and `[]` clears it
     (WHIT-476) — both carry-forwards live in repository_goals.
+
+    A MANUAL goal whose new balance crosses a checkpoint fires one celebration push (WHIT-479);
+    synced goals cross on the daily poll instead. Best-effort — a push failure never fails the save.
     """
     goal_id = (event.get("pathParameters") or {}).get("id")
     if not goal_id:
@@ -2546,8 +2551,32 @@ def upsert_goal(event: dict, repo: GoalsRepository, balance_repo: AccountBalance
     goal, error = _validate_goal_body(event)
     if error:
         return error
+    # Only a MANUAL save can cross a checkpoint here (synced goals cross on the daily poll), and
+    # only then do we need the old balance — so skip the extra read on synced saves.
+    existing = repo.list_goals().get(goal_id) if "manual_balance" in goal else None
     start_candidate = _goal_start_candidate(goal, balance_repo)
-    return _json_response(200, repo.upsert_goal(goal_id, goal, start_candidate))
+    saved = repo.upsert_goal(goal_id, goal, start_candidate)
+    _celebrate_manual_goal_crossing(goal_id, existing, saved, notify_repo, device_repo)
+    return _json_response(200, saved)
+
+
+def _celebrate_manual_goal_crossing(goal_id, old_goal, saved_goal, notify_repo, device_repo) -> None:
+    """Fire a checkpoint celebration when a MANUAL goal's saved balance crosses a checkpoint
+    (WHIT-479). Synced goals are the poller's job, so skip them. Best-effort: a push failure must
+    never fail the 200 save. Uses the SAVED goal so a save that omits `checkpoints` still
+    celebrates against the carried-forward ladder."""
+    if "manual_balance" not in saved_goal:
+        return  # synced goal, or no manual source — the poller handles synced crossings
+    old_balance = old_goal.get("manual_balance") if old_goal else None
+    try:
+        notify_goal_checkpoint_crossing(
+            old_balance, saved_goal["manual_balance"],
+            goal=saved_goal, goal_id=goal_id, synced=False,
+            device_repo=device_repo or DeviceRepository(),
+            notify_repo=notify_repo or NotifyRepository(),
+        )
+    except Exception as e:
+        logger.warning("goal checkpoint push failed (goal still saved): %s", e)
 
 
 def delete_goal(event: dict, repo: GoalsRepository) -> dict:

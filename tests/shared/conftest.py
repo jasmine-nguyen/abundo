@@ -41,8 +41,8 @@ _REIMPORT = (
     "repository_goals", "repository_category",
     "repository_errors", "repository_insight", "repository_device", "push",
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
-    "repository_paycycle", "goal_pace", "goal_nudge", "milestones", "milestone_rows", "iso_date",
-    "repayment_alerts", "repayment_rules", "api_key",
+    "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
+    "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
 )
 
 
@@ -94,6 +94,7 @@ def shared():
         import spend
         import goal_pace
         import goal_nudge
+        import goal_checkpoints
         import milestone_rows
         import milestones
         import repayment_alerts
@@ -106,8 +107,8 @@ def shared():
             budget=repository_budget, goals=repository_goals, insight=repository_insight,
             device=repository_device, push=push, push_receipt=repository_push_receipt,
             notify=repository_notify, spend=spend,
-            goal_pace=goal_pace, goal_nudge=goal_nudge, milestones=milestones,
-            milestone_rows=milestone_rows,
+            goal_pace=goal_pace, goal_nudge=goal_nudge, goal_checkpoints=goal_checkpoints,
+            milestones=milestones, milestone_rows=milestone_rows,
             repayment_alerts=repayment_alerts, repayment_rules=repayment_rules,
         )
         try:

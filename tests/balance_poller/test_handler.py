@@ -74,8 +74,12 @@ class _FakeRepo:
 class _FakeAccountRepo:
     """Recording stand-in for AccountBalanceRepository (signed per-account balances)."""
 
-    def __init__(self):
+    def __init__(self, prior=None):
         self.calls = []
+        self._prior = prior or {}  # {account_id: signed amount} read before the upsert (WHIT-479)
+
+    def list_balances(self, account_ids):
+        return [{"account_id": a, "amount": self._prior[a]} for a in account_ids if a in self._prior]
 
     def upsert_balance(self, account_id, amount, available_balance, currency, as_of, account_type):
         self.calls.append((account_id, amount, available_balance, currency, as_of, account_type))
@@ -334,7 +338,7 @@ def test_poll_account_balances_isolates_a_single_account_failure(handler, monkey
 
     monkeypatch.setattr(handler, "fetch_balance", fetch)
 
-    stored = handler._poll_account_balances("the-key")
+    stored, _deltas = handler._poll_account_balances("the-key")
 
     assert stored == 2  # spending + anz stored; the mortgage poll was skipped
     ids = {c[0] for c in accounts.calls}
@@ -383,3 +387,109 @@ def test_poll_homeloan_milestone_failure_is_swallowed_balance_still_stored(handl
 
     assert handler._poll_homeloan("key") is True  # balance still stored despite the failure
     assert fake.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
+
+
+# --- WHIT-479: goal-checkpoint celebration hook in the account poll -----------
+
+class _FakeGoalsRepo:
+    def __init__(self, goals):
+        self._goals = goals  # {goal_id: goal}
+
+    def list_goals(self):
+        return dict(self._goals)
+
+
+def test_poll_account_balances_returns_old_new_deltas(handler, monkeypatch):
+    # A prior stored balance for spending; anz has none (first poll → old None).
+    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(handler, "fetch_balance",
+                        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD)
+
+    stored, deltas = handler._poll_account_balances("key")
+    assert stored == 3
+    by_account = {d["account_id"]: d for d in deltas}
+    assert by_account["up-spending"]["old"] == Decimal("90000")
+    assert by_account["up-spending"]["new"] == Decimal("96270.59")
+    assert by_account["anz-rewards-black-visa"]["old"] is None  # first poll → seed guard
+
+
+def test_check_goal_checkpoints_fires_for_a_synced_goal_whose_account_crossed(handler, monkeypatch):
+    goal = {"direction": "grow", "name": "Holiday", "account_id": "up-spending",
+            "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("95000")}]}
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo({"g1": goal}))
+    monkeypatch.setattr(handler, "NotifyRepository", lambda: object())
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: object())
+    seen = []
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing",
+                        lambda old, new, **kw: seen.append((old, new, kw["goal_id"], kw["synced"])) or 1)
+
+    handler._check_goal_checkpoints([{"account_id": "up-spending", "old": Decimal("90000"), "new": Decimal("96270.59")}])
+    assert seen == [(Decimal("90000"), Decimal("96270.59"), "g1", True)]
+
+
+def test_check_goal_checkpoints_skips_manual_goals_and_unpolled_accounts(handler, monkeypatch):
+    goals = {
+        "manual1": {"direction": "grow", "account_id": None, "manual_balance": Decimal("5000"), "checkpoints": []},
+        "unpolled": {"direction": "grow", "account_id": "anz-rewards-black-visa", "checkpoints": []},
+    }
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo(goals))
+    monkeypatch.setattr(handler, "NotifyRepository", lambda: object())
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: object())
+    seen = []
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", lambda old, new, **kw: seen.append(kw["goal_id"]) or 0)
+
+    # deltas only has up-spending; neither goal matches (one manual, one on an unpolled account).
+    handler._check_goal_checkpoints([{"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")}])
+    assert seen == []
+
+
+def test_check_goal_checkpoints_one_goals_error_does_not_sink_the_others(handler, monkeypatch):
+    # g1 raises (a transient DB hiccup); g2 also crossed this poll and MUST still be attempted —
+    # otherwise next poll its `old` is already past the rung and its celebration is lost forever.
+    goals = {
+        "g1": {"direction": "grow", "name": "A", "account_id": "up-spending", "checkpoints": []},
+        "g2": {"direction": "grow", "name": "B", "account_id": "anz-rewards-black-visa", "checkpoints": []},
+    }
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo(goals))
+    monkeypatch.setattr(handler, "NotifyRepository", lambda: object())
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: object())
+    seen = []
+
+    def crossing(old, new, **kw):
+        seen.append(kw["goal_id"])
+        if kw["goal_id"] == "g1":
+            raise RuntimeError("dynamo throttle")
+        return 1
+
+    monkeypatch.setattr(handler, "notify_goal_checkpoint_crossing", crossing)
+    handler._check_goal_checkpoints([
+        {"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")},
+        {"account_id": "anz-rewards-black-visa", "old": Decimal("1"), "new": Decimal("2")},
+    ])
+    assert seen == ["g1", "g2"]  # g1 raised, but g2 was still attempted
+
+
+def test_lambda_handler_passes_account_deltas_to_the_goal_checkpoint_check(handler, monkeypatch):
+    monkeypatch.setattr(handler, "get_api_key", lambda: "key")
+    monkeypatch.setattr(handler, "_poll_homeloan", lambda key: True)
+    deltas = [{"account_id": "up-spending", "old": Decimal("1"), "new": Decimal("2")}]
+    monkeypatch.setattr(handler, "_poll_account_balances", lambda key: (2, deltas))
+    seen = {}
+    monkeypatch.setattr(handler, "_check_goal_checkpoints", lambda d: seen.update(deltas=d))
+
+    result = handler.lambda_handler({}, None)
+    assert result == {"homeloan_stored": True, "accounts_stored": 2}
+    assert seen["deltas"] == deltas
+
+
+def test_lambda_handler_goal_checkpoint_failure_is_swallowed(handler, monkeypatch):
+    monkeypatch.setattr(handler, "get_api_key", lambda: "key")
+    monkeypatch.setattr(handler, "_poll_homeloan", lambda key: True)
+    monkeypatch.setattr(handler, "_poll_account_balances", lambda key: (2, []))
+    def boom(_deltas):
+        raise RuntimeError("expo down")
+    monkeypatch.setattr(handler, "_check_goal_checkpoints", boom)
+
+    # A push failure must not flip the stored-balance result.
+    assert handler.lambda_handler({}, None) == {"homeloan_stored": True, "accounts_stored": 2}

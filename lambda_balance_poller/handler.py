@@ -41,9 +41,11 @@ from constants import (
 )
 from milestones import notify_milestone_crossing
 from repayment_rules import is_repayment_credit
+from goal_checkpoints import notify_goal_checkpoint_crossing
 from repository import (
     AccountBalanceRepository,
     DeviceRepository,
+    GoalsRepository,
     HomeLoanBalanceRepository,
     LoanFactsRepository,
     MilestoneRepository,
@@ -313,16 +315,23 @@ def _poll_homeloan(api_key: str) -> bool:
     return True
 
 
-def _poll_account_balances(api_key: str) -> int:
+def _poll_account_balances(api_key: str):
     """Poll + upsert a SIGNED live balance for every account (WHIT-212, Accounts tab).
 
     Best-effort PER account: one account's failure (transport, `success:false`, missing
     fields) is logged and skipped — it leaves that account's last-good row and never blocks
     the others. Each raw BankSync `aid` is mapped to its internal id so the balance lands
-    under the same id the account's transactions carry. Returns how many were stored.
+    under the same id the account's transactions carry.
+
+    Returns `(stored, deltas)`: `stored` is how many were upserted; `deltas` is one
+    `{"account_id", "old", "new"}` per stored account — the SIGNED prior balance (None on the
+    account's first-ever poll) and the new one — so a goal-checkpoint crossing can be detected
+    without a second poll (WHIT-479). The prior read is best-effort: a read hiccup leaves `old`
+    None, which the seed guard treats as "no crossing" — a missed celebration, never a wrong one.
     """
     repo = AccountBalanceRepository()
     stored = 0
+    deltas = []
     for source in BALANCE_SOURCES:
         aid = source["aid"]
         internal_id = ACCOUNT_ID_MAP.get(aid)
@@ -331,6 +340,13 @@ def _poll_account_balances(api_key: str) -> int:
             logger.error("balance source aid %s has no internal-id mapping, skipping", aid)
             continue
         try:
+            old_amount = None
+            try:
+                prior = repo.list_balances([internal_id])
+                if prior:
+                    old_amount = prior[0]["amount"]
+            except Exception as e:
+                logger.error("prior balance read failed for %s, treating as first poll: %s", internal_id, e)
             payload = fetch_balance(source["bid"], aid, api_key)
             n = normalise_account_balance(payload)
             repo.upsert_balance(
@@ -345,11 +361,44 @@ def _poll_account_balances(api_key: str) -> int:
             logger.error("account balance poll failed for %s, keeping last-good: %s", internal_id, e)
             continue
         stored += 1
+        deltas.append({"account_id": internal_id, "old": old_amount, "new": n["amount"]})
         logger.info(
             "account balance stored: %s %s %s (as of %s)",
             internal_id, n["currency"], n["amount"], n["as_of"],
         )
-    return stored
+    return stored, deltas
+
+
+def _check_goal_checkpoints(deltas: list) -> None:
+    """Celebrate any goal-checkpoint crossing on this poll's account deltas (WHIT-479). One push
+    per synced goal whose linked account's balance crossed a checkpoint; once ever per checkpoint.
+    Manual goals cross when their balance is SAVED, so they're handled at the PUT, not here."""
+    if not deltas:
+        return
+    goals = GoalsRepository().list_goals()
+    if not goals:
+        return
+    delta_by_account = {d["account_id"]: d for d in deltas}
+    notify_repo = NotifyRepository()
+    device_repo = DeviceRepository()
+    for goal_id, goal in goals.items():
+        account_id = goal.get("account_id")
+        if not account_id:
+            continue  # manual goal — celebrated at save time
+        delta = delta_by_account.get(account_id)
+        if delta is None:
+            continue  # this account wasn't polled this run
+        # Per-goal isolation: one goal's transient DB hiccup must not abort the loop, or a later
+        # goal that also crossed this poll would never fire AND never be marked — and next poll its
+        # `old` is already past the rung, so that celebration is lost forever, not merely deferred.
+        try:
+            notify_goal_checkpoint_crossing(
+                delta["old"], delta["new"],
+                goal=goal, goal_id=goal_id, synced=True,
+                device_repo=device_repo, notify_repo=notify_repo,
+            )
+        except Exception as e:
+            logger.error("goal checkpoint push failed for %s, continuing: %s", goal_id, e)
 
 
 def lambda_handler(event, context):
@@ -372,5 +421,11 @@ def lambda_handler(event, context):
         logger.error("balance poll skipped, could not fetch the BankSync API key: %s", e)
         return {"homeloan_stored": False, "accounts_stored": 0}
     homeloan_stored = _poll_homeloan(api_key)
-    accounts_stored = _poll_account_balances(api_key)
+    accounts_stored, deltas = _poll_account_balances(api_key)
+    # WHIT-479: celebrate a goal-checkpoint crossing. Best-effort — a push failure must never flip
+    # the stored-balance result, so it's isolated in its own try/except.
+    try:
+        _check_goal_checkpoints(deltas)
+    except Exception as e:
+        logger.error("goal checkpoint push failed (balances still stored): %s", e)
     return {"homeloan_stored": homeloan_stored, "accounts_stored": accounts_stored}

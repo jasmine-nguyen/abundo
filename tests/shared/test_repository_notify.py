@@ -644,3 +644,50 @@ def test_a_migration_does_not_disturb_an_unrelated_fired_marker(shared):
     r.mark_milestone_fired("id:other:bal:250000.00")
     r.migrate_milestone_markers([("bal:400000.00", "id:u1:bal:400000.00")])
     assert r.fired_milestones() == {"id:u1:bal:400000.00", "0", "id:other:bal:250000.00"}
+
+
+# --- goal-checkpoint markers (WHIT-479): once-ever, NO TTL, own item -----------------------
+# Reuses FakeMilestoneTable — same `ADD #f :m` String-Set update, no TTL — but keyed under
+# NOTIFY#GOALCHECKPOINT, a SEPARATE item from NOTIFY#MILESTONE so the mortgage feature is untouched.
+
+def _goalcheckpoint_repo(shared):
+    r = shared.notify.NotifyRepository()
+    r._table = FakeMilestoneTable()
+    return r
+
+
+def test_no_goal_checkpoints_fired_initially(shared):
+    assert _goalcheckpoint_repo(shared).fired_goal_checkpoints() == set()
+
+
+def test_mark_goal_checkpoint_then_read_round_trips(shared):
+    r = _goalcheckpoint_repo(shared)
+    r.mark_goal_checkpoint_fired("g:g1:cp:cp1:bal:5000.00")
+    assert r.fired_goal_checkpoints() == {"g:g1:cp:cp1:bal:5000.00"}
+
+
+def test_goal_checkpoint_marks_accumulate_and_are_idempotent(shared):
+    r = _goalcheckpoint_repo(shared)
+    r.mark_goal_checkpoint_fired("g:g1:cp:a:bal:1000.00")
+    r.mark_goal_checkpoint_fired("g:g1:cp:b:bal:2000.00")
+    r.mark_goal_checkpoint_fired("g:g1:cp:a:bal:1000.00")  # re-mark harmless
+    assert r.fired_goal_checkpoints() == {"g:g1:cp:a:bal:1000.00", "g:g1:cp:b:bal:2000.00"}
+
+
+def test_goal_checkpoint_mark_writes_no_ttl(shared):
+    # A crossing is once-ever (the balance isn't monotonic), so the marker must never expire.
+    r = _goalcheckpoint_repo(shared)
+    r.mark_goal_checkpoint_fired("g:g1:cp:a:bal:1000.00")
+    stored = r._table.store[("NOTIFY#GOALCHECKPOINT", "FIRED")]
+    assert "expires_at" not in stored
+
+
+def test_goal_checkpoint_markers_are_a_separate_item_from_milestones(shared):
+    # The goal-checkpoint set must NOT collide with the mortgage milestone set.
+    r = _goalcheckpoint_repo(shared)
+    r.mark_goal_checkpoint_fired("g:g1:cp:a:bal:1000.00")
+    r.mark_milestone_fired("0")
+    assert ("NOTIFY#GOALCHECKPOINT", "FIRED") in r._table.store
+    assert ("NOTIFY#MILESTONE", "FIRED") in r._table.store
+    assert r.fired_goal_checkpoints() == {"g:g1:cp:a:bal:1000.00"}
+    assert r.fired_milestones() == {"0"}
