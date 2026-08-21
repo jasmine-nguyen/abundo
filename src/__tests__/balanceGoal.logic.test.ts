@@ -750,3 +750,43 @@ describe('WHIT-478 gaps — checkpoints reached-count', () => {
     }
   });
 });
+
+// WHIT-486 QA gaps (adversarial): strengthen the raw-not-rounded pct guarantee, duplicate rungs,
+// and the degenerate progress==null case where the reached COUNT still computes but there is no
+// bar to place dots on (Option A coupling lives at the UI layer, not here).
+describe('balanceGoalView — checkpoint markers, QA gaps (WHIT-486)', () => {
+  const CPS = (...amounts: number[]) => amounts.map((amount) => ({ amount }));
+
+  it('[A-gap1] dot pct is the RAW fraction, not the rounded % — cp==current, non-round balance', () => {
+    // target 10000, balance 3333, a rung AT 3333. progress = 0.3333 (not 0.33, not 33%).
+    // Asserted against a LITERAL, so a bug that rounds BOTH progress and pct can't hide behind
+    // `pct === progress`.
+    const g = goal({ checkpoints: CPS(3333) });
+    const v = balanceGoalView({ goal: g, balance: 3333, payCycle: CYCLE }, TODAY);
+    expect(v.checkpointMarkers[0].pct).toBeCloseTo(0.3333, 10);
+    expect(v.checkpointMarkers[0].pct).toBe(v.progress);     // still lands exactly on the fill edge
+    expect(v.checkpointMarkers[0].pct).not.toBe(0.33);       // not rounded to 2dp
+  });
+
+  it('[A-gap2] two rungs at the SAME amount → two dots at the same position, count still right', () => {
+    // duplicate 4000s + a 6000; balance 5000 → both 4000s reached, 6000 not. count 2, not 1 or 3.
+    const g = goal({ checkpoints: CPS(4000, 4000, 6000) });
+    const v = balanceGoalView({ goal: g, balance: 5000, payCycle: CYCLE }, TODAY);
+    expect(v.checkpointMarkers.map((m) => m.pct)).toEqual([0.4, 0.4, 0.6]);
+    expect(v.checkpointMarkers.map((m) => m.reached)).toEqual([true, true, false]);
+    expect(v.checkpointMarkers.filter((m) => m.reached).length).toBe(v.checkpointsReached);
+    expect(v.checkpointsReached).toBe(2);
+  });
+
+  it('[A-gap3] degenerate grow (target<=baseline): progress null, NO dots, but the COUNT still computes', () => {
+    // baseline==target==10000 → no bar scale. markers empty (dots hide), yet checkpointsReached is
+    // a real number (5000 has passed 3000, not 8000) — so the "N of M" line is hidden by the UI
+    // gate on markers.length, NOT because the engine refused to count.
+    const g = goal({ baseline: 10000, target_amount: 10000, checkpoints: CPS(3000, 8000) });
+    const v = balanceGoalView({ goal: g, balance: 5000, payCycle: CYCLE }, TODAY);
+    expect(v.progress).toBeNull();
+    expect(v.checkpointMarkers).toEqual([]);
+    expect(v.checkpointsReached).toBe(1);
+    expect(v.checkpointsTotal).toBe(2);
+  });
+});

@@ -482,3 +482,60 @@ describe('WHIT-296 rich mortgage card — gap boundaries', () => {
     expect(card.getByText('100% gone')).toBeTruthy();
   });
 });
+
+// WHIT-486 QA gaps (adversarial): a SYNCED paydown with a baseline (existing dot test is grow),
+// the headline % must stay ROUNDED after the raw-fill change, a clamped extreme rung still renders
+// one dot, and a degenerate (progress==null) goal with a ladder shows neither dots nor the count.
+describe('goal cards — checkpoint dots, QA gaps (WHIT-486)', () => {
+  it('[A-gap4] synced PAYDOWN with a baseline: dots at the paid-down split, filled == reached-count', () => {
+    // synced loan, live balance −12000 → owed 12000; baseline 20000 → target 0, span 20000.
+    // rungs 15000/10000/5000 → owed 12000 <=15000 only → 1 reached, 2 not. pcts 0.25/0.5/0.75.
+    const paydown = {
+      id: 'g1', name: 'Car loan', icon: 'car', direction: 'paydown',
+      target_amount: 0, target_date: '2026-08-15', baseline: 20000, account_id: 'up-loan',
+      checkpoints: [{ id: 'a', amount: 15000 }, { id: 'b', amount: 10000 }, { id: 'c', amount: 5000 }],
+    };
+    mockData = baseData({ goals: [paydown], balanceFor: (id: string | null | undefined) => (id === 'up-loan' ? -12000 : null) });
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.getAllByTestId('bar-dot-reached')).toHaveLength(1);
+    expect(card.getAllByTestId('bar-dot')).toHaveLength(2);
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('1 of 3 reached');
+  });
+
+  it('[A-gap5] headline % stays ROUNDED after the raw-fill change (bar is raw, the number is not)', () => {
+    // balance 3750 / 10000 = 37.5% raw → the headline must read the ROUNDED "38%", never "37.5%".
+    mockData = baseData({ goals: [GROW], balanceFor: (id: string | null | undefined) => (id === 'up-spending' ? 3750 : null) });
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.getByText('38%')).toBeTruthy();
+    expect(card.queryByText('37.5%')).toBeNull();
+    expect(card.queryByText('37%')).toBeNull();
+  });
+
+  it('[A-gap6] a rung above the target clamps but still renders exactly one (hollow) dot', () => {
+    // rung 50000 sits above the 10000 target → clamps to 100%; balance 4000 hasn't reached it →
+    // one hollow dot, no filled dot, count "0 of 1". (Its clipping at the rounded end is a MANUAL
+    // eyeball check — RN can't assert pixel overhang.)
+    const withRung = { ...GROW, checkpoints: [{ id: 'a', amount: 50000 }] };
+    mockData = baseData({ goals: [withRung] });
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.getAllByTestId('bar-dot')).toHaveLength(1);
+    expect(card.queryAllByTestId('bar-dot-reached')).toHaveLength(0);
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('0 of 1 reached');
+  });
+
+  it('[A-gap7] degenerate goal (target==baseline → no bar scale) with a ladder: no dots AND no count', () => {
+    // baseline==target → progress null → headline "—", no fill scale. Dots and the count line both
+    // hide (Option A), even though 4000 has technically passed the 3000 rung.
+    const degenerate = { ...GROW, baseline: 10000, target_amount: 10000, checkpoints: [{ id: 'a', amount: 3000 }, { id: 'b', amount: 8000 }] };
+    mockData = baseData({ goals: [degenerate] });
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.getByText('—')).toBeTruthy();
+    expect(card.queryAllByTestId('bar-dot')).toHaveLength(0);
+    expect(card.queryAllByTestId('bar-dot-reached')).toHaveLength(0);
+    expect(card.queryByTestId('goal-checkpoints-g1')).toBeNull();
+  });
+});
