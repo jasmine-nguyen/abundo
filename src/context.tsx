@@ -1551,6 +1551,10 @@ export interface BalanceGoalView {
   // isn't known yet (a synced goal not yet polled — degrade like the rest of the card).
   checkpointsTotal: number;
   checkpointsReached: number | null;
+  // WHIT-486: one dot per checkpoint — `pct` is its position on the bar (0..1, same scale as
+  // `progress`), `reached` whether the balance has passed it. Empty when the balance is unknown or
+  // the bar has no scale (paydown without a start), so dots and the reached-count travel together.
+  checkpointMarkers: { pct: number; reached: boolean }[];
 }
 
 // Count the paydays remaining before a target date: the payday dates `last_pay_date +
@@ -1649,19 +1653,32 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
 
   const paydaysLeft = paydaysUntil(s.payCycle, goal.target_date, today);
 
-  // Progress % (0..1). Every denominator guarded — a clamp can't rescue 0/0 = NaN.
-  let progress: number | null = null;
-  if (known) {
-    if (goal.direction === 'grow') {
-      const lo = baseline ?? 0;
-      const denom = target - lo;                 // > 0 unless target <= baseline (or target <= 0)
-      if (denom > 0) progress = clamp01((current - lo) / denom);
-    } else if (baseline != null) {
-      const denom = baseline - target;           // > 0 unless the start isn't above the target
-      if (denom > 0) progress = clamp01((baseline - current) / denom);
-    }
-    // paydown without a baseline start reference -> progress stays null (owed/target shown instead)
+  // The bar's SCALE — the 0% anchor + the span the fill AND the WHIT-486 checkpoint dots both
+  // measure against, so a dot always lands exactly where the fill reaches. `barSpan > 0` means the
+  // bar is positionable: grow with the target above the count-from; paydown with a start owed above
+  // the target. A paydown goal with no start has no scale (owed/target shown instead of a bar).
+  let barLo = 0;
+  let barSpan = 0;
+  if (goal.direction === 'grow') {
+    barLo = baseline ?? 0;
+    barSpan = target - barLo;
+  } else if (baseline != null) {
+    barLo = baseline;
+    barSpan = baseline - target;
   }
+  const barPositionable = barSpan > 0;
+
+  // One reached-test and one bar-position, shared by the fill, the reached-count AND the dots — so
+  // "a dot sits on the fill edge" and "filled-dot count == reached-count" hold by construction, not
+  // by keeping copied formulas in sync. `posOnBar` measures any absolute amount on the bar's scale.
+  const isReached = (amount: number) =>
+    goal.direction === 'grow' ? current >= amount : current <= amount;
+  const posOnBar = (amount: number) =>
+    clamp01(goal.direction === 'grow' ? (amount - barLo) / barSpan : (barLo - amount) / barSpan);
+
+  // Progress % (0..1). Guarded — a clamp can't rescue 0/0 = NaN. grow fills up from barLo; paydown
+  // fills as the owed amount falls from barLo toward the target.
+  const progress: number | null = known && barPositionable ? posOnBar(current) : null;
 
   // Per-payday pace: remaining (floored at 0 so a met goal is 0, never negative) over the
   // paydays left. 0 paydays left (overdue / before the next payday) -> the whole amount now.
@@ -1684,12 +1701,19 @@ export function balanceGoalView(s: BalanceGoalInput, today?: Date): BalanceGoalV
   const checkpointsTotal = checkpoints.length;
   let checkpointsReached: number | null = null;
   if (known && checkpointsTotal > 0) {
-    checkpointsReached = checkpoints.filter((cp) =>
-      goal.direction === 'grow' ? current >= cp.amount : current <= cp.amount,
-    ).length;
+    checkpointsReached = checkpoints.filter((cp) => isReached(cp.amount)).length;
   }
 
-  return { progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached };
+  // WHIT-486: each checkpoint's dot — its position on the bar (0..1, the SAME scale as `progress`,
+  // so a dot lines up with the fill by construction) and whether the balance has reached it (the
+  // SAME test as the count above). Empty until the balance is known AND the bar is positionable, so
+  // the dots and the "N of M reached" line always appear together — never a count with no dots.
+  let checkpointMarkers: { pct: number; reached: boolean }[] = [];
+  if (known && barPositionable && checkpointsTotal > 0) {
+    checkpointMarkers = checkpoints.map((cp) => ({ pct: posOnBar(cp.amount), reached: isReached(cp.amount) }));
+  }
+
+  return { progress, pacePerPayday, paydaysLeft, status, checkpointsTotal, checkpointsReached, checkpointMarkers };
 }
 
 export interface BudgetView {

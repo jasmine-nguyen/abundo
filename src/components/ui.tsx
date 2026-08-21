@@ -65,10 +65,36 @@ export function BudgetBar({
 }
 
 // Plain progress bar with a gradient-ish single fill colour.
-export function Bar({ pct, color, track = 'rgba(255,255,255,.07)', height = 10 }: { pct: number; color: string; track?: string; height?: number }) {
-  return (
+export function Bar({ pct, color, track = 'rgba(255,255,255,.07)', height = 10, markers }: { pct: number; color: string; track?: string; height?: number; markers?: { pct: number; reached: boolean }[] }) {
+  const fill = (
     <View style={{ height, borderRadius: height * 0.6, backgroundColor: track, overflow: 'hidden' }}>
       <View style={{ height: '100%', width: `${pct}%`, backgroundColor: color, borderRadius: height * 0.6 }} />
+    </View>
+  );
+  // No markers → the exact same single view as before, so every other Bar caller is unaffected.
+  if (!markers?.length) return fill;
+
+  // WHIT-486: checkpoint dots overlaid on the bar — filled = reached, hollow (card-coloured centre)
+  // = not yet. The overlay is a sibling that doesn't clip, so a dot at 0%/100% can overhang the
+  // rounded ends instead of being cut off by the track's overflow:hidden. `markers[].pct` is 0..1.
+  const dot = height + 2;
+  return (
+    <View style={{ position: 'relative' }}>
+      {fill}
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: (height - dot) / 2, height: dot }}>
+        {markers.map((m, i) => (
+          <View
+            key={i}
+            testID={m.reached ? 'bar-dot-reached' : 'bar-dot'}
+            style={{
+              position: 'absolute', left: `${m.pct * 100}%`, marginLeft: -dot / 2,
+              width: dot, height: dot, borderRadius: dot / 2,
+              borderWidth: 2, borderColor: color,
+              backgroundColor: m.reached ? color : C.card,
+            }}
+          />
+        ))}
+      </View>
     </View>
   );
 }

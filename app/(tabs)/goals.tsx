@@ -182,10 +182,19 @@ export default function Goals() {
                   </View>
 
                   <View style={{ marginTop: 13 }}>
-                    <Bar pct={pct ?? 0} color={grow ? C.goodBright : C.purple} height={10} />
+                    {/* WHIT-486: feed the raw (unrounded) fill so a checkpoint dot never sits a
+                        pixel off the fill edge; the rounded % is only the headline number above. */}
+                    <Bar
+                      pct={v.progress != null ? v.progress * 100 : 0}
+                      color={grow ? C.goodBright : C.purple}
+                      height={10}
+                      markers={v.checkpointMarkers}
+                    />
                   </View>
 
-                  {v.checkpointsTotal > 0 && v.checkpointsReached != null && (
+                  {/* WHIT-486: the count travels with the dots — both show only when the bar has a
+                      scale to place them on (markers non-empty), so it's never "N reached" + no dots. */}
+                  {v.checkpointMarkers.length > 0 && v.checkpointsReached != null && (
                     <Text testID={`goal-checkpoints-${goal.id}`} style={styles.goalCheckpoints}>
                       {v.checkpointsReached} of {v.checkpointsTotal} reached
                     </Text>
