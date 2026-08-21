@@ -213,6 +213,14 @@ describe('the mortgage card', () => {
     expect(within(screen.getByTestId('mortgage-link')).getByText('$596,642 owing')).toBeTruthy();
   });
 
+  it('renders the owing amount as a bold 30px headline (WHIT-487)', () => {
+    // The plain card leads with the amount instead of a 13px subtitle. RN Testing Library can't
+    // assert pixels, so the lock is the resolved headline style; reverting to the old mortgageSub
+    // (13px/'600') reddens both the size and the weight.
+    render(<Goals />);
+    expect(screen.getByTestId('mortgage-owing')).toHaveStyle({ fontSize: 30, fontWeight: '800' });
+  });
+
   it('a SECONDARY mortgage failure still shows the card (tap to open), never blanks the hub', () => {
     mockData = baseData({ homeLoan: { balance: null, asOf: null }, mortgageError: true });
     render(<Goals />);

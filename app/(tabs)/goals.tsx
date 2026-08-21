@@ -112,7 +112,7 @@ export default function Goals() {
           <Pressable
             testID="mortgage-link"
             onPress={() => router.push('/mortgage')}
-            style={mortgageRich ? styles.mortgageCardRich : styles.mortgageCard}
+            style={styles.mortgageCardRich}
           >
             <HeroGradientFill />
             {mortgageRich ? (
@@ -133,18 +133,22 @@ export default function Goals() {
               </>
             ) : (
               <>
-                <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.mortgageTitle}>The mortgage</Text>
-                  <Text style={styles.mortgageSub}>
-                    {homeLoan.balance != null
-                      ? `${fmt(homeLoan.balance)} owing`
-                      : mortgageError
-                        ? 'Tap to open your payoff plan'
-                        : 'Tap to see your payoff plan'}
-                  </Text>
+                {/* WHIT-487: mirror the rich card's header row, then lead with a big bold owing
+                    amount below (the plain card used to bury it in a 13px subtitle). */}
+                <View style={styles.mortgageRichHead}>
+                  <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
+                  <Text style={[styles.mortgageTitle, { flex: 1 }]}>The mortgage</Text>
+                  <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
                 </View>
-                <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
+                {homeLoan.balance != null ? (
+                  <Text testID="mortgage-owing" style={styles.mortgageBalance}>
+                    {fmt(homeLoan.balance)}{' '}<Text style={styles.mortgageOwing}>owing</Text>
+                  </Text>
+                ) : (
+                  <Text style={styles.mortgageFallback}>
+                    {mortgageError ? 'Tap to open your payoff plan' : 'Tap to see your payoff plan'}
+                  </Text>
+                )}
               </>
             )}
           </Pressable>
@@ -252,10 +256,12 @@ const styles = StyleSheet.create({
   addBtn: { width: 40, height: 40, backgroundColor: tint(C.accentAlt, 0.16), borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 
   // The mortgage entry — a light hero-tinted card so it reads as the headline goal.
-  mortgageCard: { position: 'relative', overflow: 'hidden', flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.accent, borderRadius: 20, padding: 18, marginBottom: 20 },
   mortgageChip: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(21,18,58,.16)', alignItems: 'center', justifyContent: 'center' },
   mortgageTitle: { fontFamily: FONT.display, fontSize: 17, fontWeight: '800', color: C.heroInk, letterSpacing: -0.3 },
-  mortgageSub: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.heroInk2, marginTop: 2 },
+  // WHIT-487: the owing amount as the plain card's bold headline (matches the rich card's figure).
+  mortgageBalance: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.heroInk, letterSpacing: -1, marginTop: 14 },
+  mortgageOwing: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk2, letterSpacing: 0 },
+  mortgageFallback: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.heroInk2, marginTop: 14 },
 
   // WHIT-296: the rich payoff variant — mirrors the /mortgage hero (eyebrow, big figure, %
   // gone, bar, to-go row) but scaled to card size so it leads the list without swamping the
