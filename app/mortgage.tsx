@@ -141,38 +141,52 @@ export default function Mortgage() {
           </View>
         )}
 
-        {/* 36-month milestone plan — real Sprint progress, taps into the full screen */}
-        <Pressable testID="milestone-link" onPress={() => router.push('/milestone')} style={styles.card}>
-          <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>
-              {m.hasBalance ? `${m.clearedCount} of ${m.total} sprints reached` : 'The 36-month plan'}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.cardHint}>Sprint plan</Text>
-              <Glyph name="chevron" size={15} color={C.textFaint} />
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 5 }}>
-            {m.rows.map((r) => (
-              <View key={r.sprint} style={{ flex: 1, height: 9, borderRadius: 3, backgroundColor: r.cleared ? C.good : 'rgba(255,255,255,.12)' }} />
-            ))}
-          </View>
-          <View style={[styles.cardHead, { marginTop: 12, marginBottom: 0 }]}>
-            {m.hasBalance ? (
-              m.nextMilestone ? (
-                <>
-                  <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Next: under {fmt(m.nextMilestone.targetBalance)}</Text>
-                  <Text style={styles.cardHint}>{m.amountToNextLabel} to go</Text>
-                </>
-              ) : (
-                <Text style={[styles.cardTitle, { color: C.good, fontSize: 12.5 }]}>Target reached 🎉</Text>
-              )
-            ) : (
-              <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Tap to see your live progress</Text>
-            )}
-          </View>
-          {m.schedule && !m.schedule.onTrack && (
-            <Text style={[styles.planSchedule, { color: m.schedule.ahead ? C.good : C.warn }]}>{m.schedule.label}</Text>
+        {/* Milestone plan — the user's own sprints (empty until they set one), taps into the full screen */}
+        <Pressable testID="milestone-link" onPress={() => router.push(m.hasPlan ? '/milestone' : '/milestone/edit')} style={styles.card}>
+          {!m.hasPlan ? (
+            <>
+              <View style={styles.cardHead}>
+                <Text style={styles.cardTitle}>Set your payoff milestones</Text>
+                <Glyph name="plus" size={16} color={C.accentSoft} />
+              </View>
+              <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5, marginTop: 2 }]}>
+                Add your own targets to track your progress to a paid-off home →
+              </Text>
+            </>
+          ) : (
+            <>
+              <View style={styles.cardHead}>
+                <Text style={styles.cardTitle}>
+                  {m.hasBalance ? `${m.clearedCount} of ${m.total} sprints reached` : 'Your payoff plan'}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.cardHint}>Sprint plan</Text>
+                  <Glyph name="chevron" size={15} color={C.textFaint} />
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 5 }}>
+                {m.rows.map((r) => (
+                  <View key={r.sprint} style={{ flex: 1, height: 9, borderRadius: 3, backgroundColor: r.cleared ? C.good : 'rgba(255,255,255,.12)' }} />
+                ))}
+              </View>
+              <View style={[styles.cardHead, { marginTop: 12, marginBottom: 0 }]}>
+                {m.hasBalance ? (
+                  m.nextMilestone ? (
+                    <>
+                      <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Next: under {fmt(m.nextMilestone.targetBalance)}</Text>
+                      <Text style={styles.cardHint}>{m.amountToNextLabel} to go</Text>
+                    </>
+                  ) : (
+                    <Text style={[styles.cardTitle, { color: C.good, fontSize: 12.5 }]}>Target reached 🎉</Text>
+                  )
+                ) : (
+                  <Text style={[styles.cardTitle, { color: C.accentSofter, fontSize: 12.5 }]}>Tap to see your live progress</Text>
+                )}
+              </View>
+              {m.schedule && !m.schedule.onTrack && (
+                <Text style={[styles.planSchedule, { color: m.schedule.ahead ? C.good : C.warn }]}>{m.schedule.label}</Text>
+              )}
+            </>
           )}
         </Pressable>
 

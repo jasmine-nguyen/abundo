@@ -163,12 +163,14 @@ def _resolve_plan(milestone_repo=None, scope=None):
     (WHIT-424), since we can't rebuild its exact amount. Empty for every non-authoritative case,
     where nothing is swept anyway.
 
-    `plan` is the same list resolve_plan has always returned. `authoritative` is True ONLY when
-    the store returned a genuine saved list (populated OR a real empty []) — the sole case in
-    which it is safe to reconcile away dead custom markers (WHIT-385). It is False for the three
-    fallback-to-default cases (None repo, UNSET plan, or a READ FAILURE): reconciling against the
-    built-in default in any of those would treat every custom marker as dead and delete it, so a
-    transient store blip would wipe the once-ever "already celebrated" record.
+    `plan` is the same list resolve_plan has always returned. `authoritative` is True when the
+    store returned a genuine saved list (populated OR a real empty []) AND when the plan is UNSET
+    (the user has never saved one) — both are definitive answers safe to reconcile against (WHIT-385).
+    It is False for the two fallback-to-default cases (None repo or a READ FAILURE): reconciling
+    against the built-in default in either would treat every custom marker as dead and delete it, so
+    a transient store blip would wipe the once-ever "already celebrated" record. An UNSET plan now
+    resolves to an authoritative EMPTY plan (celebrate nothing) rather than the default — the user
+    sets their own milestones, so a plan they never chose must not fire pushes.
 
     `scope` is the multi-tenant seam (WHIT-369/375): None reads the single shared tenant (the
     repository's own default), a user id later reads that user's plan. One param, threaded to the
@@ -184,7 +186,14 @@ def _resolve_plan(milestone_repo=None, scope=None):
         logger.warning("milestones read failed, using the default plan: %s", e)
         return list(MILESTONES), False, _NO_LIVE_MARKERS
     if stored is None:
-        return list(MILESTONES), False, _NO_LIVE_MARKERS
+        # UNSET = the user has never saved a plan. They now set their own milestones, so there is
+        # no plan to measure against — resolve to an authoritative EMPTY plan (celebrate nothing),
+        # NOT the built-in default. A no-plan user must not get default-milestone pushes for a plan
+        # they never chose. Authoritative + empty is safe: crossed_milestones([]) is empty and the
+        # `authoritative and plan` sweep no-ops on an empty plan. Distinct from the read-failure /
+        # None-repo fallbacks above, which still default so a real-plan user keeps their celebration
+        # through a transient blip.
+        return [], True, _NO_LIVE_MARKERS
     # A corrupt whole-plan write (a non-list scalar isn't iterable) degrades to an authoritative
     # EMPTY plan, not the default: an empty plan celebrates nothing and — via the WHIT-386
     # `and plan` guard — sweeps no markers, whereas falling back to the default would send a
@@ -241,10 +250,11 @@ def _resolve_plan(milestone_repo=None, scope=None):
 
 def resolve_plan(milestone_repo=None, scope=None) -> list:
     """The plan the celebration push measures against: the user's SAVED milestone list when
-    they have one, else the built-in default MILESTONES (WHIT-384). Falls back to the default
-    when the plan is UNSET (None) or the READ fails — a store hiccup must degrade to the
-    default, never skip the celebration (the balance only moves down, so a dropped crossing is
-    never re-detected). Within a genuine saved list, any row milestone_rows rejects (WHIT-394) is
+    they have one, else an EMPTY plan when they have never saved one (they set their own
+    milestones — a plan they never chose must not fire pushes). Falls back to the built-in default
+    MILESTONES only when the READ fails or the repo is None (WHIT-384) — a store hiccup must
+    degrade to the default, never skip a real-plan user's celebration (the balance only moves down,
+    so a dropped crossing is never re-detected). Within a genuine saved list, any row milestone_rows rejects (WHIT-394) is
     skipped + logged with a distinct alarm token and the rest still celebrate — never a WRONG
     default celebration in its place, and never the whole poll's push lost to the poller's
     swallow (WHIT-387). An empty list is a genuinely empty plan — reachable only by a direct write, since the API

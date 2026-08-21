@@ -423,18 +423,17 @@ describe('milestoneView — reads the saved plan (WHIT-367)', () => {
   });
 });
 
-describe('milestoneView — falls back to the built-in default (no visible change)', () => {
-  it('an empty saved list renders identically to omitting milestones', () => {
-    const balance = { balance: 420000, asOf: null };
-    const empty = milestoneView(makeState({ milestones: [], homeLoan: balance }));
-    const omitted = milestoneView(makeState({ homeLoan: balance }));
-    expect(empty.rows).toEqual(omitted.rows);
-    expect(empty.overallPct).toBe(omitted.overallPct);
-    expect(empty.nextMilestone).toEqual(omitted.nextMilestone);
-    // …and that fallback IS the built-in default plan.
-    expect(empty.rows).toHaveLength(MILESTONES.length);
-    expect(empty.rows.map((r) => r.label)).toEqual(MILESTONES.map((m) => m.label));
-    expect(empty.rows.map((r) => r.sprint)).toEqual([0, 1, 2, 3, 4]);
+describe('milestoneView — empty when the user has no saved plan', () => {
+  it('an empty saved list yields an empty view (hasPlan false), not a default plan', () => {
+    // Fail-on-revert for removing the hardcoded default: an empty plan must NOT resurrect the
+    // built-in MILESTONES — the screens show a "set your milestones" prompt instead.
+    const v = milestoneView(makeState({ milestones: [], homeLoan: { balance: 420000, asOf: null } }));
+    expect(v.hasPlan).toBe(false);
+    expect(v.rows).toEqual([]);
+    expect(v.total).toBe(0);
+    expect(v.nextMilestone).toBeNull();
+    expect(v.schedule).toBeNull();
+    expect(v.overallPct).toBe(0);
   });
 });
 

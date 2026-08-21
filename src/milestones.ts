@@ -27,6 +27,10 @@ export interface Milestone {
   targetDate: string;      // ISO "YYYY-MM-DD"
 }
 
+// This is a SUGGESTED template, no longer an implicit default: milestoneView shows an empty
+// state until the user saves their own plan, and the editor loads these rows only when the user
+// taps "Use a suggested plan". (Its server twin shared/milestones.py still backs crossed_milestones
+// and the read-failure celebration fallback, so the two stay pinned in lockstep — see below.)
 // Ordered by targetDate ascending (equivalently targetBalance descending — the
 // loan is being paid DOWN, so each later milestone is a lower balance). The
 // invariant below enforces both, because milestoneView's schedule curve and

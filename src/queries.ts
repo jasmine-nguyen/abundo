@@ -854,7 +854,7 @@ const EMPTY_HOME_LOAN: HomeLoanState = { balance: null, asOf: null };
 const EMPTY_REPAYMENT: Repayment = { amount: null, date: null, principal: null, interest: null };
 // A frozen empty array for the not-yet-loaded / unset case, so `milestones` keeps a STABLE
 // identity across renders while the query is cold (the WHIT-244 trap). An empty list means
-// "no saved plan" — milestoneView falls back to the built-in default.
+// "no saved plan" — milestoneView yields an empty view (hasPlan:false); there is no default.
 const EMPTY_MILESTONES: MilestoneRecord[] = [];
 
 export interface GoalScreenData {
@@ -862,8 +862,9 @@ export interface GoalScreenData {
   homeLoan: HomeLoanState;
   repayment: Repayment;
   // The user's saved milestone plan (WHIT-367). SECONDARY data, deliberately kept OUT of the
-  // loading/error status below: a milestones read hiccup degrades to the built-in default plan
-  // rather than blanking or erroring the balance hero. Empty [] → milestoneView uses the default.
+  // loading/error status below: a milestones read hiccup degrades to an empty plan (the "set your
+  // milestones" empty state) rather than blanking or erroring the balance hero. Empty [] →
+  // milestoneView yields an empty view (hasPlan:false); there is no built-in default.
   milestones: MilestoneRecord[];
   isLoading: boolean; // first load, nothing cached yet
   isError: boolean; // ANY of the three reads failed after retries
@@ -906,10 +907,10 @@ export function useGoalScreenData(): GoalScreenData {
   const milestonesQuery = useMilestonesQuery(authed);
 
   // milestones is SECONDARY and stays OUT of the combined status (like accountBalances vs its
-  // composite): a milestones failure must never blank/spin the balance hero — milestoneView
-  // falls back to the built-in default plan. There is no writer yet (WHIT-377), so the plan is
-  // always the static default here; when the editor lands, its save invalidates ['milestones']
-  // to refresh, so leaving it out of refetch costs nothing now.
+  // composite): a milestones failure must never blank/spin the balance hero — it degrades to an
+  // empty plan (the "set your milestones" empty state). The editor (WHIT-377) saves via
+  // saveMilestones, which invalidates ['milestones'] to refresh, so leaving it out of refetch
+  // costs nothing.
   const status = useCombineScreenQueries([homeLoanQuery, repaymentQuery, loanFactsQuery]);
 
   return {

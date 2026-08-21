@@ -14,20 +14,23 @@ import type { GoalScreenData } from '../queries';
 import type { MilestoneRecord } from '../api';
 
 let mockGoal: GoalScreenData;
+const mockPush = jest.fn();
 jest.mock('../queries', () => ({ useGoalScreenData: () => mockGoal }));
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return { ...actual, useAppContext: () => ({}) };
 });
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({ push: mockPush, back: jest.fn() }),
   useFocusEffect: () => {},
 }));
 
+import { fireEvent } from '@testing-library/react-native';
 import Mortgage from '../../app/mortgage';
 
 beforeEach(() => {
   mockGoal = makeGoalData();
+  mockPush.mockClear();
 });
 
 it('renders standalone (no NavBarsProvider) with a "The mortgage" header', () => {
@@ -72,12 +75,20 @@ it('mortgage Sprint summary reflects the saved plan (count + next target), not t
   expect(screen.queryByText('Next: under $544,000')).toBeNull();
 });
 
-it('mortgage Sprint summary falls back to the default 5-sprint plan when none is saved', () => {
+it('mortgage Sprint summary shows the "set milestones" invite when none is saved', () => {
   mockGoal = makeGoalData({ milestones: [], homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   render(<Mortgage />);
-  // A user who hasn't edited sees the unchanged default (0 of 5, Sprint 0 Kickoff at 544k).
-  expect(screen.getByText('0 of 5 sprints reached')).toBeTruthy();
-  expect(screen.getByText('Next: under $544,000')).toBeTruthy();
+  // No hardcoded default: a user who hasn't set a plan gets an invite, not fake sprints/progress.
+  expect(screen.getByText('Set your payoff milestones')).toBeTruthy();
+  expect(screen.queryByText('0 of 5 sprints reached')).toBeNull();
+  expect(screen.queryByText('Next: under $544,000')).toBeNull();
+});
+
+it('the no-plan invite taps straight into the editor (not the read-only detail)', () => {
+  mockGoal = makeGoalData({ milestones: [], homeLoan: { balance: 596642.43, asOf: null } });
+  render(<Mortgage />);
+  fireEvent.press(screen.getByTestId('milestone-link'));
+  expect(mockPush).toHaveBeenCalledWith('/milestone/edit');
 });
 
 // Shared by the WHIT-372 owing-state describes folded below (byte-identical const in both siblings).

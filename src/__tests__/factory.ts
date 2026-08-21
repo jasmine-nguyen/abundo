@@ -3,9 +3,18 @@
 // handful of AppContext fields, so we build just those and cast — no provider,
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName, ROLLUP_KEY } from '../context';
+import { MILESTONES } from '../milestones';
 import type { Category, Transaction, Budget, HomeLoanState } from '../context';
 import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
+
+// A saved-plan fixture (the suggested template as MilestoneRecord rows, with ids). The default
+// for milestone view-math tests that just need SOME plan — the empty-state tests pass [] instead.
+// Since the hardcoded default was removed, milestoneView returns an empty view for an absent plan,
+// so these factories seed this so pre-existing view-math assertions keep exercising a real plan.
+export const DEFAULT_MILESTONES: MilestoneRecord[] = MILESTONES.map((m, i) => ({
+  id: `m${i}`, label: m.label, targetBalance: m.targetBalance, targetDate: m.targetDate,
+}));
 
 // Narrow an AiGoalSignal to the payoff arm (partial/flat/ahead), so payoff-arm tests
 // can read mortgage_free_date / months_sooner_per_100_extra without a cast. Throws on
@@ -89,9 +98,9 @@ export function makeGoalData(over: Partial<GoalScreenData> = {}): GoalScreenData
     loanFacts: LOAN_FACTS,
     homeLoan: { balance: null, asOf: null },
     repayment: NO_REPAYMENT,
-    // Empty by default so milestoneView falls back to the built-in default plan — every
-    // existing screen test's assertions (Sprint 0 · Kickoff, $544,000, …) stay green (WHIT-367).
-    milestones: [],
+    // A default saved plan so milestone view-math tests that don't pass one still exercise a real
+    // plan (the hardcoded default was removed). Empty-state tests pass `milestones: []` explicitly.
+    milestones: DEFAULT_MILESTONES,
     isLoading: false,
     isError: false,
     homeLoanError: false,
@@ -118,9 +127,9 @@ export function makeState(over: StateOver = {}) {
     homeLoan: over.homeLoan ?? { balance: null, asOf: null },
     loanFacts: over.loanFacts ?? LOAN_FACTS,
     repayment: over.repayment ?? NO_REPAYMENT,
-    // Absent by default → milestoneView falls back to the built-in default plan (WHIT-367);
-    // pass a list to exercise the saved-plan read path.
-    milestones: over.milestones,
+    // A default saved plan so view-math tests get a real plan (the hardcoded default was removed);
+    // pass `milestones: []` to exercise the no-plan empty state.
+    milestones: over.milestones ?? DEFAULT_MILESTONES,
     cycleLen,
     daysLeft: over.daysLeft ?? 7,
     category: (id: string | null) => categories.find((c) => c.id === id),

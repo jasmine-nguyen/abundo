@@ -62,7 +62,7 @@ it('renders the live balance, the sprint plan, and usable equity', () => {
   mockGoal = makeGoalData({ homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' } });
   render(<Milestone />);
   expect(screen.getByText('$596,642')).toBeTruthy();       // hero balance
-  expect(screen.getByText('The 36-month plan')).toBeTruthy();
+  expect(screen.getByText('Your payoff plan')).toBeTruthy();
   expect(screen.getByText('Equity for your next place')).toBeTruthy();
   // The known-state body frames the source as the user's own home (not "the property"),
   // matching the retitled card. Fail-on-revert to "the property value".
@@ -130,7 +130,7 @@ it('Mortgage-screen Sprint summary shows real progress when the balance has load
 
 it('Mortgage-screen Sprint summary invites a tap before the balance loads', () => {
   render(<Mortgage />);
-  expect(screen.getByText('The 36-month plan')).toBeTruthy();
+  expect(screen.getByText('Your payoff plan')).toBeTruthy();
   expect(screen.getByText('Tap to see your live progress')).toBeTruthy();
 });
 
@@ -201,7 +201,7 @@ it('milestone screen shows an equity set-up prompt when the property value is un
   render(<Milestone />);
   // Balance + sprint plan still render (they only need the live balance)...
   expect(screen.getByText('$596,642')).toBeTruthy();
-  expect(screen.getByText('The 36-month plan')).toBeTruthy();
+  expect(screen.getByText('Your payoff plan')).toBeTruthy();
   // ...but equity is a prompt, not a fabricated figure.
   expect(screen.getByText(/Add your home's value/)).toBeTruthy();
   fireEvent.press(screen.getByText('Add loan details →'));
@@ -282,12 +282,14 @@ describe('WHIT-367 milestone read path', () => {
     expect(screen.queryByText('under $544,000 · Jun 2026')).toBeNull();
   });
 
-  it('falls back to the built-in default plan when no milestones are saved', () => {
+  it('shows the empty "add milestones" state when no milestones are saved', () => {
     mockGoal = makeGoalData({ milestones: [], homeLoan: { balance: 596642.43, asOf: null } });
     render(<Milestone />);
-    // The default 5-sprint plan still renders — a user who hasn't edited sees no change.
-    expect(screen.getByText('Sprint 0 · Kickoff')).toBeTruthy();
-    expect(screen.getByText('Sprint 4 · Target')).toBeTruthy();
+    // No hardcoded default any more — a user who hasn't set a plan gets an invite, not fake sprints.
+    expect(screen.getByText(/You haven't set any milestones yet/)).toBeTruthy();
+    expect(screen.getByText('Add milestones')).toBeTruthy();
+    expect(screen.queryByText('Sprint 0 · Kickoff')).toBeNull();
+    expect(screen.queryByText(/milestones reached/)).toBeNull();
   });
 });
 
@@ -320,7 +322,7 @@ it('a known (last-good) balance WINS over a refetch error — shows the balance,
   mockGoal = makeGoalData({ homeLoan: { balance: 596642.43, asOf: '2026-07-04T00:24:37.614Z' }, homeLoanError: true, isError: true });
   render(<Milestone />);
   expect(screen.getByText('$596,642')).toBeTruthy();                 // last-good balance still shown
-  expect(screen.getByText('The 36-month plan')).toBeTruthy();        // plan still renders
+  expect(screen.getByText('Your payoff plan')).toBeTruthy();        // plan still renders
   expect(screen.queryByText("Couldn't load your balance.")).toBeNull(); // error is swallowed, not surfaced
   expect(screen.queryByText('Fetching your live balance…')).toBeNull();
 });
@@ -353,6 +355,29 @@ describe('WHIT-377 milestone editor', () => {
     expect(labelAt(0)).toBe('Start');
     expect(labelAt(1)).toBe('Midway');
     expect(labelAt(2)).toBe('Payoff');
+  });
+
+  it('a resolved new user starts with one blank row + a "Use a suggested plan" button', () => {
+    mockSaved = [];   // resolved, no saved plan
+    render(<MilestoneEdit />);
+    expect(labelAt(0)).toBe('');
+    expect(screen.queryByTestId('milestone-label-1')).toBeNull();       // exactly one blank row
+    expect(screen.getByTestId('milestone-use-template')).toBeTruthy();  // the opt-in template button
+  });
+
+  it('"Use a suggested plan" loads the built-in template as editable rows', () => {
+    mockSaved = [];
+    render(<MilestoneEdit />);
+    fireEvent.press(screen.getByTestId('milestone-use-template'));
+    // The 5-sprint suggested plan is now in the form, editable (fail-on-revert: a blank seed only).
+    expect(labelAt(0)).toBe('Kickoff');
+    expect(labelAt(4)).toBe('Target');
+  });
+
+  it('a user with a saved plan is NOT offered the suggested-plan button (no accidental wipe)', () => {
+    mockSaved = SAVED;
+    render(<MilestoneEdit />);
+    expect(screen.queryByTestId('milestone-use-template')).toBeNull();
   });
 
   it('add appends a new blank row', () => {
@@ -422,16 +447,16 @@ describe('WHIT-377 milestone editor', () => {
   // ===== WHIT-377 adversarial gaps (folded in) — cold-cache hydrate race + reorder bounds =====
 
   describe('cold-cache hydrate race', () => {
-    it('while the read is still loading: shows the built-in DEFAULT and blocks save', async () => {
+    it('while the read is still loading: shows one blank row and blocks save', async () => {
       mockSaved = undefined;      // cold cache — nothing resolved yet
       mockIsLoading = true;
       render(<MilestoneEdit />);
 
-      // The default plan (src/milestones.ts) is shown — NOT a blank form.
-      expect(labelAt(0)).toBe('Kickoff');
-      expect(labelAt(4)).toBe('Target');
+      // One blank row — NOT the old hardcoded default plan (removed).
+      expect(labelAt(0)).toBe('');
+      expect(screen.queryByTestId('milestone-label-1')).toBeNull();  // exactly one row
 
-      // Save is blocked: pressing it must NOT hand the default plan to the writer.
+      // Save is blocked while unloaded: pressing it must NOT write a plan.
       await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
       expect(mockSaveMilestones).not.toHaveBeenCalled();
     });
@@ -440,7 +465,7 @@ describe('WHIT-377 milestone editor', () => {
       mockSaved = undefined;
       mockIsLoading = true;
       const { rerender } = render(<MilestoneEdit />);
-      expect(labelAt(0)).toBe('Kickoff'); // default first
+      expect(labelAt(0)).toBe(''); // one blank row first (no hardcoded default)
 
       // The read resolves with the user's actual plan.
       mockSaved = SAVED;
@@ -478,5 +503,90 @@ describe('WHIT-377 milestone editor', () => {
       render(<MilestoneEdit />);
       expect(screen.getByTestId('milestone-up-1')).not.toBeDisabled();
     });
+  });
+});
+
+// ===== WHIT QA GAPS (empty-milestones / removed hardcoded default) =====
+// Adversarial gaps the implementer's tests leave open: the DETAIL hero when hasPlan is false
+// but a balance IS loaded (must render the balance cleanly, no rows[last] crash / no schedule
+// pill / no "0 of 0"), and the editor's suggested-plan button end-to-end (SAVE persists the
+// template) + its absence during a cold load + the blank-seed save guard.
+describe('WHIT-459 empty-milestones gaps', () => {
+  // A no-plan user with a LOADED balance: the hero shows the live balance and the "add milestones"
+  // invite — and must NOT touch rows[last] (rows is []), render a progress bar, a "N of M
+  // milestones reached" line, a "target $X", or a NEXT MILESTONE card. Fail-on-revert: drop the
+  // `v.hasPlan &&` guard around the hero block in milestone.tsx and rows[last] throws.
+  it('milestone detail hero renders the live balance cleanly when no plan is set (no crash, no schedule pill)', () => {
+    mockGoal = makeGoalData({ milestones: [], homeLoan: { balance: 596642.43, asOf: null } });
+    render(<Milestone />);
+    expect(screen.getByText('$596,642')).toBeTruthy();                 // live balance still shown
+    expect(screen.getByText(/You haven't set any milestones yet/)).toBeTruthy(); // empty invite
+    expect(screen.queryByText(/milestones reached/)).toBeNull();       // no "N of M" hero line
+    expect(screen.queryByText(/target \$/)).toBeNull();                // no heroRowR "target $X"
+    expect(screen.queryByText('NEXT MILESTONE')).toBeNull();           // nextMilestone is null
+    expect(screen.queryByText('Sprint 0 · Kickoff')).toBeNull();       // no fabricated sprints
+  });
+});
+
+// Editor gaps: same module-level mocks; a minimal labelAt + a beforeEach that clears the
+// writer/nav spies (the WHIT-377 describe's beforeEach is out of scope here).
+describe('WHIT-459 suggested-plan gaps (editor)', () => {
+  const labelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
+
+  beforeEach(() => {
+    mockSaveMilestones.mockClear();
+    mockBack.mockClear();
+    mockIsLoading = false;
+  });
+
+  // Loading the suggested plan then SAVING must persist the template rows end-to-end through
+  // saveMilestones — not just fill the form. Fail-on-revert: revert templateRows() to a blank seed
+  // (or block the save) and saveMilestones is called with the wrong rows / not at all.
+  it('"Use a suggested plan" then Save persists the 5 template rows via saveMilestones', async () => {
+    mockSaved = [];
+    render(<MilestoneEdit />);
+    fireEvent.press(screen.getByTestId('milestone-use-template'));
+    expect(labelAt(0)).toBe('Kickoff');
+    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    expect(mockSaveMilestones).toHaveBeenCalledTimes(1);
+    const sent = mockSaveMilestones.mock.calls[0][0];
+    expect(sent.map((m: { label: string }) => m.label)).toEqual(['Kickoff', 'Quarter way', 'Halfway', 'Three-quarters', 'Target']);
+    expect(sent.map((m: { targetBalance: number }) => m.targetBalance)).toEqual([544000, 420000, 295000, 170000, 55000]);
+    await Promise.resolve();
+    expect(mockBack).toHaveBeenCalled();
+  });
+
+  // During a COLD load (saved === undefined) the suggested-plan button must NOT render — offering
+  // it before the plan resolves could clobber a real saved plan when the re-seed latch fires.
+  // Fail-on-revert: change the gate to `saved === undefined || saved.length === 0`.
+  it('does NOT offer the suggested-plan button during a cold load (saved undefined)', () => {
+    mockSaved = undefined;
+    mockIsLoading = true;
+    render(<MilestoneEdit />);
+    expect(screen.queryByTestId('milestone-use-template')).toBeNull();
+  });
+});
+
+describe('WHIT-459 blank-seed save guard (editor)', () => {
+  const labelAt = (i: number) => screen.getByTestId(`milestone-label-${i}`).props.value;
+
+  beforeEach(() => {
+    mockSaveMilestones.mockClear();
+    mockShowToast.mockClear();
+    mockBack.mockClear();
+    mockIsLoading = false;
+  });
+
+  // A resolved new user (saved === []) opens on ONE BLANK row. Tapping Save WITHOUT filling it must
+  // be blocked by the shared ordering/validation guard (blank name) — a toast, and NO write of a
+  // NaN-balance / empty-label milestone. Fail-on-revert: revert seedRows to templateRows() for []
+  // (a valid default would save instead of blocking).
+  it('a new user tapping Save on the blank seed row is blocked (toast, no write)', async () => {
+    mockSaved = [];
+    render(<MilestoneEdit />);
+    expect(labelAt(0)).toBe('');                                   // opens blank, not a default plan
+    await act(async () => { fireEvent.press(screen.getByTestId('milestone-save')); await Promise.resolve(); });
+    expect(mockSaveMilestones).not.toHaveBeenCalled();
+    expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/name|target|date/i));
   });
 });

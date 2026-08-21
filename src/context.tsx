@@ -6,7 +6,7 @@ import { writeFailureMessage } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
 import * as Crypto from 'expo-crypto';
-import { MILESTONES, usableEquity as computeUsableEquity, milestoneTime } from './milestones';
+import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
 
 export type { LoanFacts, LoanFactsInput } from './api';
@@ -2790,7 +2790,7 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
 // via useGoalScreenData).
 // `milestones` is the user's saved paydown plan (WHIT-367); optional so goalView/paydownView/
 // aiGoalSignal and every existing caller stay valid unchanged. Only milestoneView reads it, and
-// an absent/empty list falls back to the built-in default MILESTONES.
+// an absent/empty list yields an empty view (`hasPlan:false`) — there is no built-in default.
 export interface GoalViewInput { loanFacts: LoanFacts; homeLoan: HomeLoanState; milestones?: MilestoneRecord[]; }
 export interface RepaymentViewInput { repayment: Repayment; }
 
@@ -3086,6 +3086,7 @@ export interface MilestoneView {
   propertyValue: number | null;
   usableEquity: number | null;
   usableEquityLabel: string;
+  hasPlan: boolean;                // false until the user has SAVED at least one milestone (no default)
   overallPct: number;              // 0..100 from the Sprint 0 balance down to the final target
   clearedCount: number;
   total: number;
@@ -3138,16 +3139,27 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   const hasBalance = typeof rawBalance === 'number';
   const balance = hasBalance ? rawBalance! : 0;
 
-  // The saved milestone plan, or the built-in default when the user hasn't saved one
-  // (the server returns [] until then). A saved MilestoneRecord has no `sprint`, so the
-  // step number is derived from list position below.
-  const plan = s.milestones && s.milestones.length > 0 ? s.milestones : MILESTONES;
-
   // Equity needs the user's saved property value + LVR (Loan facts card); until
   // they're set, equity figures show a "set this up" state rather than a fake number.
   const homeValue = s.loanFacts.homeValue;
   const lvr = s.loanFacts.lvr;
   const equityKnown = typeof homeValue === 'number' && typeof lvr === 'number';
+  const equity = equityKnown && hasBalance ? computeUsableEquity(homeValue!, balance, lvr!) : null;
+
+  // The user's SAVED milestone plan — empty until they set one. There is no hardcoded default:
+  // a user who hasn't set milestones gets an empty view (`hasPlan:false`), and the screens show a
+  // "set your payoff milestones" prompt instead of a fake plan. A saved MilestoneRecord has no
+  // `sprint`, so the step number is derived from list position below.
+  const plan = s.milestones ?? [];
+  if (plan.length === 0) {
+    return {
+      hasBalance, balance, balanceLabel: hasBalance ? fmt(balance) : '—', asOf: s.homeLoan.asOf,
+      equityKnown, propertyValue: equityKnown ? homeValue! : null,
+      usableEquity: equity, usableEquityLabel: equity != null ? fmt(equity) : '—',
+      hasPlan: false, overallPct: 0, clearedCount: 0, total: 0,
+      nextMilestone: null, amountToNext: 0, amountToNextLabel: '—', rows: [], schedule: null,
+    };
+  }
 
   const rows: MilestoneRow[] = plan.map((m, i) => ({
     sprint: i,
@@ -3169,8 +3181,6 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
   const start = plan[0].targetBalance;
   const end = plan[plan.length - 1].targetBalance;
   const overallPct = hasBalance ? overallProgressPct(balance, start, end) : 0;
-
-  const equity = equityKnown && hasBalance ? computeUsableEquity(homeValue!, balance, lvr!) : null;
 
   let schedule: MilestoneView['schedule'] = null;
   if (hasBalance) {
@@ -3197,6 +3207,7 @@ export function milestoneView(s: GoalViewInput, today?: Date): MilestoneView {
     propertyValue: equityKnown ? homeValue! : null,
     usableEquity: equity,
     usableEquityLabel: equity != null ? fmt(equity) : '—',
+    hasPlan: true,
     overallPct,
     clearedCount,
     total: rows.length,

@@ -54,8 +54,10 @@ def test_resolve_plan_none_repo_is_the_default(shared):
     assert shared.milestones.resolve_plan(None) == list(shared.milestones.MILESTONES)
 
 
-def test_resolve_plan_unset_is_the_default(shared):
-    assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored=None)) == list(shared.milestones.MILESTONES)
+def test_resolve_plan_unset_is_an_empty_plan(shared):
+    # The user sets their own milestones now — an UNSET plan resolves to EMPTY (celebrate nothing),
+    # NOT the built-in default. (A READ FAILURE / None repo still defaults — see the tests below.)
+    assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored=None)) == []
 
 
 def test_resolve_plan_read_failure_falls_back_to_the_default(shared):
@@ -198,15 +200,16 @@ def test_read_failure_still_celebrates_from_the_default(shared, recorder):
     assert recorder[0][0] == "\U0001f389 Milestone reached — Kickoff!"
 
 
-def test_no_plan_falls_back_to_default_with_sprint_markers(shared, recorder):
-    # Explicit no-regression: an unset plan behaves exactly like the pre-WHIT-384 default,
-    # marking the bare sprint string "0" (so existing users' markers keep deduping).
+def test_no_plan_celebrates_nothing(shared, recorder):
+    # A user who has never saved a plan (unset) now resolves to an EMPTY plan, so a paydown that
+    # would have crossed the old default's Sprint 0 fires NOTHING — no pushes for a plan they
+    # never set. Fail-on-revert: the old unset->default would fire the bare sprint marker "0".
     notify = FakeNotifyRepo()
     shared.milestones.notify_milestone_crossing(
         Decimal("545000"), Decimal("544000"),
         loanfacts_repo=FakeLoanFactsRepo(FACTS), device_repo=FakeDeviceRepo(),
         notify_repo=notify, milestone_repo=FakeMilestoneRepo(stored=None))
-    assert notify.fired == {"0"}
+    assert notify.fired == set()
 
 
 # --- WHIT-385: reconcile dead custom markers ------------------------------------------------
@@ -242,8 +245,9 @@ def test_read_failure_does_not_delete_any_marker(shared, recorder):
 
 
 def test_unset_plan_does_not_delete_markers(shared, recorder):
-    # An unset plan (stored is None) is a fallback default, not an authoritative empty plan, so
-    # custom markers are left intact (only a positively-returned list authorizes deletion).
+    # An unset plan (stored is None) now resolves to an AUTHORITATIVE EMPTY plan, but custom markers
+    # are still left intact: the WHIT-386 `authoritative and plan` sweep short-circuits on the empty
+    # (falsy) plan, so nothing is swept — a no-plan user's once-ever record survives.
     notify = FakeNotifyRepo({"bal:300000.00"})
     _notify(shared, old="250000", new="249000",
          milestone_repo=FakeMilestoneRepo(stored=None), notify=notify)
@@ -379,11 +383,11 @@ def test_custom_target_equal_to_default_does_not_collide_with_stale_sprint_marke
 
 # --- empty-list ([]) vs unset (None) semantics ---------------------------------------------
 
-def test_resolve_plan_empty_list_is_a_real_empty_plan_not_the_default(shared):
-    # DECISION PROBE: unset (None) -> default; but an empty LIST maps to [] (a real, empty plan).
-    # These differ: [] is NOT treated as "no plan". Documents the actual branch in resolve_plan.
+def test_resolve_plan_unset_and_empty_list_both_resolve_empty(shared):
+    # Both an empty stored LIST and an UNSET (None) plan now resolve to [] — a user with no
+    # milestones celebrates nothing either way. (A READ FAILURE still defaults; see above.)
     assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored=[])) == []
-    assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored=None)) == list(shared.milestones.MILESTONES)
+    assert shared.milestones.resolve_plan(FakeMilestoneRepo(stored=None)) == []
 
 
 def test_empty_plan_never_celebrates_even_on_a_huge_paydown(shared, recorder):
@@ -1009,3 +1013,25 @@ def test_the_legacy_marker_is_the_bare_id_less_form_the_poller_first_celebrated(
     poller_bare = shared.milestones._plan_marker({"targetBalance": stored})
     assert got_legacy == poller_bare
     assert got_legacy.startswith("bal:") and "id:" not in got_legacy
+
+
+# --- WHIT QA GAP: unset user is now AUTHORITATIVE-empty, not a fallback default -------------
+
+def test_unset_user_with_live_markers_on_a_crossing_poll_neither_fires_nor_sweeps(shared, recorder):
+    # The combined case no single existing test pins: a user who has NEVER saved a plan
+    # (stored is None), WITH a live custom "already celebrated" marker, on a poll whose paydown
+    # WOULD have crossed the OLD built-in Kickoff (545000 -> 544000). The new resolve makes this an
+    # AUTHORITATIVE EMPTY plan, so:
+    #   - nothing crosses  -> no push (they never chose this plan)
+    #   - the WHIT-386 `and plan` guard short-circuits on the empty plan -> the sweep removes NOTHING,
+    #     so the once-ever record survives (no crash on the empty live-marker set).
+    # Fail-on-revert (two ways): revert `stored is None -> [], True` back to `list(MILESTONES), False`
+    # and the default Kickoff fires (sent==1, marker "0" added); OR relax the `and plan` guard to a
+    # bare `authoritative` and the empty live set wipes the seeded custom marker (removed != set()).
+    notify = FakeNotifyRepo({"id:m1:bal:280000.00"})
+    sent, notify = _notify(shared, old="545000", new="544000",
+                           milestone_repo=FakeMilestoneRepo(stored=None), notify=notify)
+    assert sent == 0
+    assert recorder == []
+    assert notify.removed == set()
+    assert notify.fired == {"id:m1:bal:280000.00"}
