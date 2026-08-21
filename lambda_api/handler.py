@@ -2471,10 +2471,12 @@ def _validate_goal_body(event: dict):
             return None, _json_response(400, {"error": "account_id is not a known synced account"})
         goal["account_id"] = account_id
     else:
-        # Manual needs BOTH fields valid. manual_balance may be negative (a debt snapshot),
-        # so it's bounded by magnitude, not sign.
-        if not _finite_number(manual_balance, low=-_GOAL_AMOUNT_MAX, high=_GOAL_AMOUNT_MAX):
-            return None, _json_response(400, {"error": "manual_balance must be a finite number"})
+        # Manual needs BOTH fields valid. manual_balance is a non-negative magnitude, matching the
+        # goal editor (WHIT-483): owed is entered positive, savings positive. A negative would
+        # normalise to £0 (goal_checkpoints.normalise_goal_balance) and false-celebrate every rung.
+        if not _finite_number(manual_balance, low=0, high=_GOAL_AMOUNT_MAX):
+            return None, _json_response(
+                400, {"error": f"manual_balance must be a number between 0 and {_GOAL_AMOUNT_MAX}"})
         if not _valid_iso_date(manual_as_of):
             return None, _json_response(400, {"error": "manual_as_of must be a real ISO YYYY-MM-DD date"})
         goal["manual_balance"] = Decimal(str(manual_balance))
@@ -2520,9 +2522,9 @@ def _goal_start_candidate(goal: dict, balance_repo: AccountBalanceRepository) ->
     became available), NOT necessarily the day the balance was measured — the deferred
     status card should treat it as the stamp date. start_balance carries the same
     source-aware SIGN split the current balance uses: SIGNED for a synced goal (a debt
-    account is negative), and as-entered for a manual one (which MAY be negative — a debt
-    snapshot). The status card must normalise the two the same way balanceGoalView does,
-    never compare a signed synced start to an as-entered manual current.
+    account is negative), and as-entered for a manual one (a non-negative magnitude — owed or
+    saved, validated >= 0). The status card must normalise the two the same way balanceGoalView
+    does, never compare a signed synced start to an as-entered manual current.
     """
     if "manual_balance" in goal:
         return {"start_date": _melbourne_today().isoformat(), "start_balance": goal["manual_balance"]}
