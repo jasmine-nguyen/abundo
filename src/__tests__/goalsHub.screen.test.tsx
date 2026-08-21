@@ -170,6 +170,41 @@ describe('goal cards (real balanceGoalView)', () => {
     expect(card.getByTestId('goal-balance-g2')).toBeTruthy();
     expect(card.getByText('Update balance')).toBeTruthy();
   });
+
+  // WHIT-486: checkpoint dots on the progress bar (bar-dot = hollow/not reached, bar-dot-reached = filled).
+  it('renders one dot per checkpoint, filled up to the balance, matching the reached-count', () => {
+    const withLadder = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }, { id: 'b', label: 'B', amount: 4000 }, { id: 'c', label: 'C', amount: 6000 }, { id: 'd', label: 'D', amount: 8000 }] };
+    mockData = baseData({ goals: [withLadder] }); // balance 4000 → 2000 & 4000 reached
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.getAllByTestId('bar-dot-reached')).toHaveLength(2);       // filled dots
+    expect(card.getAllByTestId('bar-dot')).toHaveLength(2);               // hollow dots
+    expect(card.getByTestId('goal-checkpoints-g1')).toHaveTextContent('2 of 4 reached'); // agrees
+  });
+
+  it('renders no dots for a goal with no checkpoints', () => {
+    render(<Goals />); // GROW + PAYDOWN, neither has a ladder
+    expect(screen.queryAllByTestId('bar-dot')).toHaveLength(0);
+    expect(screen.queryAllByTestId('bar-dot-reached')).toHaveLength(0);
+  });
+
+  it('renders no dots (and no count line) for a synced goal not yet polled', () => {
+    const withLadder = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }] };
+    mockData = baseData({ goals: [withLadder], balanceFor: () => null }); // not polled
+    render(<Goals />);
+    const card = within(screen.getByTestId('goal-card-g1'));
+    expect(card.queryAllByTestId('bar-dot')).toHaveLength(0);
+    expect(card.queryAllByTestId('bar-dot-reached')).toHaveLength(0);
+    expect(card.queryByTestId('goal-checkpoints-g1')).toBeNull(); // dots + count travel together
+  });
+
+  it('leaves the mortgage card free of checkpoint dots', () => {
+    const withLadder = { ...GROW, checkpoints: [{ id: 'a', label: 'A', amount: 2000 }] };
+    mockData = baseData({ goals: [withLadder] });
+    render(<Goals />);
+    expect(within(screen.getByTestId('mortgage-link')).queryAllByTestId('bar-dot')).toHaveLength(0);
+    expect(within(screen.getByTestId('mortgage-link')).queryAllByTestId('bar-dot-reached')).toHaveLength(0);
+  });
 });
 
 describe('the mortgage card', () => {
