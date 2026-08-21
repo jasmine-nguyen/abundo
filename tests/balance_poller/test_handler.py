@@ -74,11 +74,16 @@ class _FakeRepo:
 class _FakeAccountRepo:
     """Recording stand-in for AccountBalanceRepository (signed per-account balances)."""
 
-    def __init__(self, prior=None):
+    def __init__(self, prior=None, list_raises=False):
         self.calls = []
+        self.list_balance_calls = []  # ids passed to each list_balances call (WHIT-482 batching)
         self._prior = prior or {}  # {account_id: signed amount} read before the upsert (WHIT-479)
+        self._list_raises = list_raises
 
     def list_balances(self, account_ids):
+        self.list_balance_calls.append(list(account_ids))
+        if self._list_raises:
+            raise RuntimeError("dynamo throttle")
         return [{"account_id": a, "amount": self._prior[a]} for a in account_ids if a in self._prior]
 
     def upsert_balance(self, account_id, amount, available_balance, currency, as_of, account_type):
@@ -414,6 +419,36 @@ def test_poll_account_balances_returns_old_new_deltas(handler, monkeypatch):
     assert by_account["anz-rewards-black-visa"]["old"] is None  # first poll → seed guard
 
 
+def test_poll_account_balances_reads_prior_balances_in_one_batch(handler, monkeypatch):
+    # WHIT-482: the prior read is hoisted out of the per-account loop. Whatever the account count,
+    # there is exactly ONE list_balances call, for the whole mapped id set — so this reddens if the
+    # read ever moves back inside the loop (that would make one call per account).
+    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(handler, "fetch_balance",
+                        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD)
+
+    handler._poll_account_balances("key")
+    assert len(accounts.list_balance_calls) == 1
+    assert accounts.list_balance_calls[0] == sorted(set(handler.ACCOUNT_ID_MAP.values()))
+
+
+def test_poll_account_balances_batch_read_failure_degrades_old_but_still_stores(handler, monkeypatch):
+    # WHIT-482: the batched prior read is best-effort AND load-bearing — list_balances re-raises a
+    # DatabaseError, and lambda_handler doesn't guard this call, so an unswallowed failure would
+    # abort the whole poll and store nothing. On failure every `old` is None but the poll still
+    # upserts all balances. This reddens if the try/except is "simplified" away.
+    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")}, list_raises=True)
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(handler, "fetch_balance",
+                        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD)
+
+    stored, deltas = handler._poll_account_balances("key")
+    assert stored == 3
+    assert all(d["old"] is None for d in deltas)  # the failed read nulls every account's old
+    assert len(accounts.calls) == 3               # ...but every balance was still stored
+
+
 def test_check_goal_checkpoints_fires_for_a_synced_goal_whose_account_crossed(handler, monkeypatch):
     goal = {"direction": "grow", "name": "Holiday", "account_id": "up-spending",
             "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("95000")}]}
@@ -493,3 +528,158 @@ def test_lambda_handler_goal_checkpoint_failure_is_swallowed(handler, monkeypatc
 
     # A push failure must not flip the stored-balance result.
     assert handler.lambda_handler({}, None) == {"homeloan_stored": True, "accounts_stored": 2}
+
+
+# --- WHIT-482 (QA additions): batched prior-read gaps -------------------------
+# Card: WHIT-482 — hoist the per-account prior-balance read into one batched read.
+# These cover gaps the 3 existing/new cases leave open. They exercise the REAL
+# handler._poll_account_balances / _check_goal_checkpoints — no re-implemented math.
+
+
+class _FakeNotifyRepo:
+    """Records fired goal-checkpoint markers; starts with none fired."""
+
+    def __init__(self):
+        self.marked = []
+
+    def fired_goal_checkpoints(self, scope=None):
+        return set()
+
+    def mark_goal_checkpoint_fired(self, marker, scope=None):
+        self.marked.append(marker)
+
+
+class _FakeDeviceRepo:
+    def list_tokens(self):
+        return ["ExponentPushToken[x]"]
+
+
+def test_poll_account_balances_zero_prior_keeps_signed_zero_not_none(handler, monkeypatch):
+    # WHIT-482 — [A1] a stored prior of exactly 0 must reach the delta as Decimal("0"), NOT None.
+    # `.get()` returns 0 as a real value; a `.get(id) or None` "cleanup" would wrongly null it and
+    # a checkpoint sitting just above 0 would never celebrate. Guards that regression.
+    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("0"), "up-homeloan": Decimal("0")})
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(
+        handler, "fetch_balance",
+        lambda bid, aid, key: {
+            "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
+            "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
+            "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
+        }[aid],
+    )
+
+    _stored, deltas = handler._poll_account_balances("key")
+    by_account = {d["account_id"]: d for d in deltas}
+    assert by_account["up-spending"]["old"] == Decimal("0")
+    assert by_account["up-spending"]["old"] is not None
+    assert by_account["up-homeloan"]["old"] == Decimal("0")
+
+
+def test_poll_account_balances_negative_prior_keeps_signed_value(handler, monkeypatch):
+    # WHIT-482 — [A2] a synced loan/credit-card prior is stored NEGATIVE. The delta's `old` must be
+    # that exact signed value (not abs, not None), so paydown checkpoints normalise correctly.
+    accounts = _FakeAccountRepo(
+        prior={"up-homeloan": Decimal("-596000.00"), "anz-rewards-black-visa": Decimal("-6000.00")}
+    )
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(
+        handler, "fetch_balance",
+        lambda bid, aid, key: {
+            "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
+            "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
+            "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
+        }[aid],
+    )
+
+    _stored, deltas = handler._poll_account_balances("key")
+    by_account = {d["account_id"]: d for d in deltas}
+    assert by_account["up-homeloan"]["old"] == Decimal("-596000.00")
+    assert by_account["anz-rewards-black-visa"]["old"] == Decimal("-6000.00")
+    # up-spending had no prior row in the batch -> genuinely first poll -> None.
+    assert by_account["up-spending"]["old"] is None
+
+
+def test_poll_account_balances_extra_prior_ids_are_harmless_and_dont_leak(handler, monkeypatch):
+    # WHIT-482 — [A3] the batch may return MORE ids than the loop visits (an account mapped/stored
+    # but not in BALANCE_SOURCES, or simply extra rows). Those must NEVER surface as a delta —
+    # deltas come from the BALANCE_SOURCES loop, not prior_by_id — and must not disturb real olds.
+    accounts = _FakeAccountRepo(
+        prior={"up-spending": Decimal("90000"), "orphan-not-a-source": Decimal("777")}
+    )
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(
+        handler, "fetch_balance",
+        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD,
+    )
+
+    stored, deltas = handler._poll_account_balances("key")
+    account_ids = {d["account_id"] for d in deltas}
+    assert stored == 3
+    assert "orphan-not-a-source" not in account_ids  # the extra row never leaks into a delta
+    by_account = {d["account_id"]: d for d in deltas}
+    assert by_account["up-spending"]["old"] == Decimal("90000")  # real old undisturbed by the extra
+
+
+def test_poll_account_balances_partial_fetch_failure_survivors_keep_batched_old(handler, monkeypatch):
+    # WHIT-482 — [A4] one account's fetch fails AFTER a successful batch read. The failed account is
+    # dropped from the deltas; every surviving account still carries its OWN correct batched `old`
+    # (not a shifted/None value). Extends the existing single-account-isolation test, which only
+    # checks the stored count and ids, not that survivors keep the right prior.
+    accounts = _FakeAccountRepo(
+        prior={"up-spending": Decimal("90000"), "anz-rewards-black-visa": Decimal("-6000")}
+    )
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+
+    def fetch(bid, aid, key):
+        if aid == "T6d8ppsYssBDFCwl1qEb0w":  # mortgage fetch blows up
+            raise RuntimeError("mortgage balance timed out")
+        return _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD
+
+    monkeypatch.setattr(handler, "fetch_balance", fetch)
+
+    stored, deltas = handler._poll_account_balances("key")
+    by_account = {d["account_id"]: d for d in deltas}
+    assert stored == 2
+    assert "up-homeloan" not in by_account  # the failed account is skipped from deltas
+    assert by_account["up-spending"]["old"] == Decimal("90000")     # survivor keeps its own old
+    assert by_account["anz-rewards-black-visa"]["old"] == Decimal("-6000")
+
+
+def test_batched_delta_drives_a_real_goal_checkpoint_crossing_end_to_end(handler, monkeypatch):
+    # WHIT-482 — [A5] end-to-end: a batched prior read -> delta.old -> a REAL checkpoint crossing.
+    # up-spending's batched prior (90000) sits below the checkpoint (95000); the fresh poll
+    # (96270.59) crosses it. Runs the real notify_goal_checkpoint_crossing/crossed_checkpoints —
+    # only send_push is stubbed. Reddens if the prior read stops feeding `old` (old->None => seed
+    # guard => no push).
+    import goal_checkpoints
+
+    accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
+    monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
+    monkeypatch.setattr(
+        handler, "fetch_balance",
+        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD,
+    )
+
+    goal = {
+        "direction": "grow", "name": "Holiday", "account_id": "up-spending",
+        "checkpoints": [{"id": "cp1", "label": "Halfway", "amount": Decimal("95000")}],
+    }
+    notify_repo = _FakeNotifyRepo()
+    monkeypatch.setattr(handler, "GoalsRepository", lambda: _FakeGoalsRepo({"g1": goal}))
+    monkeypatch.setattr(handler, "NotifyRepository", lambda: notify_repo)
+    monkeypatch.setattr(handler, "DeviceRepository", lambda: _FakeDeviceRepo())
+    sent = []
+    monkeypatch.setattr(goal_checkpoints, "send_push",
+                        lambda title, body, tokens, data=None: sent.append((title, data)))
+
+    stored, deltas = handler._poll_account_balances("key")
+    handler._check_goal_checkpoints(deltas)
+
+    assert stored == 3
+    assert len(sent) == 1
+    title, data = sent[0]
+    assert "Halfway" in title
+    assert data == {"type": "goalcheckpoint", "goalId": "g1"}
+    # marked once-ever so the same crossing can't re-fire next poll.
+    assert notify_repo.marked == ["g:g1:cp:cp1:bal:95000.00"]
