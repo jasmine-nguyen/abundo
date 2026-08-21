@@ -18,6 +18,7 @@ export const NOTIF_ROUTE: Record<string, string> = {
   repayment: '/mortgage',
   milestone: '/milestone',
   goal: '/goals',
+  goalcheckpoint: '/goals', // WHIT-479's checkpoint push deep-links to the goals list (WHIT-481)
 };
 
 export const NOTIF_ROUTE_BUILDERS: Record<string, (data: Record<string, unknown>) => string | null> = {

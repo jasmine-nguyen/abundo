@@ -14,6 +14,10 @@ describe('routeForNotificationData (WHIT-321, WHIT-322)', () => {
     expect(routeForNotificationData({ type: 'goal' })).toBe('/goals');
   });
 
+  it('maps a goalcheckpoint notification (WHIT-479 push) to the goals screen', () => {
+    expect(routeForNotificationData({ type: 'goalcheckpoint', goalId: 'g1' })).toBe('/goals');
+  });
+
   it('maps a budget notification to that category’s budget screen', () => {
     expect(routeForNotificationData({ type: 'budget', category: 'groceries' })).toBe('/budget/groceries');
   });
@@ -28,6 +32,7 @@ describe('routeForNotificationData (WHIT-321, WHIT-322)', () => {
     expect(NOTIF_ROUTE.repayment).toBe('/mortgage');
     expect(NOTIF_ROUTE.milestone).toBe('/milestone');
     expect(NOTIF_ROUTE.goal).toBe('/goals');
+    expect(NOTIF_ROUTE.goalcheckpoint).toBe('/goals');
   });
 
   it('exposes a budget route builder (not a static route)', () => {

@@ -1,13 +1,15 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { balanceGoalView, goalView, useAppContext } from '../../src/context';
 import { useGoalsScreenData } from '../../src/queries';
+import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebration';
 import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { Bar, RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
 
 // "2026-08-15" -> "Aug 2026". Parsed by hand (no Date) so the label can't shift across a
@@ -52,6 +54,25 @@ export default function Goals() {
   // Load-on-focus, staleness-gated (like Budgets) so tab-hopping doesn't refetch every tap.
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
+  // Each goal's view computed once — the cards below AND the WHIT-481 confetti hook read it.
+  // Memoised so a plain redraw keeps the same identity while a real balance change (a new
+  // balanceFor) recomputes it.
+  const goalViews = useMemo(
+    () => goals.map((goal) => ({ goal, view: balanceGoalView({ goal, balance: balanceFor(goal.account_id), payCycle }) })),
+    [goals, balanceFor, payCycle],
+  );
+
+  // WHIT-481: the in-app confetti. The hook compares each goal's checkpoint reached-count against
+  // what the screen last showed and bursts when one ticks up — the mortgage card has no
+  // checkpoints and never takes part. The hook's "last shown" memory lives for this screen's
+  // lifetime, and this relies on the tab staying mounted (the default): if the Goals tab were ever
+  // set to unmount on blur, returning to it would reseed and quietly stop celebrating real crossings.
+  const checkpointCounts = useMemo(
+    () => goalViews.map(({ goal, view }) => ({ id: goal.id, name: goal.name, reached: view.checkpointsReached })),
+    [goalViews],
+  );
+  const { celebrationKey, label, newlyReached } = useCheckpointCelebration(checkpointCounts);
+
   // Cache-first: keep showing goals while a background refetch runs; error takes precedence
   // over the spinner so a failed read never sits under an endless spinner with no Retry. Both
   // gate on the PRIMARY status (goals + pay cycle) — a mortgage/balance hiccup is secondary and
@@ -60,6 +81,7 @@ export default function Goals() {
   const showSpinner = !showError && isLoading && goals.length === 0;
 
   return (
+    <>
     <ScrollChromeHeader
       title="Goals"
       right={(
@@ -134,8 +156,7 @@ export default function Goals() {
               The mortgage is your first goal. Add a savings target or another debt to pay down, and we'll show how far you've come and how much to set aside each payday.
             </Text>
           ) : (
-            goals.map((goal) => {
-              const v = balanceGoalView({ goal, balance: balanceFor(goal.account_id), payCycle });
+            goalViews.map(({ goal, view: v }) => {
               const pct = v.progress != null ? Math.round(v.progress * 100) : null;
               const grow = goal.direction === 'grow';
               // A manual goal (no synced account) keeps its own balance — show when it was last
@@ -209,6 +230,10 @@ export default function Goals() {
         </>
       )}
     </ScrollChromeHeader>
+    {/* WHIT-481: the confetti overlay, a pointerEvents="none" absolute fill sibling to the header
+        so it paints over the whole tab (which fills the viewport) without blocking taps beneath. */}
+    <Celebration celebrationKey={celebrationKey} label={label} newlyReached={newlyReached} />
+    </>
   );
 }
 
