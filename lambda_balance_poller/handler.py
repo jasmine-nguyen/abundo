@@ -326,10 +326,22 @@ def _poll_account_balances(api_key: str):
     Returns `(stored, deltas)`: `stored` is how many were upserted; `deltas` is one
     `{"account_id", "old", "new"}` per stored account — the SIGNED prior balance (None on the
     account's first-ever poll) and the new one — so a goal-checkpoint crossing can be detected
-    without a second poll (WHIT-479). The prior read is best-effort: a read hiccup leaves `old`
-    None, which the seed guard treats as "no crossing" — a missed celebration, never a wrong one.
+    without a second poll (WHIT-479). The prior balances are read once, in a single batched
+    best-effort read before the loop (WHIT-482, mirroring the read API): a read hiccup leaves
+    EVERY account's `old` None (not just one), which the seed guard treats as "no crossing" — a
+    missed celebration, never a wrong one. This one read must stay wrapped: `list_balances`
+    re-raises a DatabaseError, and lambda_handler doesn't guard this call, so an unswallowed
+    failure would abort the whole poll and store nothing.
     """
     repo = AccountBalanceRepository()
+
+    prior_by_id = {}
+    try:
+        prior_rows = repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values())))
+        prior_by_id = {row["account_id"]: row["amount"] for row in prior_rows}
+    except Exception as e:
+        logger.error("prior balance batch read failed, treating all as first poll: %s", e)
+
     stored = 0
     deltas = []
     for source in BALANCE_SOURCES:
@@ -340,13 +352,7 @@ def _poll_account_balances(api_key: str):
             logger.error("balance source aid %s has no internal-id mapping, skipping", aid)
             continue
         try:
-            old_amount = None
-            try:
-                prior = repo.list_balances([internal_id])
-                if prior:
-                    old_amount = prior[0]["amount"]
-            except Exception as e:
-                logger.error("prior balance read failed for %s, treating as first poll: %s", internal_id, e)
+            old_amount = prior_by_id.get(internal_id)  # None on the account's first-ever poll
             payload = fetch_balance(source["bid"], aid, api_key)
             n = normalise_account_balance(payload)
             repo.upsert_balance(
