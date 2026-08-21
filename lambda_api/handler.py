@@ -1625,6 +1625,36 @@ def _finite_number(value, *, low=0.0, high=None) -> bool:
     return high is None or value <= high
 
 
+def _validate_label(raw, max_len, noun) -> tuple[str | None, dict | None]:
+    """Non-empty string → trimmed → length-capped. Returns (label, None) on success or
+    (None, error_response) on failure. Shared by set_milestones and
+    _validate_goal_checkpoints (WHIT-480) so the label rule can't drift between them."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None, _json_response(400, {"error": f"each {noun} needs a non-empty label"})
+    label = raw.strip()
+    if len(label) > max_len:
+        return None, _json_response(400, {"error": f"{noun} label too long"})
+    return label, None
+
+
+def _validate_id(raw_id, seen_ids, noun) -> tuple[str | None, dict | None]:
+    """Mint a uuid when the id is absent; otherwise reject a blank/non-string id, trim it
+    (so " a "/"a" collide), and reject a duplicate within `seen_ids`. On success adds the id
+    to `seen_ids` (mutates it) and returns (id, None); on failure returns (None,
+    error_response). Callers that need to know whether an id was minted capture
+    `raw_id is None` themselves before calling — the helper never exposes that (WHIT-480)."""
+    if raw_id is None:
+        new_id = str(uuid.uuid4())
+    elif not isinstance(raw_id, str) or not raw_id.strip():
+        return None, _json_response(400, {"error": f"{noun} id must be a non-empty string"})
+    else:
+        new_id = raw_id.strip()
+    if new_id in seen_ids:
+        return None, _json_response(400, {"error": f"{noun} ids must be unique"})
+    seen_ids.add(new_id)
+    return new_id, None
+
+
 def _sanitise_goal(raw) -> dict | None:
     """Validate + narrow a client-sent home-loan goal signal (WHIT-134) to a small,
     numbers-only dict, or None when it's absent/malformed.
@@ -2132,12 +2162,9 @@ def set_milestones(event: dict, repo: MilestoneRepository, notify_repo: NotifyRe
         if not isinstance(m, dict):
             return _json_response(400, {"error": "each milestone must be an object"})
 
-        label = m.get("label")
-        if not isinstance(label, str) or not label.strip():
-            return _json_response(400, {"error": "each milestone needs a non-empty label"})
-        label = label.strip()
-        if len(label) > _MILESTONE_LABEL_MAX_LEN:
-            return _json_response(400, {"error": "label too long"})
+        label, error = _validate_label(m.get("label"), _MILESTONE_LABEL_MAX_LEN, "milestone")
+        if error:
+            return error
 
         balance = m.get("targetBalance")
         if not _finite_number(balance, low=0, high=_MILESTONE_BALANCE_MAX):
@@ -2147,19 +2174,11 @@ def set_milestones(event: dict, repo: MilestoneRepository, notify_repo: NotifyRe
         if not _valid_iso_date(target_date):
             return _json_response(400, {"error": "targetDate must be a real ISO YYYY-MM-DD date"})
 
-        milestone_id = m.get("id")
-        was_id_less = milestone_id is None
-        if milestone_id is None:
-            milestone_id = str(uuid.uuid4())
-        elif not isinstance(milestone_id, str) or not milestone_id.strip():
-            return _json_response(400, {"error": "id must be a non-empty string"})
-        else:
-            # Trim like the label above, so a client that round-trips its own id with stray
-            # whitespace stores it clean and " a "/"a" collide in the uniqueness check (WHIT-383).
-            milestone_id = milestone_id.strip()
-        if milestone_id in ids:
-            return _json_response(400, {"error": "milestone ids must be unique"})
-        ids.add(milestone_id)
+        raw_id = m.get("id")
+        was_id_less = raw_id is None  # capture before minting — drives the WHIT-447 marker backfill
+        milestone_id, error = _validate_id(raw_id, ids, "milestone")
+        if error:
+            return error
 
         stored_balance = Decimal(str(balance))
         cleaned.append({
@@ -2357,12 +2376,9 @@ def _validate_goal_checkpoints(raw, direction: str, target_amount: Decimal):
         if not isinstance(item, dict):
             return [], _json_response(400, {"error": "each checkpoint must be an object"})
 
-        label = item.get("label")
-        if not isinstance(label, str) or not label.strip():
-            return [], _json_response(400, {"error": "each checkpoint needs a non-empty label"})
-        label = label.strip()
-        if len(label) > _GOAL_CHECKPOINT_LABEL_MAX_LEN:
-            return [], _json_response(400, {"error": "checkpoint label too long"})
+        label, error = _validate_label(item.get("label"), _GOAL_CHECKPOINT_LABEL_MAX_LEN, "checkpoint")
+        if error:
+            return [], error
 
         amount = item.get("amount")
         if not _finite_number(amount, low=0, high=_GOAL_AMOUNT_MAX):
@@ -2380,18 +2396,9 @@ def _validate_goal_checkpoints(raw, direction: str, target_amount: Decimal):
             return [], _json_response(
                 400, {"error": "a paydown checkpoint must be above the target amount"})
 
-        checkpoint_id = item.get("id")
-        if checkpoint_id is None:
-            checkpoint_id = str(uuid.uuid4())
-        elif not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
-            return [], _json_response(400, {"error": "checkpoint id must be a non-empty string"})
-        else:
-            # Trim like the label, so a round-tripped id with stray whitespace stores clean
-            # and " a "/"a" collide in the uniqueness check (mirrors set_milestones).
-            checkpoint_id = checkpoint_id.strip()
-        if checkpoint_id in ids:
-            return [], _json_response(400, {"error": "checkpoint ids must be unique"})
-        ids.add(checkpoint_id)
+        checkpoint_id, error = _validate_id(item.get("id"), ids, "checkpoint")
+        if error:
+            return [], error
 
         cleaned.append({"id": checkpoint_id, "label": label, "amount": amount})
 
