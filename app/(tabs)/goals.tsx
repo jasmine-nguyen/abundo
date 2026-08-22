@@ -112,7 +112,7 @@ export default function Goals() {
           <Pressable
             testID="mortgage-link"
             onPress={() => router.push('/mortgage')}
-            style={styles.mortgageCardRich}
+            style={mortgageRich ? styles.mortgageCardRich : styles.mortgageCardPlain}
           >
             <HeroGradientFill />
             {mortgageRich ? (
@@ -133,16 +133,13 @@ export default function Goals() {
               </>
             ) : (
               <>
-                {/* WHIT-487: mirror the rich card's header row, then lead with a big bold owing
-                    amount below (the plain card used to bury it in a 13px subtitle). */}
-                <View style={styles.mortgageRichHead}>
-                  <View style={styles.mortgageChip}><Glyph name="building" size={22} color={C.heroInk} /></View>
-                  <Text style={[styles.mortgageTitle, { flex: 1 }]}>The mortgage</Text>
-                  <Glyph name="chevron" size={16} color="rgba(20,18,50,.55)" />
-                </View>
+                {/* WHIT-488: the /mortgage detail hero tile copied over — eyebrow + big balance,
+                    minus the set-up body + button. The taller tile spreads the gradient (no band). */}
+                <View style={styles.mortgageBlob} />
+                <Text style={styles.mortgageEyebrow}>YOUR HOME LOAN · BALANCE OWING</Text>
                 {homeLoan.balance != null ? (
-                  <Text testID="mortgage-owing" style={styles.mortgageBalance}>
-                    {fmt(homeLoan.balance)}{' '}<Text style={styles.mortgageOwing}>owing</Text>
+                  <Text testID="mortgage-owing" style={[styles.mortgageBig, { marginTop: 6 }]}>
+                    {fmt(homeLoan.balance)}
                   </Text>
                 ) : (
                   <Text style={styles.mortgageFallback}>
@@ -258,9 +255,12 @@ const styles = StyleSheet.create({
   // The mortgage entry — a light hero-tinted card so it reads as the headline goal.
   mortgageChip: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(21,18,58,.16)', alignItems: 'center', justifyContent: 'center' },
   mortgageTitle: { fontFamily: FONT.display, fontSize: 17, fontWeight: '800', color: C.heroInk, letterSpacing: -0.3 },
-  // WHIT-487: the owing amount as the plain card's bold headline (matches the rich card's figure).
-  mortgageBalance: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.heroInk, letterSpacing: -1, marginTop: 14 },
-  mortgageOwing: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.heroInk2, letterSpacing: 0 },
+  // WHIT-488: the plain card IS the /mortgage detail hero tile (taller than the rich card so the
+  // gradient spreads smoothly instead of banding). Eyebrow + blob + big figure copied 1:1 from it.
+  mortgageCardPlain: { position: 'relative', overflow: 'hidden', backgroundColor: C.accent, borderRadius: 26, padding: 22, paddingBottom: 20, marginBottom: 20 },
+  mortgageBlob: { position: 'absolute', right: -26, top: -26, width: 140, height: 140, borderRadius: 70, backgroundColor: C.heroBlobFill },
+  mortgageEyebrow: { fontFamily: FONT.body, fontSize: 12.5, fontWeight: '700', color: C.heroInkSoft, letterSpacing: 0.3 },
+  mortgageBig: { fontFamily: FONT.display, fontSize: 48, fontWeight: '800', color: C.heroInk, lineHeight: 48, letterSpacing: -2 },
   mortgageFallback: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.heroInk2, marginTop: 14 },
 
   // WHIT-296: the rich payoff variant — mirrors the /mortgage hero (eyebrow, big figure, %

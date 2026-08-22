@@ -51,7 +51,7 @@ describe('WHIT-372 mortgage card — balance above the original', () => {
   it('balance above original → plain "$500,001 owing" line, never a rich "$1 / 0% gone" card', () => {
     render(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
-    expect(card.getByText('$500,001 owing')).toBeTruthy();
+    expect(card.getByText('$500,001')).toBeTruthy();
     expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
     expect(card.queryByText('0% gone')).toBeNull();
     expect(card.queryByText('$1')).toBeNull(); // no fmt(-1) leaking as a paid figure
