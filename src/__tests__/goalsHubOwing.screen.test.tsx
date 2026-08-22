@@ -1,16 +1,17 @@
-// WHIT-487 — the Goals-hub mortgage card's PLAIN branch, restyled to LEAD with a big bold owing
-// amount (30/'800') instead of a 13px subtitle. GAP coverage the goalsHub / Overpaid / Edges suites
-// leave open. Independent harness (passthrough header, injected useGoalsScreenData, stubbed writer,
-// stable router.push) matching the sibling files; REAL goalView runs so the branch gate is genuine.
-// Clock pinned to Sat 11 Jul 2026 for parity with the other goals-hub suites (the pace math is
-// deterministic; the mortgage card itself is date-independent).
+// WHIT-488 — the Goals-hub mortgage card's PLAIN branch, now a PURE copy of the /mortgage detail
+// hero tile: an eyebrow ("YOUR HOME LOAN · BALANCE OWING") + a big 48/'800' balance number, with the
+// header row (chip + "The mortgage" + chevron) and the "owing" suffix word dropped. GAP coverage the
+// goalsHub / Overpaid / Edges suites leave open. Independent harness (passthrough header, injected
+// useGoalsScreenData, stubbed writer, stable router.push) matching the sibling files; REAL goalView
+// runs so the branch gate is genuine. Clock pinned to Sat 11 Jul 2026 for parity with the other
+// goals-hub suites (the pace math is deterministic; the mortgage card itself is date-independent).
 //
-// Covers: [O1] the "owing" suffix is its OWN styled node inside the amount line;
+// Covers: [O1] the eyebrow + a suffix-less 48px number (no "owing" node beside the figure);
 // [O2] no-balance fallback renders the sentence at the FALLBACK style, not the headline, and the
 //      big-number testID is ABSENT; [O3] the error fallback likewise absent-testID;
 // [O4] tap-through to /mortgage still fires from the restacked NO-balance card;
 // [O5] the RICH branch renders its own figure and NO mortgage-owing testID;
-// [O6] a $0 balance still renders mortgage-owing ("$0 owing" — 0 is not null).
+// [O6] a $0 balance still renders mortgage-owing ("$0" figure — 0 is not null).
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react-native';
@@ -64,19 +65,19 @@ beforeEach(() => {
 afterEach(() => { jest.useRealTimers(); });
 
 describe('WHIT-487 plain mortgage card — owing headline gaps', () => {
-  // [O1] the "owing" suffix must render as its OWN <Text> node (its own smaller/lighter style),
-  // nested INSIDE the big-number line — not folded into the 30px headline nor a stray sibling.
-  // getByText('owing') resolves the inner node exactly (the outer is "$596,642 owing"); `within`
-  // the headline proves it's part of the same amount line. Reverting to a single "$X owing" string
-  // (the old mortgageSub) removes the standalone node → getByText('owing') throws.
-  it('[O1] renders "owing" as its own 14/700 node inside the amount line', () => {
+  // [O1] WHIT-488 pure hero: the amount is JUST the number as a 48px headline — the word "owing"
+  // now lives only in the "YOUR HOME LOAN · BALANCE OWING" eyebrow above it, NOT as its own suffix
+  // node beside the figure. The eyebrow is uppercase; the headline carries no lowercase "owing".
+  // Reverting to the old "$X owing" suffix node reddens the no-suffix (`queryByText('owing')` null)
+  // assertion, and reverting 48→30 reddens the style lock.
+  it('[O1] renders the eyebrow + a suffix-less 48px number (no "owing" beside the figure)', () => {
     render(<Goals />);
+    const card = within(screen.getByTestId('mortgage-link'));
+    expect(card.getByText('YOUR HOME LOAN · BALANCE OWING')).toBeTruthy(); // the eyebrow carries "owing"
     const headline = screen.getByTestId('mortgage-owing');
-    const suffix = within(headline).getByText('owing'); // descendant of the headline line
-    expect(suffix).toBeTruthy();
-    expect(suffix).toHaveStyle({ fontSize: 14, fontWeight: '700' });
-    // and the suffix is NOT the big headline itself (its style differs from the 30px number)
-    expect(suffix).not.toHaveStyle({ fontSize: 30 });
+    expect(headline).toHaveTextContent('$596,642');
+    expect(within(headline).queryByText('owing')).toBeNull(); // no lowercase suffix beside the number
+    expect(headline).toHaveStyle({ fontSize: 48, fontWeight: '800' });
   });
 
   // [O2] NO balance, no error: the sentence renders at the FALLBACK style (14/'600'), and the big
@@ -89,7 +90,7 @@ describe('WHIT-487 plain mortgage card — owing headline gaps', () => {
     expect(card.queryByTestId('mortgage-owing')).toBeNull();     // the loud number must be absent
     const line = card.getByText('Tap to see your payoff plan');
     expect(line).toHaveStyle({ fontSize: 14, fontWeight: '600' }); // fallback, not the 30px headline
-    expect(line).not.toHaveStyle({ fontSize: 30 });
+    expect(line).not.toHaveStyle({ fontSize: 48 });
   });
 
   // [O3] error fallback: same absence guard for the error copy path.
@@ -121,15 +122,15 @@ describe('WHIT-487 plain mortgage card — owing headline gaps', () => {
     expect(card.queryByTestId('mortgage-owing')).toBeNull();  // plain headline NOT also rendered
   });
 
-  // [O6] a $0 balance is a real, loaded number (0 != null) → the plain headline still renders
-  // "$0 owing". Guards the `balance != null` gate against a truthiness slip (`balance ? …`) that
+  // [O6] a $0 balance is a real, loaded number (0 != null) → the plain headline still renders the
+  // "$0" figure. Guards the `balance != null` gate against a truthiness slip (`balance ? …`) that
   // would drop a genuinely-zero balance into the fallback copy. No rich facts here, so it stays plain.
-  it('[O6] a $0 balance renders "$0 owing" as the headline (0 is not null)', () => {
+  it('[O6] a $0 balance renders the "$0" figure as the headline (0 is not null)', () => {
     mockData = baseData({ homeLoan: { balance: 0, asOf: '2026-07-04T00:00:00Z' } });
     render(<Goals />);
     const headline = screen.getByTestId('mortgage-owing');
-    expect(headline).toHaveTextContent('$0 owing');
-    expect(headline).toHaveStyle({ fontSize: 30, fontWeight: '800' });
+    expect(headline).toHaveTextContent('$0');
+    expect(headline).toHaveStyle({ fontSize: 48, fontWeight: '800' });
     expect(within(screen.getByTestId('mortgage-link')).queryByText('Tap to see your payoff plan')).toBeNull();
   });
 });

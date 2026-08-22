@@ -70,6 +70,11 @@ export const C = {
   // can't silently move the other — unlike the "Other" wedge, legibility really is at stake here.
   heroInk: '#16161e',
   heroInk2: '#1a1b26',
+  // Hero-tile decoration on the accent surface: heroInkSoft is the muted eyebrow label ink,
+  // heroBlobFill the pale corner-blob wash. app/mortgage.tsx's hero still inlines these two
+  // literals (baseline 14) — a later cleanup can point it at these tokens too.
+  heroInkSoft: 'rgba(20,18,50,.62)',
+  heroBlobFill: 'rgba(255,255,255,.1)',
 
   // Hero card gradient (Tokyo Night): accent-blue → indigo → purple, 150°.
   // The gradient starts on the accent by design, so it derives rather than copying the hex.

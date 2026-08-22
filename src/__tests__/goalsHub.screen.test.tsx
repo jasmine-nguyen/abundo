@@ -86,7 +86,7 @@ describe('empty state (WHIT-295: the mortgage IS a goal)', () => {
   it('lists the mortgage UNDER the "YOUR GOALS" heading (it counts as a goal)', () => {
     render(<Goals />);
     expect(screen.getByText('YOUR GOALS')).toBeTruthy();
-    expect(within(screen.getByTestId('mortgage-link')).getByText('The mortgage')).toBeTruthy();
+    expect(within(screen.getByTestId('mortgage-link')).getByText('YOUR HOME LOAN · BALANCE OWING')).toBeTruthy();
   });
 });
 
@@ -210,15 +210,15 @@ describe('goal cards (real balanceGoalView)', () => {
 describe('the mortgage card', () => {
   it('shows the balance owing when the home loan has loaded', () => {
     render(<Goals />);
-    expect(within(screen.getByTestId('mortgage-link')).getByText('$596,642 owing')).toBeTruthy();
+    expect(within(screen.getByTestId('mortgage-link')).getByText('$596,642')).toBeTruthy();
   });
 
-  it('renders the owing amount as a bold 30px headline (WHIT-487)', () => {
-    // The plain card leads with the amount instead of a 13px subtitle. RN Testing Library can't
-    // assert pixels, so the lock is the resolved headline style; reverting to the old mortgageSub
-    // (13px/'600') reddens both the size and the weight.
+  it('renders the balance as the big 48px hero headline (WHIT-488)', () => {
+    // WHIT-488 pure hero: the plain card is now a copy of the /mortgage detail hero tile, so the
+    // balance leads as a 48px/'800' number. RN Testing Library can't assert pixels, so the lock is
+    // the resolved headline style; reverting to the old 30px mortgageBalance reddens both size and weight.
     render(<Goals />);
-    expect(screen.getByTestId('mortgage-owing')).toHaveStyle({ fontSize: 30, fontWeight: '800' });
+    expect(screen.getByTestId('mortgage-owing')).toHaveStyle({ fontSize: 48, fontWeight: '800' });
   });
 
   it('a SECONDARY mortgage failure still shows the card (tap to open), never blanks the hub', () => {
@@ -276,7 +276,7 @@ describe('the mortgage card — rich payoff state', () => {
     mockData = baseData({ loanFacts: { ...READY_FACTS, original: 500000 } });
     render(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
-    expect(card.getByText('$596,642 owing')).toBeTruthy();
+    expect(card.getByText('$596,642')).toBeTruthy();
     expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
   });
 
@@ -429,7 +429,7 @@ describe('WHIT-296 rich mortgage card — gap boundaries', () => {
     mockData = baseData({ loanFacts: { ...READY_FACTS, original: 596642.43 } }); // == default balance
     render(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
-    expect(card.getByText('$596,642 owing')).toBeTruthy();
+    expect(card.getByText('$596,642')).toBeTruthy();
     expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
   });
 
@@ -477,7 +477,7 @@ describe('WHIT-296 rich mortgage card — gap boundaries', () => {
     render(<Goals />);
     const card = within(screen.getByTestId('mortgage-link'));
     expect(card.queryByText('PAID DOWN SO FAR')).toBeNull();
-    expect(card.getByText('$800,000 owing')).toBeTruthy();
+    expect(card.getByText('$800,000')).toBeTruthy();
   });
 
   // [G7] a residual-cents balance that DISPLAYS as "$0 to go" must read "100% gone", not 99 — the
