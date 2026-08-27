@@ -203,6 +203,30 @@ HOMELOAN_ACCOUNT_ID = "up-homeloan"
 # to the Accounts tab. Only lambda_api/handler.py consumes it (no shared repository_*
 # imports it), so the WHIT-136 sync guard doesn't require a shared mirror.
 ACCOUNT_BALANCES_PATH = "/accounts/balances"
+# API Gateway route path for the on-demand live balance refresh (POST). A pull-to-refresh
+# calls it to fetch fresh balances from BankSync now (throttled), rather than re-reading the
+# once-a-day poller's stored values. lambda_api-only route (no shared mirror needed).
+ACCOUNT_BALANCES_REFRESH_PATH = "/accounts/balances/refresh"
+# Short per-account BankSync timeout for the interactive refresh: the accounts are fetched
+# concurrently, so worst-case wall time is ~this, kept well under the 30s API-Gateway
+# integration cap (the daily poller uses the longer HOMELOAN_BALANCE_TIMEOUT_SECONDS).
+REFRESH_FETCH_TIMEOUT_SECONDS = 10
+# Min seconds between live refreshes: a pull within this window returns the stored balances
+# with no bank call (protects against cost + BankSync rate-limits on repeated pulls).
+REFRESH_THROTTLE_SECONDS = 60
+# Every account the refresh endpoint fetches a live balance for. lambda_api/handler.py
+# enumerates these to fan out the concurrent getBalance calls, so — unlike the poller-only
+# copy — this MUST be mirrored here (lambda_api/constants.py shadows the shared layer at
+# runtime). Kept equal to shared/constants.py, enforced by a bespoke assertion in
+# tests/lambda_api/test_constants_sync.py.
+BALANCE_SOURCES = [
+    {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                       # up-spending
+    {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"},                       # up-homeloan
+    {"bid": "fiskil_4", "aid": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"},  # anz-rewards-black-visa
+]
+assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
+    "every BALANCE_SOURCES `aid` must be a key in ACCOUNT_ID_MAP"
+)
 
 # --- Last repayment (WHIT-115) ---------------------------------------------
 # API Gateway route path for the latest home-loan repayment (GET only). Reads

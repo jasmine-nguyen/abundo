@@ -107,3 +107,31 @@ def test_account_balance_keyed_under_own_partition_no_gsi_attrs(account_balance_
     assert item["sk"] == "BALANCE"
     assert "account_id" not in item
     assert "date" not in item
+
+
+# --- refresh throttle marker (on-demand live refresh) ------------------------
+
+
+def test_last_refresh_at_is_none_before_any_write(account_balance_repo):
+    assert account_balance_repo.get_last_refresh_at() is None
+
+
+def test_set_then_get_last_refresh_round_trips_an_int(account_balance_repo):
+    account_balance_repo.set_last_refresh_at(1723372800)
+    got = account_balance_repo.get_last_refresh_at()
+    assert got == 1723372800
+    assert isinstance(got, int)
+
+
+def test_refresh_marker_never_leaks_into_list_balances_or_gsi(account_balance_repo):
+    # The marker shares the ACCTBAL# partition prefix but must never be mistaken for a
+    # balance row: list_balances only ever gets the account ids, and the marker carries no
+    # account_id/date so it stays off the date-index GSI.
+    account_balance_repo.set_last_refresh_at(1723372800)
+    account_balance_repo.upsert_balance("up-spending", Decimal("96270.59"), None, "AUD", "d", "checking")
+    rows = account_balance_repo.list_balances(["up-spending", "up-homeloan", "anz-rewards-black-visa"])
+    assert [r["account_id"] for r in rows] == ["up-spending"]
+    marker = account_balance_repo._table.store[("ACCTBAL#REFRESH", "MARKER")]
+    assert marker["sk"] == "MARKER"
+    assert "account_id" not in marker
+    assert "date" not in marker

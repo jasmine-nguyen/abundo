@@ -19,10 +19,9 @@ Invoked only by EventBridge Scheduler, never by API Gateway. ``constants``,
 """
 
 import calendar
-import json
 import logging
 import time
-import urllib.request
+import urllib.request  # noqa: F401 — load-bearing test seam; see the balance_fetch import below
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
@@ -53,16 +52,14 @@ from repository import (
 )
 from repository_notify import NotifyRepository
 from api_key import get_api_key as _fetch_api_key
+# BalanceError + normalise_account_balance + the raw fetch now live in the shared
+# balance_fetch module (reused by the on-demand refresh API). `import urllib.request`
+# stays above so the poller tests' `handler.urllib.request.urlopen` patch still reaches
+# the shared fetch (same module singleton).
+from balance_fetch import BalanceError, normalise_account_balance, fetch_balance as _fetch_balance
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-
-class BalanceError(Exception):
-    """A getBalance response we can't turn into a stored balance (BankSync
-    reported failure, the payload was missing fields, or it wasn't the mortgage
-    account). Raised by normalise_balance and swallowed by lambda_handler so a bad
-    poll leaves the last-good row untouched."""
 
 
 def get_api_key() -> str:
@@ -71,20 +68,16 @@ def get_api_key() -> str:
 
 
 def fetch_balance(bid: str, aid: str, api_key: str) -> dict:
-    """GET /v1/banks/{bid}/accounts/{aid}/balances -> the parsed JSON payload."""
-    url = f"{BANKSYNC_BASE_URL}/v1/banks/{bid}/accounts/{aid}/balances"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "X-API-Key": api_key,
-            # BankSync sits behind Cloudflare, which blocks the default
-            # "Python-urllib" User-Agent with a 403 (error 1010). Send our own.
-            "User-Agent": "abundo-homeloan-request",
-        },
-        method="GET",
+    """GET /v1/banks/{bid}/accounts/{aid}/balances -> the parsed JSON payload.
+
+    Thin wrapper over the shared fetch with the poller's own base URL, 30s timeout and
+    User-Agent (BankSync sits behind Cloudflare, which 403s the default urllib UA)."""
+    return _fetch_balance(
+        bid, aid, api_key,
+        base_url=BANKSYNC_BASE_URL,
+        timeout=HOMELOAN_BALANCE_TIMEOUT_SECONDS,
+        user_agent="abundo-homeloan-request",
     )
-    with urllib.request.urlopen(req, timeout=HOMELOAN_BALANCE_TIMEOUT_SECONDS) as resp:
-        return json.loads(resp.read())
 
 
 def normalise_balance(payload: dict) -> dict:
@@ -123,53 +116,6 @@ def normalise_balance(payload: dict) -> dict:
         raise BalanceError("getBalance `data` missing `date`")
     currency = data.get("currency") or "AUD"
     return {"balance": balance, "as_of": as_of, "currency": currency}
-
-
-def normalise_account_balance(payload: dict) -> dict:
-    """Turn a getBalance payload into a SIGNED per-account balance row (WHIT-212).
-
-    Unlike ``normalise_balance`` (mortgage-only, abs), this keeps BankSync's ``amount``
-    SIGNED as-is — spending positive, a loan or credit-card balance negative — and also
-    captures ``availableBalance``, ``currency`` and ``accountType`` for the Accounts tab.
-    Only ``amount``/``date`` are required; a failure response or a missing required field
-    raises BalanceError so the caller keeps this account's last-good row. There is NO
-    account-type guard here: this path is meant to store every account, not just the
-    mortgage.
-    """
-    if payload.get("success") is not True:
-        raise BalanceError(f"getBalance returned failure: {payload.get('error')!r}")
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        raise BalanceError("getBalance payload missing `data`")
-
-    # `is None` (not just missing) so a JSON `null` amount raises a clean BalanceError
-    # rather than an opaque Decimal("None") InvalidOperation.
-    if data.get("amount") is None:
-        raise BalanceError("getBalance `data` missing `amount`")
-    try:
-        amount = Decimal(str(data["amount"]))
-    except InvalidOperation as e:
-        raise BalanceError(f"getBalance `amount` is not a number: {data['amount']!r}") from e
-
-    as_of = data.get("date")
-    if not as_of:
-        raise BalanceError("getBalance `data` missing `date`")
-
-    # availableBalance is a secondary display field (credit-card "available credit"). A
-    # missing or malformed one is non-fatal — drop it rather than lose the whole reading.
-    available_raw = data.get("availableBalance")
-    try:
-        available = None if available_raw is None else Decimal(str(available_raw))
-    except InvalidOperation:
-        available = None
-
-    return {
-        "amount": amount,
-        "available_balance": available,
-        "currency": data.get("currency") or "AUD",
-        "as_of": as_of,
-        "account_type": data.get("accountType"),
-    }
 
 
 def check_repayment_landed_but_no_push(
