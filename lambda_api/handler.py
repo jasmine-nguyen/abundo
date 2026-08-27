@@ -1,6 +1,12 @@
 from constants import (
     ACCOUNT_BALANCES_PATH,
+    ACCOUNT_BALANCES_REFRESH_PATH,
     ACCOUNT_ID_MAP,
+    BALANCE_SOURCES,
+    BANKSYNC_BASE_URL,
+    BANKSYNC_USER_AGENT,
+    REFRESH_FETCH_TIMEOUT_SECONDS,
+    REFRESH_THROTTLE_SECONDS,
     BREAKDOWN_MAX_LOOKBACK,
     BREAKDOWN_PATH,
     BUDGET_PATH,
@@ -68,9 +74,11 @@ from banksync_enrichments import (
     BankSyncError,
     create_rule,
     delete_rule,
+    get_api_key,
     list_rules,
     update_rule,
 )
+from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
 # The pay-cycle window + spend summariser live in the shared layer (WHIT-22) so the
 # webhook's budget-alert detection computes spend identically to this read API.
 from spend import (
@@ -102,7 +110,9 @@ import json
 import logging
 import math
 import re
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +217,9 @@ def lambda_handler(event, context):
 
         if path == ACCOUNT_BALANCES_PATH and method == "GET":
             return _json_response(200, get_account_balances(AccountBalanceRepository()))
+
+        if path == ACCOUNT_BALANCES_REFRESH_PATH and method == "POST":
+            return refresh_account_balances(AccountBalanceRepository())
 
         if path == REPAYMENT_PATH and method == "GET":
             return _json_response(200, get_repayment(TransactionRepository()))
@@ -1948,6 +1961,65 @@ def get_account_balances(repo: AccountBalanceRepository) -> list:
     empty list — a 200, never a 404, so the client needs no special-casing.
     """
     return repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values())))
+
+
+def _fetch_one_account_balance(source: dict, api_key: str) -> tuple:
+    """Fetch + normalise one account's live balance. Returns (aid, normalised balance)."""
+    payload = fetch_balance(
+        source["bid"],
+        source["aid"],
+        api_key,
+        base_url=BANKSYNC_BASE_URL,
+        timeout=REFRESH_FETCH_TIMEOUT_SECONDS,
+        user_agent=BANKSYNC_USER_AGENT,
+    )
+    return source["aid"], normalise_account_balance(payload)
+
+
+def refresh_account_balances(repo: AccountBalanceRepository) -> dict:
+    """POST /accounts/balances/refresh — fetch fresh balances from BankSync now (WHIT).
+
+    Pull-to-refresh calls this so the Accounts tab shows live balances rather than the daily
+    poller's stored values. Throttled to REFRESH_THROTTLE_SECONDS: a call within that window
+    of the last live fetch returns the stored balances with no bank call. Otherwise it fans a
+    concurrent getBalance out per account (short timeout, well under the API-Gateway cap),
+    upserts each account that succeeds, and returns the same shape as GET /accounts/balances.
+
+    Best-effort per account (matches the daily poller): one broken/re-linked account keeps its
+    last-good row and never blocks the others. A 502 comes back only when EVERY account failed.
+    """
+    now = int(time.time())
+    last = repo.get_last_refresh_at()
+    if last is not None and now - last < REFRESH_THROTTLE_SECONDS:
+        return _json_response(200, repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values()))))
+
+    api_key = get_api_key()
+    fresh = []
+    with ThreadPoolExecutor(max_workers=len(BALANCE_SOURCES)) as executor:
+        futures = [executor.submit(_fetch_one_account_balance, source, api_key) for source in BALANCE_SOURCES]
+        for future in futures:
+            try:
+                fresh.append(future.result())
+            except (BalanceError, OSError, ValueError) as e:
+                # Best-effort: log and skip this account; the others still refresh.
+                logger.warning("live balance refresh failed for one account: %s", e)
+
+    # Arm the throttle on any live attempt, so pull-spam during a bank hiccup still backs off.
+    repo.set_last_refresh_at(now)
+
+    if not fresh:
+        return _json_response(502, {"error": "could not refresh balances"})
+
+    for aid, balance in fresh:
+        repo.upsert_balance(
+            ACCOUNT_ID_MAP[aid],
+            balance["amount"],
+            balance["available_balance"],
+            balance["currency"],
+            balance["as_of"],
+            balance["account_type"],
+        )
+    return _json_response(200, repo.list_balances(sorted(set(ACCOUNT_ID_MAP.values()))))
 
 
 _REPAYMENT_NULL = {"amount": None, "date": None, "principal": None, "interest": None}

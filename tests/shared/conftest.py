@@ -43,6 +43,7 @@ _REIMPORT = (
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
     "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
+    "balance_fetch",
 )
 
 
@@ -80,6 +81,7 @@ def shared():
         saved_real = {name: sys.modules.pop(name, None) for name in _REIMPORT}
 
         import encoders
+        import balance_fetch
         import repository_transaction
         import repository_balance
         import repository_loanfacts
@@ -102,6 +104,7 @@ def shared():
 
         ns = types.SimpleNamespace(
             encoders=encoders, repository=repository_transaction,
+            balance_fetch=balance_fetch,
             balance=repository_balance, loanfacts=repository_loanfacts,
             milestone=repository_milestone,
             budget=repository_budget, goals=repository_goals, insight=repository_insight,

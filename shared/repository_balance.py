@@ -27,6 +27,14 @@ def _account_balance_key(account_id: str) -> dict:
     return {"pk": f"ACCTBAL#{account_id}", "sk": "BALANCE"}
 
 
+# The on-demand refresh throttle marker: a single row holding the epoch of the last live
+# BankSync fetch. Its sk is "MARKER" (not "BALANCE") and "REFRESH" is never an account id,
+# so it can never be mistaken for a balance row by list_balances; it carries no
+# `account_id`/`date`, so it stays out of the date-index GSI.
+def _refresh_marker_key() -> dict:
+    return {"pk": "ACCTBAL#REFRESH", "sk": "MARKER"}
+
+
 class HomeLoanBalanceRepository:
     """Stores the latest home-loan balance as a single DynamoDB item.
 
@@ -164,3 +172,25 @@ class AccountBalanceRepository:
                 "account_type": item.get("account_type"),
             })
         return out
+
+    def get_last_refresh_at(self) -> Optional[int]:
+        """Epoch seconds of the last on-demand live refresh, or None if never refreshed.
+
+        Backs the 60s throttle on POST /accounts/balances/refresh.
+        """
+        try:
+            item = self._get_table().get_item(Key=_refresh_marker_key()).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read balance refresh marker")
+        if item is None:
+            return None
+        return int(item["last_fetch_at"])
+
+    def set_last_refresh_at(self, now: int) -> None:
+        """Record that a live refresh was attempted at epoch `now` (plain put)."""
+        try:
+            self._get_table().put_item(
+                Item={**_refresh_marker_key(), "last_fetch_at": now}
+            )
+        except ClientError as e:
+            handle_database_error(e, "write balance refresh marker")

@@ -94,3 +94,13 @@ def test_lambda_api_constants_have_the_same_values_as_shared():
     assert not mismatched, (
         "lambda_api/constants.py has drifted from shared/constants.py: " + str(mismatched)
     )
+
+
+def test_balance_sources_mirror_matches_shared():
+    """BALANCE_SOURCES is imported by lambda_api/handler.py (the refresh endpoint fans out
+    over it) but NOT by any shared module, so the auto guard above never checks it. It is
+    mirrored into lambda_api/constants.py by hand — pin it to the shared copy explicitly, or
+    a drift would silently make the endpoint fetch the wrong accounts."""
+    shared = _constants_namespace(_SHARED_DIR / "constants.py")
+    api = _constants_namespace(_API_CONSTANTS)
+    assert api["BALANCE_SOURCES"] == shared["BALANCE_SOURCES"]
