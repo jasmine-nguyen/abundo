@@ -637,6 +637,10 @@ export function useTransactionsScreenData(): TransactionsScreenData {
         : prev);
     feedQuery.refetch();
     categoriesQuery.refetch();
+    // A pull also force-refreshes the live per-account balances (past the 45s staleTime), so the
+    // Accounts tab's dollar figures update on pull. Kept out of isFetching/isError — a balances
+    // hiccup must never blank or stick-spin the transaction list (WHIT-212 / WHIT-363).
+    queryClient.refetchQueries({ queryKey: accountBalancesKey });
   }, [feedQuery, categoriesQuery, queryClient]);
   const refetchStale = useCallback(() => {
     if (categoriesQuery.isStale) categoriesQuery.refetch();
