@@ -53,6 +53,14 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const AI_GENERATE_TIMEOUT_MS = 60_000;
 
 /**
+ * The on-demand balance refresh calls the bank live (BankSync), which takes seconds — the
+ * default 15s read budget would falsely abort it. The server caps each account at ~10s and
+ * fans them out concurrently, so it stays under the 30s API-Gateway ceiling; this matches
+ * that ceiling as the client-side safety cap.
+ */
+const BALANCE_REFRESH_TIMEOUT_MS = 30_000;
+
+/**
  * Read a SUCCESS response's JSON body under the same stall timeout `failed()` gives the error body.
  * apiFetch's abort timer only bounds the HEADERS (cleared the instant they resolve), so a 2xx whose
  * body never finishes streaming would hang the read — and the query/writer behind it — leaving the
@@ -471,6 +479,25 @@ export async function fetchAccountBalances(): Promise<AccountBalance[]> {
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return readJson(response);
+}
+
+/**
+ * Ask the server to fetch FRESH balances from the bank right now (pull-to-refresh), rather than
+ * re-reading the once-a-day stored values. The server throttles to ~60s and returns the same
+ * shape as fetchAccountBalances (stored values instantly while throttled, freshly-fetched
+ * otherwise). Runs long (a live bank call), so it gets BALANCE_REFRESH_TIMEOUT_MS on both the
+ * request and the body read, not the 15s default.
+ *
+ * @throws If the response status is not OK (the caller keeps the last-good balances + toasts).
+ */
+export async function refreshAccountBalances(): Promise<AccountBalance[]> {
+  const response = await apiFetch(`${API_BASE}/accounts/balances/refresh`, {
+    method: "POST",
+    headers: await buildHeaders(),
+  }, BALANCE_REFRESH_TIMEOUT_MS);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, BALANCE_REFRESH_TIMEOUT_MS);
 }
 
 /**

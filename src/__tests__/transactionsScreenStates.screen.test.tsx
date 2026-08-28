@@ -32,6 +32,7 @@ const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart'
 // `retryLoad` and `category` are inert here (the component uses the query's `category`). SelectMode
 // asserts on `mockOpenMultiPicker`, so it points at a shared module-scope mock.
 const mockOpenMultiPicker = jest.fn();
+const mockShowToast = jest.fn();
 jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
@@ -40,6 +41,7 @@ jest.mock('../context', () => {
       retryLoad: jest.fn(),
       openPicker: jest.fn(),
       openMultiPicker: mockOpenMultiPicker,
+      showToast: mockShowToast,
       category: (id: string | null) => (id === 'groceries' ? CAT : undefined),
     }),
   };
@@ -58,6 +60,22 @@ import Transactions from '../../app/(tabs)/transactions';
 
 const refetch = jest.fn();
 const refetchStale = jest.fn();
+// Pull-to-refresh now drives refetchList (list refresh) + refreshLiveBalances (the live bank call);
+// onRefresh clears the spinner in a .finally() once BOTH settle — never off isFetching (WHIT-363).
+// Tests hold the resolvers so they can assert the spinner is up mid-pull and down once it settles.
+let resolveList: () => void = () => {};
+let resolveBalances: () => void = () => {};
+let rejectBalances: (e?: unknown) => void = () => {};
+const refetchList = jest.fn(() => new Promise<void>((res) => { resolveList = res; }));
+const refreshLiveBalances = jest.fn(() => new Promise<void>((res, rej) => { resolveBalances = res; rejectBalances = rej; }));
+// Settle the in-flight pull so onRefresh's .finally() runs and clears the spinner.
+async function settlePull() {
+  await act(async () => { resolveList(); resolveBalances(); await Promise.resolve(); });
+}
+// Settle a pull whose LIVE balance call fails (list ok, balances reject — onRefresh catches it).
+async function settlePullWithBalancesError() {
+  await act(async () => { resolveList(); rejectBalances(new Error('API error: 502')); await Promise.resolve(); });
+}
 
 const ROW = {
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
@@ -271,8 +289,8 @@ it('does not show Load More on the Accounts tab', () => {
 describe('Transactions — pull-to-refresh (WHIT-363)', () => {
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
 
-function txData(over: Partial<{ transactions: unknown[]; isFetching: boolean }> = {}) {
-  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch, refetchStale, ...over };
+function txData(over: Partial<{ transactions: unknown[]; isFetching: boolean; isLoading: boolean }> = {}) {
+  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch, refetchStale, refetchList, refreshLiveBalances, ...over };
 }
 
 // `props` is `any` to match testing-library's UNSAFE_getByType return (ReactTestInstance).
@@ -287,59 +305,60 @@ const isSpinning = (getByType: GetByType) => getByType(RefreshControl).props.ref
 beforeEach(() => {
   refetch.mockClear();
   refetchStale.mockClear();
+  refetchList.mockClear();
+  refreshLiveBalances.mockClear();
+  mockShowToast.mockClear();
   mockTx = txData();
 });
 
-it('pull-to-refresh refetches the visible list (the query), and nothing else', () => {
+it('pull-to-refresh refreshes the visible list AND the live balances — not the Retry re-read', async () => {
   const { UNSAFE_getByType } = render(<Transactions />);
   pull(UNSAFE_getByType);
-  expect(refetch).toHaveBeenCalledTimes(1); // WHIT-192: refreshes the query-backed list only
+  expect(refetchList).toHaveBeenCalledTimes(1);         // the list (feed + categories)
+  expect(refreshLiveBalances).toHaveBeenCalledTimes(1); // the LIVE bank call
+  expect(refetch).not.toHaveBeenCalled();               // Retry's cheap stored re-read is NOT the pull
+  await settlePull();
 });
 
-// WHIT-363 fail-on-revert: this is the bug. A background/focus refetch (refetchStale) flips
-// isFetching true with NO user pull. The list is non-empty, so the reverted
-// `refreshing={isFetching && transactions.length > 0}` would be TRUE here — a stuck spinner.
-// The fix (`refreshing={pulling}`) keeps it DOWN because the user never pulled.
-it('a background/focus refetch (isFetching, non-empty list, NO pull) does NOT raise the spinner', () => {
+// A background/focus refetch (refetchStale) runs with NO user pull. The spinner is owned by the
+// local `pulling` flag (never isFetching, WHIT-363), so it stays DOWN when the user hasn't pulled.
+it('a background/focus refetch (non-empty list, NO pull) does NOT raise the spinner', () => {
   mockTx = txData({ transactions: [ROW], isFetching: true });
   const { UNSAFE_getByType } = render(<Transactions />);
   expect(isSpinning(UNSAFE_getByType)).toBe(false);
 });
 
-// Fail-on-revert, and the complement of the background test above: with NO fetch in flight, a
-// finger-pull STILL raises the spinner — proving `pulling` alone drives it, not `isFetching`.
-// Revert to `refreshing={isFetching && transactions.length > 0}` and this goes RED (isFetching is
-// false here, so the reverted expression is false).
-it('a genuine user pull raises the spinner even with no background fetch (pulling drives it)', () => {
-  mockTx = txData({ transactions: [ROW], isFetching: false });
+// A finger-pull raises the spinner while the pull is in flight — `pulling` drives it.
+it('a genuine user pull raises the spinner while it is in flight', async () => {
+  mockTx = txData({ transactions: [ROW] });
+  const { UNSAFE_getByType } = render(<Transactions />);
+  pull(UNSAFE_getByType);
+  expect(isSpinning(UNSAFE_getByType)).toBe(true); // up while the list + live call are pending
+  await settlePull();
+});
+
+// The spinner clears once the pull's work (list + live balances) SETTLES — via onRefresh's
+// .finally(), not isFetching. Fail-on-revert: drop the `.finally(() => setPulling(false))` and the
+// spinner never clears → this goes RED.
+it('the pull spinner clears when the pull settles', async () => {
+  mockTx = txData({ transactions: [ROW] });
   const { UNSAFE_getByType } = render(<Transactions />);
   pull(UNSAFE_getByType);
   expect(isSpinning(UNSAFE_getByType)).toBe(true);
-});
-
-// Also covers the card's exact scenario: a background refetch (refetchStale) is already in flight
-// (isFetching true) when the user pulls DURING it — the pull spins, then clears when the fetch
-// ends, not sticks.
-it('the pull spinner clears when that pull\'s fetch resolves', () => {
-  // Pull while a fetch is in flight (isFetching true) so the falling-edge watcher latches it...
-  mockTx = txData({ transactions: [ROW], isFetching: true });
-  const { UNSAFE_getByType, rerender } = render(<Transactions />);
-  pull(UNSAFE_getByType);
-  expect(isSpinning(UNSAFE_getByType)).toBe(true);
-  // ...then the fetch settles (isFetching false) → the watcher clears `pulling`.
-  mockTx = txData({ transactions: [ROW], isFetching: false });
-  act(() => { rerender(<Transactions />); });
+  await settlePull();
   expect(isSpinning(UNSAFE_getByType)).toBe(false);
 });
 
-it('the pull spinner does NOT spin during a cold load (empty + fetching) — the inline spinner owns it', () => {
-  mockTx = txData({ transactions: [], isFetching: true });
+it('the pull spinner does NOT spin during a cold load (empty list) — the inline spinner owns it', async () => {
+  mockTx = txData({ transactions: [], isLoading: true });
   const { UNSAFE_getByType } = render(<Transactions />);
-  expect(isSpinning(UNSAFE_getByType)).toBe(false);
+  pull(UNSAFE_getByType);
+  expect(isSpinning(UNSAFE_getByType)).toBe(false); // empty list → pull spinner suppressed
+  await settlePull();
 });
 
-it('the spinner is down when nothing is fetching', () => {
-  mockTx = txData({ transactions: [ROW], isFetching: false });
+it('the spinner is down when the user has not pulled', () => {
+  mockTx = txData({ transactions: [ROW] });
   const { UNSAFE_getByType } = render(<Transactions />);
   expect(isSpinning(UNSAFE_getByType)).toBe(false);
 });
@@ -366,7 +385,7 @@ describe('Transactions — pull-to-refresh adversarial edges (WHIT-363)', () => 
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
 
 function txData(over: Partial<{ transactions: unknown[]; isFetching: boolean; isError: boolean; isLoading: boolean }> = {}) {
-  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch, refetchStale, ...over };
+  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch, refetchStale, refetchList, refreshLiveBalances, ...over };
 }
 
 type GetByType = (t: typeof RefreshControl) => { props: any };
@@ -376,24 +395,25 @@ const isSpinning = (getByType: GetByType) => getByType(RefreshControl).props.ref
 beforeEach(() => {
   refetch.mockClear();
   refetchStale.mockClear();
+  refetchList.mockClear();
+  refreshLiveBalances.mockClear();
+  mockShowToast.mockClear();
   mockTx = txData();
 });
 
-// [E1] The pull's fetch FAILS. isFetching still falls to false (the query settles into an
-// error), so the falling-edge watcher must clear `pulling` — the spinner must not stick just
-// because the fetch errored. isError is true but the list keeps its prior rows (no cold error
-// screen), so RefreshControl is still mounted and would otherwise spin forever.
-// Fail-on-revert: guard the clear with `&& !isError` in transactions.tsx (keep spinning on
-// error) → pulling never clears → this assertion flips to true → RED.
-it('[E1] a pull whose fetch ERRORS still clears the spinner', () => {
-  mockTx = txData({ transactions: [ROW], isFetching: true });
-  const { UNSAFE_getByType, rerender } = render(<Transactions />);
+// [E1] The pull's LIVE balance call FAILS. onRefresh catches it (toasts) and its .finally() still
+// clears the spinner once the pull settles — the spinner must not stick just because the live call
+// rejected, and the list keeps its rows (a balances failure never blanks it).
+// Fail-on-revert: drop the `.catch`/`.finally` in onRefresh → the rejection escapes / the spinner
+// never clears → this assertion flips to true → RED.
+it('[E1] a pull whose live balance call ERRORS still clears the spinner (and toasts)', async () => {
+  mockTx = txData({ transactions: [ROW] });
+  const { UNSAFE_getByType } = render(<Transactions />);
   pull(UNSAFE_getByType);
   expect(isSpinning(UNSAFE_getByType)).toBe(true);
-  // Fetch settles into an error: isFetching false, isError true, rows unchanged.
-  mockTx = { ...txData({ transactions: [ROW], isFetching: false }), isError: true };
-  act(() => { rerender(<Transactions />); });
+  await settlePullWithBalancesError(); // live call rejects, list ok
   expect(isSpinning(UNSAFE_getByType)).toBe(false); // cleared, not stuck on error
+  expect(mockShowToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
 });
 
 // [E3] A pull DURING the cold-load window (empty list still loading) must NOT double-spin with
@@ -401,35 +421,31 @@ it('[E1] a pull whose fetch ERRORS still clears the spinner', () => {
 // the empty first-load state. The `&& transactions.length > 0` guard on `refreshing` enforces it.
 // Fail-on-revert: drop that guard (refreshing={pulling}) → a pull with an empty list raises the
 // RefreshControl too → this assertion flips to true → RED.
-it('[E3] a pull during a cold load does NOT raise the pull spinner (inline spinner owns it)', () => {
-  mockTx = txData({ transactions: [], isLoading: true, isFetching: true });
+it('[E3] a pull during a cold load does NOT raise the pull spinner (inline spinner owns it)', async () => {
+  mockTx = txData({ transactions: [], isLoading: true });
   const { UNSAFE_getByType } = render(<Transactions />);
   pull(UNSAFE_getByType);
   expect(isSpinning(UNSAFE_getByType)).toBe(false); // empty list → pull spinner suppressed
+  await settlePull();
 });
 
-// [E2] After one full pull cycle (spin → clear), a SECOND pull must spin again and clear —
-// the `wasFetching` ref / `pulling` flag must reset, not latch permanently.
+// [E2] After one full pull cycle (spin → clear), a SECOND pull must spin again and clear — the
+// `pulling` flag must reset, not latch permanently.
 // Fail-on-revert: drop `setPulling(true)` from onRefresh → the second pull can't raise the
 // spinner → the mid-test `true` assertion goes RED (same guard as sibling test 3, but this
 // locks that it survives a prior completed cycle).
-it('[E2] a second pull after the first resolves still spins and clears', () => {
-  mockTx = txData({ transactions: [ROW], isFetching: true });
-  const { UNSAFE_getByType, rerender } = render(<Transactions />);
+it('[E2] a second pull after the first resolves still spins and clears', async () => {
+  mockTx = txData({ transactions: [ROW] });
+  const { UNSAFE_getByType } = render(<Transactions />);
   // First cycle.
   pull(UNSAFE_getByType);
   expect(isSpinning(UNSAFE_getByType)).toBe(true);
-  mockTx = txData({ transactions: [ROW], isFetching: false });
-  act(() => { rerender(<Transactions />); });
+  await settlePull();
   expect(isSpinning(UNSAFE_getByType)).toBe(false);
-  // Second cycle — a new fetch is in flight again.
-  mockTx = txData({ transactions: [ROW], isFetching: true });
-  act(() => { rerender(<Transactions />); });
-  expect(isSpinning(UNSAFE_getByType)).toBe(false); // a background fetch alone: still no spinner
+  // Second cycle — a fresh pull spins and clears again (the flag reset, didn't latch).
   pull(UNSAFE_getByType);
   expect(isSpinning(UNSAFE_getByType)).toBe(true);  // second pull raises it again
-  mockTx = txData({ transactions: [ROW], isFetching: false });
-  act(() => { rerender(<Transactions />); });
+  await settlePull();
   expect(isSpinning(UNSAFE_getByType)).toBe(false); // and clears again
 });
 });
