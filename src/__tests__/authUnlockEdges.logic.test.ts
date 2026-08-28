@@ -127,7 +127,10 @@ describe('signInWithGoogle guarded-write path', () => {
     mockExchange.mockResolvedValue({ idToken: 'ID', accessToken: 'A', refreshToken: 'R', issuedAt: nowSec(), expiresIn: 3600 });
     const auth = loadAuth();
 
-    await expect(auth.signInWithGoogle()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Couldn't complete Google sign-in. Please try again.",
+    });
     // Token written FIRST, sentinel AFTER: a failed token write must never leave a
     // "session exists" marker pointing at a token that isn't there.
     expect(mockSetItem.mock.calls.some((c) => c[0] === SENTINEL_KEY)).toBe(false);
@@ -388,11 +391,14 @@ describe('signInWithGoogle partial-persist rollback', () => {
     });
     const auth = loadAuth();
 
-    await expect(auth.signInWithGoogle()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Couldn't complete Google sign-in. Please try again.",
+    });
     // The rollback deletes the auth-method key, which the normal persist path only ever
     // WRITES (never deletes) — so a method-key DELETE binds that clearStoredSession ran.
-    // Fail-on-revert: without the rollback the outer catch just returns false and the
-    // guarded token + method key survive → this delete never fires.
+    // Fail-on-revert: without the rollback the outer catch just returns the error result
+    // and the guarded token + method key survive → this delete never fires.
     expect(mockDeleteItem.mock.calls.some((c) => c[0] === METHOD_KEY)).toBe(true);
     expect(auth.getStatus()).not.toBe('authed');
   });

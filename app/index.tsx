@@ -133,16 +133,21 @@ export default function Login() {
     setError(null);
     setNotice(null);
     setBusy('google');
-    let ok = false;
+    let res: Awaited<ReturnType<typeof signInWithGoogle>>;
     try {
-      ok = await signInWithGoogle();
+      res = await signInWithGoogle();
     } catch {
       setBusy(null);
+      setError('Something went wrong. Please try again.');
       return;
     }
     setBusy(null);
-    if (ok) go();
-    // A false result is almost always a user cancel — stay quietly on the screen.
+    if (res.ok) {
+      go();
+      return;
+    }
+    // A result with no error is a genuine user cancel — stay quietly on the screen.
+    if (res.error) setError(res.error);
   };
 
   // WHIT-182: send the reset code, then confirm it with a new password.

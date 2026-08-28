@@ -84,7 +84,7 @@ describe('signInWithGoogle (Hosted UI PKCE flow)', () => {
     });
     const auth = loadAuth();
 
-    await expect(auth.signInWithGoogle()).resolves.toBe(true);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: true });
     expect(mockExchange).toHaveBeenCalledWith(
       expect.objectContaining({ clientId: 'client123', code: 'AUTH_CODE', extraParams: { code_verifier: 'test-verifier' } }),
       expect.objectContaining({ tokenEndpoint: `${DOMAIN}/oauth2/token` }),
@@ -93,25 +93,31 @@ describe('signInWithGoogle (Hosted UI PKCE flow)', () => {
     expect(auth.getStatus()).toBe('authed');
   });
 
-  it('returns false and stores nothing when the user cancels', async () => {
+  it('resolves silently (no error) and stores nothing when the user cancels', async () => {
     mockPromptAsync.mockResolvedValue({ type: 'cancel' });
     const auth = loadAuth();
 
-    await expect(auth.signInWithGoogle()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: false });
     expect(mockExchange).not.toHaveBeenCalled();
     expect(mockStore.size).toBe(0);
   });
 
-  it('never throws when promptAsync rejects', async () => {
+  it('never throws when promptAsync rejects — surfaces the generic failure', async () => {
     mockPromptAsync.mockRejectedValue(new Error('boom'));
     const auth = loadAuth();
-    await expect(auth.signInWithGoogle()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Couldn't complete Google sign-in. Please try again.",
+    });
   });
 
-  it('bails (returns false, no browser) when config is missing', async () => {
+  it('bails with a "not set up" error (no browser) when config is missing', async () => {
     delete process.env.EXPO_PUBLIC_COGNITO_APP_CLIENT_ID;
     const auth = loadAuth();
-    await expect(auth.signInWithGoogle()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Sign-in isn't set up. Check the app configuration.",
+    });
     expect(mockPromptAsync).not.toHaveBeenCalled();
   });
 });

@@ -12,7 +12,7 @@ const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
 
 const mockSignInWithPassword = jest.fn<(e: string, p: string) => Promise<unknown>>();
-const mockSignInWithGoogle = jest.fn<() => Promise<boolean>>();
+const mockSignInWithGoogle = jest.fn<() => Promise<import('../auth').OAuthSignInResult>>();
 jest.mock('../../src/auth', () => ({
   signInWithPassword: (...a: unknown[]) => mockSignInWithPassword(...(a as [string, string])),
   signInWithGoogle: () => mockSignInWithGoogle(),
@@ -57,18 +57,27 @@ it('the NEW_PASSWORD_REQUIRED challenge flips into the set-password form, no nav
 });
 
 it('Continue with Google calls signInWithGoogle and enters the app on success', async () => {
-  mockSignInWithGoogle.mockResolvedValue(true);
+  mockSignInWithGoogle.mockResolvedValue({ ok: true });
   const { getByTestId } = render(<Login />);
   fireEvent.press(getByTestId('login-google'));
   await waitFor(() => expect(mockSignInWithGoogle).toHaveBeenCalled());
   await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/budgets'));
 });
 
-it('a cancelled Google sign-in (false) stays on the screen, no navigation', async () => {
-  mockSignInWithGoogle.mockResolvedValue(false);
-  const { getByTestId } = render(<Login />);
+it('a cancelled Google sign-in stays silent — no navigation, no error box', async () => {
+  mockSignInWithGoogle.mockResolvedValue({ ok: false });
+  const { getByTestId, queryByTestId } = render(<Login />);
   fireEvent.press(getByTestId('login-google'));
   await waitFor(() => expect(mockSignInWithGoogle).toHaveBeenCalled());
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(queryByTestId('login-error')).toBeNull();
+});
+
+it('a failed Google sign-in shows the returned error, no navigation', async () => {
+  mockSignInWithGoogle.mockResolvedValue({ ok: false, error: "Sign-in isn't set up. Check the app configuration." });
+  const { getByTestId, findByText } = render(<Login />);
+  fireEvent.press(getByTestId('login-google'));
+  expect(await findByText("Sign-in isn't set up. Check the app configuration.")).toBeTruthy();
   expect(mockReplace).not.toHaveBeenCalled();
 });
 

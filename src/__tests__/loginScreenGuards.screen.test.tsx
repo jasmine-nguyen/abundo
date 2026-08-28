@@ -11,7 +11,7 @@ const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
 
 const mockSignInWithPassword = jest.fn<(e: string, p: string) => Promise<unknown>>();
-const mockSignInWithGoogle = jest.fn<() => Promise<boolean>>();
+const mockSignInWithGoogle = jest.fn<() => Promise<import('../auth').OAuthSignInResult>>();
 jest.mock('../../src/auth', () => ({
   signInWithPassword: (...a: unknown[]) => mockSignInWithPassword(...(a as [string, string])),
   signInWithGoogle: () => mockSignInWithGoogle(),
@@ -91,7 +91,7 @@ it('clears an earlier error once a retry succeeds', async () => {
 
 it('clears a password error when the user switches to Google and it succeeds', async () => {
   mockSignInWithPassword.mockResolvedValue({ ok: false, error: 'Incorrect email or password.' });
-  mockSignInWithGoogle.mockResolvedValue(true);
+  mockSignInWithGoogle.mockResolvedValue({ ok: true });
   const { getByTestId, findByText, queryByText } = render(<Login />);
   fill(getByTestId);
   fireEvent.press(getByTestId('login-submit'));
