@@ -3,6 +3,7 @@
 // on the budgets screens, so they're the highest-value regression lock.
 import { describe, it, expect } from '@jest/globals';
 import { elapsedFrac, budgetViews, budgetDetail, groupTransactionsByDate } from '../context';
+import type { Budget } from '../context';
 import { C } from '../theme';
 import { makeState, cat, budget, txn } from './factory';
 
@@ -247,6 +248,76 @@ describe('budgetDetail', () => {
       ],
     }), 'coffee')!;
     expect(bd.relItems.map((t) => t.transaction_id)).toEqual(['parent', 'sub']);
+  });
+});
+
+// The detail status must be pace-aware, matching the list (budgetViews): spending past
+// today's linear target is an amber caution, not a green "keep it up". Pace rides the base
+// per-cycle budget (b.budget * elapsed), so it stays consistent with the list on both screens.
+describe('budgetDetail — spend pace status', () => {
+  const detail = (over: Partial<Budget>, clock: { cycleLen: number; daysLeft: number }) =>
+    budgetDetail(makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', pending: 0, ...over })], ...clock }), 'coffee')!;
+
+  // FAIL-ON-REVERT: today's binary code reads 3667 <= 3667 as green "On target — keep it up".
+  it('100% spent on day 1 reads amber "ahead of pace", not green (the mortgage bug)', () => {
+    const d = detail({ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 });
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).not.toBe(C.good);
+    expect(d.dailyLabel).toBe('Daily limit: $0'); // envelope gone → nothing left per day
+  });
+
+  it('over pace but still under budget → amber, and the daily limit is not zeroed', () => {
+    // elapsed 2/14 ≈ 0.143, target ≈ 14.3; spent 60 is well past pace, still under 100.
+    const d = detail({ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 });
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
+    expect(d.dailyLabel).toContain('Daily limit');
+    expect(d.dailyLabel).not.toBe('Daily limit: $0');
+  });
+
+  it('on/under pace late in the cycle stays green even near 100% (no over-flagging)', () => {
+    // elapsed 13/14 ≈ 0.929, target ≈ 92.9; spent 90 is under pace → legit late spend.
+    const d = detail({ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 });
+    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusColor).toBe(C.good);
+  });
+
+  it('within the $0.50 pace tolerance stays green (guards against flagging rounding noise)', () => {
+    // elapsed 0.5, target 50; spent 50.30 is 0.30 over → within tolerance → green.
+    const d = detail({ budget: 100, posted: 50.3 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusColor).toBe(C.good);
+  });
+
+  it('pending spend counts toward pace (low posted, high pending crosses the target)', () => {
+    // elapsed 0.5, target 50; spent = posted 10 + pending 45 = 55 → over pace → amber.
+    const d = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 10, pending: 45 })],
+      cycleLen: 14, daysLeft: 7,
+    }), 'coffee')!;
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
+  });
+
+  it('$0 spent is never flagged — green', () => {
+    const d = detail({ budget: 100, posted: 0 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusColor).toBe(C.good);
+  });
+
+  it('truly over budget still reads red — the middle state did not steal it', () => {
+    const d = detail({ budget: 100, posted: 130 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('Over budget — ease up');
+    expect(d.statusColor).toBe(C.bad);
+    expect(d.dailyLabel).toBe('Daily limit: $0');
+  });
+
+  it('rollover: pace rides the base budget while over-budget uses the buffered envelope', () => {
+    // available = 100 + 100 = 200 (not over), pace target = base 100 × 0.5 = 50; spent 120 → amber.
+    const d = detail({ budget: 100, posted: 120, rollover: true, carryover: 100 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
   });
 });
 

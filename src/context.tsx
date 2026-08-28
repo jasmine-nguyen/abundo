@@ -2754,14 +2754,23 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // envelope (target + buffer), so a sinking-fund draw-down isn't flagged over.
   const spent = actual;
   const over = spent > available;
+  // Pace rides the base per-cycle target (not the rollover buffer), matching budgetViews'
+  // list label — so the same budget reads the same state on both screens. Spending past
+  // today's linear target but still under the envelope is a caution, not a green "keep it up".
+  const target = b.budget * elapsed;
+  const aheadOfPace = !over && spent - target > 0.5;
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
   const remain = available - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
+  let statusLabel = 'On target — keep it up';
+  let statusColor: string = C.good;
+  if (over) { statusLabel = 'Over budget — ease up'; statusColor = C.bad; }
+  else if (aheadOfPace) { statusLabel = 'Ahead of pace — ease up'; statusColor = C.warn; }
   return {
     ...common,
     spentBig: fmtExact(spent), ofBudget: 'of ' + fmt(available),
-    statusLabel: over ? 'Over budget — ease up' : 'On target — keep it up',
-    statusColor: over ? C.bad : C.good,
+    statusLabel,
+    statusColor,
     postedPct, pendingPct,
     postedColor: over ? C.bad : c.color, pendingTint: tint(over ? C.bad : c.color, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
