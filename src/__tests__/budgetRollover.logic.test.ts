@@ -89,7 +89,9 @@ describe('budgetDetail — carryover', () => {
   it('positive buffer: header is the envelope and the rolled-over line shows', () => {
     const d = detail({ budget: 100, posted: 250, pending: 0, rollover: true, carryover: 200 });
     expect(d.ofBudget).toBe('of $300');                 // available
-    expect(d.statusLabel).toBe('On target — keep it up'); // 250 < available 300 → not over
+    // Not over budget (250 < 300), but far past this cycle's base pace (target = 100 × 0.5 = 50):
+    // amber "ahead of pace", matching the list's "over pace" for the same drawn-down sinking fund.
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
     expect(d.carryoverLine).toBe('Includes $200 rolled over from past cycles');
   });
 
