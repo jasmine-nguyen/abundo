@@ -52,6 +52,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   setTransactionCategories: () => api.setTransactionCategories([{ id: 't1', category: 'groceries' }]),
   fetchHomeLoan: () => api.fetchHomeLoan(),
   fetchAccountBalances: () => api.fetchAccountBalances(),
+  refreshAccountBalances: () => api.refreshAccountBalances(),
   fetchGoals: () => api.fetchGoals(),
   fetchMilestones: () => api.fetchMilestones(),
   setMilestones: () => api.setMilestones([]),

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { RefreshControl, View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -21,10 +21,10 @@ export default function Transactions() {
   const [search, setSearch] = useState('');
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { openMultiPicker } = useAppContext();
+  const { openMultiPicker, showToast } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
-  const { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData();
+  const { transactions, category, balances, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
@@ -63,26 +63,22 @@ export default function Transactions() {
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
-  // WHIT-192: pull-to-refresh re-fetches the visible transaction list. The other screens'
-  // reads (budgets, loan, rules, pay-cycle) each refresh themselves on focus via their own
-  // queries — pull no longer eagerly reloads the whole app off the retired store.
-  // WHIT-363: the pull-to-refresh spinner must show ONLY for a real finger-pull. The on-focus
-  // background refetch (refetchStale, above) also flips isFetching, and driving the spinner off
-  // isFetching let a programmatic refresh raise a spinner that RN's RefreshControl then failed
-  // to dismiss — the spinner stuck below the title on return from a transaction. So a local
-  // `pulling` flag, set only here on a user pull, owns the spinner instead.
+  // Pull-to-refresh: refresh the visible list AND fetch fresh account balances live from the
+  // bank (refreshLiveBalances). The other screens (budgets, loan, rules, pay-cycle) refresh
+  // themselves on focus via their own queries — pull doesn't reload the whole app.
+  // WHIT-363: the spinner must show ONLY for a real finger-pull and must always dismiss. The
+  // local `pulling` flag owns it, set on the pull and cleared in a `.finally()` once BOTH the
+  // list refetch and the live balance call SETTLE — success, failure, or timeout. It is NEVER
+  // driven off isFetching (that was the WHIT-363 stuck-spinner cause), so the on-focus
+  // background refetch never raises it and a slow/failed live call can't wedge it.
   const [pulling, setPulling] = useState(false);
-  const onRefresh = useCallback(() => { setPulling(true); refetch(); }, [refetch]);
-  // Clear on the falling edge of isFetching (saw a fetch, now none). refetch() flips isFetching
-  // true synchronously-enough that we never clear before the pull's own fetch is in flight; a
-  // plain `!isFetching` would clear on the first render after setPulling(true), before it starts.
-  // Relies on isFetching staying continuously true across a pull-over-background refetch
-  // (TanStack refetch defaults to cancelRefetch, so the edge falls once, on the pull's completion).
-  const wasFetching = useRef(false);
-  useEffect(() => {
-    if (isFetching) wasFetching.current = true;
-    else if (wasFetching.current) { wasFetching.current = false; setPulling(false); }
-  }, [isFetching]);
+  const onRefresh = useCallback(() => {
+    setPulling(true);
+    // A failed live refresh keeps the last-good balances; just tell the user, don't blank the list.
+    const livePull = refreshLiveBalances()
+      .catch(() => showToast('Could not refresh balances. Showing last saved.'));
+    Promise.allSettled([refetchList(), livePull]).finally(() => setPulling(false));
+  }, [refetchList, refreshLiveBalances, showToast]);
 
   // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
   // wrapper (WHIT-199). The RefreshControl is a render-prop so this screen keeps its own

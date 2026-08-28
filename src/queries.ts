@@ -6,7 +6,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
@@ -561,7 +561,7 @@ export interface RecentTransactionsScreenData {
   balances: Map<string, AccountBalance>; // account_id → live balance (WHIT-212); empty until polled
   isLoading: boolean; // first load, nothing cached yet → spinner
   isError: boolean; // a read failed after retries → inline retry
-  isFetching: boolean; // any fetch in flight (incl. a background refetch) → pull-to-refresh spinner
+  isFetching: boolean; // any first-page/list fetch in flight (incl. a background refetch) — a background-activity flag on the shared shape. NOT the pull spinner (WHIT-363 — the screen owns that via a local `pulling` flag).
   refetch: () => void; // force refresh (inline Retry / pull)
   refetchStale: () => void; // focus refresh — only refetches stale queries
 }
@@ -570,6 +570,8 @@ export interface TransactionsScreenData extends RecentTransactionsScreenData {
   hasMore: boolean; // more (older) history to page in → show the Load More control
   loadMore: () => void; // fetch the next (older) page
   isLoadingMore: boolean; // the next page is in flight → Load More spinner (NOT the pull spinner)
+  refetchList: () => Promise<unknown>; // pull: refresh the list (feed + categories), NOT balances
+  refreshLiveBalances: () => Promise<void>; // pull: fetch fresh balances live from the bank
 }
 
 // A single frozen empty list for the cold case, so `transactions` keeps a STABLE identity
@@ -614,8 +616,9 @@ export function useTransactionsScreenData(): TransactionsScreenData {
 
   const isLoading = feedQuery.isLoading || categoriesQuery.isLoading;
   const isError = feedQuery.isError || categoriesQuery.isError;
-  // Pull-to-refresh spins on the FIRST-page fetch only; a Load More (fetchNextPage) must NOT
-  // raise the pull spinner (WHIT-363), so exclude isFetchingNextPage.
+  // A background-fetch flag on the shared composite shape (WHIT-190a): first-page/list activity,
+  // excluding a Load More (isFetchingNextPage). The pull spinner is NOT driven off this (WHIT-363) —
+  // the screen owns it via a local `pulling` flag cleared in .finally(); no consumer reads this today.
   const isFetching = (feedQuery.isFetching && !feedQuery.isFetchingNextPage) || categoriesQuery.isFetching;
 
   const hasMore = feedQuery.hasNextPage;
@@ -628,26 +631,38 @@ export function useTransactionsScreenData(): TransactionsScreenData {
   //  • focus (refetchStale): re-check the loaded pages IN PLACE — refetch each by its own stable
   //    cursor, so the newest batch refreshes and the user keeps their scroll position. staleTime
   //    (45s) gates it, so rapid tab-switching doesn't refetch.
-  //  • manual pull / inline Retry (refetch): SNAP to newest — trim to the first page, then refetch
-  //    it fresh (+ the taxonomy). One round-trip, and it re-pages history cleanly from the top.
-  const refetch = useCallback(() => {
+  //  • manual pull / inline Retry: SNAP to newest — trim to the first page, then refetch it fresh
+  //    (+ the taxonomy). One round-trip, and it re-pages history cleanly from the top.
+  const refetchList = useCallback(() => {
     queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(transactionsKey, (prev) =>
       prev && prev.pages.length > 1
         ? { pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
         : prev);
-    feedQuery.refetch();
-    categoriesQuery.refetch();
-    // A pull also force-refreshes the live per-account balances (past the 45s staleTime), so the
-    // Accounts tab's dollar figures update on pull. Kept out of isFetching/isError — a balances
-    // hiccup must never blank or stick-spin the transaction list (WHIT-212 / WHIT-363).
-    queryClient.refetchQueries({ queryKey: accountBalancesKey });
+    return Promise.all([feedQuery.refetch(), categoriesQuery.refetch()]);
   }, [feedQuery, categoriesQuery, queryClient]);
+  // Inline Retry (list-load error) refreshes the list AND re-reads the STORED balances — cheap,
+  // no live bank call. The live call is pull-only (refreshLiveBalances). Balances stay out of
+  // isFetching/isError so a balances hiccup can't blank or stick-spin the list (WHIT-212/363).
+  const refetch = useCallback(() => {
+    refetchList();
+    queryClient.refetchQueries({ queryKey: accountBalancesKey });
+  }, [refetchList, queryClient]);
+  // Pull-to-refresh: fetch FRESH balances live from the bank (throttled server-side), then seed
+  // the cache so the Accounts cards update. Throws on failure so the screen owns the toast and
+  // TanStack keeps the last-good balances (never blanks the cards). cancelQueries first: an
+  // in-flight stored GET (the mount fetch, or a reconnect revalidate) can otherwise resolve AFTER
+  // the seed and clobber the fresh value back to the once-a-day number (a real, timing-dependent race).
+  const refreshLiveBalances = useCallback(async () => {
+    const fresh = await refreshAccountBalances();
+    await queryClient.cancelQueries({ queryKey: accountBalancesKey });
+    queryClient.setQueryData(accountBalancesKey, fresh);
+  }, [queryClient]);
   const refetchStale = useCallback(() => {
     if (categoriesQuery.isStale) categoriesQuery.refetch();
     if (feedQuery.isStale) feedQuery.refetch(); // refetches every loaded page in place (keeps place)
   }, [feedQuery, categoriesQuery]);
 
-  return { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, hasMore, loadMore, isLoadingMore };
+  return { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }
 
 /** The bounded "recent" reads (tab-bar dot, account detail, goal-edit picker): a fixed

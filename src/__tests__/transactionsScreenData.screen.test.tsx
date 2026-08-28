@@ -9,6 +9,7 @@
 // refetchStale for a consumer to wire to useFocusEffect and never calls expo-router itself).
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
+import { RefreshControl } from 'react-native';
 import { render, renderHook, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Transaction } from '../context';
@@ -37,11 +38,14 @@ const mockFetchTransactionsFeed = jest.fn<(cursor?: string) => Promise<unknown>>
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
 const mockFetchAccountBalances = jest.fn<() => Promise<unknown>>();
+const mockRefreshAccountBalances = jest.fn<() => Promise<unknown>>();
+const mockShowToast = jest.fn<(m: string) => void>();
 jest.mock('../api', () => ({
   fetchTransactionsFeed: (cursor?: string) => mockFetchTransactionsFeed(cursor),
   fetchCategories: () => mockFetchCategories(),
   fetchTransactions: () => mockFetchTransactions(),
   fetchAccountBalances: () => mockFetchAccountBalances(),
+  refreshAccountBalances: () => mockRefreshAccountBalances(),
 }));
 
 const CATS = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }];
@@ -54,7 +58,7 @@ jest.mock('../context', () => {
   const actual = jest.requireActual('../context') as typeof import('../context');
   return {
     ...actual,
-    useAppContext: () => ({ retryLoad: jest.fn(), category: (id: string | null) => CATS.find((c) => c.id === id) }),
+    useAppContext: () => ({ retryLoad: jest.fn(), openMultiPicker: jest.fn(), showToast: mockShowToast, category: (id: string | null) => CATS.find((c) => c.id === id) }),
   };
 });
 
@@ -113,9 +117,10 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     await waitFor(() => expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(2));
   });
 
-  it('pull-to-refresh (refetch) force-refetches account balances past staleTime', async () => {
-    // Infinity-stale client: the balances query is never stale, so only an UNCONDITIONAL
-    // (forced) refetch can refire it — proving the pull bypasses the 45s freshness window.
+  it('inline Retry (refetch) re-reads the STORED account balances past staleTime', async () => {
+    // refetch backs the inline Retry button; the live bank call is pull-only (refreshLiveBalances).
+    // Infinity-stale client: balances is never stale, so only an UNCONDITIONAL (forced) refetch
+    // refires the stored GET — proving Retry re-reads balances past the 45s window.
     mockFetchAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -100 }]);
     const client = makeClient(Infinity);
     const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
@@ -123,7 +128,31 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     expect(mockFetchAccountBalances).toHaveBeenCalledTimes(1); // initial load
 
     act(() => { result.current.refetch(); });
-    await waitFor(() => expect(mockFetchAccountBalances).toHaveBeenCalledTimes(2)); // pull forced it
+    await waitFor(() => expect(mockFetchAccountBalances).toHaveBeenCalledTimes(2)); // Retry forced the re-read
+    expect(mockRefreshAccountBalances).not.toHaveBeenCalled(); // Retry never makes the paid live call
+  });
+
+  it('pull (refreshLiveBalances) fetches LIVE balances via the refresh endpoint and seeds the cards', async () => {
+    // Pull calls the live-refresh POST (not the stored GET) and seeds the cache with its result, so
+    // the Accounts cards show the freshly-fetched numbers. Infinity-stale client proves it's the POST
+    // updating them, not a staleness-driven GET — and that the stored GET is NOT fired again on pull.
+    mockFetchAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -100 }]); // stored (initial)
+    mockRefreshAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -250 }]); // live POST result
+    const client = makeClient(Infinity);
+    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.balances.get('a1')).toBeTruthy());
+    expect(mockFetchAccountBalances).toHaveBeenCalledTimes(1); // initial stored load
+    const feedCallsBefore = mockFetchTransactionsFeed.mock.calls.length;
+
+    await act(async () => {
+      await Promise.all([result.current.refetchList(), result.current.refreshLiveBalances()]);
+    });
+
+    // The cards show the freshly-fetched number (the live POST seeded the cache).
+    await waitFor(() => expect(result.current.balances.get('a1')?.amount).toBe(-250));
+    expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(1);                          // the LIVE call fired
+    expect(mockFetchAccountBalances).toHaveBeenCalledTimes(1);                            // NOT a second stored GET
+    expect(mockFetchTransactionsFeed.mock.calls.length).toBeGreaterThan(feedCallsBefore); // list refreshed too
   });
 
   it('focus refresh (refetchStale) never force-refetches balances — even when everything is stale (scope guard)', async () => {
@@ -143,10 +172,10 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     expect(mockFetchAccountBalances).toHaveBeenCalledTimes(1); // balances deliberately left alone
   });
 
-  it('a balances refetch FAILURE on pull leaves the transaction list intact — isError false, rows stay, last balance kept', async () => {
-    // The pull DOES force balances past staleTime, but balances is secondary: if that forced refetch
-    // rejects, the composite must not surface it. isError stays false, the feed rows stay, and
-    // react-query keeps the last-good balance (no card blanks mid-pull).
+  it('a stored-balances refetch FAILURE (Retry) leaves the transaction list intact — isError false, rows stay, last balance kept', async () => {
+    // refetch (Retry) re-reads balances, but balances is secondary: if that forced refetch rejects,
+    // the composite must not surface it. isError stays false, the feed rows stay, and react-query
+    // keeps the last-good balance (no card blanks mid-refetch).
     mockFetchAccountBalances.mockReset()
       .mockResolvedValueOnce([{ account_id: 'a1', amount: -100 }]) // initial load OK
       .mockRejectedValue(new Error('API error: 503'));            // the pull-forced refetch fails
@@ -156,7 +185,7 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     expect(result.current.isError).toBe(false);
 
     act(() => { result.current.refetch(); });
-    await waitFor(() => expect(mockFetchAccountBalances).toHaveBeenCalledTimes(2)); // pull forced it
+    await waitFor(() => expect(mockFetchAccountBalances).toHaveBeenCalledTimes(2)); // Retry forced the re-read
     await waitFor(() => expect(client.getQueryState(accountBalancesKey)?.status).toBe('error')); // it truly failed
     expect(result.current.isError).toBe(false);           // ...yet the list status is unaffected
     expect(result.current.transactions.length).toBe(1);   // rows still there
@@ -335,10 +364,10 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     expect(mockFetchTransactionsFeed).toHaveBeenCalled();
   });
 
-  it('the inline Retry also force-refreshes account balances (shares the pull refetch)', async () => {
-    // Retry (transactions.tsx onPress={refetch}) and pull (onRefresh -> refetch) are the SAME
-    // callback, so recovering from a sustained load error must ALSO refresh the Accounts-tab
-    // balances — not just the rows. Guards the shared wiring against a future divergence/revert.
+  it('the inline Retry re-reads the stored account balances (not just the rows)', async () => {
+    // Retry (transactions.tsx onPress={refetch}) recovers from a sustained load error by refreshing
+    // the rows AND re-reading the stored balances — a cheap GET, no paid live bank call (that's
+    // pull-only). Guards that the Retry path keeps its balance refresh.
     mockFetchAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -100 }]);
     mockFetchTransactionsFeed.mockReset().mockRejectedValue(new Error('API error: 503'));
     renderTransactions(makeClient(false));
@@ -349,5 +378,25 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     fireEvent.press(screen.getByTestId('transactions-retry'));
     expect(await screen.findByText('-$42.00')).toBeTruthy();                        // rows recovered
     await waitFor(() => expect(mockFetchAccountBalances).toHaveBeenCalledTimes(2)); // Retry forced balances too
+  });
+
+  it('a FAILED live pull toasts, keeps the last-good balances, and clears the spinner (WHIT-363)', async () => {
+    // The pull's live refresh rejects. The screen must: toast, keep the list (no error, rows stay),
+    // and STILL clear the pull spinner via .finally() — a failed/slow live call can never wedge it.
+    mockFetchAccountBalances.mockReset().mockResolvedValue([{ account_id: 'a1', amount: -100 }]);
+    mockRefreshAccountBalances.mockReset().mockRejectedValue(new Error('API error: 502'));
+    renderTransactions();
+    expect(await screen.findByText('-$42.00')).toBeTruthy(); // rows loaded
+
+    const refreshControl = screen.UNSAFE_getByType(RefreshControl);
+    await act(async () => { refreshControl.props.onRefresh(); });
+
+    await waitFor(() => expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(1)); // the live call fired
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.'));
+    expect(screen.queryByTestId('transactions-error')).toBeNull(); // list not blanked
+    expect(screen.getByText('-$42.00')).toBeTruthy();              // rows still there
+    // The spinner cleared once the pull settled, even though the live call rejected.
+    await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
   });
 });
