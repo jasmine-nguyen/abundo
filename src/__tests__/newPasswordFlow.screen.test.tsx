@@ -11,7 +11,7 @@ const mockReplace = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }) }));
 
 const mockSignInWithPassword = jest.fn<(e: string, p: string) => Promise<unknown>>();
-const mockSignInWithGoogle = jest.fn<() => Promise<boolean>>();
+const mockSignInWithGoogle = jest.fn<() => Promise<import('../auth').OAuthSignInResult>>();
 const mockCompleteNewPassword = jest.fn<(p: string) => Promise<unknown>>();
 jest.mock('../../src/auth', () => ({
   signInWithPassword: (...a: unknown[]) => mockSignInWithPassword(...(a as [string, string])),

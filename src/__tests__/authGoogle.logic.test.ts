@@ -66,7 +66,7 @@ describe('signInWithGoogle', () => {
   it('pins identity_provider=Google on the authorize request (straight to Google, no chooser)', async () => {
     promptOkExchangeOk();
     const auth = loadAuth();
-    await expect(auth.signInWithGoogle()).resolves.toBe(true);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: true });
     expect(mockAuthRequestCfg).toHaveBeenCalledWith(
       expect.objectContaining({ extraParams: { identity_provider: 'Google' }, usePKCE: true }),
     );
@@ -85,11 +85,50 @@ describe('signInWithGoogle', () => {
     await expect(auth.getAuthToken()).resolves.toBe('IDTOK');
   });
 
-  it('a cancelled/dismissed prompt resolves false and seats nothing', async () => {
+  it('a dismissed prompt (iOS swipe-away) resolves silently — no error, seats nothing', async () => {
     mockPromptAsync.mockResolvedValue({ type: 'dismiss' });
     const auth = loadAuth();
-    await expect(auth.signInWithGoogle()).resolves.toBe(false);
+    // Exact object: { ok: false } with NO error key — locks the silent-cancel path.
+    await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: false });
     expect(auth.getStatus()).not.toBe('authed');
     expect(mockSetItem.mock.calls.some((c) => c[0] === REFRESH_KEY)).toBe(false);
+  });
+
+  it('a cancelled prompt (Android back) also resolves silently', async () => {
+    mockPromptAsync.mockResolvedValue({ type: 'cancel' });
+    const auth = loadAuth();
+    await expect(auth.signInWithGoogle()).resolves.toEqual({ ok: false });
+    expect(auth.getStatus()).not.toBe('authed');
+  });
+
+  it('missing config returns a "not set up" error and never opens the browser', async () => {
+    delete process.env.EXPO_PUBLIC_COGNITO_HOSTED_UI_DOMAIN;
+    const auth = loadAuth();
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Sign-in isn't set up. Check the app configuration.",
+    });
+    expect(mockPromptAsync).not.toHaveBeenCalled();
+  });
+
+  it('a prompt error (not a cancel) returns the generic failure message', async () => {
+    mockPromptAsync.mockResolvedValue({ type: 'error' });
+    const auth = loadAuth();
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Couldn't complete Google sign-in. Please try again.",
+    });
+    expect(auth.getStatus()).not.toBe('authed');
+  });
+
+  it('a failed token exchange (network) returns the generic failure message', async () => {
+    mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'CODE' } });
+    mockExchange.mockRejectedValue(new Error('network down'));
+    const auth = loadAuth();
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Couldn't complete Google sign-in. Please try again.",
+    });
+    expect(auth.getStatus()).not.toBe('authed');
   });
 });

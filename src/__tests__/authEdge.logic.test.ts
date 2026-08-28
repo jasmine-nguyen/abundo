@@ -101,11 +101,14 @@ describe('single-flight is cleared after a failure (no wedge)', () => {
 });
 
 describe('signInWithGoogle — exchange throws after a successful prompt', () => {
-  it('returns false and stores nothing when exchangeCodeAsync rejects', async () => {
+  it('returns the generic failure and stores nothing when exchangeCodeAsync rejects', async () => {
     mockPromptAsync.mockResolvedValue({ type: 'success', params: { code: 'C' } });
     mockExchange.mockRejectedValue(new Error('token endpoint 500'));
     const auth = loadAuth();
-    await expect(auth.signInWithGoogle()).resolves.toBe(false);
+    await expect(auth.signInWithGoogle()).resolves.toEqual({
+      ok: false,
+      error: "Couldn't complete Google sign-in. Please try again.",
+    });
     expect(mockStore.size).toBe(0);
     await expect(auth.getAuthToken()).resolves.toBeUndefined();
   });

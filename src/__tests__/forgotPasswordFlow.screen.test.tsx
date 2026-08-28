@@ -11,7 +11,7 @@ const mockRequestReset = jest.fn<(e: string) => Promise<unknown>>();
 const mockConfirmReset = jest.fn<(e: string, c: string, p: string) => Promise<unknown>>();
 jest.mock('../../src/auth', () => ({
   signInWithPassword: jest.fn(async () => ({ ok: true })),
-  signInWithGoogle: jest.fn(async () => false),
+  signInWithGoogle: jest.fn(async () => ({ ok: false })),
   completeNewPassword: jest.fn(async () => ({ ok: true })),
   requestPasswordReset: (...a: unknown[]) => mockRequestReset(...(a as [string])),
   confirmPasswordReset: (...a: unknown[]) => mockConfirmReset(...(a as [string, string, string])),

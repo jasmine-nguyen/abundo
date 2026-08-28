@@ -67,6 +67,14 @@ export type SignInResult =
  */
 export type CompletePasswordResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Result of an OAuth (Hosted UI / Google) sign-in. Unlike the password results, `error`
+ * is OPTIONAL: a genuine user cancel/dismiss is `{ ok: false }` with no message (the
+ * screen stays quiet), while a real failure — missing config, network, token exchange —
+ * carries a friendly `error` the screen shows. Never a thrown exception.
+ */
+export type OAuthSignInResult = { ok: true } | { ok: false; error?: string };
+
 /** The in-memory token set. `issuedAt`/`expiresIn` are seconds (OAuth convention). */
 interface Session {
   idToken: string | undefined;
@@ -247,16 +255,17 @@ function isNearExpiry(s: Session): boolean {
  * code (with the PKCE verifier) for tokens, persist the refresh token, and seat the
  * session as an OAuth session. `extraParams` are appended to the /oauth2/authorize
  * request — e.g. `{ identity_provider: "Google" }` makes Cognito redirect STRAIGHT to
- * Google, skipping its chooser page (WHIT-179). Returns whether a session was
- * established. Never throws — a cancel, a network error, or missing config all
- * resolve to `false`.
+ * Google, skipping its chooser page (WHIT-179). Never throws. Returns an
+ * OAuthSignInResult: `{ ok: true }` on success, `{ ok: false }` (silent) on a genuine
+ * user cancel/dismiss, and `{ ok: false, error }` on a real failure (missing config,
+ * network, token exchange) so the caller can show why.
  */
-async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<boolean> {
-  try {
-    const domain = hostedUiDomain();
-    const clientId = appClientId();
-    if (!domain || !clientId) return false;
+async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<OAuthSignInResult> {
+  const domain = hostedUiDomain();
+  const clientId = appClientId();
+  if (!domain || !clientId) return { ok: false, error: OAUTH_NOT_CONFIGURED };
 
+  try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const AuthSession = require("expo-auth-session");
     const redirectUri = AuthSession.makeRedirectUri({ scheme: "acme", path: "oauthredirect" });
@@ -272,7 +281,11 @@ async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<
     });
 
     const result = await request.promptAsync(disco);
-    if (result.type !== "success" || !result.params?.code) return false;
+    // The user backed out (iOS swipe-dismiss, Android back) — no error, stay quiet.
+    if (result.type === "cancel" || result.type === "dismiss") return { ok: false };
+    // Anything else non-success (error/locked, or a success with no code) is a real
+    // failure the user should hear about.
+    if (result.type !== "success" || !result.params?.code) return { ok: false, error: OAUTH_FAILED };
 
     const token: TokenResponse = await AuthSession.exchangeCodeAsync(
       {
@@ -308,10 +321,11 @@ async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<
     sessionAuthMethod = "oauth";
     cacheToken(token);
     setStatus("authed");
-    return true;
+    return { ok: true };
   } catch {
-    // User cancel, network, popup dismissed — stay signed-out, never crash.
-    return false;
+    // Network, token-exchange, or the keychain-persist rollback re-throw — a real
+    // failure (not a cancel, which the result.type check handles above). Surface it.
+    return { ok: false, error: OAUTH_FAILED };
   }
 }
 
@@ -320,9 +334,9 @@ async function hostedUiAuthorize(extraParams?: Record<string, string>): Promise<
  * `identity_provider=Google` so Cognito redirects STRAIGHT to Google's own consent
  * sheet — the user never sees the Cognito chooser page. Federated → provenance
  * "oauth" (refreshes at /oauth2/token). The Pre-Sign-Up allowlist still gates which
- * Google accounts may sign up. Never throws.
+ * Google accounts may sign up. Never throws; see OAuthSignInResult for the shape.
  */
-export async function signInWithGoogle(): Promise<boolean> {
+export async function signInWithGoogle(): Promise<OAuthSignInResult> {
   return hostedUiAuthorize({ identity_provider: "Google" });
 }
 
@@ -355,6 +369,11 @@ export function getCurrentUser(): { email?: string; name?: string; picture?: str
 // so we handle every challenge and resolve to this rather than break the never-throw
 // contract. WHIT-178.
 const UNSUPPORTED_CHALLENGE = "This account needs a sign-in step the app doesn't support yet.";
+
+// Same wording as the password path's "not set up" error (see runPasswordSignIn) so a
+// misconfigured build reads identically whichever button the user tries.
+const OAUTH_NOT_CONFIGURED = "Sign-in isn't set up. Check the app configuration.";
+const OAUTH_FAILED = "Couldn't complete Google sign-in. Please try again.";
 
 /**
  * Native email/password sign-in (WHIT-178) via the Cognito SDK's SRP flow — no Hosted
