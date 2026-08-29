@@ -13,6 +13,7 @@ import { useReduceMotion } from '../../src/motion/useReduceMotion';
 const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
   { name: 'transactions', label: 'Transactions', icon: 'navTx' },
+  { name: 'accounts', label: 'Accounts', icon: 'wallet' },
   { name: 'insights', label: 'Insights', icon: 'navInsights' },
   { name: 'goals', label: 'Goals', icon: 'navGoals' },
   { name: 'settings', label: 'Settings', icon: 'navSettings' },
@@ -99,7 +100,7 @@ export default function TabsLayout() {
         // (detachInactiveScreens={false}) removes that native detach/attach cycle, so the
         // fade's opacity settles correctly. The cross-fade itself still runs — it comes from
         // the per-scene opacity style, not the detach. See react-navigation issue #12755.
-        // Cost: all 5 lightweight tab scenes stay mounted (they already are, via the
+        // Cost: all 6 lightweight tab scenes stay mounted (they already are, via the
         // always-mounted tab bar's own query) — negligible here, and tab switches keep their
         // scroll position as a bonus.
         detachInactiveScreens={false}
@@ -114,6 +115,7 @@ export default function TabsLayout() {
       >
         <Tabs.Screen name="budgets" />
         <Tabs.Screen name="transactions" />
+        <Tabs.Screen name="accounts" />
         <Tabs.Screen name="insights" />
         <Tabs.Screen name="goals" />
         <Tabs.Screen name="settings" />
@@ -125,8 +127,8 @@ export default function TabsLayout() {
 const styles = StyleSheet.create({
   // Floats over the scene (absolute) so the list reclaims the space when the bar hides.
   bar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingTop: 10, paddingHorizontal: 8, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.hairline },
-  // flex:1 (not a fixed width) so the items share the row evenly — with 5 tabs a
-  // fixed 76pt width overflowed narrow phones (5×76 + padding > 390pt).
+  // flex:1 (not a fixed width) so the items share the row evenly — a fixed 76pt width
+  // overflowed narrow phones even at 5 tabs (5×76 + padding > 390pt), and there are 6 now.
   item: { flex: 1, minWidth: 0, alignItems: 'center', gap: 5 },
   // WHIT-184 taste: pressed-state feedback for the tab buttons.
   itemPressed: { opacity: 0.55, transform: [{ scale: 0.92 }] },

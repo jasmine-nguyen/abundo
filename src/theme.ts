@@ -83,6 +83,11 @@ export const C = {
   heroGradTo: '#bb9af7',
 } as const;
 
+// WHIT-215: account cards carry no server-side colour, so each gets a stable cosmetic accent by
+// index — purely visual, no meaning attached to the colour. Lives here (a palette home) so the
+// Accounts tab reads a token instead of hand-writing the hex.
+export const ACCOUNT_ACCENTS = ['#7FD49B', '#8AB4F8', '#F0B67F', '#C9B3F5', '#F08C8C'] as const;
+
 export const FONT = {
   // 'Inter Tight' / 'Inter' in the mockup. On web these resolve via the Google Fonts
   // stylesheet (so fontWeight works); on native they are registered by expo-font in

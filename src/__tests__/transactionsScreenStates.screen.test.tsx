@@ -11,15 +11,8 @@
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
-import { StyleSheet, RefreshControl } from 'react-native';
-import { C } from '../theme';
+import { RefreshControl } from 'react-native';
 import { HEADER_BODY_HEIGHT } from '../motion/useNavBarsHeader';
-
-const bal = (over: Record<string, unknown> = {}) => ({
-  account_id: 'a1', amount: 96270.59, available_balance: 96270.59, currency: 'AUD',
-  as_of: '2026-07-08T09:32:02.405Z', account_type: 'checking', ...over,
-});
-const colorOf = (node: unknown) => (StyleSheet.flatten((node as { props: { style?: unknown } }).props.style) as { color?: string }).color;
 
 // WHIT-459: the folded siblings each carry their own block-scoped `txData` (some omit `balances`);
 // they all assign to this shared `mockTx`, so `balances` is optional here to accept every shape.
@@ -47,12 +40,11 @@ jest.mock('../context', () => {
   };
 });
 
-const mockPush = jest.fn();
 jest.mock('expo-router', () => {
   const ReactLib = require('react');
   return {
     useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]),
-    useRouter: () => ({ push: mockPush }),
+    useRouter: () => ({ push: jest.fn() }),
   };
 });
 
@@ -96,7 +88,6 @@ function txData(over: Partial<{
 beforeEach(() => {
   refetch.mockClear();
   refetchStale.mockClear();
-  mockPush.mockClear();
   mockTx = txData();
 });
 
@@ -126,87 +117,6 @@ it('empty + loading shows the spinner', () => {
   mockTx = txData({ transactions: [], isLoading: true });
   render(<Transactions />);
   expect(screen.getByTestId('transactions-loading')).toBeTruthy();
-});
-
-it('Accounts tab derives one card per account_id from the transactions (consistent name)', () => {
-  const anz = { ...ROW, transaction_id: 't1', account_id: 'a1', account_name: 'ANZ' };
-  const up = { ...ROW, transaction_id: 't2', account_id: 'a2', account_name: 'Up Homeloan' };
-  const up2 = { ...ROW, transaction_id: 't3', account_id: 'a2', account_name: 'Up Homeloan' };
-  mockTx = txData({ transactions: [anz, up, up2] });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  // One card per account; the Up account (2 txns) collapses to a single consistent name.
-  expect(screen.getByText('ANZ')).toBeTruthy();
-  expect(screen.getAllByText('Up Homeloan')).toHaveLength(1);
-});
-
-it('tapping an account card navigates to that account\'s detail route', () => {
-  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }] });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  fireEvent.press(screen.getByText('ANZ'));
-  expect(mockPush).toHaveBeenCalledWith('/account/a1');
-});
-
-it('Accounts tab shows the cold-load spinner (empty + loading) — it derives from the query now', () => {
-  mockTx = txData({ transactions: [], isLoading: true, isError: false });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.getByTestId('transactions-loading')).toBeTruthy();
-});
-
-it('Accounts tab shows the inline retry on a cold error (empty + error)', () => {
-  mockTx = txData({ transactions: [], isError: true });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.getByTestId('transactions-error')).toBeTruthy();
-});
-
-it('Accounts tab keeps its cards through a background error when txns are cached (cache-first)', () => {
-  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }], isError: true });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.getByText('ANZ')).toBeTruthy();
-  expect(screen.queryByTestId('transactions-error')).toBeNull();
-});
-
-it('Accounts tab settled with no transactions shows the empty state', () => {
-  mockTx = txData({ transactions: [] });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.getByText('No accounts yet')).toBeTruthy();
-});
-
-it('an account card shows its live balance — green when in credit (amount >= 0)', () => {
-  mockTx = txData({
-    transactions: [{ ...ROW, account_id: 'a1', account_name: 'Up Spending' }],
-    balances: new Map([['a1', bal({ amount: 96270.59 })]]),
-  });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  const label = screen.getByText('$96,270.59'); // bare, no + sign
-  expect(colorOf(label)).toBe(C.good);
-});
-
-it('an account card shows a negative balance in red (money owed)', () => {
-  mockTx = txData({
-    transactions: [{ ...ROW, account_id: 'a1', account_name: 'Up Homeloan' }],
-    balances: new Map([['a1', bal({ amount: -596642.43 })]]),
-  });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  const label = screen.getByText('-$596,642.43');
-  expect(colorOf(label)).toBe(C.bad);
-});
-
-it('an account with no balance yet shows a dim "—" placeholder', () => {
-  mockTx = txData({
-    transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }],
-    balances: new Map(), // not polled yet
-  });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.getByText('—')).toBeTruthy();
 });
 
 it('empty Uncategorized tab (settled) shows the "All caught up" empty state', () => {
@@ -271,13 +181,6 @@ it('swaps the button for a spinner while the next page is loading', () => {
   render(<Transactions />);
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // button hidden while loading
   expect(screen.getByTestId('transactions-load-more-spinner')).toBeTruthy();
-});
-
-it('does not show Load More on the Accounts tab', () => {
-  mockTx = txData({ hasMore: true });
-  render(<Transactions />);
-  fireEvent.press(screen.getByText('Accounts'));
-  expect(screen.queryByTestId('transactions-load-more')).toBeNull();
 });
 });
 
