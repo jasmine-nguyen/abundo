@@ -8,8 +8,8 @@
 // "error with cached cards" case surface the error.
 import { it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
+import { render, screen, fireEvent, act } from '@testing-library/react-native';
+import { StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { C } from '../theme';
 
 const bal = (over: Record<string, unknown> = {}) => ({
@@ -143,4 +143,41 @@ it('an account with no balance yet shows a dim "—" placeholder', () => {
   });
   render(<Accounts />);
   expect(screen.getByText('—')).toBeTruthy();
+});
+
+// The list fills the viewport (flexGrow:1) so a short account list is one full-screen
+// pull-to-refresh target — a short ScrollView otherwise had no grabbable area and the pull
+// never caught. The fill must COEXIST with the shared clearances, not replace them: the wrapper
+// flattens [{ paddingHorizontal:18, ...contentPadding }, contentContainerStyle], so flexGrow
+// merges on top of paddingTop (clears the floating header) + paddingBottom (clears the tab bar).
+// If a change made the screen style REPLACE the shared padding, the pull spinner would draw
+// behind the header and the last card would hide under the tab bar.
+// NOTE: RN Testing Library can't fire a real drag, so this locks that the fill is APPLIED, not
+// that the gesture works on device. Fail-on-revert: drop the fill → flexGrow undefined → red;
+// break the wrapper's merge → the padding asserts → red. (flexGrow is not an RN default.)
+it('fills the viewport (flexGrow:1) without clobbering the shared header/tab-bar/horizontal clearances', () => {
+  mockTx = txData({ transactions: [{ ...ROW, account_id: 'a1', account_name: 'ANZ' }] });
+  render(<Accounts />);
+  const scroll = screen.UNSAFE_getAllByType(ScrollView)[0];
+  const cc = StyleSheet.flatten(scroll.props.contentContainerStyle);
+  expect(cc.flexGrow).toBe(1);
+  expect(cc.paddingHorizontal).toBe(18);
+  expect(cc.paddingTop).toBeGreaterThan(0);    // header clearance survives
+  expect(cc.paddingBottom).toBeGreaterThan(0); // tab-bar clearance survives
+});
+
+// R2: a pull on the settled "No accounts yet" empty list must still show the spinner. The fill
+// makes that short state pullable, so gating the spinner on `transactions.length > 0` left the
+// pull feeling dead (refresh ran, no feedback). `!showSpinner` shows it whenever the cold-load
+// spinner isn't already owning the screen. Fail-on-revert: restore the `length > 0` gate → an
+// empty-list pull reports refreshing=false → red.
+it('shows the pull spinner when pulling the settled empty list', () => {
+  mockTx = txData({ transactions: [] }); // settled + empty → "No accounts yet"
+  // Hold the pull open so `refreshing` stays observable while in flight.
+  refetchList.mockReturnValueOnce(new Promise<void>(() => {}));
+  refreshLiveBalances.mockReturnValueOnce(new Promise<void>(() => {}));
+  render(<Accounts />);
+  expect(screen.getByText('No accounts yet')).toBeTruthy();
+  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 });
