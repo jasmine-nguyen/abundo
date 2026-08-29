@@ -1,30 +1,25 @@
 import React, { useCallback, useState } from 'react';
 import { RefreshControl, View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { C, FONT, tint, fmtBalance } from '../../src/theme';
-import { Icon, Glyph } from '../../src/icons';
-import { transactionGroups, transactionMatchesSearch, countUncategorized, accountSummaries, useAppContext } from '../../src/context';
+import { useFocusEffect } from 'expo-router';
+import { C, FONT, tint } from '../../src/theme';
+import { Glyph } from '../../src/icons';
+import { transactionGroups, transactionMatchesSearch, countUncategorized, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { RetryButton } from '../../src/components/ui';
 
-type Tab = 'all' | 'uncategorized' | 'accounts';
-
-// Accounts carry no server-side icon/colour, so give each card a stable cosmetic accent by
-// index — purely visual, no meaning attached to the colour (WHIT-215).
-const ACCT_COLORS = ['#7FD49B', '#8AB4F8', '#F0B67F', '#C9B3F5', '#F08C8C'];
+type Tab = 'all' | 'uncategorized';
 
 export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { openMultiPicker, showToast } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
-  const { transactions, category, balances, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData();
+  const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData();
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
@@ -39,8 +34,8 @@ export default function Transactions() {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   }), []);
-  // Switching tabs leaves selection mode, so a selection never straddles a context the user
-  // can't see (e.g. the Accounts tab has no rows).
+  // Switching between All and Uncategorized leaves selection mode, so a selection never
+  // straddles a filter the user can no longer see.
   const changeTab = useCallback((t: Tab) => { setTab(t); exitSelection(); }, [exitSelection]);
   // Only carry ids still in the live list — a background refetch (pull-to-refresh) can evict a
   // selected charge mid-selection, and this keeps the picker's "File N" count honest.
@@ -57,9 +52,6 @@ export default function Transactions() {
   const query = search.trim();
   const searched = query ? transactions.filter((t) => transactionMatchesSearch({ category }, t, query)) : transactions;
   const groups = transactionGroups({ transactions: searched, category }, tab === 'uncategorized' ? 'uncategorized' : 'all');
-  // WHIT-215: the Accounts tab is derived from the transactions themselves (one card per
-  // account_id), not a hardcoded list — so names always match what's in the data.
-  const accounts = accountSummaries(view);
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
@@ -85,17 +77,14 @@ export default function Transactions() {
   // refreshing/onRefresh state while the wrapper hands back headerHeight for the spinner
   // offset (WHIT-211 — otherwise the spinner draws behind the opaque floating header).
   // WHIT-291: a "Select" button enters selection mode; it becomes "Cancel" while selecting.
-  // Hidden on the Accounts tab (no transaction rows to select there).
   const headerRight = selectionMode ? (
     <Pressable onPress={exitSelection} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
       <Text style={styles.hdrBtnText}>Cancel</Text>
     </Pressable>
-  ) : tab !== 'accounts' ? (
+  ) : (
     <Pressable onPress={() => { setSelectionMode(true); setSearch(''); }} hitSlop={8} style={styles.hdrBtn} accessibilityRole="button">
       <Text style={styles.hdrBtnText}>Select</Text>
     </Pressable>
-  ) : (
-    <View style={styles.slot} />
   );
 
   return (
@@ -122,10 +111,9 @@ export default function Transactions() {
         <View style={styles.seg}>
           <Seg label="All" active={tab === 'all'} onPress={() => changeTab('all')} flex={1} />
           <Seg label="Uncategorized" active={tab === 'uncategorized'} onPress={() => changeTab('uncategorized')} flex={1.45} badge={uncategorizedCount} />
-          <Seg label="Accounts" active={tab === 'accounts'} onPress={() => changeTab('accounts')} flex={1} />
         </View>
 
-        {tab !== 'accounts' && !selectionMode && (
+        {!selectionMode && (
           <View style={styles.search}>
             <Glyph name="search" size={18} color="#6e6e78" />
             <TextInput
@@ -157,8 +145,6 @@ export default function Transactions() {
           </View>
         )}
 
-        {/* WHIT-215: the Accounts tab now derives from the transactions query too, so the
-            cold-load spinner + error apply to every tab (they no longer skip 'accounts'). */}
         {showSpinner && (
           <View testID="transactions-loading" style={styles.rowsState}>
             <ActivityIndicator color={C.accent} />
@@ -171,7 +157,7 @@ export default function Transactions() {
           </View>
         )}
 
-        {tab !== 'accounts' && !showSpinner && !showError && groups.map((g) => (
+        {!showSpinner && !showError && groups.map((g) => (
           <View key={g.label} style={{ marginTop: 18 }}>
             <Text style={styles.groupLabel}>{g.label}</Text>
             {g.items.map((t) => (
@@ -189,7 +175,7 @@ export default function Transactions() {
 
         {/* Search returned nothing on this tab (the "all caught up" state below still owns the
             genuinely-empty uncategorized case, so don't double up on it). */}
-        {tab !== 'accounts' && !showSpinner && !showError && query.length > 0 && groups.length === 0
+        {!showSpinner && !showError && query.length > 0 && groups.length === 0
           && !(tab === 'uncategorized' && uncategorizedCount === 0) && (
           <View testID="transactions-no-results" style={styles.empty}>
             <View style={[styles.emptyIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="search" size={30} color={C.textDim} /></View>
@@ -209,7 +195,7 @@ export default function Transactions() {
         {/* Load More: page older history in via the feed cursor. Hidden at end-of-history
             (hasMore false) and while the cold-load spinner / error own the empty state. The
             newest batch shows first; each tap appends the next, older batch. */}
-        {tab !== 'accounts' && !showSpinner && !showError && hasMore && (
+        {!showSpinner && !showError && hasMore && (
           isLoadingMore ? (
             <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
               <ActivityIndicator color={C.accent} />
@@ -227,42 +213,6 @@ export default function Transactions() {
           )
         )}
 
-        {tab === 'accounts' && !showSpinner && !showError && accounts.length === 0 && (
-          <View style={styles.empty}>
-            <View style={styles.emptyIcon}><Glyph name="wallet" size={32} color={C.accentSoft} /></View>
-            <Text style={styles.emptyTitle}>No accounts yet</Text>
-            <Text style={styles.emptySub}>Your linked accounts show up here once transactions sync.</Text>
-          </View>
-        )}
-
-        {tab === 'accounts' && !showSpinner && !showError && accounts.length > 0 && (
-          <View style={{ marginTop: 14 }}>
-            {accounts.map((a, i) => {
-              const color = ACCT_COLORS[i % ACCT_COLORS.length];
-              // WHIT-212: signed live balance from the poller-fed query — green when in
-              // credit, red when owing. Absent until the account's first poll → a dim "—".
-              const bal = balances.get(a.id);
-              return (
-                <Pressable
-                  key={a.id}
-                  onPress={() => router.push(`/account/${a.id}`)}
-                  style={({ pressed }) => [styles.acct, pressed && styles.acctPressed]}
-                >
-                  <View style={[styles.acctChip, { backgroundColor: tint(color, 0.15) }]}><Icon name="bank" size={22} color={color} /></View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.acctName}>{a.name}</Text>
-                    <Text style={styles.acctSub}>{a.count} {a.count === 1 ? 'transaction' : 'transactions'}</Text>
-                  </View>
-                  {bal ? (
-                    <Text style={[styles.acctBal, { color: bal.amount < 0 ? C.bad : C.good }]}>{fmtBalance(bal.amount)}</Text>
-                  ) : (
-                    <Text style={styles.acctBalPending}>—</Text>
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
     </ScrollChromeHeader>
     {/* WHIT-291: the selection action bar floats above the tab bar while selecting. */}
     {selectionMode && (
@@ -297,9 +247,7 @@ function Seg({ label, active, onPress, flex, badge }: { label: string; active: b
 }
 
 const styles = StyleSheet.create({
-  searchBtn: { width: 40, height: 40, backgroundColor: 'rgba(255,255,255,.06)', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  // WHIT-291: header Select/Cancel button + a 40px spacer (keeps the title centred on Accounts).
-  slot: { width: 40 },
+  // WHIT-291: header Select/Cancel button.
   hdrBtn: { height: 40, paddingHorizontal: 8, alignItems: 'flex-end', justifyContent: 'center' },
   hdrBtnText: { fontFamily: FONT.body, fontSize: 14.5, fontWeight: '700', color: C.accentSoft },
   // Extra bottom padding so the last rows can scroll clear of the floating action bar.
@@ -334,15 +282,6 @@ const styles = StyleSheet.create({
   emptyIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: tint(C.good, 0.12), alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright },
   emptySub: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, marginTop: 6, textAlign: 'center', lineHeight: 20 },
-
-  acct: { flexDirection: 'row', alignItems: 'center', gap: 13, backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 16, padding: 15, paddingHorizontal: 16, marginBottom: 10 },
-  // WHIT-215 taste: the account card is tappable now, so it dims on press like a row.
-  acctPressed: { opacity: 0.6 },
-  acctChip: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  acctName: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.textBright },
-  acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
-  acctBal: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
-  acctBalPending: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', color: C.textFaint },
 
   // Load More: same treatment as the budget-detail reveal button (app/budget/[id]), plus a
   // matched-height spinner slot so the list doesn't jump when it swaps in while a page loads.

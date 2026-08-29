@@ -1,5 +1,5 @@
-// WHIT-184 GAP — the Transactions segmented control ('All' / 'Uncategorized' / 'Accounts')
-// gained a pressed dim (segPressed: opacity 0.6). Seg is a private component, so we render
+// WHIT-184 GAP — the Transactions segmented control ('All' / 'Uncategorized') gained a
+// pressed dim (segPressed: opacity 0.6). Seg is a private component, so we render
 // Transactions and pick the Seg Pressables by their distinctive segBtn geometry
 // (paddingVertical 9 — a TransactionRow uses 13). Drop `pressed && styles.segPressed` and
 // the opacity assertion fails.
@@ -40,12 +40,12 @@ function flat(node: Node, pressed: boolean) {
   return StyleSheet.flatten((node.props.style as (x: { pressed: boolean }) => unknown)({ pressed })) as { opacity?: number; paddingVertical?: number };
 }
 
-it('the three segmented tabs dim (opacity 0.6) on press and are solid at rest', () => {
+it('the two segmented tabs dim (opacity 0.6) on press and are solid at rest', () => {
   const { UNSAFE_root } = render(<Transactions />);
   const root = UNSAFE_root as unknown as { findAll: (p: (n: Node) => boolean) => Node[] };
   // Seg Pressables: function style whose resting flatten carries the segBtn paddingVertical 9.
   const segs = root.findAll((n) => typeof n.props?.style === 'function' && flat(n, false).paddingVertical === 9);
-  expect(segs.length).toBe(3);
+  expect(segs.length).toBe(2);
   for (const seg of segs) {
     expect(flat(seg, false).opacity).toBeUndefined();
     expect(flat(seg, true).opacity).toBe(0.6);

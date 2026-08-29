@@ -1,14 +1,15 @@
 // WHIT-363 / WHIT-212 — pull-to-refresh LIVE balances, adversarial gaps the implementer's tests miss.
-// Renders the REAL Transactions screen on a real QueryClient (mirrors the WHIT-190a screen describe
-// in transactionsScreenData.screen.test.tsx). The existing suite proves the HOOK seeds -250 and that
-// a failed pull "keeps last-good"/toasts at the LIST level; these prove it on the RENDERED Accounts
-// CARD (the dollar figure the user sees), that a success does NOT toast, that the LIST still refreshes
-// when the live call fails (allSettled), that a second pull after a FAILED first is not latched, and
-// that an in-flight stored GET can't clobber the freshly-seeded live value.
+// Renders the REAL Accounts screen (its own bottom-bar tab now) on a real QueryClient (mirrors the
+// WHIT-190a screen describe in transactionsScreenData.screen.test.tsx). The account cards render on
+// mount — no segment to press. The existing suite proves the HOOK seeds -250 and that a failed pull
+// "keeps last-good"/toasts at the LIST level; these prove it on the RENDERED Accounts CARD (the dollar
+// figure the user sees), that a success does NOT toast, that the LIST still refreshes when the live
+// call fails (allSettled), that a second pull after a FAILED first is not latched, and that an
+// in-flight stored GET can't clobber the freshly-seeded live value.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { RefreshControl } from 'react-native';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react-native';
+import { render, screen, act, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 let mockAuthStatus = 'authed';
@@ -41,7 +42,7 @@ jest.mock('expo-router', () => {
   return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
-import Transactions from '../../app/(tabs)/transactions';
+import Accounts from '../../app/(tabs)/accounts';
 
 const TXNS = [{
   transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
@@ -59,7 +60,7 @@ function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, gcTime: Infinity } } });
 }
 function renderScreen(client = makeClient()) {
-  return render(React.createElement(QueryClientProvider, { client }, React.createElement(Transactions)));
+  return render(React.createElement(QueryClientProvider, { client }, React.createElement(Accounts)));
 }
 const rc = () => screen.UNSAFE_getByType(RefreshControl);
 const pull = async () => { await act(async () => { rc().props.onRefresh(); }); };
@@ -81,9 +82,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G1] a successful live pull updates the rendered Accounts card old→new', async () => {
     mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
     renderScreen();
-    expect(await screen.findByText('-$42.00')).toBeTruthy();     // list loaded
-    fireEvent.press(screen.getByText('Accounts'));
-    expect(await screen.findByText('-$100.00')).toBeTruthy();    // stored balance on the card
+    expect(await screen.findByText('-$100.00')).toBeTruthy();    // card loaded, stored balance shown
 
     await pull();
     expect(await screen.findByText('-$250.00')).toBeTruthy();    // card now shows the live number
@@ -95,7 +94,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G2] a successful live pull does NOT toast', async () => {
     mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
     renderScreen();
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
+    expect(await screen.findByText('-$100.00')).toBeTruthy();
     await pull();
     await waitFor(() => expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(1));
     expect(mockShowToast).not.toHaveBeenCalled();
@@ -108,8 +107,6 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G3] an offline live pull keeps the exact prior card number and toasts', async () => {
     mockRefreshAccountBalances.mockRejectedValue(new Error('Network request failed'));
     renderScreen();
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
-    fireEvent.press(screen.getByText('Accounts'));
     expect(await screen.findByText('-$100.00')).toBeTruthy();
 
     await pull();
@@ -125,7 +122,7 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   it('[G4] the list still refetches when the live balance call fails', async () => {
     mockRefreshAccountBalances.mockRejectedValue(new Error('API error: 502'));
     renderScreen();
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
+    expect(await screen.findByText('-$100.00')).toBeTruthy();
     const feedCallsBefore = mockFetchTransactionsFeed.mock.calls.length;
 
     await pull();
@@ -138,8 +135,6 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
   // → the 2nd pull's spinner never comes up / never clears → the mid-pull `true` or final `false` reddens.
   it('[G5] a second pull after a FAILED first re-fires the live call and clears the spinner', async () => {
     renderScreen();
-    expect(await screen.findByText('-$42.00')).toBeTruthy();
-    fireEvent.press(screen.getByText('Accounts'));
     expect(await screen.findByText('-$100.00')).toBeTruthy();
 
     // First pull: live call rejects.
@@ -176,9 +171,8 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
 
     renderScreen();
-    expect(await screen.findByText('-$42.00')).toBeTruthy();       // list up; balances GET still pending
-    fireEvent.press(screen.getByText('Accounts'));
-    expect(await screen.findByText('—')).toBeTruthy();             // no balance yet → the pending dash
+    // Card up (feed resolved); balances GET still pending → the pending dash.
+    expect(await screen.findByText('—')).toBeTruthy();
 
     await pull();                                                  // live POST seeds -250, cancels the GET
     expect(await screen.findByText('-$250.00')).toBeTruthy();
