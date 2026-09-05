@@ -11,7 +11,10 @@ class Transaction(TypedDict):
     amount: Decimal
     account_id: str
     account_name: str
-    category: str
+    # None when the bank sends the category as JSON-null or omits the key entirely
+    # (WHIT-83/84: normalise stores None rather than dropping the transaction). Readers
+    # treat None as uncategorised. sanitise_transaction strips None, so it's sparse.
+    category: Optional[str]
     status: str
     type: str
     counts_to_budget: bool
