@@ -158,21 +158,29 @@ export function merchantLabel(t: Transaction): string {
   return cleanName(t.merchant_name || t.description);
 }
 
-// The `contains` pattern the "Every {merchant} charge" rule matches on. Where the
-// merchant name appears inside the description, return that slice using the
-// description's OWN casing — this drops the volatile store#/location/ref suffix so
-// the rule generalises to future charges, while the preserved casing keeps the
-// match working whether or not BankSync's `contains` is case-sensitive. Falls back
-// to the full description when there's no clean merchant substring (behaves as
-// before — a rule that only catches this exact description).
-export function rulePattern(t: Transaction): string {
+// The merchant slice of a description: where the merchant name appears inside the
+// description, that slice using the description's OWN casing — dropping the volatile
+// store#/location/ref suffix so a rule built from it generalises to future charges,
+// while the preserved casing keeps the match working whether or not BankSync's
+// `contains` is case-sensitive. Returns null when there's no clean merchant substring
+// (no merchant name, or it isn't found in the description); a caller uses that null to
+// tell a genuine merchant slice from a full-description fallback (WHIT-491) — a rule
+// minted from the noisy fallback would carry volatile ref/store tokens and match nothing.
+export function merchantSlice(t: Transaction): string | null {
   const desc = t.description ?? '';
   const merchant = (t.merchant_name ?? '').trim();
   if (merchant) {
     const i = desc.toLowerCase().indexOf(merchant.toLowerCase());
     if (i >= 0) return desc.slice(i, i + merchant.length);
   }
-  return desc;
+  return null;
+}
+
+// The `contains` pattern the "Every {merchant} charge" rule matches on: the merchant
+// slice when there is one, else the full description (behaves as before — a rule that
+// only catches this exact description).
+export function rulePattern(t: Transaction): string {
+  return merchantSlice(t) ?? (t.description ?? '');
 }
 
 // Lowercase + strip every non-alphanumeric char, so BankSync's descriptor variants
@@ -840,9 +848,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // job (duplicate) and a different-category one is a conflict we SURFACE but never silently
       // change — this tap has no Replace/Cancel dialog, so the user resolves it in the Rules
       // screen (mirrors the sheet, which only retargets a rule on an explicit Replace).
+      // WHIT-491: BankSync matches future charges by a literal `contains` on the ONE stored
+      // value, so a single rule can't span two spellings of the same merchant (ANZ's spaced
+      // `UNIFLEX REMEDIAL MASSAGE` vs Westpac's `UNIFLEXREMEDIALMASSAGE`). Mint one rule per
+      // distinct GENUINE spelling among the swept charges so both banks' spellings file going
+      // forward. Candidates: the tapped charge's own pattern (unchanged — it always gets a rule,
+      // even a full-description fallback) PLUS each swept charge's merchant slice ONLY when it's a
+      // real merchant substring (merchantSlice != null), never the full-description fallback — so a
+      // noisy no-merchant pending auth in the sweep can't mint a match-nothing rule.
       const existingRules = queryClient.getQueryData<Rule[]>(['rules']) ?? [];
-      const existingConflict = ruleConflict(existingRules, ruleValue, categoryId);
-      const makeRule = existingConflict === null;
+      const candidateValues = [
+        ruleValue,
+        ...sameMerchantIds
+          .map((id) => transactions.find((t) => t.transaction_id === id))
+          .map((swept) => (swept ? merchantSlice(swept) : null))
+          .filter((value): value is string => value !== null),
+      ];
+      // Dedup by rule identity (folds case + whitespace) into the spellings to mint. Each mint
+      // gets a UNIQUE temp id so the optimistic add + per-rule reconcile below never target the
+      // wrong row. A same-category duplicate is skipped (a rule already does the job); the first
+      // cross-category clash is remembered to surface in the toast (WHIT-355 behaviour, per rule).
+      const seenIdentities = new Set<string>();
+      const mints: { value: string; tempId: string }[] = [];
+      let existingConflict: RuleConflict | null = null;
+      for (const value of candidateValues) {
+        const identity = normaliseRuleIdentity(value);
+        if (!identity || seenIdentities.has(identity)) continue;
+        seenIdentities.add(identity);
+        const conflict = ruleConflict(existingRules, value, categoryId);
+        if (conflict === null) {
+          mints.push({ value, tempId: `tmp-${Date.now()}-${mints.length}` });
+        } else if (conflict.kind === 'conflict' && existingConflict === null) {
+          existingConflict = conflict;
+        }
+      }
 
       // WHIT-292: word the toast for what actually happened, naming the count it just filed.
       // WHIT-324: the tapped charge is always in the set now, so the count is ≥ 1; the rule-only
@@ -866,12 +905,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast(sweepToast);
       setSheet(null); // close the confirm sheet
 
-      // Optimistically add the rule ONLY when minting a new one (skip on duplicate/conflict).
-      // Keep its temp id so we can swap in the server id or roll it back.
-      const tempRuleId = 'tmp-' + Date.now();
-      if (makeRule) {
+      // Optimistically add each minted rule (none on all-duplicate/all-conflict). Each keeps its
+      // own temp id so we can swap in the server id or roll it back independently.
+      if (mints.length > 0) {
         patchRules((prev) => [
-          { id: tempRuleId, pattern: ruleValue, categoryId, isNew: true },
+          ...mints.map((mint) => ({ id: mint.tempId, pattern: mint.value, categoryId, isNew: true })),
           ...prev,
         ]);
       }
@@ -883,21 +921,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // handler synchronously, so a rule failure can never float as an unhandled rejection
       // while the batch is in flight; issuing it first preserves the prior rule-before-charges
       // call order.
-      const ruleSettled = makeRule
-        ? Promise.allSettled([createEnrichment({ value: ruleValue, categoryId })])
+      const ruleSettled = mints.length > 0
+        ? Promise.allSettled(mints.map((mint) => createEnrichment({ value: mint.value, categoryId })))
         : null;
       const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId);
-      const ruleOutcome = ruleSettled ? (await ruleSettled)[0] : null;
+      const ruleOutcomes = ruleSettled ? await ruleSettled : [];
 
-      // Reconcile the optimistic rule (only present when we minted one): swap in the real
-      // BankSync id on success (so a later delete targets the real rule), or remove it on failure.
-      if (ruleOutcome?.status === 'fulfilled') {
-        // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
-        // false for the load path, where rules genuinely aren't new).
-        patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(ruleOutcome.value), isNew: true } : r)));
-      } else if (ruleOutcome?.status === 'rejected') {
-        patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
-      }
+      // Reconcile each optimistic rule against ITS OWN temp id (allSettled preserves order, so
+      // outcome i belongs to mints[i]): swap in the real BankSync id on success (so a later delete
+      // targets the real rule), or remove just that temp row on failure — the others stand.
+      ruleOutcomes.forEach((outcome, i) => {
+        const { tempId } = mints[i];
+        if (outcome.status === 'fulfilled') {
+          // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
+          // false for the load path, where rules genuinely aren't new).
+          patchRules((prev) => prev.map((r) => (r.id === tempId ? { ...toRule(outcome.value), isNew: true } : r)));
+        } else {
+          patchRules((prev) => prev.filter((r) => r.id !== tempId));
+        }
+      });
+      const anyRuleRejected = ruleOutcomes.some((outcome) => outcome.status === 'rejected');
       if (failedIds.length > 0) {
         // Roll back only the ones whose save failed — each to its OWN previous category
         // (WHIT-324), so a failed re-file of an already-categorised charge doesn't wrongly
@@ -916,8 +959,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (savedIds.length > 0) removeRefiledFromBudgetLists(categories, savedIds, categoryId);
           showToast('Could not save some categories. Please try again.');
         }
-      } else if (ruleOutcome?.status === 'rejected') {
-        // Transactions filed fine; only the future-rule failed to persist.
+      } else if (anyRuleRejected) {
+        // Transactions filed fine; at least one future-rule failed to persist.
         if (epoch === sessionEpoch.current) showToast('Filed, but could not save the rule for future charges.');
       }
       // Some categorisations persisted -> refresh the bars + breakdown so spend updates
