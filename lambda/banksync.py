@@ -1,6 +1,7 @@
 import logging
 from constants import ACCOUNT_ID_MAP, HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES
 from decimal import Decimal
+from typing import Optional
 
 from merchant import clean_merchant
 from models import Transaction
@@ -43,7 +44,7 @@ def resolve_account_id(banksync_account_id: str) -> str:
     return internal_id
 
 
-def counts_to_budget(internal_account_id: str, category: str) -> bool:
+def counts_to_budget(internal_account_id: str, category: Optional[str]) -> bool:
     """Whether a transaction counts toward a SPENDING budget (WHIT-50).
 
     Excluded: anything on the home-loan account (interest, repayment credits) and any
@@ -77,6 +78,15 @@ class BankSyncClient:
         # window, the date-index GSI, and the age-out sweep all depend on that invariant).
         swipe_date = _date_only(row.get("authorizedDate", ""), "authorizedDate")
         booking_date = _date_only(row["date"])
+        # BankSync normally tags every row with a category, but a row can arrive with the
+        # key absent (a rare upstream gap). Read it as None rather than raising, so a
+        # tagless charge is stored uncategorised instead of being dropped (WHIT-83/84:
+        # never drop a transaction). A missing key then behaves exactly like a JSON-null
+        # category, which is already tolerated. Log it so the gap surfaces in CloudWatch,
+        # the same way _date_only surfaces a malformed date.
+        if "category" not in row:
+            logger.warning("row %s carried no category; storing it uncategorised", row.get("id"))
+        category = row.get("category")
         normalised: Transaction = {
             "transaction_id": str(row["id"]),
             # Date-only on write: the budget window (date range compare) and
@@ -90,10 +100,10 @@ class BankSyncClient:
             "amount": Decimal(str(row["amount"])),
             "account_id": internal_account_id,
             "account_name": row["accountName"],
-            "category": row["category"],
+            "category": category,
             "status": "pending" if row["pending"] else "posted",
             "type": row["type"],
-            "counts_to_budget": counts_to_budget(internal_account_id, row["category"]),
+            "counts_to_budget": counts_to_budget(internal_account_id, category),
             # None when missing or JSON-null (the case today). sanitise_transaction
             # strips None, so it never bloats the stored item.
             "pending_transaction_id": row.get("pendingTransactionId"),

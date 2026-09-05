@@ -140,13 +140,37 @@ def test_purchase_on_anz_card_account_counts(lam):
     assert txn["counts_to_budget"] is True
 
 
-def test_missing_category_key_raises_keyerror(lam):
-    # normalise reads row["category"] directly; a MISSING key is a KeyError, which
-    # handler.process_transaction catches -> save_failed_transactions.
+def test_missing_category_key_normalises_and_counts(lam):
+    # A row with NO category key must NOT crash (it used to raise KeyError, which
+    # dead-lettered the whole transaction and left it stuck forever). It normalises,
+    # stores category=None (same as a JSON-null category), and still counts to budget.
+    # Asserting BOTH the stored category AND counts_to_budget exercises both former
+    # row["category"] reads, so reverting only one of them still reddens this.
     row = _row()
     del row["category"]
-    with pytest.raises(KeyError):
-        lam.banksync.BankSyncClient.normalise(row)
+    txn = lam.banksync.BankSyncClient.normalise(row)
+    assert txn["category"] is None
+    assert txn["counts_to_budget"] is True
+
+
+def test_missing_category_on_home_loan_account_is_excluded(lam):
+    # The account rule dominates: a category-less row on the mortgage account is still
+    # excluded from budget, so the None default can't smuggle home-loan movement in.
+    row = _row(accountId=HOMELOAN_BANKSYNC_ID, accountName="Home loan", amount="-2525.82")
+    del row["category"]
+    txn = lam.banksync.BankSyncClient.normalise(row)
+    assert txn["account_id"] == "up-homeloan"
+    assert txn["counts_to_budget"] is False
+
+
+def test_empty_string_category_passes_through_and_counts(lam):
+    # normalise reads the category with row.get(...) and no truthiness coercion, so an
+    # empty-string category is stored verbatim and still counts (it isn't a NON_BUDGET
+    # category). Guards against "fixing" the missing-key case with `or "..."`, which
+    # would silently rewrite an empty string too.
+    txn = _normalise(lam, category="")
+    assert txn["category"] == ""
+    assert txn["counts_to_budget"] is True
 
 
 def test_null_category_reaches_helper_and_counts(lam):
@@ -296,3 +320,68 @@ def test_westpac_row_with_an_abundo_category_id_still_counts(lam):
     # Swipe date wins over the bank's booking date, as for every other account.
     assert txn["date"] == "2026-09-02"
     assert txn["merchant_name"] == "UNIFLEXREMEDIALMASSAGE"
+
+
+# --- WHIT-83/84 missing-category: adversarial GAP tests (qa) -----------------
+# The implementer covered: missing key -> None+counts, missing on home loan
+# excluded, empty-string passthrough, and the untouched null case. These add the
+# gaps: the WARNING actually fires for a missing key (and does NOT for null /
+# present), a missing-category row still normalises EVERY other field (incl. the
+# pending status), and a whitespace-only category isn't coerced by a strip-based fix.
+
+
+def test_missing_category_logs_a_warning_naming_the_id(lam, caplog):
+    # The fix logs so the gap surfaces in CloudWatch. Assert the warning fires and
+    # names the row id, mirroring the _date_only warning tests. Reverting the fix
+    # (back to row["category"]) removes this branch AND raises KeyError -> red.
+    row = _row(id="bank_tx_nocat")
+    del row["category"]
+    with caplog.at_level("WARNING"):
+        lam.banksync.BankSyncClient.normalise(row)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("carried no category" in m for m in msgs)
+    assert any("bank_tx_nocat" in m for m in msgs)   # the offending row is identified
+
+
+def test_null_category_does_not_warn(lam, caplog):
+    # A JSON-null category is a PRESENT key -> the "no category" warning must NOT
+    # fire (the fix keys off `"category" not in row`, not truthiness). Guards against
+    # a mis-fix that warns on every null, drowning the real missing-key signal.
+    with caplog.at_level("WARNING"):
+        _normalise(lam, category=None)
+    assert not any("carried no category" in r.getMessage() for r in caplog.records)
+
+
+def test_present_category_does_not_warn(lam, caplog):
+    # The normal case is silent — no spurious CloudWatch noise on every healthy row.
+    with caplog.at_level("WARNING"):
+        _normalise(lam, category="MEDICAL")
+    assert not any("carried no category" in r.getMessage() for r in caplog.records)
+
+
+def test_missing_category_row_normalises_every_other_field(lam):
+    # The missing-category default must not disturb the rest of the row: a tagless
+    # PENDING charge still gets its status, merchant, amount, dates and account —
+    # proving the None default is isolated to category, not smuggling other damage.
+    raw = "POS AUTHORISATION         COLES 0602               MELBOURNE    AU"
+    row = _row(id="bank_tx_full", description=raw, merchantName="", pending=True,
+               amount="-88.40", date="2026-06-18", authorizedDate="2026-06-17")
+    del row["category"]
+    txn = lam.banksync.BankSyncClient.normalise(row)
+    assert txn["category"] is None
+    assert txn["counts_to_budget"] is True
+    assert txn["status"] == "pending"                # row["pending"] path intact
+    assert txn["merchant_name"] == "COLES"           # merchant cleaning intact
+    assert txn["description"] == raw                 # raw description preserved
+    assert str(txn["amount"]) == "-88.40"
+    assert txn["date"] == "2026-06-17"               # swipe date wins
+    assert txn["account_id"] == "up-spending"
+
+
+def test_whitespace_only_category_is_not_coerced(lam):
+    # A whitespace-only category is stored VERBATIM (no .strip()/truthiness coercion)
+    # and still counts (it isn't a NON_BUDGET category). Guards against a mis-fix like
+    # `row.get("category") or None` that would silently rewrite "   ".
+    txn = _normalise(lam, category="   ")
+    assert txn["category"] == "   "
+    assert txn["counts_to_budget"] is True

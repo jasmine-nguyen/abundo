@@ -62,6 +62,43 @@ def test_reprocess_recovers_and_deletes_the_failed_row(lam, repo):
 # --- rows that still cannot process are LEFT in place ------------------------
 
 
+def test_reprocess_recovers_a_row_missing_its_category(lam, repo):
+    # The real stuck case: a FAILED row whose raw payload has NO category key used to be
+    # skipped on every sweep (normalise raised KeyError). Now normalise stores it
+    # uncategorised, the insert lands, and the dead-letter is deleted -- so the sweep
+    # RECOVERS it instead of leaving it stuck until it expires. (This is the ANZ
+    # "Inner View Psych" charge.) A revert reintroduces the KeyError -> skipped=1.
+    raw = _raw_row(txn_id="nocat")
+    del raw["category"]
+    repo.save_failed_transactions([raw])
+
+    summary = lam.reprocess.reprocess_failed(repo)
+
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
+    assert any(k[1] == "TXN#nocat" for k in _txn_keys(repo))
+    assert _failed_keys(repo) == []
+
+
+def test_reprocess_recovers_a_pending_row_missing_its_category(lam, repo):
+    # GAP: the recovered missing-category row above is POSTED. A stuck row can equally
+    # be PENDING (the auth leg). It must recover the same way -- stored uncategorised,
+    # status "pending", still counting -- and the dead-letter deleted. Reverting the
+    # banksync fix reintroduces KeyError on normalise -> skipped=1, nothing stored.
+    raw = _raw_row(txn_id="pendnocat", pending=True)
+    del raw["category"]
+    repo.save_failed_transactions([raw])
+
+    summary = lam.reprocess.reprocess_failed(repo)
+
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
+    stored = _txn_rows(repo)
+    assert "TXN#pendnocat" in stored
+    assert stored["TXN#pendnocat"]["status"] == "pending"
+    assert stored["TXN#pendnocat"].get("category") is None
+    assert stored["TXN#pendnocat"]["counts_to_budget"] is True
+    assert _failed_keys(repo) == []
+
+
 def test_still_unmapped_account_is_skipped_and_survives(lam, repo):
     # accountId not in ACCOUNT_ID_MAP -> normalise raises UnknownAccountError -> skip.
     repo.save_failed_transactions([_raw_row(account_id="not-a-real-account")])
