@@ -1,12 +1,13 @@
-import React, { useCallback, useState } from 'react';
-import { RefreshControl, View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import React, { useCallback } from 'react';
+import { RefreshControl, View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { C, FONT, tint, fmtBalance, ACCOUNT_ACCENTS } from '../../src/theme';
 import { Icon, Glyph } from '../../src/icons';
 import { accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
+import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
-import { RetryButton } from '../../src/components/ui';
+import { ListStates } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
@@ -26,16 +27,9 @@ export default function Accounts() {
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
-  // Pull-to-refresh: refresh the visible list AND fetch fresh account balances live from the
-  // bank. The `pulling` flag owns the spinner (set on pull, cleared once BOTH the list refetch
-  // and the live balance call settle) so it never wedges on a slow/failed live call (WHIT-363).
-  const [pulling, setPulling] = useState(false);
-  const onRefresh = useCallback(() => {
-    setPulling(true);
-    const livePull = refreshLiveBalances()
-      .catch(() => showToast('Could not refresh balances. Showing last saved.'));
-    Promise.allSettled([refetchList(), livePull]).finally(() => setPulling(false));
-  }, [refetchList, refreshLiveBalances, showToast]);
+  // Pull-to-refresh (WHIT-489: shared hook): refresh the visible list AND fetch fresh account
+  // balances live from the bank, with the WHIT-363 stuck-spinner invariant owned in one place.
+  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast);
 
   return (
     <ScrollChromeHeader
@@ -58,17 +52,14 @@ export default function Accounts() {
         />
       )}
     >
-      {showSpinner && (
-        <View testID="accounts-loading" style={styles.rowsState}>
-          <ActivityIndicator color={C.accent} />
-        </View>
-      )}
-      {showError && (
-        <View testID="accounts-error" style={styles.rowsState}>
-          <Text style={styles.stateText}>Couldn't load your accounts.</Text>
-          <RetryButton onPress={refetch} label="Retry loading your accounts" testID="accounts-retry" style={styles.retryBtn} textStyle={styles.retryText} />
-        </View>
-      )}
+      <ListStates
+        showSpinner={showSpinner}
+        showError={showError}
+        idPrefix="accounts"
+        errorText="Couldn't load your accounts."
+        retryLabel="Retry loading your accounts"
+        onRetry={refetch}
+      />
 
       {!showSpinner && !showError && accounts.length === 0 && (
         <View style={styles.empty}>
@@ -126,9 +117,4 @@ const styles = StyleSheet.create({
   acctSub: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 2 },
   acctBal: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
   acctBalPending: { fontFamily: FONT.display, fontSize: 16, fontWeight: '700', color: C.textFaint },
-
-  rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
-  stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
-  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

@@ -6,9 +6,10 @@ import { C, FONT, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
+import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
-import { RetryButton } from '../../src/components/ui';
+import { ListStates } from '../../src/components/ListStates';
 import { SettingsButton } from '../../src/components/SettingsButton';
 
 type Tab = 'all' | 'uncategorized';
@@ -56,22 +57,11 @@ export default function Transactions() {
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
-  // Pull-to-refresh: refresh the visible list AND fetch fresh account balances live from the
-  // bank (refreshLiveBalances). The other screens (budgets, loan, rules, pay-cycle) refresh
-  // themselves on focus via their own queries — pull doesn't reload the whole app.
-  // WHIT-363: the spinner must show ONLY for a real finger-pull and must always dismiss. The
-  // local `pulling` flag owns it, set on the pull and cleared in a `.finally()` once BOTH the
-  // list refetch and the live balance call SETTLE — success, failure, or timeout. It is NEVER
-  // driven off isFetching (that was the WHIT-363 stuck-spinner cause), so the on-focus
-  // background refetch never raises it and a slow/failed live call can't wedge it.
-  const [pulling, setPulling] = useState(false);
-  const onRefresh = useCallback(() => {
-    setPulling(true);
-    // A failed live refresh keeps the last-good balances; just tell the user, don't blank the list.
-    const livePull = refreshLiveBalances()
-      .catch(() => showToast('Could not refresh balances. Showing last saved.'));
-    Promise.allSettled([refetchList(), livePull]).finally(() => setPulling(false));
-  }, [refetchList, refreshLiveBalances, showToast]);
+  // Pull-to-refresh (WHIT-489: shared hook): refresh the visible list AND fetch fresh account
+  // balances live from the bank, with the WHIT-363 stuck-spinner invariant owned in one place.
+  // The other screens (budgets, loan, rules, pay-cycle) refresh themselves on focus via their
+  // own queries — pull doesn't reload the whole app.
+  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast);
 
   // Scroll-to-hide chrome + the floating header now live in the shared ScrollChromeHeader
   // wrapper (WHIT-199). The RefreshControl is a render-prop so this screen keeps its own
@@ -147,17 +137,14 @@ export default function Transactions() {
           </View>
         )}
 
-        {showSpinner && (
-          <View testID="transactions-loading" style={styles.rowsState}>
-            <ActivityIndicator color={C.accent} />
-          </View>
-        )}
-        {showError && (
-          <View testID="transactions-error" style={styles.rowsState}>
-            <Text style={styles.stateText}>Couldn't load your transactions.</Text>
-            <RetryButton onPress={refetch} label="Retry loading your transactions" testID="transactions-retry" style={styles.retryBtn} textStyle={styles.retryText} />
-          </View>
-        )}
+        <ListStates
+          showSpinner={showSpinner}
+          showError={showError}
+          idPrefix="transactions"
+          errorText="Couldn't load your transactions."
+          retryLabel="Retry loading your transactions"
+          onRetry={refetch}
+        />
 
         {!showSpinner && !showError && groups.map((g) => (
           <View key={g.label} style={{ marginTop: 18 }}>
@@ -290,9 +277,4 @@ const styles = StyleSheet.create({
   loadMore: { marginTop: 18, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
   loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
   loadMoreState: { marginTop: 18, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
-
-  rowsState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
-  stateText: { fontFamily: FONT.body, fontSize: 14.5, color: C.textMid, textAlign: 'center' },
-  retryBtn: { paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12, backgroundColor: tint(C.accentAlt, 0.16) },
-  retryText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentSoft },
 });

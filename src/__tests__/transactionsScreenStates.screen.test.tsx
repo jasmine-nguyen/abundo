@@ -351,6 +351,24 @@ it('[E2] a second pull after the first resolves still spins and clears', async (
   await settlePull();
   expect(isSpinning(UNSAFE_getByType)).toBe(false); // and clears again
 });
+
+// [E4] WHIT-489 divergent gate: the Transactions RefreshControl gates on
+// `pulling && transactions.length > 0`, so a pull on a SETTLED EMPTY list (not loading, no rows)
+// must NOT raise the pull spinner — the divergence from the Accounts tab, which DOES spin on its
+// settled-empty list. [E3] only exercises the LOADING-empty case, where the accounts gate
+// (`!showSpinner`) and this screen's gate (`length > 0`) AGREE (both false) — so nothing else
+// catches Transactions accidentally adopting the accounts `!showSpinner` gate. This locks the
+// distinguishing case. Fail-on-revert: switch transactions.tsx to `refreshing={pulling && !showSpinner}`
+// → a settled-empty pull reports refreshing=true → RED.
+it('[E4] a pull on the SETTLED EMPTY list does NOT raise the pull spinner (length>0 gate)', async () => {
+  mockTx = txData({ transactions: [], isLoading: false }); // settled + empty, NOT a cold load
+  const { UNSAFE_getByType } = render(<Transactions />);
+  pull(UNSAFE_getByType);
+  expect(refetchList).toHaveBeenCalledTimes(1);          // the pull DID fire (pulling=true)
+  expect(refreshLiveBalances).toHaveBeenCalledTimes(1);
+  expect(isSpinning(UNSAFE_getByType)).toBe(false);      // ...but the spinner is gated off by length>0
+  await settlePull();
+});
 });
 
 // ===== Search (folded from transactionsSearch.screen.test.tsx) =====
