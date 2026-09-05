@@ -40,13 +40,13 @@ resource "aws_iam_role" "transaction_trigger_exec" {
   })
 }
 
-# Execution role for the homeloan-request lambda. Reads the BankSync API key from
+# Execution role for the balance-poller lambda. Reads the BankSync API key from
 # SSM; reads + writes DynamoDB (the balance row it upserts, plus the milestone /
 # repayment notify markers, device tokens, loan facts, and push receipts the milestone
 # push and the WHIT-316 alarm check need — GetItem/PutItem/UpdateItem on the base table
 # only, no transactions/GSI); and writes its own logs.
-resource "aws_iam_role" "homeloan_request_exec" {
-  name = "${var.project_name}-homeloan-request-exec"
+resource "aws_iam_role" "balance_poller_exec" {
+  name = "${var.project_name}-balance-poller-exec"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -270,9 +270,9 @@ resource "aws_iam_role_policy" "transaction_trigger_logs" {
 # leaving the WHIT-316 repayment-miss alarm dead-on-arrival (WHIT-318). WHIT-317 then added
 # Query + index/* so the transaction-based detector can read the date-index (without it the
 # detector throws on every Query, gets swallowed, and silently never alarms — the same trap).
-resource "aws_iam_role_policy" "homeloan_request_dynamodb" {
-  name = "${var.project_name}-homeloan-request-dynamodb"
-  role = aws_iam_role.homeloan_request_exec.id
+resource "aws_iam_role_policy" "balance_poller_dynamodb" {
+  name = "${var.project_name}-balance-poller-dynamodb"
+  role = aws_iam_role.balance_poller_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -292,12 +292,12 @@ resource "aws_iam_role_policy" "homeloan_request_dynamodb" {
   })
 }
 
-# Homeloan-request lambda: read the BankSync API key. ssm:GetParameter alone
+# Balance-poller lambda: read the BankSync API key. ssm:GetParameter alone
 # decrypts the SecureString via the AWS-managed key (same pattern as
 # transaction_trigger_ssm).
-resource "aws_iam_role_policy" "homeloan_request_ssm" {
-  name = "${var.project_name}-homeloan-request-ssm"
-  role = aws_iam_role.homeloan_request_exec.id
+resource "aws_iam_role_policy" "balance_poller_ssm" {
+  name = "${var.project_name}-balance-poller-ssm"
+  role = aws_iam_role.balance_poller_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -313,10 +313,10 @@ resource "aws_iam_role_policy" "homeloan_request_ssm" {
   })
 }
 
-# Homeloan-request lambda: write to its own CloudWatch log group.
-resource "aws_iam_role_policy" "homeloan_request_logs" {
-  name = "${var.project_name}-homeloan-request-logs"
-  role = aws_iam_role.homeloan_request_exec.id
+# Balance-poller lambda: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "balance_poller_logs" {
+  name = "${var.project_name}-balance-poller-logs"
+  role = aws_iam_role.balance_poller_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -328,17 +328,38 @@ resource "aws_iam_role_policy" "homeloan_request_logs" {
         "logs:PutLogEvents"
       ]
       Resource = [
-        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-homeloan-request:*"
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-balance-poller:*"
       ]
     }]
   })
+}
+
+# WHIT-493: renamed the balance-poller's execution role and inline policies from
+# homeloan_request_* to balance_poller_*. The deployed role/policy names change, so these
+# are replacements, not in-place moves; the blocks migrate the state address. Garbage-collect
+# once applied.
+moved {
+  from = aws_iam_role.homeloan_request_exec
+  to   = aws_iam_role.balance_poller_exec
+}
+moved {
+  from = aws_iam_role_policy.homeloan_request_dynamodb
+  to   = aws_iam_role_policy.balance_poller_dynamodb
+}
+moved {
+  from = aws_iam_role_policy.homeloan_request_ssm
+  to   = aws_iam_role_policy.balance_poller_ssm
+}
+moved {
+  from = aws_iam_role_policy.homeloan_request_logs
+  to   = aws_iam_role_policy.balance_poller_logs
 }
 
 # Push-receipts sweep lambda: Query the pending-receipts partition (list_pending),
 # DeleteItem resolved rows (delete), and UpdateItem to prune a dead device token
 # (DeviceRepository.remove uses a DELETE-expression UpdateItem). All hit base-table
 # items — no GSI is touched — so this is scoped to the base table ARN only, matching
-# homeloan_request_dynamodb's tight scoping. No Scan.
+# balance_poller_dynamodb's tight scoping. No Scan.
 resource "aws_iam_role_policy" "push_receipts_dynamodb" {
   name = "${var.project_name}-push-receipts-dynamodb"
   role = aws_iam_role.push_receipts_exec.id

@@ -279,7 +279,7 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_errors" {
 # still seen when the webhook is broken. Keep this pattern and handler.py in lockstep.
 resource "aws_cloudwatch_log_metric_filter" "up_webhook_repayment_missed" {
   name           = "${var.project_name}-up-webhook-repayment-missed"
-  log_group_name = aws_cloudwatch_log_group.homeloan_request.name
+  log_group_name = aws_cloudwatch_log_group.balance_poller.name
   pattern        = "UP_WEBHOOK_REPAYMENT_MISSED"
 
   metric_transformation {
@@ -316,7 +316,7 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_repayment_missed" {
 # deliberately logs at WARNING with NO token, so a screen read never fires this poller alarm.
 resource "aws_cloudwatch_log_metric_filter" "milestone_row_malformed" {
   name           = "${var.project_name}-milestone-row-malformed"
-  log_group_name = aws_cloudwatch_log_group.homeloan_request.name
+  log_group_name = aws_cloudwatch_log_group.balance_poller.name
   pattern        = "?MILESTONE_ROW_MALFORMED ?MILESTONE_PLAN_MALFORMED"
 
   metric_transformation {
