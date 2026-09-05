@@ -32,7 +32,8 @@ def test_get_account_balances_asks_for_the_known_internal_ids(handler):
     repo = FakeAccountBalanceRepo()
     handler.get_account_balances(repo)
     # Queries the app's known accounts (ACCOUNT_ID_MAP's internal ids), sorted + deduped.
-    assert repo.list_calls == [["anz-rewards-black-visa", "up-homeloan", "up-spending"]]
+    assert repo.list_calls == [["anz-rewards-black-visa", "up-homeloan", "up-spending",
+                                "westpac-altitude-qantas-black"]]
 
 
 def test_get_account_balances_returns_the_stored_rows(handler):
@@ -122,6 +123,7 @@ _LIVE_PAYLOADS = {
     "3zVQJ8Btz_IRmqp78VrQnQ": _ok_payload("96270.59", "checking"),                       # up-spending
     "T6d8ppsYssBDFCwl1qEb0w": _ok_payload("-596642.43", "mortgage"),                     # up-homeloan
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ok_payload("-6492.26", "unknown"),   # anz-rewards-black-visa
+    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _ok_payload("-230", "unknown"),              # westpac-altitude-qantas-black
 }
 
 _REFRESH_EVENT = {"rawPath": "/accounts/balances/refresh", "requestContext": {"http": {"method": "POST"}}}
@@ -174,6 +176,7 @@ def test_refresh_live_fetches_upserts_and_arms_marker(handler, monkeypatch):
         "up-spending": Decimal("96270.59"),
         "up-homeloan": Decimal("-596642.43"),
         "anz-rewards-black-visa": Decimal("-6492.26"),
+        "westpac-altitude-qantas-black": Decimal("-230"),
     }
     assert repo.set_calls == [1000]  # marker armed at now
 
@@ -192,8 +195,9 @@ def test_refresh_partial_failure_upserts_successes_and_returns_200(handler, monk
 
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
-    assert resp["statusCode"] == 200  # one account down, the other two still refresh
-    assert {u[0] for u in repo.upserts} == {"up-spending", "up-homeloan"}
+    assert resp["statusCode"] == 200  # one account down, the others still refresh
+    assert {u[0] for u in repo.upserts} == {"up-spending", "up-homeloan",
+                                            "westpac-altitude-qantas-black"}
     assert repo.set_calls == [1000]   # marker armed despite the partial failure
 
 
@@ -228,7 +232,8 @@ def test_refresh_normalise_failure_counts_as_a_failed_account(handler, monkeypat
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
-    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa"}
+    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa",
+                                            "westpac-altitude-qantas-black"}
 
 
 def test_refresh_accepts_post_with_no_body(handler, monkeypatch):

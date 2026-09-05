@@ -145,6 +145,8 @@ export async function persistCategoryBatch(
 export const CLEAN_NAME: Record<string, string> = {
   'DD *DOORDASH HUTIEUGOO': 'DoorDash',
   'UNIFLEX REMEDIAL MASSAGE': 'Uniflex Massage',
+  // Westpac sends the same clinic unspaced; ANZ spaces it. Both map to one name.
+  'UNIFLEXREMEDIALMASSAGE': 'Uniflex Massage',
   'SQ *KKV INTERNATIONAL': 'KKV International',
 };
 export function cleanName(m: string) { return CLEAN_NAME[m] || m; }

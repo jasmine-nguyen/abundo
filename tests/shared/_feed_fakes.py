@@ -14,10 +14,11 @@ imports with no shared/-layer module on the path and needs no conftest `_REIMPOR
 
 import copy
 
-# The three internal account ids, in ACCOUNT_ID_MAP order.
+# The internal account ids, in ACCOUNT_ID_MAP order.
 ANZ = "anz-rewards-black-visa"
 SPENDING = "up-spending"
 HOMELOAN = "up-homeloan"
+WESTPAC = "westpac-altitude-qantas-black"
 
 
 def _row(account_id, date, txn_id, **extra):

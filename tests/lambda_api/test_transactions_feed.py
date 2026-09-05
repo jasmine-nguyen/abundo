@@ -18,7 +18,7 @@ import pytest
 
 # FakeFeedRepo and friends live in tests/shared/_feed_fakes.py so this impl suite and its
 # gap suite share ONE definition (WHIT-445); resolved via pytest.ini's pythonpath.
-from _feed_fakes import ANZ, SPENDING, HOMELOAN, _row, FakeFeedRepo, _feed_event
+from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, _row, FakeFeedRepo, _feed_event
 
 
 def _drain_feed(handler, repo, limit=None):
@@ -49,20 +49,21 @@ def test_first_page_queries_every_account_from_newest_with_no_date_floor(handler
         ANZ: [_row(ANZ, "2026-07-10", "a1")],
         SPENDING: [_row(SPENDING, "2026-07-11", "s1")],
         HOMELOAN: [_row(HOMELOAN, "2026-07-09", "h1")],
+        WESTPAC: [_row(WESTPAC, "2026-07-08", "w1")],
     })
     resp = handler.get_transactions_feed(_feed_event({}), repo)
 
     assert resp["statusCode"] == 200
     # Every account queried with start=end=None (no 7-day floor) and cursor=None.
     queried = {c[0]: c for c in repo.calls}
-    assert set(queried) == {ANZ, SPENDING, HOMELOAN}
+    assert set(queried) == {ANZ, SPENDING, HOMELOAN, WESTPAC}
     for account_id, call in queried.items():
         assert call[1] is None and call[2] is None   # no start/end date floor
         assert call[4] is None                        # first page → from newest
 
     body = json.loads(resp["body"])
     # Merged newest-first across accounts.
-    assert [t["transaction_id"] for t in body["transactions"]] == ["s1", "a1", "h1"]
+    assert [t["transaction_id"] for t in body["transactions"]] == ["s1", "a1", "h1", "w1"]
     assert body["nextCursor"] is None                 # everything fit on one page
 
 
@@ -97,7 +98,7 @@ def _assert_full_history_newest_first(handler, repo, expected_ids, limit):
 
 
 def test_paging_reaches_all_history_across_accounts_no_dupes_no_gaps(handler):
-    # Interleaved dates across all three accounts, more rows than one small page holds.
+    # Interleaved dates across three accounts, more rows than one small page holds.
     rows = {
         ANZ: [_row(ANZ, f"2026-07-{d:02d}", f"a{d}") for d in (1, 4, 7, 10, 13)],
         SPENDING: [_row(SPENDING, f"2026-07-{d:02d}", f"s{d}") for d in (2, 5, 8, 11, 14)],
@@ -121,7 +122,7 @@ def test_paging_is_correct_across_a_range_of_page_sizes(handler):
 
 
 def test_equal_dates_straddling_accounts_are_all_returned_once(handler):
-    # Same date on all three accounts, plus older rows — the page boundary falls on a tie.
+    # Same date on three accounts, plus older rows — the page boundary falls on a tie.
     rows = {
         ANZ: [_row(ANZ, "2026-07-01", "a_tie"), _row(ANZ, "2026-06-20", "a_old")],
         SPENDING: [_row(SPENDING, "2026-07-01", "s_tie"), _row(SPENDING, "2026-06-20", "s_old")],
@@ -483,7 +484,7 @@ def test_same_date_run_within_one_account_split_by_size_change(handler):
 
 
 def test_same_date_across_accounts_resume_boundary_with_size_change(handler):
-    # Same date on all three accounts AND older tails, page size changing each page. The
+    # Same date on three accounts AND older tails, page size changing each page. The
     # equal-date tiebreak (ACCOUNT_ID_MAP order) must stay stable across the resume so no
     # tie-row is lost or doubled.
     rows = {

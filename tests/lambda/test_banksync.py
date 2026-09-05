@@ -247,3 +247,52 @@ def test_date_only_input_logs_nothing(lam, caplog):
     with caplog.at_level("WARNING"):
         _normalise(lam, date="2026-01-16", authorizedDate="2026-01-15")
     assert caplog.records == []
+
+
+# --- Westpac Altitude Qantas Black Card -------------------------------------
+# The account reached the webhook before it was mapped, so every row was rejected
+# by resolve_account_id and dead-lettered. These lock the mapping and the shape of
+# the two rows that were actually stuck, taken verbatim from the FAILED partition.
+
+WESTPAC_BANKSYNC_ID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
+
+
+def test_westpac_account_resolves_to_its_internal_id(lam):
+    assert lam.banksync.resolve_account_id(WESTPAC_BANKSYNC_ID) == "westpac-altitude-qantas-black"
+
+
+def test_westpac_fee_row_normalises_and_counts_to_budget(lam):
+    # The real "QANTAS REWARDS FEE" row. `category` is a raw BankSync enum here
+    # (BANK_FEES) — not in NON_BUDGET_CATEGORIES, so a card fee counts as spend.
+    txn = _normalise(
+        lam,
+        id="bank_tx_6d03cf4f45d7ec6ef02b23506a4dc3a69b7e32ba63867a46c02d8b58c76fa20b",
+        date="2026-09-02", authorizedDate="2026-09-02",
+        description="QANTAS REWARDS FEE", merchantName="QANTAS REWARDS FEE",
+        amount="-75", category="BANK_FEES", type="FEE",
+        accountId=WESTPAC_BANKSYNC_ID, accountName="Altitude Qantas Black Card",
+    )
+    assert txn["account_id"] == "westpac-altitude-qantas-black"
+    assert txn["category"] == "BANK_FEES"
+    assert txn["counts_to_budget"] is True
+    assert txn["status"] == "posted"
+
+
+def test_westpac_row_with_an_abundo_category_id_still_counts(lam):
+    # The real massage row. A BankSync enrichment rule had already written abundo's
+    # lowercase category id ("health") in place of the raw enum. Lowercase ids are
+    # never in NON_BUDGET_CATEGORIES (raw enums only), so it must still count.
+    txn = _normalise(
+        lam,
+        id="bank_tx_b220e370899f9a0b0b75a04837f4190e80b7fea137ee7a02e5b11df1f52822a5",
+        date="2026-09-03", authorizedDate="2026-09-02",
+        description="UNIFLEXREMEDIALMASSAGE ALTONA NORT AUS",
+        merchantName="UNIFLEXREMEDIALMASSAGE",
+        amount="-155", category="health", type="OTHER",
+        accountId=WESTPAC_BANKSYNC_ID, accountName="Altitude Qantas Black Card",
+    )
+    assert txn["account_id"] == "westpac-altitude-qantas-black"
+    assert txn["counts_to_budget"] is True
+    # Swipe date wins over the bank's booking date, as for every other account.
+    assert txn["date"] == "2026-09-02"
+    assert txn["merchant_name"] == "UNIFLEXREMEDIALMASSAGE"

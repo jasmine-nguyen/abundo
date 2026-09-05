@@ -13,6 +13,7 @@ faked by conftest, and the repository is replaced with a recording fake.
 
 import io
 import json
+import logging
 import urllib.error
 from decimal import Decimal
 
@@ -106,6 +107,24 @@ _ANZ_PAYLOAD = {
         "accountType": "unknown", "accountId": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0",
         "amount": -6492.26, "availableBalance": 8171.88, "currency": "AUD",
     },
+}
+_WESTPAC_PAYLOAD = {
+    "success": True,
+    "data": {
+        "date": "2026-09-05T03:58:13.856Z", "accountName": "Altitude Qantas Black Card",
+        "accountType": "unknown", "accountId": "A3AC9195-9E8D-48B8-86D0-46D130D7F64A",
+        "amount": -230, "availableBalance": 5770, "currency": "AUD",
+    },
+}
+
+# Every BALANCE_SOURCES aid -> its getBalance payload. Stubs look up through this
+# dict rather than falling back to a default, so an aid with no payload raises
+# instead of quietly resolving to another account's balance.
+_PAYLOADS_BY_AID = {
+    "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
+    "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
+    "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
+    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _WESTPAC_PAYLOAD,
 }
 
 
@@ -247,25 +266,32 @@ def test_get_api_key_reads_the_banksync_path(handler, monkeypatch):
 # --- lambda_handler ----------------------------------------------------------
 
 
-def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, monkeypatch):
+def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, monkeypatch, caplog):
     homeloan = _FakeRepo()
     accounts = _FakeAccountRepo()
     monkeypatch.setattr(handler, "get_api_key", lambda: "the-key")
     monkeypatch.setattr(handler, "HomeLoanBalanceRepository", lambda: homeloan)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
 
-    # Return a per-account payload keyed by the aid in the request URL.
-    payloads = {
-        "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
-        "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
-        "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
-    }
-    monkeypatch.setattr(handler.urllib.request, "urlopen",
-                        lambda req, timeout=None: _FakeResponse(next(p for aid, p in payloads.items() if aid in req.full_url)))
+    # Return a per-account payload keyed by the aid in the request URL. An aid with no
+    # stub raises rather than falling through: _poll_account_balances swallows every
+    # per-account exception, so a missing payload would otherwise leave this test green
+    # while the account it names silently failed to store.
+    def urlopen(req, timeout=None):
+        for aid, payload in _PAYLOADS_BY_AID.items():
+            if aid in req.full_url:
+                return _FakeResponse(payload)
+        raise AssertionError(f"no stub payload for {req.full_url}")
+
+    caplog.set_level(logging.ERROR)
+    monkeypatch.setattr(handler.urllib.request, "urlopen", urlopen)
 
     result = handler.lambda_handler({}, None)
 
-    assert result == {"homeloan_stored": True, "accounts_stored": 3}
+    assert result == {"homeloan_stored": True, "accounts_stored": len(handler.BALANCE_SOURCES)}
+    # The count alone can't prove every source stored — a swallowed per-account failure
+    # lowers it silently. Assert the poller logged no skip at all.
+    assert "account balance poll failed" not in caplog.text
     # The abs home-loan row (Goal screen) is still written exactly as before.
     assert homeloan.calls == [("up-homeloan", Decimal("596642.43"), "2026-07-04T00:24:37.614Z", "AUD")]
     # A signed row per account, each under its internal id.
@@ -274,6 +300,7 @@ def test_lambda_handler_stores_homeloan_and_every_account_on_success(handler, mo
         "up-spending": Decimal("96270.59"),
         "up-homeloan": Decimal("-596642.43"),
         "anz-rewards-black-visa": Decimal("-6492.26"),
+        "westpac-altitude-qantas-black": Decimal("-230"),
     }
 
 
@@ -339,15 +366,15 @@ def test_poll_account_balances_isolates_a_single_account_failure(handler, monkey
     def fetch(bid, aid, api_key):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":
             raise RuntimeError("mortgage balance timed out")
-        return _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD
+        return _PAYLOADS_BY_AID[aid]
 
     monkeypatch.setattr(handler, "fetch_balance", fetch)
 
     stored, _deltas = handler._poll_account_balances("the-key")
 
-    assert stored == 2  # spending + anz stored; the mortgage poll was skipped
+    assert stored == len(handler.BALANCE_SOURCES) - 1  # only the mortgage poll was skipped
     ids = {c[0] for c in accounts.calls}
-    assert ids == {"up-spending", "anz-rewards-black-visa"}
+    assert ids == {"up-spending", "anz-rewards-black-visa", "westpac-altitude-qantas-black"}
 
 
 # --- WHIT-301: milestone celebration hook in _poll_homeloan ------------------
@@ -409,10 +436,10 @@ def test_poll_account_balances_returns_old_new_deltas(handler, monkeypatch):
     accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD)
+                        lambda bid, aid, key: _PAYLOADS_BY_AID[aid])
 
     stored, deltas = handler._poll_account_balances("key")
-    assert stored == 3
+    assert stored == len(handler.BALANCE_SOURCES)
     by_account = {d["account_id"]: d for d in deltas}
     assert by_account["up-spending"]["old"] == Decimal("90000")
     assert by_account["up-spending"]["new"] == Decimal("96270.59")
@@ -426,7 +453,7 @@ def test_poll_account_balances_reads_prior_balances_in_one_batch(handler, monkey
     accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")})
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD)
+                        lambda bid, aid, key: _PAYLOADS_BY_AID[aid])
 
     handler._poll_account_balances("key")
     assert len(accounts.list_balance_calls) == 1
@@ -441,12 +468,12 @@ def test_poll_account_balances_batch_read_failure_degrades_old_but_still_stores(
     accounts = _FakeAccountRepo(prior={"up-spending": Decimal("90000")}, list_raises=True)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(handler, "fetch_balance",
-                        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD)
+                        lambda bid, aid, key: _PAYLOADS_BY_AID[aid])
 
     stored, deltas = handler._poll_account_balances("key")
-    assert stored == 3
+    assert stored == len(handler.BALANCE_SOURCES)
     assert all(d["old"] is None for d in deltas)  # the failed read nulls every account's old
-    assert len(accounts.calls) == 3               # ...but every balance was still stored
+    assert len(accounts.calls) == len(handler.BALANCE_SOURCES)  # ...but every balance stored
 
 
 def test_check_goal_checkpoints_fires_for_a_synced_goal_whose_account_crossed(handler, monkeypatch):
@@ -562,11 +589,7 @@ def test_poll_account_balances_zero_prior_keeps_signed_zero_not_none(handler, mo
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: {
-            "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
-            "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
-            "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
-        }[aid],
+        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
     )
 
     _stored, deltas = handler._poll_account_balances("key")
@@ -585,11 +608,7 @@ def test_poll_account_balances_negative_prior_keeps_signed_value(handler, monkey
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: {
-            "3zVQJ8Btz_IRmqp78VrQnQ": _SPENDING_PAYLOAD,
-            "T6d8ppsYssBDFCwl1qEb0w": _OK_PAYLOAD,
-            "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ANZ_PAYLOAD,
-        }[aid],
+        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
     )
 
     _stored, deltas = handler._poll_account_balances("key")
@@ -610,12 +629,12 @@ def test_poll_account_balances_extra_prior_ids_are_harmless_and_dont_leak(handle
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD,
+        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
     )
 
     stored, deltas = handler._poll_account_balances("key")
     account_ids = {d["account_id"] for d in deltas}
-    assert stored == 3
+    assert stored == len(handler.BALANCE_SOURCES)
     assert "orphan-not-a-source" not in account_ids  # the extra row never leaks into a delta
     by_account = {d["account_id"]: d for d in deltas}
     assert by_account["up-spending"]["old"] == Decimal("90000")  # real old undisturbed by the extra
@@ -634,13 +653,13 @@ def test_poll_account_balances_partial_fetch_failure_survivors_keep_batched_old(
     def fetch(bid, aid, key):
         if aid == "T6d8ppsYssBDFCwl1qEb0w":  # mortgage fetch blows up
             raise RuntimeError("mortgage balance timed out")
-        return _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD
+        return _PAYLOADS_BY_AID[aid]
 
     monkeypatch.setattr(handler, "fetch_balance", fetch)
 
     stored, deltas = handler._poll_account_balances("key")
     by_account = {d["account_id"]: d for d in deltas}
-    assert stored == 2
+    assert stored == len(handler.BALANCE_SOURCES) - 1
     assert "up-homeloan" not in by_account  # the failed account is skipped from deltas
     assert by_account["up-spending"]["old"] == Decimal("90000")     # survivor keeps its own old
     assert by_account["anz-rewards-black-visa"]["old"] == Decimal("-6000")
@@ -658,7 +677,7 @@ def test_batched_delta_drives_a_real_goal_checkpoint_crossing_end_to_end(handler
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: accounts)
     monkeypatch.setattr(
         handler, "fetch_balance",
-        lambda bid, aid, key: _SPENDING_PAYLOAD if aid == "3zVQJ8Btz_IRmqp78VrQnQ" else _ANZ_PAYLOAD,
+        lambda bid, aid, key: _PAYLOADS_BY_AID[aid],
     )
 
     goal = {
@@ -676,7 +695,7 @@ def test_batched_delta_drives_a_real_goal_checkpoint_crossing_end_to_end(handler
     stored, deltas = handler._poll_account_balances("key")
     handler._check_goal_checkpoints(deltas)
 
-    assert stored == 3
+    assert stored == len(handler.BALANCE_SOURCES)
     assert len(sent) == 1
     title, data = sent[0]
     assert "Halfway" in title
