@@ -67,7 +67,9 @@ jest.mock('../motion/NavBarsContext', () => {
 
 import Goals from '../../app/(tabs)/goals';
 import Insights from '../../app/(tabs)/insights';
-import Settings from '../../app/(tabs)/settings';
+// WHIT-495: Settings left the tab bar (now a root screen with a plain ScrollView, no
+// ScrollChromeHeader) so it no longer has the scroll-to-hide wiring — dropped from this suite.
+// Goals + Insights still exercise it.
 
 beforeEach(() => {
   mockSetNavBars.mockClear();
@@ -97,7 +99,6 @@ function firstScrollView(ui: React.ReactElement) {
 const SCREENS: [string, React.ReactElement][] = [
   ['Goals', <Goals />],
   ['Insights', <Insights />],
-  ['Settings', <Settings />],
 ];
 
 describe.each(SCREENS)('scroll-to-hide is wired on %s (WHIT-199)', (_name, ui) => {

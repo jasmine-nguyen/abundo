@@ -7,6 +7,7 @@ import { useAppContext, categoryBreakdown, incomeBreakdown } from '../../src/con
 import { useInsightsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { SettingsButton } from '../../src/components/SettingsButton';
 import { AiCoachCard } from '../../src/components/AiCoachCard';
 import { SpendingDonut } from '../../src/components/SpendingDonut';
 import { EarnedVsSpent } from '../../src/components/EarnedVsSpent';
@@ -91,7 +92,7 @@ export default function Insights() {
   const side = showToggle ? sideChoice : 'spending';
 
   return (
-    <ScrollChromeHeader title="Insights">
+    <ScrollChromeHeader title="Insights" left={<SettingsButton />}>
         {/* WHIT-68: look back one pay cycle. "This cycle" is spend so far; "Last cycle"
             is the full prior cycle. Switching only moves the hero + rows (the AI coach
             below stays about the current cycle). */}

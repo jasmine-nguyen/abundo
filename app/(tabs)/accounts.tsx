@@ -7,6 +7,7 @@ import { accountSummaries, useAppContext } from '../../src/context';
 import { useTransactionsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { RetryButton } from '../../src/components/ui';
+import { SettingsButton } from '../../src/components/SettingsButton';
 
 // The Accounts tab. Lifted out of the Transactions segmented control into its own bottom-bar
 // tab, unchanged: it derives one card per account_id from the same transactions query the
@@ -39,6 +40,7 @@ export default function Accounts() {
   return (
     <ScrollChromeHeader
       title="Accounts"
+      left={<SettingsButton />}
       // Fill the viewport even with only a few cards, so the whole screen is a pull-to-refresh
       // target. Without this the content is shorter than the screen and the pull never catches
       // on a short account list (the tall Transactions list never hit this).

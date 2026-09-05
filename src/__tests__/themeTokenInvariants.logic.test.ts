@@ -469,7 +469,7 @@ const BASELINE: Record<string, number> = {
   'app/(tabs)/budgets.tsx': 10,
   'app/(tabs)/goals.tsx': 2,
   'app/(tabs)/insights.tsx': 3,
-  'app/(tabs)/settings.tsx': 5,
+  'app/settings.tsx': 5,
   'app/(tabs)/transactions.tsx': 8,
   'app/budget/[id].tsx': 4,
   'app/budget/edit.tsx': 4,

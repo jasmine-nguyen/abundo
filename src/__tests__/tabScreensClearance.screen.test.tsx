@@ -79,7 +79,9 @@ jest.mock('expo-router', () => {
 
 import Goals from '../../app/(tabs)/goals';
 import Insights from '../../app/(tabs)/insights';
-import Settings from '../../app/(tabs)/settings';
+// WHIT-495: Settings left the tab bar (now a root screen with a plain ScrollView + Header), so it
+// no longer routes through the shared ScrollChromeHeader/TAB_BAR_CLEARANCE — dropped from this
+// suite. Goals + Insights still exercise the shared inset, so the guard keeps its teeth.
 
 beforeEach(() => {
   mockState = {
@@ -105,8 +107,5 @@ describe('unwired tab screens use the shared TAB_BAR_CLEARANCE, not a literal 12
   });
   it('Insights list bottom inset comes from TAB_BAR_CLEARANCE', () => {
     expect(bottomPaddingOf(<Insights />)).toBe(SENTINEL);
-  });
-  it('Settings list bottom inset comes from TAB_BAR_CLEARANCE', () => {
-    expect(bottomPaddingOf(<Settings />)).toBe(SENTINEL);
   });
 });

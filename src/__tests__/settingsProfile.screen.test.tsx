@@ -24,7 +24,7 @@ jest.mock('../../src/context', () => ({
   }),
 }));
 
-import Settings from '../../app/(tabs)/settings';
+import Settings from '../../app/settings';
 
 it('shows the real name + email (Google login), not the mock', () => {
   mockUser = { email: 'me.jasminenguyen@gmail.com', name: 'Jasmine Nguyen' };

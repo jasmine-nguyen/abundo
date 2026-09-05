@@ -9,6 +9,7 @@ import { useTransactionsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { RetryButton } from '../../src/components/ui';
+import { SettingsButton } from '../../src/components/SettingsButton';
 
 type Tab = 'all' | 'uncategorized';
 
@@ -91,6 +92,7 @@ export default function Transactions() {
     <View style={{ flex: 1 }}>
     <ScrollChromeHeader
       title="Transactions"
+      left={<SettingsButton />}
       right={headerRight}
       contentContainerStyle={selectionMode ? styles.contentWithBar : undefined}
       keyboardShouldPersistTaps="handled"

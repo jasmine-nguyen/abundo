@@ -26,5 +26,5 @@ beforeEach(() => { capturedNames = []; });
 
 it('declares the tabs in order with Accounts 3rd, right after Transactions', () => {
   render(<TabsLayout />);
-  expect(capturedNames).toEqual(['budgets', 'transactions', 'accounts', 'insights', 'goals', 'settings']);
+  expect(capturedNames).toEqual(['budgets', 'transactions', 'accounts', 'insights', 'goals']);
 });

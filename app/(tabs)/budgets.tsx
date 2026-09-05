@@ -7,6 +7,7 @@ import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { BudgetBar, RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { SettingsButton } from '../../src/components/SettingsButton';
 
 export default function Budgets() {
   const router = useRouter();
@@ -36,6 +37,7 @@ export default function Budgets() {
   return (
     <ScrollChromeHeader
       title="Budgets"
+      left={<SettingsButton />}
       right={(
         <Pressable onPress={() => router.push('/budget/pick')} style={styles.addBtn}>
           <Glyph name="plus" size={22} color={C.accentSoft} />

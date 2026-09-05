@@ -66,7 +66,7 @@ jest.mock('expo-router', () => {
   return { useRouter: () => ({ push: jest.fn(), replace: mockReplace }), useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]) };
 });
 
-import Settings from '../../app/(tabs)/settings';
+import Settings from '../../app/settings';
 import { useSettingsScreenData } from '../queries';
 
 // ===== WHIT-191a — the Settings server-backed rows (categories count + loan-facts status)

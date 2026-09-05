@@ -1,13 +1,20 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Image, ScrollView } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { C, FONT, tint } from '../../src/theme';
-import { Glyph } from '../../src/icons';
-import { useAppContext } from '../../src/context';
-import { useSettingsScreenData, useRulesScreenData, usePayCycle } from '../../src/queries';
-import { signOut, getCurrentUser } from '../../src/auth';
-import { SectionLabel, RetryButton } from '../../src/components/ui';
-import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
+import { C, FONT, tint } from '../src/theme';
+import { Glyph } from '../src/icons';
+import { useAppContext } from '../src/context';
+import { useSettingsScreenData, useRulesScreenData, usePayCycle } from '../src/queries';
+import { signOut, getCurrentUser } from '../src/auth';
+import { SectionLabel, RetryButton } from '../src/components/ui';
+import { Header } from '../src/components/Header';
+
+// WHIT-495: Settings is no longer a bottom-bar tab — it's reached from the header gear on every
+// tab and opens as a root-stack pushed screen. It sits OUTSIDE NavBarsProvider, so it uses the
+// shared <Header showBack/> + a plain ScrollView (the milestone/mortgage/loan detail pattern)
+// rather than the tab's ScrollChromeHeader. Route stays /settings so deep links resolve. The
+// screen body is otherwise unchanged.
 
 // WHIT-180: avatar initials from the real signed-in identity (name → first+last
 // initial; else the first two letters of the email's local part). A whitespace-only
@@ -31,6 +38,7 @@ export function initialsFrom(u: { email?: string; name?: string } | null): strin
 export default function Settings() {
   const s = useAppContext(); // alerts toggle + setSheet (client-state)
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   // WHIT-191a: the two server-backed rows (categories count + loan-facts status) now come
   // from the cached query layer. "…" while first-loading so the count never flashes "0".
@@ -71,7 +79,9 @@ export default function Settings() {
   };
 
   return (
-    <ScrollChromeHeader title="Settings">
+    <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
+      <Header title="Settings" />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
         {/* profile */}
         <View style={styles.profile}>
           {showPhoto ? (
@@ -119,7 +129,8 @@ export default function Settings() {
         </View>
 
         <Text style={styles.version}>Abundo · v1.0 · death-pledge slayer</Text>
-    </ScrollChromeHeader>
+      </ScrollView>
+    </View>
   );
 }
 

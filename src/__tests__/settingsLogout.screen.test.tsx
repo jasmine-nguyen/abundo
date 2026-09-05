@@ -9,7 +9,8 @@ import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
 
 const mockReplace = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn() }), useFocusEffect: () => {} }));
+const mockBack = jest.fn();
+jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace, push: jest.fn(), back: mockBack }), useFocusEffect: () => {} }));
 
 const mockSignOut = jest.fn(async () => {});
 // WHIT-180: Settings now also reads getCurrentUser for the profile card.
@@ -33,11 +34,19 @@ jest.mock('../../src/context', () => ({
   }),
 }));
 
-import Settings from '../../app/(tabs)/settings';
+import Settings from '../../app/settings';
 
 it('Log out calls signOut() and returns to the login screen', () => {
   const { getByTestId } = render(<Settings />);
   fireEvent.press(getByTestId('settings-logout'));
   expect(mockSignOut).toHaveBeenCalledTimes(1);
   expect(mockReplace).toHaveBeenCalledWith('/');
+});
+
+// WHIT-495: Settings is now a pushed root screen, so it must carry a back control (it's no
+// longer a tab). The shared Header renders a labelled "Back" button that pops the stack.
+it('renders a Back button that pops back to the origin tab', () => {
+  const { getByLabelText } = render(<Settings />);
+  fireEvent.press(getByLabelText('Back'));
+  expect(mockBack).toHaveBeenCalledTimes(1);
 });
