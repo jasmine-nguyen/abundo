@@ -16,6 +16,13 @@ describe('cleanName / merchantLabel', () => {
     expect(cleanName('WOOLWORTHS')).toBe('WOOLWORTHS');
   });
 
+  it('maps both bank spellings of one merchant to the same name', () => {
+    // ANZ sends the clinic spaced, Westpac sends it unspaced. Without both entries
+    // the same merchant reads differently depending on which card was used.
+    expect(cleanName('UNIFLEX REMEDIAL MASSAGE')).toBe('Uniflex Massage');
+    expect(cleanName('UNIFLEXREMEDIALMASSAGE')).toBe('Uniflex Massage');
+  });
+
   it('prefers merchant_name, falling back to description', () => {
     expect(merchantLabel(txn({ merchant_name: 'Woolworths', description: 'WOOLWORTHS 123' }))).toBe('Woolworths');
     expect(merchantLabel(txn({ merchant_name: '', description: 'DD *DOORDASH HUTIEUGOO' }))).toBe('DoorDash');

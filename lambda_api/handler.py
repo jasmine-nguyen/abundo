@@ -2406,7 +2406,7 @@ _GOAL_DIRECTIONS = {"grow", "paydown"}
 # number limit and 500ing at write instead of a clean 400 (matches set_budget).
 _GOAL_AMOUNT_MAX = 1_000_000_000
 # A goal's balance source, when synced, must name one of the real synced accounts —
-# the client picker only offers these three, so a phantom id is a bug caught here.
+# the client picker only offers the mapped accounts, so a phantom id is a bug caught here.
 _SYNCED_ACCOUNT_IDS = frozenset(ACCOUNT_ID_MAP.values())
 # A goal's checkpoint ladder (WHIT-476): a few "you're a step closer" markers between the
 # start and the target. Deliberately smaller than the mortgage plan's 50 — a goal ladder is

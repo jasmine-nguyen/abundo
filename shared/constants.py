@@ -5,6 +5,7 @@ ACCOUNT_ID_MAP = {
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": "anz-rewards-black-visa",
     "3zVQJ8Btz_IRmqp78VrQnQ": "up-spending",
     "T6d8ppsYssBDFCwl1qEb0w": "up-homeloan",
+    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": "westpac-altitude-qantas-black",
 }
 
 # The mortgage account's internal id (a value in ACCOUNT_ID_MAP). Everything posted here
@@ -118,6 +119,10 @@ DEFAULT_PAYCYCLE = {"length": 14, "last_pay_date": "2024-01-03"}
 SYNC_FEED_IDS = {
     "xXkBR72EKo4Qxkz8667l": "spending-anz",
     "LwO4ZvpH5SMBhEkAO2br": "up-homeloan",
+    # This feed also carries its own daily schedule inside BankSync, so our hourly
+    # tick can overlap it; trigger_sync treats the resulting 409 ("sync already in
+    # progress") as a skip, so the overlap is harmless.
+    "zJiG0SNKKWScMp9bFdD4": "westpac-altitude-qantas-black",
 }
 
 # HTTP timeout, in seconds, for a single sync-trigger request to BankSync.
@@ -146,6 +151,7 @@ BALANCE_SOURCES = [
     {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                       # up-spending
     {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"},                       # up-homeloan
     {"bid": "fiskil_4", "aid": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"},  # anz-rewards-black-visa
+    {"bid": "fiskil_77", "aid": "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"},        # westpac-altitude-qantas-black
 ]
 # Drift guard (mirrors the HOMELOAN_ACCOUNT_ID assert): a source whose aid isn't mapped
 # would store a balance under a raw id the app can never join to an account. Fail at import

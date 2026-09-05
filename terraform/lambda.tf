@@ -246,12 +246,15 @@ resource "aws_lambda_function" "app_api" {
 # Triggered on a schedule by EventBridge Scheduler (see scheduler.tf) to kick off
 # BankSync incremental syncs. Only needs the shared layer for constants.py/ssm.py;
 # no DynamoDB access (BankSync pushes results to the webhook lambda instead).
+# The timeout scales with the feed count: SYNC_FEED_IDS is POSTed serially at up to
+# SYNC_TIMEOUT_SECONDS (30) each, so at 60s a third feed could be killed mid-loop
+# before its sync fired, and before the per-feed error line ran.
 resource "aws_lambda_function" "transaction_trigger" {
   function_name    = "${var.project_name}-transaction-trigger"
   role             = aws_iam_role.transaction_trigger_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
-  timeout          = 60
+  timeout          = 300
   memory_size      = 128
   filename         = data.archive_file.sync_trigger_zip.output_path
   source_code_hash = data.archive_file.sync_trigger_zip.output_base64sha256
@@ -267,12 +270,16 @@ resource "aws_lambda_function" "transaction_trigger" {
 # home-loan balance from BankSync (getBalance) and store it (WHIT-8). Needs the
 # shared layer (constants.py/ssm.py/repository.py) AND DynamoDB PutItem +
 # TABLE_NAME (unlike the transaction trigger, which writes nothing itself).
+# The timeout scales with the account count: BALANCE_SOURCES is fetched serially at up
+# to HOMELOAN_BALANCE_TIMEOUT_SECONDS (30) each, so at 60s two slow bank calls exhausted
+# the budget and the remaining accounts were dropped for the day with no per-account log
+# line. 300 matches the other sweeps.
 resource "aws_lambda_function" "homeloan_request" {
   function_name    = "${var.project_name}-homeloan-request"
   role             = aws_iam_role.homeloan_request_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
-  timeout          = 60
+  timeout          = 300
   memory_size      = 128
   filename         = data.archive_file.balance_poller_zip.output_path
   source_code_hash = data.archive_file.balance_poller_zip.output_base64sha256

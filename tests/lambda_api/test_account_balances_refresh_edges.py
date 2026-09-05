@@ -52,6 +52,7 @@ _LIVE_PAYLOADS = {
     "3zVQJ8Btz_IRmqp78VrQnQ": _ok_payload("96270.59", "checking"),                       # up-spending
     "T6d8ppsYssBDFCwl1qEb0w": _ok_payload("-596642.43", "mortgage"),                     # up-homeloan
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": _ok_payload("-6492.26", "unknown"),   # anz
+    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": _ok_payload("-230", "unknown"),              # westpac
 }
 _ALL_AIDS = set(_LIVE_PAYLOADS)
 
@@ -183,7 +184,8 @@ def test_timeout_worker_is_treated_as_a_failed_account(handler, monkeypatch):
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
-    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa"}
+    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa",
+                                            "westpac-altitude-qantas-black"}
     assert repo.set_calls == [1000]
 
 
@@ -207,7 +209,7 @@ def test_all_timeout_returns_502(handler, monkeypatch):
 
 def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, monkeypatch):
     # BankSync returning a JSON array/string/number (not an object) for ONE account must be
-    # treated like any other failed account: the other two still upsert, the response is 200,
+    # treated like any other failed account: the others still upsert, the response is 200,
     # and the marker is armed. (Regression guard for the isinstance(payload, dict) guard in
     # shared/balance_fetch.py — without it this raises AttributeError and 500s the request.)
     repo = OrderedRefreshRepo(rows=[], last=None)
@@ -224,5 +226,6 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
-    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa"}
+    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa",
+                                            "westpac-altitude-qantas-black"}
     assert repo.set_calls == [1000]

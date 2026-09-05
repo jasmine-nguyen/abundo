@@ -88,7 +88,8 @@ _REGISTRY = [
     _Domain(
         "feed",
         [_Module("_feed_fakes",
-                 {"ANZ", "SPENDING", "HOMELOAN", "_row", "FakeFeedRepo", "_feed_event"})],
+                 {"ANZ", "SPENDING", "HOMELOAN", "WESTPAC", "_row", "FakeFeedRepo",
+                  "_feed_event"})],
         # WHIT-469 folded test_transactions_feed_gaps.py into the main.
         (_API_TESTS / "test_transactions_feed.py",),
     ),

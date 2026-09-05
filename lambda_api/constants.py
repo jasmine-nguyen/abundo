@@ -2,6 +2,7 @@ ACCOUNT_ID_MAP = {
     "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0": "anz-rewards-black-visa",
     "3zVQJ8Btz_IRmqp78VrQnQ": "up-spending",
     "T6d8ppsYssBDFCwl1qEb0w": "up-homeloan",
+    "A3AC9195-9E8D-48B8-86D0-46D130D7F64A": "westpac-altitude-qantas-black",
 }
 PENDING_STATUS = "pending"
 POSTED_STATUS = "posted"
@@ -223,6 +224,7 @@ BALANCE_SOURCES = [
     {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                       # up-spending
     {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"},                       # up-homeloan
     {"bid": "fiskil_4", "aid": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"},  # anz-rewards-black-visa
+    {"bid": "fiskil_77", "aid": "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"},        # westpac-altitude-qantas-black
 ]
 assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
     "every BALANCE_SOURCES `aid` must be a key in ACCOUNT_ID_MAP"

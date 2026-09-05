@@ -361,15 +361,15 @@ def test_none_date_pending_is_skipped_not_reaped(lam, repo):
 # --- multi-account correctness ----------------------------------------------
 
 
-def test_sweeps_all_three_accounts_including_home_loan(lam, repo):
-    # ACCOUNT_ID_MAP resolves to THREE distinct internal ids; the sweep must visit all
-    # three (not just the two spending accounts) — a stale ghost on the home-loan
-    # account is reaped and `accounts` counts 3. Guards against an account being skipped.
+def test_sweep_visits_the_home_loan_account_too(lam, repo):
+    # The sweep must visit EVERY internal id in ACCOUNT_ID_MAP, not just the spending
+    # accounts — a stale ghost on the home-loan account is reaped and `accounts` counts
+    # them all. Guards against an account being skipped.
     _store(lam, repo, _raw_row("ghost_homeloan", "2026-06-10", account=_ACCOUNT_C))
 
     summary = _sweep(lam, repo)
 
-    assert summary["accounts"] == 3
+    assert summary["accounts"] == len(set(lam.age_out.ACCOUNT_ID_MAP.values()))
     assert summary["reaped"] == 1
     assert "ghost_homeloan" not in _rows(repo)
 
@@ -399,7 +399,7 @@ def test_summary_surfaces_cutoff_and_account_count(lam, repo):
 
     assert summary["cutoff"] == "2026-06-21"
     assert summary["cutoff"] == lam.age_out._cutoff_date(_TODAY)
-    assert summary["accounts"] == 3
+    assert summary["accounts"] == len(set(lam.age_out.ACCOUNT_ID_MAP.values()))
     assert summary["dry_run"] is False
 
 
