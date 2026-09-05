@@ -1,5 +1,6 @@
-// WHIT-215 GAP (accounts-separate-tab) — the tab bar now renders SIX tabs incl. the new
-// Accounts tab. The uncategorized red dot must still light EXACTLY ONE tab (Transactions) and
+// WHIT-215 GAP (accounts-separate-tab) — the tab bar renders FIVE tabs incl. the Accounts tab
+// (WHIT-495 later moved Settings to a header gear). The uncategorized red dot must still light
+// EXACTLY ONE tab (Transactions) and
 // must NOT be duplicated onto the new Accounts tab. The existing tabBadgeQuery / whit330TabDot
 // tests render the bar with a SINGLE transactions route, so they can't catch a dot that leaks
 // onto a sibling tab. This renders the full route set and asserts one dot, on Transactions.
@@ -19,7 +20,7 @@ jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () =
 
 import { TabBar } from '../../app/(tabs)/_layout';
 
-// The full navigator route set, in order, incl. the new Accounts tab at index 2.
+// The full navigator route set, in order, incl. the Accounts tab at index 2.
 const barProps: React.ComponentProps<typeof TabBar> = {
   state: {
     index: 1,
@@ -29,7 +30,6 @@ const barProps: React.ComponentProps<typeof TabBar> = {
       { key: 'accounts', name: 'accounts' },
       { key: 'insights', name: 'insights' },
       { key: 'goals', name: 'goals' },
-      { key: 'settings', name: 'settings' },
     ],
   },
   navigation: { emit: () => ({ defaultPrevented: false }), navigate: jest.fn() },

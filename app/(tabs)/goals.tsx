@@ -9,6 +9,7 @@ import { useCheckpointCelebration } from '../../src/hooks/useCheckpointCelebrati
 import { MONTHS, formatDayMonthYear, parseISODate } from '../../src/dateutil';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { Bar, RetryButton, HeroGradientFill } from '../../src/components/ui';
+import { SettingsButton } from '../../src/components/SettingsButton';
 import { Celebration } from '../../src/components/Celebration';
 import { PayoffSummary } from '../../src/components/PayoffSummary';
 
@@ -84,6 +85,7 @@ export default function Goals() {
     <>
     <ScrollChromeHeader
       title="Goals"
+      left={<SettingsButton />}
       right={(
         <Pressable testID="add-goal" onPress={() => router.push('/goal/edit')} style={styles.addBtn}>
           <Glyph name="plus" size={22} color={C.accentSoft} />

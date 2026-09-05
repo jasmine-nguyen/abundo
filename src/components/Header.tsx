@@ -17,7 +17,7 @@ export function Header({
       <View style={styles.row}>
         <View style={styles.side}>
           {showBack && (
-            <Pressable onPress={() => router.back()} style={styles.iconBtn}>
+            <Pressable onPress={() => router.back()} style={styles.iconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Back">
               <Glyph name="back" size={22} color="#fff" />
             </Pressable>
           )}

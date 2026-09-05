@@ -10,7 +10,7 @@ jest.mock('expo-router', () => ({ useRouter: () => ({ replace: jest.fn(), push: 
 jest.mock('../../src/auth', () => ({ signOut: jest.fn(), getCurrentUser: () => null }));
 jest.mock('../../src/context', () => ({ loanFactsReady: () => false, useAppContext: () => ({}) }));
 
-import { initialsFrom } from '../../app/(tabs)/settings';
+import { initialsFrom } from '../../app/settings';
 
 describe('initialsFrom', () => {
   it('two-word name → first + last initial', () => {
