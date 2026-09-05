@@ -181,3 +181,21 @@ it('shows the pull spinner when pulling the settled empty list', () => {
   act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
   expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(true);
 });
+
+// WHIT-489 divergent gate (the OTHER half): the Accounts RefreshControl gates on
+// `pulling && !showSpinner`, so a pull DURING a cold load (empty + loading → showSpinner=true)
+// must NOT raise the pull spinner — the centred inline cold-load spinner (accounts-loading) owns
+// that window; the two must never double-spin. The sibling above proves settled-empty → DOES spin.
+// Fail-on-revert: change accounts.tsx to `refreshing={pulling}` (drop `&& !showSpinner`) → a
+// cold-load pull reports refreshing=true alongside accounts-loading → RED.
+it('does NOT raise the pull spinner during a cold load (inline spinner owns it)', () => {
+  mockTx = txData({ transactions: [], isLoading: true }); // cold load → showSpinner true
+  refetchList.mockClear(); refreshLiveBalances.mockClear(); // beforeEach doesn't reset these
+  refetchList.mockReturnValueOnce(new Promise<void>(() => {}));
+  refreshLiveBalances.mockReturnValueOnce(new Promise<void>(() => {}));
+  render(<Accounts />);
+  expect(screen.getByTestId('accounts-loading')).toBeTruthy(); // inline cold-load spinner is up
+  act(() => { screen.UNSAFE_getByType(RefreshControl).props.onRefresh(); });
+  expect(refetchList).toHaveBeenCalledTimes(1);                // the pull DID fire (pulling=true)
+  expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false); // ...but gated off
+});
