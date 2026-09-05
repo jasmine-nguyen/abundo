@@ -11,6 +11,10 @@ import json
 
 import pytest
 
+# _failed_keys / _txn_rows live in tests/shared/_deadletter_fakes.py so both dead-letter
+# recovery suites share ONE definition (WHIT-494); resolved via pytest.ini's pythonpath.
+from _deadletter_fakes import _failed_keys, _txn_rows
+
 # A real BankSync account id that resolves via ACCOUNT_ID_MAP to an internal id.
 _MAPPED_ACCOUNT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
 
@@ -33,10 +37,6 @@ def _raw_row(txn_id="r1", account_id=_MAPPED_ACCOUNT, amount=-5.50, pending=Fals
         "type": "PAYMENT",
         "pendingTransactionId": None,
     }
-
-
-def _failed_keys(repo):
-    return [k for k in repo._table.store if k[0] == "FAILED"]
 
 
 def _txn_keys(repo):
@@ -201,11 +201,6 @@ def test_lambda_handler_runs_the_sweep_and_returns_the_summary(lam, monkeypatch)
 # REAL summary serialising through lambda_handler.
 
 
-def _internal_txn_rows(repo):
-    """All stored ACCOUNT#/TXN# rows as a {sk: item} map (account-id agnostic)."""
-    return {k[1]: v for k, v in repo._table.store.items() if k[0].startswith("ACCOUNT#")}
-
-
 def test_pending_dead_letter_resurrects_a_duplicate_alongside_existing_posted(lam, repo):
     # KNOWN LIMITATION pinned: the posted version already synced + is stored; its
     # pending twin was stuck in the dead-letter. Reprocess re-drives the pending, which
@@ -219,7 +214,7 @@ def test_pending_dead_letter_resurrects_a_duplicate_alongside_existing_posted(la
     summary = lam.reprocess.reprocess_failed(repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
-    stored = _internal_txn_rows(repo)
+    stored = _txn_rows(repo)
     assert "TXN#posted1" in stored and "TXN#pend1" in stored
     assert stored["TXN#pend1"]["status"] == "pending"
     assert _failed_keys(repo) == []
@@ -238,7 +233,7 @@ def test_reprocess_does_not_clobber_user_category_on_stored_posted_twin(lam, rep
     summary = lam.reprocess.reprocess_failed(repo)
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
-    rows = [v for k, v in _internal_txn_rows(repo).items() if k == "TXN#p1"]
+    rows = [v for k, v in _txn_rows(repo).items() if k == "TXN#p1"]
     assert len(rows) == 1                          # no duplicate
     assert rows[0]["category"] == "USER_PICKED"    # user category survived the re-drive
     assert _failed_keys(repo) == []
@@ -270,14 +265,14 @@ def test_delete_failure_after_insert_counts_error_and_rerun_is_safe(lam, repo, m
     first = lam.reprocess.reprocess_failed(repo)
 
     assert first == {"reprocessed": 0, "skipped": 0, "errors": 1}
-    assert any(k == "TXN#r1" for k in _internal_txn_rows(repo))  # insert DID land
+    assert any(k == "TXN#r1" for k in _txn_rows(repo))  # insert DID land
     assert len(_failed_keys(repo)) == 1                          # dead-letter NOT deleted
 
     monkeypatch.undo()
     second = lam.reprocess.reprocess_failed(repo)
 
     assert second == {"reprocessed": 1, "skipped": 0, "errors": 0}
-    assert len([k for k in _internal_txn_rows(repo) if k == "TXN#r1"]) == 1
+    assert len([k for k in _txn_rows(repo) if k == "TXN#r1"]) == 1
     assert _failed_keys(repo) == []
 
 
@@ -295,7 +290,7 @@ def test_multi_page_backlog_with_mixed_outcomes(lam, repo):
 
     assert summary == {"reprocessed": 2, "skipped": 3, "errors": 0}
     assert summary["reprocessed"] + summary["skipped"] + summary["errors"] == 5
-    stored = _internal_txn_rows(repo)
+    stored = _txn_rows(repo)
     assert "TXN#ok0" in stored and "TXN#ok1" in stored   # both recovered across pages
     assert len(_failed_keys(repo)) == 3                  # only recoverable rows deleted
 

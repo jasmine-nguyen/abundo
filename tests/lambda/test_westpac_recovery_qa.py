@@ -14,6 +14,10 @@ the point is that a real row round-trips, not a trimmed fixture.
 from datetime import date
 from decimal import Decimal
 
+# _failed_keys / _txn_rows live in tests/shared/_deadletter_fakes.py so both dead-letter
+# recovery suites share ONE definition (WHIT-494); resolved via pytest.ini's pythonpath.
+from _deadletter_fakes import _failed_keys, _txn_rows
+
 _WESTPAC_AID = "A3AC9195-9E8D-48B8-86D0-46D130D7F64A"
 
 _MASSAGE_ID = "bank_tx_b220e370899f9a0b0b75a04837f4190e80b7fea137ee7a02e5b11df1f52822a5"
@@ -43,15 +47,6 @@ _FEE_RAW = {
     "accountId": _WESTPAC_AID, "bankId": "fiskil_77",
     "currency": "AUD", "amount": -75, "pending": False,
 }
-
-
-def _failed_keys(repo):
-    return [k for k in repo._table.store if k[0] == "FAILED"]
-
-
-def _txn_rows(repo):
-    """Stored ACCOUNT#/TXN# rows as {sk: item}."""
-    return {k[1]: v for k, v in repo._table.store.items() if k[0].startswith("ACCOUNT#")}
 
 
 def _dead_letter_the_real_backlog(repo):

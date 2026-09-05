@@ -30,6 +30,7 @@ from _ast_bindings import _top_level_binding_list
 
 _SHARED_TESTS = pathlib.Path(__file__).resolve().parent            # tests/shared
 _API_TESTS = _SHARED_TESTS.parent / "lambda_api"                   # tests/lambda_api
+_LAMBDA_TESTS = _SHARED_TESTS.parent / "lambda"                    # tests/lambda
 # Bare names of the repo-root shared/ layer modules — a dependency-light fake must touch none.
 _SHARED_LAYER = frozenset(
     p.stem for p in (_SHARED_TESTS.parents[1] / "shared").glob("*.py")
@@ -125,6 +126,12 @@ _REGISTRY = [
          _SHARED_TESTS / "test_milestones_custom_plan.py",
          _SHARED_TESTS / "test_milestone_rows.py"),
         shadow_check=True,
+    ),
+    _Domain(
+        "deadletter",
+        [_Module("_deadletter_fakes", {"_failed_keys", "_txn_rows"})],
+        (_LAMBDA_TESTS / "test_reprocess.py",
+         _LAMBDA_TESTS / "test_westpac_recovery_qa.py"),
     ),
 ]
 

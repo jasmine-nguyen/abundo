@@ -25,6 +25,7 @@ import pytest
 _TESTS = pathlib.Path(__file__).resolve().parent.parent          # tests/
 _SHARED = _TESTS / "shared"
 _API = _TESTS / "lambda_api"
+_LAMBDA = _TESTS / "lambda"
 
 # The WHIT-445 guards/meta-tests import the fake MODULES to introspect them, not to use them as
 # test doubles, so they are not "suites that could paste a drifting copy". They are excluded
@@ -34,6 +35,10 @@ _GUARD_FILES = frozenset({
     "test_fakes_invariants.py",
     "test_shared_fakes_contract_gaps.py",
     "test_shared_fakes_tuple_completeness_gaps.py",
+    # Imports _deadletter_fakes to test the readers' behaviour, not as a drift-prone
+    # double — exclude it like the other guards so broadening a search dir can't
+    # misflag it as an unregistered consuming suite (WHIT-494).
+    "test_deadletter_fakes.py",
 })
 
 
@@ -76,6 +81,7 @@ _DOMAINS = [
     pytest.param(_API, {"_handler_patch_fakes"}, _CONSOLIDATED_GUARD, id="handler_patch"),
     pytest.param(_API, {"_paycycle_fakes"}, _CONSOLIDATED_GUARD, id="paycycle"),
     pytest.param(_API, {"_category_fakes"}, _CONSOLIDATED_GUARD, id="category"),
+    pytest.param(_LAMBDA, {"_deadletter_fakes"}, _CONSOLIDATED_GUARD, id="deadletter"),
 ]
 
 
