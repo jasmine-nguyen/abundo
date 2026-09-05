@@ -3,7 +3,7 @@
 // substring (dropping volatile suffixes), preserves the description's casing, and
 // falls back to the full description safely.
 import { describe, it, expect } from '@jest/globals';
-import { rulePattern, matchesRulePattern } from '../context';
+import { rulePattern, matchesRulePattern, merchantSlice } from '../context';
 import { txn } from './factory';
 
 describe('rulePattern', () => {
@@ -25,6 +25,26 @@ describe('rulePattern', () => {
   it('falls back to the full description when there is no merchant name', () => {
     expect(rulePattern(txn({ description: 'NETFLIX.COM', merchant_name: '' })))
       .toBe('NETFLIX.COM');
+  });
+});
+
+// WHIT-491: merchantSlice returns the merchant substring, or null when there's no clean
+// one. That null is what lets the apply-all path tell a genuine spelling (safe to mint a
+// rule from) apart from a noisy full-description fallback (must NOT mint a rule from).
+describe('merchantSlice', () => {
+  it('returns the merchant substring when the name is found in the description', () => {
+    expect(merchantSlice(txn({ description: 'WOOLWORTHS METRO 1234 SYDNEY', merchant_name: 'Woolworths' })))
+      .toBe('WOOLWORTHS');
+  });
+
+  it('returns null when there is no merchant name (a noisy pending auth would fall back)', () => {
+    expect(merchantSlice(txn({ description: 'POS AUTHORISATION   DD *DOORDASH   +611800958316AU', merchant_name: '' })))
+      .toBeNull();
+  });
+
+  it('returns null when the merchant name is not a substring of the description', () => {
+    expect(merchantSlice(txn({ description: 'SQ *KKV INTERNATIONAL', merchant_name: 'Something Else' })))
+      .toBeNull();
   });
 });
 

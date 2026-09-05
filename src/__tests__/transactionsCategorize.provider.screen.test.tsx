@@ -172,6 +172,114 @@ it('[WHIT-355] applyCategory(all) STILL creates a rule when no same-pattern rule
   expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
 });
 
+// --- WHIT-491: one merchant, two spellings → one rule per distinct spelling ------------------
+// BankSync matches future charges by a literal `contains` on ONE stored value, so a single rule
+// can't span both banks' spellings of a merchant. The apply-all tap must mint a rule per distinct
+// GENUINE spelling it sweeps — without minting a junk rule from a noisy no-merchant charge.
+
+// A charge with a specific description + merchant (the factory is fixed to COLES/Coles).
+const merchantTxn = (id: string, description: string, merchant_name: string): Transaction =>
+  ({ ...txn(id), description, merchant_name });
+
+it('[WHIT-491] applyCategory(all) mints one rule per distinct spelling of the same merchant', async () => {
+  // ANZ sends it spaced; Westpac sends it joined — same clinic, two descriptors. The sweep spans
+  // both (normalised match), so BOTH must get a stored rule or future Westpac charges go unfiled.
+  const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
+  const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
+  const result = mount([anz, westpac]);
+  queryClient.setQueryData(['rules'], []);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(cachedCategory('t1')).toBe('groceries');
+  expect(cachedCategory('t2')).toBe('groceries'); // both spellings swept + filed
+  // FAIL-ON-REVERT: the pre-491 single-rule code minted only the tapped spelling → 1 call. The fix
+  // mints one per distinct spelling → exactly 2, one for each descriptor.
+  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(2);
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+});
+
+it('[WHIT-491] applyCategory(all) does NOT mint a rule from a swept no-merchant pending auth', async () => {
+  // The pending authorisation has NO merchant_name — only a noisy `POS AUTHORISATION …` line. It IS
+  // swept in (space-preserving fallback), but its full description must never become a stored rule
+  // (it would carry the ref/phone tokens and match nothing). Only the tapped clean spelling mints.
+  const posted = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
+  const pendingAuth = merchantTxn('t2', 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', '');
+  const result = mount([posted, pendingAuth]);
+  queryClient.setQueryData(['rules'], []);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(cachedCategory('t2')).toBe('groceries'); // the pending auth IS swept + filed
+  // ...but no rule is minted from its noisy full description.
+  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+});
+
+it('[WHIT-491] applyCategory(all) dedups spellings that differ only by internal whitespace', async () => {
+  // Three swept charges, but two descriptors differ only by a doubled space — the same rule (rule
+  // identity folds whitespace). So exactly TWO distinct rules mint, not three.
+  const tapped = merchantTxn('t1', 'UNIFLEX MASSAGE', 'UNIFLEX MASSAGE');
+  const doubleSpace = merchantTxn('t2', 'UNIFLEX  MASSAGE', 'UNIFLEX  MASSAGE'); // ws-variant of t1
+  const joined = merchantTxn('t3', 'UNIFLEXMASSAGE', 'UNIFLEXMASSAGE'); // genuinely distinct
+  const result = mount([tapped, doubleSpace, joined]);
+  queryClient.setQueryData(['rules'], []);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(2); // ws-variant folded away
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEXMASSAGE', categoryId: 'groceries' });
+});
+
+it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save failed', async () => {
+  // Two spellings mint two rules; the Westpac one fails to save. Only its optimistic row is removed
+  // — the ANZ rule keeps its real server id — and the "could not save the rule" toast fires.
+  const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
+  const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
+  mockApi.createEnrichment.mockImplementation(async ({ value, categoryId }) => {
+    if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
+    return { id: 'r-anz', field: 'description', operator: 'contains', value, categoryId };
+  });
+  const result = mount([anz, westpac]);
+  queryClient.setQueryData(['rules'], []);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  const rules = queryClient.getQueryData(['rules']) as { id: string; pattern: string }[];
+  expect(rules).toHaveLength(1); // failed spelling's temp row removed; the other stands
+  expect(rules[0]).toMatchObject({ id: 'r-anz', pattern: 'UNIFLEX REMEDIAL MASSAGE' }); // real server id swapped in
+  expect(cachedCategory('t1')).toBe('groceries'); // charges filed regardless
+  expect(cachedCategory('t2')).toBe('groceries');
+  expect(result.current.toast).toBe('Filed, but could not save the rule for future charges.');
+});
+
+it('[WHIT-491] applyCategory(all) skips only the spelling that clashes with an existing rule, mints the other', async () => {
+  // One spelling already has a rule filing it as Dining (a clash); the other spelling is new. Mint
+  // the new one, skip the clashing one (never a second fighting rule), and surface the clash.
+  const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
+  const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
+  const result = mount([anz, westpac]);
+  queryClient.setQueryData(['categories'], [{ ...CAT }, { ...DINING }]);
+  queryClient.setQueryData(['rules'], [{ id: 'existing', pattern: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'dining', isNew: false }]);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  // The new spelling mints; the clashing one does not.
+  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createEnrichment).not.toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(mockApi.updateEnrichment).not.toHaveBeenCalled(); // existing rule never silently changed
+  expect(cachedCategory('t1')).toBe('groceries'); // charges still file where the user chose
+  expect(cachedCategory('t2')).toBe('groceries');
+});
+
 // --- WHIT-291: applyCategoryToMany (multi-select batch re-file) ------------------------------
 
 it('applyCategoryToMany re-files exactly the ids in the set, in one batch, + invalidates', async () => {
@@ -287,4 +395,128 @@ describe('the feed InfiniteData cache under optimistic writes', () => {
     expect(mockApi.setTransactionFields).toHaveBeenCalledWith('r1', { notes: 'x' }); // NOT a silent no-op
     expect(recentRows()[0].notes).toBe('x'); // filed into the recent cache
   });
+});
+
+// ===== WHIT-491 QA — adversarial GAP tests (not covered by the implementer's suite above) =====
+// Target: allSettled outcome[i]→mints[i] index alignment under N=3 with a MIDDLE reject; per-spelling
+// dedup when the TAPPED spelling is the existing duplicate; the toast precedence when charge-batch AND
+// a rule both fail; the TAPPED-charge full-description fallback rule; and the ['rules']-cache-absent
+// network path. Each proven fail-on-revert (single-mutation red-green) before landing.
+
+// [QA1] — allSettled outcome[i] must map to mints[i] with N=3 and the MIDDLE rule rejecting. NOT the
+// implementer's "rolls back ONLY the failed spelling" (that is N=2 with the LAST rule rejecting — an
+// off-by-one in the reconcile index would still look correct there).
+it('[WHIT-491][QA1] with 3 minted rules, a MIDDLE rejection removes exactly its row and keeps the other two with their real ids', async () => {
+  // Three genuinely-distinct spellings (spaces in different places → 3 distinct rule identities) that
+  // all normalise to the same stem, so the sweep spans all three and all three mint.
+  const a = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
+  const b = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
+  const c = merchantTxn('t3', 'UNIFLEX REMEDIALMASSAGE', 'UNIFLEX REMEDIALMASSAGE');
+  mockApi.createEnrichment.mockImplementation(async ({ value, categoryId }) => {
+    if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom'); // the MIDDLE mint
+    return { id: `r-${value}`, field: 'description', operator: 'contains', value, categoryId };
+  });
+  const result = mount([a, b, c]);
+  queryClient.setQueryData(['rules'], []);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  const rules = queryClient.getQueryData(['rules']) as { id: string; pattern: string }[];
+  expect(rules).toHaveLength(2); // the MIDDLE spelling's optimistic row is gone
+  // Assert POSITIONALLY, not by a pattern→id map: a fulfilled reconcile overwrites both id and pattern
+  // from the server outcome, so a pattern→id lookup can't see an index misalignment. The surviving ROW
+  // ORDER [m0, m2] holds only when outcome[i] reconciles mints[i].
+  expect(rules.map((r) => r.pattern)).toEqual(['UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIALMASSAGE']);
+  expect(rules.map((r) => r.id)).toEqual(['r-UNIFLEX REMEDIAL MASSAGE', 'r-UNIFLEX REMEDIALMASSAGE']);
+  expect(rules.some((r) => r.pattern === 'UNIFLEXREMEDIALMASSAGE')).toBe(false); // rejected spelling dropped
+  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(3);
+});
+
+// [QA2] — the per-spelling conflict check is independent: when the TAPPED spelling already has a
+// same-category rule (a duplicate → skip) but a SWEPT spelling is new, only the swept one mints. NOT
+// the implementer's clash test (that skips a DIFFERENT-category SWEPT spelling); here the SKIP is on
+// the TAPPED spelling and the surviving mint is the swept one — the opposite index.
+it('[WHIT-491][QA2] tapped spelling is an existing duplicate, swept spelling is new → mints ONLY the swept one', async () => {
+  const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE'); // tapped
+  const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');   // new
+  const result = mount([anz, westpac]);
+  // A same-CATEGORY rule already exists for the tapped spelling → duplicate (skip), not a conflict.
+  queryClient.setQueryData(['rules'], [{ id: 'existing', pattern: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries', isNew: false }]);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createEnrichment).not.toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  // Not a conflict → the "clash" wording must NOT appear; charges still file.
+  expect(result.current.toast).not.toContain('already have a rule');
+  expect(cachedCategory('t1')).toBe('groceries');
+  expect(cachedCategory('t2')).toBe('groceries');
+});
+
+// [QA3] — when the CHARGE batch partially fails AND a rule also rejects in the same tap, the
+// charge-failure toast wins and the rule-failure toast is suppressed (they share an if/else-if). No
+// implementer test exercises both failures at once.
+it('[WHIT-491][QA3] charge-batch partial failure + a rule rejection → only the charge-failure toast shows, rule row still rolled back', async () => {
+  const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
+  const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
+  // t2's categorisation fails to save (batch returns only t1 updated).
+  mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] });
+  // ...and the westpac spelling's rule save also rejects.
+  mockApi.createEnrichment.mockImplementation(async ({ value, categoryId }) => {
+    if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
+    return { id: `r-${value}`, field: 'description', operator: 'contains', value, categoryId };
+  });
+  const result = mount([anz, westpac]);
+  queryClient.setQueryData(['rules'], []);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  // The charge-failure toast dominates; the "could not save the rule" toast is NOT shown.
+  expect(result.current.toast).toBe('Could not save some categories. Please try again.');
+  // The failed charge reverted; the saved one stayed.
+  expect(cachedCategory('t1')).toBe('groceries');
+  expect(cachedCategory('t2')).toBeNull();
+  // The rejected rule's optimistic row was still removed; the good rule kept its real id.
+  const rules = queryClient.getQueryData(['rules']) as { id: string; pattern: string }[];
+  expect(rules).toHaveLength(1);
+  expect(rules[0]).toMatchObject({ id: 'r-UNIFLEX REMEDIAL MASSAGE', pattern: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries', isNew: true });
+});
+
+// [QA4] — characterisation: "a no-merchant charge mints no junk rule" applies only to SWEPT charges.
+// The TAPPED charge always mints from its rulePattern, which for a no-merchant charge is the FULL
+// description (fallback). Deliberate (context.tsx candidate set keeps ruleValue) but worth locking.
+it('[WHIT-491][QA4] tapping a no-merchant charge for apply-all mints a full-description fallback rule from the TAPPED charge', async () => {
+  const pendingAuth = merchantTxn('t1', 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', '');
+  const result = mount([pendingAuth]);
+  queryClient.setQueryData(['rules'], []);
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  // The tapped charge's own pattern falls back to the full noisy description and IS minted.
+  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({
+    value: 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', categoryId: 'groceries',
+  });
+});
+
+// [QA5] — Rules screen never opened → ['rules'] cache is ABSENT. createEnrichment must STILL fire (the
+// rule has to reach the server), patchRules no-ops (guarded), and the absent cache is NOT resurrected.
+it('[WHIT-491][QA5] with no ["rules"] cache seeded, createEnrichment still fires and the cache is not resurrected', async () => {
+  const result = mount(); // COLES/Coles factory; NO queryClient.setQueryData(['rules'], ...)
+  expect(queryClient.getQueryData(['rules'])).toBeUndefined(); // precondition: never opened
+
+  act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
+  await act(async () => { await result.current.applyCategory('all'); });
+
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+  // patchRules is guarded (prev ? fn(prev) : prev) → the absent cache stays absent, no crash.
+  expect(queryClient.getQueryData(['rules'])).toBeUndefined();
+  // Charges still filed.
+  expect(cachedCategory('t1')).toBe('groceries');
+  expect(cachedCategory('t2')).toBe('groceries');
 });
