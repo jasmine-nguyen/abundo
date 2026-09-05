@@ -58,8 +58,8 @@ resource "aws_scheduler_schedule" "transaction_sync" {
 # no value polling it hourly like the transaction sync.
 
 # Role assumed by EventBridge Scheduler to invoke the balance-poller lambda.
-resource "aws_iam_role" "homeloan_scheduler" {
-  name = "${var.project_name}-homeloan-scheduler"
+resource "aws_iam_role" "balance_scheduler" {
+  name = "${var.project_name}-balance-scheduler"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -70,9 +70,9 @@ resource "aws_iam_role" "homeloan_scheduler" {
   })
 }
 
-resource "aws_iam_role_policy" "homeloan_scheduler_invoke" {
-  name = "${var.project_name}-homeloan-scheduler-invoke"
-  role = aws_iam_role.homeloan_scheduler.id
+resource "aws_iam_role_policy" "balance_scheduler_invoke" {
+  name = "${var.project_name}-balance-scheduler-invoke"
+  role = aws_iam_role.balance_scheduler.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -84,8 +84,8 @@ resource "aws_iam_role_policy" "homeloan_scheduler_invoke" {
   })
 }
 
-resource "aws_scheduler_schedule" "homeloan_poll" {
-  name = "${var.project_name}-homeloan-poll"
+resource "aws_scheduler_schedule" "balance_poll" {
+  name = "${var.project_name}-balance-poll"
 
   flexible_time_window {
     mode = "OFF"
@@ -96,8 +96,26 @@ resource "aws_scheduler_schedule" "homeloan_poll" {
 
   target {
     arn      = aws_lambda_function.balance_poller.arn
-    role_arn = aws_iam_role.homeloan_scheduler.arn
+    role_arn = aws_iam_role.balance_scheduler.arn
   }
+}
+
+# WHIT-496: rename the balance-poller's scheduler plumbing from homeloan_* to
+# balance_* (matching the WHIT-493 lambda rename). The deployed role/policy/schedule
+# names are ForceNew, so each resource is REPLACED, not moved in place; these blocks
+# migrate the state address so it stays continuous rather than orphan+create.
+# Garbage-collect once applied.
+moved {
+  from = aws_iam_role.homeloan_scheduler
+  to   = aws_iam_role.balance_scheduler
+}
+moved {
+  from = aws_iam_role_policy.homeloan_scheduler_invoke
+  to   = aws_iam_role_policy.balance_scheduler_invoke
+}
+moved {
+  from = aws_scheduler_schedule.homeloan_poll
+  to   = aws_scheduler_schedule.balance_poll
 }
 
 # Push-receipts sweep schedule (WHIT-139). A dedicated schedule that invokes the
