@@ -80,7 +80,7 @@ data "archive_file" "sync_trigger_zip" {
   output_path = "${path.module}/artifacts/sync_trigger.zip"
 }
 
-# Homeloan-request lambda source. Contains only handler.py; constants.py, ssm.py,
+# Balance-poller lambda source. Contains only handler.py; constants.py, ssm.py,
 # and repository.py come from the shared layer.
 data "archive_file" "balance_poller_zip" {
   type        = "zip"
@@ -274,9 +274,9 @@ resource "aws_lambda_function" "transaction_trigger" {
 # to HOMELOAN_BALANCE_TIMEOUT_SECONDS (30) each, so at 60s two slow bank calls exhausted
 # the budget and the remaining accounts were dropped for the day with no per-account log
 # line. 300 matches the other sweeps.
-resource "aws_lambda_function" "homeloan_request" {
-  function_name    = "${var.project_name}-homeloan-request"
-  role             = aws_iam_role.homeloan_request_exec.arn
+resource "aws_lambda_function" "balance_poller" {
+  function_name    = "${var.project_name}-balance-poller"
+  role             = aws_iam_role.balance_poller_exec.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 300
@@ -293,7 +293,7 @@ resource "aws_lambda_function" "homeloan_request" {
 
   logging_config {
     log_format = "Text"
-    log_group  = aws_cloudwatch_log_group.homeloan_request.name
+    log_group  = aws_cloudwatch_log_group.balance_poller.name
   }
 }
 
@@ -327,7 +327,7 @@ resource "aws_lambda_function" "push_receipts" {
 
 # Goal-nudge sweep lambda (WHIT-236). Scheduled daily; sends the behind-pace push. Its own
 # tightly-scoped role (goal_nudge_exec) — reads goals/paycycle/device/balances, writes notify
-# markers + push-receipt rows — mirroring push_receipts / homeloan_request.
+# markers + push-receipt rows — mirroring push_receipts / balance_poller.
 resource "aws_lambda_function" "goal_nudge" {
   function_name    = "${var.project_name}-goal-nudge"
   role             = aws_iam_role.goal_nudge_exec.arn
@@ -374,9 +374,19 @@ moved {
   from = aws_lambda_function.sync_trigger
   to   = aws_lambda_function.transaction_trigger
 }
+# WHIT-493: the "homeloan_request" lambda actually polls every account's balance, so
+# rename its address and deployed names to balance_poller (matching lambda_balance_poller/
+# and the rest of the repo). The deployed function_name / log-group name change, so the
+# function and log group are REPLACED, not moved in place; these blocks migrate the state
+# address so terraform doesn't see the old address as a separate resource to destroy.
+# Garbage-collect once applied.
 moved {
-  from = aws_lambda_function.balance_poller
-  to   = aws_lambda_function.homeloan_request
+  from = aws_lambda_function.homeloan_request
+  to   = aws_lambda_function.balance_poller
+}
+moved {
+  from = aws_cloudwatch_log_group.homeloan_request
+  to   = aws_cloudwatch_log_group.balance_poller
 }
 
 resource "aws_cloudwatch_log_group" "transaction_ingest" {
@@ -409,8 +419,8 @@ resource "aws_cloudwatch_log_group" "transaction_trigger" {
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_log_group" "homeloan_request" {
-  name              = "/aws/lambda/${var.project_name}-homeloan-request"
+resource "aws_cloudwatch_log_group" "balance_poller" {
+  name              = "/aws/lambda/${var.project_name}-balance-poller"
   retention_in_days = 30
 }
 
