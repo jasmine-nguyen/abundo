@@ -22,6 +22,7 @@ User-Agent is load-bearing (Cloudflare 403s the default urllib agent). Both
 """
 
 import json
+import re
 import urllib.error
 import urllib.request
 
@@ -164,12 +165,53 @@ def _rule_payload(field: str, operator: str, value: str, category_id: str) -> di
     }
 
 
+def _fold(value: str) -> str:
+    """Fold a rule value for duplicate-matching, mirroring the client's
+    normaliseRuleIdentity (src/context.tsx): trim, lowercase, collapse internal
+    whitespace runs. Case + spacing vary for the same merchant, so an exact-value
+    compare would miss real duplicates. `str(...)` guards a non-string value from a
+    foreign enrichment so the fail-open lookup can't raise. The two folds are only
+    guaranteed equal for ASCII (Python `.lower()` and JS `toLowerCase()` disagree on
+    a few non-ASCII chars) — fine for the AU merchant strings this matches."""
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _rule_identity(field: str, operator: str, value: str, category_id: str) -> tuple:
+    """The dedup key for a rule. Only `value` is folded; field/operator/category_id
+    stay EXACT — the client may send a non-default field/operator (RULE_FIELDS /
+    RULE_OPERATORS), which target different text or set a different action, so
+    folding them together would wrongly merge genuinely different rules."""
+    return (field, operator, _fold(value), category_id)
+
+
 def create_rule(field: str, operator: str, value: str, category_id: str) -> dict:
     """POST /v1/enrichments — create a single-condition categorisation rule.
+
+    WHIT-497: idempotent on rule identity. Before creating, look up existing rules
+    and return a match instead of minting a duplicate — the client's own guard runs
+    only against its in-memory rule cache, which is empty when the Rules screen was
+    never opened, so a re-tap or cold cache would otherwise pile up duplicate rules.
 
     Returns the new Rule (id from BankSync + the inputs), so the caller doesn't
     depend on BankSync echoing the ruleConfig back.
     """
+    identity = _rule_identity(field, operator, value, category_id)
+    # Fail OPEN: a failed READ must never block the WRITE. If the lookup errors we
+    # skip the dedup and create as before (worst case: the one duplicate we already
+    # tolerate today). The concurrent per-mint creates (context.tsx) make a hard
+    # dependency on the lookup a real regression risk, so we swallow BankSyncError.
+    # Best-effort scope: list_rules reads only the first page of enrichments, so a
+    # duplicate beyond page 1 (a very large rule set) can still slip through — an
+    # accepted limit for this clutter-reduction fix (WHIT-497).
+    try:
+        for existing in list_rules():
+            if _rule_identity(
+                existing["field"], existing["operator"], existing["value"], existing["categoryId"]
+            ) == identity:
+                return existing
+    except BankSyncError:
+        pass
+
     result = _request("POST", _ENRICHMENTS, _rule_payload(field, operator, value, category_id))
     created = result.get("data") or {}
     return {

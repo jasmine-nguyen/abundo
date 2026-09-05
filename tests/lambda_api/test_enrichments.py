@@ -75,9 +75,13 @@ def _enrichment(**over):
 
 
 def test_create_rule_builds_correct_payload_and_headers(enrichments, monkeypatch):
+    # WHIT-497: create_rule now lists existing rules first (dedup). With no match
+    # (empty list) it POSTs exactly as before — this asserts that POST is unchanged.
     captured = {}
 
     def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": []})  # no existing rule → fall through to POST
         captured["req"] = req
         return _FakeResponse({"success": True, "data": {"id": "enr_new"}})
 
@@ -103,6 +107,217 @@ def test_create_rule_builds_correct_payload_and_headers(enrichments, monkeypatch
     # Returned Rule uses BankSync's id + our inputs (no dependence on the echo).
     assert rule == {
         "id": "enr_new", "field": "description", "operator": "contains",
+        "value": "WOOLWORTHS", "categoryId": "groceries",
+    }
+
+
+# --- WHIT-497: create_rule is idempotent on rule identity --------------------
+
+
+def test_create_rule_returns_existing_on_identity_match(enrichments, monkeypatch):
+    # A rule with the same (field, operator, folded value, category) already exists,
+    # so create_rule returns it and NEVER POSTs a duplicate. The requested value
+    # differs by case + surrounding whitespace ("  woolworths " vs stored
+    # "WOOLWORTHS") — the fold must still call it a match.
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": [_enrichment()]})  # WOOLWORTHS -> groceries
+        raise AssertionError("create_rule must not POST when a duplicate already exists")
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("description", "contains", "  woolworths ", "groceries")
+
+    # Returns the EXISTING rule (its stored id + original casing), not a new one.
+    assert rule == {
+        "id": "enr_1", "field": "description", "operator": "contains",
+        "value": "WOOLWORTHS", "categoryId": "groceries",
+    }
+
+
+def test_create_rule_folds_internal_whitespace(enrichments, monkeypatch):
+    # The fold collapses internal whitespace runs, mirroring the client's
+    # normaliseRuleIdentity: stored "KKV  INTL" (two spaces) matches a create of
+    # "KKV INTL" (one space) → no duplicate POSTed.
+    stored = _enrichment(id="enr_kkv", ruleConfig={"rules": [{
+        "conditions": {"logic": "and", "conditions": [
+            {"field": "description", "operator": "contains", "value": "KKV  INTL"}]},
+        "action": {"field": "category", "value": "groceries"},
+    }]})
+
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": [stored]})
+        raise AssertionError("whitespace-only variant must dedup, not POST")
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("description", "contains", "KKV INTL", "groceries")
+    assert rule["id"] == "enr_kkv"
+
+
+def test_create_rule_fails_open_when_lookup_errors(enrichments, monkeypatch):
+    # Fail OPEN: a failed lookup GET must NOT block the create. We swallow the
+    # BankSyncError and POST as before — worst case is the one duplicate we already
+    # tolerate today; a failed READ never blocks the WRITE.
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            raise _http_error(enrichments, 500)
+        return _FakeResponse({"success": True, "data": {"id": "enr_new"}})
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("description", "contains", "WOOLWORTHS", "groceries")
+    assert rule["id"] == "enr_new"  # created despite the failed lookup
+
+
+def test_create_rule_distinct_category_still_creates(enrichments, monkeypatch):
+    # Same value + field + operator but a DIFFERENT category is a different rule →
+    # create still POSTs (category_id is exact in the identity).
+    posted = {}
+
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": [_enrichment()]})  # ... -> groceries
+        posted["called"] = True
+        return _FakeResponse({"success": True, "data": {"id": "enr_new"}})
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("description", "contains", "WOOLWORTHS", "dining")
+    assert posted.get("called") is True
+    assert rule["id"] == "enr_new"
+
+
+def test_create_rule_distinct_field_operator_still_creates(enrichments, monkeypatch):
+    # Stored: `description contains WOOLWORTHS -> groceries`. Creating
+    # `category equals woolworths -> groceries` has the same folded value + category
+    # but a different field/operator (targets different data), so it is NOT a
+    # duplicate — field/operator stay exact in the identity, so it still POSTs.
+    posted = {}
+
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": [_enrichment()]})
+        posted["called"] = True
+        return _FakeResponse({"success": True, "data": {"id": "enr_new"}})
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("category", "equals", "woolworths", "groceries")
+    assert posted.get("called") is True
+    assert rule["id"] == "enr_new"
+
+
+# --- WHIT-497 QA gap tests (adversarial edges the create_rule dedup tests miss) --
+
+
+def test_create_rule_post_failure_still_raises(enrichments, monkeypatch):
+    # [A4]. NOT duplicated by test_create_rule_fails_open_when_lookup_errors: that fails
+    # the GET and asserts the POST succeeds. This is the OPPOSITE side — the lookup
+    # succeeds (empty, no match) and the POST itself 500s. The try/except wraps only
+    # list_rules(), so the POST BankSyncError must propagate, as pre-WHIT-497.
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": []})
+        raise _http_error(enrichments, 500)
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(enrichments.BankSyncError) as ei:
+        enrichments.create_rule("description", "contains", "WOOLWORTHS", "groceries")
+    assert ei.value.upstream_status == 500
+
+
+def test_create_rule_substring_value_does_not_dedup(enrichments, monkeypatch):
+    # [A5]. NOT duplicated by the fold tests (case/whitespace variants of the SAME
+    # token). Here created "WOOL" is a substring of stored "WOOLWORTHS": the identity is
+    # exact string equality after fold, not containment → must POST a new rule.
+    posted = {}
+
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": [_enrichment()]})  # WOOLWORTHS
+        posted["called"] = True
+        return _FakeResponse({"success": True, "data": {"id": "enr_new"}})
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("description", "contains", "WOOL", "groceries")
+    assert posted.get("called") is True
+    assert rule["id"] == "enr_new"
+
+
+def test_create_rule_superstring_value_does_not_dedup(enrichments, monkeypatch):
+    # [A6]. Mirror of the substring case: created value is a SUPERSTRING of the stored
+    # one ("WOOLWORTHS METRO" vs "WOOLWORTHS"). Distinct rule → POSTs.
+    posted = {}
+
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": [_enrichment()]})
+        posted["called"] = True
+        return _FakeResponse({"success": True, "data": {"id": "enr_new"}})
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("description", "contains", "WOOLWORTHS METRO", "groceries")
+    assert posted.get("called") is True
+    assert rule["id"] == "enr_new"
+
+
+def test_create_rule_matches_rule_not_first_in_list(enrichments, monkeypatch):
+    # [A7]. NOT duplicated: every implementer dedup test uses a single-element list, so a
+    # bug that only checked data[0] would pass their suite. Here the match is the THIRD
+    # rule; the first two differ by value/category. Must still dedup.
+    others = [
+        _enrichment(id="enr_a", ruleConfig={"rules": [{
+            "conditions": {"logic": "and", "conditions": [
+                {"field": "description", "operator": "contains", "value": "COLES"}]},
+            "action": {"field": "category", "value": "groceries"},
+        }]}),
+        _enrichment(id="enr_b", ruleConfig={"rules": [{
+            "conditions": {"logic": "and", "conditions": [
+                {"field": "description", "operator": "contains", "value": "WOOLWORTHS"}]},
+            "action": {"field": "category", "value": "dining"},  # same value, diff category
+        }]}),
+        _enrichment(id="enr_target"),  # description contains WOOLWORTHS -> groceries
+    ]
+
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": others})
+        raise AssertionError("a match exists later in the list — must not POST")
+
+    monkeypatch.setattr(enrichments.urllib.request, "urlopen", fake_urlopen)
+
+    rule = enrichments.create_rule("description", "contains", "woolworths", "groceries")
+    assert rule["id"] == "enr_target"
+
+
+def test_create_enrichment_dedup_hit_returns_valid_201(handler, monkeypatch):
+    # [A9]. The handler tests all monkeypatch create_rule, so the REAL idempotent-hit
+    # return shape is never exercised through handler.create_enrichment. Here we let the
+    # real create_rule run and fake only the network: the GET returns an existing
+    # WOOLWORTHS->groceries rule, so create_rule returns it WITHOUT POSTing. The handler
+    # must still emit a well-formed 201 whose body is the existing Rule.
+    import banksync_enrichments as be  # same module object handler's create_rule closes over
+
+    def fake_urlopen(req, timeout=None):
+        if req.method == "GET":
+            return _FakeResponse({"success": True, "data": [_enrichment()]})
+        raise AssertionError("dedup hit must not POST via the handler path")
+
+    monkeypatch.setattr(be.urllib.request, "urlopen", fake_urlopen)
+
+    resp = handler.lambda_handler(
+        _event("POST", "/enrichments", {"value": " woolworths ", "categoryId": "groceries"}),
+        None)
+
+    assert resp["statusCode"] == 201
+    body = json.loads(resp["body"])
+    assert body == {
+        "id": "enr_1", "field": "description", "operator": "contains",
         "value": "WOOLWORTHS", "categoryId": "groceries",
     }
 
