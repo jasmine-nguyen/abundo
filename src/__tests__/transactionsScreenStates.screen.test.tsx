@@ -182,6 +182,28 @@ it('swaps the button for a spinner while the next page is loading', () => {
   expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // button hidden while loading
   expect(screen.getByTestId('transactions-load-more-spinner')).toBeTruthy();
 });
+
+// WHIT: on the Uncategorized tab, when everything is filed ("All caught up"), Load More must
+// not render even though older history still exists — there's nothing to page toward there.
+it('hides Load More on the uncategorized "all caught up" empty state, even with more history', () => {
+  // Default rows are all categorized -> uncategorizedCount 0 -> the empty state shows.
+  mockTx = txData({ hasMore: true });
+  render(<Transactions />);
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  expect(screen.getByText('All caught up')).toBeTruthy();
+  expect(screen.queryByTestId('transactions-load-more')).toBeNull(); // fail-on-revert: reappears without the guard
+});
+
+// The guard is the EMPTY case, not the whole tab: with real uncategorized rows showing, Load
+// More still pages older history (so a buried uncategorized charge isn't stranded).
+it('keeps Load More on the uncategorized tab when there ARE uncategorized rows', () => {
+  const uncategorizedRow = { ...row('t1'), category: null }; // no resolvable category -> uncategorized
+  mockTx = txData({ transactions: [uncategorizedRow], hasMore: true });
+  render(<Transactions />);
+  fireEvent.press(screen.getByTestId('tab-uncategorized'));
+  expect(screen.queryByText('All caught up')).toBeNull();
+  expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
+});
 });
 
 // ===== WHIT-363 pull-to-refresh (folded from transactionsPullRefresh.screen.test.tsx) =====
@@ -519,4 +541,85 @@ it('Cancel leaves selection mode and clears the checkboxes', () => {
   expect(screen.queryByLabelText('Select Woolworths')).toBeNull();
   expect(screen.getByText('Select')).toBeTruthy();
 });
+});
+
+// ===== WHIT-491 — Load More × search & tab-switch (QA gaps) =====
+// Adversarial companion to the `Transactions — Load More` block above. That block already locks
+// the NO-SEARCH cases (all-caught-up hides Load More; real uncategorized rows keep it). These lock
+// the GAPS: the search interaction (guard is computed pre-search-filter), the tab round-trip, and
+// the isLoadingMore-leak on the empty state. Reuses the module-scope ../queries / ../context /
+// expo-router mocks. NOT a duplicate of the sibling block — no search / tab-toggle / spinner-leak
+// case exists there.
+describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
+  const mockLoadMore = jest.fn();
+  const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
+  const catRow = (id: string) => ({
+    transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
+    description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
+    account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
+  });
+  function txData(over: Partial<{ transactions: unknown[]; hasMore: boolean; isLoadingMore: boolean }> = {}) {
+    return {
+      transactions: [catRow('t1')], category, balances: new Map(),
+      isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
+      hasMore: false, loadMore: mockLoadMore, isLoadingMore: false, ...over,
+    };
+  }
+  const type = (q: string) => fireEvent.changeText(screen.getByPlaceholderText('Search transactions'), q);
+  beforeEach(() => { mockLoadMore.mockClear(); mockTx = txData(); });
+
+  // [A-S1] Uncategorized tab, everything filed (count 0), a search typed that matches nothing.
+  // uncategorizedCount is computed over the FULL list (transactions.tsx reads `transactions`, not
+  // the searched list), so it stays 0 under any query. "All caught up" still owns the empty state,
+  // the "No matches" block is suppressed, and Load More stays hidden. Fail-on-revert: drop the
+  // Load More guard and it reappears here.
+  it('[A-S1] uncategorized + all-filed + active search: All caught up shows, No matches suppressed, Load More hidden', () => {
+    mockTx = txData({ hasMore: true }); // rows all categorized -> uncategorizedCount 0
+    render(<Transactions />);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    type('zzzzz');
+    expect(screen.getByText('All caught up')).toBeTruthy();
+    expect(screen.queryByTestId('transactions-no-results')).toBeNull(); // not double-shown with All caught up
+    expect(screen.queryByTestId('transactions-load-more')).toBeNull();  // guard holds under an active search
+  });
+
+  // [A-S2] Uncategorized tab WITH real uncategorized rows (count > 0), search matches nothing:
+  // identical to the All-tab behaviour, unchanged by the fix — "No matches" shows AND Load More
+  // still shows (guard is false because count > 0, so a search miss must not strand paging).
+  // Fail-on-revert: widen the guard to hide on the whole uncategorized tab and Load More vanishes.
+  it('[A-S2] uncategorized + uncategorized-rows + search miss: No matches shows AND Load More still shows', () => {
+    const uncategorized = { ...catRow('t1'), category: null }; // no resolvable category -> uncategorized
+    mockTx = txData({ transactions: [uncategorized], hasMore: true });
+    render(<Transactions />);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    type('zzzzz');
+    expect(screen.getByTestId('transactions-no-results')).toBeTruthy();
+    expect(screen.queryByText('All caught up')).toBeNull();
+    expect(screen.getByTestId('transactions-load-more')).toBeTruthy(); // unchanged from the All tab
+  });
+
+  // [A-T1] Round-trip All -> Uncategorized -> All with more history and 0 uncategorized: Load More
+  // shows on All, hides on Uncategorized (all caught up), shows again on returning to All — the
+  // guard tracks the live tab, not a one-way latch.
+  it('[A-T1] All -> Uncategorized -> All toggles Load More off then back on (0 uncategorized, hasMore)', () => {
+    mockTx = txData({ hasMore: true });
+    render(<Transactions />);
+    expect(screen.getByTestId('transactions-load-more')).toBeTruthy();  // All: shown
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    expect(screen.queryByTestId('transactions-load-more')).toBeNull();  // Uncategorized empty: hidden
+    fireEvent.press(screen.getByTestId('tab-all'));
+    expect(screen.getByTestId('transactions-load-more')).toBeTruthy();  // back to All: shown again
+  });
+
+  // [A-LS1] The empty-state guard beats isLoadingMore: on the uncategorized all-caught-up state,
+  // even with a page mid-load, NEITHER the Load More button NOR its spinner leaks (the whole block
+  // is gated off before the isLoadingMore branch).
+  it('[A-LS1] uncategorized all-caught-up + isLoadingMore: neither Load More button nor its spinner renders', () => {
+    mockTx = txData({ hasMore: true, isLoadingMore: true });
+    render(<Transactions />);
+    fireEvent.press(screen.getByTestId('tab-uncategorized'));
+    expect(screen.getByText('All caught up')).toBeTruthy();
+    expect(screen.queryByTestId('transactions-load-more')).toBeNull();
+    expect(screen.queryByTestId('transactions-load-more-spinner')).toBeNull(); // no spinner leak
+  });
 });
