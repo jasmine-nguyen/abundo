@@ -49,6 +49,9 @@ export default function Transactions() {
 
   const view = { transactions, category };
   const uncategorizedCount = countUncategorized(view);
+  // The Uncategorized tab is "all caught up" once every loaded charge is filed. Named once so the
+  // empty state and the two controls it must exclude (search-no-results, Load More) can't drift.
+  const allCaughtUp = tab === 'uncategorized' && uncategorizedCount === 0;
   // Live search over the visible fields (merchant + category + amount). Filtered before grouping
   // so the date sections only show matching rows. Empty query → the full list (no-op filter).
   const query = search.trim();
@@ -164,8 +167,7 @@ export default function Transactions() {
 
         {/* Search returned nothing on this tab (the "all caught up" state below still owns the
             genuinely-empty uncategorized case, so don't double up on it). */}
-        {!showSpinner && !showError && query.length > 0 && groups.length === 0
-          && !(tab === 'uncategorized' && uncategorizedCount === 0) && (
+        {!showSpinner && !showError && query.length > 0 && groups.length === 0 && !allCaughtUp && (
           <View testID="transactions-no-results" style={styles.empty}>
             <View style={[styles.emptyIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="search" size={30} color={C.textDim} /></View>
             <Text style={styles.emptyTitle}>No matches</Text>
@@ -173,7 +175,7 @@ export default function Transactions() {
           </View>
         )}
 
-        {tab === 'uncategorized' && !showSpinner && !showError && uncategorizedCount === 0 && (
+        {allCaughtUp && !showSpinner && !showError && (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}><Glyph name="check" size={32} color={C.good} /></View>
             <Text style={styles.emptyTitle}>All caught up</Text>
@@ -182,9 +184,10 @@ export default function Transactions() {
         )}
 
         {/* Load More: page older history in via the feed cursor. Hidden at end-of-history
-            (hasMore false) and while the cold-load spinner / error own the empty state. The
-            newest batch shows first; each tap appends the next, older batch. */}
-        {!showSpinner && !showError && hasMore && (
+            (hasMore false), while the cold-load spinner / error own the empty state, and on the
+            uncategorized "all caught up" empty state (nothing to page toward there). The newest
+            batch shows first; each tap appends the next, older batch. */}
+        {!showSpinner && !showError && hasMore && !allCaughtUp && (
           isLoadingMore ? (
             <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
               <ActivityIndicator color={C.accent} />
@@ -224,7 +227,7 @@ export default function Transactions() {
 
 function Seg({ label, active, onPress, flex, badge }: { label: string; active: boolean; onPress: () => void; flex: number; badge?: number }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && styles.segPressed]}>
+    <Pressable testID={`tab-${label.toLowerCase()}`} onPress={onPress} style={({ pressed }) => [styles.segBtn, { flex, backgroundColor: active ? '#fff' : 'transparent' }, pressed && styles.segPressed]}>
       <Text style={[styles.segText, { color: active ? C.accentInk : C.textMid }]}>{label}</Text>
       {badge !== undefined && (
         <View style={[styles.badge, { backgroundColor: active ? tint(C.accentInk, 0.18) : tint(C.bad, 0.2) }]}>
