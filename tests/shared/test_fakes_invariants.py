@@ -92,7 +92,9 @@ _REGISTRY = [
                  {"ANZ", "SPENDING", "HOMELOAN", "WESTPAC", "_row", "FakeFeedRepo",
                   "_feed_event"})],
         # WHIT-469 folded test_transactions_feed_gaps.py into the main.
-        (_API_TESTS / "test_transactions_feed.py",),
+        # WHIT-500: the uncategorized-count suite reuses FakeFeedRepo for the deep-page case.
+        (_API_TESTS / "test_transactions_feed.py",
+         _API_TESTS / "test_uncategorized_count.py"),
     ),
     _Domain(
         "handler_patch",

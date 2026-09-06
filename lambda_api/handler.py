@@ -46,6 +46,7 @@ from constants import (
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
     TRANSACTIONS_FEED_PATH,
+    UNCATEGORIZED_COUNT_PATH,
     UNCATEGORIZED_KEY,
 )
 from collections.abc import Callable
@@ -134,6 +135,12 @@ def lambda_handler(event, context):
         # {transactions, nextCursor}, so its own branch.
         if path == TRANSACTIONS_FEED_PATH and method == "GET":
             return get_transactions_feed(event, TransactionRepository())
+
+        # Full-history uncategorized count (WHIT-500). An EXACT path — disjoint from
+        # "/transactions", "/transactions/feed", and the PATCH "/transactions/{id}" item
+        # route (a GET, so the startswith-PATCH branch never matches it).
+        if path == UNCATEGORIZED_COUNT_PATH and method == "GET":
+            return get_uncategorized_count(TransactionRepository(), CategoryRepository())
 
         # Collection route (batch) BEFORE the item route. "/transactions" does not
         # start with "/transactions/", so the two are disjoint regardless of order.
@@ -1018,14 +1025,15 @@ def delete_enrichment(event: dict) -> dict:
 _MAX_PAGES_PER_ACCOUNT = 1000
 
 
-def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: str) -> list[dict]:
+def _fetch_windowed_transactions(repo: TransactionRepository, start: str | None, end: str | None) -> list[dict]:
     """Every transaction across all accounts within [start, end], following the
-    date-index pagination to completion.
+    date-index pagination to completion. `start`/`end` may be None for no floor/ceiling
+    (whole history) — get_transactions_by_date_range treats no dates as the whole partition.
 
-    Both the recent-transactions feed and the budget rollup need the WHOLE window,
-    so this loops on the returned cursor until each account is exhausted rather than
-    stopping at the first page. The loop is bounded (_MAX_PAGES_PER_ACCOUNT): a
-    cursor that never terminates raises rather than hanging both endpoints.
+    Its callers need every row in the window (the budget rollup, the drill-in lists, and
+    the whole-history uncategorized count), so this loops on the returned cursor until each
+    account is exhausted rather than stopping at the first page. The loop is bounded
+    (_MAX_PAGES_PER_ACCOUNT): a cursor that never terminates raises rather than hanging.
     """
     transactions: list[dict] = []
     for account_id in ACCOUNT_ID_MAP.values():
@@ -1046,6 +1054,34 @@ def _fetch_windowed_transactions(repo: TransactionRepository, start: str, end: s
                     f"avoid an unbounded read"
                 )
     return transactions
+
+
+def _is_unmapped_category(category: str | None, taxonomy_ids: set[str]) -> bool:
+    """Server twin of the client's categoryIsUnmapped (src/context.tsx): a charge is
+    uncategorized when its category is null OR a raw value not in the user's taxonomy,
+    excluding income. One place so the count and the /breakdown bucket can't drift from
+    each other or from the client. Budget contribution is a SEPARATE gate a caller adds."""
+    return category != "income" and category not in taxonomy_ids
+
+
+def get_uncategorized_count(transaction_repo: TransactionRepository, category_repo: CategoryRepository) -> dict:
+    """GET /transactions/uncategorized/count — how many uncategorized charges the user has
+    across ALL history (WHIT-500), so the tab badge, tab-bar dot, and "All caught up" empty
+    state reflect the whole picture, not just the loaded feed pages.
+
+    "Uncategorized" mirrors the client's categoryIsUnmapped EXACTLY: a charge whose category
+    is null OR a raw value not in the user's taxonomy, excluding income. It deliberately does
+    NOT gate on contributes_to_budget (unlike the /breakdown uncategorized bucket) — the badge
+    counts excluded transfers too (WHIT-330), so the count must, or it wouldn't match the list.
+    """
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    count = sum(
+        1
+        for transaction in transactions
+        if _is_unmapped_category(transaction.get("category"), taxonomy_ids)
+    )
+    return _json_response(200, {"count": count})
 
 
 def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) -> tuple[str, str]:
@@ -1547,8 +1583,7 @@ def get_category_transactions(
 
         def predicate(transaction: dict) -> bool:
             return (contributes_to_budget(transaction)
-                    and transaction.get("category") != "income"
-                    and transaction.get("category") not in taxonomy_ids)
+                    and _is_unmapped_category(transaction.get("category"), taxonomy_ids))
     else:
         def predicate(transaction: dict) -> bool:
             return transaction.get("category") == category_id
