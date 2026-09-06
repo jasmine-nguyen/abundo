@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { countUncategorized } from '../../src/context';
-import { useRecentTransactionsScreenData, useKeepTransactionsFeedWarm } from '../../src/queries';
+import { useRecentTransactionsScreenData, useKeepTransactionsFeedWarm, useUncategorizedCount } from '../../src/queries';
 import { NavBarsProvider, useNavBars } from '../../src/motion/NavBarsContext';
 import { NavBarsRouteReset } from '../../src/motion/NavBarsRouteReset';
 import { useReduceMotion } from '../../src/motion/useReduceMotion';
@@ -38,7 +38,11 @@ export function TabBar({ state, navigation }: TabBarShape) {
   // Keep the feed's first page warm app-wide (the dot no longer does) so the Picker/Confirm
   // sheets resolve the tapped transaction even before the Transactions tab is visited.
   useKeepTransactionsFeedWarm();
-  const hasUncategorized = countUncategorized({ transactions, category }) > 0;
+  // WHIT-501: the dot reflects the WHOLE history via the server tally. While that's loading/errored
+  // (undefined) it falls back to the bounded recent-window count — never to 0, so it can't wrongly
+  // hide the dot when older history has an unfiled charge.
+  const serverCount = useUncategorizedCount();
+  const hasUncategorized = (serverCount ?? countUncategorized({ transactions, category })) > 0;
   // Scroll-to-hide (WHIT-184): the bar floats (position:absolute, so the scene fills
   // full height and content scrolls under it), and slides straight down out of view
   // when `visibility` → 0. Measure the bar's own height so the hidden state translates

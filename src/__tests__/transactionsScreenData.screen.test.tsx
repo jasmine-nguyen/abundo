@@ -40,12 +40,16 @@ const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
 const mockFetchAccountBalances = jest.fn<() => Promise<unknown>>();
 const mockRefreshAccountBalances = jest.fn<() => Promise<unknown>>();
 const mockShowToast = jest.fn<(m: string) => void>();
+const mockFetchUncategorizedCount = jest.fn<() => Promise<number>>().mockResolvedValue(0);
 jest.mock('../api', () => ({
   fetchTransactionsFeed: (cursor?: string) => mockFetchTransactionsFeed(cursor),
   fetchCategories: () => mockFetchCategories(),
   fetchTransactions: () => mockFetchTransactions(),
   fetchAccountBalances: () => mockFetchAccountBalances(),
   refreshAccountBalances: () => mockRefreshAccountBalances(),
+  // WHIT-501: the real ../queries now imports this; without a stub the tab-dot/count query
+  // would throw "fetchUncategorizedCount is not a function" the moment it fires.
+  fetchUncategorizedCount: () => mockFetchUncategorizedCount(),
 }));
 
 const CATS = [{ id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 }];
@@ -153,6 +157,24 @@ describe('useTransactionsScreenData composite (WHIT-190a gaps)', () => {
     expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(1);                          // the LIVE call fired
     expect(mockFetchAccountBalances).toHaveBeenCalledTimes(1);                            // NOT a second stored GET
     expect(mockFetchTransactionsFeed.mock.calls.length).toBeGreaterThan(feedCallsBefore); // list refreshed too
+  });
+
+  it('pull (refetchList) invalidates the whole-history uncategorized count (badge/dot refresh on pull)', async () => {
+    // WHIT-501: a pull loads brand-new unfiled rows into the list, so it must also refresh the
+    // server tally that drives the badge/dot — otherwise the number stays fresh-cached (5min) and
+    // disagrees with the rows the pull just brought in.
+    // Fail-on-revert: drop the uncategorizedCount invalidate from refetchList → this key is no
+    // longer passed to invalidateQueries and the assertion fails.
+    const client = makeClient(Infinity);
+    const spy = jest.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useTransactionsScreenData(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.transactions.length).toBe(1));
+
+    await act(async () => { await result.current.refetchList(); });
+
+    const keys = spy.mock.calls.map((c) => (c[0] as { queryKey?: unknown[] } | undefined)?.queryKey?.[0]);
+    expect(keys).toContain('uncategorizedCount');
+    spy.mockRestore();
   });
 
   it('focus refresh (refetchStale) never force-refetches balances — even when everything is stale (scope guard)', async () => {

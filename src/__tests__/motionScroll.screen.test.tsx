@@ -12,7 +12,12 @@ import type { AppContext } from '../context';
 import { HEADER_BODY_HEIGHT, TAB_BAR_CLEARANCE } from '../motion/useNavBarsHeader';
 
 let mockTx: { transactions: unknown[]; category: (id: string | null) => unknown; isLoading: boolean; isError: boolean; isFetching: boolean; refetch: jest.Mock; refetchStale: jest.Mock };
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({
+  useTransactionsScreenData: () => mockTx,
+  // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
+  // the badge and "All caught up" gating stay driven by these fixtures exactly as before.
+  useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
+}));
 
 let mockState: AppContext;
 jest.mock('../context', () => {

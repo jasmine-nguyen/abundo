@@ -8,7 +8,7 @@ import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories, fetchPayCycle,
   setPayCycle, setBudget, deleteBudget, fetchHomeLoan, fetchLoanFacts, setLoanFacts, fetchRepayment,
-  setTransactionFields,
+  setTransactionFields, fetchUncategorizedCount,
 } from '../api';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
@@ -118,6 +118,17 @@ describe('reads', () => {
     expect(url).toBe(`${API}/repayment`);
     expectAuth(opts);
     expect(out).toEqual(body);
+  });
+
+  // WHIT-501: the whole-history uncategorized tally. It UNWRAPS the { count } envelope and
+  // returns the bare number, so the badge/dot hooks get a `number` (not `{count}`).
+  it('fetchUncategorizedCount GETs /transactions/uncategorized/count and returns body.count', async () => {
+    fetchMock.mockReturnValue(okJson({ count: 7 }));
+    const out = await fetchUncategorizedCount();
+    const [url, opts] = lastCall();
+    expect(url).toBe(`${API}/transactions/uncategorized/count`);
+    expectAuth(opts);
+    expect(out).toBe(7); // the bare number, not the { count } envelope
   });
 });
 
@@ -229,6 +240,7 @@ describe('every fetcher throws on a not-OK response', () => {
     ['fetchHomeLoan', () => fetchHomeLoan()],
     ['fetchLoanFacts', () => fetchLoanFacts()],
     ['fetchRepayment', () => fetchRepayment()],
+    ['fetchUncategorizedCount', () => fetchUncategorizedCount()],
     ['setLoanFacts', () => setLoanFacts({ original: 1, homeValue: 1, lvr: 0.8, ratePct: 5, baseRepay: 1, extra: 0 })],
     ['createCategory', () => createCategory({ name: 'X', bucket: 'Living', icon: 'cart' })],
     ['updateCategory', () => updateCategory('x', { name: 'X', bucket: 'Living', icon: 'cart' })],

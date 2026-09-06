@@ -10,7 +10,12 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 
 const mockPush = jest.fn();
 let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({
+  useTransactionsScreenData: () => mockTx,
+  // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
+  // the badge and "All caught up" gating stay driven by these fixtures exactly as before.
+  useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
+}));
 
 const mockOpenMultiPicker = jest.fn();
 jest.mock('../context', () => {

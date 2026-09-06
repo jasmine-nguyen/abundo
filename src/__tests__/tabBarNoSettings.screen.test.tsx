@@ -12,6 +12,8 @@ import { render, screen } from '@testing-library/react-native';
 jest.mock('../queries', () => ({
   useRecentTransactionsScreenData: () => ({ transactions: [], category: () => undefined }),
   useKeepTransactionsFeedWarm: () => {},
+  // WHIT-501: leave the server tally undefined so the dot falls back to the LOCAL recent-window count.
+  useUncategorizedCount: () => undefined,
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));

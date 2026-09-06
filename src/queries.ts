@@ -6,7 +6,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedCount, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
@@ -54,6 +54,12 @@ export const transactionsKey = ['transactions'] as const;
 // account-detail screen, and the goal-edit picker. A SEPARATE key from the feed so those
 // counts stay fixed and can't drift as the tab pages back through full history.
 export const transactionsRecentKey = ['transactionsRecent'] as const;
+// The full-history uncategorized count (WHIT-500/501) behind the tab badge, the tab-bar dot,
+// and the "All caught up" empty state — a single server number that reflects ALL history, not
+// just the loaded pages. Kept in sync with the literal ['uncategorizedCount'] the categorise +
+// delete-category writes invalidate in context.tsx (context imports queryClient directly, not
+// this key, to avoid a circular import).
+export const uncategorizedCountKey = ['uncategorizedCount'] as const;
 // Loan facts (the Settings "Loan details" row + the loan form). Un-windowed flat key,
 // kept in sync with the literal ['loanFacts'] the saveLoanFacts write uses in context.tsx.
 export const loanFactsKey = ['loanFacts'] as const;
@@ -139,6 +145,19 @@ function firstLoadError(q: { isError: boolean; data: unknown }): boolean {
 // --- the individual queries (each auth-gated) --------------------------------
 export function useCategoriesQuery(enabled: boolean) {
   return useQuery({ queryKey: categoriesKey, queryFn: fetchCategories, enabled, select: selectCategories });
+}
+
+// The full-history uncategorized count. Longer staleTime than the default (it's a whole-history
+// server walk): it stays cached between focuses and is invalidated after any categorise / delete,
+// so it's refreshed exactly when it can actually change, not on every redraw.
+export function useUncategorizedCountQuery(enabled: boolean) {
+  return useQuery({ queryKey: uncategorizedCountKey, queryFn: fetchUncategorizedCount, enabled, staleTime: 5 * 60_000 });
+}
+
+// Returns `number | undefined` — undefined while loading / errored / pre-auth, so each consumer
+// falls back to the LOCAL loaded-page count (never to 0) and only trusts a RESOLVED value.
+export function useUncategorizedCount(): number | undefined {
+  return useUncategorizedCountQuery(useIsAuthed()).data;
 }
 
 export function usePayCycleQuery(enabled: boolean) {
@@ -638,7 +657,16 @@ export function useTransactionsScreenData(): TransactionsScreenData {
       prev && prev.pages.length > 1
         ? { pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
         : prev);
-    return Promise.all([feedQuery.refetch(), categoriesQuery.refetch()]);
+    // WHIT-501: a pull is the user's explicit "get me the latest", so refresh the whole-history
+    // uncategorized tally alongside the list. Without this the badge/dot keep a fresh-cached number
+    // (5min staleTime) while the pull loads brand-new unfiled rows into the list — badge says 3, list
+    // shows 5. invalidate → the always-mounted count query refetches; awaited so the pull spinner
+    // stays up until the number the feature exists to make accurate has actually refreshed.
+    return Promise.all([
+      feedQuery.refetch(),
+      categoriesQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
+    ]);
   }, [feedQuery, categoriesQuery, queryClient]);
   // Inline Retry (list-load error) refreshes the list AND re-reads the STORED balances — cheap,
   // no live bank call. The live call is pull-only (refreshLiveBalances). Balances stay out of
