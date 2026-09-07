@@ -29,7 +29,10 @@ export default function Accounts() {
   const showSpinner = !showError && isLoading && transactions.length === 0;
   // Pull-to-refresh (WHIT-489: shared hook): refresh the visible list AND fetch fresh account
   // balances live from the bank, with the WHIT-363 stuck-spinner invariant owned in one place.
-  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast);
+  // A successful pull confirms itself with "Balances up to date" — a live refresh often returns
+  // the same number (unchanged balance, or the server's 60s throttle), so without this feedback
+  // an intact pull looks like it did nothing.
+  const { pulling, onRefresh } = usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date');
 
   return (
     <ScrollChromeHeader

@@ -3,7 +3,7 @@
 // WHIT-190a screen describe in transactionsScreenData.screen.test.tsx). The account cards render on
 // mount — no segment to press. The existing suite proves the HOOK seeds -250 and that a failed pull
 // "keeps last-good"/toasts at the LIST level; these prove it on the RENDERED Accounts CARD (the dollar
-// figure the user sees), that a success does NOT toast, that the LIST still refreshes when the live
+// figure the user sees), that a success toasts "Balances up to date", that the LIST still refreshes when the live
 // call fails (allSettled), that a second pull after a FAILED first is not latched, and that an
 // in-flight stored GET can't clobber the freshly-seeded live value.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -89,15 +89,19 @@ describe('pull-to-refresh LIVE balances on the rendered screen (WHIT-363 / WHIT-
     expect(screen.queryByText('-$100.00')).toBeNull();           // old number gone
   });
 
-  // [G2] The success path must be SILENT — the "Showing last saved" toast is a FAILURE affordance only.
-  // Fail-on-revert: move showToast out of `.catch` so it always fires → this reddens.
-  it('[G2] a successful live pull does NOT toast', async () => {
+  // [G2] A SUCCESSFUL live pull confirms itself with the "Balances up to date" toast. The pull often
+  // returns the same number (the balance didn't move, or the server's 60s throttle returned the stored
+  // values), so this toast is the only signal it actually ran. The FAILURE toast ("Showing last saved")
+  // stays a separate affordance and must NOT fire on success.
+  // Fail-on-revert: drop the successMessage arg on the Accounts screen (or the `.then` toast in the
+  // hook) → no toast fires on success → RED.
+  it('[G2] a successful live pull toasts "Balances up to date"', async () => {
     mockRefreshAccountBalances.mockResolvedValue([{ account_id: 'a1', amount: -250 }]);
     renderScreen();
     expect(await screen.findByText('-$100.00')).toBeTruthy();
     await pull();
-    await waitFor(() => expect(mockRefreshAccountBalances).toHaveBeenCalledTimes(1));
-    expect(mockShowToast).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Balances up to date'));
+    expect(mockShowToast).not.toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
   });
 
   // [G3] OFFLINE / failed live pull: the card must keep the EXACT prior number (-$100.00), never blank
