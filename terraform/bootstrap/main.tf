@@ -3,6 +3,14 @@ locals {
   # here so the CI roles' state-access policy grants exactly this key. PR2's
   # `backend "s3"` block must use the same value (see DEPLOY.md).
   state_key = "${var.project_name}/terraform.tfstate"
+
+  # OIDC subject prefixes the CI roles trust. GitHub mints two forms depending on
+  # the repo: the legacy name-only form and the newer immutable form carrying the
+  # numeric owner/repo ids. Both are derived from var.github_repo (single source of
+  # owner/name), so only the ids live separately. github_repo must stay "owner/name".
+  github_repo_parts    = split("/", var.github_repo)
+  sub_prefix_legacy    = "repo:${var.github_repo}"
+  sub_prefix_immutable = "repo:${local.github_repo_parts[0]}@${var.github_owner_id}/${local.github_repo_parts[1]}@${var.github_repo_id}"
 }
 
 # --- Remote state backend infra ----------------------------------------------
@@ -152,7 +160,9 @@ resource "aws_iam_policy" "tfstate_apply" {
 # --- Plan role: assumed by PR (pull_request) runs, read-only + state ----------
 
 # Trust is pinned to the `pull_request` subject only, so this role can be assumed
-# from a PR run but never from a push to a branch.
+# from a PR run but never from a push to a branch. Both the legacy and immutable
+# subject forms are accepted (a list under StringEquals is an OR) so the login
+# works whichever form GitHub mints for this repo.
 resource "aws_iam_role" "github_plan" {
   name = "${var.project_name}-github-plan"
   assume_role_policy = jsonencode({
@@ -164,7 +174,10 @@ resource "aws_iam_role" "github_plan" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:pull_request"
+          "token.actions.githubusercontent.com:sub" = [
+            "${local.sub_prefix_legacy}:pull_request",
+            "${local.sub_prefix_immutable}:pull_request",
+          ]
         }
       }
     }]
@@ -186,7 +199,8 @@ resource "aws_iam_role_policy_attachment" "plan_state" {
 # Trust is pinned to the `environment:<environment_name>` subject, so this role
 # can ONLY be assumed by a job that declares that environment — which means the
 # job has already passed the environment's required-reviewer approval. A PR run
-# (subject `pull_request`) can never assume it.
+# (subject `pull_request`) can never assume it. Both the legacy and immutable
+# subject forms are accepted (a list under StringEquals is an OR).
 resource "aws_iam_role" "github_apply" {
   name = "${var.project_name}-github-apply"
   assume_role_policy = jsonencode({
@@ -198,7 +212,10 @@ resource "aws_iam_role" "github_apply" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:environment:${var.environment_name}"
+          "token.actions.githubusercontent.com:sub" = [
+            "${local.sub_prefix_legacy}:environment:${var.environment_name}",
+            "${local.sub_prefix_immutable}:environment:${var.environment_name}",
+          ]
         }
       }
     }]

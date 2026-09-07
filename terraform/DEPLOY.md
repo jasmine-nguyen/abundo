@@ -45,6 +45,25 @@ terraform apply
   apply errors with "provider already exists", you already have one — import it
   (`terraform import aws_iam_openid_connect_provider.github <arn>`) instead of
   creating a second.
+- **Immutable OIDC subject (numeric ids).** GitHub now mints the login "subject"
+  for newer repos in an *immutable* form carrying numeric owner/repo ids
+  (`repo:owner@<owner_id>/name@<repo_id>:...`) instead of the plain name
+  (`repo:owner/name:...`). The CI role trust accepts **both** forms, so the login
+  works either way. The ids live in `github_owner_id` / `github_repo_id`
+  (`bootstrap/variables.tf`); the committed defaults are this repo's. For a
+  different repo, read them with `gh api users/<owner> -q .id` and
+  `gh api repos/<owner>/<repo> -q .id`.
+- **⚠️ Already applied the bootstrap before this trust change? Re-apply it.** The
+  bootstrap module runs only from your Mac (CI never touches it), so editing the
+  trust changes nothing in AWS until you re-run it: `cd terraform/bootstrap &&
+  terraform plan && terraform apply`. Expect **exactly 2 in-place role updates
+  (0 add, 0 destroy)** — `aws_iam_role.github_plan` and `github_apply`. Until you
+  do, the CI plan job stays red with `Not authorized to perform
+  sts:AssumeRoleWithWebIdentity`. The plan role is proven by the next PR preview;
+  the apply role's immutable subject is inferred (same repo prefix +
+  `:environment:production`) — confirm it on your first real gated deploy (the
+  apply job logs in without `AccessDenied`, or check the CloudTrail
+  `AssumeRoleWithWebIdentity` event's `userName`).
 
 ### 2. Store the role ARNs, region + state bucket as GitHub **Variables** (none is sensitive)
 
