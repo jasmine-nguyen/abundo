@@ -59,13 +59,14 @@ variable "github_repo_id" {
   }
 }
 
-# The GitHub Environment that gates the deploy job. The apply role's trust is
-# pinned to "...:environment:<this>", so ONLY a job that declares this
-# environment (and therefore passes its required-reviewer approval) can assume the
-# apply role. This exact name must match the protected environment created in the
+# The GitHub Environment the deploy job declares. The apply role's trust is pinned
+# to "...:environment:<this>", so ONLY a job that declares this environment can
+# assume the apply role. (Required-reviewer protection is Enterprise-only for private
+# repos, so the actual deploy gate is deploy.yml's manual workflow_dispatch trigger,
+# not this environment.) This exact name must match the environment created in the
 # repo settings AND the `environment:` in deploy.yml.
 variable "environment_name" {
-  description = "GitHub Environment that gates the apply job and the apply role's trust"
+  description = "GitHub Environment the apply job declares; the apply role's trust is pinned to it"
   type        = string
   default     = "production"
 }

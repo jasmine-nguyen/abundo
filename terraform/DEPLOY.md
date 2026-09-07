@@ -1,16 +1,24 @@
-# Deploy runbook — one-time setup for automatic deploys
+# Deploy runbook — one-time setup for GitHub Actions deploys
 
 Today you deploy by running `terraform apply` on your Mac. This sets up GitHub
-Actions to do it for you: **preview on every PR, deploy on merge to `main` behind
-your approval.**
+Actions to do it for you: **preview on every PR, and deploy with a manual button
+(Run workflow) whenever you're ready.**
+
+> **Why a manual button, not deploy-on-merge?** GitHub's "require a reviewer to
+> approve a deploy" is an *environment protection rule*, and those are only
+> available for **private** repos on **GitHub Enterprise**. This repo is private and
+> not on Enterprise, so that gate can't exist here. Instead the deploy job runs only
+> when you click **Run workflow** — that click is the gate. Merging to `main` deploys
+> nothing on its own.
 
 It ships in **two PRs, in order**. This file lands in **PR1** with the bootstrap
 module (`terraform/bootstrap/`). Do PR1's steps fully before merging PR2.
 
 > **Why two PRs?** The deploy workflow (PR2) must never reach `main` before the
-> AWS roles, the approved-reviewer gate, and the migrated state all exist —
-> otherwise the first automatic deploy runs against empty state and tries to
-> recreate everything. Stage A below creates those; PR2 only wires the button.
+> AWS roles and the migrated state exist. Merging PR2 deploys nothing by itself, but
+> your **first manual deploy** must run against your real migrated state — if you ran
+> it against empty state it would try to recreate everything. Stage A creates the
+> roles; Stage B migrates the state before you ever press the button.
 
 You need the `aws` CLI logged in (same creds you use for `terraform apply`), the
 `gh` CLI logged in, and Terraform ≥ 1.5.
@@ -61,7 +69,7 @@ terraform apply
   do, the CI plan job stays red with `Not authorized to perform
   sts:AssumeRoleWithWebIdentity`. The plan role is proven by the next PR preview;
   the apply role's immutable subject is inferred (same repo prefix +
-  `:environment:production`) — confirm it on your first real gated deploy (the
+  `:environment:production`) — confirm it on your first manual deploy (the
   apply job logs in without `AccessDenied`, or check the CloudTrail
   `AssumeRoleWithWebIdentity` event's `userName`).
 
@@ -114,49 +122,44 @@ overwrites them. Leave them alone.
 > If you're unsure which `TF_VAR_*` you actually set, run
 > `env | grep TF_VAR_` on your Mac in the shell you deploy from.
 
-### 4. Create the protected `production` environment — THIS is the approval gate
+### 4. Create the `production` environment (unprotected) — needed for the login
 
-The gate is the **required reviewer**, not the trust policy. GitHub silently creates
-an **unprotected** environment the first time a workflow names one, so create it
-protected first — and verify it stuck.
+This is **not** the gate (the manual Run-workflow button is — see step 8). The
+environment must still exist for a different reason: the apply role's trust is pinned
+to the OIDC subject `...:environment:production`, and GitHub only puts that
+`:environment:production` segment in the token **when the apply job declares this
+environment**. No environment → wrong subject → the deploy can't log in.
 
-**UI (recommended — the CLI reviewer syntax is fiddly):** repo → Settings →
-Environments → **New environment** → name it exactly `production` → enable
-**Required reviewers**, add yourself → under **Deployment branches and tags**, choose
-**Selected branches** and add `main` only.
+> **Why not a required reviewer?** Environment protection rules (required reviewers,
+> branch policies) are **Enterprise-only for private repos**. This repo can't have
+> them, which is exactly why the deploy is a manual button instead.
 
-**CLI alternative** (use a JSON body via `--input`; `-f "reviewers[][type]=..."` does
-not reliably encode an array of objects and can leave the reviewer unset):
+Create it (unprotected is expected and fine):
 
 ```bash
-gh api --method PUT repos/jasmine-nguyen/abundo/environments/production --input - <<JSON
-{ "reviewers": [ { "type": "User", "id": $(gh api user -q .id) } ],
-  "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true } }
-JSON
-gh api --method POST repos/jasmine-nguyen/abundo/environments/production/deployment-branch-policies -f name='main'
+gh api --method PUT repos/jasmine-nguyen/abundo/environments/production
+# (GitHub also auto-creates it the first time the apply job names it; this is just explicit.)
 ```
 
-**Verify it actually protected — do NOT skip:**
+**Verify it exists — and expect NO protection rules:**
 
 ```bash
 gh api repos/jasmine-nguyen/abundo/environments/production -q '.protection_rules[].type'
-# must include "required_reviewers" — if empty, the gate is OFF; fix before PR2.
+# Empty output is EXPECTED (no reviewer rule available on this plan). The gate is the
+# manual button in step 8, plus: only you (with Actions write access) can press it.
 ```
 
-Two things must both be true, or the gate is bypassable:
-
-- **Required reviewer = you** — this is the approval prompt itself.
-- **Deployment branches = `main` only** — the apply role's trust is pinned to
-  `environment:production` but NOT to a branch, so without this a job on any branch
-  that declares `environment: production` could deploy non-`main` code after an
-  accidental approval.
-
-The name must be exactly `production` (pinned in the apply role's trust and `deploy.yml`).
+- **`main` only is by convention.** Branch-restriction is part of the same
+  Enterprise-only protection feature, so we can't enforce it. The apply role's trust
+  is pinned to `environment:production` but not to a branch → the Run-workflow menu
+  lets you pick any branch. **Always run it from `main`.**
+- The name must be exactly `production` (pinned in the apply role's trust and `deploy.yml`).
 
 ### 5. Generate + commit the provider lock files (multi-platform) — MANDATORY
 
-CI deploys unattended, so provider versions must be **pinned** (not re-resolved from
-`~> 6.0` every run). CI runs on Linux and your Mac isn't, so generate the lock for
+The deploy runs non-interactively (no prompt to pin a version mid-run), so provider
+versions must be **pinned** (not re-resolved from `~> 6.0` every run). CI runs on Linux
+and your Mac isn't, so generate the lock for
 both platforms. **The PR2 branch the assistant pushes does NOT contain these lock
 files — you generate them here and commit them onto the PR2 branch before merge**
 (the assistant's sandbox can't reach the provider registry). CI's first `init` works
@@ -208,10 +211,12 @@ means a `TF_VAR_*` from step 3 is missing locally; stop and fix it.
 
 Then generate + commit the lock files (step 5) and push the branch.
 
-### 7. Read the CI preview, THEN merge — the real destroy-guard
+### 7. Read the CI preview before you merge — the real destroy-guard
 
-Your local `plan` used **your Mac's** secrets. The check that proves *CI* has them is
-the **preview plan comment** the workflow posts after your migrate + lock push:
+Merging no longer deploys anything, but the preview is still what proves **CI** holds
+the secrets before your first manual deploy. Your local `plan` used **your Mac's**
+secrets; the **preview plan comment** the workflow posts after your migrate + lock
+push is the one that used CI's:
 
 - Expected: the three `null_resource.prepare_*` replaced (benign, as above), and
   **zero destroys** of `aws_cognito_identity_provider.google` /
@@ -222,18 +227,26 @@ the **preview plan comment** the workflow posts after your migrate + lock push:
   failure), not just a line in the comment. Fix the secret, push again.
 - **Do not merge until the preview is clean.**
 
-### 8. Merge PR2
+### 8. Merge PR2, then deploy with the button
 
 From now on:
 - Open a PR touching `terraform/`, `lambda*/`, or `shared/` → the workflow posts a
   **preview** (plan) as a comment. Nothing is deployed.
-- Merge to `main` → the deploy job **waits for your approval** (the `production`
-  gate), then runs `terraform apply`. Done.
-- **The gate is your approval, not the tests.** The Python/client test suites run on
-  the merge, but they don't block the deploy — glance at the checks before you click
-  Approve. (A hard test gate can be added later if you ever want hands-off deploys.)
+- Merge to `main` → **nothing deploys.** The merge just makes the change live in the
+  repo.
+- **To deploy:** GitHub → **Actions → "Deploy (Terraform)" → Run workflow →** pick
+  branch **`main`** → Run. That runs `terraform apply`. Clicking Run **is** the gate.
+- **The gate is your click, not the tests.** The test suites run on PRs, but nothing
+  blocks the button — glance at the checks before you Run.
 
-You never run `terraform apply` by hand again.
+Two things to know about the button:
+- It only appears **after this workflow file is on `main`** (i.e. after PR2 merges) —
+  before that, there's no Run-workflow button to find.
+- A second Run **from `main`** queues behind an in-flight one (it never cancels a
+  running apply) — apply is never interrupted midway. (Queueing is per-branch, so this
+  holds as long as you always Run from `main`, which you should.)
+
+You never run `terraform apply` from your Mac again — you press the button instead.
 
 ---
 
