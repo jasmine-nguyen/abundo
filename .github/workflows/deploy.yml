@@ -1,8 +1,10 @@
 name: Deploy (Terraform)
 
-# Preview on every PR (a plan comment, no changes made); deploy on merge to main,
-# behind the `production` environment's required-reviewer gate. AWS auth is via
-# GitHub OIDC (no stored keys) using the roles from terraform/bootstrap/.
+# Preview on every PR (a plan comment, no changes made); deploy is MANUAL — run this
+# workflow from the Actions tab (Run workflow) to apply. Merging to main deploys
+# nothing on its own: GitHub can't offer an environment required-reviewer gate on a
+# private repo off Enterprise, so the manual trigger is the gate (see DEPLOY.md).
+# AWS auth is via GitHub OIDC (no stored keys) using the roles from terraform/bootstrap/.
 #
 # Both jobs rebuild the gitignored lambda/layer artifacts with the shared script
 # BEFORE terraform runs — CI can't rely on Terraform's build provisioners re-firing
@@ -17,15 +19,7 @@ on:
       - "**/requirements*.txt"
       - "scripts/build_terraform_artifacts.sh"
       - ".github/workflows/deploy.yml"
-  push:
-    branches: [main]
-    paths:
-      - "terraform/**"
-      - "lambda*/**"
-      - "shared/**"
-      - "**/requirements*.txt"
-      - "scripts/build_terraform_artifacts.sh"
-      - ".github/workflows/deploy.yml"
+  workflow_dispatch: # the deploy gate: apply runs only when you click Run workflow (use branch main)
 
 # One run per ref, and NEVER cancel an in-flight apply — a killed apply can leave
 # state locked or half-applied.
@@ -116,9 +110,12 @@ jobs:
 
   apply:
     name: Terraform apply (deploy)
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: production # required-reviewer gate + main-only branch policy
+    # Unprotected env — kept because the OIDC token's subject only carries
+    # :environment:production when the job declares this environment, and the apply
+    # role's trust is pinned to that subject. The manual trigger is the gate.
+    environment: production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

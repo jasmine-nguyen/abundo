@@ -197,10 +197,11 @@ resource "aws_iam_role_policy_attachment" "plan_state" {
 # --- Apply role: assumed only by the gated `production` deploy job -------------
 
 # Trust is pinned to the `environment:<environment_name>` subject, so this role
-# can ONLY be assumed by a job that declares that environment — which means the
-# job has already passed the environment's required-reviewer approval. A PR run
-# (subject `pull_request`) can never assume it. Both the legacy and immutable
-# subject forms are accepted (a list under StringEquals is an OR).
+# can ONLY be assumed by a job that declares that environment. A PR run (subject
+# `pull_request`) can never assume it. The deploy gate is deploy.yml's manual
+# workflow_dispatch trigger (required-reviewer protection is Enterprise-only for
+# private repos). Both the legacy and immutable subject forms are accepted (a list
+# under StringEquals is an OR).
 resource "aws_iam_role" "github_apply" {
   name = "${var.project_name}-github-apply"
   assume_role_policy = jsonencode({
