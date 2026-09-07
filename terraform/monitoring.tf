@@ -18,6 +18,15 @@ resource "aws_sns_topic_subscription" "alerts_email" {
   topic_arn = aws_sns_topic.alerts.arn
   protocol  = "email"
   endpoint  = var.alert_email
+
+  # Refuse to destroy the subscription if alert_email ever arrives empty (e.g. a
+  # deploy without TF_VAR_alert_email): count would drop to 0 and Terraform would
+  # tear it down (requiring the one-time email re-confirmation to restore). Turns a
+  # silent teardown into a loud apply error. To intentionally remove it, delete this
+  # line first. Inert while alert_email is unset (count 0 = nothing to protect).
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # --- Age-out sweep alarms (WHIT-79) -----------------------------------------

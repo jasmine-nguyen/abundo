@@ -83,6 +83,13 @@ resource "aws_cognito_identity_provider" "google" {
   # secret. Fail at plan with a clear message instead of an opaque AWS 400
   # mid-apply if only the id was supplied.
   lifecycle {
+    # Refuse to destroy the login if google_client_id ever arrives empty (e.g. a
+    # deploy — CI or local — without TF_VAR_google_client_id): count would drop to
+    # 0 and Terraform would delete this IdP, locking out the only sign-in. This
+    # turns that into a loud apply error instead of silent data loss. To
+    # intentionally remove Google sign-in, delete this line first.
+    prevent_destroy = true
+
     precondition {
       condition     = var.google_client_secret != ""
       error_message = "google_client_id is set but google_client_secret is empty — Google sign-in needs both."
