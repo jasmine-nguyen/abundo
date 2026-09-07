@@ -2,7 +2,8 @@
 // for the list tabs. This is its unit-level home: `pulling` flips true on a pull, both refreshes
 // fire, and `pulling` clears ONLY after BOTH settle (Promise.allSettled) — never wedged by a
 // slow/failed live-balance call. A failed live call toasts the exact copy and still clears; a
-// success is silent; a second pull after a failed first is not latched.
+// success is silent unless a `successMessage` is passed (then it confirms the pull); a second
+// pull after a failed first is not latched.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
@@ -68,11 +69,26 @@ describe('usePullToRefresh', () => {
     expect(result.current.pulling).toBe(false);
   });
 
-  it('a successful pull does not toast', async () => {
+  it('a successful pull does not toast when no success message is given', async () => {
     const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast));
     await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
     expect(showToast).not.toHaveBeenCalled();
     expect(result.current.pulling).toBe(false);
+  });
+
+  it('toasts the success message on a successful pull when one is provided', async () => {
+    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date'));
+    await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
+    expect(showToast).toHaveBeenCalledWith('Balances up to date');
+    expect(result.current.pulling).toBe(false);
+  });
+
+  it('does NOT toast the success message when the live refresh fails', async () => {
+    refreshLiveBalances.mockReturnValueOnce(Promise.reject(new Error('offline')));
+    const { result } = renderHook(() => usePullToRefresh(refetchList, refreshLiveBalances, showToast, 'Balances up to date'));
+    await act(async () => { result.current.onRefresh(); await Promise.resolve(); await Promise.resolve(); });
+    expect(showToast).toHaveBeenCalledWith('Could not refresh balances. Showing last saved.');
+    expect(showToast).not.toHaveBeenCalledWith('Balances up to date');
   });
 
   it('refetches the list even when the live balance call rejects', async () => {
