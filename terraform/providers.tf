@@ -7,6 +7,20 @@ terraform {
       version = "~> 6.0"
     }
   }
+
+  # Remote state in S3, locked via DynamoDB (both created by terraform/bootstrap/).
+  # `bucket` carries an account-id suffix and a backend block takes no interpolation,
+  # so it's supplied at init via -backend-config (GitHub Variable TF_STATE_BUCKET =
+  # bootstrap output state_bucket_name); see .github/workflows/deploy.yml and
+  # DEPLOY.md. key/region/lock table have no account-specific part, so they're
+  # literals here. key MUST equal bootstrap local.state_key — the CI state policy is
+  # scoped to exactly this object.
+  backend "s3" {
+    key            = "abundo/terraform.tfstate"
+    region         = "ap-southeast-2"
+    dynamodb_table = "abundo-tfstate-lock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {

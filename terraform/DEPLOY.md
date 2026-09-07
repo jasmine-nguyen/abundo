@@ -45,22 +45,43 @@ terraform apply
   apply errors with "provider already exists", you already have one — import it
   (`terraform import aws_iam_openid_connect_provider.github <arn>`) instead of
   creating a second.
+- **Immutable OIDC subject (numeric ids).** GitHub now mints the login "subject"
+  for newer repos in an *immutable* form carrying numeric owner/repo ids
+  (`repo:owner@<owner_id>/name@<repo_id>:...`) instead of the plain name
+  (`repo:owner/name:...`). The CI role trust accepts **both** forms, so the login
+  works either way. The ids live in `github_owner_id` / `github_repo_id`
+  (`bootstrap/variables.tf`); the committed defaults are this repo's. For a
+  different repo, read them with `gh api users/<owner> -q .id` and
+  `gh api repos/<owner>/<repo> -q .id`.
+- **⚠️ Already applied the bootstrap before this trust change? Re-apply it.** The
+  bootstrap module runs only from your Mac (CI never touches it), so editing the
+  trust changes nothing in AWS until you re-run it: `cd terraform/bootstrap &&
+  terraform plan && terraform apply`. Expect **exactly 2 in-place role updates
+  (0 add, 0 destroy)** — `aws_iam_role.github_plan` and `github_apply`. Until you
+  do, the CI plan job stays red with `Not authorized to perform
+  sts:AssumeRoleWithWebIdentity`. The plan role is proven by the next PR preview;
+  the apply role's immutable subject is inferred (same repo prefix +
+  `:environment:production`) — confirm it on your first real gated deploy (the
+  apply job logs in without `AccessDenied`, or check the CloudTrail
+  `AssumeRoleWithWebIdentity` event's `userName`).
 
-### 2. Store the role ARNs + region as GitHub **Variables** (none is sensitive)
+### 2. Store the role ARNs, region + state bucket as GitHub **Variables** (none is sensitive)
 
-The workflow reads these three. Read the values from `terraform output`, then:
+The workflow reads these. Read the values from `terraform output`, then:
 
 ```bash
 gh variable set AWS_PLAN_ROLE_ARN  --repo jasmine-nguyen/abundo --body "$(terraform output -raw plan_role_arn)"
 gh variable set AWS_APPLY_ROLE_ARN --repo jasmine-nguyen/abundo --body "$(terraform output -raw apply_role_arn)"
 gh variable set AWS_REGION         --repo jasmine-nguyen/abundo --body "$(terraform output -raw aws_region)"
+gh variable set TF_STATE_BUCKET    --repo jasmine-nguyen/abundo --body "$(terraform output -raw state_bucket_name)"
 ```
 
-The state **bucket / lock table / key** are NOT stored as Variables — a `backend "s3"`
-block can't read variables, so they go in as **literals** in PR2's backend block
-(step 7). Copy them verbatim from `terraform output` (`state_bucket_name`,
-`lock_table_name`, `state_key`); don't retype — a typo becomes an opaque S3
-access-denied in CI.
+The state **bucket name** carries your account id, and a `backend "s3"` block can't
+read variables — so the workflow (and your local migrate step) pass it to
+`terraform init` via `-backend-config="bucket=$TF_STATE_BUCKET"`. The **key**
+(`abundo/terraform.tfstate`), **region** (`ap-southeast-2`), and **lock table**
+(`abundo-tfstate-lock`) have no account-specific part, so they're literals in the
+backend block, not Variables (`TF_LOCK_TABLE` is intentionally not needed).
 
 ### 3. ⚠️ Store your deploy-time inputs as GitHub **Secrets** — DO THIS BEFORE PR2
 
@@ -132,49 +153,74 @@ Two things must both be true, or the gate is bypassable:
 
 The name must be exactly `production` (pinned in the apply role's trust and `deploy.yml`).
 
-### 5. Generate the provider lock files for CI (multi-platform)
+### 5. Generate + commit the provider lock files (multi-platform) — MANDATORY
 
-CI runs on Linux; your Mac is not. A lock file generated only on macOS makes CI's
-`terraform init` fail. Generate both platforms and commit the results in PR2:
+CI deploys unattended, so provider versions must be **pinned** (not re-resolved from
+`~> 6.0` every run). CI runs on Linux and your Mac isn't, so generate the lock for
+both platforms. **The PR2 branch the assistant pushes does NOT contain these lock
+files — you generate them here and commit them onto the PR2 branch before merge**
+(the assistant's sandbox can't reach the provider registry). CI's first `init` works
+without them; committing them pins every run after.
 
 ```bash
-cd terraform          && terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
+cd terraform             && terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
 cd ../terraform/bootstrap && terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64
+# then commit BOTH terraform/.terraform.lock.hcl and terraform/bootstrap/.terraform.lock.hcl onto the PR2 branch
 ```
+
+(You'll actually run this during step 6, once you've checked out the PR2 branch.)
 
 ---
 
 ## Stage B — PR2 (the deploy button)
 
-PR2 adds the `backend "s3"` block to `terraform/providers.tf` (bucket / key / region /
-lock table as literals from step 2), the committed lock files from step 5, the
-`.gitignore` change that un-ignores them, and `.github/workflows/deploy.yml`.
+PR2 adds the `backend "s3"` block to `terraform/providers.tf` (key/region/lock table
+as literals; **bucket** supplied at init via `-backend-config` from the
+`TF_STATE_BUCKET` Variable), `.github/workflows/deploy.yml`, the `.gitignore` change
+that stops ignoring the lock files, and `scripts/build_terraform_artifacts.sh` — the
+one recipe the workflow runs to rebuild the gitignored lambda/layer bundles before
+Terraform (CI can't rely on Terraform's own build steps re-firing against remote
+state). You add the committed lock files (step 5) onto the branch.
 
-### 6. Migrate state — on your Mac, BEFORE you push/open PR2
+### 6. Migrate state onto the PR2 branch (on your Mac)
 
-Do this on PR2's branch **locally, before pushing it**. Opening the PR fires a CI
-preview that would otherwise race your migration for the state lock:
+The assistant opens PR2 for you. Its **first** CI preview runs before your state is
+migrated, so it plans "create everything" against the still-empty remote state —
+**ignore that first preview**; it's superseded once you migrate. Then, on your Mac:
 
 ```bash
+git fetch && git checkout claude/westpac-feed-transactions-5qhd4d
 cd terraform
-terraform init -migrate-state   # answer "yes" to copy local state up to S3
-terraform plan                  # MUST say "No changes" — proves state moved intact
+terraform init -migrate-state \
+  -backend-config="bucket=$(cd bootstrap && terraform output -raw state_bucket_name)"   # answer "yes" to copy local state up
+terraform plan
 aws s3 ls "s3://$(cd bootstrap && terraform output -raw state_bucket_name)/abundo/"
 # ^ confirm the object exists at abundo/terraform.tfstate (the key CI is scoped to)
 ```
 
-If `plan` shows changes — especially any **destroy** — stop; a `TF_VAR_*` from step 3
-is missing locally. Only push PR2 once this is a clean no-op.
+**What that `plan` should show:** the three `null_resource.prepare_*` appear as
+**replaced** — this PR moved their build into `scripts/build_terraform_artifacts.sh`,
+which changes their triggers; they rebuild byte-identical bundles, so it's benign.
+What must be true: **zero destroys**, and **zero changes to real AWS resources**
+(`aws_lambda_function.*`, `aws_cognito_*`, `aws_sns_*`, …). A destroy — especially of
+`aws_cognito_identity_provider.google` or `aws_sns_topic_subscription.alerts_email` —
+means a `TF_VAR_*` from step 3 is missing locally; stop and fix it.
+
+Then generate + commit the lock files (step 5) and push the branch.
 
 ### 7. Read the CI preview, THEN merge — the real destroy-guard
 
-Your local `plan` above used **your Mac's** secrets. The one check that proves *CI*
-has them is the **preview plan comment** the workflow posts after you push PR2:
+Your local `plan` used **your Mac's** secrets. The check that proves *CI* has them is
+the **preview plan comment** the workflow posts after your migrate + lock push:
 
-- It MUST show **No changes** — specifically **zero** destroys of
-  `aws_cognito_identity_provider.google` or `aws_sns_topic_subscription.alerts_email`.
-- A destroy there means a **repository secret** from step 3 is missing in CI. Fix it,
-  push again. **Do not merge until the comment is clean.**
+- Expected: the three `null_resource.prepare_*` replaced (benign, as above), and
+  **zero destroys** of `aws_cognito_identity_provider.google` /
+  `aws_sns_topic_subscription.alerts_email`, and no real-resource changes you didn't
+  intend.
+- If a repository secret from step 3 is missing, that resource plans a destroy — and
+  because it carries `prevent_destroy`, the **plan step goes red** (a hard check
+  failure), not just a line in the comment. Fix the secret, push again.
+- **Do not merge until the preview is clean.**
 
 ### 8. Merge PR2
 
@@ -183,5 +229,18 @@ From now on:
   **preview** (plan) as a comment. Nothing is deployed.
 - Merge to `main` → the deploy job **waits for your approval** (the `production`
   gate), then runs `terraform apply`. Done.
+- **The gate is your approval, not the tests.** The Python/client test suites run on
+  the merge, but they don't block the deploy — glance at the checks before you click
+  Approve. (A hard test gate can be added later if you ever want hands-off deploys.)
 
 You never run `terraform apply` by hand again.
+
+---
+
+## Security note (accepted for a single-user private repo)
+
+A preview (`plan`) on a PR **from this repo** runs with the real `TF_VAR_*` secrets
+so the preview is accurate. That's bounded: it needs repo write access, the plan role
+is read-only, and the secrets are `sensitive` so they're masked in plan output/logs.
+PRs from **forks** are skipped entirely (they get no token or secrets). Accepted for a
+one-owner private repo; revisit if collaborators are ever added.

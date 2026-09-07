@@ -71,7 +71,11 @@ variable "goal_nudge_schedule_expression" {
 variable "alert_email" {
   description = "Email address subscribed to the CloudWatch alerts SNS topic (empty = no email subscription)"
   type        = string
-  default     = ""
+  # sensitive so the address is redacted in `terraform plan` output — otherwise a
+  # plan that creates/changes the subscription would print it into the CI plan PR
+  # comment (which posts the plan file, past GitHub's log-only secret masking).
+  sensitive = true
+  default   = ""
 }
 
 # --- Cognito auth (WHIT-97) --------------------------------------------------

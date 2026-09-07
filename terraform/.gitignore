@@ -1,7 +1,10 @@
 .terraform/
 *.tfstate
 *.tfstate.backup
-.terraform.lock.hcl
+# .terraform.lock.hcl is intentionally committed (both terraform/ and
+# terraform/bootstrap/): CI deploys unattended, so provider versions must be pinned
+# rather than re-resolved from "~> 6.0" each run. Generate it multi-platform on your
+# Mac per DEPLOY.md before merging PR2.
 # Never commit variable files — they hold the Google client secret / Apple .p8
 # key for the Cognito IdPs (WHIT-97). Supply those via TF_VAR_* env vars.
 *.tfvars
