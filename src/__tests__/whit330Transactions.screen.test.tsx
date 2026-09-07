@@ -14,7 +14,13 @@ let mockTx: ReturnType<typeof txData>;
 // WHIT-459 fold: superset of both sources' ../queries factory — the list screen reads
 // useTransactionsScreenData; the folded WHIT-328 detail test also imports (but does not
 // depend on) useRecentTransactionsScreenData, so it's exported here harmlessly.
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx, useRecentTransactionsScreenData: () => ({ transactions: [] }) }));
+jest.mock('../queries', () => ({
+  useTransactionsScreenData: () => mockTx,
+  useRecentTransactionsScreenData: () => ({ transactions: [] }),
+  // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
+  // the transfer keeps the tab out of the "All caught up" state exactly as before.
+  useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
+}));
 
 // WHIT-459 fold: superset useAppContext serving both regimes. The list screen asserts on
 // openMultiPicker; the folded detail test asserts on openPicker and needs applyTransactionEdit

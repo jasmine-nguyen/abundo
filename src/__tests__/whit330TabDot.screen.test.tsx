@@ -10,7 +10,9 @@ import { render, screen } from '@testing-library/react-native';
 import { txn } from './factory';
 
 let mockTx: { transactions: unknown[]; category: (id: string | null) => unknown };
-jest.mock('../queries', () => ({ useRecentTransactionsScreenData: () => mockTx, useKeepTransactionsFeedWarm: () => {} }));
+// WHIT-501: leave the server tally undefined so the dot falls back to the LOCAL recent-window
+// count — this test's fail-on-revert restores the countUncategorized gate, which must still drive the dot.
+jest.mock('../queries', () => ({ useRecentTransactionsScreenData: () => mockTx, useKeepTransactionsFeedWarm: () => {}, useUncategorizedCount: () => undefined }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('../motion/NavBarsContext', () => ({ useNavBars: () => ({ visibility: { interpolate: () => 0 } }) }));
 jest.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));

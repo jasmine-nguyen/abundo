@@ -801,6 +801,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // refresh the budget-detail and category drill-in lists (flat prefix → every cached list).
       queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
       queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
+      // WHIT-501: filing a charge changes the full-history uncategorized tally (badge/dot/empty state).
+      queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
     };
 
     if (scope === 'all') {
@@ -1056,6 +1058,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
       queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
       queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
+      // WHIT-501: a batch re-file changes the full-history uncategorized tally.
+      queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
     }
   }, [showToast, patchTransactions]);
 
@@ -1319,6 +1323,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // The deleted category's in-cycle spend now falls into Uncategorized on the
       // breakdown; invalidate so the Insights tab re-pulls and reflects that.
       queryClient.invalidateQueries({ queryKey: ['breakdown'] });
+      // WHIT-501: the deleted category's charges just became uncategorized (patched to null
+      // above, and the id dropped from the server's taxonomy), so the full-history tally rose.
+      // Invalidate (not setQueryData) — the server count genuinely changed, so a refetch is truth.
+      queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
       // WHIT-271: return false (not just skip the toast) so app/category/edit.tsx's `if (ok)`
       // doesn't router.back() the next session after a mid-delete sign-out.
       if (epoch !== sessionEpoch.current) return false; // signed out mid-flight

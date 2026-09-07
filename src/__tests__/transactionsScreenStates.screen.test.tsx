@@ -17,7 +17,12 @@ import { HEADER_BODY_HEIGHT } from '../motion/useNavBarsHeader';
 // WHIT-459: the folded siblings each carry their own block-scoped `txData` (some omit `balances`);
 // they all assign to this shared `mockTx`, so `balances` is optional here to accept every shape.
 let mockTx: Omit<ReturnType<typeof txData>, 'balances'> & { balances?: Map<string, unknown> };
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx }));
+jest.mock('../queries', () => ({
+  useTransactionsScreenData: () => mockTx,
+  // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
+  // the badge and "All caught up" gating stay driven by these fixtures exactly as before.
+  useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
+}));
 
 const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
 // WHIT-459: superset useAppContext stub covering every folded sibling. The component reads only

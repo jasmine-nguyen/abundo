@@ -27,6 +27,11 @@ export type ScreenState = Record<string, unknown> & {
   repayment?: unknown;
   goals?: unknown[];
   balances?: Record<string, number>; // account_id -> live signed balance, for the Goals hub
+  // WHIT-501: the whole-history uncategorized tally (server). Left undefined here so the tab dot /
+  // badge fall back to the LOCAL count off `transactions`, exactly like the real hook does while the
+  // server value is loading. A consumer that wants the resolved "All caught up" empty state (which is
+  // gated on the server value being exactly 0) sets this explicitly.
+  uncategorizedCount?: number;
 };
 
 const noop = () => {};
@@ -51,5 +56,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
     useGoalScreenData: () => ({ loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, repayment: st().repayment ?? {}, homeLoanError: false, repaymentError: false, ...status }),
     useGoalsScreenData: () => ({ goals: st().goals ?? [], payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, balanceFor: (id: string | null | undefined) => (id == null ? null : (st().balances ?? {})[id] ?? null), loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, mortgageError: false, ...status }),
     useLoanFactsQuery: () => ({ data: st().loanFacts }),
+    // WHIT-501: whole-history uncategorized tally. Undefined by default (see ScreenState.uncategorizedCount).
+    useUncategorizedCount: () => st().uncategorizedCount,
   };
 }

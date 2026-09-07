@@ -170,6 +170,28 @@ export async function fetchTransactionsFeed(cursor?: string, limit?: number): Pr
 }
 
 /**
+ * Fetch the full-history uncategorized count (WHIT-500): how many uncategorized charges
+ * exist across ALL history, not just the loaded feed pages. Backs the tab badge, the tab-bar
+ * dot, and the "All caught up" empty state so they reflect the whole picture. Auth-gated.
+ *
+ * @returns The count (a bare number, unwrapped from the server's {count}).
+ * @throws If the response status is not OK.
+ */
+export async function fetchUncategorizedCount(): Promise<number> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/count`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  const body = await readJson(response);
+  // Fail LOUD on a malformed envelope (missing / stringified count), mirroring selectCategories.
+  // A non-number would otherwise flow straight through as the badge TEXT and defeat the `=== 0`
+  // "All caught up" gate (a stringified "0" is not `=== 0`). Throwing → the query errors → the hook
+  // stays undefined → consumers fall back to the local count, never a wrong badge or false empty state.
+  if (typeof body?.count !== 'number' || Number.isNaN(body.count))
+    throw new Error(`fetchUncategorizedCount: expected a numeric count, got ${JSON.stringify(body?.count)}`);
+  return body.count;
+}
+
+/**
  * Fetch the full category taxonomy.
  *
  * @returns The list of categories from the API.

@@ -5,7 +5,7 @@ import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, useAppContext } from '../../src/context';
-import { useTransactionsScreenData } from '../../src/queries';
+import { useTransactionsScreenData, useUncategorizedCount } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -48,10 +48,18 @@ export default function Transactions() {
   };
 
   const view = { transactions, category };
-  const uncategorizedCount = countUncategorized(view);
-  // The Uncategorized tab is "all caught up" once every loaded charge is filed. Named once so the
-  // empty state and the two controls it must exclude (search-no-results, Load More) can't drift.
-  const allCaughtUp = tab === 'uncategorized' && uncategorizedCount === 0;
+  // WHIT-501: the badge / dot / "All caught up" now reflect the WHOLE history via the server tally,
+  // not just the loaded pages. `serverCount` is undefined while loading/errored, so we fall back to
+  // the loaded-page count — never to 0, which would flash a false "All caught up".
+  const serverCount = useUncategorizedCount();
+  const localUncategorized = countUncategorized(view);
+  // Badge headline: the server's whole-history number once resolved, else the loaded-page count.
+  // `??` uses a resolved 0 (0 isn't nullish); it only falls through to local while serverCount is undefined.
+  const uncategorizedCount = serverCount ?? localUncategorized;
+  // "All caught up" is the strong "every transaction is filed" claim — true ONLY on a RESOLVED server
+  // 0, never during loading/error (undefined). Named once so the empty state and the two controls it
+  // must exclude (search-no-results, Load More) can't drift.
+  const allCaughtUp = tab === 'uncategorized' && serverCount === 0;
   // Live search over the visible fields (merchant + category + amount). Filtered before grouping
   // so the date sections only show matching rows. Empty query → the full list (no-op filter).
   const query = search.trim();
@@ -130,7 +138,7 @@ export default function Transactions() {
           </View>
         )}
 
-        {tab === 'uncategorized' && uncategorizedCount > 0 && !selectionMode && (
+        {tab === 'uncategorized' && localUncategorized > 0 && !selectionMode && (
           <View style={styles.hint}>
             <Glyph name="star" size={18} color={C.accentSoft} />
             <Text style={styles.hintText}>
@@ -175,7 +183,12 @@ export default function Transactions() {
           </View>
         )}
 
-        {allCaughtUp && !showSpinner && !showError && (
+        {/* WHIT-501: also require the tab to be genuinely empty (`groups.length === 0`). `allCaughtUp`
+            is the WHOLE-history "server says 0" signal, which can briefly disagree with the loaded
+            rows — a cross-device or server-side re-tag drops the server count to 0 while the feed
+            cache (never invalidated on that path) still holds those rows. Without this gate the screen
+            would show "Every transaction is categorized" ABOVE a visible list of uncategorized rows. */}
+        {allCaughtUp && groups.length === 0 && !showSpinner && !showError && (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}><Glyph name="check" size={32} color={C.good} /></View>
             <Text style={styles.emptyTitle}>All caught up</Text>
