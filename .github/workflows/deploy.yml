@@ -1,0 +1,140 @@
+name: Deploy (Terraform)
+
+# Preview on every PR (a plan comment, no changes made); deploy on merge to main,
+# behind the `production` environment's required-reviewer gate. AWS auth is via
+# GitHub OIDC (no stored keys) using the roles from terraform/bootstrap/.
+#
+# Both jobs rebuild the gitignored lambda/layer artifacts with the shared script
+# BEFORE terraform runs — CI can't rely on Terraform's build provisioners re-firing
+# against remote state (see scripts/build_terraform_artifacts.sh).
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "lambda*/**"
+      - "shared/**"
+      - "**/requirements*.txt"
+      - "scripts/build_terraform_artifacts.sh"
+      - ".github/workflows/deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - "lambda*/**"
+      - "shared/**"
+      - "**/requirements*.txt"
+      - "scripts/build_terraform_artifacts.sh"
+      - ".github/workflows/deploy.yml"
+
+# One run per ref, and NEVER cancel an in-flight apply — a killed apply can leave
+# state locked or half-applied.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # mint the OIDC token to assume the AWS role
+  contents: read
+  pull-requests: write # post the plan comment
+
+# Apply-time inputs, supplied to BOTH jobs so plan and apply agree. Missing values
+# would surface as a DESTROY of the Google IdP / alert subscription (guarded by
+# prevent_destroy in cognito.tf / monitoring.tf, and by the preview check in
+# DEPLOY.md). Set as repository secrets per DEPLOY.md.
+env:
+  TF_VAR_google_client_id: ${{ secrets.TF_VAR_google_client_id }}
+  TF_VAR_google_client_secret: ${{ secrets.TF_VAR_google_client_secret }}
+  TF_VAR_alert_email: ${{ secrets.TF_VAR_alert_email }}
+  TF_VAR_apple_services_id: ${{ secrets.TF_VAR_apple_services_id }}
+  TF_VAR_apple_team_id: ${{ secrets.TF_VAR_apple_team_id }}
+  TF_VAR_apple_key_id: ${{ secrets.TF_VAR_apple_key_id }}
+  TF_VAR_apple_private_key: ${{ secrets.TF_VAR_apple_private_key }}
+
+jobs:
+  # Offline guard: the build script's lambda_api allowlist stays in lockstep with
+  # the .gitignore allowlist, stages exactly that set, and ships no cruft. No AWS
+  # creds/secrets, so it runs on every PR incl. forks.
+  verify-build-script:
+    name: Verify build script
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build-artifacts guard
+        run: bash scripts/tests/build_artifacts_test.sh
+
+  plan:
+    name: Terraform plan (preview)
+    # PR previews only, and skip forks: a fork PR gets no OIDC token or secrets, so
+    # the job could only fail noisily.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # match the Lambda runtime (terraform/lambda.tf)
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: Build lambda/layer artifacts
+        run: bash scripts/build_terraform_artifacts.sh all
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Terraform init
+        run: terraform -chdir=terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+      - name: Terraform fmt
+        run: terraform -chdir=terraform fmt -check -recursive
+      - name: Terraform validate
+        run: terraform -chdir=terraform validate
+      - name: Terraform plan
+        run: terraform -chdir=terraform plan -no-color -input=false -lock-timeout=5m 2>&1 | tee plan.txt
+      - name: Post plan comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = '_No plan output was produced._';
+            try { plan = fs.readFileSync('plan.txt', 'utf8'); } catch (e) {}
+            const MAX = 60000;
+            if (plan.length > MAX) {
+              plan = plan.slice(0, MAX) + '\n\n_…truncated — see the Terraform plan step in the Actions log for the full output._';
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '### Terraform plan\n```\n' + plan + '\n```',
+            });
+
+  apply:
+    name: Terraform apply (deploy)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production # required-reviewer gate + main-only branch policy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: Build lambda/layer artifacts
+        run: bash scripts/build_terraform_artifacts.sh all
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Terraform init
+        run: terraform -chdir=terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+      - name: Terraform apply
+        run: terraform -chdir=terraform apply -auto-approve -input=false -lock-timeout=5m

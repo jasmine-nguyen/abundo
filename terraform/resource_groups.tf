@@ -5,7 +5,7 @@
 # second app, deployed with its own project_name, forms its own separate group.
 
 resource "aws_resourcegroups_group" "app" {
-  name        = var.project_name
+  name = var.project_name
   # AWS Resource Groups descriptions allow only [\s a-zA-Z0-9 _ . -] — no commas.
   description = "All ${var.project_name} resources grouped by the App tag."
 

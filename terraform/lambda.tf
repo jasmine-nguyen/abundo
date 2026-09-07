@@ -1,17 +1,17 @@
 # Install the webhook lambda's third-party deps into lambda/ before zipping.
 # These are gitignored build artifacts (not source); without this step a fresh
 # clone would zip the function without them (which is exactly how the deployed
-# webhook lost `standardwebhooks` and started 500ing). Installed --no-deps on
-# purpose: the signature-verify path we use is pure-stdlib, and standardwebhooks'
-# declared deps (httpx, wrapt with a compiled .so, ...) are unused and would ship
-# an architecture-incompatible wheel into the Linux runtime.
+# webhook lost `standardwebhooks` and started 500ing). The build command lives in
+# scripts/build_terraform_artifacts.sh so CI and the local apply share one recipe
+# (CI can't rely on this provisioner re-running — see that script's header).
 resource "null_resource" "prepare_lambda_deps" {
   triggers = {
     requirements = filesha256("${path.module}/../lambda/requirements.txt")
+    build_script = filesha256("${path.module}/../scripts/build_terraform_artifacts.sh")
   }
 
   provisioner "local-exec" {
-    command = "python3 -m pip install --no-deps --quiet --target ${path.module}/../lambda -r ${path.module}/../lambda/requirements.txt"
+    command = "bash ${path.module}/../scripts/build_terraform_artifacts.sh webhook"
   }
 }
 
@@ -29,39 +29,24 @@ data "archive_file" "lambda_zip" {
 # Stage the lambda_api package from ONLY its true source (handler.py + its own
 # constants.py, which intentionally shadows the layer's constants with
 # category-aware values). repository.py, models.py, and encoders.py come from the
-# shared layer. Previously this zipped the raw lambda_api/ dir, which is a
-# gitignored build dir ("allowlist only true source" per .gitignore) — so it
-# shipped whatever stale copies happened to be on disk. A leftover repository.py
-# predating CategoryNotFoundError landed in /var/task, shadowed the layer's fresh
-# copy, and 500'd every route on import. Staging a clean dir makes the package
-# deterministic regardless of local cruft.
+# shared layer. Previously this zipped the raw lambda_api/ dir — a leftover stale
+# repository.py once landed in /var/task, shadowed the layer's fresh copy, and
+# 500'd every route on import. Staging a clean dir keeps the package deterministic
+# regardless of local cruft.
 #
-# The true-source files are listed ONCE in local.lambda_api_sources below and
-# consumed by both the hash trigger and the cp, so adding/removing a source file
-# is a single-line edit — no more keeping a trigger map and a cp list in lockstep
-# (the drift that left dead milestone_ai.py references and broke `tf apply`). This
-# stays an explicit allowlist rather than a fileset("lambda_api","*.py") glob on
-# purpose: lambda_api/ is a gitignored build dir, so a glob would re-ship exactly
-# the on-disk cruft this staging exists to keep out. Keep the list in sync with
-# the !lambda_api/* allowlist in .gitignore (git's own copy of the same set).
-locals {
-  lambda_api_sources = [
-    "handler.py",
-    "constants.py",
-    "banksync_enrichments.py",
-    "insights_ai.py",
-    "anthropic_client.py",
-  ]
-  lambda_api_source_paths = [for f in local.lambda_api_sources : "${path.module}/../lambda_api/${f}"]
-}
-
+# The explicit true-source allowlist and the copy live in
+# scripts/build_terraform_artifacts.sh (the single recipe CI and local apply
+# share). The trigger below hashes lambda_api/*.py with a glob: that only affects
+# WHEN we rebuild — the copy still uses the script's explicit allowlist, so on-disk
+# cruft never ships.
 resource "null_resource" "prepare_lambda_api" {
   triggers = {
-    sources = sha256(join("", [for p in local.lambda_api_source_paths : filesha256(p)]))
+    sources      = sha256(join("", [for f in fileset("${path.module}/../lambda_api", "*.py") : filesha256("${path.module}/../lambda_api/${f}")]))
+    build_script = filesha256("${path.module}/../scripts/build_terraform_artifacts.sh")
   }
 
   provisioner "local-exec" {
-    command = "rm -rf ${path.module}/build/lambda_api && mkdir -p ${path.module}/build/lambda_api && cp ${join(" ", local.lambda_api_source_paths)} ${path.module}/build/lambda_api/"
+    command = "bash ${path.module}/../scripts/build_terraform_artifacts.sh lambda_api"
   }
 }
 
