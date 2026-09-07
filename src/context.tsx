@@ -1355,6 +1355,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     patchRules((prev) => prev.filter((r) => r.id !== id));
     // WHIT-271: patchRules is guarded (no-ops on the evicted cache); gate the toast on the epoch.
     const epoch = sessionEpoch.current;
+    // WHIT-502: deleting a rule doesn't re-tag existing charges (rules apply at bank-sync time, to
+    // incoming charges), so the ['uncategorizedCount'] tally can't move here — intentionally NOT invalidated.
     try {
       await deleteEnrichment(id);
     } catch {
@@ -1382,6 +1384,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (c) showToast(`Rule added — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
     const epoch = sessionEpoch.current;
+    // WHIT-502: a new rule only files FUTURE charges (BankSync applies rules at sync time); no stored
+    // charge changes category here, so ['uncategorizedCount'] is intentionally NOT invalidated. Any later
+    // bank-side re-tag arrives via the webhook, already covered by the count's staleTime + pull-to-refresh.
     try {
       const created = await createEnrichment({ value, categoryId });
       // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
@@ -1409,6 +1414,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
     const epoch = sessionEpoch.current;
+    // WHIT-502: editing a rule re-files only future charges, not stored ones — ['uncategorizedCount']
+    // intentionally NOT invalidated (see saveManualRule).
     try {
       const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator });
       patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
