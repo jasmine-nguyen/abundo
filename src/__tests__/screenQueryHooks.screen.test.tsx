@@ -70,7 +70,7 @@ it('useBudgetDetailScreenData assembles the budget list + budgets + categories f
   await waitFor(() => expect(result.current.isLoading).toBe(false));
   expect(result.current.cycleLen).toBe(30);
   expect(result.current.category('coffee')?.name).toBe('Coffee');
-  expect(result.current.budgets).toEqual([{ id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0 }]);
+  expect(result.current.budgets).toEqual([{ id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, spreadAdjustment: 0 }]);
   expect(mockFetchBudgetTransactions).toHaveBeenCalledWith('coffee'); // the list is fetched per-budget
   expect(result.current.transactions).toHaveLength(1);
   expect(result.current.isError).toBe(false);

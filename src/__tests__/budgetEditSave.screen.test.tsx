@@ -197,7 +197,7 @@ describe('budgetEditRollover (folded)', () => {
     mockState = {
       categories: [SPEND],
       // existing budget already has rollover ON — the editor must seed the Switch from it.
-      budgets: [{ id: 'coffee', budget: 100, posted: 0, pending: 0, rollover: true, carryover: 0 }],
+      budgets: [{ id: 'coffee', budget: 100, posted: 0, pending: 0, rollover: true, carryover: 0, spreadAdjustment: 0 }],
       saveBudget: mockSaveBudget,
     } as unknown as AppContext;
     const { UNSAFE_getByType } = render(<BudgetEdit />);

@@ -291,6 +291,16 @@ export async function deleteCategory(id: string): Promise<{ id: string }> {
   return readJson(response);
 }
 
+/** A bill spread's shape on a budget (WHIT-504/505). `adjustment` is the signed dollars this
+ * cycle's spendable moves by — a positive cushion in the anchor cycle, a negative slice in a
+ * payback cycle. Shared by the wire `BudgetRollup.spread` and the client `Budget.spread`. */
+export interface SpreadPlan {
+  amount: number;
+  cycles: number;
+  index: number;
+  adjustment: number;
+}
+
 /** A budget's target plus its computed spend for the current window. */
 export interface BudgetRollup {
   target: number;
@@ -301,6 +311,9 @@ export interface BudgetRollup {
   // carried as a deficit). Absent on a non-rollover/legacy budget — the client defaults them.
   rollover?: boolean;
   carryover?: number;
+  // Bill spread (WHIT-504): present only for a spend category with an active plan (see SpreadPlan).
+  // A category has rollover OR a spread, never both. Absent = no plan; the client defaults it.
+  spread?: SpreadPlan;
 }
 
 /**
@@ -884,6 +897,50 @@ export async function setBudget(
  */
 export async function deleteBudget(categoryId: string): Promise<{ id: string }> {
   const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Spread a one-off bill over the coming pay cycles (WHIT-504): cushion `amount` this cycle,
+ * take it back in `cycles` equal slices. Creating a plan on a category that already has one
+ * replaces it. Spend-only, and rejected (400) while the category has rollover on.
+ *
+ * @param categoryId - The spend category to spread the bill on.
+ * @param amount - The bill amount (must be > 0). Stored rounded to cents server-side.
+ * @param cycles - How many cycles to pay it back over (1..24).
+ * @returns The saved id, amount and cycle count.
+ * @throws If the response status is not OK (e.g. 400 on a bad amount/cycles, rollover on, or no budget).
+ */
+export async function setSpread(
+  categoryId: string,
+  amount: number,
+  cycles: number
+): Promise<{ id: string; amount: number; cycles: number }> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/spread`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ amount, cycles }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Remove a category's bill spread (WHIT-504). Idempotent — a category with no plan (or an
+ * unknown id) still returns 200. Only the plan is removed; the budget target is untouched.
+ *
+ * @param categoryId - The category whose spread to remove.
+ * @returns The id whose spread was removed.
+ * @throws If the response status is not OK.
+ */
+export async function deleteSpread(categoryId: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/spread`, {
     method: "DELETE",
     headers: await buildHeaders(),
   });

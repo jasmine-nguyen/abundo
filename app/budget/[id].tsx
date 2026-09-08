@@ -101,6 +101,13 @@ export default function BudgetDetail() {
               <Text style={styles.carryoverText}>{bd.carryoverLine}</Text>
             </View>
           ) : null}
+
+          {bd.spreadLine ? (
+            <View style={styles.carryoverBox}>
+              <Glyph name="clock" size={18} color={C.accentSoft} />
+              <Text style={styles.carryoverText}>{bd.spreadLine}</Text>
+            </View>
+          ) : null}
         </View>
 
         <Text style={styles.sectionLabel}>RELATED TRANSACTIONS</Text>
@@ -116,6 +123,16 @@ export default function BudgetDetail() {
           </Pressable>
         )}
         {bd.relEmpty && !d.isLoading && <Text style={styles.empty}>No transactions in this category this cycle.</Text>}
+
+        {bd.spreadActive ? (
+          <Pressable testID="budget-spread" onPress={() => router.push(`/budget/spread?categoryId=${id}`)} style={styles.spreadBtn}>
+            <Text style={styles.spreadText}>Edit or remove bill spread</Text>
+          </Pressable>
+        ) : bd.canStartSpread ? (
+          <Pressable testID="budget-spread" onPress={() => router.push(`/budget/spread?categoryId=${id}&prefill=${bd.overspend}`)} style={styles.spreadBtn}>
+            <Text style={styles.spreadText}>Spread this bill over pay cycles</Text>
+          </Pressable>
+        ) : null}
 
         <Pressable testID="budget-delete" onPress={onDelete} disabled={deleting} style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}>
           <Text style={styles.deleteText}>{deleting ? 'Removing…' : 'Delete budget'}</Text>
@@ -146,6 +163,8 @@ const styles = StyleSheet.create({
   empty: { fontFamily: FONT.body, fontSize: 13.5, color: C.textDim, textAlign: 'center', paddingVertical: 30 },
   loadMore: { marginTop: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
   loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
-  deleteBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
+  spreadBtn: { marginTop: 24, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },
+  spreadText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSofter },
+  deleteBtn: { marginTop: 14, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,107,107,.3)', backgroundColor: 'rgba(255,107,107,.08)', alignItems: 'center' },
   deleteText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.bad },
 });

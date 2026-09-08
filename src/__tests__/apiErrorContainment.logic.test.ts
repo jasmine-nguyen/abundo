@@ -67,6 +67,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   setPayCycle: () => api.setPayCycle({ length: 14, last_pay_date: '2026-07-01' }),
   setBudget: () => api.setBudget('groceries', 100),
   deleteBudget: () => api.deleteBudget('groceries'),
+  setSpread: () => api.setSpread('groceries', 100, 3),
+  deleteSpread: () => api.deleteSpread('groceries'),
   listEnrichments: () => api.listEnrichments(),
   createEnrichment: () => api.createEnrichment({ value: 'COLES', categoryId: 'groceries' }),
   updateEnrichment: () => api.updateEnrichment('r1', { value: 'COLES', categoryId: 'groceries' }),
