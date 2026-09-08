@@ -36,6 +36,23 @@ UNCATEGORIZED_COUNT_PATH = "/transactions/uncategorized/count"
 # lambda_api/handler.py consumes it (no shared repository_* imports it), so the WHIT-136 sync
 # guard doesn't require a shared mirror.
 UNCATEGORIZED_FEED_PATH = "/transactions/uncategorized/feed"
+# API Gateway route path for the "apply my rules to charges already stored" pass (POST).
+# BankSync applies rules at sync time to INCOMING charges only, so a rule written today never
+# reaches yesterday's unfiled charges (WHIT-502); this route closes that gap. It PREVIEWS by
+# default — a write needs an explicit {"dryRun": false} — so a bulk write can't happen by
+# accident. Only lambda_api/handler.py consumes it (no shared repository_* imports it), so the
+# WHIT-136 sync guard doesn't require a shared mirror.
+UNCATEGORIZED_APPLY_RULES_PATH = "/transactions/uncategorized/apply-rules"
+# Ceiling on rows one apply-rules request will write. A secondary guard behind the wall-clock
+# budget below: the response reports `remaining` and the app says "tap again", which is safe
+# because re-running only ever files what is STILL unfiled.
+APPLY_RULES_MAX_WRITES = 300
+# Wall clock, in seconds, after which the write loop stops and reports `remaining`. API Gateway
+# cuts the request off at ~30s while the Lambda keeps running to its own 60s timeout — so
+# without this, a slow BankSync read plus a long write run could have the client show a failure
+# for rows that were actually filed. Stopping well inside the gateway window keeps the response
+# the client sees an honest account of what was written.
+APPLY_RULES_TIME_BUDGET_SECONDS = 15
 # Default page size for the transactions feed when a request sends no ?limit=. Smaller
 # than MAX_PAGE_SIZE: the feed fans out one query PER account per page, so a modest page
 # keeps a "Load More" tap cheap while still filling a screen. Lambda_api-only.
