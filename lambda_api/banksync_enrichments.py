@@ -116,6 +116,12 @@ def _to_rule(enrichment: dict) -> dict | None:
             "operator": operator,
             "value": value,
             "categoryId": category_id,
+            # How many conditions the source enrichment REALLY had. We only read the first
+            # leaf, so a foreign "description contains UBER AND amount > 50" would read as the
+            # much broader "description contains UBER". Harmless while rules are only listed,
+            # but applying that broadened rule to stored history would mis-file every Uber
+            # charge — so rule_apply refuses to act on anything but a true single-leaf rule.
+            "conditionCount": len(leaves),
         }
     except (AttributeError, TypeError, IndexError):
         return None
@@ -220,6 +226,9 @@ def create_rule(field: str, operator: str, value: str, category_id: str) -> dict
         "operator": operator,
         "value": value,
         "categoryId": category_id,
+        # A rule we mint always has exactly one condition (_rule_payload builds one leaf), so
+        # the shape matches _to_rule's and rule_apply can act on it.
+        "conditionCount": 1,
     }
 
 
@@ -236,6 +245,7 @@ def update_rule(enrichment_id: str, field: str, operator: str, value: str, categ
         "operator": operator,
         "value": value,
         "categoryId": category_id,
+        "conditionCount": 1,  # _rule_payload builds exactly one leaf (see create_rule)
     }
 
 

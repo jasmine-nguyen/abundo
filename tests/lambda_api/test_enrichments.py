@@ -107,7 +107,7 @@ def test_create_rule_builds_correct_payload_and_headers(enrichments, monkeypatch
     # Returned Rule uses BankSync's id + our inputs (no dependence on the echo).
     assert rule == {
         "id": "enr_new", "field": "description", "operator": "contains",
-        "value": "WOOLWORTHS", "categoryId": "groceries",
+        "value": "WOOLWORTHS", "categoryId": "groceries", "conditionCount": 1,
     }
 
 
@@ -131,7 +131,7 @@ def test_create_rule_returns_existing_on_identity_match(enrichments, monkeypatch
     # Returns the EXISTING rule (its stored id + original casing), not a new one.
     assert rule == {
         "id": "enr_1", "field": "description", "operator": "contains",
-        "value": "WOOLWORTHS", "categoryId": "groceries",
+        "value": "WOOLWORTHS", "categoryId": "groceries", "conditionCount": 1,
     }
 
 
@@ -318,7 +318,7 @@ def test_create_enrichment_dedup_hit_returns_valid_201(handler, monkeypatch):
     body = json.loads(resp["body"])
     assert body == {
         "id": "enr_1", "field": "description", "operator": "contains",
-        "value": "WOOLWORTHS", "categoryId": "groceries",
+        "value": "WOOLWORTHS", "categoryId": "groceries", "conditionCount": 1,
     }
 
 
@@ -345,7 +345,7 @@ def test_list_rules_maps_and_skips_non_conforming(enrichments, monkeypatch):
 
     assert rules == [{
         "id": "enr_1", "field": "description", "operator": "contains",
-        "value": "WOOLWORTHS", "categoryId": "groceries",
+        "value": "WOOLWORTHS", "categoryId": "groceries", "conditionCount": 1,
     }]
 
 
@@ -554,7 +554,7 @@ def test_update_rule_builds_correct_put_payload(enrichments, monkeypatch):
 
     # id is the KNOWN enrichment id (not from the echo); same shape as create.
     assert rule == {"id": "enr_1", "field": "description", "operator": "contains",
-                    "value": "NETFLIX", "categoryId": "subs"}
+                    "value": "NETFLIX", "categoryId": "subs", "conditionCount": 1}
 
 
 def test_update_rule_404_propagates(enrichments, monkeypatch):

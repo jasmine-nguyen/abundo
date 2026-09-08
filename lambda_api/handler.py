@@ -1,4 +1,6 @@
 from constants import (
+    APPLY_RULES_MAX_WRITES,
+    APPLY_RULES_TIME_BUDGET_SECONDS,
     ACCOUNT_BALANCES_PATH,
     ACCOUNT_BALANCES_REFRESH_PATH,
     ACCOUNT_ID_MAP,
@@ -48,6 +50,7 @@ from constants import (
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
     TRANSACTIONS_FEED_PATH,
+    UNCATEGORIZED_APPLY_RULES_PATH,
     UNCATEGORIZED_COUNT_PATH,
     UNCATEGORIZED_FEED_PATH,
     UNCATEGORIZED_KEY,
@@ -107,6 +110,7 @@ from anthropic_client import AnthropicError
 from insights_ai import generate_suggestions
 from iso_date import ISO_DATE_RE, valid_iso_date
 from milestones import mint_migration_markers
+from rule_apply import plan_rule_application
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -153,6 +157,13 @@ def lambda_handler(event, context):
         # (a GET, so the startswith-PATCH branch never matches it).
         if path == UNCATEGORIZED_FEED_PATH and method == "GET":
             return get_uncategorized_feed(event, TransactionRepository(), CategoryRepository())
+
+        # Apply the user's BankSync rules to charges ALREADY stored (BankSync only applies them
+        # to incoming charges — WHIT-502). POST-only, and it PREVIEWS unless the body says
+        # {"dryRun": false}. An EXACT path, so it can't collide with the two GET uncategorized
+        # routes; the PATCH "/transactions/{id}" branch is method-gated and never sees a POST.
+        if path == UNCATEGORIZED_APPLY_RULES_PATH and method == "POST":
+            return apply_rules_to_uncategorized(event, TransactionRepository(), CategoryRepository())
 
         # Collection route (batch) BEFORE the item route. "/transactions" does not
         # start with "/transactions/", so the two are disjoint regardless of order.
@@ -285,9 +296,8 @@ def lambda_handler(event, context):
         if path.startswith(f"{GOALS_PATH}/") and method == "DELETE":
             return delete_goal(event, GoalsRepository())
 
-        # Enrichments (BankSync categorisation rules). These sit behind the API
-        # Gateway authorizer (unlike the routes above), because they mutate
-        # BankSync — our source of truth.
+        # Enrichments (BankSync categorisation rules) — they mutate BankSync, our source of
+        # truth for rules. Like every app route, they sit behind the API Gateway JWT authorizer.
         if path == ENRICHMENTS_PATH and method == "GET":
             return get_enrichments()
 
@@ -300,8 +310,7 @@ def lambda_handler(event, context):
         if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "DELETE":
             return delete_enrichment(event)
 
-        # Device push-token registration. Behind the same shared-secret authorizer
-        # as /enrichments (it controls who receives the user's notifications).
+        # Device push-token registration (it controls who receives the user's notifications).
         if path == DEVICES_PATH and method == "POST":
             return register_device(event, DeviceRepository())
 
@@ -1193,6 +1202,120 @@ def get_uncategorized_feed(
         "transactions": page,
         "nextCursor": _encode_feed_cursor(next_resume_keys),
     })
+
+
+def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanished: list = (),
+                          failed: list = (), remaining: int = 0) -> dict:
+    """The one response shape both the preview and the write return, so the app renders the same
+    summary either way — only the outcome lists differ.
+
+    The counts summarise the PLAN (what the rules cover); the lists report the OUTCOME of this
+    request:
+      filed     — rows written, {id, category} each.
+      vanished  — rows deleted between the scan and the write. Nothing to retry; they are gone
+                  from the next scan too.
+      failed    — rows the write errored on. A re-run retries them (they are still unfiled).
+      remaining — matched rows this request did NOT attempt, because the write cap or the time
+                  budget stopped it. Rows in `failed` are NOT counted here (they were attempted),
+                  but a re-run picks them up anyway. In a preview this equals `matched`.
+    """
+    return _json_response(200, {
+        "dryRun": dry_run,
+        "rulesConsidered": plan["rules_considered"],
+        "unfiled": plan["unfiled"],
+        "matched": len(plan["matched"]),
+        "conflicted": plan["conflicted"],
+        "conflictedSamples": plan["conflicted_samples"],
+        "byCategory": plan["by_category"],
+        "byRule": plan["by_rule"],
+        "skippedRules": plan["skipped_rules"],
+        "filed": filed,
+        "vanished": vanished,
+        "failed": failed,
+        "remaining": remaining,
+    })
+
+
+def apply_rules_to_uncategorized(
+    event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository
+) -> dict:
+    """POST /transactions/uncategorized/apply-rules — file the charges the user's own rules
+    already cover, across ALL history.
+
+    BankSync applies rules at sync time to INCOMING charges only, so rules never reach charges
+    already stored (WHIT-502). This evaluates them literally (see rule_apply) against every
+    charge the badge counts as unfiled, and either reports what it WOULD file or files it.
+
+        {"dryRun": true}   (default) — decide and report, write nothing
+        {"dryRun": false}            — write
+
+    Previewing is the default so a bulk write can never happen by accident: a non-boolean
+    `dryRun` is rejected rather than coerced, a missing or non-object body is a 400, and a
+    missing `dryRun` previews. Safe to run twice: a charge is only ever filed to a category that
+    counts as FILED, so it leaves the unfiled set and the next run won't touch it.
+    """
+    started = time.monotonic()
+    body, error = _parse_json_body(event)
+    if error is not None:
+        return error
+    dry_run = body.get("dryRun", True)
+    if not isinstance(dry_run, bool):
+        return _json_response(400, {"error": "invalid dryRun; expected a boolean"})
+
+    try:
+        rules = list_rules()
+    except BankSyncError as e:
+        return _banksync_error_response(e)
+
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+
+    def is_unfiled(category: str | None) -> bool:
+        return _is_unmapped_category(category, taxonomy_ids)
+
+    # No rules -> nothing can match, so skip the whole-history scan entirely.
+    if not rules:
+        empty = plan_rule_application([], [], is_unfiled)
+        return _apply_rules_response(empty, dry_run)
+
+    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    plan = plan_rule_application(rules, transactions, is_unfiled)
+
+    if dry_run:
+        return _apply_rules_response(plan, True, remaining=len(plan["matched"]))
+
+    filed: list[dict] = []
+    vanished: list[str] = []
+    failed: list[str] = []
+    attempted = 0  # counts ATTEMPTS, not successes — it bounds the work this request does
+    for transaction, category_id in plan["matched"]:
+        if attempted >= APPLY_RULES_MAX_WRITES:
+            break
+        # Stop well inside the API Gateway window so the response the app sees is an honest
+        # account of what was written; the rest is reported as `remaining` ("tap again").
+        # `attempted and` guarantees at least one write per request, so a slow rule read or a
+        # long scan can never starve the loop into looping forever with nothing to show.
+        if attempted and time.monotonic() - started >= APPLY_RULES_TIME_BUDGET_SECONDS:
+            break
+        transaction_id = transaction.get("transaction_id")
+        attempted += 1
+        try:
+            saved = transaction_repo.update_transaction_category(
+                transaction["pk"], transaction["sk"], category_id
+            )
+        except DatabaseError:
+            failed.append(transaction_id)
+            continue
+        # False = the row was deleted between the scan and the write (a pending aged out, or
+        # its posted twin replaced it). Nothing to retry — it is gone from the next scan too.
+        if saved:
+            filed.append({"id": transaction_id, "category": category_id})
+        else:
+            vanished.append(transaction_id)
+
+    return _apply_rules_response(
+        plan, False, filed=filed, vanished=vanished, failed=failed,
+        remaining=len(plan["matched"]) - attempted,
+    )
 
 
 def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) -> tuple[str, str]:

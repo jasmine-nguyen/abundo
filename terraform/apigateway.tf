@@ -34,6 +34,7 @@ locals {
     "GET /transactions/feed",
     "GET /transactions/uncategorized/count",
     "GET /transactions/uncategorized/feed",
+    "POST /transactions/uncategorized/apply-rules",
     "PATCH /transactions/{id}",
     "PATCH /transactions",
     "GET /categories",

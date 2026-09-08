@@ -71,6 +71,7 @@ lambda_api/*
 !lambda_api/banksync_enrichments.py
 !lambda_api/insights_ai.py
 !lambda_api/anthropic_client.py
+!lambda_api/rule_apply.py
 
 # terraform
 terraform/artifacts/*
