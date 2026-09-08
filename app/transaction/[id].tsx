@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { transactionView, useAppContext, Transaction } from '../../src/context';
 import { formatDayMonthYear } from '../../src/dateutil';
-import { useTransactionsScreenData, useRecentTransactionsScreenData } from '../../src/queries';
+import { useTransactionsScreenData, useTransactionResolver } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
@@ -26,11 +26,13 @@ export default function TransactionDetail() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { openPicker } = useAppContext();
-  const { transactions, category, isLoading, isError, refetch } = useTransactionsScreenData();
-  // Resolve from the feed first, then the bounded recent cache — a charge tapped on the
-  // account-detail screen can sit within the recent window yet beyond the feed's loaded pages.
-  const { transactions: recentTransactions } = useRecentTransactionsScreenData();
-  const transaction = transactions.find((t) => t.transaction_id === id) ?? recentTransactions.find((t) => t.transaction_id === id);
+  const { category, isLoading, isError, refetch } = useTransactionsScreenData();
+  // Resolve the charge across every list cache — feed, uncategorized feed, and the bounded recent
+  // window — via the shared resolver, so a row tapped anywhere (incl. a deep-history unfiled charge
+  // on the Uncategorized tab) resolves. `transactions` here is that union, so hasCache below is true
+  // whenever any list has loaded.
+  const { findTx, transactions } = useTransactionResolver();
+  const transaction = findTx(id);
   const view = transaction ? transactionView({ category }, transaction) : null;
 
   return (

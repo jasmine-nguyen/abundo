@@ -21,7 +21,7 @@ export default function Transactions() {
   const { openMultiPicker, showToast } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
-  const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData();
+  const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData(tab);
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
@@ -68,6 +68,14 @@ export default function Transactions() {
 
   const showError = isError && transactions.length === 0;
   const showSpinner = !showError && isLoading && transactions.length === 0;
+  // The uncategorized feed is paged: when the badge says there ARE unfiled charges but none are
+  // in the loaded pages yet, they sit deeper in history (a "Load More" away) — or a cross-device
+  // re-tag left the badge briefly ahead of the list. Either way, show an explanatory state instead
+  // of a bare, unexplained blank tab. Gated so it never competes with the search-no-results,
+  // "All caught up", or cold-load states. `hasMore` distinguishes "keep loading" from "pull to
+  // refresh"; the `serverCount > 0` arm covers the stale-badge skew when there are no more pages.
+  const showUncategorizedMore = tab === 'uncategorized' && !allCaughtUp && groups.length === 0
+    && query.length === 0 && !showSpinner && !showError && (hasMore || (serverCount ?? 0) > 0);
   // Pull-to-refresh (WHIT-489: shared hook): refresh the visible list AND fetch fresh account
   // balances live from the bank, with the WHIT-363 stuck-spinner invariant owned in one place.
   // The other screens (budgets, loan, rules, pay-cycle) refresh themselves on focus via their
@@ -103,7 +111,10 @@ export default function Transactions() {
           // pull's fetch ends — so the silent on-focus/background refetch never raises it. The
           // `length > 0` guard stops a pull during the cold-load window from double-spinning with
           // the inline loading spinner (showSpinner), which owns the empty first-load state.
-          refreshing={pulling && transactions.length > 0}
+          // `showUncategorizedMore` is the ONE empty-list state that invites a pull ("pull down to
+          // refresh"), so let the spinner show there too — otherwise the instruction gives no feedback.
+          // (It requires !showSpinner, so it can never re-introduce the cold-load double-spin.)
+          refreshing={pulling && (transactions.length > 0 || showUncategorizedMore)}
           onRefresh={onRefresh}
           tintColor={C.accent}
           progressViewOffset={headerHeight}
@@ -193,6 +204,21 @@ export default function Transactions() {
             <View style={styles.emptyIcon}><Glyph name="check" size={32} color={C.good} /></View>
             <Text style={styles.emptyTitle}>All caught up</Text>
             <Text style={styles.emptySub}>Every transaction is categorized. New ones matching your rules file themselves automatically.</Text>
+          </View>
+        )}
+
+        {/* Paged uncategorized feed: the badge says there are unfiled charges but none are in the
+            loaded pages — they're deeper in history (Load More below), or a cross-device re-tag
+            left the badge briefly ahead. Explain it rather than showing a blank tab. */}
+        {showUncategorizedMore && (
+          <View testID="transactions-uncategorized-more" style={styles.empty}>
+            <View style={styles.emptyIcon}><Glyph name="search" size={30} color={C.accentSoft} /></View>
+            <Text style={styles.emptyTitle}>{hasMore ? 'More to load' : 'Nothing to show yet'}</Text>
+            <Text style={styles.emptySub}>
+              {hasMore
+                ? 'Your unfiled charges are further back in history. Keep loading to see them.'
+                : 'Pull down to refresh this list.'}
+            </Text>
           </View>
         )}
 

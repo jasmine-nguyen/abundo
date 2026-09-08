@@ -6,7 +6,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedCount, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
@@ -50,6 +50,13 @@ export const breakdownKey = ['breakdown'] as const;
 // optimistic write path patches in context.tsx (context imports queryClient directly, not
 // this key, to avoid a circular import) — those writes map over the InfiniteData pages.
 export const transactionsKey = ['transactions'] as const;
+// The Uncategorized tab's OWN cursor-paged feed: each page is real uncategorized rows from
+// full history (server-filtered, same rule as the count), so the tab lists actual unfiled
+// charges via "Load More" instead of client-filtering the general feed's loaded pages. A
+// SEPARATE infinite-query key from ['transactions'] so the two feeds page independently. Kept
+// in sync with the literal ['uncategorizedFeed'] the optimistic write path patches in
+// context.tsx (context imports queryClient directly, not this key, to avoid a circular import).
+export const uncategorizedFeedKey = ['uncategorizedFeed'] as const;
 // The BOUNDED "recent" list (the server's rolling window) behind the tab-bar dot, the
 // account-detail screen, and the goal-edit picker. A SEPARATE key from the feed so those
 // counts stay fixed and can't drift as the tab pages back through full history.
@@ -236,6 +243,62 @@ export function useRecentTransactionsQuery(enabled: boolean) {
 // sheet opened before the Transactions tab is ever visited still resolves the newest rows.
 export function useKeepTransactionsFeedWarm(): void {
   useTransactionsFeedQuery(useIsAuthed());
+}
+
+// The Uncategorized tab's own feed as an infinite query: same shape and cursor semantics as the
+// all-accounts feed, but each page is server-filtered to uncategorized charges. hasNextPage stays
+// true while nextCursor is non-null — a page can come back sparse (or empty) with more history
+// behind it, so "Load More" keeps working until the server exhausts history.
+export function useUncategorizedFeedQuery(enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: uncategorizedFeedKey,
+    queryFn: ({ pageParam }) => fetchUncategorizedFeed(pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled,
+  });
+}
+
+/** Resolve a tapped transaction by id across every list cache it might live in — the
+ *  all-accounts feed, the uncategorized feed (a deep-history unfiled row shown on the
+ *  Uncategorized tab lives ONLY here), and the bounded recent window (a row tapped on
+ *  account-detail). One place, so the picker, confirm sheet, and detail screen can't drift on
+ *  which caches they search. Only LOADED pages are in cache, but only loaded rows are ever
+ *  visible/tappable, so that is exactly the set the user can act on. */
+export interface TransactionResolver {
+  findTx: (id: string) => Transaction | undefined;
+  transactions: Transaction[]; // the de-duped union, for "has anything loaded yet" checks
+}
+export function useTransactionResolver(): TransactionResolver {
+  const authed = useIsAuthed();
+  const feedQuery = useTransactionsFeedQuery(authed);
+  // Read the uncategorized feed PASSIVELY (enabled: false) — it reads the cache the Uncategorized
+  // tab warms, but never fires its own whole-history scan. Deep-history unfiled rows are only
+  // visible/tappable on that tab (which keeps this cache warm), so the resolver never needs to
+  // fetch: an always-enabled query here would run the fill-loop-to-cap on every picker/detail open
+  // from any screen, only to return a page that (being page 1) can't even contain a deep row.
+  const uncategorizedFeedQuery = useUncategorizedFeedQuery(false);
+  const recentQuery = useRecentTransactionsQuery(authed);
+  const transactions = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: Transaction[] = [];
+    const add = (rows: Transaction[]) => {
+      for (const transaction of rows) {
+        if (seen.has(transaction.transaction_id)) continue;
+        seen.add(transaction.transaction_id);
+        merged.push(transaction);
+      }
+    };
+    if (feedQuery.data) for (const page of feedQuery.data.pages) add(page.transactions);
+    if (uncategorizedFeedQuery.data) for (const page of uncategorizedFeedQuery.data.pages) add(page.transactions);
+    add(recentQuery.data ?? EMPTY_TX);
+    return merged;
+  }, [feedQuery.data, uncategorizedFeedQuery.data, recentQuery.data]);
+  const findTx = useCallback(
+    (id: string) => transactions.find((transaction) => transaction.transaction_id === id),
+    [transactions],
+  );
+  return { findTx, transactions };
 }
 
 // WHIT-191a: the user's home-loan facts (un-windowed).
@@ -618,16 +681,30 @@ function useBalancesMap(authed: boolean) {
   );
 }
 
-/** The Transactions TAB: the all-accounts feed (with Load More), the category taxonomy for the
- *  row selectors, and the live per-account balances (WHIT-212). No pay-cycle window. */
-export function useTransactionsScreenData(): TransactionsScreenData {
+/** The Transactions TAB: the list feed (with Load More), the category taxonomy for the row
+ *  selectors, and the live per-account balances (WHIT-212). No pay-cycle window.
+ *
+ *  `tab` selects the list source: 'all' is the all-accounts feed; 'uncategorized' is the
+ *  server-filtered uncategorized feed, so the tab lists real unfiled charges from full history
+ *  (matching the badge) rather than client-filtering the general feed's loaded pages. Every
+ *  derived field — transactions, isLoading/isError/isFetching, hasMore/loadMore, and the
+ *  refetch paths — swaps to the active feed with the tab, so the spinner/error/empty/Load-More
+ *  states stay coherent. Defaults to 'all', so the other callers (Accounts, detail) are
+ *  unaffected and never mount the uncategorized query. */
+export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all'): TransactionsScreenData {
   const authed = useIsAuthed();
-  const feedQuery = useTransactionsFeedQuery(authed);
+  const onUncategorized = tab === 'uncategorized';
+  // Both hooks are always called (rules of hooks); the uncategorized one only FETCHES on its tab.
+  const allFeedQuery = useTransactionsFeedQuery(authed);
+  const uncategorizedFeedQuery = useUncategorizedFeedQuery(authed && onUncategorized);
+  const feedQuery = onUncategorized ? uncategorizedFeedQuery : allFeedQuery;
+  const activeFeedKey = onUncategorized ? uncategorizedFeedKey : transactionsKey;
   const { categoriesQuery, category } = useCategoryLookup(authed);
   const balances = useBalancesMap(authed);
   const queryClient = useQueryClient();
 
-  // Flatten the loaded pages into one newest-first list, with a stable identity while cold.
+  // Flatten the active feed's loaded pages into one newest-first list, with a stable identity
+  // while cold.
   const transactions = useMemo(
     () => (feedQuery.data ? feedQuery.data.pages.flatMap((p) => p.transactions) : EMPTY_TX),
     [feedQuery.data],
@@ -653,7 +730,7 @@ export function useTransactionsScreenData(): TransactionsScreenData {
   //  • manual pull / inline Retry: SNAP to newest — trim to the first page, then refetch it fresh
   //    (+ the taxonomy). One round-trip, and it re-pages history cleanly from the top.
   const refetchList = useCallback(() => {
-    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(transactionsKey, (prev) =>
+    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(activeFeedKey, (prev) =>
       prev && prev.pages.length > 1
         ? { pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
         : prev);
@@ -667,7 +744,7 @@ export function useTransactionsScreenData(): TransactionsScreenData {
       categoriesQuery.refetch(),
       queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
     ]);
-  }, [feedQuery, categoriesQuery, queryClient]);
+  }, [feedQuery, categoriesQuery, queryClient, activeFeedKey]);
   // Inline Retry (list-load error) refreshes the list AND re-reads the STORED balances — cheap,
   // no live bank call. The live call is pull-only (refreshLiveBalances). Balances stay out of
   // isFetching/isError so a balances hiccup can't blank or stick-spin the list (WHIT-212/363).

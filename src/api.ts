@@ -170,6 +170,31 @@ export async function fetchTransactionsFeed(cursor?: string, limit?: number): Pr
 }
 
 /**
+ * Fetch one page of the UNCATEGORIZED-only feed, newest first — every account merged,
+ * cursor-paged back through the full history, filtered server-side to uncategorized charges
+ * (the same rule as the badge count). Backs the Uncategorized tab's "Load More", so the list
+ * shows real uncategorized rows from all history instead of client-filtering the general feed's
+ * loaded pages. Same page shape and cursor format as the plain feed; a null `nextCursor` means
+ * there is no more history. A page can be sparse (or empty) with a non-null cursor when the
+ * uncategorized rows sit deep in history — keep loading.
+ *
+ * @param cursor - The previous page's nextCursor, or undefined/absent for the newest page.
+ * @param limit - Optional target page size; the server clamps to its own max and applies a default.
+ * @returns One page: its uncategorized transactions plus the cursor for the next page (null at the end).
+ * @throws If the response status is not OK.
+ */
+export async function fetchUncategorizedFeed(cursor?: string, limit?: number): Promise<TransactionFeedPage> {
+  const parts: string[] = [];
+  if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+  if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
+  const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/feed${qs}`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
  * Fetch the full-history uncategorized count (WHIT-500): how many uncategorized charges
  * exist across ALL history, not just the loaded feed pages. Backs the tab badge, the tab-bar
  * dot, and the "All caught up" empty state so they reflect the whole picture. Auth-gated.

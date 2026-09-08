@@ -35,6 +35,7 @@ function setAuth(next: string) {
 // describe aliases these to its own local names; the factory passes the cursor through so the
 // feed describe's `toHaveBeenNthCalledWith(2, 'cur1')` still holds.
 const mockFetchTransactionsFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
+const mockFetchUncategorizedFeed = jest.fn<(cursor?: string) => Promise<unknown>>();
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchTransactions = jest.fn<() => Promise<unknown>>();
 const mockFetchAccountBalances = jest.fn<() => Promise<unknown>>();
@@ -43,6 +44,8 @@ const mockShowToast = jest.fn<(m: string) => void>();
 const mockFetchUncategorizedCount = jest.fn<() => Promise<number>>().mockResolvedValue(0);
 jest.mock('../api', () => ({
   fetchTransactionsFeed: (cursor?: string) => mockFetchTransactionsFeed(cursor),
+  // The Uncategorized tab's paged source; stubbed so the composite can drive it on that tab.
+  fetchUncategorizedFeed: (cursor?: string) => mockFetchUncategorizedFeed(cursor),
   fetchCategories: () => mockFetchCategories(),
   fetchTransactions: () => mockFetchTransactions(),
   fetchAccountBalances: () => mockFetchAccountBalances(),
@@ -312,6 +315,93 @@ describe('the Transactions tab feed composite — pagination + refresh', () => {
     await waitFor(() => expect(result.current.transactions.length).toBe(1));
     expect(result.current.transactions[0].transaction_id).toBe('r1'); // from fetchTransactions, not the feed
     expect(mockFeed).not.toHaveBeenCalled(); // the recent hook never touches the feed cache
+  });
+});
+
+// The Uncategorized tab drives the SAME composite but with tab='uncategorized', so the list source,
+// Load More, and loading/error all swap to the server-filtered uncategorized feed. This is the fix:
+// the tab lists real uncategorized rows from history (paged), not the general feed filtered down.
+describe('the Uncategorized tab feed composite — server-side paged uncategorized', () => {
+  const tx = (id: string): Transaction => ({
+    transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
+    description: 'X', merchant_name: 'X', amount: -1, account_id: 'a1',
+    account_name: 'ANZ', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
+  });
+  const ids = (list: Transaction[]) => list.map((t) => t.transaction_id);
+  const mockUncat = mockFetchUncategorizedFeed;
+
+  function makeClient(staleTime = 60_000) {
+    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime, gcTime: Infinity } } });
+  }
+
+  beforeEach(() => {
+    mockAuthStatus = 'authed';
+    mockAuthListeners.clear();
+    mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: [], nextCursor: null });
+    mockUncat.mockReset();
+    mockFetchTransactions.mockReset().mockResolvedValue([]);
+    mockFetchCategories.mockReset().mockResolvedValue([]);
+    mockFetchAccountBalances.mockReset().mockResolvedValue([]);
+  });
+
+  it('drives the list from the uncategorized feed, not the plain feed', async () => {
+    mockFetchTransactionsFeed.mockResolvedValue({ transactions: [tx('plain1')], nextCursor: null });
+    mockUncat.mockResolvedValue({ transactions: [tx('u1'), tx('u2')], nextCursor: null });
+    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+
+    await waitFor(() => expect(result.current.transactions.length).toBe(2));
+    expect(ids(result.current.transactions)).toEqual(['u1', 'u2']); // uncategorized feed, not 'plain1'
+    expect(mockUncat).toHaveBeenCalled();
+  });
+
+  it('Load More pages the uncategorized feed via its OWN cursor', async () => {
+    mockUncat
+      .mockResolvedValueOnce({ transactions: [tx('u1')], nextCursor: 'ucur1' })
+      .mockResolvedValueOnce({ transactions: [tx('u2')], nextCursor: null });
+    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+
+    await waitFor(() => expect(result.current.transactions.length).toBe(1));
+    expect(result.current.hasMore).toBe(true);
+    await act(async () => { result.current.loadMore(); });
+    await waitFor(() => expect(result.current.transactions.length).toBe(2));
+    expect(ids(result.current.transactions)).toEqual(['u1', 'u2']);
+    expect(result.current.hasMore).toBe(false);
+    expect(mockUncat).toHaveBeenNthCalledWith(2, 'ucur1'); // page 2 fetched with page 1's uncat cursor
+  });
+
+  it('a SPARSE first page (0 rows) with a non-null cursor still offers Load More — deep rows reachable', async () => {
+    // The crux of the paged design: the server can return an empty page mid-history while more
+    // uncategorized rows sit deeper. hasMore keys off the cursor, not the row count, so Load More stays.
+    mockUncat
+      .mockResolvedValueOnce({ transactions: [], nextCursor: 'ucur1' })
+      .mockResolvedValueOnce({ transactions: [tx('deep')], nextCursor: null });
+    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.transactions.length).toBe(0); // sparse first page
+    expect(result.current.hasMore).toBe(true);           // but MORE history behind it
+    await act(async () => { result.current.loadMore(); });
+    await waitFor(() => expect(ids(result.current.transactions)).toEqual(['deep'])); // reached the deep row
+    expect(result.current.hasMore).toBe(false);
+  });
+
+  it('shows the spinner while the uncategorized walk runs (isLoading swaps to the uncat source)', async () => {
+    // Feed + categories resolved, uncat feed still pending → isLoading stays true, so switching to the
+    // tab shows a spinner instead of a false-empty list. (Without the source swap, isLoading would read
+    // the already-loaded plain feed and be false.)
+    let resolveUncat: (v: unknown) => void = () => {};
+    mockUncat.mockReturnValue(new Promise((res) => { resolveUncat = res; }));
+    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(true));
+    await act(async () => { resolveUncat({ transactions: [tx('u1')], nextCursor: null }); });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+  });
+
+  it('surfaces an uncategorized-feed error as isError on that tab', async () => {
+    mockUncat.mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() => useTransactionsScreenData('uncategorized'), { wrapper: wrapper(makeClient()) });
+    await waitFor(() => expect(result.current.isError).toBe(true));
   });
 });
 

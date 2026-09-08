@@ -17,6 +17,11 @@ let mockTx: ReturnType<typeof txData>;
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
   useRecentTransactionsScreenData: () => ({ transactions: [] }),
+  // The detail screen resolves the row via the shared resolver; back it with the same fixture list.
+  useTransactionResolver: () => ({
+    transactions: (mockTx as { transactions: { transaction_id: string }[] }).transactions,
+    findTx: (id: string) => (mockTx as { transactions: { transaction_id: string }[] }).transactions.find((t) => t.transaction_id === id),
+  }),
   // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
   // the transfer keeps the tab out of the "All caught up" state exactly as before.
   useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),

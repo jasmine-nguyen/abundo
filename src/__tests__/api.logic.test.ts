@@ -3,7 +3,7 @@
 // body/method/url shape (incl. encodeURIComponent + server-default field/operator
 // omission), and the not-OK throw. fetch is mocked; no network. (WHIT-52, WHIT-162)
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice, fetchCategoryTransactions, fetchTransactionsFeed } from '../api';
+import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice, fetchCategoryTransactions, fetchTransactionsFeed, fetchUncategorizedFeed } from '../api';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
 import { getAuthToken } from '../auth';
@@ -291,5 +291,46 @@ describe('fetchTransactionsFeed — URL shaping', () => {
     const page = { transactions: [{ transaction_id: 't1' }], nextCursor: 'next-cur' };
     fetchMock.mockReturnValue(okJson(page));
     await expect(fetchTransactionsFeed()).resolves.toEqual(page);
+  });
+});
+
+// ===== fetchUncategorizedFeed URL shaping — the Uncategorized tab's paged source. Same shape as
+// the plain feed but its OWN path, so the two feeds page independently.
+describe('fetchUncategorizedFeed — URL shaping', () => {
+  it('omits the query string for the newest page (no cursor, no limit)', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchUncategorizedFeed();
+    // FAIL-ON-REVERT: always appending would make this `?cursor=undefined` and page from the wrong place.
+    expect(calledUrl()).toBe(`${API}/transactions/uncategorized/feed`);
+  });
+
+  it('hits the uncategorized feed path, NOT the plain feed', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchUncategorizedFeed('cur');
+    // Locks the distinct route: a paste of the plain-feed URL here (the easy copy-paste bug) fails.
+    expect(calledUrl()).toBe(`${API}/transactions/uncategorized/feed?cursor=cur`);
+  });
+
+  it('percent-encodes an opaque cursor so it cannot fork the URL', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchUncategorizedFeed('a/b c&d=e');
+    expect(calledUrl()).toBe(`${API}/transactions/uncategorized/feed?cursor=a%2Fb%20c%26d%3De`);
+  });
+
+  it('joins cursor and limit with &', async () => {
+    fetchMock.mockReturnValue(okJson({ transactions: [], nextCursor: null }));
+    await fetchUncategorizedFeed('cur', 50);
+    expect(calledUrl()).toBe(`${API}/transactions/uncategorized/feed?cursor=cur&limit=50`);
+  });
+
+  it('throws on a not-OK response (the tab must see an error, not an empty page)', async () => {
+    fetchMock.mockReturnValue(notOk(500));
+    await expect(fetchUncategorizedFeed()).rejects.toThrow('API error: 500');
+  });
+
+  it('returns the { transactions, nextCursor } page unchanged', async () => {
+    const page = { transactions: [{ transaction_id: 'u1' }], nextCursor: 'next-cur' };
+    fetchMock.mockReturnValue(okJson(page));
+    await expect(fetchUncategorizedFeed()).resolves.toEqual(page);
   });
 });
