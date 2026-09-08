@@ -582,6 +582,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // keystroke writes it with zero re-renders, and the sheet reads it once on remount (post-unlock).
   // Cleared when any sheet closes (submit/cancel) and on sign-out, so nothing leaks to the next session.
   const sheetDrafts = useRef<Map<string, unknown>>(new Map());
+  // WHIT-508: one apply-rules run at a time, held here rather than in the sheet — see the writer.
+  const applyRulesInFlight = useRef(false);
   const readSheetDraft = useCallback((key: string): unknown => sheetDrafts.current.get(key), []);
   const writeSheetDraft = useCallback((key: string, value: unknown) => { sheetDrafts.current.set(key, value); }, []);
   // WHIT-192: rule edits are mirrored straight into the ['rules'] query cache the Rules
@@ -1146,6 +1148,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
     queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
     queryClient.invalidateQueries({ queryKey: ['uncategorizedFeed'] });
+    // The reconcile writes the SERVER's category id onto the row, and a row whose id isn't in the
+    // client's taxonomy still counts as unfiled (categoryIsUnmapped). So a category created in
+    // another session during the run would leave its charges sitting in the Uncategorized list
+    // while the badge dropped — list and badge disagreeing. Re-read the taxonomy too.
+    queryClient.invalidateQueries({ queryKey: ['categories'] });
   }, []);
 
   // WHIT-508: preview what the user's existing rules would file, writing nothing. Lives here
@@ -1169,6 +1176,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Returns the server's own report (null on failure) so the sheet can offer "Apply the rest"
   // after a capped run without paying for a second whole-history preview.
   const applyRulesToHistory = useCallback(async (): Promise<ApplyRulesResult | null> => {
+    // The latch lives HERE, not in the sheet: dismissing the sheet mid-write unmounts it, and
+    // reopening would otherwise mint a fresh component latch and let a second 300-write run start
+    // on top of the first. The provider outlives the sheet, so one run at a time really means one.
+    if (applyRulesInFlight.current) return null;
+    applyRulesInFlight.current = true;
     const epoch = sessionEpoch.current;
     try {
       const result = await applyRulesToUncategorized(false);
@@ -1197,6 +1209,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // and let the sheet say the outcome is uncertain.
       refreshAfterApplyRules();
       return null;
+    } finally {
+      applyRulesInFlight.current = false;
     }
   }, [patchTransactions, refreshAfterApplyRules]);
 
@@ -2703,7 +2717,9 @@ export function categoryLabel(
   lookup: (id: string | null) => Category | undefined,
 ): string {
   if (categoryId === 'income') return 'Income';
-  return lookup(categoryId)?.name ?? categoryId;
+  // `||`, not `??`: a category whose name is an empty string would otherwise render as a blank
+  // label under a count — the exact thing this helper exists to prevent.
+  return lookup(categoryId)?.name || categoryId;
 }
 
 // A transaction is uncategorized when it has no resolvable Abundo category: its

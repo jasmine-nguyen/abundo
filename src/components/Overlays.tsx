@@ -750,7 +750,7 @@ function GoalBalanceSheet() {
 // It reads and writes only through the context actions, never src/api.ts directly: that keeps the
 // session-epoch bail every other awaited call gets, and keeps the `../context` mock seam the
 // screen tests use.
-type ApplyRulesPhase = 'loading' | 'preview' | 'applying' | 'done' | 'previewFailed' | 'writeFailed';
+type ApplyRulesPhase = 'loading' | 'preview' | 'applying' | 'done' | 'stuck' | 'previewFailed' | 'writeFailed';
 
 function ApplyRulesSheet() {
   // The provider's writers are useCallback-stable, so the mount effect below fires exactly once
@@ -769,6 +769,15 @@ function ApplyRulesSheet() {
   // Filing 639 charges takes several rounds, and each round's report describes only ITS round. Keep
   // the running total here, or the closing toast would announce the last round (39) as the whole job.
   const filedTotal = useRef(0);
+  // Rows left over because they ERRORED are re-attempted by the next round against the same failing
+  // condition, so "Apply the rest" can offer an identical screen forever. Remember what was left
+  // last round: a round that files nothing and shrinks nothing is stuck, not worth another tap.
+  const previousStillToGo = useRef<number | null>(null);
+  // The sheet is dismissable while a write runs (the backdrop and the drag handle are SheetHost's,
+  // not ours), so a run can finish with nothing left to render into. Report it as a toast instead
+  // of dropping it silently.
+  const onScreen = useRef(true);
+  useEffect(() => () => { onScreen.current = false; }, []);
 
   const runPreview = useCallback(async () => {
     setPhase('loading');
@@ -785,14 +794,26 @@ function ApplyRulesSheet() {
   const onApply = () => runGuarded(async () => {
     setPhase('applying');
     const result = await applyRulesToHistory();
-    if (!result) { setPhase('writeFailed'); return; }
+    if (!result) {
+      if (onScreen.current) setPhase('writeFailed');
+      else showToast("Couldn't finish applying your rules. Some charges may already have been filed.");
+      return;
+    }
     setReport(result);
     filedTotal.current += result.filed.length;
     // `failed` rows were attempted and so are NOT in `remaining`, but they are still unfiled — a
     // re-run picks them up. Both count as work left.
-    if (result.remaining + result.failed.length > 0) { setPhase('done'); return; }
-    setSheet(null);
-    showToast(applyRulesDoneMessage(filedTotal.current));
+    const stillToGo = result.remaining + result.failed.length;
+    if (stillToGo === 0) {
+      setSheet(null);
+      showToast(applyRulesDoneMessage(filedTotal.current));
+      return;
+    }
+    const stalled = result.filed.length === 0
+      && previousStillToGo.current !== null && stillToGo >= previousStillToGo.current;
+    previousStillToGo.current = stillToGo;
+    if (!onScreen.current) { showToast(applyRulesRoundMessage(filedTotal.current, stillToGo)); return; }
+    setPhase(stalled ? 'stuck' : 'done');
   });
 
   if (phase === 'loading' || phase === 'applying') {
@@ -851,6 +872,22 @@ function ApplyRulesSheet() {
   }
 
   const stillToGo = report.remaining + report.failed.length;
+
+  // A round that filed nothing and left just as much behind will do the same again — the server
+  // re-plans from a fresh scan, so nothing self-corrects. Offering "Apply the rest" here is an
+  // invitation to tap forever. Say what happened and give her a way out instead.
+  if (phase === 'stuck') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Something's stopping these</Text>
+        <Text style={styles.confirmSub}>
+          {filedTotal.current > 0 ? `Filed ${filedTotal.current} ${chargeNoun(filedTotal.current)} in total. ` : ''}
+          The last {stillToGo} wouldn't save, and trying again didn't help. Give it a while, or file them by hand.
+        </Text>
+        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+      </View>
+    );
+  }
 
   // `phase === 'done'` is only ever set from a write's own result, so this reads the write's report.
   if (phase === 'done') {
@@ -926,6 +963,12 @@ function nothingToFileReason(report: ApplyRulesResult, applicable: number): stri
   if (applicable === 0) return `None of your ${report.rulesConsidered} ${ruleNoun} can be applied — see why below.`;
   if (report.conflicted > 0) return `Your rules disagree about every charge they cover, so none were filed.`;
   return `None of your ${report.rulesConsidered} ${ruleNoun} match your ${report.unfiled} unfiled ${chargeNoun(report.unfiled)}.`;
+}
+
+/** What a partial round reports when the sheet was dismissed before it finished. */
+function applyRulesRoundMessage(filed: number, stillToGo: number): string {
+  if (filed === 0) return `Couldn't file any — ${stillToGo} still to go.`;
+  return `Filed ${filed} ${chargeNoun(filed)} — ${stillToGo} still to go.`;
 }
 
 /** The one success toast, so a clean run and a finished multi-round run read the same. */

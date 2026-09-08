@@ -124,8 +124,13 @@ it('invalidates the server-derived reads but never the transactions feed', async
   await act(async () => { await result.current.applyRulesToHistory(); });
 
   const keys = invalidatedKeys(spy);
+  // `categories` is in the list for a specific reason: the reconcile writes the SERVER's category
+  // id onto the row, and a row whose id isn't in the client's taxonomy still counts as unfiled —
+  // so a category created elsewhere during the run would leave its charges in the Uncategorized
+  // list while the badge dropped. Fail-on-revert: drop that invalidation and this reddens.
   expect(keys).toEqual(expect.arrayContaining(
-    ['uncategorizedCount', 'budgets', 'breakdown', 'budgetTransactions', 'categoryTransactions', 'uncategorizedFeed']));
+    ['uncategorizedCount', 'budgets', 'breakdown', 'budgetTransactions', 'categoryTransactions',
+      'uncategorizedFeed', 'categories']));
   // Fail-on-revert for the documented storm rule: an InfiniteData invalidate refetches EVERY
   // loaded page sequentially, and the patch above already wrote the change into this cache.
   expect(keys).not.toContain('transactions');
