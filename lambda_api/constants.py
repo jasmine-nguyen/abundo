@@ -29,6 +29,13 @@ TRANSACTIONS_FEED_PATH = "/transactions/feed"
 # the loaded feed pages. Only lambda_api/handler.py consumes it (no shared repository_*
 # imports it), so the WHIT-136 sync guard doesn't require a shared mirror.
 UNCATEGORIZED_COUNT_PATH = "/transactions/uncategorized/count"
+# API Gateway route path for the paged uncategorized feed. Same {transactions, nextCursor}
+# shape as /transactions/feed, but each page returns only uncategorized charges (same rule
+# as the count), so the Uncategorized tab lists ACTUAL uncategorized rows from all history
+# via Load More instead of client-filtering the general feed's loaded pages. Only
+# lambda_api/handler.py consumes it (no shared repository_* imports it), so the WHIT-136 sync
+# guard doesn't require a shared mirror.
+UNCATEGORIZED_FEED_PATH = "/transactions/uncategorized/feed"
 # Default page size for the transactions feed when a request sends no ?limit=. Smaller
 # than MAX_PAGE_SIZE: the feed fans out one query PER account per page, so a modest page
 # keeps a "Load More" tap cheap while still filling a screen. Lambda_api-only.

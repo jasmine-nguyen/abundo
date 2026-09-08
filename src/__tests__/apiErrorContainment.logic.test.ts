@@ -39,6 +39,7 @@ const REASON_CARRYING = ['createCategory', 'updateCategory', 'deleteCategory'] a
 const CALLS: Record<string, () => Promise<unknown>> = {
   fetchTransactions: () => api.fetchTransactions(),
   fetchTransactionsFeed: () => api.fetchTransactionsFeed('cur', 25),
+  fetchUncategorizedFeed: () => api.fetchUncategorizedFeed('cur', 25), // a read → generic error, NOT a reason-carrying write
   fetchUncategorizedCount: () => api.fetchUncategorizedCount(), // WHIT-501: a read → generic error, NOT a reason-carrying write
   fetchCategories: () => api.fetchCategories(),
   createCategory: () => api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),

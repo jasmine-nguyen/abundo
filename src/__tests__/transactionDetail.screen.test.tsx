@@ -9,7 +9,14 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn } from './factory';
 
 let mockTx: ReturnType<typeof txData>;
-jest.mock('../queries', () => ({ useTransactionsScreenData: () => mockTx, useRecentTransactionsScreenData: () => ({ transactions: [] }) }));
+jest.mock('../queries', () => ({
+  useTransactionsScreenData: () => mockTx,
+  // The detail screen resolves the row via the shared resolver; back it with the same fixture list.
+  useTransactionResolver: () => ({
+    transactions: mockTx.transactions,
+    findTx: (id: string) => (mockTx.transactions as { transaction_id: string }[]).find((t) => t.transaction_id === id),
+  }),
+}));
 
 // WHIT-275: the screen's note/tags editor reads applyTransactionEdit from the context; stub
 // it (real selectors kept) so these read-path tests render without an AppProvider.

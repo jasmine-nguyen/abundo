@@ -512,20 +512,42 @@ function readFeedRows(): Transaction[] {
   const data = queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(['transactions']);
   return data ? data.pages.flatMap((p) => p.transactions) : [];
 }
-// The union of both caches, de-duped by id (a charge in both appears once). Newest-first from the
-// feed, then any recent-only rows.
+// The Uncategorized tab's own paged feed (its loaded pages). A deep-history unfiled charge shown
+// on that tab lives ONLY here — not in the general feed's loaded pages nor the recent window — so
+// the union below must include it, or tapping it on the tab would "not find" the row and the
+// categorise would silently no-op.
+function readUncategorizedFeedRows(): Transaction[] {
+  const data = queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed']);
+  return data ? data.pages.flatMap((p) => p.transactions) : [];
+}
+// The union of the three list caches, de-duped by id (a charge in more than one appears once).
+// Newest-first from the feed, then uncategorized-feed-only rows, then recent-only rows.
 function readTransactionsCache(): Transaction[] {
   const feed = readFeedRows();
+  const uncategorized = readUncategorizedFeedRows();
   const recent = queryClient.getQueryData<Transaction[]>(['transactionsRecent']) ?? [];
   const seen = new Set(feed.map((t) => t.transaction_id));
-  return [...feed, ...recent.filter((t) => !seen.has(t.transaction_id))];
+  const merged = [...feed];
+  for (const row of [...uncategorized, ...recent]) {
+    if (seen.has(row.transaction_id)) continue;
+    seen.add(row.transaction_id);
+    merged.push(row);
+  }
+  return merged;
 }
-// Map the caller's per-row transform over the feed pages (page boundaries + cursors preserved —
-// every caller is a .map() that adds/removes no rows) AND the flat recent array, so an optimistic
-// edit reflects on the tab list, the dot, account-detail, and goal-edit at once.
-function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): void {
-  queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(['transactions'], (prev) =>
+// Map the caller's per-row transform over the feed pages, the uncategorized-feed pages (page
+// boundaries + cursors preserved — every caller is a .map() that adds/removes no rows) AND the flat
+// recent array, so an optimistic edit reflects on the tab list, the uncategorized tab, the dot,
+// account-detail, and goal-edit at once. On the uncategorized tab this is what drops a just-filed
+// row from the list instantly: the row stays in the cached page but no longer matches the client
+// re-filter, so it disappears without a whole-history re-scan.
+function patchInfiniteFeed(key: readonly unknown[], fn: (prev: Transaction[]) => Transaction[]): void {
+  queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(key, (prev) =>
     prev ? { ...prev, pages: prev.pages.map((pg) => ({ ...pg, transactions: fn(pg.transactions) })) } : prev);
+}
+function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): void {
+  patchInfiniteFeed(['transactions'], fn);
+  patchInfiniteFeed(['uncategorizedFeed'], fn);
   queryClient.setQueryData<Transaction[]>(['transactionsRecent'], (prev) => (prev ? fn(prev) : prev));
 }
 
@@ -1327,6 +1349,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // above, and the id dropped from the server's taxonomy), so the full-history tally rose.
       // Invalidate (not setQueryData) — the server count genuinely changed, so a refetch is truth.
       queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
+      // Those charges must also ENTER the Uncategorized tab's list. The patch above only cleared
+      // the category on rows already in a cache; the uncategorized feed is a separate paged query
+      // that must re-fetch to include them. Unlike a single categorise (where an in-place patch
+      // suffices, so the frequent path avoids an InfiniteData refetch storm), deleting a category
+      // is rare, so invalidating the paged feed here is cheap and keeps the list correct.
+      queryClient.invalidateQueries({ queryKey: ['uncategorizedFeed'] });
       // WHIT-271: return false (not just skip the toast) so app/category/edit.tsx's `if (ok)`
       // doesn't router.back() the next session after a mid-delete sign-out.
       if (epoch !== sessionEpoch.current) return false; // signed out mid-flight

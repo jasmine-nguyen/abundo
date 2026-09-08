@@ -50,6 +50,12 @@ export function queryMocksFromState(getState: () => ScreenState) {
     // The bounded recent list (tab dot, account detail, goal-edit picker). Same fixture as the
     // tab composite here — screens needing real per-account balances use an inline mock instead.
     useRecentTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, balances: new Map(), isFetching: false, ...status }),
+    // The by-id resolver the picker/confirm sheets + detail screen use. Resolves over the same
+    // fixture list; findTx searches it by transaction_id.
+    useTransactionResolver: () => {
+      const txns = (st().transactions ?? []) as { transaction_id: string }[];
+      return { transactions: txns, findTx: (id: string) => txns.find((t) => t.transaction_id === id) };
+    },
     useRulesScreenData: () => ({ rules: st().rules ?? [], rulesError: st().rulesError ?? false, ...status }),
     usePayCycle: () => ({ payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleName: st().cycleName ?? (() => 'Fortnightly'), isLoading: false, isError: false }),
     useSettingsScreenData: () => ({ categoriesCount: cats().length, loanReady: false, categoriesError: st().categoriesError ?? false, loanReadyError: st().loanReadyError ?? false, ...status }),

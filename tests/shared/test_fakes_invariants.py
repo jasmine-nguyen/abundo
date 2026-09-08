@@ -93,8 +93,11 @@ _REGISTRY = [
                   "_feed_event"})],
         # WHIT-469 folded test_transactions_feed_gaps.py into the main.
         # WHIT-500: the uncategorized-count suite reuses FakeFeedRepo for the deep-page case.
+        # The paged uncategorized-feed suite reuses FakeFeedRepo the same way.
         (_API_TESTS / "test_transactions_feed.py",
-         _API_TESTS / "test_uncategorized_count.py"),
+         _API_TESTS / "test_uncategorized_count.py",
+         _API_TESTS / "test_uncategorized_feed.py",
+         _API_TESTS / "test_uncategorized_feed_gaps.py"),
     ),
     _Domain(
         "handler_patch",

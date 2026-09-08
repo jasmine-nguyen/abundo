@@ -47,6 +47,7 @@ from constants import (
     TRANSACTION_PATH,
     TRANSACTIONS_FEED_PATH,
     UNCATEGORIZED_COUNT_PATH,
+    UNCATEGORIZED_FEED_PATH,
     UNCATEGORIZED_KEY,
 )
 from collections.abc import Callable
@@ -141,6 +142,13 @@ def lambda_handler(event, context):
         # route (a GET, so the startswith-PATCH branch never matches it).
         if path == UNCATEGORIZED_COUNT_PATH and method == "GET":
             return get_uncategorized_count(TransactionRepository(), CategoryRepository())
+
+        # The uncategorized-only feed, paged back through full history (Load More). An EXACT
+        # path — disjoint from "/transactions", "/transactions/feed",
+        # "/transactions/uncategorized/count", and the PATCH "/transactions/{id}" item route
+        # (a GET, so the startswith-PATCH branch never matches it).
+        if path == UNCATEGORIZED_FEED_PATH and method == "GET":
+            return get_uncategorized_feed(event, TransactionRepository(), CategoryRepository())
 
         # Collection route (batch) BEFORE the item route. "/transactions" does not
         # start with "/transactions/", so the two are disjoint regardless of order.
@@ -587,47 +595,57 @@ def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
     return sorted_all_recent_transactions
 
 
-def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
-    """GET /transactions/feed — the all-accounts feed, newest-first, paged back through
-    FULL history (Load More).
+def _parse_feed_page_params(event: dict) -> tuple[int, dict, dict | None]:
+    """Parse the shared feed query params (limit + cursor) both /transactions/feed and
+    /transactions/uncategorized/feed accept, so the two routes can't drift on clamping or cursor
+    validation. Returns (limit, resume_keys, error): on bad input `error` is a 400 response and the
+    caller returns it; otherwise `error` is None.
 
-    Unlike GET /transactions (a fixed 7-day rolling window returning a bare array), this
-    merges every account with NO date floor and returns a cursor so the app can walk back
-    to the start of history:
-
-        limit   (optional) — page size, clamped to [1, MAX_PAGE_SIZE] (default FEED_PAGE_SIZE)
-        cursor  (optional) — an opaque nextCursor from a previous page
-
-    Returns {"transactions": [...], "nextCursor": <opaque string|null>}. nextCursor is null
-    once every account is exhausted. Bad input → 400.
+        limit   (optional) — clamped to [1, MAX_PAGE_SIZE] (default FEED_PAGE_SIZE); a 0/negative
+                             Limit is a DynamoDB ValidationException, so clamp rather than 500.
+        cursor  (optional) — an opaque nextCursor from a previous page; a forged one → 400, not 500.
     """
     params = event.get("queryStringParameters") or {}
-
-    # `limit` is optional. Parse to int (non-numeric → 400) and clamp to [1, MAX_PAGE_SIZE]:
-    # a 0/negative Limit is a DynamoDB ValidationException.
     raw_limit = params.get("limit")
     limit = FEED_PAGE_SIZE
     if raw_limit is not None:
         try:
             limit = int(raw_limit)
         except (TypeError, ValueError):
-            return _json_response(400, {"error": "invalid limit; expected an integer"})
+            return limit, {}, _json_response(400, {"error": "invalid limit; expected an integer"})
         limit = max(1, min(limit, MAX_PAGE_SIZE))
-
     try:
         resume_keys = _decode_feed_cursor(params.get("cursor"))
     except _BadCursor:
-        return _json_response(400, {"error": "invalid cursor"})
+        return limit, {}, _json_response(400, {"error": "invalid cursor"})
+    return limit, resume_keys, None
 
-    page, next_resume_keys = _fetch_feed_page(repo, limit, resume_keys)
 
-    # Mirror the other transaction routes' row shaping: drop the DynamoDB keys, default
-    # sparse fields. The resume keys were already built from the raw rows inside
-    # _fetch_feed_page, so popping pk/sk here does not disturb the cursor.
+def _shape_feed_rows(page: list[dict]) -> None:
+    """Strip the DynamoDB storage keys and default sparse fields on each feed row, in place —
+    the shared row shaping both feed routes apply. The resume keys were already built from the raw
+    rows inside _fetch_feed_page, so popping pk/sk here does not disturb the cursor."""
     for txn in page:
         txn.pop("pk", None)
         txn.pop("sk", None)
         txn.setdefault("category", None)
+
+
+def get_transactions_feed(event: dict, repo: TransactionRepository) -> dict:
+    """GET /transactions/feed — the all-accounts feed, newest-first, paged back through
+    FULL history (Load More).
+
+    Unlike GET /transactions (a fixed 7-day rolling window returning a bare array), this
+    merges every account with NO date floor and returns a cursor so the app can walk back
+    to the start of history. Returns {"transactions": [...], "nextCursor": <opaque string|null>};
+    nextCursor is null once every account is exhausted. Bad input → 400.
+    """
+    limit, resume_keys, error = _parse_feed_page_params(event)
+    if error is not None:
+        return error
+
+    page, next_resume_keys = _fetch_feed_page(repo, limit, resume_keys)
+    _shape_feed_rows(page)
 
     return _json_response(200, {
         "transactions": page,
@@ -1082,6 +1100,75 @@ def get_uncategorized_count(transaction_repo: TransactionRepository, category_re
         if _is_unmapped_category(transaction.get("category"), taxonomy_ids)
     )
     return _json_response(200, {"count": count})
+
+
+# How many raw feed chunks one uncategorized-feed request will walk to fill a page. Each
+# chunk is a MAX_PAGE_SIZE-row slice of the merged feed, so this bounds a single Load More
+# to ~this many × MAX_PAGE_SIZE rows scanned. If a user's uncategorized charges are sparse
+# and deep, one request may return fewer than the target (with a continuation cursor) rather
+# than scanning unbounded history; the next Load More resumes where this one stopped.
+_MAX_UNCATEGORIZED_SCAN_PAGES = 30
+
+
+def _fetch_uncategorized_feed_page(
+    repo: TransactionRepository, taxonomy_ids: set[str], target: int, resume_keys: dict
+) -> tuple[list[dict], dict]:
+    """One page of uncategorized rows: walk the merged all-accounts feed from `resume_keys`,
+    keeping only uncategorized charges (same rule as the count), until `target` of them
+    accrue, history is exhausted, or the scan cap is hit. Returns the accumulated rows plus
+    the resume map for the next page.
+
+    Reuses _fetch_feed_page unchanged, so the walk stays gap-free and dupe-free. Each raw
+    chunk is MAX_PAGE_SIZE rows (not `target`) to minimise round trips. The accumulated rows
+    are NOT truncated to `target`: the cursor has already advanced past every raw row consumed
+    to build them, so dropping any would skip an uncategorized charge (a gap). A page may
+    therefore hold slightly more than `target` on the final chunk — harmless.
+    """
+    accumulated: list[dict] = []
+    cursor = resume_keys
+    for _ in range(_MAX_UNCATEGORIZED_SCAN_PAGES):
+        raw_page, cursor = _fetch_feed_page(repo, MAX_PAGE_SIZE, cursor)
+        accumulated.extend(
+            row for row in raw_page
+            if _is_unmapped_category(row.get("category"), taxonomy_ids)
+        )
+        if len(accumulated) >= target or not cursor:
+            break
+    return accumulated, cursor
+
+
+def get_uncategorized_feed(
+    event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository
+) -> dict:
+    """GET /transactions/uncategorized/feed — the uncategorized-only feed, newest-first,
+    paged back through FULL history (Load More).
+
+    Same {transactions, nextCursor} shape and cursor format as /transactions/feed, but each
+    page returns only uncategorized charges (the SAME rule as get_uncategorized_count, so the
+    tab list and the badge can't disagree). A page can be sparse (or empty) yet still carry a
+    non-null nextCursor when uncategorized rows sit deep in history — the client keeps
+    "Load More" available while nextCursor is non-null.
+
+        limit   (optional) — target uncategorized rows per page, clamped to [1, MAX_PAGE_SIZE]
+                             (default FEED_PAGE_SIZE)
+        cursor  (optional) — an opaque nextCursor from a previous page
+
+    Bad input → 400.
+    """
+    limit, resume_keys, error = _parse_feed_page_params(event)
+    if error is not None:
+        return error
+
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+    page, next_resume_keys = _fetch_uncategorized_feed_page(
+        transaction_repo, taxonomy_ids, limit, resume_keys
+    )
+    _shape_feed_rows(page)
+
+    return _json_response(200, {
+        "transactions": page,
+        "nextCursor": _encode_feed_cursor(next_resume_keys),
+    })
 
 
 def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) -> tuple[str, str]:
