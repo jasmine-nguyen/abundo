@@ -44,6 +44,8 @@ locals {
     "GET /budgets/{category}/transactions",
     "PUT /budgets/{category}",
     "DELETE /budgets/{category}",
+    "PUT /budgets/{category}/spread",
+    "DELETE /budgets/{category}/spread",
     "GET /breakdown",
     "GET /homeloan",
     "GET /accounts/balances",

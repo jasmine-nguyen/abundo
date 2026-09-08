@@ -12,7 +12,7 @@ from the shared constants (present in both constants files per the WHIT-136 guar
 
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from constants import PENDING_STATUS, POSTED_STATUS
@@ -119,6 +119,40 @@ def completed_cycle_windows(anchor_start: str, current_start: str, length: int,
     if len(starts) > max_cycles:
         starts = starts[-max_cycles:]
     return [(s.isoformat(), (s + timedelta(days=length - 1)).isoformat()) for s in starts]
+
+
+def spread_index(spread_from: str, current_start: str, length: int) -> int:
+    """How many whole pay cycles the current cycle is past a bill spread's anchor cycle:
+    0 while still in the cycle the spread was created in, 1 the next cycle, and so on.
+
+    A plain, UNCAPPED count — deliberately not `len(completed_cycle_windows(...))`, whose
+    `max_cycles` cap truncates the list and would pin the position at the cap, so a plan
+    could never be seen to end. `spread_from` is a cycle-aligned start captured at write
+    (like `carryover_from`), so on an unchanged pay cycle the day delta is an exact multiple
+    of `length` and this steps 0, 1, 2, ... with no drift.
+    """
+    return (date.fromisoformat(current_start) - date.fromisoformat(spread_from)).days // length
+
+
+def spread_adjustment(amount: Decimal, cycles: int, index: int) -> Decimal:
+    """The signed amount a bill spread adds to a category's spendable in the cycle at
+    `index` (see spread_index): the full `+amount` cushion in the anchor cycle (index 0),
+    an equal slice taken back in each of the next `cycles` cycles, and 0 once the plan
+    has run its course (or for a negative index, which no aligned plan produces).
+
+    Slices are worked out in whole cents so they sum back to `amount` EXACTLY — no lost
+    cent: `divmod` splits the cents evenly and the first `extra` slices carry one cent
+    more. `amount` is expected to be quantised to cents already (the write does that);
+    the half-up rounding is only a guard against a stray fraction.
+    """
+    if index == 0:
+        return amount
+    if index < 0 or index > cycles:
+        return Decimal(0)
+    cents = int((amount * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    base, extra = divmod(cents, cycles)
+    slice_cents = base + (1 if index <= extra else 0)
+    return Decimal(-slice_cents) / 100
 
 
 def transactions_in_window(transactions: list[dict], start: str, end: str) -> list[dict]:

@@ -288,6 +288,14 @@ ROLLOVER_SETTLE_LAG_DAYS = 10
 # older leftovers are dropped and the anchor jumps forward (an accepted cold-start limit).
 ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 
+# --- Budget bill spread (WHIT-504) -------------------------------------------
+# How many pay cycles a one-off bill may be paid back over. 1 = the whole bill is taken
+# back next cycle; 24 = about a year of fortnights (two years monthly). Handler-only (validation
+# on PUT /budgets/{category}/spread) — the shared spread math takes `cycles` as an
+# argument and never imports these, so shared/constants.py needs no mirror (WHIT-136).
+SPREAD_MIN_CYCLES = 1
+SPREAD_MAX_CYCLES = 24
+
 # Seed until the user sets their real payday: a fixed past date (a Wednesday, the
 # app's original default last_pay_date) + a fortnightly length. Any past date works —
 # the window math walks forward from it in `length`-day steps (P14/Slice 2).
