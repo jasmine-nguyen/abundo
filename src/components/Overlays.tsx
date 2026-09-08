@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Modal, ScrollView, TextInput, Animated, GestureResponderEvent, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict } from '../context';
-import type { RuleConflict } from '../context';
+import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, categoryLabel, APPLY_RULES_MAX_WRITES } from '../context';
+import type { RuleConflict, ApplyRulesResult, Category } from '../context';
+import { useInFlightGuard } from '../hooks/useInFlightGuard';
 import { useTransactionResolver, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
@@ -159,6 +160,7 @@ function SheetHost() {
             {s.sheet?.mode === 'addrule' && <AddRuleSheet key={s.sheet.ruleId ?? 'new'} />}
             {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
             {s.sheet?.mode === 'goalbalance' && <GoalBalanceSheet key={s.sheet.goalId} />}
+            {s.sheet?.mode === 'applyRules' && <ApplyRulesSheet />}
           </View>
         </Animated.View>
       </KeyboardAvoidingView>
@@ -739,6 +741,233 @@ function GoalBalanceSheet() {
   );
 }
 
+// WHIT-508: preview the user's existing rules against charges already stored, then file them.
+//
+// BankSync only runs rules as a transaction ARRIVES, so history never gets re-labelled. This is
+// the catch-up pass. It previews on mount (writing nothing) so an over-eager rule — "ALDI" also
+// catching VIVALDI — is visible BEFORE anything is written, which is the whole point of the sheet.
+//
+// It reads and writes only through the context actions, never src/api.ts directly: that keeps the
+// session-epoch bail every other awaited call gets, and keeps the `../context` mock seam the
+// screen tests use.
+type ApplyRulesPhase = 'loading' | 'preview' | 'applying' | 'done' | 'previewFailed' | 'writeFailed';
+
+function ApplyRulesSheet() {
+  const s = useAppContext(); // previewRuleApplication + applyRulesToHistory (writers) + setSheet
+  const { category } = useCategories();
+  const runGuarded = useInFlightGuard();
+  const [report, setReport] = useState<ApplyRulesResult | null>(null);
+  const [phase, setPhase] = useState<ApplyRulesPhase>('loading');
+  // Only the NEWEST preview may paint. "Try again" starts a second one while the first may still
+  // be running (a whole-history scan is slow), and without this the loser could resolve last and
+  // overwrite the correct answer. A per-effect `cancelled` flag can't see the retry's request.
+  const latestPreview = useRef(0);
+  // The context value changes identity on every toast/sheet change; pin the stable writers so the
+  // mount effect below can't re-fire a whole-history scan on an unrelated re-render.
+  const { previewRuleApplication, applyRulesToHistory, setSheet, showToast } = s;
+
+  const runPreview = useCallback(async () => {
+    const mine = ++latestPreview.current;
+    setPhase('loading');
+    const result = await previewRuleApplication();
+    if (mine !== latestPreview.current) return;
+    if (!result) { setPhase('previewFailed'); return; }
+    setReport(result);
+    setPhase('preview');
+  }, [previewRuleApplication]);
+
+  useEffect(() => { runPreview(); }, [runPreview]);
+
+  // The write RE-PLANS from a fresh scan and a fresh rule list, so its numbers — not the
+  // preview's — are the truthful ones afterwards. Replace the report wholesale.
+  const onApply = () => runGuarded(async () => {
+    setPhase('applying');
+    const result = await applyRulesToHistory();
+    if (!result) { setPhase('writeFailed'); return; }
+    setReport(result);
+    // `failed` rows were attempted and so are NOT in `remaining`, but they are still unfiled — a
+    // re-run picks them up. Both count as work left.
+    if (result.remaining + result.failed.length > 0) { setPhase('done'); return; }
+    setSheet(null);
+    showToast(applyRulesDoneMessage(result.filed.length));
+  });
+
+  if (phase === 'loading' || phase === 'applying') {
+    const label = phase === 'loading' ? 'Checking what your rules would file…' : 'Filing your charges…';
+    return (
+      <View testID="apply-rules-busy" style={styles.applyRulesBusy}>
+        <ActivityIndicator color={C.accent} />
+        <Text style={[styles.confirmSub, { marginTop: 14 }]}>{label}</Text>
+      </View>
+    );
+  }
+
+  if (phase === 'previewFailed') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Couldn't read your rules</Text>
+        <Text style={styles.confirmSub}>Nothing has been changed. Please try again.</Text>
+        <Pressable testID="apply-rules-retry" onPress={runPreview} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Try again</Text>
+        </Pressable>
+        <ApplyRulesCancel label="Cancel" onPress={() => setSheet(null)} />
+      </View>
+    );
+  }
+
+  if (phase === 'writeFailed') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Couldn't finish</Text>
+        {/* Deliberately NOT "nothing happened": the server writes row by row and only reports at
+            the end, so a dropped connection can leave charges already filed. And deliberately not
+            "pull down to refresh" — applyRulesToHistory already refreshed the caches for her. */}
+        <Text style={styles.confirmSub}>
+          Some charges may already have been filed. Your list and count have been refreshed — open this again to see what's left.
+        </Text>
+        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+      </View>
+    );
+  }
+
+  if (!report) return null;
+
+  // The server returns BEFORE scanning history when there are no rules at all, so `unfiled` is 0
+  // even with hundreds of unfiled charges. Branching on `matched === 0` alone would tell her she
+  // has nothing to file while the tab behind the sheet visibly shows otherwise.
+  if (report.rulesConsidered === 0) {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>You don't have any rules yet</Text>
+        <Text style={styles.confirmSub}>
+          Rules come from filing a charge and choosing "All from this merchant". Make one, then come back and it can sweep the rest of your history.
+        </Text>
+        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+      </View>
+    );
+  }
+
+  const stillToGo = report.remaining + report.failed.length;
+  const wrote = report.dryRun === false;
+
+  if (wrote && phase === 'done') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Filed {report.filed.length} {chargeNoun(report.filed.length)}</Text>
+        <Text style={styles.confirmSub}>
+          {stillToGo} still to go — we file up to {APPLY_RULES_MAX_WRITES} at a time.
+        </Text>
+        <Pressable testID="apply-rules-continue" onPress={onApply} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Apply the rest</Text>
+        </Pressable>
+        <ApplyRulesCancel label="Done for now" onPress={() => setSheet(null)} />
+      </View>
+    );
+  }
+
+  if (report.matched === 0) {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Nothing to file</Text>
+        <Text style={styles.confirmSub}>
+          None of your {report.rulesConsidered} {report.rulesConsidered === 1 ? 'rule' : 'rules'} match your {report.unfiled} unfiled {chargeNoun(report.unfiled)}.
+        </Text>
+        <ApplyRulesDetail report={report} category={category} />
+        <ApplyRulesCancel label="Close" onPress={() => setSheet(null)} />
+      </View>
+    );
+  }
+
+  const capped = report.matched > APPLY_RULES_MAX_WRITES;
+  return (
+    <View>
+      <Text style={styles.confirmTitle}>Apply my rules</Text>
+      <Text style={styles.confirmSub}>
+        Your rules can file {report.matched} of your {report.unfiled} unfiled {chargeNoun(report.unfiled)}.
+        {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this will take a few rounds.` : ''}
+      </Text>
+      <ApplyRulesDetail report={report} category={category} />
+      <Pressable testID="apply-rules-apply" onPress={onApply} style={[styles.btn, styles.btnPrimary]}>
+        <Text style={styles.btnPrimaryText}>
+          {capped ? `File up to ${APPLY_RULES_MAX_WRITES} now` : `File ${report.matched} ${chargeNoun(report.matched)}`}
+        </Text>
+      </Pressable>
+      <ApplyRulesCancel label="Cancel" onPress={() => setSheet(null)} />
+    </View>
+  );
+}
+
+/** "charge"/"charges" — the noun every count in this sheet takes. */
+function chargeNoun(count: number): string {
+  return count === 1 ? 'charge' : 'charges';
+}
+
+/** The one success toast, so a clean run and a finished multi-round run read the same. */
+function applyRulesDoneMessage(filed: number): string {
+  if (filed === 0) return 'Nothing left for your rules to file.';
+  return `Filed ${filed} ${chargeNoun(filed)} with your rules.`;
+}
+
+/** Cancel/Close writes nothing — the preview that opened this sheet was a dry run. */
+function ApplyRulesCancel({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable testID="apply-rules-cancel" onPress={onPress} style={[styles.btn, styles.btnGhost]}>
+      <Text style={styles.btnGhostText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+// The breakdown that makes this a preview rather than a dare: one row per rule with its count and
+// a few real descriptions, so a rule matching far more than expected is obvious before the write.
+// The server already sorts biggest-first, so the worst offender is always the first thing on screen.
+function ApplyRulesDetail({ report, category }: {
+  report: ApplyRulesResult;
+  category: (id: string | null) => Category | undefined;
+}) {
+  return (
+    <ScrollView style={styles.applyRulesScroll}>
+      {report.byRule.map((rule, index) => (
+        <View key={rule.ruleId ?? `rule-${index}`} testID="apply-rules-rule" style={styles.applyRulesRow}>
+          <Text style={styles.applyRulesRuleText}>
+            "{rule.value ?? '—'}" → {categoryLabel(rule.categoryId, category)} · {rule.count} {chargeNoun(rule.count)}
+          </Text>
+          {rule.samples.filter((sample) => sample).map((sample, sampleIndex) => (
+            <Text key={sampleIndex} style={styles.applyRulesSample} numberOfLines={1}>{sample}</Text>
+          ))}
+        </View>
+      ))}
+
+      {report.conflicted > 0 && (
+        <View testID="apply-rules-conflicts" style={styles.ruleConflict}>
+          <Text style={styles.ruleConflictText}>
+            {report.conflicted} {chargeNoun(report.conflicted)} match two rules that disagree, so they're left alone.
+          </Text>
+          {report.conflictedSamples.map((conflict, index) => (
+            <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>
+              {conflict.description ?? '—'} — {conflict.categoryIds.map((id) => categoryLabel(id, category)).join(' vs ')}
+            </Text>
+          ))}
+        </View>
+      )}
+
+      {report.skippedRules.length > 0 && (
+        <View testID="apply-rules-skipped" style={styles.applyRulesSkipped}>
+          <Text style={styles.fieldLabel}>
+            {report.skippedRules.length} {report.skippedRules.length === 1 ? 'rule' : 'rules'} skipped
+          </Text>
+          {/* The reason text is authored server-side and already plain English. Rendered verbatim
+              rather than through a client re-wording map, which would drift silently. */}
+          {report.skippedRules.map((skipped, index) => (
+            <Text key={skipped.id ?? `skipped-${index}`} style={styles.applyRulesSample}>
+              "{skipped.value ?? '—'}" — {skipped.reason}
+            </Text>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
 const styles = StyleSheet.create({
   // toast
   toastWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 200 },
@@ -795,4 +1024,12 @@ const styles = StyleSheet.create({
   cycleText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600' },
   cycleSectionLabel: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginTop: 20, letterSpacing: 0.2 },
   cycleSectionHint: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, lineHeight: 18, marginTop: 4 },
+
+  // apply-rules (WHIT-508) — bounded so a long rule list scrolls inside the sheet, like the picker
+  applyRulesBusy: { alignItems: 'center', paddingVertical: 34 },
+  applyRulesScroll: { maxHeight: 300, marginTop: 16 },
+  applyRulesRow: { paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.hairline },
+  applyRulesRuleText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textBright },
+  applyRulesSample: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 3 },
+  applyRulesSkipped: { marginTop: 4 },
 });
