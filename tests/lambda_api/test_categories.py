@@ -406,6 +406,43 @@ def test_update_rebucket_clear_rollover_is_best_effort(handler):
     assert repo.update_calls == [("coffee", "Coffee", "Income", "tag")]  # the re-bucket stuck
 
 
+def test_update_rebucket_to_income_clears_the_bill_spread_too(handler):
+    # A bill spread is spend-only like rollover (WHIT-504): moving the category to Income
+    # strips it, so a stale plan can't keep adjusting a spendable on a later move back.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58, "spread_amount": 100}})
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
+
+    assert resp["statusCode"] == 200
+    assert budget.clear_spread_calls == ["coffee"]
+
+
+def test_update_within_spend_bucket_does_not_clear_the_bill_spread(handler):
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(budgets={"coffee": {"target": 58, "spread_amount": 100}})
+
+    resp = handler.update_category(_category_item_event("PATCH"), repo, budget)  # bucket "Living"
+
+    assert resp["statusCode"] == 200
+    assert budget.clear_spread_calls == []
+
+
+def test_update_rebucket_still_attempts_the_spread_clear_when_the_rollover_clear_fails(handler):
+    # Each clear is its own best-effort attempt: a failing rollover clear must not skip the
+    # spread clear (or vice-versa), and neither may fail the bucket edit.
+    repo = FakeCategoryRepo()
+    budget = FakeBudgetRepo(raises=handler.VersionConflictError("contention"))
+
+    resp = handler.update_category(
+        _category_item_event("PATCH", body='{"name": "Coffee", "bucket": "Income"}'), repo, budget)
+
+    assert resp["statusCode"] == 200
+    assert budget.clear_rollover_calls == ["coffee"]
+    assert budget.clear_spread_calls == ["coffee"]
+
+
 def test_update_rebucket_to_savings_with_zero_target_still_rejected(handler):
     # The guard keys on `cat_id in list_budgets()`; a stored target of 0 is still a KEY
     # there, so a 0-target category is NOT a hole — re-bucketing it into Savings is blocked,

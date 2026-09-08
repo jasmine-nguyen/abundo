@@ -18,6 +18,13 @@ _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 # NOT imported from shared/constants.py — so the WHIT-136 constants-sync guard is untouched.
 _ROLLOVER_FIELDS = ("rollover", "carryover", "carryover_from", "carryover_len", "carryover_paydate")
 
+# The bill-spread fields on a budget entry (WHIT-504): the bill amount, how many cycles it
+# is paid back over, and the anchor cycle it was created in (`spread_from`) plus the pay
+# cycle that anchor was captured under (`spread_len`/`spread_paydate`, so a cycle-config
+# change can be detected — the same pattern as the rollover anchor). Spend-only, like
+# rollover, and cleared on a reclassify out of spend. Kept local for the same WHIT-136 reason.
+_SPREAD_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
+
 
 class BudgetRepository:
     """Stores per-category budget targets as a single DynamoDB config item.
@@ -27,8 +34,9 @@ class BudgetRepository:
     once a category opts into rollover (WHIT budget-rollover), the optional fields
     `rollover` (bool), `carryover` (signed Decimal buffer), `carryover_from` (ISO cycle
     start the buffer is sealed as of), `carryover_len`/`carryover_paydate` (the pay-cycle
-    the buffer was sealed under, so a cycle-config change can re-anchor). All optional
-    fields are absent on a legacy/non-rollover budget and default to off/0. Kept separate from
+    the buffer was sealed under, so a cycle-config change can re-anchor), or — instead of
+    rollover, never alongside it — a bill spread's `spread_*` fields (see _SPREAD_FIELDS,
+    WHIT-504). All optional fields are absent on a legacy/plain budget and default to off/0. Kept separate from
     the CATEGORIES item on purpose: an independent version means budget writes and
     category edits never contend on the same lock. Unlike the taxonomy there is no
     server seed — a target exists only once the user sets one, so the map seeds
@@ -76,22 +84,26 @@ class BudgetRepository:
             item = self._get_config()  # re-read so a concurrent set is reflected
         return dict(item["items"])
 
-    def _merge_entry(self, cat_id: str, fields: dict) -> dict:
+    def _merge_entry(self, cat_id: str, fields: dict, drop: tuple = ()) -> dict:
         """Read-modify-write ONE category entry: merge `fields` over the existing entry
-        (or an empty one) and write the whole entry back under the optimistic-lock guard.
+        (or an empty one), minus any keys in `drop`, and write the whole entry back under
+        the optimistic-lock guard.
 
         Merge — not a per-field nested SET — for two reasons: it PRESERVES the entry's
         other fields (so an amount edit can't wipe a stored `carryover`/`rollover`, and a
         settle can't wipe `target`), and it works when the entry doesn't exist yet (a
         nested `SET #items.#id.#field` errors on a missing parent map, but `SET #items.#id
-        = :val` is valid because the `items` map itself is always seeded). Retries once on
-        a version race; raises VersionConflictError if it can't converge.
+        = :val` is valid because the `items` map itself is always seeded). `drop` is
+        applied on EVERY attempt, so a retry after a version race re-strips whatever the
+        competing writer merged in. Retries once on a version race; raises
+        VersionConflictError if it can't converge.
         """
         self._ensure_seeded()
         for _attempt in range(2):
             item = self._get_config()
             version = item["version"]
-            entry = {**item["items"].get(cat_id, {}), **fields}
+            existing = {k: v for k, v in item["items"].get(cat_id, {}).items() if k not in drop}
+            entry = {**existing, **fields}
             try:
                 self._get_table().update_item(
                     Key=_BUDGETS_KEY,
@@ -127,13 +139,19 @@ class BudgetRepository:
         left untouched (frozen-then-resumed), so toggling OFF then ON keeps the buffer but
         never seals the cycles that elapsed while it was off. Raises VersionConflictError
         if it can't converge within the retry budget.
+
+        A category has rollover OR a bill spread, never both (WHIT-504). The handler 400s
+        the co-state up front, but that is check-then-act; this write is where the rule is
+        made structural — turning rollover ON strips any spread fields in the SAME write,
+        so a lost race can never leave both stored (last writer wins).
         """
         fields: dict = {"target": target}
         if rollover is not None:
             fields["rollover"] = rollover
         if anchor is not None:
             fields.update(anchor)
-        entry = self._merge_entry(cat_id, fields)
+        drop = _SPREAD_FIELDS if rollover else ()
+        entry = self._merge_entry(cat_id, fields, drop=drop)
         return {"id": cat_id, "target": entry["target"]}
 
     def settle_carryover(self, cat_id: str, carryover: Decimal, carryover_from: str,
@@ -186,6 +204,29 @@ class BudgetRepository:
                 # The version moved under us; loop re-reads and retries once.
         raise VersionConflictError("delete_budget: exhausted retries under write contention")
 
+    def set_spread(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
+                   spread_len: int, spread_paydate: str) -> dict:
+        """Record (upsert) a bill spread on a category's budget entry (WHIT-504): cover
+        `amount` this cycle and take it back in equal slices over the next `cycles` cycles.
+        The anchor is the current cycle start plus the pay cycle it was captured under, so a
+        later cycle-config change is detectable (as with the rollover anchor).
+
+        Preserves `target` via _merge_entry. The handler has already quantised `amount` to
+        cents and enforced that a target exists and rollover is off — but that check is
+        check-then-act, so this write strips any rollover fields in the SAME write: a
+        category has rollover OR a spread, never both, even after a lost race (last writer
+        wins; the mirror strip lives in set_budget). Raises VersionConflictError if it
+        can't converge.
+        """
+        entry = self._merge_entry(cat_id, {
+            "spread_amount": amount,
+            "spread_cycles": Decimal(cycles),
+            "spread_from": spread_from,
+            "spread_len": Decimal(spread_len),
+            "spread_paydate": spread_paydate,
+        }, drop=_ROLLOVER_FIELDS)
+        return {"id": cat_id, "amount": entry["spread_amount"], "cycles": cycles}
+
     def clear_rollover(self, cat_id: str) -> None:
         """Strip the rollover fields (see _ROLLOVER_FIELDS) from a category's budget entry,
         KEEPING its `target` — run when the category is reclassified out of a spend bucket
@@ -193,26 +234,41 @@ class BudgetRepository:
         later move back to spend under the same pay cycle, `list_budgets` would re-fold every
         cycle since — inflating the buffer with money that was never budgeted (WHIT-474).
 
+        The buffer itself is discarded: it is meaningless on an Income earn-target, and
+        re-enabling rollover later starts fresh. No-op/lock semantics per _strip_fields.
+        """
+        self._strip_fields(cat_id, _ROLLOVER_FIELDS, "clear rollover")
+
+    def clear_spread(self, cat_id: str) -> None:
+        """Strip the bill-spread fields (see _SPREAD_FIELDS) from a category's budget entry,
+        KEEPING its `target` and rollover fields — run when the user removes the spread, when
+        a plan has run its course or been settled after a pay-cycle change (best-effort from
+        the read path), and on a reclassify out of spend. No-op/lock semantics per _strip_fields.
+        """
+        self._strip_fields(cat_id, _SPREAD_FIELDS, "clear spread")
+
+    def _strip_fields(self, cat_id: str, fields: tuple, operation: str) -> None:
+        """Remove `fields` from ONE category's budget entry, keeping everything else.
+
         Idempotent no-op (no seed, no version bump) when the category has no budget entry or
-        the entry carries no rollover fields — the common case, so a plain edit of an
-        Income/Savings category is cheap. Writes the whole stripped entry back (a plain
-        `{"target": ...}`) under the same optimistic-lock guard as set_budget, retrying once
-        on a race. The buffer itself is discarded: it is meaningless on an Income earn-target,
-        and re-enabling rollover later starts fresh.
+        the entry carries none of `fields` — the common case, so a plain edit of an
+        Income/Savings category is cheap. Writes the whole stripped entry back under the same
+        optimistic-lock guard as set_budget, retrying once on a race. `operation` names the
+        caller in the error it raises.
         """
         for _attempt in range(2):
             item = self._get_config()
             if item is None or cat_id not in item["items"]:
                 return  # no budget for this id -> nothing to clear
             entry = item["items"][cat_id]
-            stripped = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
+            stripped = {k: v for k, v in entry.items() if k not in fields}
             if stripped == entry:
-                return  # no rollover fields -> no-op, don't bump the version
+                return  # none of the fields present -> no-op, don't bump the version
             version = item["version"]
             try:
                 self._get_table().update_item(
                     Key=_BUDGETS_KEY,
-                    # Rewrite ONE entry (target only); SET bumps the version. Other ids untouched.
+                    # Rewrite ONE entry; SET bumps the version. Other ids untouched.
                     UpdateExpression="SET #items.#id = :val, #v = :next",
                     ConditionExpression="attribute_exists(pk) AND #v = :expected",
                     ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
@@ -225,6 +281,6 @@ class BudgetRepository:
                 return
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "clear rollover")
+                    handle_database_error(e, operation)
                 # The version moved under us; loop re-reads and retries once.
-        raise VersionConflictError("clear_rollover: exhausted retries under write contention")
+        raise VersionConflictError(f"{operation}: exhausted retries under write contention")
