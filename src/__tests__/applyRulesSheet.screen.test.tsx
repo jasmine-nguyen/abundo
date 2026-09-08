@@ -90,9 +90,41 @@ it('says "no rules yet" when the user has none — never "0 unfiled charges"', a
 it('says the rules match nothing when there are rules but no hits', async () => {
   await mountWithPreview(report({ rulesConsidered: 2, unfiled: 10, matched: 0, byRule: [], remaining: 0 }));
 
-  expect(screen.getByText('Nothing to file')).toBeTruthy();
+  expect(screen.getByText('Nothing to file automatically')).toBeTruthy();
   expect(screen.getByText('None of your 2 rules match your 10 unfiled charges.')).toBeTruthy();
   expect(screen.queryByTestId('apply-rules-apply')).toBeNull();
+});
+
+// `matched === 0` does NOT mean the rules missed: rule_apply counts a rule's hits BEFORE the
+// conflict check, so two rules that disagree on every charge they cover give matched 0 with a
+// non-empty breakdown. The old copy claimed "none of your rules match" directly above a list
+// showing them matching. Fail-on-revert: restore that sentence and this reddens.
+it('does not claim the rules missed when they actually disagreed', async () => {
+  await mountWithPreview(report({
+    rulesConsidered: 2, unfiled: 10, matched: 0, conflicted: 5,
+    conflictedSamples: [{ description: 'COLES EXPRESS', categoryIds: ['fuel', 'groceries'] }],
+    byRule: [{ ruleId: 'r1', value: 'coles', categoryId: 'groceries', count: 5, samples: [] }],
+    remaining: 0,
+  }));
+
+  expect(screen.getByText('Your rules disagree about every charge they cover, so none were filed.')).toBeTruthy();
+  expect(screen.queryByText(/match your 10 unfiled/)).toBeNull();
+  expect(screen.getByText('"coles" → Groceries · 5 charges')).toBeTruthy();  // the breakdown agrees
+});
+
+// The other route to matched 0: every rule was SKIPPED, so none was ever evaluated. Saying they
+// "don't match" would be inventing a reason the report doesn't support.
+it('says the rules could not be applied when every one was skipped', async () => {
+  await mountWithPreview(report({
+    rulesConsidered: 2, unfiled: 10, matched: 0, byRule: [], remaining: 0,
+    skippedRules: [
+      { id: 'r1', value: 'uber', reason: 'rule has more than one condition' },
+      { id: 'r2', value: 'aldi', reason: 'category no longer exists' },
+    ],
+  }));
+
+  expect(screen.getByText('None of your 2 rules can be applied — see why below.')).toBeTruthy();
+  expect(screen.queryByText(/match your 10 unfiled/)).toBeNull();
 });
 
 // --- the preview --------------------------------------------------------------
@@ -209,15 +241,67 @@ it('cancel closes the sheet and writes nothing', async () => {
 it('keeps the sheet open with the work left, counting failed rows too', async () => {
   await mountWithPreview(report({ unfiled: 639, matched: 512, remaining: 512 }));
   fns.applyRulesToHistory.mockResolvedValue(report({
-    dryRun: false, matched: 512, filed: [{ id: 't1', category: 'groceries' }], remaining: 200, failed: ['t9', 't10'],
+    dryRun: false, matched: 512, remaining: 200, failed: ['t9', 't10'],
+    filed: Array.from({ length: 298 }, (_, n) => ({ id: `t${n}`, category: 'groceries' })),
   }));
 
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
 
-  expect(screen.getByText('202 still to go — we file up to 300 at a time.')).toBeTruthy();
+  expect(screen.getByText(/202 still to go/)).toBeTruthy();
+  expect(screen.getByText(/2 we couldn't save/)).toBeTruthy();
   expect(screen.getByTestId('apply-rules-continue')).toBeTruthy();
   expect(fns.setSheet).not.toHaveBeenCalledWith(null);   // stays open for the next round
   expect(fns.showToast).not.toHaveBeenCalled();          // the sheet says it; a toast would repeat it
+});
+
+// The cap is only one of three reasons a run stops — the server also has a wall-clock budget, and
+// rows can be left over because they ERRORED. Blaming the cap for a run that attempted 3 rows is a
+// made-up explanation. Fail-on-revert: print the cap line unconditionally and this reddens.
+it('only blames the 300 cap when the run actually reached it', async () => {
+  await mountWithPreview(report({ unfiled: 639, matched: 512, remaining: 512 }));
+  fns.applyRulesToHistory.mockResolvedValue(report({
+    dryRun: false, matched: 512, filed: [{ id: 't1', category: 'groceries' }], remaining: 12,
+  }));
+
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+
+  expect(screen.getByText('12 still to go.')).toBeTruthy();
+  expect(screen.queryByText(/up to 300 at a time/)).toBeNull();
+});
+
+// A round where every write errored saved nothing. "Filed 0 charges" reads as success.
+it('does not report a filing when the round saved nothing', async () => {
+  await mountWithPreview(report({ unfiled: 639, matched: 512, remaining: 512 }));
+  fns.applyRulesToHistory.mockResolvedValue(report({
+    dryRun: false, matched: 512, filed: [], failed: ['t1', 't2'], remaining: 300,
+  }));
+
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+
+  expect(screen.getByText("Couldn't file any this time")).toBeTruthy();
+  expect(screen.queryByText(/Filed 0/)).toBeNull();
+});
+
+// Each round's report describes only ITS round, so reading the total off the last one would
+// announce "Filed 39" after filing 639. Fail-on-revert: toast result.filed.length and this reddens.
+it('counts the whole job across rounds, not just the last one', async () => {
+  await mountWithPreview(report({ unfiled: 639, matched: 639, remaining: 639 }));
+  const round = (filed: number, remaining: number) => report({
+    dryRun: false, matched: 639, remaining,
+    filed: Array.from({ length: filed }, (_, n) => ({ id: `r${remaining}-${n}`, category: 'groceries' })),
+  });
+
+  fns.applyRulesToHistory.mockResolvedValueOnce(round(300, 339));
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+  expect(screen.getByText('Filed 300 charges so far')).toBeTruthy();
+
+  fns.applyRulesToHistory.mockResolvedValueOnce(round(300, 39));
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+  expect(screen.getByText('Filed 600 charges so far')).toBeTruthy();
+
+  fns.applyRulesToHistory.mockResolvedValueOnce(round(39, 0));
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+  expect(fns.showToast).toHaveBeenCalledWith('Filed 639 charges with your rules.');
 });
 
 // A PREVIEW sets remaining = matched, so a partial state keyed on `remaining > 0` would fire on
@@ -238,8 +322,9 @@ it('re-renders from the write response, not the stale preview', async () => {
 
   await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
 
-  expect(screen.getByText('Filed 1 charge')).toBeTruthy();
-  expect(screen.getByText('12 still to go — we file up to 300 at a time.')).toBeTruthy();
+  expect(screen.getByText('Filed 1 charge so far')).toBeTruthy();
+  // 12 left, from the write's re-plan — not the preview's 512.
+  expect(screen.getByText('12 still to go.')).toBeTruthy();
 });
 
 it('reports nothing left when a re-run files zero', async () => {
@@ -266,26 +351,22 @@ it('offers a retry when the preview fails, and the retry re-previews', async () 
   expect(screen.getByTestId('apply-rules-apply')).toBeTruthy();
 });
 
-// "Try again" is a plain button, not a guarded write, so two taps really do put two whole-history
-// scans in flight. Whichever the network returns LAST would paint — and the older one is the wrong
-// answer. Fail-on-revert: drop the request counter (or use a per-effect `cancelled` flag, which
-// cannot see the retry's request) and the stale 999-row plan wins.
-it('ignores a stale preview that resolves after a newer one', async () => {
+// A preview is a whole-history scan plus a live rules read. Two in flight cost double the server
+// work and can resolve out of order, painting the older answer over the newer — so the retry shares
+// the mount call's latch. Fail-on-revert: call runPreview unguarded and the second scan starts.
+it('runs one preview even when Try again is double-tapped', async () => {
   await mountWithPreview(null);   // first attempt fails → the retry button is on screen
+  expect(fns.previewRuleApplication).toHaveBeenCalledTimes(1);
 
-  const first = deferred<ApplyRulesResult | null>();
-  const second = deferred<ApplyRulesResult | null>();
-  fns.previewRuleApplication.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-
+  const pending = deferred<ApplyRulesResult | null>();
+  fns.previewRuleApplication.mockReturnValue(pending.promise);
   const retry = screen.getByTestId('apply-rules-retry');
   await act(async () => { fireEvent.press(retry); fireEvent.press(retry); });
 
-  // The NEWER request answers first, then the older, slower one straggles in behind it.
-  await act(async () => { second.resolve(report({ matched: 4 })); });
-  await act(async () => { first.resolve(report({ matched: 999 })); });
+  expect(fns.previewRuleApplication).toHaveBeenCalledTimes(2);   // one retry, not two
 
+  await act(async () => { pending.resolve(report({ matched: 4 })); });
   expect(screen.getByText('File 4 charges')).toBeTruthy();
-  expect(screen.queryByText('File 999 charges')).toBeNull();
 });
 
 // The blocker: the server commits row by row, so an abort mid-write can leave charges filed. The

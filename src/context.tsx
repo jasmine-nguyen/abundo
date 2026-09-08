@@ -553,8 +553,8 @@ function readTransactionsCache(): Transaction[] {
 }
 // Map the caller's per-row transform over the feed pages, the uncategorized-feed pages (page
 // boundaries + cursors preserved) AND the flat recent array, so an optimistic edit reflects on the
-// tab list, the uncategorized tab, the dot,
-// account-detail, and goal-edit at once. On the uncategorized tab this is what drops a just-filed
+// tab list, the uncategorized tab, the dot, account-detail, and goal-edit at once.
+// On the uncategorized tab this is what drops a just-filed
 // row from the list instantly: the row stays in the cached page but no longer matches the client
 // re-filter, so it disappears without a whole-history re-scan.
 // Most callers are a plain .map() that adds and removes no rows. The exception is WHIT-508's
@@ -670,8 +670,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // privacy shield returns null for 'locked' too — so the apply-rules sheet's local state dies
     // while the context-held `sheet` survives. On unlock it would remount and fire a SECOND
     // whole-history scan with no memory of the first run. There is no half-typed draft to
-    // preserve here, so drop it: the run finishes in the provider and toasts, and the next open
-    // previews fresh against whatever actually landed.
+    // preserve here, so drop it: the run finishes in the provider, the caches refresh, and the
+    // next open previews fresh against whatever actually landed. (No toast survives a lock either
+    // way — the same shield unmounts the Toast, and its timer clears it before unlock.)
     // Keyed on the same condition the shield unmounts on (`!== 'authed'`), not on 'anon', so a
     // re-broadcast of 'authed' can't close a sheet the user is still reading.
     if (getStatus() !== 'authed') setSheet((prev) => (prev?.mode === 'applyRules' ? null : prev));
@@ -1128,8 +1129,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // half invalidates instead — a refetch on a hook we don't own isn't available, and invalidate
   // correctly just marks stale when nothing is watching.
   //
-  // ['transactions'] is deliberately NOT invalidated: the reconcile below already wrote the change
-  // into that cache, and an invalidate would storm it.
+  // ['transactions'] is deliberately NOT invalidated: on the success path the reconcile below has
+  // already written the change into that cache, and an invalidate would storm it. On the FAILURE
+  // path there is no reconcile, so the All tab and the recent window can hold a stale category for
+  // up to their 45s staleTime — accepted: the storm argument still holds, the Uncategorized tab and
+  // the badge (the numbers this feature is about) are correct immediately, and focus reconciles the
+  // rest. The sheet's failure copy is worded to match, claiming only the unfiled list and count.
   const refreshAfterApplyRules = useCallback(() => {
     queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed'], (prev) =>
       prev && prev.pages.length > 1
