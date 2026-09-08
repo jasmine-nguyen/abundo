@@ -39,7 +39,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # leak across tests).
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
-    "banksync_enrichments", "insights_ai", "anthropic_client",
+    "banksync_enrichments", "insights_ai", "anthropic_client", "rule_apply",
     "spend", "repayment_rules", "api_key",
 )
 
@@ -60,6 +60,29 @@ def handler():
 
     try:
         yield h
+    finally:
+        for name in _COLLIDING:
+            sys.modules.pop(name, None)
+        for name, mod in saved.items():
+            if mod is not None:
+                sys.modules[name] = mod
+
+
+@pytest.fixture
+def rule_apply():
+    """Import lambda_api/rule_apply.py in isolation — the pure rule-matching logic, tested
+    without the handler's scan or writes."""
+    for d in (_SHARED_DIR, _LAMBDA_API_DIR):
+        while d in sys.path:
+            sys.path.remove(d)
+    sys.path.insert(0, _SHARED_DIR)
+    sys.path.insert(0, _LAMBDA_API_DIR)
+
+    saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
+    import rule_apply as ra
+
+    try:
+        yield ra
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)
