@@ -4,12 +4,13 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
 
 export type { LoanFacts, LoanFactsInput } from './api';
+export type { ApplyRulesResult } from './api';
 // WHIT-190a: the categorise write double-writes the query cache (for the migrated
 // Transactions list) alongside the old store (for the tab badge + budget detail).
 // Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
@@ -110,6 +111,9 @@ export type Sheet =
   | { mode: 'addrule'; ruleId?: string }   // ruleId set -> editing an existing rule
   | { mode: 'paycycle' }
   | { mode: 'goalbalance'; goalId: string } // update a manual goal's balance in place (WHIT-235)
+  // WHIT-508: preview then apply the user's existing rules to charges already stored. No params —
+  // everything it shows comes from the server's own plan summary.
+  | { mode: 'applyRules' }
   | null;
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
@@ -119,6 +123,13 @@ export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
 // of this size so a large merchant spans multiple requests instead of tripping the
 // server's per-request cap. Keep the two equal.
 const CATEGORY_BATCH_LIMIT = 100;
+
+// Max charges ONE apply-rules request writes. Mirrors the server's APPLY_RULES_MAX_WRITES
+// (lambda_api/constants.py) — the parity is asserted by applyRulesCap.logic.test.ts, since a
+// comment alone drifts. With ~639 unfiled charges the FIRST run is expected to be partial, so
+// the preview says so UP FRONT instead of promising a number one tap can't deliver. The server
+// can stop even earlier (a wall-clock budget), hence "up to" in the copy. Keep the two equal.
+export const APPLY_RULES_MAX_WRITES = 300;
 
 // WHIT-292: the batch category write shared by applyCategory('all') and applyCategoryToMany.
 // Chunk the ids under the server's per-request cap (CATEGORY_BATCH_LIMIT), send the chunks
@@ -435,6 +446,11 @@ export interface AppContext {
   applyCategory: (scope: 'one' | 'all') => Promise<void>;
   // WHIT-291: re-file every id under one category in a single batch (partial rollback on failure).
   applyCategoryToMany: (txIds: string[], categoryId: string) => Promise<void>;
+  // WHIT-508: preview what the existing rules would file across stored history. Writes nothing.
+  previewRuleApplication: () => Promise<ApplyRulesResult | null>;
+  // WHIT-508: file what the rules cover, capped at APPLY_RULES_MAX_WRITES per call. Returns the
+  // server's report (null on failure, where the outcome is unknown and the caches are refreshed).
+  applyRulesToHistory: () => Promise<ApplyRulesResult | null>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
@@ -566,11 +582,15 @@ function readTransactionsCache(): Transaction[] {
   return merged;
 }
 // Map the caller's per-row transform over the feed pages, the uncategorized-feed pages (page
-// boundaries + cursors preserved — every caller is a .map() that adds/removes no rows) AND the flat
-// recent array, so an optimistic edit reflects on the tab list, the uncategorized tab, the dot,
-// account-detail, and goal-edit at once. On the uncategorized tab this is what drops a just-filed
+// boundaries + cursors preserved) AND the flat recent array, so an optimistic edit reflects on the
+// tab list, the uncategorized tab, the dot, account-detail, and goal-edit at once.
+// On the uncategorized tab this is what drops a just-filed
 // row from the list instantly: the row stays in the cached page but no longer matches the client
 // re-filter, so it disappears without a whole-history re-scan.
+// Most callers are a plain .map() that adds and removes no rows. The exception is WHIT-508's
+// apply-rules reconcile, which also REMOVES rows the server reported as deleted mid-run: safe
+// because page boundaries and cursors are untouched and the feeds already tolerate a sparse or
+// empty page (see useUncategorizedFeedQuery).
 function patchInfiniteFeed(key: readonly unknown[], fn: (prev: Transaction[]) => Transaction[]): void {
   queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(key, (prev) =>
     prev ? { ...prev, pages: prev.pages.map((pg) => ({ ...pg, transactions: fn(pg.transactions) })) } : prev);
@@ -592,6 +612,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // keystroke writes it with zero re-renders, and the sheet reads it once on remount (post-unlock).
   // Cleared when any sheet closes (submit/cancel) and on sign-out, so nothing leaks to the next session.
   const sheetDrafts = useRef<Map<string, unknown>>(new Map());
+  // WHIT-508: one apply-rules run at a time, held here rather than in the sheet — see the writer.
+  const applyRulesInFlight = useRef(false);
   const readSheetDraft = useCallback((key: string): unknown => sheetDrafts.current.get(key), []);
   const writeSheetDraft = useCallback((key: string, value: unknown) => { sheetDrafts.current.set(key, value); }, []);
   // WHIT-192: rule edits are mirrored straight into the ['rules'] query cache the Rules
@@ -676,6 +698,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { if (sheet === null) sheetDrafts.current.clear(); }, [sheet]);
 
   useEffect(() => subscribe(() => {
+    // WHIT-508: a LOCK (not just sign-out) unmounts the whole overlay layer — Overlays' WHIT-268
+    // privacy shield returns null for 'locked' too — so the apply-rules sheet's local state dies
+    // while the context-held `sheet` survives. On unlock it would remount and fire a SECOND
+    // whole-history scan with no memory of the first run. There is no half-typed draft to
+    // preserve here, so drop it: the run finishes in the provider, the caches refresh, and the
+    // next open previews fresh against whatever actually landed. (No toast survives a lock either
+    // way — the same shield unmounts the Toast, and its timer clears it before unlock.)
+    // Keyed on the same condition the shield unmounts on (`!== 'authed'`), not on 'anon', so a
+    // re-broadcast of 'authed' can't close a sheet the user is still reading.
+    if (getStatus() !== 'authed') setSheet((prev) => (prev?.mode === 'applyRules' ? null : prev));
     if (getStatus() !== 'anon') return;
     sessionEpoch.current += 1;
     clearTimeout(toastTimer.current);
@@ -1114,6 +1146,103 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
     }
   }, [showToast, patchTransactions]);
+
+  // WHIT-508: bring the server-derived reads back in line after an apply-rules run.
+  //
+  // Ordering matters. Invalidating an InfiniteData refetches EVERY loaded page sequentially (the
+  // storm applyCategory documents above), and each page of the now-sparse uncategorized feed makes
+  // the server re-walk up to its own scan cap. So trim to page 1 FIRST, then invalidate: one round
+  // trip. `resetQueries` would also avoid the storm but drops the data, and the tab's cold-load
+  // gate is `isLoading && transactions.length === 0` — so the list would blank to a spinner right
+  // after a successful bulk file. Trimming keeps page 1 on screen while it refetches.
+  //
+  // The trim mirrors refetchList's (queries.ts), which then calls `refetch()` because it holds the
+  // hook. The provider doesn't, and the sheet can be opened with no active feed observer, so this
+  // half invalidates instead — a refetch on a hook we don't own isn't available, and invalidate
+  // correctly just marks stale when nothing is watching.
+  //
+  // ['transactions'] is deliberately NOT invalidated: on the success path the reconcile below has
+  // already written the change into that cache, and an invalidate would storm it. On the FAILURE
+  // path there is no reconcile, so the All tab and the recent window can hold a stale category for
+  // up to their 45s staleTime — accepted: the storm argument still holds, the Uncategorized tab and
+  // the badge (the numbers this feature is about) are correct immediately, and focus reconciles the
+  // rest. The sheet's failure copy is worded to match, claiming only the unfiled list and count.
+  const refreshAfterApplyRules = useCallback(() => {
+    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed'], (prev) =>
+      prev && prev.pages.length > 1
+        ? { ...prev, pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
+        : prev);
+    queryClient.invalidateQueries({ queryKey: ['budgets'] });
+    queryClient.invalidateQueries({ queryKey: ['breakdown'] });
+    queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
+    queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
+    queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
+    queryClient.invalidateQueries({ queryKey: ['uncategorizedFeed'] });
+    // The reconcile writes the SERVER's category id onto the row, and a row whose id isn't in the
+    // client's taxonomy still counts as unfiled (categoryIsUnmapped). So a category created in
+    // another session during the run would leave its charges sitting in the Uncategorized list
+    // while the badge dropped — list and badge disagreeing. Re-read the taxonomy too.
+    queryClient.invalidateQueries({ queryKey: ['categories'] });
+  }, []);
+
+  // WHIT-508: preview what the user's existing rules would file, writing nothing. Lives here
+  // rather than in the sheet so the component never imports the api layer directly: it keeps the
+  // `../api` mock seam every screen test relies on, and it gets the same session-epoch bail every
+  // other awaited call has — a preview landing after a sign-out must not paint the next session.
+  const previewRuleApplication = useCallback(async (): Promise<ApplyRulesResult | null> => {
+    const epoch = sessionEpoch.current;
+    try {
+      const result = await applyRulesToUncategorized(true);
+      if (epoch !== sessionEpoch.current) return null;
+      return result;
+    } catch {
+      return null; // a preview writes nothing, so there is nothing to reconcile
+    }
+  }, []);
+
+  // WHIT-508: file every charge the rules cover. The server has already committed by the time it
+  // answers and tells us exactly which rows landed, so — unlike applyCategory/applyCategoryToMany
+  // — there is no optimistic write, no previous-category snapshot and no rollback to build.
+  // Returns the server's own report (null on failure) so the sheet can offer "Apply the rest"
+  // after a capped run without paying for a second whole-history preview.
+  const applyRulesToHistory = useCallback(async (): Promise<ApplyRulesResult | null> => {
+    // The latch lives HERE, not in the sheet: dismissing the sheet mid-write unmounts it, and
+    // reopening would otherwise mint a fresh component latch and let a second 300-write run start
+    // on top of the first. The provider outlives the sheet, so one run at a time really means one.
+    if (applyRulesInFlight.current) return null;
+    applyRulesInFlight.current = true;
+    const epoch = sessionEpoch.current;
+    try {
+      const result = await applyRulesToUncategorized(false);
+      if (epoch !== sessionEpoch.current) return null; // signed out mid-flight
+
+      const filedBy = new Map(result.filed.map((row) => [row.id, row.category]));
+      const vanished = new Set(result.vanished);
+      if (filedBy.size > 0 || vanished.size > 0) {
+        // One pass over all three list caches. A filed row stops matching the Uncategorized tab's
+        // client re-filter and disappears instantly; a vanished row is gone server-side, so leaving
+        // it would show a phantom charge until the next refetch.
+        patchTransactions((prev) => prev
+          .filter((existing) => !vanished.has(existing.transaction_id))
+          .map((existing) => (filedBy.has(existing.transaction_id)
+            ? { ...existing, category: filedBy.get(existing.transaction_id)! }
+            : existing)));
+      }
+      refreshAfterApplyRules();
+      return result;
+    } catch {
+      if (epoch !== sessionEpoch.current) return null;
+      // The outcome is UNKNOWN, not "nothing happened": the server writes row by row and only
+      // reports at the end, so an abort, a dropped connection or a late 5xx can leave up to
+      // APPLY_RULES_MAX_WRITES charges filed. The count has a 5-minute staleTime, so without this
+      // the badge, tab list and budgets would keep the old numbers until a manual pull. Refresh
+      // and let the sheet say the outcome is uncertain.
+      refreshAfterApplyRules();
+      return null;
+    } finally {
+      applyRulesInFlight.current = false;
+    }
+  }, [patchTransactions, refreshAfterApplyRules]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
@@ -1610,9 +1739,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -2654,6 +2783,21 @@ export function categoryIsUnmapped(
   lookup: (id: string | null) => Category | undefined,
 ): boolean {
   return categoryId !== 'income' && (categoryId == null || !lookup(categoryId));
+}
+
+// WHIT-508: the display name for a category id that came back from the SERVER — a rule's target,
+// a byCategory key, a conflict's disagreeing ids. The exact complement of categoryIsUnmapped:
+// 'income' is a real filed bucket with no row in the taxonomy map, so a rule pointing at it must
+// read "Income" rather than nothing. Anything else unresolved falls back to the raw id — never an
+// empty label sitting under a count.
+export function categoryLabel(
+  categoryId: string,
+  lookup: (id: string | null) => Category | undefined,
+): string {
+  if (categoryId === 'income') return 'Income';
+  // `||`, not `??`: a category whose name is an empty string would otherwise render as a blank
+  // label under a count — the exact thing this helper exists to prevent.
+  return lookup(categoryId)?.name || categoryId;
 }
 
 // A transaction is uncategorized when it has no resolvable Abundo category: its

@@ -61,6 +61,15 @@ const AI_GENERATE_TIMEOUT_MS = 60_000;
 const BALANCE_REFRESH_TIMEOUT_MS = 30_000;
 
 /**
+ * Applying rules to history walks the WHOLE stored history, reads the live rule list from
+ * BankSync, then writes up to 300 charges — seconds of work, so the default 15s read budget
+ * would abort a run that is actually succeeding. Its own constant rather than a reuse of
+ * BALANCE_REFRESH_TIMEOUT_MS: same number today, unrelated reasons, so retuning one must not
+ * silently move the other. 30s is the API-Gateway integration ceiling.
+ */
+const APPLY_RULES_TIMEOUT_MS = 30_000;
+
+/**
  * Read a SUCCESS response's JSON body under the same stall timeout `failed()` gives the error body.
  * apiFetch's abort timer only bounds the HEADERS (cleared the instant they resolve), so a 2xx whose
  * body never finishes streaming would hang the read — and the query/writer behind it — leaving the
@@ -214,6 +223,86 @@ export async function fetchUncategorizedCount(): Promise<number> {
   if (typeof body?.count !== 'number' || Number.isNaN(body.count))
     throw new Error(`fetchUncategorizedCount: expected a numeric count, got ${JSON.stringify(body?.count)}`);
   return body.count;
+}
+
+/** One applicable rule's share of an apply-rules plan: how many unfiled charges it catches,
+ *  with a few example descriptions so an over-eager rule is visible before anything is written.
+ *  `ruleId`/`value` are nullable — a rule authored outside the app can arrive without them. */
+export interface ApplyRulesRule {
+  ruleId: string | null;
+  value: string | null;
+  categoryId: string;
+  count: number;
+  samples: (string | null)[];
+}
+
+/** A charge two rules disagree about. It is deliberately left unfiled — we never guess. */
+export interface ApplyRulesConflict {
+  description: string | null;
+  categoryIds: string[];
+}
+
+/** A rule the server would not apply, with its plain-English reason (authored server-side in
+ *  lambda_api/rule_apply.py and rendered verbatim, so a new reason needs no client change). */
+export interface ApplyRulesSkipped {
+  id: string | null;
+  value: string | null;
+  reason: string;
+}
+
+/**
+ * The one summary both the preview and the write return.
+ *
+ * The COUNTS (rulesConsidered/unfiled/matched/conflicted/byCategory/byRule) describe the PLAN —
+ * what the rules cover. The LISTS (filed/vanished/failed/remaining) describe THIS request's
+ * outcome. After a capped or time-boxed run they deliberately disagree, so "what was filed" is
+ * always `filed`, never `byCategory`.
+ *
+ * `remaining` counts matched rows this request never attempted. Rows in `failed` were attempted
+ * and are NOT in `remaining`, yet they are still unfiled — so the work left over is
+ * `remaining + failed.length`, never bare `remaining`.
+ */
+export interface ApplyRulesResult {
+  dryRun: boolean;
+  rulesConsidered: number;
+  unfiled: number;
+  matched: number;
+  conflicted: number;
+  conflictedSamples: ApplyRulesConflict[];
+  byCategory: Record<string, number>;
+  byRule: ApplyRulesRule[];
+  skippedRules: ApplyRulesSkipped[];
+  filed: { id: string; category: string }[];
+  vanished: string[];
+  failed: string[];
+  remaining: number;
+}
+
+/**
+ * Apply the user's existing rules to charges ALREADY stored (WHIT-507/508). BankSync only runs
+ * rules as a transaction arrives, so history never gets re-labelled; this walks it and files what
+ * the rules cover.
+ *
+ * `dryRun: true` previews and writes nothing. `dryRun: false` writes, capped by the server. The
+ * flag is always sent explicitly — the server defaults a missing key to preview, but leaning on an
+ * omitted field to mean "don't write" is the one mistake that turns a typo into a 300-row write.
+ *
+ * Runs long (whole-history scan + a live BankSync rules read + writes), so it gets
+ * APPLY_RULES_TIMEOUT_MS on both the request and the body read, not the 15s default.
+ *
+ * @param dryRun - True to preview, false to file.
+ * @returns The plan summary plus this request's outcome.
+ * @throws If the response status is not OK (the sheet shows phase-specific copy).
+ */
+export async function applyRulesToUncategorized(dryRun: boolean): Promise<ApplyRulesResult> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules`, {
+    method: "POST",
+    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ dryRun }),
+  }, APPLY_RULES_TIMEOUT_MS);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, APPLY_RULES_TIMEOUT_MS);
 }
 
 /**
