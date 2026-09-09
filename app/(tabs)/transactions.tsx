@@ -18,7 +18,7 @@ export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
   const insets = useSafeAreaInsets();
-  const { openMultiPicker, showToast } = useAppContext();
+  const { openMultiPicker, showToast, setSheet } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
   const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData(tab);
@@ -157,6 +157,23 @@ export default function Transactions() {
               <Text style={styles.hintBold}>just that one</Text> or <Text style={styles.hintBold}>every charge</Text> from that merchant.
             </Text>
           </View>
+        )}
+
+        {/* WHIT-508: rules only run as a charge ARRIVES, so history never gets re-labelled. This
+            sweeps it. Gated on the WHOLE-history count (the badge's number), not the loaded-page
+            count: after a capped run the loaded page can be empty while hundreds remain deeper in
+            history, and that is exactly when the button is still needed. Hidden behind the cold
+            spinner and the load error like every other control on this screen. */}
+        {tab === 'uncategorized' && !selectionMode && !showSpinner && !showError && uncategorizedCount > 0 && (
+          <Pressable
+            testID="transactions-apply-rules"
+            onPress={() => setSheet({ mode: 'applyRules' })}
+            accessibilityRole="button"
+            accessibilityLabel="Apply my rules to your unfiled charges"
+            style={styles.applyRules}
+          >
+            <Text style={styles.applyRulesText}>Apply my rules</Text>
+          </Pressable>
         )}
 
         <ListStates
@@ -319,4 +336,8 @@ const styles = StyleSheet.create({
   loadMore: { marginTop: 18, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
   loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
   loadMoreState: { marginTop: 18, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+
+  // "Apply my rules" (WHIT-508): the Load More treatment, sitting under the hint.
+  applyRules: { marginTop: 10, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
+  applyRulesText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
 });

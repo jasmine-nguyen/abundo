@@ -41,6 +41,10 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   fetchTransactionsFeed: () => api.fetchTransactionsFeed('cur', 25),
   fetchUncategorizedFeed: () => api.fetchUncategorizedFeed('cur', 25), // a read → generic error, NOT a reason-carrying write
   fetchUncategorizedCount: () => api.fetchUncategorizedCount(), // WHIT-501: a read → generic error, NOT a reason-carrying write
+  // WHIT-508: a write, but deliberately NOT reason-carrying. Its only 4xx are developer errors
+  // ("dryRun must be a boolean"), never copy for the user; a 502 body names BankSync internals.
+  // The sheet's own phase-specific wording is what the user reads, so the generic error is right.
+  applyRulesToUncategorized: () => api.applyRulesToUncategorized(true),
   fetchCategories: () => api.fetchCategories(),
   createCategory: () => api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),
   updateCategory: () => api.updateCategory('gym', { name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),
