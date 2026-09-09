@@ -49,7 +49,7 @@ export function txn(over: Partial<Transaction> = {}): Transaction {
 }
 
 export function budget(over: Partial<Budget> = {}): Budget {
-  return { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, ...over };
+  return { id: 'coffee', budget: 100, posted: 40, pending: 10, rollover: false, carryover: 0, spreadAdjustment: 0, ...over };
 }
 
 export function spend(over: Partial<CategorySpend> = {}): CategorySpend {

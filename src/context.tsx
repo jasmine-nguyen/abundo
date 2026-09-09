@@ -4,7 +4,7 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -60,6 +60,12 @@ export interface Budget {
   // the signed buffer this cycle adds to the target (positive = saved up, negative = a prior
   // spike's overspend carried as a deficit). Default off/0 for a non-rollover/legacy budget.
   rollover: boolean; carryover: number;
+  // Bill spread (WHIT-504): `spreadAdjustment` is the signed dollars this cycle's spendable
+  // moves by (a positive cushion in the anchor cycle, a negative slice in a payback cycle);
+  // default 0 for a non-spread budget. `spread` carries the plan detail for the status line.
+  // A category has rollover OR a spread, never both, so at most one of carryover/spreadAdjustment
+  // is ever non-zero.
+  spreadAdjustment: number; spread?: SpreadPlan;
 }
 export interface Transaction {
   transaction_id: string;
@@ -448,6 +454,8 @@ export interface AppContext {
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
+  saveSpread: (categoryId: string, amount: number, cycles: number) => Promise<boolean>;
+  removeSpread: (categoryId: string) => Promise<boolean>;
   saveCategory: (editId: string | null, form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<boolean>;
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
@@ -505,7 +513,29 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
   return {
     id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending,
     rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
+    spreadAdjustment: rollup.spread?.adjustment ?? 0, spread: rollup.spread,
   };
+}
+
+// Bill-spread cycle bounds the app offers, mirroring the server (SPREAD_MIN/MAX_CYCLES,
+// lambda_api/constants.py). Advisory only — the server re-validates and 400s a bad value —
+// so a bound change server-side just needs these kept in step; the stepper clamps to them.
+export const SPREAD_MIN_CYCLES = 1;
+export const SPREAD_MAX_CYCLES = 24;
+
+// Preview the per-cycle effect of spreading `amount` over `cycles`, matching the server's
+// whole-cent split (shared/spend.py spread_adjustment): the cushion is the whole amount,
+// slices are amount/cycles in whole cents with the first `extra` cents' slices one cent
+// bigger, so the slices sum back to exactly `amount`. Drives the new screen's live preview.
+export function spreadPreview(amount: number, cycles: number): { cushion: number; firstSlice: number; lastSlice: number } {
+  const cents = Math.round(amount * 100);
+  const base = Math.floor(cents / cycles);
+  const extra = cents - base * cycles;
+  // `extra` (< cycles) slices carry one cent more, so the earliest slice is base+1 cents and
+  // the last is always the base — the slices sum back to `amount` exactly, as the server splits.
+  const firstSlice = (base + (extra > 0 ? 1 : 0)) / 100;
+  const lastSlice = base / 100;
+  return { cushion: amount, firstSlice, lastSlice };
 }
 
 // Map a server enrichment rule into the client `Rule` shape. `value` -> `pattern`
@@ -1336,6 +1366,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [showToast],
   );
 
+  // WHIT-505: spread a one-off bill over the coming cycles. Non-optimistic — invalidates
+  // ['budgets'] here so the plan reconciles from the server rollup (self-contained, matching
+  // removeSpread below; the caller just navigates). The category name (for the toast) comes
+  // from the ['categories'] cache; every post-await toast/return is gated on the session epoch
+  // (WHIT-271) so a mid-save sign-out never toasts into or navigates the next user's session.
+  const saveSpread = useCallback(
+    async (categoryId: string, amount: number, cycles: number): Promise<boolean> => {
+      if (amount <= 0 || cycles < SPREAD_MIN_CYCLES || cycles > SPREAD_MAX_CYCLES) return false;
+      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      const epoch = sessionEpoch.current;
+      try {
+        await apiSetSpread(categoryId, amount, cycles);
+        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+        queryClient.invalidateQueries({ queryKey: ['budgets'] });
+        if (c) showToast(`Bill spread set for ${c.name}.`);
+        return true;
+      } catch {
+        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+        showToast('Could not set the bill spread. Please try again.');
+        return false;
+      }
+    },
+    [showToast],
+  );
+
+  // WHIT-505: remove a category's bill spread. Non-optimistic (invalidate + refetch), matching
+  // saveSpread beside it — the writer touches the query cache, never screen state, so a popped
+  // screen can't setState-after-unmount. Idempotent server-side (200 with no plan).
+  const removeSpread = useCallback(
+    async (categoryId: string): Promise<boolean> => {
+      const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
+      const epoch = sessionEpoch.current;
+      try {
+        await apiDeleteSpread(categoryId);
+        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+        queryClient.invalidateQueries({ queryKey: ['budgets'] });
+        if (c) showToast(`Bill spread removed for ${c.name}.`);
+        return true;
+      } catch {
+        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+        showToast('Could not remove the bill spread. Please try again.');
+        return false;
+      }
+    },
+    [showToast],
+  );
+
   // WHIT-203: remove a category's budget target (the Budget detail screen's Delete). The
   // category and its transactions are untouched — only the pay-cycle target is dropped, so
   // the category simply stops appearing on the Budgets tab. Optimistically strips the id from
@@ -1662,9 +1739,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -2022,9 +2099,10 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // Income category the rollup is positive EARNINGS, not spend.
     const pending = b.pending, posted = b.posted, actual = posted + pending;
     // Rollover: this cycle's spendable is the target PLUS the accumulated buffer (a sinking
-    // fund adds room; a prior spike's deficit removes it). Non-rollover/Income => carryover
-    // is 0, so available == budget and nothing below changes.
-    const available = b.budget + (b.rollover ? b.carryover : 0);
+    // fund adds room; a prior spike's deficit removes it). A bill spread adds its own signed
+    // adjustment (a cushion this cycle, a slice in a payback cycle). Rollover XOR spread, so
+    // at most one term is non-zero; Non-rollover/non-spend/Income => both 0, available == budget.
+    const available = b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment;
     // Bars/remain divide by `available`, but it can be 0 or negative (a drained/borrowed
     // envelope) — fall back to the base target, then 1, so a percentage is never NaN.
     const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
@@ -2943,13 +3021,14 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   if (c.bucket === 'Savings') return null;
   const elapsed = elapsedFrac(s);
   const isIncome = c.bucket === 'Income';
+  const spreadActive = !!b.spread;
   // posted/pending come from the server rollup (computed over the window). For an
   // Income category this is positive EARNINGS toward an earn-target, not spend.
   const pending = b.pending, posted = b.posted, actual = posted + pending;
-  // Rollover: the spendable envelope this cycle is target + buffer (see budgetViews). `den`
-  // guards the bar percentages against a 0/negative envelope. Non-rollover/Income => buffer
-  // is 0, so available == budget and the math is unchanged.
-  const available = b.budget + (b.rollover ? b.carryover : 0);
+  // Rollover: the spendable envelope this cycle is target + buffer (see budgetViews); a bill
+  // spread adds its signed adjustment instead (rollover XOR spread). `den` guards the bar
+  // percentages against a 0/negative envelope. No rollover/spend adjustment => available == budget.
+  const available = b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment;
   const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
   const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
   // The list is already the cycle's whole subtree, contributing rows only, newest-first
@@ -2962,7 +3041,16 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   let carryoverLine = '';
   if (b.rollover && b.carryover > 0.5) carryoverLine = `Includes ${fmt(b.carryover)} rolled over from past cycles`;
   else if (b.rollover && b.carryover < -0.5) carryoverLine = `Includes ${fmt(-b.carryover)} borrowed from this cycle`;
-  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relItems, relEmpty: relItems.length === 0, carryoverLine };
+  // Bill spread status line: the dollar effect this cycle (never a bare "X of N"), with a
+  // "last cycle" tag on the final slice. The screen shows this while a plan is active.
+  let spreadLine = '';
+  if (b.spread) {
+    const adj = b.spreadAdjustment;
+    const last = b.spread.index >= b.spread.cycles;
+    if (adj > 0.005) spreadLine = `Bill spread: +${fmtExact(adj)} added this cycle`;
+    else if (adj < -0.005) spreadLine = `Bill spread: ${fmtExact(-adj)} paid back this cycle${last ? ' (last cycle)' : ''}`;
+  }
+  const common = { name: c.name, icon: c.icon, color: c.color, daysLeftLabel, targetPct, relItems, relEmpty: relItems.length === 0, carryoverLine, spreadLine, spreadActive, spread: b.spread };
 
   if (isIncome) {
     // Earn-target (floor): over-is-good, so the status is never red. Under target
@@ -2979,6 +3067,9 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
       postedPct, pendingPct,
       postedColor: c.color, pendingTint: tint(c.color, 0.45),
       dailyLabel: met ? 'Target reached' : `${fmt(perDay)}/day to target`,
+      // Spread is spend-only (the server rejects it on Income), so an earn-target never
+      // offers it — but both return branches carry the same keys so [id].tsx compiles.
+      overspend: 0, canStartSpread: false,
     };
   }
 
@@ -2994,6 +3085,9 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
   const remain = available - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
+  // How much a bill has pushed the category over, in whole cents (no float dust in the URL).
+  // No active plan/rollover when canStartSpread is true, so available == budget here.
+  const overspend = Math.round(Math.max(0, spent - available) * 100) / 100;
   let statusLabel = 'On target — keep it up';
   let statusColor: string = C.good;
   if (over) { statusLabel = 'Over budget — ease up'; statusColor = C.bad; }
@@ -3006,6 +3100,12 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     postedPct, pendingPct,
     postedColor: over ? C.bad : c.color, pendingTint: tint(over ? C.bad : c.color, 0.45),
     dailyLabel: over ? 'Daily limit: $0' : `Daily limit: ${fmt(daily)}`,
+    // Spreading is offered once a bill has pushed the category at least a cent over (the entry
+    // prefills with `overspend`, so requiring >= 0.01 avoids offering an unsaveable $0 spread on
+    // a sub-cent overshoot) and it has no plan or rollover yet. Once a plan is active the cushion
+    // can flip `over` false, so the edit/remove entry keys off `spreadActive`, NOT `over`.
+    overspend,
+    canStartSpread: over && overspend >= 0.01 && !spreadActive && !b.rollover,
   };
 }
 
@@ -3017,6 +3117,9 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
   // meaningless as an income floor — for income we suppress the recommendation and
   // the spend-history stats and reframe the copy as earnings (WHIT-169).
   const isIncome = c?.bucket === 'Income';
+  // Rollover and a bill spread are mutually exclusive — the toggle is disabled while a
+  // spread is active, and the edit screen tells the user to remove it first.
+  const spreadActive = !!existing?.spread;
   const avg = c ? Math.round(c.recent) : 0;
   const last = Math.round(avg * 0.92);
   const rec = avg; // recommendBasis default: Recent average (spend only)
@@ -3039,10 +3142,11 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
     histBars,
     title: existing ? 'Edit budget' : 'Set budget',
     saveText: existing ? 'Update budget' : 'Add budget',
-    // Rollover: spend-only (never Income earn-targets or Savings). `rolloverOn` seeds the
-    // editor toggle from the stored flag.
-    rolloverAllowed: !isIncome && c?.bucket !== 'Savings',
+    // Rollover: spend-only (never Income earn-targets or Savings), and never alongside an
+    // active bill spread. `rolloverOn` seeds the editor toggle from the stored flag.
+    rolloverAllowed: !isIncome && c?.bucket !== 'Savings' && !spreadActive,
     rolloverOn: existing?.rollover ?? false,
+    spreadActive,
   };
 }
 
