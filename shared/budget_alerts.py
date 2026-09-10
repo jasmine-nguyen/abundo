@@ -47,7 +47,14 @@ from decimal import Decimal
 
 from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
 from push import send_push
-from spend import build_category_children, current_cycle_window, fold_subtree, subtree_ids, summarise_transactions
+from spend import (
+    _spread_state,
+    build_category_children,
+    current_cycle_window,
+    fold_subtree,
+    subtree_ids,
+    summarise_transactions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -241,12 +248,34 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     # (cat_id, pct_to_send, [all newly-crossed pcts]) — pct_to_send is the highest.
     crossings = []
     for cat_id in target_ids:
-        target = Decimal(str(targets[cat_id]["target"]))
-        if target <= 0:
+        entry = targets[cat_id]
+        target = Decimal(str(entry["target"]))
+        # Fold the bill-spread cushion into the threshold basis so the push agrees with the
+        # /budgets screen. The screen's spendable for a spread category is target + the signed
+        # spread adjustment (WHIT-504): a full +amount cushion in the cycle the bill lands, an
+        # equal slice taken back over the next N cycles. Crossing against the raw target only
+        # (the WHIT-509 bug) fired a false "over budget" on a cushioned category that the screen
+        # shows as in-budget. Same helper + same args as list_budgets, so the two can't disagree.
+        # ONLY the spread cushion is folded — rollover carryover is deliberately out of scope
+        # (it needs prior-cycle reads and a shared seal/persist → a bigger change with a write
+        # race). Read-only here: _spread_state's finished/reanchor outcomes are ignored; the
+        # /budgets read owns persistence and re-derives the same state on every GET.
+        adjustment = Decimal(0)
+        if "spread_amount" in entry:
+            spread_row, _, _ = _spread_state(
+                entry, ctx["start"], ctx["length"], ctx["last_pay_date"], ctx["end"])
+            if spread_row is not None:
+                adjustment = spread_row["adjustment"]
+        basis = target + adjustment
+        # basis <= 0 (a payback slice bigger than the whole target) can't cross: with a, b >= 0
+        # the test b < frac*basis <= a is already vacuously false, so this just skips the work.
+        # Such a cycle reads over-budget on screen but sends no push — a push the user couldn't
+        # act on — a deliberate, defensible silence.
+        if basis <= 0:
             continue
         ids = ids_by_target[cat_id]
         b, a = _combined_target(before, ids), _combined_target(after, ids)
-        newly = [pct for frac, pct in _THRESHOLDS if b < frac * target <= a]
+        newly = [pct for frac, pct in _THRESHOLDS if b < frac * basis <= a]
         if newly:
             crossings.append((cat_id, newly[0], newly))  # _THRESHOLDS is high→low
 

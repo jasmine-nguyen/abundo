@@ -89,8 +89,10 @@ from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
 # The pay-cycle window + spend summariser live in the shared layer (WHIT-22) so the
 # webhook's budget-alert detection computes spend identically to this read API.
 from spend import (
+    _SPREAD_ENTRY_FIELDS,
     _melbourne_today,
     _spend_contribution,
+    _spread_state,
     build_category_children,
     completed_cycle_windows,
     contributes_to_budget,
@@ -1429,84 +1431,6 @@ def _seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
     if sealed != stored_carryover or new_anchor != entry.get("carryover_from"):
         persist = {"carryover": sealed, "carryover_from": new_anchor}
     return sealed + unsealed, persist
-
-
-# The five fields a stored bill spread carries — mirrors repository_budget._SPREAD_FIELDS (a
-# test pins the two equal). A read only trusts an entry that has all of them.
-_SPREAD_ENTRY_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
-
-
-def _settle_spread(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
-    """After a pay-cycle change, the ONE-cycle plan that collects what a spread still owes —
-    or None when nothing is owed.
-
-    The old slice grid is fictional under the new cycle, so instead of reading slices off it
-    we settle up. "Taken" means what the user was actually SHOWN: `elapsed` is the index the
-    plan had reached under its OWN grid as of today (not the new cycle start — a new start
-    that lands a day inside a completed old cycle would otherwise un-take that cycle's slice
-    and charge it twice), so the slices for old cycles 1..elapsed−1, each shown for a full
-    cycle, count as taken. `outstanding = amount − taken` is re-saved as a fresh plan of
-    `outstanding` over 1 cycle, anchored one cycle BACK on the new grid — so it reads as
-    index 1 (the whole outstanding comes off THIS cycle) for the rest of the cycle and
-    finishes on the next. Net over the plan's life = +amount − taken − outstanding = 0,
-    exactly; nothing is forgiven, nothing invented. Persisting it (rather than showing a
-    one-shot and clearing) is what keeps the settle visible past the first read, and lets
-    a second cycle change re-settle it the same way.
-
-    None when the change lands while still in the anchor cycle (elapsed 0 — the cushion and
-    the settle would cancel in the same cycle) or when every slice was already taken.
-    """
-    amount = entry["spread_amount"]
-    cycles = int(entry["spread_cycles"])
-    elapsed = spread_index(entry["spread_from"], today, int(entry["spread_len"]))
-    if elapsed <= 0:
-        return None
-    taken_through = min(cycles, elapsed - 1)
-    taken = -sum((spread_adjustment(amount, cycles, k) for k in range(1, taken_through + 1)), Decimal(0))
-    outstanding = amount - taken
-    if outstanding == 0:
-        return None
-    previous_start = (date.fromisoformat(cycle_start) - timedelta(days=length)).isoformat()
-    return {
-        "spread_amount": outstanding, "spread_cycles": Decimal(1), "spread_from": previous_start,
-        "spread_len": Decimal(length), "spread_paydate": last_pay_date,
-    }
-
-
-def _spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
-    """The bill-spread contribution for one category this read (WHIT-504).
-
-    Returns (spread_row, finished, reanchor). `spread_row` is the {amount, cycles, index,
-    adjustment} object for the /budgets row — `adjustment` is the signed amount added to the
-    cycle's spendable — or None when there is nothing to show. `finished` asks for the stored
-    fields to be cleared (best-effort, from the read path); `reanchor` is a replacement plan
-    to persist instead (the pay-cycle-change settle, see _settle_spread). At most one is set.
-
-    Aligned (the plan was created under the CURRENT pay cycle): index 0 shows the `+amount`
-    cushion, cycles 1..N take back a slice each, and past N the plan is finished — nothing
-    shown, fields cleared. Alignment is the exact length+payday, as _rollover_windows checks.
-    Misaligned: the settle plan is computed and then read exactly like an aligned one.
-
-    An entry missing any of the five fields (a hand-edited item — every write sets and
-    strips all five together) is treated as finished and cleared, rather than letting one
-    bad entry 500 every budget row.
-    """
-    fields = [entry.get(field) for field in _SPREAD_ENTRY_FIELDS]
-    if None in fields:
-        return None, True, None
-    amount, cycles, spread_from, stored_len, stored_paydate = fields
-    cycles = int(cycles)
-    if int(stored_len) != length or stored_paydate != last_pay_date:
-        reanchor = _settle_spread(entry, cycle_start, length, last_pay_date, today)
-        if reanchor is None:
-            return None, True, None
-        spread_row, _, _ = _spread_state(reanchor, cycle_start, length, last_pay_date, today)
-        return spread_row, False, reanchor
-    index = spread_index(spread_from, cycle_start, length)
-    if index > cycles:
-        return None, True, None
-    return {"amount": amount, "cycles": cycles, "index": index,
-            "adjustment": spread_adjustment(amount, cycles, index)}, False, None
 
 
 def _persist_spread_settlements(budget_repo: BudgetRepository, finished: list, reanchored: dict) -> None:
