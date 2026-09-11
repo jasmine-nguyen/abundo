@@ -108,9 +108,10 @@ def test_a_preview_shows_the_numbers_without_minting_anything(handler, monkeypat
     assert repo.writes == []
 
 
-def test_the_inline_rule_runs_alongside_the_existing_ones(handler, monkeypatch):
-    # The inline rule is added to her rules, not substituted for them: one request files both
-    # the new shop and anything her existing rules still cover.
+def test_the_inline_rule_files_only_its_own_shop_not_her_other_rules(handler, monkeypatch):
+    # FAIL-ON-REVERT for the whole card (WHIT-523). She taps "file COLES"; her BP charge, which
+    # a DIFFERENT rule of hers covers, must be left alone. The sweep runs the inline rule ONLY,
+    # so only the COLES charge files — the BP rule is read (for the clash check) but not swept.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-02", "t1", description="COLES 0342", category=None),
         _row(SPENDING, "2026-07-01", "t2", description="BP 2210 SERVO", category=None),
@@ -122,8 +123,10 @@ def test_the_inline_rule_runs_alongside_the_existing_ones(handler, monkeypatch):
                        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
                        banksync=_RecordingBankSync(existing))
 
-    assert body["byCategory"] == {"groceries": 1, "petrol": 1}
-    assert sorted(filed["id"] for filed in body["filed"]) == ["t1", "t2"]
+    assert body["byCategory"] == {"groceries": 1}          # never petrol
+    assert body["filed"] == [{"id": "t1", "category": "groceries"}]  # BP charge left unfiled
+    assert body["rulesConsidered"] == 1                    # only the inline rule was swept
+    assert [entry["ruleId"] for entry in body["byRule"]] == [None]
 
 
 def test_no_inline_rule_behaves_exactly_as_before(handler, monkeypatch):
@@ -332,11 +335,31 @@ def test_a_rule_for_a_different_shop_is_not_a_clash(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     assert banksync.minted == [("description", "contains", "COLES", "groceries")]
-    # Both rules run: the new one files the COLES charges, the existing one files the NETFLIX
-    # charge it always covered. Neither is dropped for the other.
+    # A different shop's rule is no clash, so the COLES rule is minted and swept — but ONLY it
+    # (WHIT-523). The NETFLIX charge (t3) her existing rule covers is left unfiled; filing COLES
+    # files just COLES.
     assert sorted((filed["id"], filed["category"]) for filed in body["filed"]) == [
-        ("t1", "groceries"), ("t2", "groceries"), ("t3", "petrol"),
+        ("t1", "groceries"), ("t2", "groceries"),
     ]
+
+
+def test_a_same_category_unrelated_rule_still_files_only_this_shop(handler, monkeypatch):
+    # FAIL-ON-REVERT, and the case the clash guard can't catch: an existing NETFLIX rule filing
+    # to the SAME category (groceries) as the inline COLES rule does NOT clash (they agree), so
+    # nothing refuses it. The scope must still hold — the NETFLIX charge stays unfiled, because
+    # only the inline rule is swept, not "every rule that happens to agree on category".
+    repo = _coles_repo()  # t1/t2 COLES, t3 NETFLIX.COM
+    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "NETFLIX",
+                 "categoryId": "groceries", "conditionCount": 1}]
+
+    resp, body, banksync = _call(handler, monkeypatch, repo,
+                                 {"dryRun": False, "rule": {"value": "COLES",
+                                                            "categoryId": "groceries"}},
+                                 banksync=_RecordingBankSync(existing))
+
+    assert resp["statusCode"] == 200
+    assert sorted(filed["id"] for filed in body["filed"]) == ["t1", "t2"]  # never t3 (NETFLIX)
+    assert body["rulesConsidered"] == 1
 
 
 def test_a_preview_reports_the_clash_too(handler, monkeypatch):
