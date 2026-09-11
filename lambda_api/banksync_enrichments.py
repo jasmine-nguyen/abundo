@@ -190,6 +190,18 @@ def _rule_identity(field: str, operator: str, value: str, category_id: str) -> t
     return (field, operator, _fold(value), category_id)
 
 
+def rule_targets_same_text(rule: dict, field: str, operator: str, value: str) -> bool:
+    """Would this existing rule match exactly the charges `<field> <operator> <value>` matches?
+
+    The value half of _rule_identity, WITHOUT the category — so a caller can find a rule that
+    targets the same text but files it somewhere else. That pair is the damaging case: two rules
+    disagreeing over the same charges leaves them conflicted, and conflicted charges are never
+    filed (rule_apply), on this run or any future one.
+    """
+    return (rule.get("field"), rule.get("operator"), _fold(rule.get("value"))) == (
+        field, operator, _fold(value))
+
+
 def create_rule(field: str, operator: str, value: str, category_id: str) -> dict:
     """POST /v1/enrichments — create a single-condition categorisation rule.
 

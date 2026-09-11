@@ -148,7 +148,12 @@ def test_the_rule_is_minted_before_the_sweep(handler, monkeypatch):
     repo = _coles_repo()
     banksync = _RecordingBankSync()
     real_create = banksync.create_rule
-    banksync.create_rule = lambda *args: (order.append("mint"), real_create(*args))[1]
+
+    def _record_then_create(*args):
+        order.append("mint")
+        return real_create(*args)
+
+    banksync.create_rule = _record_then_create
     repo.refile_hook = lambda transaction_id, _repo: order.append(f"write:{transaction_id}")
 
     _call(handler, monkeypatch, repo,
@@ -173,7 +178,9 @@ def test_a_failure_to_mint_writes_nothing(handler, monkeypatch):
                                                      "categoryId": "groceries"}},
                           banksync=banksync)
 
-    assert resp["statusCode"] >= 500
+    # Exactly 502 — a failure upstream, not ours. ">= 500" would stay green if this started
+    # returning a bare 500, which reads to the app as "our bug, don't retry".
+    assert resp["statusCode"] == 502
     assert repo.writes == []
 
 
@@ -195,13 +202,34 @@ def test_a_rule_value_too_short_to_be_safe_is_rejected(handler, monkeypatch, val
     assert banksync.minted == [] and repo.writes == []
 
 
-def test_the_floor_is_the_same_one_the_merchant_screen_offers_groups_by(handler):
-    # FAIL-ON-REVERT for the two halves agreeing. Two copies of the number would let the screen
-    # offer a group the write then refuses — she taps, and nothing happens.
+def test_a_group_the_merchant_screen_offers_files_exactly_what_it_promised(handler, monkeypatch):
+    # FAIL-ON-REVERT for the seam between the two halves, and the contract that matters: the
+    # count on the screen is the number that gets filed. A round trip, not an identity check —
+    # asserting the two modules share a function proves only that nobody hand-copied it, and
+    # says nothing about the OTHER fences, which can refuse a group just as easily.
+    #
+    # "7-ELEVEN" is deliberate: it clears the letters/digits floor while "7-11" would not, so a
+    # floor that counted characters on one side and alphanumerics on the other reddens here.
     import merchant_groups
 
-    assert handler.rule_value_is_safe is merchant_groups.rule_value_is_safe
-    assert handler.MIN_RULE_VALUE_ALPHANUMERICS == merchant_groups.MIN_RULE_VALUE_ALPHANUMERICS
+    rows = [
+        _row(SPENDING, "2026-07-03", "t1", merchant_name="7-ELEVEN",
+             description="7-ELEVEN 2210 KEW", category=None),
+        _row(SPENDING, "2026-07-02", "t2", merchant_name="7-ELEVEN",
+             description="7-ELEVEN 0199 CBD", category=None),
+        _row(SPENDING, "2026-07-01", "t3", merchant_name="NETFLIX",
+             description="NETFLIX.COM", category=None),
+    ]
+    offered = merchant_groups.group_unfiled_by_merchant(
+        rows, lambda category: category != "income" and category not in {"groceries", "petrol"})
+    group = next(g for g in offered["groups"] if g["merchant"] == "7-ELEVEN")
+
+    resp, body, _ = _call(
+        handler, monkeypatch, WritableFeedRepo({SPENDING: rows}),
+        {"dryRun": False, "rule": {"value": group["rulePattern"], "categoryId": "petrol"}})
+
+    assert resp["statusCode"] == 200          # never a fence refusing what the screen offered
+    assert len(body["filed"]) == group["count"]
 
 
 @pytest.mark.parametrize("category_id", ["not-a-category", "", None, 7, "GROCERIES"])
@@ -233,6 +261,96 @@ def test_a_supplied_field_or_operator_is_rejected_not_ignored(handler, monkeypat
     assert resp["statusCode"] == 400
     assert "field/operator" in body["error"]
     assert banksync.minted == [] and repo.writes == []
+
+
+def test_a_rule_already_sending_that_shop_elsewhere_is_refused(handler, monkeypatch):
+    # FAIL-ON-REVERT. Without this the route mints a SECOND rule for the same text pointing at a
+    # different category, files nothing (the two disagree, so every charge is conflicted and
+    # conflicted charges are never filed, now or ever), and returns 200 — she sees "done", the
+    # charges are untouched, and she is left with a permanent contradiction she can't see.
+    #
+    # The realistic way in: a rule written months ago never touched her stored charges
+    # (WHIT-502), so that shop is still on the merchant screen with its charges unfiled.
+    repo = _coles_repo()
+    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
+                 "categoryId": "petrol", "conditionCount": 1}]
+
+    resp, body, banksync = _call(handler, monkeypatch, repo,
+                                 {"dryRun": False, "rule": {"value": "COLES",
+                                                            "categoryId": "groceries"}},
+                                 banksync=_RecordingBankSync(existing))
+
+    assert resp["statusCode"] == 409
+    assert "petrol" in body["error"]              # names where the existing rule sends them
+    assert body["existingRule"]["id"] == "r1"     # so the app can offer to edit that one
+    assert banksync.minted == [] and repo.writes == []
+
+
+def test_the_clash_check_ignores_case_and_spacing(handler, monkeypatch):
+    # Rules are matched on the same folded identity BankSync's own dedup uses, so " coles " and
+    # "COLES" are the same rule. Comparing raw text would let the clash slip straight through.
+    repo = _coles_repo()
+    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": " coles ",
+                 "categoryId": "petrol", "conditionCount": 1}]
+
+    resp, _, banksync = _call(handler, monkeypatch, repo,
+                              {"dryRun": False, "rule": {"value": "COLES",
+                                                         "categoryId": "groceries"}},
+                              banksync=_RecordingBankSync(existing))
+
+    assert resp["statusCode"] == 409
+    assert banksync.minted == []
+
+
+def test_an_existing_rule_to_the_SAME_category_is_not_a_clash(handler, monkeypatch):
+    # FAIL-ON-REVERT the other way. Refusing this would break the re-tap after a capped run —
+    # the rule is already there by design, and the second tap has to finish the filing.
+    repo = _coles_repo()
+    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
+                 "categoryId": "groceries", "conditionCount": 1}]
+
+    resp, body, _ = _call(handler, monkeypatch, repo,
+                          {"dryRun": False, "rule": {"value": "COLES",
+                                                     "categoryId": "groceries"}},
+                          banksync=_RecordingBankSync(existing))
+
+    assert resp["statusCode"] == 200
+    assert sorted(filed["id"] for filed in body["filed"]) == ["t1", "t2"]
+
+
+def test_a_rule_for_a_different_shop_is_not_a_clash(handler, monkeypatch):
+    # Only the SAME target text clashes. A rule for another shop filing elsewhere is normal —
+    # refusing on category alone would make the screen unusable after the first few shops.
+    repo = _coles_repo()
+    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "NETFLIX",
+                 "categoryId": "petrol", "conditionCount": 1}]
+
+    resp, body, banksync = _call(handler, monkeypatch, repo,
+                                 {"dryRun": False, "rule": {"value": "COLES",
+                                                            "categoryId": "groceries"}},
+                                 banksync=_RecordingBankSync(existing))
+
+    assert resp["statusCode"] == 200
+    assert banksync.minted == [("description", "contains", "COLES", "groceries")]
+    # Both rules run: the new one files the COLES charges, the existing one files the NETFLIX
+    # charge it always covered. Neither is dropped for the other.
+    assert sorted((filed["id"], filed["category"]) for filed in body["filed"]) == [
+        ("t1", "groceries"), ("t2", "groceries"), ("t3", "petrol"),
+    ]
+
+
+def test_a_preview_reports_the_clash_too(handler, monkeypatch):
+    # She should learn about it from the preview, before committing — not after tapping through.
+    repo = _coles_repo()
+    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
+                 "categoryId": "petrol", "conditionCount": 1}]
+
+    resp, _, _ = _call(handler, monkeypatch, repo,
+                       {"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}},
+                       banksync=_RecordingBankSync(existing))
+
+    assert resp["statusCode"] == 409
+    assert repo.writes == []
 
 
 @pytest.mark.parametrize("rule", ["COLES", ["COLES"], 7, True])
@@ -308,6 +426,24 @@ def test_re_tapping_after_a_timeout_does_not_pile_up_duplicate_rules(handler, mo
 
     assert banksync.minted == []
     assert body["createdRule"]["id"] == "enr_1"
+
+
+def test_a_capped_run_leaves_the_rule_in_place_so_tapping_again_finishes(handler, monkeypatch):
+    # FAIL-ON-REVERT for the state the app actually hits on a big history: the write cap stops
+    # the sweep partway, `remaining` says so, and the app taps again. The rule must already
+    # exist at that point — otherwise the second tap mints a duplicate, and the charges filed by
+    # the first tap have nothing behind them if she stops there.
+    monkeypatch.setattr(handler, "APPLY_RULES_MAX_WRITES", 1)
+    repo = _coles_repo()
+
+    _, body, banksync = _call(handler, monkeypatch, repo,
+                              {"dryRun": False, "rule": {"value": "COLES",
+                                                         "categoryId": "groceries"}})
+
+    assert len(body["filed"]) == 1
+    assert body["remaining"] == 1
+    assert body["createdRule"]["id"] == "enr_new"
+    assert banksync.minted == [("description", "contains", "COLES", "groceries")]
 
 
 def test_the_route_carries_the_inline_rule_through(handler, monkeypatch):

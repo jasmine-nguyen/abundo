@@ -84,6 +84,7 @@ from banksync_enrichments import (
     delete_rule,
     get_api_key,
     list_rules,
+    rule_targets_same_text,
     update_rule,
 )
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -1255,6 +1256,30 @@ def _as_leaf_rule(inline_rule: dict) -> dict:
     }
 
 
+def _rule_already_targets_that_text(rules: list[dict], inline_rule: dict) -> dict | None:
+    """An existing rule matching the same charges but filing them to a DIFFERENT category, or
+    None.
+
+    Minting alongside one would be quietly destructive. The two rules disagree, so every charge
+    they both match is `conflicted` — never filed, on this run or any future one — and the user
+    is left with a permanent contradiction she never asked for and can't see. She taps "file
+    these as groceries", nothing is filed, and the response says 200.
+
+    The realistic way in: a rule she wrote months ago never touched her stored charges (WHIT-502),
+    so that merchant still appears on the merchant screen with its charges unfiled.
+
+    A rule to the SAME category is not a clash — create_rule is safe to run twice (WHIT-497) and
+    returns the existing one, which is exactly what a re-tap after a capped run should do.
+    """
+    for rule in rules:
+        if rule.get("categoryId") == inline_rule["categoryId"]:
+            continue
+        if rule_targets_same_text(rule, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
+                                  inline_rule["value"]):
+            return rule
+    return None
+
+
 def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | None, dict | None]:
     """The optional `rule` on an apply-rules request — the one this run should mint and sweep
     with (WHIT-516), so making a rule for a merchant and filing that merchant's existing charges
@@ -1270,6 +1295,10 @@ def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | No
       * only "description contains" is minted here. A supplied field/operator is REJECTED rather
         than ignored — silently narrowing an "equals" to a "contains" would file the wrong
         charges, and the caller would never know.
+
+    `income` is deliberately NOT accepted, unlike POST /enrichments: it is a valid rule target
+    (filed, but not a taxonomy id) and rule_apply honours it, but this route mints from the
+    merchant screen, where income categories aren't pickable (WHIT-158). Unreachable today.
     """
     rule = body.get("rule")
     if rule is None:
@@ -1316,9 +1345,12 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
       remaining — matched rows this request did NOT attempt, because the write cap or the time
                   budget stopped it. Rows in `failed` are NOT counted here (they were attempted),
                   but a re-run picks them up anyway. In a preview this equals `matched`.
-      createdRule — the rule an inline `rule` minted, or null. A PREVIEW always reports null: it
-                  writes nothing, including to BankSync, so the numbers can be seen before any
-                  rule exists. The app uses the id to refresh its rules list.
+      createdRule — the inline rule, newly created OR the existing one that already matched it,
+                  or null. create_rule is safe to run twice (WHIT-497), so a re-tap after a
+                  capped run returns the rule already there rather than minting a second — do
+                  not render this as "rule created" without checking. A PREVIEW always reports
+                  null: it writes nothing, including to BankSync, so the numbers can be seen
+                  before any rule exists. The app uses the id to refresh its rules list.
 
     Note the guarantee is per-run: a charge filed to a category id that later stops existing reads
     as unfiled again, so a subsequent run may legitimately file it.
@@ -1386,11 +1418,18 @@ def apply_rules_to_uncategorized(
     except BankSyncError as e:
         return _banksync_error_response(e)
 
+    if inline_rule is not None:
+        clash = _rule_already_targets_that_text(rules, inline_rule)
+        if clash is not None:
+            return _json_response(409, {
+                "error": f"you already have a rule for that filing to "
+                         f"'{clash['categoryId']}'",
+                "existingRule": clash,
+            })
+        rules = rules + [_as_leaf_rule(inline_rule)]
+
     def is_unfiled(category: str | None) -> bool:
         return _is_unmapped_category(category, taxonomy_ids)
-
-    if inline_rule is not None:
-        rules = rules + [_as_leaf_rule(inline_rule)]
 
     # No rules -> nothing can match, so skip the whole-history scan entirely.
     if not rules:
