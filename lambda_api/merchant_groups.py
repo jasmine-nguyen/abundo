@@ -27,8 +27,9 @@ _SAMPLES_PER_GROUP = 3
 
 # A rule value must carry at least this many letters/digits. Short values are the dangerous
 # ones: a rule on "BP" would file every BPAY transfer as petrol, permanently and silently.
-# Counted on letters/digits only, so punctuation and spaces can't pad a two-letter value.
-_MIN_RULE_VALUE_ALPHANUMERICS = 4
+# Counted on letters/digits only, so punctuation and spaces can't pad a two-letter value —
+# "7-11" is four characters and only three of them count.
+MIN_RULE_VALUE_ALPHANUMERICS = 4
 
 
 def _text(value) -> str:
@@ -63,8 +64,14 @@ def _merchant_slice(transaction: dict) -> str | None:
     return found
 
 
-def _alphanumeric_length(value: str) -> int:
-    return sum(1 for character in value if character.isalnum())
+def rule_value_is_safe(value: str) -> bool:
+    """Does this `description contains` value carry enough letters/digits to rule on?
+
+    Public because the write half (apply-rules with an inline rule) has to enforce the SAME
+    floor this screen offers groups by. Two copies of the number would let the screen offer a
+    group the write then refuses.
+    """
+    return sum(1 for character in value if character.isalnum()) >= MIN_RULE_VALUE_ALPHANUMERICS
 
 
 def _bucket_by_merchant(transactions: list[dict]) -> dict[str, list[dict]]:
@@ -108,7 +115,7 @@ def _rule_value_for_bucket(bucket: list[dict]) -> str | None:
     if not counts:
         return None
     value = min(counts, key=lambda candidate: (-counts[candidate], candidate))
-    if _alphanumeric_length(value) < _MIN_RULE_VALUE_ALPHANUMERICS:
+    if not rule_value_is_safe(value):
         return None
     return value
 

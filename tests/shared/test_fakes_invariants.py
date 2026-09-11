@@ -100,6 +100,7 @@ _REGISTRY = [
          _API_TESTS / "test_uncategorized_feed_gaps.py",
          _API_TESTS / "test_apply_rules.py",
          _API_TESTS / "test_apply_rules_gaps.py",
+         _API_TESTS / "test_apply_rules_inline_rule.py",
          _API_TESTS / "test_uncategorized_merchants.py",
          _API_TESTS / "test_uncategorized_merchants_gaps.py"),
     ),

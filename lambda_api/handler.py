@@ -112,7 +112,11 @@ from spend import (
 from anthropic_client import AnthropicError
 from insights_ai import generate_suggestions
 from iso_date import ISO_DATE_RE, valid_iso_date
-from merchant_groups import group_unfiled_by_merchant
+from merchant_groups import (
+    MIN_RULE_VALUE_ALPHANUMERICS,
+    group_unfiled_by_merchant,
+    rule_value_is_safe,
+)
 from milestones import mint_migration_markers
 from rule_apply import plan_rule_application
 from repository_notify import NotifyRepository
@@ -1237,8 +1241,62 @@ def get_uncategorized_merchants(
     return _json_response(200, body)
 
 
+def _as_leaf_rule(inline_rule: dict) -> dict:
+    """The inline rule in the shape rule_apply evaluates. `conditionCount` 1 is not decoration:
+    rule_apply refuses to act on anything it read only the first condition of, and this rule has
+    exactly one by construction."""
+    return {
+        "id": None,
+        "field": DEFAULT_RULE_FIELD,
+        "operator": DEFAULT_RULE_OPERATOR,
+        "value": inline_rule["value"],
+        "categoryId": inline_rule["categoryId"],
+        "conditionCount": 1,
+    }
+
+
+def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | None, dict | None]:
+    """The optional `rule` on an apply-rules request — the one this run should mint and sweep
+    with (WHIT-516), so making a rule for a merchant and filing that merchant's existing charges
+    is ONE request rather than two with a gap between them.
+
+    Returns (rule, None), (None, None) when there is no inline rule, or (None, 400).
+
+    Fenced hard, because this mints a rule that outlives the request and files in bulk:
+      * the value must clear the SAME letters/digits floor the merchant screen offers groups by
+        (merchant_groups.rule_value_is_safe), or a rule on "BP" files every BPAY transfer;
+      * the category must be one the user actually has, or every charge filed to it would still
+        read as unfiled and the next run would file it again, forever;
+      * only "description contains" is minted here. A supplied field/operator is REJECTED rather
+        than ignored — silently narrowing an "equals" to a "contains" would file the wrong
+        charges, and the caller would never know.
+    """
+    rule = body.get("rule")
+    if rule is None:
+        return None, None
+    if not isinstance(rule, dict):
+        return None, _json_response(400, {"error": "invalid rule; expected an object"})
+    if "field" in rule or "operator" in rule:
+        return None, _json_response(
+            400, {"error": "rule field/operator are not accepted here; this mints "
+                           f"'{DEFAULT_RULE_FIELD} {DEFAULT_RULE_OPERATOR}' only"})
+
+    value = rule.get("value")
+    if not isinstance(value, str) or not rule_value_is_safe(value):
+        return None, _json_response(
+            400, {"error": "rule value must contain at least "
+                           f"{MIN_RULE_VALUE_ALPHANUMERICS} letters or digits"})
+
+    category_id = rule.get("categoryId")
+    if not isinstance(category_id, str) or category_id not in taxonomy_ids:
+        return None, _json_response(400, {"error": "rule categoryId is not one of your categories"})
+
+    return {"value": value.strip(), "categoryId": category_id}, None
+
+
 def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanished: list = (),
-                          failed: list = (), already_filed: list = (), remaining: int = 0) -> dict:
+                          failed: list = (), already_filed: list = (), remaining: int = 0,
+                          created_rule: dict | None = None) -> dict:
     """The one response shape both the preview and the write return, so the app renders the same
     summary either way — only the outcome lists differ.
 
@@ -1258,6 +1316,9 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
       remaining — matched rows this request did NOT attempt, because the write cap or the time
                   budget stopped it. Rows in `failed` are NOT counted here (they were attempted),
                   but a re-run picks them up anyway. In a preview this equals `matched`.
+      createdRule — the rule an inline `rule` minted, or null. A PREVIEW always reports null: it
+                  writes nothing, including to BankSync, so the numbers can be seen before any
+                  rule exists. The app uses the id to refresh its rules list.
 
     Note the guarantee is per-run: a charge filed to a category id that later stops existing reads
     as unfiled again, so a subsequent run may legitimately file it.
@@ -1277,6 +1338,7 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
         "failed": failed,
         "alreadyFiled": already_filed,
         "remaining": remaining,
+        "createdRule": created_rule,
     })
 
 
@@ -1293,10 +1355,18 @@ def apply_rules_to_uncategorized(
         {"dryRun": true}   (default) — decide and report, write nothing
         {"dryRun": false}            — write
 
+    An optional `rule` — {"value": <str>, "categoryId": <slug>} — is the merchant screen's
+    "file this shop" (WHIT-516): the rule is swept with alongside the user's existing ones, so
+    one request both mints it and files the charges already stored. Making the rule alone would
+    leave every existing charge exactly where it was (WHIT-502), which is the whole problem.
+    A PREVIEW never mints it — the numbers can be seen before anything exists in BankSync.
+
     Previewing is the default so a bulk write can never happen by accident: a non-boolean
     `dryRun` is rejected rather than coerced, a missing or non-object body is a 400, and a
     missing `dryRun` previews. Safe to run twice: a charge is only ever filed to a category that
-    counts as FILED, so it leaves the unfiled set and the next run won't touch it.
+    counts as FILED, so it leaves the unfiled set and the next run won't touch it — and
+    create_rule is itself idempotent on rule identity (WHIT-497), so a re-tap after a timeout
+    returns the existing rule rather than piling up duplicates.
     """
     started = time.monotonic()
     body, error = _parse_json_body(event)
@@ -1306,15 +1376,21 @@ def apply_rules_to_uncategorized(
     if not isinstance(dry_run, bool):
         return _json_response(400, {"error": "invalid dryRun; expected a boolean"})
 
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+    inline_rule, error = _validate_inline_rule(body, taxonomy_ids)
+    if error is not None:
+        return error
+
     try:
         rules = list_rules()
     except BankSyncError as e:
         return _banksync_error_response(e)
 
-    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-
     def is_unfiled(category: str | None) -> bool:
         return _is_unmapped_category(category, taxonomy_ids)
+
+    if inline_rule is not None:
+        rules = rules + [_as_leaf_rule(inline_rule)]
 
     # No rules -> nothing can match, so skip the whole-history scan entirely.
     if not rules:
@@ -1326,6 +1402,20 @@ def apply_rules_to_uncategorized(
 
     if dry_run:
         return _apply_rules_response(plan, True, remaining=len(plan["matched"]))
+
+    created_rule = None
+    if inline_rule is not None:
+        # Minted BEFORE the sweep, so the failure mode is the recoverable one: a rule that
+        # exists with its existing charges not yet filed is exactly today's state, and tapping
+        # again finishes the job. Filing first and failing here would leave the charges filed
+        # with nothing to catch the next one.
+        try:
+            created_rule = create_rule(
+                DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
+                inline_rule["value"], inline_rule["categoryId"],
+            )
+        except BankSyncError as e:
+            return _banksync_error_response(e)
 
     filed: list[dict] = []
     vanished: list[str] = []
@@ -1372,6 +1462,7 @@ def apply_rules_to_uncategorized(
     return _apply_rules_response(
         plan, False, filed=filed, vanished=vanished, failed=failed,
         already_filed=already_filed, remaining=len(plan["matched"]) - attempted,
+        created_rule=created_rule,
     )
 
 
