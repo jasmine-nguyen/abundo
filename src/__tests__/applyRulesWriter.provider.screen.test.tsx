@@ -308,3 +308,30 @@ it('leaves other sheets alone on a lock, and every sheet alone on an authed re-b
   act(() => { mockSetStatus('authed') });
   expect(result.current.sheet).toEqual({ mode: 'applyRules' });
 });
+
+// --- [A52] WHIT-508: a row someone else filed is NOT a row that disappeared ----
+
+// `vanished` and `alreadyFiled` both mean "we did not write this one", and they are one word
+// apart in the response — but only `vanished` rows are gone server-side. An alreadyFiled row is
+// sitting on screen holding the category the user just tapped, so dropping it from the caches
+// deletes a charge she can see, and the invalidation does not bring the general feed back.
+// Fail-on-revert: fold `result.alreadyFiled` into the `vanished` Set -> red.
+it('keeps rows the user filed mid-run in the caches, with their own category', async () => {
+  seedTransactionsCache(queryClient, [
+    txn({ transaction_id: 'kept', category: 'coffee' }),   // her tap, already in the cache
+    txn({ transaction_id: 'gone' }),
+  ]);
+  queryClient.setQueryData(['transactionsRecent'], [txn({ transaction_id: 'kept', category: 'coffee' })]);
+  mockApi.applyRulesToUncategorized.mockResolvedValue(report({
+    filed: [], vanished: ['gone'], alreadyFiled: ['kept'],
+  }));
+
+  const result = mount();
+  await act(async () => { await result.current.applyRulesToHistory(); });
+
+  const rows = rowsIn('transactions');
+  expect(rows.map((r) => r.transaction_id)).toEqual(['kept']);   // the vanished one went, this stayed
+  // And it still holds HER category — the rule's target was never written, so neither is it here.
+  expect(rows[0].category).toBe('coffee');
+  expect(queryClient.getQueryData<Transaction[]>(['transactionsRecent'])).toHaveLength(1);
+});

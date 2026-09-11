@@ -275,6 +275,11 @@ export interface ApplyRulesResult {
   filed: { id: string; category: string }[];
   vanished: string[];
   failed: string[];
+  /** Rows something else filed between the scan and the write — a tap on the phone, or a
+   *  settlement carrying a category across. Nothing was written and nothing needs retrying: the
+   *  user's own choice stands (WHIT-508). OPTIONAL because the app and the server ship
+   *  independently — a released app must not crash against a server that predates this field. */
+  alreadyFiled?: string[];
   remaining: number;
 }
 

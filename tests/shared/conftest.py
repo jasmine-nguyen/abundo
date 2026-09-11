@@ -150,6 +150,8 @@ class FakeTable:
     def __init__(self):
         self.store: dict = {}  # (pk, sk) -> item
         self.query_calls = 0
+        self.get_item_calls = 0
+        self.consistent_reads: list = []
 
     def batch_writer(self):
         store = self.store
@@ -168,20 +170,44 @@ class FakeTable:
 
     def put_item(self, Item, ConditionExpression=None):
         key = (Item["pk"], Item["sk"])
+        # Same strictness as update_item below: an unrecognised condition must not pass silently,
+        # or a drifted expression string leaves the guard dead with every test still green.
+        if ConditionExpression not in (None, "attribute_not_exists(pk)"):
+            raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
         if ConditionExpression == "attribute_not_exists(pk)" and key in self.store:
             raise _client_error("ConditionalCheckFailedException")
         self.store[key] = dict(Item)
 
-    def get_item(self, Key):
+    def get_item(self, Key, ConsistentRead=False):
+        self.get_item_calls += 1
+        self.consistent_reads.append(ConsistentRead)
         item = self.store.get((Key["pk"], Key["sk"]))
         return {"Item": dict(item)} if item is not None else {}
+
+    def _condition_holds(self, key, ConditionExpression, values):
+        """Evaluate the condition strings the shared TransactionRepository actually builds.
+
+        An UNRECOGNISED expression raises rather than falling through: the old code silently
+        ignored one, so a drifted condition string would leave every conditional test green with
+        the guard dead — and the setdefault below would invent the row it was meant to protect.
+        """
+        item = self.store.get(key)
+        if ConditionExpression == "attribute_exists(pk)":
+            return item is not None
+        if ConditionExpression == "attribute_exists(pk) AND attribute_not_exists(#c)":
+            return item is not None and "category" not in item
+        if ConditionExpression == "attribute_exists(pk) AND #c = :expected":
+            return item is not None and item.get("category") == values[":expected"]
+        raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
                     ExpressionAttributeValues=None, ConditionExpression=None):
         key = (Key["pk"], Key["sk"])
-        if ConditionExpression == "attribute_exists(pk)" and key not in self.store:
-            raise _client_error("ConditionalCheckFailedException")
         values = ExpressionAttributeValues or {}
+        if ConditionExpression is not None and not self._condition_holds(
+            key, ConditionExpression, values
+        ):
+            raise _client_error("ConditionalCheckFailedException")
         item = self.store.setdefault(key, {"pk": Key["pk"], "sk": Key["sk"]})
         # The repository builds "SET ... [REMOVE ...]" — either clause optional
         # (update_transaction_fields; update_transaction_category is SET-only). SET
