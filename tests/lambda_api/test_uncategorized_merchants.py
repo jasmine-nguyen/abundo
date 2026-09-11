@@ -264,21 +264,26 @@ def test_equal_sized_groups_are_ordered_by_pattern(handler):
     assert [group["rulePattern"] for group in body["groups"]] == ["ALDI", "MYER", "ZARA"]
 
 
-def test_a_swept_charge_with_no_merchant_name_is_still_disclosed(handler):
-    # The disclosure has to cover the messy descriptions too — "PAYPAL *COLES ONLINE" carries no
-    # merchant name, but a COLES rule files it just the same. Skipping it would blind the
-    # warning to exactly the charges it exists to warn about.
+def test_swept_charges_with_no_merchant_name_share_one_disclosure_line(handler):
+    # FAIL-ON-REVERT, both ways. The disclosure has to cover the messy descriptions —
+    # "PAYPAL *COLES ONLINE" carries no merchant name but a COLES rule files it just the same —
+    # AND it has to stay readable: those descriptions carry a per-charge reference, so naming
+    # them individually would turn the warning into one line per charge.
     repo = FakeFeedRepo({ANZ: [
         _charge(ANZ, "2026-07-10", "c1", "COLES", "COLES 0342 RICHMOND"),
         _charge(ANZ, "2026-07-09", "c2", "COLES", "COLES ONLINE"),
-        _charge(ANZ, "2026-07-08", "p1", "", "PAYPAL *COLES ONLINE"),
+        _charge(ANZ, "2026-07-08", "p1", "", "PAYPAL *COLES ONLINE 0001"),
+        _charge(ANZ, "2026-07-07", "p2", "", "PAYPAL *COLES ONLINE 0002"),
+        _charge(ANZ, "2026-07-06", "p3", "", "PAYPAL *COLES ONLINE 0003"),
     ]})
 
     body = _groups(handler, repo)
 
     coles = body["groups"][0]
-    assert coles["count"] == 3
-    assert coles["alsoCatches"] == [{"merchant": "PAYPAL *COLES ONLINE", "count": 1}]
+    assert coles["count"] == 5
+    # One entry with no name, not one per description: those descriptions carry a per-charge
+    # reference, so keying them by description would make 300 swept charges 300 warning lines.
+    assert coles["alsoCatches"] == [{"merchant": None, "count": 3}]
 
 
 def test_scans_whole_history_with_no_date_floor(handler):

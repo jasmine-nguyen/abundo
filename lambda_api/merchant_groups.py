@@ -47,6 +47,8 @@ def _merchant_slice(transaction: dict) -> str | None:
     """
     description = _text(transaction.get("description"))
     merchant = _text(transaction.get("merchant_name")).strip()
+    # Belt-and-braces: the only caller buckets by merchant name, so a nameless row never reaches
+    # here. Without the guard an empty name would "find" at index 0 and return an empty slice.
     if not merchant:
         return None
     start = description.lower().find(merchant.lower())
@@ -111,13 +113,18 @@ def _rule_value_for_bucket(bucket: list[dict]) -> str | None:
     return value
 
 
-def _matches(lowered_description: str, value: str) -> bool:
+def _matches(folded_description: str, value: str) -> bool:
     """The same literal `description contains value` test rule_apply.rule_matches applies, so
-    a group's count equals what the minted rule would really file. Literal, NOT punctuation- or
-    whitespace-stripping: a looser compare would let a "COLES" group swallow "NICOLE'S CAFE" and
-    overstate the count right before a bulk write. Case-insensitive for the same reason it is
-    there: descriptions arrive upper-case and BankSync's own case behaviour is unverified."""
-    return value.lower() in lowered_description
+    a group's count equals what the minted rule would really file.
+
+    Trim + lowercase BOTH sides, exactly as rule_apply._normalise does — not because a derived
+    value can carry edge whitespace today (the merchant name is stripped before the slice is
+    taken), but so "previews N, files N+k" stays impossible by construction rather than by
+    accident of a guard somewhere else. Deliberately NOT punctuation- or whitespace-COLLAPSING:
+    a looser compare would let a "COLES" group swallow "NICOLE'S CAFE" and overstate the count
+    right before a bulk write.
+    """
+    return value.strip().lower() in folded_description
 
 
 def _dates(members: list[dict]) -> tuple[str | None, str | None]:
@@ -135,23 +142,26 @@ def _also_catches(members: list[dict], own_key: str) -> list[dict]:
     smaller one would lose it. So both groups stay, and each discloses what else its rule
     reaches.
 
-    A member with no merchant name falls back to its description, mirroring the client's
-    merchantLabel (src/context.tsx). Skipping those would blind the disclosure to exactly the
-    messy descriptions most likely to be swept in ("PAYPAL *COLES ONLINE") — the ones it exists
-    to warn about.
+    Members with NO merchant name are disclosed too — "PAYPAL *COLES ONLINE" is swept in just
+    the same, and those messy descriptions are the ones this warning exists for. They share one
+    entry with a null name, because their descriptions carry a reference number that differs per
+    charge: keying them by description would turn 300 swept charges into 300 near-identical
+    lines, unreadable in exactly the case that matters. The app supplies the wording.
     """
-    counts: dict[str, int] = {}
-    display: dict[str, str] = {}
+    counts: dict[str | None, int] = {}
+    display: dict[str | None, str | None] = {}
     for member in members:
-        merchant = _text(member.get("merchant_name")).strip() or _text(member.get("description")).strip()
-        key = merchant.lower()
-        if not merchant or key == own_key:
+        merchant = _text(member.get("merchant_name")).strip()
+        key = merchant.lower() or None
+        if key == own_key:
             continue
         counts[key] = counts.get(key, 0) + 1
-        display.setdefault(key, merchant)
+        display.setdefault(key, merchant or None)
     return [
         {"merchant": display[key], "count": counts[key]}
-        for key in sorted(counts, key=lambda candidate: (-counts[candidate], candidate))
+        # Biggest first; the unnamed entry sorts as "" among equal counts, so the order is total
+        # and stable rather than depending on a None comparison.
+        for key in sorted(counts, key=lambda candidate: (-counts[candidate], candidate or ""))
     ]
 
 
@@ -168,9 +178,9 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
     against the badge.
     """
     eligible = [t for t in transactions if is_unfiled(t.get("category"))]
-    # Lowered once, not once per group: every accepted bucket tests its value against every
-    # eligible charge, so re-lowering here is the whole cost of the walk.
-    lowered_descriptions = [_text(t.get("description")).lower() for t in eligible]
+    # Folded once, not once per group: every accepted bucket tests its value against every
+    # eligible charge, so re-folding here is the whole cost of the walk.
+    folded_descriptions = [_text(t.get("description")).strip().lower() for t in eligible]
 
     groups = []
     grouped_positions: set[int] = set()
@@ -178,15 +188,21 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
         value = _rule_value_for_bucket(bucket)
         if value is None:
             continue
-        positions = [index for index, lowered in enumerate(lowered_descriptions)
-                     if _matches(lowered, value)]
+        positions = [index for index, folded in enumerate(folded_descriptions)
+                     if _matches(folded, value)]
         members = [eligible[index] for index in positions]
         first_date, last_date = _dates(members)
         grouped_positions.update(positions)
         groups.append({
+            # The heading is the merchant name as first seen; `rulePattern` is the commonest
+            # slice, so the two can differ in casing for a merchant spelled inconsistently. The
+            # app shows the heading — it is a label, and the pattern is the thing that matters.
             "merchant": _text(bucket[0].get("merchant_name")).strip(),
             "rulePattern": value,
             "count": len(members),
+            # Scan order, not newest-first: the scan walks account by account, so a group
+            # spanning two accounts samples the first account's charges. Illustrative only —
+            # firstDate/lastDate cover the whole group.
             "samples": [_text(member.get("description")) for member in members[:_SAMPLES_PER_GROUP]],
             "firstDate": first_date,
             "lastDate": last_date,
