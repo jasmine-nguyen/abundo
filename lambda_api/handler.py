@@ -53,8 +53,8 @@ from constants import (
     UNCATEGORIZED_APPLY_RULES_PATH,
     UNCATEGORIZED_COUNT_PATH,
     UNCATEGORIZED_FEED_PATH,
-    UNCATEGORIZED_MERCHANTS_PATH,
     UNCATEGORIZED_KEY,
+    UNCATEGORIZED_MERCHANTS_PATH,
 )
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
@@ -112,9 +112,9 @@ from spend import (
 from anthropic_client import AnthropicError
 from insights_ai import generate_suggestions
 from iso_date import ISO_DATE_RE, valid_iso_date
+from merchant_groups import group_unfiled_by_merchant
 from milestones import mint_migration_markers
 from rule_apply import plan_rule_application
-from merchant_groups import group_unfiled_by_merchant
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -1231,10 +1231,10 @@ def get_uncategorized_merchants(
     """
     taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
     transactions = _fetch_windowed_transactions(transaction_repo, None, None)
-    groups = group_unfiled_by_merchant(
+    body = group_unfiled_by_merchant(
         transactions, lambda category: _is_unmapped_category(category, taxonomy_ids)
     )
-    return _json_response(200, groups)
+    return _json_response(200, body)
 
 
 def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanished: list = (),

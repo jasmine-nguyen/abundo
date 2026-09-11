@@ -16,6 +16,10 @@ from this group would actually match, evaluated the same literal way rule_apply.
 evaluates a `description contains VALUE` rule. That is what makes "COLES — 50 charges" honest
 when 12 of them are really COLES EXPRESS, and it is why every group also reports which OTHER
 merchants its rule would sweep in (`alsoCatches`).
+
+Unlike rule_apply, which returns snake_case internals the handler maps to the wire, this
+returns the response body as the app reads it. The shape is all presentation — there is no
+second consumer to map it for, and a mapping step would only be somewhere for the two to drift.
 """
 
 # How many example descriptions a group (and the ungrouped bucket) shows.
@@ -48,7 +52,13 @@ def _merchant_slice(transaction: dict) -> str | None:
     start = description.lower().find(merchant.lower())
     if start < 0:
         return None
-    return description[start:start + len(merchant)]
+    found = description[start:start + len(merchant)]
+    # lower() is not always length-preserving ("İ" lowercases to two chars), so an index taken
+    # in the lowered description can point into the wrong place in the original. Re-check rather
+    # than mint a rule on a slice sliding off the merchant name.
+    if found.lower() != merchant.lower():
+        return None
+    return found
 
 
 def _alphanumeric_length(value: str) -> int:
@@ -82,6 +92,10 @@ def _rule_value_for_bucket(bucket: list[dict]) -> str | None:
     always yields the same rule.
 
     None when no row yields a slice, or when the winning slice is too short to be safe.
+
+    Whatever comes back folds to the bucket's own key (a slice is the merchant name as the
+    description spells it), so two buckets can never derive the same value and the caller needs
+    no dedup.
     """
     counts: dict[str, int] = {}
     for transaction in bucket:
@@ -97,12 +111,13 @@ def _rule_value_for_bucket(bucket: list[dict]) -> str | None:
     return value
 
 
-def _matches(transaction: dict, value: str) -> bool:
+def _matches(lowered_description: str, value: str) -> bool:
     """The same literal `description contains value` test rule_apply.rule_matches applies, so
-    a group's count equals what the minted rule would really file. Case-insensitive for the
-    same reason it is there: descriptions arrive upper-case and BankSync's own case behaviour
-    is unverified."""
-    return value.lower() in _text(transaction.get("description")).lower()
+    a group's count equals what the minted rule would really file. Literal, NOT punctuation- or
+    whitespace-stripping: a looser compare would let a "COLES" group swallow "NICOLE'S CAFE" and
+    overstate the count right before a bulk write. Case-insensitive for the same reason it is
+    there: descriptions arrive upper-case and BankSync's own case behaviour is unverified."""
+    return value.lower() in lowered_description
 
 
 def _dates(members: list[dict]) -> tuple[str | None, str | None]:
@@ -119,11 +134,16 @@ def _also_catches(members: list[dict], own_key: str) -> list[dict]:
     as groceries — permanently. Merging the two into one group would hide that; dropping the
     smaller one would lose it. So both groups stay, and each discloses what else its rule
     reaches.
+
+    A member with no merchant name falls back to its description, mirroring the client's
+    merchantLabel (src/context.tsx). Skipping those would blind the disclosure to exactly the
+    messy descriptions most likely to be swept in ("PAYPAL *COLES ONLINE") — the ones it exists
+    to warn about.
     """
     counts: dict[str, int] = {}
     display: dict[str, str] = {}
     for member in members:
-        merchant = _text(member.get("merchant_name")).strip()
+        merchant = _text(member.get("merchant_name")).strip() or _text(member.get("description")).strip()
         key = merchant.lower()
         if not merchant or key == own_key:
             continue
@@ -148,20 +168,18 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
     against the badge.
     """
     eligible = [t for t in transactions if is_unfiled(t.get("category"))]
+    # Lowered once, not once per group: every accepted bucket tests its value against every
+    # eligible charge, so re-lowering here is the whole cost of the walk.
+    lowered_descriptions = [_text(t.get("description")).lower() for t in eligible]
 
     groups = []
     grouped_positions: set[int] = set()
-    seen_values: set[str] = set()
     for key, bucket in _bucket_by_merchant(eligible).items():
         value = _rule_value_for_bucket(bucket)
         if value is None:
             continue
-        # Two buckets deriving the same value would render as two identical rows offering the
-        # same rule. Keep the first (buckets are walked in first-seen order).
-        if value.lower() in seen_values:
-            continue
-        seen_values.add(value.lower())
-        positions = [index for index, t in enumerate(eligible) if _matches(t, value)]
+        positions = [index for index, lowered in enumerate(lowered_descriptions)
+                     if _matches(lowered, value)]
         members = [eligible[index] for index in positions]
         first_date, last_date = _dates(members)
         grouped_positions.update(positions)

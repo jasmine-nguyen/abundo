@@ -204,6 +204,83 @@ def test_groups_a_merchant_whose_charges_sit_beyond_the_first_page(handler):
     assert len([call for call in repo.calls if call[0] == ANZ]) > 1  # genuinely paged
 
 
+def test_every_group_count_is_what_the_rule_would_really_file(handler, rule_apply):
+    # FAIL-ON-REVERT for the invariant the whole feature rests on. Every other count assertion
+    # here is computed by the module under test, so a matcher that drifted looser — stripping
+    # punctuation, say — would pass all of them while quietly overstating. This checks the
+    # counts against the OTHER module, the one that does the filing for real.
+    #
+    # NICOLE'S CAFE is the trap: punctuation-stripped, "nicolescafe" contains "coles". A COLES
+    # rule must not reach it, and the group count must not include it.
+    rows = [
+        _charge(ANZ, "2026-07-10", "c1", "COLES", "COLES 0342 RICHMOND"),
+        _charge(ANZ, "2026-07-09", "c2", "COLES", "COLES ONLINE"),
+        _charge(ANZ, "2026-07-08", "e1", "COLES EXPRESS", "COLES EXPRESS 1123"),
+        _charge(ANZ, "2026-07-07", "n1", "NICOLE'S CAFE", "NICOLE'S CAFE BRUNSWICK"),
+        _charge(ANZ, "2026-07-06", "n2", "NICOLE'S CAFE", "NICOLE'S CAFE BRUNSWICK"),
+    ]
+    body = _groups(handler, FakeFeedRepo({ANZ: rows}), taxonomy={"groceries"})
+
+    def still_unfiled(category):
+        return category != "income" and category != "groceries"
+
+    for group in body["groups"]:
+        rule = {"id": "r", "field": "description", "operator": "contains",
+                "value": group["rulePattern"], "categoryId": "groceries", "conditionCount": 1}
+        plan = rule_apply.plan_rule_application([rule], rows, still_unfiled)
+        assert plan["by_rule"][0]["count"] == group["count"], group["rulePattern"]
+
+    coles = next(g for g in body["groups"] if g["rulePattern"] == "COLES")
+    assert coles["count"] == 3  # c1, c2, e1 — never the two NICOLE'S CAFE charges
+
+
+def test_a_description_whose_lowercasing_changes_length_yields_no_rule(handler):
+    # Lowercasing "İ" produces TWO characters, so a position found in the lowered description
+    # points past where the shop name really starts in the original. Here that slides the slice
+    # off "MERCHANT" onto "ERCHANT " — a rule that would match charges at random. Better to
+    # leave these unfiled than to offer a rule built on a misread.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "u1", "MERCHANT", "İMERCHANT 123"),
+        _charge(ANZ, "2026-07-09", "u2", "MERCHANT", "İMERCHANT 456"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    assert body["groups"] == []
+    assert body["ungrouped"]["count"] == 2
+
+
+def test_equal_sized_groups_are_ordered_by_pattern(handler):
+    # Two groups the same size must come back in a fixed order, or the list reshuffles between
+    # refreshes and she loses her place halfway down a long tail.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "z1", "ZARA", "ZARA MELBOURNE"),
+        _charge(ANZ, "2026-07-09", "a1", "ALDI", "ALDI 771 KEW"),
+        _charge(ANZ, "2026-07-08", "m1", "MYER", "MYER CITY"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    assert [group["rulePattern"] for group in body["groups"]] == ["ALDI", "MYER", "ZARA"]
+
+
+def test_a_swept_charge_with_no_merchant_name_is_still_disclosed(handler):
+    # The disclosure has to cover the messy descriptions too — "PAYPAL *COLES ONLINE" carries no
+    # merchant name, but a COLES rule files it just the same. Skipping it would blind the
+    # warning to exactly the charges it exists to warn about.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "c1", "COLES", "COLES 0342 RICHMOND"),
+        _charge(ANZ, "2026-07-09", "c2", "COLES", "COLES ONLINE"),
+        _charge(ANZ, "2026-07-08", "p1", "", "PAYPAL *COLES ONLINE"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    coles = body["groups"][0]
+    assert coles["count"] == 3
+    assert coles["alsoCatches"] == [{"merchant": "PAYPAL *COLES ONLINE", "count": 1}]
+
+
 def test_scans_whole_history_with_no_date_floor(handler):
     repo = FakeFeedRepo({ANZ: [_charge(ANZ, "2026-07-10", "a1", "ALDI", "ALDI 771 KEW")]})
 
