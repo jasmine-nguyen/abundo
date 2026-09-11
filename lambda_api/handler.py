@@ -1207,19 +1207,29 @@ def get_uncategorized_feed(
 
 
 def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanished: list = (),
-                          failed: list = (), remaining: int = 0) -> dict:
+                          failed: list = (), already_filed: list = (), remaining: int = 0) -> dict:
     """The one response shape both the preview and the write return, so the app renders the same
     summary either way — only the outcome lists differ.
 
     The counts summarise the PLAN (what the rules cover); the lists report the OUTCOME of this
     request:
-      filed     — rows written, {id, category} each.
+      filed     — rows this request's write was ACCEPTED for, {id, category} each. Note the
+                  weaker claim: a settlement reconciling the same row immediately afterwards
+                  re-puts the whole item and can still land on top (WHIT-513).
       vanished  — rows deleted between the scan and the write. Nothing to retry; they are gone
                   from the next scan too.
-      failed    — rows the write errored on. A re-run retries them (they are still unfiled).
+      failed    — rows the write did not land on. A re-run retries them (they are still unfiled).
+                  Covers a database error AND a row that changed underneath into something still
+                  unfiled — a re-sync carrying the bank's own raw label back onto the row.
+      alreadyFiled — rows something else filed between the scan and the write: a tap on the phone,
+                  or a settlement carrying a category across. NOTHING was written and there is
+                  nothing to retry — the user's own choice stands, which is the whole point.
       remaining — matched rows this request did NOT attempt, because the write cap or the time
                   budget stopped it. Rows in `failed` are NOT counted here (they were attempted),
                   but a re-run picks them up anyway. In a preview this equals `matched`.
+
+    Note the guarantee is per-run: a charge filed to a category id that later stops existing reads
+    as unfiled again, so a subsequent run may legitimately file it.
     """
     return _json_response(200, {
         "dryRun": dry_run,
@@ -1234,6 +1244,7 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
         "filed": filed,
         "vanished": vanished,
         "failed": failed,
+        "alreadyFiled": already_filed,
         "remaining": remaining,
     })
 
@@ -1288,6 +1299,7 @@ def apply_rules_to_uncategorized(
     filed: list[dict] = []
     vanished: list[str] = []
     failed: list[str] = []
+    already_filed: list[str] = []
     attempted = 0  # counts ATTEMPTS, not successes — it bounds the work this request does
     for transaction, category_id in plan["matched"]:
         if attempted >= APPLY_RULES_MAX_WRITES:
@@ -1301,22 +1313,34 @@ def apply_rules_to_uncategorized(
         transaction_id = transaction.get("transaction_id")
         attempted += 1
         try:
-            saved = transaction_repo.update_transaction_category(
-                transaction["pk"], transaction["sk"], category_id
+            # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
+            # since keeps their choice (WHIT-508). Their tap always beats a rule.
+            status, current_category = transaction_repo.update_transaction_category_if_unchanged(
+                transaction["pk"], transaction["sk"], category_id, transaction.get("category")
             )
         except DatabaseError:
             failed.append(transaction_id)
             continue
-        # False = the row was deleted between the scan and the write (a pending aged out, or
-        # its posted twin replaced it). Nothing to retry — it is gone from the next scan too.
-        if saved:
+        if status == "written":
             filed.append({"id": transaction_id, "category": category_id})
-        else:
+            continue
+        # The row was deleted between the scan and the write (a pending aged out, or its posted
+        # twin replaced it). Nothing to retry — it is gone from the next scan too.
+        if status == "gone":
             vanished.append(transaction_id)
+            continue
+        # It changed underneath. Only the taxonomy says whether that counts as FILED: a tap files
+        # it (leave it alone, say so), but a re-sync carrying the bank's own raw label back on
+        # leaves it unfiled, and reporting THAT as filed would let the app claim the job was done
+        # while the badge still counted the charge.
+        if is_unfiled(current_category):
+            failed.append(transaction_id)
+            continue
+        already_filed.append(transaction_id)
 
     return _apply_rules_response(
         plan, False, filed=filed, vanished=vanished, failed=failed,
-        remaining=len(plan["matched"]) - attempted,
+        already_filed=already_filed, remaining=len(plan["matched"]) - attempted,
     )
 
 

@@ -36,7 +36,7 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   dryRun: true, rulesConsidered: 2, unfiled: 639, matched: 512, conflicted: 0, conflictedSamples: [],
   byCategory: { groceries: 512 },
   byRule: [{ ruleId: 'r1', value: 'coles', categoryId: 'groceries', count: 512, samples: ['COLES 1234'] }],
-  skippedRules: [], filed: [], vanished: [], failed: [], remaining: 512,
+  skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 512,
   ...over,
 });
 
@@ -200,4 +200,46 @@ it('keeps offering rounds while the work left is shrinking', async () => {
 
   expect(screen.getByText('Filed 500 charges so far')).toBeTruthy();
   expect(screen.getByTestId('apply-rules-continue')).toBeTruthy();
+});
+
+// --- [A50]-[A51] WHIT-508: rows someone else filed mid-run are DONE, not work left ---------
+
+// The work-left sum is `remaining + failed` on purpose. A row the user filed with their own tap
+// during the run needs nothing: it is filed, and the next round's scan will not even see it.
+// Counting it as work left gives her a round that reports charges to go, then a next round that
+// finds nothing and reports the same number again — a button that never finishes.
+// Fail-on-revert: add the alreadyFiled count to `stillToGo` and the sheet stays open offering
+// "Apply the rest" instead of closing -> red.
+it('finishes the run when every attempted row was already filed by the user', async () => {
+  await mountWithPreview(report({ matched: 4, remaining: 4 }));
+  fns.applyRulesToHistory.mockResolvedValueOnce(report({
+    dryRun: false, matched: 4, filed: [], failed: [],
+    alreadyFiled: ['t1', 't2', 't3', 't4'], remaining: 0,
+  }));
+
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+
+  expect(fns.setSheet).toHaveBeenCalledWith(null);
+  // Honest: this round filed nothing itself, so it must not claim a number it did not write.
+  expect(fns.showToast).toHaveBeenCalledWith('Nothing left for your rules to file.');
+  expect(screen.queryByTestId('apply-rules-continue')).toBeNull();
+});
+
+// A round can file nothing ITSELF and still be progress: the user (or another device) filed those
+// rows during it, so the work left genuinely shrank. Judging "stuck" on `filed.length === 0` alone
+// would slam the door on a run that is finishing normally and tell her something is wrong.
+// Fail-on-revert: drop the "did the work left shrink" half of the stall test -> red.
+it('does not call a round stuck when someone else filed the rows it skipped', async () => {
+  await mountWithPreview(report());
+  await firstRound();                                   // filed 300, 212 to go
+
+  fns.applyRulesToHistory.mockResolvedValueOnce(report({
+    dryRun: false, matched: 512, filed: [], failed: [],
+    alreadyFiled: Array.from({ length: 100 }, (_, i) => `x${i}`), remaining: 112,
+  }));
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-continue')); });
+
+  expect(screen.queryByText("Something's stopping these")).toBeNull();
+  expect(screen.getByTestId('apply-rules-continue')).toBeTruthy();   // still worth another tap
+  expect(screen.getByText(/112 still to go/)).toBeTruthy();
 });

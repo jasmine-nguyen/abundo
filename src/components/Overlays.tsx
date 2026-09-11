@@ -894,7 +894,11 @@ function ApplyRulesSheet() {
     // Only blame the cap when the cap actually bit. The server also stops on a wall-clock budget,
     // and rows can be left over because they ERRORED — saying "we file up to 300 at a time" after
     // a run that saved nothing, or that stopped at 12, is a made-up explanation.
-    const attempted = report.filed.length + report.vanished.length + report.failed.length;
+    // A row someone filed mid-run was attempted too, so it counts toward the cap. `?? []` because
+    // the field is absent on a server that predates it — an old server must not crash a new app.
+    const alreadyFiled = (report.alreadyFiled ?? []).length;
+    const attempted = report.filed.length + report.vanished.length + report.failed.length
+      + alreadyFiled;
     const hitCap = attempted >= APPLY_RULES_MAX_WRITES;
     return (
       <View>
@@ -904,8 +908,17 @@ function ApplyRulesSheet() {
             : `Filed ${filedTotal.current} ${chargeNoun(filedTotal.current)} so far`}
         </Text>
         <Text style={styles.confirmSub}>
-          {stillToGo} still to go{report.failed.length > 0 ? ` (${report.failed.length} we couldn't save)` : ''}
+          {stillToGo} still to go
+          {report.failed.length > 0 ? ` (${report.failed.length} we couldn't save)` : ''}
           {hitCap ? ` — we file up to ${APPLY_RULES_MAX_WRITES} at a time.` : '.'}
+          {/* A SEPARATE sentence, not a second parenthetical: `failed` rows are INSIDE the
+              still-to-go number and these are OUTSIDE it, so hanging both off the same figure
+              would give a reader no way to tell which is which. Without this line at all, a round
+              that skipped 40 charges because SHE filed them reads as "Couldn't file any this
+              time" — accurate, and it looks broken. */}
+          {alreadyFiled > 0
+            ? ` You'd already filed ${alreadyFiled} ${chargeNoun(alreadyFiled)} yourself.`
+            : ''}
         </Text>
         <Pressable testID="apply-rules-continue" onPress={onApply} style={[styles.btn, styles.btnPrimary]}>
           <Text style={styles.btnPrimaryText}>Apply the rest</Text>

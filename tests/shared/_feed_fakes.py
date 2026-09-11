@@ -8,8 +8,10 @@ assertions only mean anything while the fake models DynamoDB's resume-strictly-a
 ExclusiveStartKey exactly — WHIT-445).
 
 Resolved by pytest.ini's `pythonpath = tests/shared`, the same way the category suites
-import `_category_fakes`. This module is dependency-light (stdlib `copy` only), so it
-imports with no shared/-layer module on the path and needs no conftest `_REIMPORT` entry.
+import `_category_fakes`. This module imports nothing from the shared layer at MODULE scope
+(stdlib `copy` only), so it imports with no shared/-layer module on the path and needs no
+conftest `_REIMPORT` entry. WritableFeedRepo's one shared import is deferred into the method
+body to keep that true — see [G2].
 """
 
 import copy
@@ -75,3 +77,76 @@ def _feed_event(params=None):
         "requestContext": {"http": {"method": "GET"}},
         "queryStringParameters": params,
     }
+
+
+class WritableFeedRepo(FakeFeedRepo):
+    """FakeFeedRepo plus the conditional category write, so a second run really sees the first
+    run's effect. Promoted here in WHIT-508 — test_apply_rules.py and test_apply_rules_gaps.py
+    each carried a byte-identical private copy, which is exactly the drift this module prevents.
+
+    The conditional is implemented for REAL against the fake's own rows rather than keyed off an
+    id set, so the fake cannot lie: a handler that passed the wrong expected value (the rule's
+    target instead of the value the scan saw) fails here.
+
+      error_ids    — raise DatabaseError (a retryable database failure).
+      vanished_ids — the row was deleted between the scan and the write.
+      refile_hook  — called once before each write with (transaction_id, repo), so a test can
+                     simulate the user tapping a category mid-run.
+      scan_shows   — transaction_id -> the category the SCAN reports, while the store holds the
+                     real one. The scan reads a secondary index that cannot be read consistently,
+                     so "the scan is behind the stored row" is the everyday case, not an exotic one.
+    """
+
+    def __init__(self, rows_by_account):
+        super().__init__(rows_by_account)
+        self.writes = []
+        self.vanished_ids = set()
+        self.error_ids = set()
+        self.refile_hook = None
+        self.scan_shows = {}
+
+    def get_transactions_by_date_range(self, account_id, start_date, end_date, limit=20, cursor=None):
+        page, next_key = super().get_transactions_by_date_range(
+            account_id, start_date, end_date, limit, cursor)
+        for row in page:
+            transaction_id = row["sk"].split("#", 1)[1]
+            if transaction_id in self.scan_shows:
+                row["category"] = self.scan_shows[transaction_id]
+        return page, next_key
+
+    def _find_row(self, pk, sk):
+        """Resolve a row by its FULL key. Matching on sk alone would silently cross accounts —
+        ids like "t1" repeat per account in these fixtures, so a multi-account test would write
+        to the wrong row and still look green."""
+        for rows in self._rows.values():
+            for row in rows:
+                if row["pk"] == pk and row["sk"] == sk:
+                    return row
+        return None
+
+    def set_category(self, transaction_id, category, account_id=SPENDING):
+        """Write a category behind the handler's back — the user's tap, mid-run."""
+        row = self._find_row(f"ACCOUNT#{account_id}", f"TXN#{transaction_id}")
+        if row is None:
+            raise AssertionError(f"no row {transaction_id!r} in account {account_id!r}")
+        row["category"] = category
+
+    def update_transaction_category_if_unchanged(self, pk, sk, category, expected_category):
+        transaction_id = sk.split("#", 1)[1]
+        if self.refile_hook is not None:
+            self.refile_hook(transaction_id, self)
+        self.writes.append((pk, sk, category, expected_category))
+        if transaction_id in self.error_ids:
+            # Imported lazily: _feed_fakes must stay importable with no shared/ layer on the
+            # path ([G2]), so this may not move to module scope.
+            from repository import DatabaseError
+            raise DatabaseError("write failed")
+        if transaction_id in self.vanished_ids:
+            return "gone", None
+        row = self._find_row(pk, sk)
+        if row is None:
+            return "gone", None
+        if row.get("category") != expected_category:
+            return "changed", row.get("category")
+        row["category"] = category
+        return "written", category

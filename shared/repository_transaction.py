@@ -181,6 +181,64 @@ class TransactionRepository:
                 return False
             handle_database_error(e, "write")
 
+    def update_transaction_category_if_unchanged(
+        self, pk: str, sk: str, category: str, expected_category: Optional[str]
+    ) -> tuple[str, Optional[str]]:
+        """Set a transaction's category ONLY IF it still holds `expected_category` (WHIT-508).
+
+        The apply-rules pass reads all of history, decides, then writes — up to 15s later. An
+        unconditional write there silently overwrites a category the user tapped in the gap; this
+        makes the user's own tap win.
+
+        Returns (status, current_category):
+          ("written", category) — the row still held expected_category and now holds `category`.
+          ("changed", current)  — the row exists but holds something else; NOTHING was written.
+                                  `current` is what it holds now, so the CALLER can judge whether
+                                  that counts as filed — only the caller knows the taxonomy.
+          ("gone", None)        — the row no longer exists.
+
+        `expected_category=None` means "the row had no category at all", so the condition is
+        attribute_not_exists rather than a comparison against NULL: rows are sparse — insert
+        strips None (sanitise_transaction) and update_transaction_fields REMOVEs a cleared field —
+        so an unfiled row carries no category attribute.
+
+        DynamoDB reports "deleted" and "changed underneath" with the SAME error, so on a refusal we
+        read the row back to tell them apart. Getting that wrong matters: the caller reports a
+        missing row as vanished, and the app then drops it from the list entirely. "gone" is
+        therefore only ever returned on a clean, definite absence — a failed read raises.
+        """
+        condition = "attribute_exists(pk) AND attribute_not_exists(#c)"
+        values = {":category": category}
+        if expected_category is not None:
+            condition = "attribute_exists(pk) AND #c = :expected"
+            values[":expected"] = expected_category
+
+        try:
+            self._get_table().update_item(
+                Key={"pk": pk, "sk": sk},
+                UpdateExpression="SET #c = :category",
+                ExpressionAttributeNames={"#c": "category"},
+                ExpressionAttributeValues=values,
+                ConditionExpression=condition,
+            )
+            return "written", category
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                handle_database_error(e, "write")
+            # Fall through: the write was refused, so find out which refusal it was. Strongly
+            # consistent because the scan reads an index that cannot be — reading stale here would
+            # reintroduce the very race this method exists to close.
+
+        try:
+            item = self._get_table().get_item(
+                Key={"pk": pk, "sk": sk}, ConsistentRead=True
+            ).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read")
+        if item is None:
+            return "gone", None
+        return "changed", item.get("category")
+
     def update_transaction_fields(
         self,
         pk: str,

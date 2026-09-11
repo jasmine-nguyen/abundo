@@ -1222,6 +1222,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // One pass over all three list caches. A filed row stops matching the Uncategorized tab's
         // client re-filter and disappears instantly; a vanished row is gone server-side, so leaving
         // it would show a phantom charge until the next refetch.
+        // Deliberately NOT touching `alreadyFiled`: unlike `vanished`, those rows still exist and
+        // now carry the category the user just chose. Dropping them would delete a charge they can
+        // see, and the invalidation below does not bring the general feed back.
         patchTransactions((prev) => prev
           .filter((existing) => !vanished.has(existing.transaction_id))
           .map((existing) => (filedBy.has(existing.transaction_id)

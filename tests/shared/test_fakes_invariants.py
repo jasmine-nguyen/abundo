@@ -90,7 +90,7 @@ _REGISTRY = [
         "feed",
         [_Module("_feed_fakes",
                  {"ANZ", "SPENDING", "HOMELOAN", "WESTPAC", "_row", "FakeFeedRepo",
-                  "_feed_event"})],
+                  "_feed_event", "WritableFeedRepo"})],
         # WHIT-469 folded test_transactions_feed_gaps.py into the main.
         # WHIT-500: the uncategorized-count suite reuses FakeFeedRepo for the deep-page case.
         # The paged uncategorized-feed suite reuses FakeFeedRepo the same way.

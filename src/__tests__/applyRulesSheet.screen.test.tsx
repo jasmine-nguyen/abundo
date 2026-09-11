@@ -36,7 +36,7 @@ const report = (over: Partial<ApplyRulesResult> = {}): ApplyRulesResult => ({
   dryRun: true, rulesConsidered: 2, unfiled: 10, matched: 4, conflicted: 0, conflictedSamples: [],
   byCategory: { groceries: 4 },
   byRule: [{ ruleId: 'r1', value: 'coles', categoryId: 'groceries', count: 4, samples: ['COLES 1234 RICHMOND'] }],
-  skippedRules: [], filed: [], vanished: [], failed: [], remaining: 4,
+  skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 4,
   ...over,
 });
 
@@ -267,6 +267,55 @@ it('only blames the 300 cap when the run actually reached it', async () => {
 
   expect(screen.getByText('12 still to go.')).toBeTruthy();
   expect(screen.queryByText(/up to 300 at a time/)).toBeNull();
+});
+
+// WHIT-508. A charge the user filed mid-run was attempted too, so it consumed a slot of the cap.
+// Leaving it out would under-count and drop the "we file up to 300 at a time" explanation from a
+// run that genuinely hit the cap. Fail-on-revert: remove alreadyFiled from `attempted` → red.
+it('counts rows the user filed mid-run toward the per-run cap', async () => {
+  await mountWithPreview(report({ unfiled: 639, matched: 512, remaining: 512 }));
+  fns.applyRulesToHistory.mockResolvedValue(report({
+    dryRun: false, matched: 512, remaining: 212,
+    filed: Array.from({ length: 250 }, (_, n) => ({ id: `f${n}`, category: 'groceries' })),
+    alreadyFiled: Array.from({ length: 50 }, (_, n) => `a${n}`),
+  }));
+
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+
+  expect(screen.getByText(/we file up to 300 at a time/)).toBeTruthy();
+  // And SAY why the round skipped them, or it reads as "Couldn't file any this time" with no
+  // explanation. A separate sentence on purpose: the failed count is INSIDE "still to go" and
+  // this one is outside it. Fail-on-revert: delete the line from the sheet and this reddens —
+  // nothing else does, because both branches are already executed by other tests.
+  expect(screen.getByText(/You'd already filed 50 charges yourself\./)).toBeTruthy();
+});
+
+// The two parentheticals mean opposite things — `failed` rows are counted in "still to go",
+// already-filed ones are not — so they must never read as one undifferentiated list.
+it('separates what is still to do from what someone else already did', async () => {
+  await mountWithPreview(report({ unfiled: 639, matched: 512, remaining: 512 }));
+  fns.applyRulesToHistory.mockResolvedValue(report({
+    dryRun: false, matched: 512, remaining: 212, failed: ['x', 'y', 'z'],
+    filed: [{ id: 't1', category: 'groceries' }], alreadyFiled: ['a1'],
+  }));
+
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+
+  expect(screen.getByText(/215 still to go \(3 we couldn't save\)/)).toBeTruthy();
+  expect(screen.getByText(/You'd already filed 1 charge yourself\./)).toBeTruthy();
+});
+
+// The app ships through the store and the server through its own deploy, so a released app can
+// meet a server that predates this field. Reading it blindly would throw mid-render on every run.
+it('renders a write result from a server that does not send alreadyFiled', async () => {
+  await mountWithPreview(report({ matched: 4 }));
+  const withoutField = report({ dryRun: false, matched: 4, remaining: 2, filed: [] });
+  delete (withoutField as { alreadyFiled?: string[] }).alreadyFiled;
+  fns.applyRulesToHistory.mockResolvedValue(withoutField);
+
+  await act(async () => { fireEvent.press(screen.getByTestId('apply-rules-apply')); });
+
+  expect(screen.getByText(/2 still to go/)).toBeTruthy();
 });
 
 // A round where every write errored saved nothing. "Filed 0 charges" reads as success.

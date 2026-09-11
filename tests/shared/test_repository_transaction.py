@@ -318,6 +318,110 @@ def test_update_category_maps_other_database_error(repo, client_error, database_
 
 
 # --------------------------------------------------------------------------- #
+# update_transaction_category_if_unchanged (WHIT-508)                          #
+# --------------------------------------------------------------------------- #
+# The apply-rules pass reads all of history, decides, then writes up to 15s later. These lock the
+# guard that makes the user's own tap in that gap win, and — just as important — that a refusal is
+# correctly told apart from a deleted row: reporting a live charge as deleted makes the app drop it
+# from the list with nothing to bring it back.
+
+_NO_CATEGORY = object()
+
+
+def _seed(repo, category=_NO_CATEGORY):
+    """Seed one row, with no category attribute at all unless one is given (rows are sparse)."""
+    key = ("ACCOUNT#acct", "TXN#t1")
+    item = {"pk": key[0], "sk": key[1]}
+    if category is not _NO_CATEGORY:
+        item["category"] = category
+    repo._table.store = {key: item}
+    return key
+
+
+def test_conditional_write_files_a_row_the_scan_saw_unfiled(repo):
+    key = _seed(repo)  # no category attribute — what an unfiled row really looks like
+    assert repo.update_transaction_category_if_unchanged(*key, "groceries", None) == ("written", "groceries")
+    assert repo._table.store[key]["category"] == "groceries"
+
+
+def test_conditional_write_files_a_row_still_holding_the_scanned_value(repo):
+    key = _seed(repo, "FOOD_AND_DRINK")  # a raw bank label still counts as unfiled
+    assert repo.update_transaction_category_if_unchanged(*key, "eatingout", "FOOD_AND_DRINK") == ("written", "eatingout")
+    assert repo._table.store[key]["category"] == "eatingout"
+
+
+def test_conditional_write_leaves_a_row_the_user_filed_mid_run(repo):
+    # THE CARD. The scan saw no category; the user tapped "coffee" before the write landed.
+    # FAIL-ON-REVERT: drop the condition (or compare against the wrong value) and the store below
+    # reads "eatingout" — the user's tap silently overwritten, which is the whole bug.
+    key = _seed(repo, "coffee")
+    assert repo.update_transaction_category_if_unchanged(*key, "eatingout", None) == ("changed", "coffee")
+    assert repo._table.store[key]["category"] == "coffee"
+
+
+def test_conditional_write_reports_the_current_value_so_the_caller_can_judge(repo):
+    # A cleared category leaves the row unfiled again. The repository must NOT call that "filed" —
+    # it hands back what it found and lets the handler, which holds the taxonomy, decide.
+    key = _seed(repo, "TRANSFER_OUT")
+    assert repo.update_transaction_category_if_unchanged(*key, "groceries", None) == ("changed", "TRANSFER_OUT")
+
+
+def test_conditional_write_reports_a_deleted_row_as_gone(repo):
+    repo._table.store = {}
+    assert repo.update_transaction_category_if_unchanged(
+        "ACCOUNT#x", "TXN#gone", "groceries", None) == ("gone", None)
+
+
+def test_conditional_write_reads_the_row_back_only_when_the_write_is_refused(repo):
+    # The probe costs a round trip inside a 15s budget, so it must not run on the happy path.
+    key = _seed(repo)
+    repo.update_transaction_category_if_unchanged(*key, "groceries", None)
+    assert repo._table.get_item_calls == 0
+
+    repo.update_transaction_category_if_unchanged(*key, "eatingout", None)  # now refused
+    assert repo._table.get_item_calls == 1
+    # STRONGLY consistent, and pinned: the scan reads a secondary index that cannot be read
+    # consistently, so a stale read here would reintroduce the very race this method closes.
+    # Fail-on-revert: drop ConsistentRead=True and this reddens.
+    assert repo._table.consistent_reads == [True]
+
+
+def test_conditional_write_maps_other_database_error(repo, client_error, database_error, monkeypatch):
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    monkeypatch.setattr(repo._table, "update_item", boom)
+    with pytest.raises(database_error):
+        repo.update_transaction_category_if_unchanged("pk", "sk", "groceries", None)
+
+
+def test_conditional_write_raises_when_the_read_back_fails(repo, client_error, database_error, monkeypatch):
+    # A failed probe must NEVER be read as "gone": the handler reports gone rows as vanished and
+    # the app then deletes them from the list. An error is an error.
+    key = _seed(repo, "coffee")
+
+    def boom(**kwargs):
+        raise client_error("ProvisionedThroughputExceededException")
+
+    monkeypatch.setattr(repo._table, "get_item", boom)
+    with pytest.raises(database_error):
+        repo.update_transaction_category_if_unchanged(*key, "eatingout", None)
+
+
+def test_conditional_write_handles_an_empty_string_category(repo):
+    # The one value that separates the two condition branches: "" is PRESENT, so it must be
+    # compared, not treated as absent.
+    key = _seed(repo, "")
+    assert repo.update_transaction_category_if_unchanged(*key, "groceries", "") == ("written", "groceries")
+    assert repo._table.store[key]["category"] == "groceries"
+
+
+def test_conditional_write_does_not_treat_an_empty_string_as_unfiled(repo):
+    key = _seed(repo, "")
+    assert repo.update_transaction_category_if_unchanged(*key, "groceries", None) == ("changed", "")
+
+
+# --------------------------------------------------------------------------- #
 # update_transaction_fields (WHIT-275)                                         #
 # --------------------------------------------------------------------------- #
 
@@ -642,3 +746,79 @@ def test_update_fields_remove_only_omits_expression_attribute_values(repo, monke
     assert repo.update_transaction_fields(key[0], key[1], category="") is True
     assert "ExpressionAttributeValues" not in captured
     assert captured["UpdateExpression"].strip().startswith("REMOVE")
+
+
+# --------------------------------------------------------------------------- #
+# WHIT-508 gaps — what the fake cannot see about HOW the call was made          #
+# --------------------------------------------------------------------------- #
+# FakeTable answers update_item without caring what expression was handed to it, so the one
+# rule DynamoDB itself enforces — every declared expression value must be referenced — is
+# invisible to every test above. It fails only in production, on every write.
+
+
+def _record_updates(repo, monkeypatch):
+    """Capture the kwargs of every update_item while still running the real fake underneath.
+    (The read-back is already pinned by the fake's own get_item_calls / consistent_reads.)"""
+    updates = []
+    real_update = repo._table.update_item
+
+    def update_item(**kwargs):
+        updates.append(kwargs)
+        return real_update(**kwargs)
+
+    monkeypatch.setattr(repo._table, "update_item", update_item)
+    return updates
+
+
+def test_conditional_write_declares_no_unused_expression_value_when_the_row_was_unfiled(
+        repo, monkeypatch):
+    # [A41] DynamoDB REJECTS an UpdateItem whose ExpressionAttributeValues carries a value the
+    # expression never references ("Value provided in ExpressionAttributeValues unused in
+    # expressions") — a ValidationException, so every single apply-rules write would 500 in
+    # production while every fake stayed green. The attribute_not_exists branch must therefore
+    # send `:category` ONLY.
+    # FAIL-ON-REVERT: build `values` with `:expected` always present -> red.
+    key = _seed(repo)
+    updates = _record_updates(repo, monkeypatch)
+
+    repo.update_transaction_category_if_unchanged(*key, "groceries", None)
+
+    assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND attribute_not_exists(#c)"
+    assert set(updates[0]["ExpressionAttributeValues"]) == {":category"}
+
+
+def test_conditional_write_compares_against_the_scanned_value_when_there_was_one(repo, monkeypatch):
+    # [A41b] The other branch, pinned at the wire level: the comparison is against the value the
+    # SCAN saw, not the value being written. (The behavioural tests above catch the swap too;
+    # this one names the exact expression, so a rewrite of the builder can't drift silently.)
+    key = _seed(repo, "FOOD_AND_DRINK")
+    updates = _record_updates(repo, monkeypatch)
+
+    repo.update_transaction_category_if_unchanged(*key, "eatingout", "FOOD_AND_DRINK")
+
+    assert updates[0]["ConditionExpression"] == "attribute_exists(pk) AND #c = :expected"
+    assert updates[0]["ExpressionAttributeValues"] == {
+        ":category": "eatingout", ":expected": "FOOD_AND_DRINK"}
+
+
+def test_a_row_whose_category_attribute_disappeared_reads_as_changed_not_as_gone(repo):
+    # [A42] The dangerous confusion, from the direction nothing else covers: the scan saw a value,
+    # the attribute is now ABSENT, and the row still EXISTS. Whatever the cause, an absent
+    # attribute is not an absent ROW — answering "gone" has the handler report `vanished` and the
+    # app delete a charge the user is looking at. Defensive rather than a named live trigger
+    # (clearing is 400'd today, and the re-sync carry only copies truthy values), and
+    # catastrophic if it were ever wrong.
+    # FAIL-ON-REVERT: return "gone" whenever the read-back has no category -> red.
+    key = _seed(repo)  # attribute absent, as a cleared row really is
+    assert repo.update_transaction_category_if_unchanged(
+        *key, "groceries", "FOOD_AND_DRINK") == ("changed", None)
+    assert "category" not in repo._table.store[key]   # nothing was written
+
+
+def test_a_deleted_row_is_gone_on_the_compare_branch_too(repo):
+    # [A43] The suite above proves "gone" only for the attribute_not_exists branch. The compare
+    # branch is the one a re-synced row takes, and it must not shortcut the probe and report a
+    # deleted row as `changed` holding the value it used to have.
+    repo._table.store = {}
+    assert repo.update_transaction_category_if_unchanged(
+        "ACCOUNT#x", "TXN#gone", "groceries", "FOOD_AND_DRINK") == ("gone", None)
