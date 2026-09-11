@@ -2,8 +2,9 @@
 (WHIT-516) — "make a rule for this shop AND file the charges it already has", in one request.
 
 These do NOT duplicate tests/lambda_api/test_apply_rules_inline_rule.py. That suite locks the
-card's spine: one request mints + files, a preview mints nothing, the inline rule runs ALONGSIDE
-the existing ones, an absent rule is the old path, mint-before-sweep ordering, create_rule
+card's spine: one request mints + files, a preview mints nothing, the inline rule is swept ALONE
+(the existing rules read only to refuse a clash — WHIT-523), an absent rule is the old path,
+mint-before-sweep ordering, create_rule
 failing, the floor / taxonomy / field-operator / non-object / non-string fences, the shared
 floor identity, WHIT-508's hand-filed charge, create_rule's dedup pass-through, and the route
 wiring.
@@ -321,8 +322,8 @@ def test_a_nested_rule_to_the_SAME_category_is_still_fine(handler, monkeypatch):
 
 
 def test_a_failure_to_read_her_rules_mints_nothing(handler, monkeypatch):
-    # [A7] The inline rule must not be minted when we could not read the rules it has to run
-    # ALONGSIDE. Minting first would leave a rule behind for a request that filed nothing.
+    # [A7] The inline rule must not be minted when we could not read the rules it must check for
+    # a clash before minting. Minting first would leave a rule behind for a request that failed.
     repo = _coles_repo()
     banksync = _BankSync()
 
@@ -421,11 +422,10 @@ def test_tapping_again_after_the_cap_finishes_the_job_and_rewrites_nothing(
     assert second["remaining"] == 0 and second["unfiled"] == 25
     # Exactly one write per row across BOTH requests — nothing refiled.
     assert len(repo.writes) == cap + 25
-    # DOCUMENTED WART: the re-sent inline rule is considered ALONGSIDE the copy that now exists
-    # in BankSync, so the same rule is listed twice (once with a real id, once with null).
-    assert second["rulesConsidered"] == 2
-    assert sorted((entry["ruleId"] for entry in second["byRule"]),
-                  key=lambda value: (value is not None, value or "")) == [None, "enr_1"]
+    # WHIT-523: the sweep is the inline rule ALONE, even on the re-tap when a copy of it now
+    # exists in BankSync. So it is considered once, not twice.
+    assert second["rulesConsidered"] == 1
+    assert [entry["ruleId"] for entry in second["byRule"]] == [None]
 
 
 def test_the_time_budget_stops_the_sweep_with_the_rule_already_minted(handler, monkeypatch):
@@ -508,3 +508,127 @@ def test_a_very_long_value_is_minted_verbatim_and_files_nothing(handler, monkeyp
     assert response["statusCode"] == 200
     assert banksync.minted == [("description", "contains", value, "groceries")]
     assert body["filed"] == [] and repo.writes == []
+
+
+# --- WHIT-523 scope: what the inline rule sweeps vs what it must NOT --------------
+
+
+def test_the_plain_sweep_still_files_across_ALL_her_rules(handler, monkeypatch):
+    # [A16] REGRESSION GUARD — the worst outcome of WHIT-523 would be the scoping leaking onto the
+    # plain "Apply my rules" button (no inline rule), quietly filing only ONE of her rules. With no
+    # inline `rule`, EVERY rule must still sweep: a COLES charge AND a BP charge both file, to their
+    # own categories, and both rules show in byRule. Does NOT duplicate
+    # test_no_inline_rule_behaves_exactly_as_before (impl suite) — that has ONE existing rule and so
+    # can't tell a full sweep from a truncated one; this pins multiple rules all firing.
+    repo = WritableFeedRepo({SPENDING: [
+        _row(SPENDING, "2026-07-04", "t1", description="COLES 0342", category=None),
+        _row(SPENDING, "2026-07-03", "t2", description="COLES ONLINE", category=None),
+        _row(SPENDING, "2026-07-02", "b1", description="BP 2210 SERVO", category=None),
+        _row(SPENDING, "2026-07-01", "n1", description="NETFLIX.COM", category=None),
+    ]})
+    existing = [
+        {"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
+         "categoryId": "groceries", "conditionCount": 1},
+        {"id": "r2", "field": "description", "operator": "contains", "value": "BP 2210",
+         "categoryId": "petrol", "conditionCount": 1},
+    ]
+    response, body, banksync = _apply(handler, monkeypatch, repo, {"dryRun": False},
+                                      banksync=_BankSync(existing))
+
+    assert response["statusCode"] == 200
+    assert banksync.minted == [] and body["createdRule"] is None    # plain path mints nothing
+    assert sorted(filed["id"] for filed in body["filed"]) == ["b1", "t1", "t2"]  # never n1
+    assert body["byCategory"] == {"groceries": 2, "petrol": 1}
+    assert body["rulesConsidered"] == 2
+    assert sorted(entry["ruleId"] for entry in body["byRule"]) == ["r1", "r2"]
+
+
+def test_conflicted_cannot_arise_on_the_inline_path(handler, monkeypatch):
+    # [A17] The card's claim to pin: with only the inline rule sweeping, nothing is left to
+    # disagree, so `conflicted` is always 0 on the inline path. Two of her EXISTING rules
+    # (NETFLIX->groceries, FLIX->petrol) both hit the NETFLIX charge and disagree — under the OLD
+    # "all rules + inline" sweep that charge is conflicted:1 with a sample. Neither existing rule
+    # clashes with the inline COLES rule (different text), so no 409 masks it. Under WHIT-523 the
+    # sweep is COLES alone: conflicted 0, no samples, and the NETFLIX charge just stays unfiled.
+    # FAIL-ON-REVERT: undo the one-liner -> conflicted becomes 1 and rulesConsidered 3.
+    repo = WritableFeedRepo({SPENDING: [
+        _row(SPENDING, "2026-07-03", "t1", description="COLES 0342", category=None),
+        _row(SPENDING, "2026-07-02", "t2", description="COLES ONLINE", category=None),
+        _row(SPENDING, "2026-07-01", "n1", description="NETFLIX.COM", category=None),
+    ]})
+    existing = [
+        {"id": "r1", "field": "description", "operator": "contains", "value": "NETFLIX",
+         "categoryId": "groceries", "conditionCount": 1},
+        {"id": "r2", "field": "description", "operator": "contains", "value": "FLIX",
+         "categoryId": "petrol", "conditionCount": 1},
+    ]
+    response, body, _ = _apply(
+        handler, monkeypatch, repo,
+        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        banksync=_BankSync(existing))
+
+    assert response["statusCode"] == 200
+    assert body["conflicted"] == 0 and body["conflictedSamples"] == []
+    assert body["rulesConsidered"] == 1
+    assert sorted(filed["id"] for filed in body["filed"]) == ["t1", "t2"]  # n1 stays unfiled
+    assert body["byCategory"] == {"groceries": 2}
+
+
+def test_a_nested_agreeing_rules_charge_stays_unfiled_only_inline_text_files(handler, monkeypatch):
+    # [A18] The exact boundary the card names. Existing COLES EXPRESS->groceries AND
+    # WOOLWORTHS->groceries both AGREE with the inline COLES->groceries, so neither clashes (no
+    # 409). Under WHIT-523 the inline COLES rule files what ITS OWN text matches — including the
+    # nested-narrower COLES EXPRESS charge (its description contains "COLES") — but NOT the
+    # WOOLWORTHS charge, which only her other rule matches. FAIL-ON-REVERT: undo the one-liner and
+    # the WOOLWORTHS charge (w1) files too. Does NOT duplicate
+    # test_a_nested_rule_to_the_SAME_category_is_still_fine (impl suite): that fixture has no
+    # discriminating charge, so it passes under BOTH the scoped and the all-rules sweep.
+    repo = WritableFeedRepo({SPENDING: [
+        _row(SPENDING, "2026-07-04", "t1", description="COLES 0342 RICHMOND", category=None),
+        _row(SPENDING, "2026-07-03", "t2", description="COLES ONLINE", category=None),
+        _row(SPENDING, "2026-07-02", "e1", description="COLES EXPRESS 5512", category=None),
+        _row(SPENDING, "2026-07-01", "w1", description="WOOLWORTHS 4410", category=None),
+    ]})
+    existing = [
+        {"id": "r1", "field": "description", "operator": "contains", "value": "COLES EXPRESS",
+         "categoryId": "groceries", "conditionCount": 1},
+        {"id": "r2", "field": "description", "operator": "contains", "value": "WOOLWORTHS",
+         "categoryId": "groceries", "conditionCount": 1},
+    ]
+    response, body, _ = _apply(
+        handler, monkeypatch, repo,
+        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        banksync=_BankSync(existing))
+
+    assert response["statusCode"] == 200
+    # e1 (COLES EXPRESS) files because the inline COLES text matches it; w1 (WOOLWORTHS) does not.
+    assert sorted(filed["id"] for filed in body["filed"]) == ["e1", "t1", "t2"]  # never w1
+    assert body["byCategory"] == {"groceries": 3}
+    assert body["rulesConsidered"] == 1
+
+
+def test_a_preview_with_other_rules_counts_only_the_inline_rule(handler, monkeypatch):
+    # [A19] The screen previews before minting, so the numbers it shows must be the scoped ones.
+    # With an existing BP->petrol rule and a BP charge present, the preview must count ONLY the
+    # inline COLES rule: matched 2, byCategory groceries-only, rulesConsidered 1, nothing minted.
+    # Does NOT duplicate test_a_preview_shows_the_numbers_without_minting_anything (impl suite):
+    # that fixture has no other rules, so its matched==2 holds under the all-rules sweep too.
+    # FAIL-ON-REVERT: undo the one-liner -> matched 3, byCategory gains petrol, rulesConsidered 2.
+    repo = WritableFeedRepo({SPENDING: [
+        _row(SPENDING, "2026-07-03", "t1", description="COLES 0342", category=None),
+        _row(SPENDING, "2026-07-02", "t2", description="COLES ONLINE", category=None),
+        _row(SPENDING, "2026-07-01", "b1", description="BP 2210 SERVO", category=None),
+    ]})
+    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "BP 2210",
+                 "categoryId": "petrol", "conditionCount": 1}]
+    response, body, banksync = _apply(
+        handler, monkeypatch, repo,
+        {"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        banksync=_BankSync(existing))
+
+    assert response["statusCode"] == 200
+    assert body["dryRun"] is True
+    assert body["matched"] == 2
+    assert body["byCategory"] == {"groceries": 2}
+    assert body["rulesConsidered"] == 1
+    assert body["createdRule"] is None and banksync.minted == [] and repo.writes == []

@@ -1383,21 +1383,23 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
 def apply_rules_to_uncategorized(
     event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository
 ) -> dict:
-    """POST /transactions/uncategorized/apply-rules — file the charges the user's own rules
-    already cover, across ALL history.
+    """POST /transactions/uncategorized/apply-rules — file charges already stored that a rule
+    covers, across ALL history.
 
     BankSync applies rules at sync time to INCOMING charges only, so rules never reach charges
     already stored (WHIT-502). This evaluates them literally (see rule_apply) against every
     charge the badge counts as unfiled, and either reports what it WOULD file or files it.
 
+    Two shapes, by whether the body carries an inline `rule`:
+      * no rule (the plain "Apply my rules" button) — sweeps ALL the user's rules.
+      * with a rule — {"value": <str>, "categoryId": <slug>}, the merchant screen's "file this
+        shop": mints that rule AND sweeps with ONLY it (WHIT-523), so filing one shop files just
+        that shop, not whatever her other rules match. The existing rules are read only to refuse
+        a clash (a rule that would fight the new one). A PREVIEW never mints it — the numbers can
+        be seen before anything exists in BankSync.
+
         {"dryRun": true}   (default) — decide and report, write nothing
         {"dryRun": false}            — write
-
-    An optional `rule` — {"value": <str>, "categoryId": <slug>} — is the merchant screen's
-    "file this shop" (WHIT-516): the rule is swept with alongside the user's existing ones, so
-    one request both mints it and files the charges already stored. Making the rule alone would
-    leave every existing charge exactly where it was (WHIT-502), which is the whole problem.
-    A PREVIEW never mints it — the numbers can be seen before anything exists in BankSync.
 
     Previewing is the default so a bulk write can never happen by accident: a non-boolean
     `dryRun` is rejected rather than coerced, a missing or non-object body is a 400, and a
@@ -1432,7 +1434,11 @@ def apply_rules_to_uncategorized(
                          f"'{clash['categoryId']}'",
                 "existingRule": clash,
             })
-        rules = rules + [_as_leaf_rule(inline_rule)]
+        # File ONLY this shop (WHIT-523). The clash check above has already read the user's
+        # existing rules; the sweep must not, or "file COLES" would also file whatever her other
+        # rules match in stored history. The plain "Apply my rules" path (no inline rule) still
+        # sweeps every rule.
+        rules = [_as_leaf_rule(inline_rule)]
 
     def is_unfiled(category: str | None) -> bool:
         return _is_unmapped_category(category, taxonomy_ids)
