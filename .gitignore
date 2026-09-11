@@ -72,6 +72,7 @@ lambda_api/*
 !lambda_api/insights_ai.py
 !lambda_api/anthropic_client.py
 !lambda_api/rule_apply.py
+!lambda_api/merchant_groups.py
 
 # terraform
 terraform/artifacts/*

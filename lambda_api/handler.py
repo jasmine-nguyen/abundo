@@ -53,6 +53,7 @@ from constants import (
     UNCATEGORIZED_APPLY_RULES_PATH,
     UNCATEGORIZED_COUNT_PATH,
     UNCATEGORIZED_FEED_PATH,
+    UNCATEGORIZED_MERCHANTS_PATH,
     UNCATEGORIZED_KEY,
 )
 from collections.abc import Callable
@@ -113,6 +114,7 @@ from insights_ai import generate_suggestions
 from iso_date import ISO_DATE_RE, valid_iso_date
 from milestones import mint_migration_markers
 from rule_apply import plan_rule_application
+from merchant_groups import group_unfiled_by_merchant
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -159,6 +161,12 @@ def lambda_handler(event, context):
         # (a GET, so the startswith-PATCH branch never matches it).
         if path == UNCATEGORIZED_FEED_PATH and method == "GET":
             return get_uncategorized_feed(event, TransactionRepository(), CategoryRepository())
+
+        # The unfiled charges grouped by merchant (WHIT-515). An EXACT path, disjoint from the
+        # other two GET uncategorized routes; the PATCH "/transactions/{id}" branch is
+        # method-gated and never sees it.
+        if path == UNCATEGORIZED_MERCHANTS_PATH and method == "GET":
+            return get_uncategorized_merchants(TransactionRepository(), CategoryRepository())
 
         # Apply the user's BankSync rules to charges ALREADY stored (BankSync only applies them
         # to incoming charges — WHIT-502). POST-only, and it PREVIEWS unless the body says
@@ -1204,6 +1212,29 @@ def get_uncategorized_feed(
         "transactions": page,
         "nextCursor": _encode_feed_cursor(next_resume_keys),
     })
+
+
+def get_uncategorized_merchants(
+    transaction_repo: TransactionRepository, category_repo: CategoryRepository
+) -> dict:
+    """GET /transactions/uncategorized/merchants — the unfiled charges grouped by merchant,
+    biggest group first (WHIT-515).
+
+    Walks ALL history, exactly like get_uncategorized_count, and uses the SAME "still needs
+    filing" rule, so `unfiled` in the response reconciles with the tab badge. Grouping on the
+    server is not an optimisation: the Uncategorized tab only holds the pages it has loaded and
+    these charges live deep in the tail, so grouping in the app would show a partial picture —
+    the WHIT-506 bug again, where the badge said 639 and the list showed 1.
+
+    Read-only: it decides nothing and writes nothing. The rule minting and the filing are a
+    separate, explicit request (WHIT-516).
+    """
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    groups = group_unfiled_by_merchant(
+        transactions, lambda category: _is_unmapped_category(category, taxonomy_ids)
+    )
+    return _json_response(200, groups)
 
 
 def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanished: list = (),
