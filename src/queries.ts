@@ -3,9 +3,9 @@
 // launch" design (see the WHIT-187 epic). This card wires up the Budgets screen; the
 // other screens migrate in later cards, so the old context store stays intact until
 // the WHIT-192 cleanup.
-import { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
-import type { InfiniteData } from '@tanstack/react-query';
+import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
@@ -269,8 +269,34 @@ export interface TransactionResolver {
   findTx: (id: string) => Transaction | undefined;
   transactions: Transaction[]; // the de-duped union, for "has anything loaded yet" checks
 }
+// A version counter that ticks ONLY when a ['budgetTransactions', *] or
+// ['categoryTransactions', *] cache changes. It's the reactive trigger for the resolver's
+// point-in-time getQueriesData reads below: those caches aren't observed by a useQuery here,
+// so without this a note/tag edit that patches them wouldn't re-run the merge. The key-prefix
+// filter is deliberate — useTransactionResolver is also used by the root-mounted picker/confirm
+// sheets, so an unfiltered subscription would recompute on every unrelated cache event (the
+// balance poller, feed refetches). getVersion returns the ref's integer, referentially stable
+// between unrelated renders, so useSyncExternalStore never loops.
+function useScopedTransactionCachesVersion(queryClient: QueryClient): number {
+  const versionRef = useRef(0);
+  const subscribe = useCallback(
+    (onStoreChange: () => void) =>
+      queryClient.getQueryCache().subscribe((event) => {
+        const key = event.query.queryKey[0];
+        if (key === budgetTransactionsKey[0] || key === categoryTransactionsKey[0]) {
+          versionRef.current += 1;
+          onStoreChange();
+        }
+      }),
+    [queryClient],
+  );
+  const getVersion = () => versionRef.current;
+  return useSyncExternalStore(subscribe, getVersion, getVersion);
+}
+
 export function useTransactionResolver(): TransactionResolver {
   const authed = useIsAuthed();
+  const queryClient = useQueryClient();
   const feedQuery = useTransactionsFeedQuery(authed);
   // Read the uncategorized feed PASSIVELY (enabled: false) — it reads the cache the Uncategorized
   // tab warms, but never fires its own whole-history scan. Deep-history unfiled rows are only
@@ -279,6 +305,12 @@ export function useTransactionResolver(): TransactionResolver {
   // from any screen, only to return a page that (being page 1) can't even contain a deep row.
   const uncategorizedFeedQuery = useUncategorizedFeedQuery(false);
   const recentQuery = useRecentTransactionsQuery(authed);
+  // Also span the budget-detail and Insights category-drill caches, so a charge tapped from
+  // those lists resolves too. They live in their own per-category (and per-cycle) caches the
+  // feed/recent queries never touch; an older one-off (scrolled out of the recent window) that
+  // lives ONLY there used to resolve to nothing and show a false "not found". scopedVersion
+  // re-runs the merge when one of those caches changes (getQueriesData is a point-in-time read).
+  const scopedVersion = useScopedTransactionCachesVersion(queryClient);
   const transactions = useMemo(() => {
     const seen = new Set<string>();
     const merged: Transaction[] = [];
@@ -289,11 +321,15 @@ export function useTransactionResolver(): TransactionResolver {
         merged.push(transaction);
       }
     };
+    // Feed / uncategorized / recent FIRST, so their fresher (optimistically-patched) copy wins
+    // the de-dup over a stale budget/category copy of the same charge.
     if (feedQuery.data) for (const page of feedQuery.data.pages) add(page.transactions);
     if (uncategorizedFeedQuery.data) for (const page of uncategorizedFeedQuery.data.pages) add(page.transactions);
     add(recentQuery.data ?? EMPTY_TX);
+    for (const [, rows] of queryClient.getQueriesData<Transaction[]>({ queryKey: budgetTransactionsKey })) add(rows ?? EMPTY_TX);
+    for (const [, rows] of queryClient.getQueriesData<Transaction[]>({ queryKey: categoryTransactionsKey })) add(rows ?? EMPTY_TX);
     return merged;
-  }, [feedQuery.data, uncategorizedFeedQuery.data, recentQuery.data]);
+  }, [feedQuery.data, uncategorizedFeedQuery.data, recentQuery.data, scopedVersion, queryClient]);
   const findTx = useCallback(
     (id: string) => transactions.find((transaction) => transaction.transaction_id === id),
     [transactions],
