@@ -43,6 +43,13 @@ UNCATEGORIZED_FEED_PATH = "/transactions/uncategorized/feed"
 # accident. Only lambda_api/handler.py consumes it (no shared repository_* imports it), so the
 # WHIT-136 sync guard doesn't require a shared mirror.
 UNCATEGORIZED_APPLY_RULES_PATH = "/transactions/uncategorized/apply-rules"
+# API Gateway route path for the unfiled charges grouped by merchant (WHIT-515). "Apply my
+# rules" can only file what an existing rule covers; what remains is merchants the user has
+# never written a rule for. This walks ALL history and returns those charges grouped by
+# merchant, biggest group first, so one decision per merchant clears the tail instead of one
+# tap per charge. Only lambda_api/handler.py consumes it (no shared repository_* imports it),
+# so the WHIT-136 sync guard doesn't require a shared mirror.
+UNCATEGORIZED_MERCHANTS_PATH = "/transactions/uncategorized/merchants"
 # Ceiling on rows one apply-rules request will write. A secondary guard behind the wall-clock
 # budget below: the response reports `remaining` and the app says "tap again", which is safe
 # because re-running only ever files what is STILL unfiled.

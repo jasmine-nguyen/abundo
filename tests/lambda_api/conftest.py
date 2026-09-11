@@ -40,6 +40,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
     "banksync_enrichments", "insights_ai", "anthropic_client", "rule_apply",
+    "merchant_groups",
     "spend", "repayment_rules", "api_key",
 )
 
