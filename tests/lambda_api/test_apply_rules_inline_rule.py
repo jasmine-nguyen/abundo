@@ -406,9 +406,11 @@ def test_a_hand_filed_charge_still_beats_the_new_rule(handler, monkeypatch):
     assert body["alreadyFiled"] == ["t2"]
 
 
-def test_re_tapping_after_a_timeout_does_not_pile_up_duplicate_rules(handler, monkeypatch):
-    # The app retries when a run reports `remaining`. create_rule is idempotent on rule identity
-    # (WHIT-497), so the second request must return the SAME rule rather than mint another.
+def test_the_handler_goes_through_create_rule_rather_than_posting_its_own(handler, monkeypatch):
+    # The app retries when a run reports `remaining`, and create_rule is what makes that safe:
+    # it returns the rule already there instead of minting a second (WHIT-497, its own suite).
+    # What THIS pins is narrower and still worth pinning — the handler routes every mint through
+    # create_rule, so it inherits that dedup rather than bypassing it with its own POST.
     class _IdempotentBankSync(_RecordingBankSync):
         def create_rule(self, field, operator, value, category_id):
             for rule in self.existing:

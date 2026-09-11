@@ -84,7 +84,7 @@ from banksync_enrichments import (
     delete_rule,
     get_api_key,
     list_rules,
-    rule_targets_same_text,
+    rule_overlaps_text,
     update_rule,
 )
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -1256,26 +1256,32 @@ def _as_leaf_rule(inline_rule: dict) -> dict:
     }
 
 
-def _rule_already_targets_that_text(rules: list[dict], inline_rule: dict) -> dict | None:
-    """An existing rule matching the same charges but filing them to a DIFFERENT category, or
-    None.
+def _rule_that_would_fight(rules: list[dict], inline_rule: dict) -> dict | None:
+    """An existing rule that would reach the same charges but file them to a DIFFERENT category,
+    or None.
 
-    Minting alongside one would be quietly destructive. The two rules disagree, so every charge
-    they both match is `conflicted` — never filed, on this run or any future one — and the user
-    is left with a permanent contradiction she never asked for and can't see. She taps "file
-    these as groceries", nothing is filed, and the response says 200.
+    Minting alongside one is quietly destructive. The two rules disagree, so every charge they
+    both match is `conflicted` — never filed, on this run or any future one — and the user is
+    left with a permanent contradiction she never asked for and can't see. She taps "file these
+    as groceries", nothing (or only part) is filed, and the response says 200.
 
     The realistic way in: a rule she wrote months ago never touched her stored charges (WHIT-502),
     so that merchant still appears on the merchant screen with its charges unfiled.
 
-    A rule to the SAME category is not a clash — create_rule is safe to run twice (WHIT-497) and
-    returns the existing one, which is exactly what a re-tap after a capped run should do.
+    Nesting counts, not just an exact repeat: an existing "COLES EXPRESS -> petrol" fights an
+    inline "COLES -> groceries" over every EXPRESS charge, and that is the shape the merchant
+    screen already warns about in `alsoCatches`. Refusing is the honest answer until the more
+    specific rule can win (WHIT-518) — minting files the non-overlapping charges and strands
+    the rest for good.
+
+    A rule to the SAME category is not a clash at any width: it agrees, so nothing conflicts, and
+    the re-tap after a capped run depends on that (create_rule is safe to run twice, WHIT-497).
     """
     for rule in rules:
         if rule.get("categoryId") == inline_rule["categoryId"]:
             continue
-        if rule_targets_same_text(rule, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
-                                  inline_rule["value"]):
+        if rule_overlaps_text(rule, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
+                              inline_rule["value"]):
             return rule
     return None
 
@@ -1419,7 +1425,7 @@ def apply_rules_to_uncategorized(
         return _banksync_error_response(e)
 
     if inline_rule is not None:
-        clash = _rule_already_targets_that_text(rules, inline_rule)
+        clash = _rule_that_would_fight(rules, inline_rule)
         if clash is not None:
             return _json_response(409, {
                 "error": f"you already have a rule for that filing to "
