@@ -27,10 +27,11 @@ export default function TransactionDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { openPicker } = useAppContext();
   const { category, isLoading, isError, refetch } = useTransactionsScreenData();
-  // Resolve the charge across every list cache — feed, uncategorized feed, and the bounded recent
-  // window — via the shared resolver, so a row tapped anywhere (incl. a deep-history unfiled charge
-  // on the Uncategorized tab) resolves. `transactions` here is that union, so hasCache below is true
-  // whenever any list has loaded.
+  // Resolve the charge across every list cache — feed, uncategorized feed, the bounded recent
+  // window, AND the budget-detail / Insights category-drill caches — via the shared resolver, so a
+  // row tapped anywhere (incl. a deep-history unfiled charge on the Uncategorized tab, or an older
+  // one-off opened from a budget's Related Transactions) resolves. `transactions` here is that
+  // union, so hasCache below is true whenever any list has loaded.
   const { findTx, transactions } = useTransactionResolver();
   const transaction = findTx(id);
   const view = transaction ? transactionView({ category }, transaction) : null;
@@ -101,7 +102,8 @@ export default function TransactionDetail() {
               <NoteAndTagsEditor key={transaction.transaction_id} transaction={transaction} />
             </>
           ) : (
-            // No transaction carries this id (stale/unknown link) — settled, not loading.
+            // No cache (feed / recent / budget-detail / category-drill) carries this id
+            // (stale/unknown link) — settled, not loading.
             <View style={styles.empty}>
               <Glyph name="search" size={26} color={C.textFaint} />
               <Text style={styles.emptyTitle}>Transaction not found</Text>

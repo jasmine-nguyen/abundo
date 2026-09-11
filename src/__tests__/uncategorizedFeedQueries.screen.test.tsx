@@ -33,7 +33,7 @@ jest.mock('../api', () => ({
   fetchAccountBalances: () => mockBalances(),
 }));
 
-import { useTransactionsScreenData, useTransactionResolver, transactionsKey, uncategorizedFeedKey } from '../queries';
+import { useTransactionsScreenData, useTransactionResolver, transactionsKey, uncategorizedFeedKey, budgetTransactionsKey, categoryTransactionsKey, transactionsRecentKey } from '../queries';
 
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
@@ -103,6 +103,79 @@ describe('[C2] useTransactionResolver unions the uncategorized feed', () => {
     expect(result.current.findTx('dup')!.description).toBe('FEED');
     // the whole union is present, each once.
     expect(new Set(ids(result.current.transactions))).toEqual(new Set(['dup', 'feedonly', 'deep', 'recentonly']));
+  });
+});
+
+// [C4] useTransactionResolver also spans the budget-detail (['budgetTransactions', *]) and
+// Insights category-drill (['categoryTransactions', *]) caches, so a charge tapped from a budget's
+// Related Transactions list resolves even when it lives ONLY there (an older one-off off the recent
+// window). These caches aren't observed by a useQuery in the resolver, so a narrow query-cache
+// subscription re-runs the union when — and only when — one of them changes (WHIT-524).
+describe('[C4] useTransactionResolver unions the budget/category caches', () => {
+  const emptyFeed = () => mockFeed.mockResolvedValue({ transactions: [], nextCursor: null });
+
+  it('finds a row that lives ONLY in the budget-detail cache', async () => {
+    emptyFeed();
+    const client = makeClient();
+    client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { description: 'INSURANCE' })]);
+    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
+    expect(result.current.findTx('bill')!.description).toBe('INSURANCE');
+  });
+
+  it('finds a row that lives ONLY in the category-drill cache (keyed by category AND cycle)', async () => {
+    emptyFeed();
+    const client = makeClient();
+    // A past-cycle drill list — keyed [category, cycle], so only a PREFIX scan reaches it.
+    client.setQueryData([...categoryTransactionsKey, 'coffee', 1], [tx('past', { description: 'DRILL' })]);
+    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.findTx('past')).toBeDefined());
+    expect(result.current.findTx('past')!.description).toBe('DRILL');
+  });
+
+  it('feed-wins: a charge in both the feed (fresh) and a stale category cache resolves to the feed copy', async () => {
+    mockFeed.mockResolvedValue({ transactions: [tx('dup', { description: 'FRESH' })], nextCursor: null });
+    const client = makeClient();
+    client.setQueryData([...categoryTransactionsKey, 'coffee', 0], [tx('dup', { description: 'STALE' })]);
+    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    // Wait until the (async) feed has loaded — the category copy resolves synchronously first, so
+    // this asserts the steady state where BOTH are present and the feed copy wins the de-dup.
+    await waitFor(() => expect(result.current.findTx('dup')!.description).toBe('FRESH'));
+    expect(ids(result.current.transactions).filter((id) => id === 'dup')).toHaveLength(1); // exactly once
+  });
+
+  it('reacts when a budget cache changes after mount (an optimistic edit reflects, no remount)', async () => {
+    emptyFeed();
+    const client = makeClient();
+    client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: '' })]);
+    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
+    act(() => { client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill', { notes: 'paid' })]); });
+    await waitFor(() => expect(result.current.findTx('bill')!.notes).toBe('paid'));
+  });
+
+  it('does NOT recompute the union on an unrelated cache change (narrow subscription)', async () => {
+    const client = makeClient();
+    // Pre-seed feed + recent as already-fresh (staleTime 60s), so neither fetches — there are zero
+    // pending renders and the unrelated write below is the ONLY thing that could recompute the memo.
+    client.setQueryData(transactionsKey, { pages: [{ transactions: [], nextCursor: null }], pageParams: [undefined] });
+    client.setQueryData(transactionsRecentKey, []);
+    client.setQueryData([...budgetTransactionsKey, 'insurance'], [tx('bill')]);
+    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.findTx('bill')).toBeDefined());
+    const before = result.current.transactions;
+    // An unrelated cache write must NOT bump the version counter → the memo keeps its reference.
+    // (A whole-cache subscription would recompute here and fail this `toBe`.)
+    act(() => { client.setQueryData(['accountBalances'], [{ account_id: 'a1', amount: 5 }]); });
+    expect(result.current.transactions).toBe(before);
+  });
+
+  it('resolves to nothing when no cache holds the id (the real not-found)', async () => {
+    emptyFeed();
+    const client = makeClient();
+    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.transactions).toEqual([]));
+    expect(result.current.findTx('ghost')).toBeUndefined();
   });
 });
 

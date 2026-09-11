@@ -563,25 +563,51 @@ describe('budgetTxRefileOptimistic (folded)', () => {
         expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // and the fresh data survived
       });
 
-      it('[G4] a note-only edit (budget_excluded absent) never scans or rewrites the budget lists', async () => {
-        // The snapshot is guarded on `patch.budget_excluded === true`. A note/tag edit must NOT scan
-        // (getQueriesData) or rewrite (setQueryData) any ['budgetTransactions', *] list — even on failure.
-        mockApi.setTransactionFields.mockRejectedValue(new Error('boom'));
+      it('[G4] a note/tag edit optimistically patches the budget lists IN PLACE, then rolls back on a failed save', async () => {
+        // WHIT-524: a charge is now editable from a budget's Related Transactions list, so a note/tag
+        // edit DOES patch every ['budgetTransactions', *] holding it — in place (unlike the row-removal
+        // the budget_excluded path does) — and restores the original row if the save fails. This
+        // replaces the old guard that a note edit must never touch the budget lists.
+        let rejectSave: (e: unknown) => void = () => {};
+        mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
         const result = mount([txn('t1')]);
         queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);
 
-        const getSpy = jest.spyOn(queryClient, 'getQueriesData');
-        const setSpy = jest.spyOn(queryClient, 'setQueryData');
-        await act(async () => { await result.current.applyTransactionEdit('t1', { notes: 'lunch with A' }); });
+        let pending: Promise<void> = Promise.resolve();
+        act(() => { pending = result.current.applyTransactionEdit('t1', { notes: 'lunch with A' }); });
+        // Optimistic: the budget-list row carries the new note before the save settles.
+        expect(foodList()).toEqual([txn('t1', { notes: 'lunch with A' })]);
 
-        const budgetScans = getSpy.mock.calls.filter(
-          (c: unknown[]) => (c[0] as { queryKey?: unknown[] } | undefined)?.queryKey?.[0] === 'budgetTransactions');
-        const budgetWrites = setSpy.mock.calls.filter(
-          (c: unknown[]) => Array.isArray(c[0]) && c[0][0] === 'budgetTransactions');
-        expect(budgetScans).toEqual([]);            // guard skipped the getQueriesData snapshot entirely
-        expect(budgetWrites).toEqual([]);           // and never rewrote a budget list
-        expect(foodList()).toEqual([txn('t1')]);    // the list is left exactly as-is
-        getSpy.mockRestore(); setSpy.mockRestore();
+        await act(async () => { rejectSave(new Error('boom')); await pending; });
+        // Rolled back to the original row — no stale note left behind.
+        expect(foodList()).toEqual([txn('t1')]);
+      });
+
+      it('[G4b] a note/tag edit also patches the Insights category-drill cache, and rolls back on failure', async () => {
+        // Same as G4 for the ['categoryTransactions', category, cycle] cache — reached by a prefix
+        // scan since it's keyed by category AND cycle.
+        let rejectSave: (e: unknown) => void = () => {};
+        mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
+        const result = mount([txn('t1')]);
+        const drillKey = ['categoryTransactions', 'coffee', 0];
+        queryClient.setQueryData(drillKey, [txn('t1')]);
+
+        let pending: Promise<void> = Promise.resolve();
+        act(() => { pending = result.current.applyTransactionEdit('t1', { tags: ['work'] }); });
+        expect(queryClient.getQueryData(drillKey)).toEqual([txn('t1', { tags: ['work'] })]); // optimistic
+
+        await act(async () => { rejectSave(new Error('boom')); await pending; });
+        expect(queryClient.getQueryData(drillKey)).toEqual([txn('t1')]);                     // rolled back
+      });
+
+      it('[G4c] a note edit on a row present ONLY in a budget list (absent from feed/recent) is applied, not a no-op', async () => {
+        // The fallback lookup: readTransactionsCache (feed/uncat/recent) is empty, so without the
+        // budget/category scan the edit would early-return and the note would never land.
+        mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'bill', notes: 'annual premium' });
+        const result = mount([]);                                    // feed + recent empty
+        queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill')]);
+        await act(async () => { await result.current.applyTransactionEdit('bill', { notes: 'annual premium' }); });
+        expect(budgetList('insurance')).toEqual([txn('bill', { notes: 'annual premium' })]);
       });
 
       it('[G5] a list that was EMPTY at removal time and refetched into rows mid-save survives a failed rollback', async () => {

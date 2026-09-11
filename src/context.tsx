@@ -1254,8 +1254,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // (and vice-versa); a passed "" note / [] tags clears that field on the server.
   const applyTransactionEdit = useCallback(
     async (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }): Promise<void> => {
-      const transactions = readTransactionsCache();
-      const transaction = transactions.find((t) => t.transaction_id === txId);
+      // The budget-detail + Insights category-drill lists live in their own per-category (and
+      // per-cycle) caches, NOT in readTransactionsCache's feed/uncat/recent union. A charge
+      // opened from one of those lists that lives ONLY there (an older one-off, off the recent
+      // window) would otherwise not be found here and the edit would silently no-op. Scan those
+      // caches ONLY for this lookup — kept local to this edit so applyCategory's re-file sweep,
+      // which shares readTransactionsCache, never sees a stale cycle-keyed row (WHIT-524).
+      const findInScopedLists = (id: string): Transaction | undefined => {
+        for (const prefix of [['budgetTransactions'], ['categoryTransactions']] as const) {
+          for (const [, data] of queryClient.getQueriesData<Transaction[]>({ queryKey: prefix })) {
+            const hit = data?.find((t) => t.transaction_id === id);
+            if (hit) return hit;
+          }
+        }
+        return undefined;
+      };
+      // Stamp `fields` onto this txId wherever it appears; leave other rows untouched.
+      const stamp = (fields: Partial<Transaction>) => (row: Transaction) =>
+        (row.transaction_id === txId ? { ...row, ...fields } : row);
+      // Map `stamp` over each cache under the given key prefixes, in place. Guarded (no-ops on a
+      // cleared cache), so — like patchTransactions — the rollback below needs no epoch gate.
+      const patchScopedLists = (prefixes: readonly (readonly string[])[], mapRow: (t: Transaction) => Transaction) => {
+        for (const prefix of prefixes) {
+          for (const [key] of queryClient.getQueriesData<Transaction[]>({ queryKey: prefix })) {
+            queryClient.setQueryData<Transaction[]>(key, (prev) => (prev ? prev.map(mapRow) : prev));
+          }
+        }
+      };
+      const BUDGET_AND_CATEGORY = [['budgetTransactions'], ['categoryTransactions']] as const;
+      const CATEGORY_ONLY = [['categoryTransactions']] as const;
+
+      const transaction =
+        readTransactionsCache().find((t) => t.transaction_id === txId) ?? findInScopedLists(txId);
       if (!transaction) return; // cache evicted / unknown id — nothing to edit
 
       // Snapshot only the fields we're about to change, so a failed save restores
@@ -1286,6 +1316,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         queryClient.setQueryData<Transaction[]>(key, data!.filter((t) => t.transaction_id !== txId));
       });
 
+      // A note/tag edit must also reflect on the budget-detail + category-drill lists (their own
+      // caches, untouched by patchTransactions above).
+      // For an exclude, the budget list already dropped the row above (WHIT-344); the category-drill
+      // caches have no such instant-drop rule, so MARK the row there instead — that both moves the
+      // detail screen's toggle for a charge that lives ONLY in a category cache and keeps the screen
+      // showing it (removing it would blank the screen to "not found"). The success invalidate then
+      // refetches those lists.
+      if ('budget_excluded' in patch) {
+        patchScopedLists(CATEGORY_ONLY, stamp(patch));
+      } else {
+        patchScopedLists(BUDGET_AND_CATEGORY, stamp(patch));
+      }
+
       // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate the late
       // failure toast on the epoch so a save settling after sign-out doesn't toast the next session.
       const epoch = sessionEpoch.current;
@@ -1306,6 +1349,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch {
         patchTransactions((prev) =>
           prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...previous } : existing)));
+        // Mirror the optimistic scoped-cache patch back. Guarded (prev ? map : prev), so it no-ops
+        // on a cleared cache and needs no epoch gate — unlike the raw budgetTxSnapshots restore
+        // below. Same prefix split as the optimistic write above (category-only for an exclude).
+        patchScopedLists('budget_excluded' in patch ? CATEGORY_ONLY : BUDGET_AND_CATEGORY, stamp(previous));
         // WHIT-344/WHIT-271: the budget-list restore is a raw setQueryData (it recreates the
         // entry), so — unlike guarded patchTransactions — it must be epoch-gated, or a save
         // failing after sign-out would re-seat the previous account's rows into the cleared cache.
