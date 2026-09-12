@@ -74,6 +74,8 @@ from repository import (
     LoanFactsRepository,
     MilestoneRepository,
     PayCycleRepository,
+    RuleClashError,
+    RuleRepository,
     TransactionRepository,
     VersionConflictError,
 )
@@ -84,7 +86,6 @@ from banksync_enrichments import (
     delete_rule,
     get_api_key,
     list_rules,
-    rule_overlaps_text,
     update_rule,
 )
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -119,7 +120,7 @@ from merchant_groups import (
     rule_value_is_safe,
 )
 from milestones import mint_migration_markers
-from rule_engine import plan_rule_application, is_unfiled_category
+from rule_engine import plan_rule_application, is_unfiled_category, overlaps
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -178,7 +179,8 @@ def lambda_handler(event, context):
         # {"dryRun": false}. An EXACT path, so it can't collide with the two GET uncategorized
         # routes; the PATCH "/transactions/{id}" branch is method-gated and never sees a POST.
         if path == UNCATEGORIZED_APPLY_RULES_PATH and method == "POST":
-            return apply_rules_to_uncategorized(event, TransactionRepository(), CategoryRepository())
+            return apply_rules_to_uncategorized(
+                event, TransactionRepository(), CategoryRepository(), RuleRepository())
 
         # Collection route (batch) BEFORE the item route. "/transactions" does not
         # start with "/transactions/", so the two are disjoint regardless of order.
@@ -1254,6 +1256,33 @@ def _as_leaf_rule(inline_rule: dict) -> dict:
     }
 
 
+def _rule_to_client(row: dict) -> dict:
+    """Map a stored rule row (repository_rule, snake_case) to the client/engine Rule shape.
+
+    Our store speaks `category_id`; rule_engine and the apply-rules responses read `categoryId`.
+    This is the single point translating between the two. `conditionCount` is always 1 — our
+    store only ever holds single-leaf rules (create_rule mints one condition), so a stored rule
+    can never be the multi-condition foreign rule the sweep would otherwise refuse to broaden.
+    """
+    return {
+        "id": row.get("id"),
+        "field": row.get("field"),
+        "operator": row.get("operator"),
+        "value": row.get("value"),
+        "categoryId": row.get("category_id"),
+        "conditionCount": 1,
+    }
+
+
+def _rule_clash_response(existing: dict) -> dict:
+    """The 409 for an inline rule that would fight an existing one. `existing` is a client-shaped
+    rule. One definition so the pre-scan clash and the mint-time race clash can't drift apart."""
+    return _json_response(409, {
+        "error": f"you already have a rule for that filing to '{existing['categoryId']}'",
+        "existingRule": existing,
+    })
+
+
 def _rule_that_would_fight(rules: list[dict], inline_rule: dict) -> dict | None:
     """An existing rule that would reach the same charges but file them to a DIFFERENT category,
     or None.
@@ -1278,8 +1307,8 @@ def _rule_that_would_fight(rules: list[dict], inline_rule: dict) -> dict | None:
     for rule in rules:
         if rule.get("categoryId") == inline_rule["categoryId"]:
             continue
-        if rule_overlaps_text(rule, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
-                              inline_rule["value"]):
+        if overlaps(rule, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
+                    inline_rule["value"]):
             return rule
     return None
 
@@ -1379,7 +1408,8 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
 
 
 def apply_rules_to_uncategorized(
-    event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository
+    event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository,
+    rule_repo: RuleRepository,
 ) -> dict:
     """POST /transactions/uncategorized/apply-rules — file charges already stored that a rule
     covers, across ALL history.
@@ -1394,7 +1424,7 @@ def apply_rules_to_uncategorized(
         shop": mints that rule AND sweeps with ONLY it (WHIT-523), so filing one shop files just
         that shop, not whatever her other rules match. The existing rules are read only to refuse
         a clash (a rule that would fight the new one). A PREVIEW never mints it — the numbers can
-        be seen before anything exists in BankSync.
+        be seen before the rule is saved to our store.
 
         {"dryRun": true}   (default) — decide and report, write nothing
         {"dryRun": false}            — write
@@ -1420,18 +1450,16 @@ def apply_rules_to_uncategorized(
         return error
 
     try:
-        rules = list_rules()
-    except BankSyncError as e:
-        return _banksync_error_response(e)
+        rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+    except DatabaseError:
+        # A read failure is OUR database, not an upstream — 500, and returning here (before the
+        # whole-history scan and the write loop) guarantees nothing is written.
+        return _json_response(500, {"error": "could not read your rules"})
 
     if inline_rule is not None:
         clash = _rule_that_would_fight(rules, inline_rule)
         if clash is not None:
-            return _json_response(409, {
-                "error": f"you already have a rule for that filing to "
-                         f"'{clash['categoryId']}'",
-                "existingRule": clash,
-            })
+            return _rule_clash_response(clash)
         # File ONLY this shop (WHIT-523). The clash check above has already read the user's
         # existing rules; the sweep must not, or "file COLES" would also file whatever her other
         # rules match in stored history. The plain "Apply my rules" path (no inline rule) still
@@ -1459,12 +1487,18 @@ def apply_rules_to_uncategorized(
         # again finishes the job. Filing first and failing here would leave the charges filed
         # with nothing to catch the next one.
         try:
-            created_rule = create_rule(
+            row, _created = rule_repo.create_rule(
                 DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
                 inline_rule["value"], inline_rule["categoryId"],
             )
-        except BankSyncError as e:
-            return _banksync_error_response(e)
+        except RuleClashError as e:
+            # A rule with this exact text but a different category appeared between the pre-scan
+            # clash check and here (a race). create_rule is safe to run twice, so same-text +
+            # same-category returns the existing rule (created=False) rather than raising.
+            return _rule_clash_response(_rule_to_client(e.existing))
+        except DatabaseError:
+            return _json_response(500, {"error": "could not save your rule"})
+        created_rule = _rule_to_client(row)
 
     filed: list[dict] = []
     vanished: list[str] = []

@@ -78,6 +78,7 @@ _DOMAINS = [
     pytest.param(_SHARED, {"_milestone_fakes", "_milestone_row_fakes"},
                  _CONSOLIDATED_GUARD, id="milestone"),
     pytest.param(_API, {"_feed_fakes"}, _CONSOLIDATED_GUARD, id="feed"),
+    pytest.param(_API, {"_rule_fakes"}, _CONSOLIDATED_GUARD, id="rule"),
     pytest.param(_API, {"_handler_patch_fakes"}, _CONSOLIDATED_GUARD, id="handler_patch"),
     pytest.param(_API, {"_paycycle_fakes"}, _CONSOLIDATED_GUARD, id="paycycle"),
     pytest.param(_API, {"_category_fakes"}, _CONSOLIDATED_GUARD, id="category"),

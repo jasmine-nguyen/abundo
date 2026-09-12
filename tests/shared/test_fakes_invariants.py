@@ -106,6 +106,19 @@ _REGISTRY = [
          _API_TESTS / "test_uncategorized_merchants_gaps.py"),
     ),
     _Domain(
+        "rule",
+        [_Module("_rule_fakes", {"FakeRuleRepo"})],
+        # WHIT-531 repointed apply-rules at RuleRepository; these suites drive FakeRuleRepo. They
+        # ALSO appear in the `feed` domain (they use FakeFeedRepo/FakeCategoryRepo) — allowed: [G1]
+        # checks each domain's owned names independently and the suites only import each fake.
+        (_API_TESTS / "test_apply_rules.py",
+         _API_TESTS / "test_apply_rules_gaps.py",
+         _API_TESTS / "test_apply_rules_inline_rule.py",
+         _API_TESTS / "test_apply_rules_inline_rule_gaps.py",
+         _API_TESTS / "test_apply_rules_repoint_gaps.py",
+         _SHARED_TESTS / "test_rule_fake_contract_gaps.py"),
+    ),
+    _Domain(
         "handler_patch",
         [_Module("_handler_patch_fakes", {"_UNSET", "FakeRepo", "_patch_event"})],
         # WHIT-469 folded test_handler_whit275_gaps.py / test_handler_whit296_gaps.py into the main.
