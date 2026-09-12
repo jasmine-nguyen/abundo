@@ -1,6 +1,6 @@
 """ADVERSARIAL gap tests for POST /transactions/uncategorized/apply-rules.
 
-These do NOT duplicate tests/lambda_api/test_apply_rules.py or test_rule_apply.py. Those suites
+These do NOT duplicate tests/lambda_api/test_apply_rules.py or test_rule_engine.py. Those suites
 lock the preview-by-default safety property, the write-by-own-keys path, run-twice, the
 vanished-vs-failed split, the cap, the budget floor, the deep-history page walk, the BankSync
 502, and the pure matcher's case/space/conflict rules.
@@ -445,13 +445,13 @@ def _txn(transaction_id, description="COLES 1234", category=None):
             "pk": "ACCOUNT#a1", "sk": f"TXN#{transaction_id}"}
 
 
-def test_two_rules_with_the_same_category_file_once_but_are_counted_by_each(rule_apply):
+def test_two_rules_with_the_same_category_file_once_but_are_counted_by_each(rule_engine):
     # [A30] Not a conflict (the categories agree), so the charge is filed ONCE — but byRule
     # credits BOTH rules with the hit. That overlap is deliberate: byRule is a per-rule
     # "how over-eager is this rule?" signal, never a total.
     rules = [_rule("coles", "groceries", rule_id="r-a"),
              _rule("1234", "groceries", rule_id="r-b")]
-    plan = rule_apply.plan_rule_application(rules, [_txn("t1")], _is_unfiled({"groceries"}))
+    plan = rule_engine.plan_rule_application(rules, [_txn("t1")], _is_unfiled({"groceries"}))
 
     assert len(plan["matched"]) == 1
     assert plan["by_category"] == {"groceries": 1}
@@ -467,10 +467,10 @@ def test_two_rules_with_the_same_category_file_once_but_are_counted_by_each(rule
     (False, "FALSE ALARM", False),
 ])
 def test_a_non_string_rule_value_is_stringified_and_never_crashes(
-        rule_apply, value, description, expected):
+        rule_engine, value, description, expected):
     # [A31] `value` reaches us from BankSync, not from our own client, so it is not guaranteed
     # to be a string. It must never raise — an exception here would 500 the whole run.
-    assert rule_apply.rule_matches(_rule(value), _txn("t1", description)) is expected
+    assert rule_engine.rule_matches(_rule(value), _txn("t1", description)) is expected
 
 
 @pytest.mark.parametrize("description,expected", [
@@ -479,47 +479,47 @@ def test_a_non_string_rule_value_is_stringified_and_never_crashes(
     ("", False),
     (0, False),
 ])
-def test_a_non_string_transaction_description_never_crashes(rule_apply, description, expected):
+def test_a_non_string_transaction_description_never_crashes(rule_engine, description, expected):
     # [A32] Same for the stored row: a description that is not a string must not 500 the run.
-    assert rule_apply.rule_matches(_rule("1234"), _txn("t1", description)) is expected
+    assert rule_engine.rule_matches(_rule("1234"), _txn("t1", description)) is expected
 
 
-def test_matching_is_case_insensitive_across_accents_but_never_folds_them(rule_apply):
+def test_matching_is_case_insensitive_across_accents_but_never_folds_them(rule_engine):
     # [A33] Real descriptions carry accents (CAFÉ, NOËL). Lower-casing handles the CASE, but
     # nothing strips the accent — so a rule typed without the accent does NOT match. Pinned
     # because "why doesn't my CAFE rule match CAFÉ?" is otherwise an invisible behaviour.
-    assert rule_apply.rule_matches(_rule("café"), _txn("t1", "CAFÉ DE PARIS"))
-    assert rule_apply.rule_matches(_rule("CAFÉ"), _txn("t2", "café de paris"))
-    assert not rule_apply.rule_matches(_rule("cafe"), _txn("t3", "CAFÉ DE PARIS"))
-    assert not rule_apply.rule_matches(_rule("café"), _txn("t4", "CAFE DE PARIS"))
+    assert rule_engine.rule_matches(_rule("café"), _txn("t1", "CAFÉ DE PARIS"))
+    assert rule_engine.rule_matches(_rule("CAFÉ"), _txn("t2", "café de paris"))
+    assert not rule_engine.rule_matches(_rule("cafe"), _txn("t3", "CAFÉ DE PARIS"))
+    assert not rule_engine.rule_matches(_rule("café"), _txn("t4", "CAFE DE PARIS"))
 
 
-def test_a_rule_with_no_category_id_is_skipped_rather_than_crashing_the_run(rule_apply):
+def test_a_rule_with_no_category_id_is_skipped_rather_than_crashing_the_run(rule_engine):
     # [A34] A rule missing `categoryId` entirely (a hand-made or half-migrated BankSync rule).
     # _skip_reason must catch it BEFORE the planner reaches rule["categoryId"] — that subscript
     # would raise KeyError and 500 the whole run, taking every other rule with it. The reason
     # names the real problem rather than blaming a deleted category.
     rule = {"id": "no-cat", "field": "description", "operator": "contains", "value": "coles"}
-    plan = rule_apply.plan_rule_application([rule], [_txn("t1")], _is_unfiled({"groceries"}))
+    plan = rule_engine.plan_rule_application([rule], [_txn("t1")], _is_unfiled({"groceries"}))
 
     assert plan["matched"] == []
     assert plan["skipped_rules"] == [
         {"id": "no-cat", "value": "coles", "reason": "rule has no category"}]
 
 
-def test_category_equals_does_not_match_a_prefix_of_the_stored_category(rule_apply):
+def test_category_equals_does_not_match_a_prefix_of_the_stored_category(rule_engine):
     # [A35] `equals` is not `contains`: a FOOD rule must not sweep up every FOOD_AND_DRINK
     # charge.
     rule = _rule("FOOD", field="category", operator="equals")
-    assert not rule_apply.rule_matches(rule, _txn("t1", category="FOOD_AND_DRINK"))
-    assert rule_apply.rule_matches(_rule("FOOD_AND_DRINK", field="category", operator="equals"),
+    assert not rule_engine.rule_matches(rule, _txn("t1", category="FOOD_AND_DRINK"))
+    assert rule_engine.rule_matches(_rule("FOOD_AND_DRINK", field="category", operator="equals"),
                                    _txn("t2", category="FOOD_AND_DRINK"))
 
 
-def test_a_charge_whose_category_is_an_empty_string_is_eligible_and_filable(rule_apply):
+def test_a_charge_whose_category_is_an_empty_string_is_eligible_and_filable(rule_engine):
     # [A36] "" is neither income nor a taxonomy id, so the badge counts it — the apply pass must
     # be able to file it too, or those rows are permanently stuck.
-    plan = rule_apply.plan_rule_application(
+    plan = rule_engine.plan_rule_application(
         [_rule("coles")], [_txn("t1", "COLES", category="")], _is_unfiled({"groceries"}))
 
     assert plan["unfiled"] == 1

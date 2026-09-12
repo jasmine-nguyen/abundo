@@ -63,7 +63,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
 _REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "age_out",
              "budget_alerts", "repayment_alerts", "spend", "push", "repository_base", "repository_transaction", "repository_budget",
-             "repository_category", "repository_device", "repository_notify", "repository_paycycle")
+             "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine")
 
 
 @pytest.fixture

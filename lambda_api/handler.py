@@ -119,7 +119,7 @@ from merchant_groups import (
     rule_value_is_safe,
 )
 from milestones import mint_migration_markers
-from rule_apply import plan_rule_application
+from rule_engine import plan_rule_application, is_unfiled_category
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -1122,12 +1122,10 @@ def _fetch_windowed_transactions(repo: TransactionRepository, start: str | None,
     return transactions
 
 
-def _is_unmapped_category(category: str | None, taxonomy_ids: set[str]) -> bool:
-    """Server twin of the client's categoryIsUnmapped (src/context.tsx): a charge is
-    uncategorized when its category is null OR a raw value not in the user's taxonomy,
-    excluding income. One place so the count and the /breakdown bucket can't drift from
-    each other or from the client. Budget contribution is a SEPARATE gate a caller adds."""
-    return category != "income" and category not in taxonomy_ids
+# The unfiled-category predicate now lives in the shared rule engine (WHIT-527), so the
+# count, the /breakdown bucket, the rule sweep, and the webhook all decide "unfiled" the
+# same way. Kept under the old name for the call sites that read like a handler local.
+_is_unmapped_category = is_unfiled_category
 
 
 def get_uncategorized_count(transaction_repo: TransactionRepository, category_repo: CategoryRepository) -> dict:
@@ -1243,8 +1241,8 @@ def get_uncategorized_merchants(
 
 
 def _as_leaf_rule(inline_rule: dict) -> dict:
-    """The inline rule in the shape rule_apply evaluates. `conditionCount` 1 is not decoration:
-    rule_apply refuses to act on anything it read only the first condition of, and this rule has
+    """The inline rule in the shape rule_engine evaluates. `conditionCount` 1 is not decoration:
+    rule_engine refuses to act on anything it read only the first condition of, and this rule has
     exactly one by construction."""
     return {
         "id": None,
@@ -1303,7 +1301,7 @@ def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | No
         charges, and the caller would never know.
 
     `income` is deliberately NOT accepted, unlike POST /enrichments: it is a valid rule target
-    (filed, but not a taxonomy id) and rule_apply honours it, but this route mints from the
+    (filed, but not a taxonomy id) and rule_engine honours it, but this route mints from the
     merchant screen, where income categories aren't pickable (WHIT-158). Unreachable today.
     """
     rule = body.get("rule")
@@ -1387,7 +1385,7 @@ def apply_rules_to_uncategorized(
     covers, across ALL history.
 
     BankSync applies rules at sync time to INCOMING charges only, so rules never reach charges
-    already stored (WHIT-502). This evaluates them literally (see rule_apply) against every
+    already stored (WHIT-502). This evaluates them literally (see rule_engine) against every
     charge the badge counts as unfiled, and either reports what it WOULD file or files it.
 
     Two shapes, by whether the body carries an inline `rule`:

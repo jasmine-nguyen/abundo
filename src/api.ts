@@ -243,7 +243,7 @@ export interface ApplyRulesConflict {
 }
 
 /** A rule the server would not apply, with its plain-English reason (authored server-side in
- *  lambda_api/rule_apply.py and rendered verbatim, so a new reason needs no client change). */
+ *  shared/rule_engine.py and rendered verbatim, so a new reason needs no client change). */
 export interface ApplyRulesSkipped {
   id: string | null;
   value: string | null;

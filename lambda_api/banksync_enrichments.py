@@ -22,7 +22,6 @@ User-Agent is load-bearing (Cloudflare 403s the default urllib agent). Both
 """
 
 import json
-import re
 import urllib.error
 import urllib.request
 
@@ -33,6 +32,9 @@ from constants import (
     BANKSYNC_USER_AGENT,
 )
 from api_key import get_api_key as _fetch_api_key
+# The value fold + text-overlap test live in the shared rule engine (WHIT-527), so this
+# module, the "apply my rules" sweep, and the webhook all fold and match identically.
+from rule_engine import fold as _fold, overlaps as rule_overlaps_text
 
 _ENRICHMENTS = "/v1/enrichments"
 
@@ -120,7 +122,7 @@ def _to_rule(enrichment: dict) -> dict | None:
             # leaf, so a foreign "description contains UBER AND amount > 50" would read as the
             # much broader "description contains UBER". Harmless while rules are only listed,
             # but applying that broadened rule to stored history would mis-file every Uber
-            # charge — so rule_apply refuses to act on anything but a true single-leaf rule.
+            # charge — so rule_engine refuses to act on anything but a true single-leaf rule.
             "conditionCount": len(leaves),
         }
     except (AttributeError, TypeError, IndexError):
@@ -171,49 +173,12 @@ def _rule_payload(field: str, operator: str, value: str, category_id: str) -> di
     }
 
 
-def _fold(value: str) -> str:
-    """Fold a rule value for duplicate-matching, mirroring the client's
-    normaliseRuleIdentity (src/context.tsx): trim, lowercase, collapse internal
-    whitespace runs. Case + spacing vary for the same merchant, so an exact-value
-    compare would miss real duplicates. `str(...)` guards a non-string value from a
-    foreign enrichment so the fail-open lookup can't raise. The two folds are only
-    guaranteed equal for ASCII (Python `.lower()` and JS `toLowerCase()` disagree on
-    a few non-ASCII chars) — fine for the AU merchant strings this matches."""
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
-
-
 def _rule_identity(field: str, operator: str, value: str, category_id: str) -> tuple:
     """The dedup key for a rule. Only `value` is folded; field/operator/category_id
     stay EXACT — the client may send a non-default field/operator (RULE_FIELDS /
     RULE_OPERATORS), which target different text or set a different action, so
     folding them together would wrongly merge genuinely different rules."""
     return (field, operator, _fold(value), category_id)
-
-
-def rule_overlaps_text(rule: dict, field: str, operator: str, value: str) -> bool:
-    """Is this existing rule GUARANTEED to fight over charges with `<field> <operator> <value>`?
-
-    The value half of _rule_identity, WITHOUT the category — so a caller can find a rule that
-    reaches the same charges but files them somewhere else. That pair is the damaging case: two
-    rules disagreeing over a charge leaves it conflicted, and conflicted charges are never filed
-    (rule_apply), on this run or any future one.
-
-    True when either value CONTAINS the other, not only when they are equal. Two `contains`
-    rules where one value sits inside the other necessarily overlap: every description matching
-    "COLES EXPRESS" also matches "COLES". Equality alone would wave the nested pair straight
-    through — and nesting is the common shape, not the exotic one (it is what the merchant
-    screen's `alsoCatches` exists to warn about).
-
-    Values that merely CAN co-occur ("COLES" and "RICHMOND", both inside "COLES 0342 RICHMOND")
-    are not detectable from the values alone — they depend on the data, and rule_apply reports
-    those as `conflicted`.
-    """
-    if (rule.get("field"), rule.get("operator")) != (field, operator):
-        return False
-    existing, candidate = _fold(rule.get("value")), _fold(value)
-    if not existing or not candidate:
-        return False
-    return existing in candidate or candidate in existing
 
 
 def create_rule(field: str, operator: str, value: str, category_id: str) -> dict:
@@ -253,7 +218,7 @@ def create_rule(field: str, operator: str, value: str, category_id: str) -> dict
         "value": value,
         "categoryId": category_id,
         # A rule we mint always has exactly one condition (_rule_payload builds one leaf), so
-        # the shape matches _to_rule's and rule_apply can act on it.
+        # the shape matches _to_rule's and rule_engine can act on it.
         "conditionCount": 1,
     }
 

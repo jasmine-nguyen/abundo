@@ -8,19 +8,24 @@ The way out is that N charges is nowhere near N merchants — spending clusters 
 leftovers by merchant, biggest first, and one decision per merchant clears the tail.
 
 Pure logic, no I/O: the handler owns the scan, so the grouping can be tested on its own (same
-split as rule_apply.py).
+split as the shared rule_engine).
 
 The counts here have to be TRUE, because the next step writes with them. So a group's count is
 not "how many rows carry this merchant name" — it is how many eligible charges the rule minted
-from this group would actually match, evaluated the same literal way rule_apply.rule_matches
-evaluates a `description contains VALUE` rule. That is what makes "COLES — 50 charges" honest
-when 12 of them are really COLES EXPRESS, and it is why every group also reports which OTHER
-merchants its rule would sweep in (`alsoCatches`).
+from this group would actually match, evaluated the same literal way rule_engine.rule_matches
+evaluates a `description contains VALUE` rule (both go through rule_engine.contains). That is
+what makes "COLES — 50 charges" honest when 12 of them are really COLES EXPRESS, and it is why
+every group also reports which OTHER merchants its rule would sweep in (`alsoCatches`).
 
-Unlike rule_apply, which returns snake_case internals the handler maps to the wire, this
-returns the response body as the app reads it. The shape is all presentation — there is no
+Unlike plan_rule_application, which returns snake_case internals the handler maps to the wire,
+this returns the response body as the app reads it. The shape is all presentation — there is no
 second consumer to map it for, and a mapping step would only be somewhere for the two to drift.
 """
+
+# The literal `description contains value` test lives once in the shared rule engine
+# (WHIT-527), so a group's count is folded and matched exactly as the minted rule — and
+# the webhook — would. This module still folds each description ONCE up front (below).
+from rule_engine import contains
 
 # How many example descriptions a group (and the ungrouped bucket) shows.
 _SAMPLES_PER_GROUP = 3
@@ -120,20 +125,6 @@ def _rule_value_for_bucket(bucket: list[dict]) -> str | None:
     return value
 
 
-def _matches(folded_description: str, value: str) -> bool:
-    """The same literal `description contains value` test rule_apply.rule_matches applies, so
-    a group's count equals what the minted rule would really file.
-
-    Trim + lowercase BOTH sides, exactly as rule_apply._normalise does — not because a derived
-    value can carry edge whitespace today (the merchant name is stripped before the slice is
-    taken), but so "previews N, files N+k" stays impossible by construction rather than by
-    accident of a guard somewhere else. Deliberately NOT punctuation- or whitespace-COLLAPSING:
-    a looser compare would let a "COLES" group swallow "NICOLE'S CAFE" and overstate the count
-    right before a bulk write.
-    """
-    return value.strip().lower() in folded_description
-
-
 def _dates(members: list[dict]) -> tuple[str | None, str | None]:
     dates = sorted(_text(member.get("date")) for member in members if member.get("date"))
     if not dates:
@@ -177,7 +168,7 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
 
     `is_unfiled(category)` is the caller's "this charge still needs filing" predicate — the
     same one the badge counts with — so this module never has its own opinion of what
-    "uncategorized" means (same contract as rule_apply.plan_rule_application).
+    "uncategorized" means (same contract as rule_engine.plan_rule_application).
 
     Every group carries the exact `rulePattern` a rule would be minted from, so the app never
     has to guess it and the count it shows is the count that will be filed. Charges no group
@@ -196,7 +187,7 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
         if value is None:
             continue
         positions = [index for index, folded in enumerate(folded_descriptions)
-                     if _matches(folded, value)]
+                     if contains(value, folded)]
         members = [eligible[index] for index in positions]
         first_date, last_date = _dates(members)
         grouped_positions.update(positions)

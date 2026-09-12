@@ -9,7 +9,7 @@ empty history, the route wiring, the POST 404, and the runaway-cursor raise.
 What it does NOT lock, and this file does:
 
   * [A1]  a group's `count` equals what the minted rule would ACTUALLY file, asserted against
-          the REAL rule_apply.rule_matches (the function WHIT-516 will write with) rather than
+          the REAL rule_engine.rule_matches (the function WHIT-516 will write with) rather than
           a hard-coded number. This is the card's load-bearing claim: an overstated count is a
           lie shown immediately before a bulk write.
   * [A2]  `unfiled` equals the real /transactions/uncategorized/count endpoint on the same rows
@@ -39,7 +39,7 @@ What it does NOT lock, and this file does:
   * [A14] the endpoint is READ-ONLY — it writes nothing, even against a repo that can write.
   * [A15] a database failure mid-scan propagates instead of degrading into an empty "all caught
           up" response.
-  * [A16] under a length-changing fold, the previewed count still equals what rule_apply would
+  * [A16] under a length-changing fold, the previewed count still equals what rule_engine would
           file. The impl suite's test_a_description_whose_lowercasing_changes_length_yields_no_rule
           owns "no rule is offered"; this owns "and no count lies". Before the fix this fixture
           previewed 2 while the rule filed 3.
@@ -76,7 +76,7 @@ def _eligible_rows(handler):
 
 
 def _contains_rule(pattern):
-    """The leaf rule WHIT-516 would mint from a group — the shape rule_apply evaluates."""
+    """The leaf rule WHIT-516 would mint from a group — the shape rule_engine evaluates."""
     return {"field": "description", "operator": "contains", "value": pattern,
             "conditionCount": 1, "categoryId": "groceries"}
 
@@ -107,7 +107,7 @@ def _messy_rows():
         _txn("m16", "UBER EATS", "UBER EATS SYDNEY", "2026-06-25", account_id=WESTPAC),
         # A mixed-case description of a merchant whose other rows are upper-case. The winning
         # pattern stays "COLES", so [A1] only holds while the count is computed
-        # case-insensitively — exactly as rule_apply._normalise compares.
+        # case-insensitively — exactly as rule_engine._normalise compares.
         _txn("m17", "COLES", "Coles Online Kew", "2026-06-24"),
         # A raw BankSync enum (unfiled by the badge's rule, but NOT a null category) and an
         # income row (filed, never offered). Together they make [A1]/[A2]/[A3] sensitive to the
@@ -125,9 +125,9 @@ def _messy_repo():
     return FakeFeedRepo(rows_by_account)
 
 
-def test_every_group_count_is_what_the_minted_rule_would_really_file(handler, rule_apply):
+def test_every_group_count_is_what_the_minted_rule_would_really_file(handler, rule_engine):
     # [A1] FAIL-ON-REVERT for the card's load-bearing claim. Asserted against the REAL
-    # rule_apply.rule_matches — the exact function WHIT-516 files with — so a group whose count
+    # rule_engine.rule_matches — the exact function WHIT-516 files with — so a group whose count
     # was computed any other way (merchant-name equality, case-sensitive containment, counting
     # bucket members instead of matches) reddens here. A hard-coded number cannot catch that.
     body = _body(handler, _messy_repo(), taxonomy={"groceries"})
@@ -138,13 +138,13 @@ def test_every_group_count_is_what_the_minted_rule_would_really_file(handler, ru
     for group in body["groups"]:
         would_file = sum(
             1 for row in eligible
-            if rule_apply.rule_matches(_contains_rule(group["rulePattern"]), row)
+            if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), row)
         )
         if would_file != group["count"]:
             divergences.append((group["rulePattern"], group["count"], would_file))
 
     assert divergences == [], (
-        "a group's count disagrees with what rule_apply would file for its own rulePattern "
+        "a group's count disagrees with what rule_engine would file for its own rulePattern "
         "(pattern, previewed, would-file): " + repr(divergences)
     )
 
@@ -418,12 +418,12 @@ def test_a_database_failure_mid_scan_is_not_swallowed_into_all_caught_up(handler
 
 
 def test_a_length_changing_fold_never_lets_the_preview_disagree_with_the_rule(
-    handler, rule_apply
+    handler, rule_engine
 ):
     # [A16] FAIL-ON-REVERT, and the sharper half of the "İ" case. The impl suite proves no rule
     # is offered for İMERCHANT. This proves the thing that actually burns her: before the fix
     # this fixture offered a rule on "OLES " — with a trailing space — which previewed 2 charges
-    # while rule_apply (which STRIPS a rule value) would have filed 3. A shifted slice does not
+    # while rule_engine (which STRIPS a rule value) would have filed 3. A shifted slice does not
     # just look wrong; it makes the number lie one tap before a bulk write.
     rows = [
         _txn("u1", "COLES", "İ MART COLES 123", "2026-07-10"),
@@ -438,7 +438,42 @@ def test_a_length_changing_fold_never_lets_the_preview_disagree_with_the_rule(
 
     for group in body["groups"]:
         would_file = sum(1 for row in rows
-                         if rule_apply.rule_matches(_contains_rule(group["rulePattern"]), row))
+                         if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), row))
         assert would_file == group["count"], (
             f"pattern {group['rulePattern']!r} previews {group['count']} but files {would_file}"
         )
+
+
+def test_a_double_spaced_charge_is_not_swept_in_by_a_single_spaced_rule(handler, rule_engine):
+    # [A17] FAIL-ON-REVERT for WHIT-527: merchant_groups now shares rule_engine.contains instead
+    # of its own `_matches` copy, and both must fold the description the STRICT (non-collapsing)
+    # way. This is the length-changing-fold drift the card asks for, at the collapse boundary
+    # [A16]'s İ case can't reach: two single-spaced descriptions yield the rule "COLES ONLINE",
+    # and a third row carries the SAME merchant but a DOUBLE space in its description.
+    #
+    #   strict (today)    -> "coles online" is NOT in "coles  online ...", so the group files 2
+    #   collapsing (drift)-> both fold to "coles online", so it would file 3 and the count lies
+    #
+    # rule_engine.rule_matches is the independent oracle (it folds the description via _normalise,
+    # merchant_groups folds it up front at :190 — different code, same strict semantics). Revert
+    # lever: reintroduce a whitespace-collapsing matcher in merchant_groups and this reddens.
+    rows = [
+        _txn("s1", "COLES ONLINE", "COLES ONLINE 111", "2026-07-10"),
+        _txn("s2", "COLES ONLINE", "COLES ONLINE 222", "2026-07-09"),
+        _txn("d1", "COLES ONLINE", "COLES  ONLINE 333", "2026-07-08"),  # double space
+    ]
+    body = _body(handler, FakeFeedRepo({ANZ: rows}))
+
+    assert body["unfiled"] == 3
+    assert len(body["groups"]) == 1
+    group = body["groups"][0]
+    assert group["rulePattern"] == "COLES ONLINE"
+
+    would_file = sum(1 for row in rows
+                     if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), row))
+    assert group["count"] == would_file == 2, (
+        f"pattern {group['rulePattern']!r} previews {group['count']} but files {would_file} "
+        "(a whitespace-collapsing fold would sweep in the double-spaced charge and count 3)"
+    )
+    # The double-spaced charge is left for its own decision, never silently folded into the group.
+    assert body["ungrouped"]["count"] == 1

@@ -43,7 +43,7 @@ _REIMPORT = (
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
     "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
-    "balance_fetch",
+    "balance_fetch", "rule_engine",
 )
 
 
@@ -63,6 +63,28 @@ def api_key_module():
         sys.modules.pop("api_key", None)
         if saved is not None:
             sys.modules["api_key"] = saved
+        while _SHARED_DIR in sys.path:
+            sys.path.remove(_SHARED_DIR)
+
+
+@pytest.fixture
+def rule_engine():
+    """shared/rule_engine.py imported in isolation — the pure rule-matching logic (WHIT-527).
+
+    Standalone like api_key_module: rule_engine imports only `re`, so it needs neither the boto
+    fakes nor the repository chain the `shared` fixture wires up."""
+    while _SHARED_DIR in sys.path:
+        sys.path.remove(_SHARED_DIR)
+    sys.path.insert(0, _SHARED_DIR)
+    saved = sys.modules.pop("rule_engine", None)
+    import rule_engine
+
+    try:
+        yield rule_engine
+    finally:
+        sys.modules.pop("rule_engine", None)
+        if saved is not None:
+            sys.modules["rule_engine"] = saved
         while _SHARED_DIR in sys.path:
             sys.path.remove(_SHARED_DIR)
 
