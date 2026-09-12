@@ -24,7 +24,12 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error
-from repository_errors import RuleClashError, RuleNotFoundError, DatabaseError
+from repository_errors import (
+    RuleClashError,
+    RuleNotFoundError,
+    DatabaseError,
+    VersionConflictError,
+)
 import rule_engine
 
 logger = logging.getLogger(__name__)
@@ -33,6 +38,15 @@ logger = logging.getLogger(__name__)
 # Scan. It is also the value the IAM DeleteItem grant pins via dynamodb:LeadingKeys, so the
 # API can only ever delete rule rows — see delete_rule and terraform/iam.tf.
 _PK = "RULE"
+
+# The one-off BankSync import (WHIT-532) keeps a private ledger row here: which BankSync
+# enrichment id was bound to which of OUR rule ids, so the import can tell an in-app edit
+# (we moved the id) from a BankSync-side edit (the id is still where we put it) and never
+# resurrect a rule the new app deleted. Its own partition — NOT "RULE" — so list_rules,
+# which Queries pk="RULE", never returns it as a rule. The row is never deleted, so it also
+# stays outside the IAM DeleteItem grant that pins pk="RULE".
+_LEDGER_PK = "RULE_IMPORT"
+_LEDGER_SK = "LEDGER"
 
 
 def _now() -> str:
@@ -88,6 +102,7 @@ class RuleRepository:
         source: str = "app",
         imported_at: Optional[str] = None,
         banksync_enrichment_ids: Optional[list] = None,
+        now: Optional[str] = None,
     ) -> tuple[dict, bool]:
         """Create a rule, returning ``(rule, created)``.
 
@@ -97,10 +112,15 @@ class RuleRepository:
             same charges, and a conflicted charge is never filed).
         The ``attribute_not_exists(pk)`` condition is the dedup guard — dropping it would let the
         second create silently overwrite the first.
+
+        ``now`` overrides the created/updated timestamp. The app leaves it None (stamp = wall
+        clock). The import script passes the same value it uses for ``imported_at`` so a freshly
+        imported row has ``created_at == updated_at == imported_at`` — the "untouched since
+        import" signal the script reads to decide whether the app has since edited the rule.
         """
         rule_id = rule_engine.rule_id_for(field, operator, value)
         item = _rule_row(rule_id, field, operator, value, category_id, source,
-                         imported_at, banksync_enrichment_ids, created_at=_now())
+                         imported_at, banksync_enrichment_ids, created_at=now or _now())
         try:
             self._get_table().put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
             return item, True
@@ -208,15 +228,131 @@ class RuleRepository:
                 raise RuleNotFoundError(rule_id)
             handle_database_error(e, "update rule")
 
-    def delete_rule(self, rule_id: str) -> None:
-        """Delete a rule. Safe to run twice — deleting a missing key is a no-op."""
+    def delete_rule(self, rule_id: str, *, expected_updated_at: Optional[str] = None) -> None:
+        """Delete a rule. Safe to run twice — deleting a missing key is a no-op.
+
+        With ``expected_updated_at`` the delete is guarded on the row being unchanged since it
+        was read (the import script's "only delete a row the app hasn't touched" check). A guarded
+        delete of a missing row raises ``RuleNotFoundError`` (already gone — the caller treats it
+        as done); of a CHANGED row, ``VersionConflictError`` (the app edited it under us — refuse).
+        The unguarded delete keeps its no-op-on-missing behaviour so the app's delete stays
+        idempotent.
+        """
+        # The pk is the literal "RULE" — the SAME value the IAM DeleteItem grant pins via
+        # dynamodb:LeadingKeys (terraform/iam.tf). Kept a literal at EACH call (not _PK, not a
+        # variable) so the IAM guard test can read, at the call site, that the API only ever
+        # deletes rule rows.
+        if expected_updated_at is None:
+            try:
+                self._get_table().delete_item(Key={"pk": "RULE", "sk": f"RULE#{rule_id}"})
+            except ClientError as e:
+                handle_database_error(e, "delete rule")
+            return
         try:
-            # The pk is the literal "RULE" — the SAME value the IAM DeleteItem grant pins via
-            # dynamodb:LeadingKeys (terraform/iam.tf). Kept a literal here (not _PK) so the IAM
-            # guard test can prove, at this call, that the API only ever deletes rule rows.
-            self._get_table().delete_item(Key={"pk": "RULE", "sk": f"RULE#{rule_id}"})
+            self._get_table().delete_item(
+                Key={"pk": "RULE", "sk": f"RULE#{rule_id}"},
+                ConditionExpression="attribute_exists(pk) AND #u = :expected",
+                ExpressionAttributeNames={"#u": "updated_at"},
+                ExpressionAttributeValues={":expected": expected_updated_at},
+            )
         except ClientError as e:
-            handle_database_error(e, "delete rule")
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                handle_database_error(e, "delete rule")
+            if self.get_rule(rule_id) is None:
+                raise RuleNotFoundError(rule_id)
+            raise VersionConflictError("rule changed since it was read")
+
+    def stamp_import(
+        self,
+        rule_id: str,
+        *,
+        stamp: str,
+        category_id: Optional[str] = None,
+        banksync_enrichment_ids: Optional[list] = None,
+        set_imported_at: bool = True,
+        expected_updated_at: Optional[str] = None,
+    ) -> None:
+        """The ONE write the import script makes to an existing rule row.
+
+        Always sets ``updated_at = stamp``. Optionally sets ``imported_at = stamp`` (keep it on
+        for a script-owned row so "untouched" stays ``updated_at == imported_at``; turn it OFF
+        when merging a BankSync id onto an APP-authored row, which must not grow import metadata).
+        Optionally sets ``category_id`` and ``banksync_enrichment_ids`` — an empty list REMOVEs the
+        ids attribute so a cleared row reads back with none (matching ``_rule_row``'s sparse shape).
+
+        With ``expected_updated_at`` the write is guarded on the row being unchanged since it was
+        read: a missing row raises ``RuleNotFoundError``, a changed one ``VersionConflictError``.
+        """
+        names = {"#u": "updated_at"}
+        values = {":u": stamp}
+        assignments = ["#u = :u"]
+        removals = []
+        if set_imported_at:
+            names["#i"] = "imported_at"
+            values[":i"] = stamp
+            assignments.append("#i = :i")
+        if category_id is not None:
+            names["#c"] = "category_id"
+            values[":c"] = category_id
+            assignments.append("#c = :c")
+        if banksync_enrichment_ids is not None:
+            names["#b"] = "banksync_enrichment_ids"
+            if banksync_enrichment_ids:
+                values[":b"] = sorted(set(banksync_enrichment_ids))
+                assignments.append("#b = :b")
+            else:
+                removals.append("#b")
+        expression = "SET " + ", ".join(assignments)
+        if removals:
+            expression += " REMOVE " + ", ".join(removals)
+
+        condition = "attribute_exists(pk)"
+        if expected_updated_at is not None:
+            # Reuse the #u alias (already bound to updated_at) so the guarded write emits the
+            # SAME condition string as delete_rule — one shape for FakeTable and the reader.
+            condition += " AND #u = :expected"
+            values[":expected"] = expected_updated_at
+
+        try:
+            self._get_table().update_item(
+                Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
+                UpdateExpression=expression,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ConditionExpression=condition,
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                handle_database_error(e, "stamp import")
+            if self.get_rule(rule_id) is None:
+                raise RuleNotFoundError(rule_id)
+            raise VersionConflictError("rule changed since it was read")
+
+    def get_import_ledger(self) -> dict:
+        """The import ledger: a map of BankSync enrichment id -> the rule id it was bound to when
+        last imported. Empty ``{}`` when the script has never run. See ``_LEDGER_PK``."""
+        try:
+            response = self._get_table().get_item(Key={"pk": _LEDGER_PK, "sk": _LEDGER_SK})
+        except ClientError as e:
+            handle_database_error(e, "read import ledger")
+        item = response.get("Item")
+        return dict(item.get("bindings", {})) if item else {}
+
+    def add_to_import_ledger(self, bindings: dict, *, stamp: str) -> None:
+        """Merge ``{enrichment_id: rule_id}`` into the ledger (upsert). A no-op — NO write — when
+        ``bindings`` is empty, so a re-run that imports nothing touches nothing."""
+        if not bindings:
+            return
+        merged = {**self.get_import_ledger(), **bindings}
+        try:
+            self._get_table().update_item(
+                Key={"pk": _LEDGER_PK, "sk": _LEDGER_SK},
+                UpdateExpression="SET #b = :b, #u = :u",
+                ExpressionAttributeNames={"#b": "bindings", "#u": "updated_at"},
+                ExpressionAttributeValues={":b": merged, ":u": stamp},
+            )
+        except ClientError as e:
+            handle_database_error(e, "write import ledger")
 
 
 def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: str,

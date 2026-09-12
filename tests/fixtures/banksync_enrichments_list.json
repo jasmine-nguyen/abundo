@@ -1,0 +1,17 @@
+{
+  "_comment": "Hand-built GET /v1/enrichments sample for WHIT-532 (no real capture exists in the repo). Shape mirrors tests/lambda_api/test_enrichments.py's _enrichment(). Before the first --apply, replace this with a redacted real response (which also confirms the paging shape). Taxonomy for the tests that read it: groceries, petrol, dining.",
+  "success": true,
+  "data": [
+    {"id": "enr_woolies_1", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "WOOLWORTHS"}]}, "action": {"field": "category", "value": "groceries"}}]}},
+    {"id": "enr_woolies_2", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "  woolworths "}]}, "action": {"field": "category", "value": "groceries"}}]}},
+    {"id": "enr_bp", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "BP"}]}, "action": {"field": "category", "value": "petrol"}}]}},
+    {"id": "enr_multi", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "UBER"}, {"field": "amount", "operator": "gt", "value": "50"}]}, "action": {"field": "category", "value": "petrol"}}]}},
+    {"id": "enr_unsupported", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "amount", "operator": "gt", "value": "100"}]}, "action": {"field": "category", "value": "dining"}}]}},
+    {"id": "enr_memo_action", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "NOTE"}]}, "action": {"field": "memo", "value": "seen"}}]}},
+    {"id": "enr_nested_group", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"logic": "or", "conditions": [{"field": "description", "operator": "contains", "value": "X"}]}]}, "action": {"field": "category", "value": "groceries"}}]}},
+    {"id": "enr_unknown_category", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "MYER"}]}, "action": {"field": "category", "value": "no-longer-a-category"}}]}},
+    {"id": "enr_not_a_rule", "type": "memory", "ruleConfig": {"rules": []}},
+    {"id": "enr_disagree_a", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "TARGET"}]}, "action": {"field": "category", "value": "groceries"}}]}},
+    {"id": "enr_disagree_b", "type": "rule", "ruleConfig": {"rules": [{"conditions": {"logic": "and", "conditions": [{"field": "description", "operator": "contains", "value": "target"}]}, "action": {"field": "category", "value": "dining"}}]}}
+  ]
+}

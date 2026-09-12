@@ -25,6 +25,10 @@ from decimal import Decimal
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
+# FakeTable + _client_error moved to _dynamo_fakes so a sibling suite (tests/scripts) can import
+# them by basename (WHIT-532). Re-imported here so this conftest's fixtures and the
+# conftest.FakeTable attribute are unchanged.
+from _dynamo_fakes import FakeTable, _client_error
 
 # Set the env vars + install fake boto3/botocore/ssm at module load, so
 # shared/api_key.py's `from ssm import get_param` (and the repositories' boto imports)
@@ -149,148 +153,12 @@ def shared():
                 sys.path.remove(_SHARED_DIR)
 
 
-def _client_error(code: str, message: str = "boom"):
-    """Build a botocore-shaped ClientError the repository's handlers can inspect."""
-    err = sys.modules["botocore.exceptions"].ClientError()
-    err.response = {"Error": {"Code": code, "Message": message}}
-    return err
-
-
 @pytest.fixture
 def database_error(shared):
     """The DatabaseError type handle_database_error raises (WHIT-127). Depends on
     `shared` so shared/ is on sys.path and this resolves the same class the repos do."""
     import repository_errors
     return repository_errors.DatabaseError
-
-
-class FakeTable:
-    """In-memory DynamoDB table stand-in, injected via ``repo._table``. Emulates the
-    calls the shared TransactionRepository makes: batch_writer put, conditional
-    put_item / update_item, and query with KeyConditionExpression + FilterExpression
-    (evaluated via _Predicate), newest-first ordering, Limit and cursor pagination.
-    """
-
-    def __init__(self):
-        self.store: dict = {}  # (pk, sk) -> item
-        self.query_calls = 0
-        self.get_item_calls = 0
-        self.consistent_reads: list = []
-
-    def batch_writer(self):
-        store = self.store
-
-        class _Batch:
-            def __enter__(self_):
-                return self_
-
-            def __exit__(self_, *exc):
-                return False
-
-            def put_item(self_, Item):
-                store[(Item["pk"], Item["sk"])] = dict(Item)
-
-        return _Batch()
-
-    def put_item(self, Item, ConditionExpression=None):
-        key = (Item["pk"], Item["sk"])
-        # Same strictness as update_item below: an unrecognised condition must not pass silently,
-        # or a drifted expression string leaves the guard dead with every test still green.
-        if ConditionExpression not in (None, "attribute_not_exists(pk)"):
-            raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
-        if ConditionExpression == "attribute_not_exists(pk)" and key in self.store:
-            raise _client_error("ConditionalCheckFailedException")
-        self.store[key] = dict(Item)
-
-    def get_item(self, Key, ConsistentRead=False):
-        self.get_item_calls += 1
-        self.consistent_reads.append(ConsistentRead)
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def _condition_holds(self, key, ConditionExpression, values):
-        """Evaluate the condition strings the shared TransactionRepository actually builds.
-
-        An UNRECOGNISED expression raises rather than falling through: the old code silently
-        ignored one, so a drifted condition string would leave every conditional test green with
-        the guard dead — and the setdefault below would invent the row it was meant to protect.
-        """
-        item = self.store.get(key)
-        if ConditionExpression == "attribute_exists(pk)":
-            return item is not None
-        if ConditionExpression == "attribute_exists(pk) AND attribute_not_exists(#c)":
-            return item is not None and "category" not in item
-        if ConditionExpression == "attribute_exists(pk) AND #c = :expected":
-            return item is not None and item.get("category") == values[":expected"]
-        raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
-                    ExpressionAttributeValues=None, ConditionExpression=None):
-        key = (Key["pk"], Key["sk"])
-        values = ExpressionAttributeValues or {}
-        if ConditionExpression is not None and not self._condition_holds(
-            key, ConditionExpression, values
-        ):
-            raise _client_error("ConditionalCheckFailedException")
-        item = self.store.setdefault(key, {"pk": Key["pk"], "sk": Key["sk"]})
-        # The repository builds "SET ... [REMOVE ...]" — either clause optional
-        # (update_transaction_fields; update_transaction_category is SET-only). SET
-        # assigns aliased name = value; REMOVE deletes each aliased attribute, so a
-        # cleared field reads back ABSENT (not ""/[]). ExpressionAttributeValues is
-        # omitted for a REMOVE-only update, matching real DynamoDB.
-        set_part, _, remove_part = UpdateExpression.strip().partition("REMOVE")
-        set_part = set_part.strip()
-        if set_part.startswith("SET"):
-            for pair in set_part[len("SET"):].split(","):
-                if not pair.strip():
-                    continue
-                name_alias, value_alias = (part.strip() for part in pair.split("="))
-                item[ExpressionAttributeNames[name_alias]] = values[value_alias]
-        for name_alias in remove_part.split(","):
-            name_alias = name_alias.strip()
-            if name_alias:
-                item.pop(ExpressionAttributeNames[name_alias], None)
-
-    def delete_item(self, Key, ConditionExpression=None):
-        # pop(..., None) makes a delete of a missing key a no-op, so delete-twice both succeed.
-        # Same strictness as put_item/update_item: an unrecognised condition must raise, not pass
-        # silently (no repository delete uses a condition today, so any is a drift to catch).
-        if ConditionExpression is not None:
-            raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
-        self.store.pop((Key["pk"], Key["sk"]), None)
-
-    def query(self, KeyConditionExpression=None, FilterExpression=None,
-              ScanIndexForward=None, Limit=None, IndexName=None,
-              ExclusiveStartKey=None):
-        self.query_calls += 1
-        items = list(self.store.values())
-        if KeyConditionExpression is not None:
-            items = [it for it in items if KeyConditionExpression.evaluate(it)]
-        if FilterExpression is not None:
-            items = [it for it in items if FilterExpression.evaluate(it)]
-
-        # date-index reads sort by date; ScanIndexForward=False → newest first.
-        items.sort(
-            key=lambda it: (it.get("date", ""), it.get("sk", "")),
-            reverse=ScanIndexForward is False,
-        )
-
-        if ExclusiveStartKey is not None:
-            after = (ExclusiveStartKey["pk"], ExclusiveStartKey["sk"])
-            for i, it in enumerate(items):
-                if (it["pk"], it["sk"]) == after:
-                    items = items[i + 1:]
-                    break
-
-        result: dict = {}
-        if Limit is not None and len(items) > Limit:
-            page = items[:Limit]
-            last = page[-1]
-            result["LastEvaluatedKey"] = {"pk": last["pk"], "sk": last["sk"]}
-        else:
-            page = items
-        result["Items"] = [dict(it) for it in page]
-        return result
 
 
 class ConfigItemTable:
