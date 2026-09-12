@@ -25,15 +25,7 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, _row, FakeFeedRepo
-
-
-class _FakeCategoryRepo:
-    def __init__(self, category_ids):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import ANZ, SPENDING, _row, FakeFeedRepo, FakeCategoryRepo
 
 
 def _uncat_event(params=None):
@@ -75,12 +67,12 @@ def test_overshoot_page_returns_all_rows_untruncated_and_resumes_gap_free(handle
     repo = FakeFeedRepo({SPENDING: rows})  # 6 uncategorized rows, newest u6 .. oldest u1
 
     first = json.loads(
-        handler.get_uncategorized_feed(_uncat_event({"limit": "2"}), repo, _FakeCategoryRepo(set()))["body"]
+        handler.get_uncategorized_feed(_uncat_event({"limit": "2"}), repo, FakeCategoryRepo(set()))["body"]
     )
     assert len(first["transactions"]) == 3          # overshoot: the whole first chunk, NOT clamped to 2
     assert first["nextCursor"] is not None           # and more history behind it
 
-    drained = _drain(handler, repo, _FakeCategoryRepo(set()), limit=2)
+    drained = _drain(handler, repo, FakeCategoryRepo(set()), limit=2)
     ids = [t["transaction_id"] for t in drained]
     assert ids == [f"u{d}" for d in range(6, 0, -1)]  # every row once, newest-first, no dupe/gap
 
@@ -106,12 +98,12 @@ def test_scan_cap_returns_short_nonempty_page_then_completes(handler, monkeypatc
     repo = FakeFeedRepo({SPENDING: rows})
 
     first = json.loads(
-        handler.get_uncategorized_feed(_uncat_event({"limit": "3"}), repo, _FakeCategoryRepo({"groceries"}))["body"]
+        handler.get_uncategorized_feed(_uncat_event({"limit": "3"}), repo, FakeCategoryRepo({"groceries"}))["body"]
     )
     assert [t["transaction_id"] for t in first["transactions"]] == ["u6", "u4"]  # 2 of the wanted 3 (cap)
     assert first["nextCursor"] is not None                                        # NOT a false end-of-history
 
-    drained = _drain(handler, repo, _FakeCategoryRepo({"groceries"}), limit=3)
+    drained = _drain(handler, repo, FakeCategoryRepo({"groceries"}), limit=3)
     assert [t["transaction_id"] for t in drained] == ["u6", "u4", "u2"]  # deep row reached, all newest-first
 
 
@@ -132,7 +124,7 @@ def test_limit_one_walk_across_sparse_and_dense_accounts(handler, monkeypatch):
     ]
     repo = FakeFeedRepo({ANZ: anz, SPENDING: spending})
 
-    drained = _drain(handler, repo, _FakeCategoryRepo({"groceries"}), limit=1)
+    drained = _drain(handler, repo, FakeCategoryRepo({"groceries"}), limit=1)
 
     ids = [t["transaction_id"] for t in drained]
     assert set(ids) == {"s-new", "anz-deep", "s-old"}   # every uncategorized charge surfaced

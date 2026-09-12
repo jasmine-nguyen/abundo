@@ -18,19 +18,11 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, WESTPAC, _row, FakeFeedRepo
-
-
-class _FakeCategoryRepo:
-    def __init__(self, category_ids):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import ANZ, SPENDING, WESTPAC, _row, FakeFeedRepo, FakeCategoryRepo
 
 
 def _groups(handler, repo, taxonomy=()):
-    resp = handler.get_uncategorized_merchants(repo, _FakeCategoryRepo(set(taxonomy)))
+    resp = handler.get_uncategorized_merchants(repo, FakeCategoryRepo(set(taxonomy)))
     assert resp["statusCode"] == 200
     return json.loads(resp["body"])
 
@@ -289,7 +281,7 @@ def test_swept_charges_with_no_merchant_name_share_one_disclosure_line(handler):
 def test_scans_whole_history_with_no_date_floor(handler):
     repo = FakeFeedRepo({ANZ: [_charge(ANZ, "2026-07-10", "a1", "ALDI", "ALDI 771 KEW")]})
 
-    handler.get_uncategorized_merchants(repo, _FakeCategoryRepo(set()))
+    handler.get_uncategorized_merchants(repo, FakeCategoryRepo(set()))
 
     anz_call = next(call for call in repo.calls if call[0] == ANZ)
     assert anz_call[1] is None and anz_call[2] is None
@@ -303,7 +295,7 @@ def test_empty_history_returns_no_groups(handler):
 def test_route_wires_to_get_uncategorized_merchants(handler, monkeypatch):
     repo = FakeFeedRepo({ANZ: [_charge(ANZ, "2026-07-10", "a1", "ALDI", "ALDI 771 KEW")]})
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(set()))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
     resp = handler.lambda_handler({
         "rawPath": "/transactions/uncategorized/merchants",
@@ -321,7 +313,7 @@ def test_post_to_the_merchants_path_is_not_routed(handler, monkeypatch):
 
     monkeypatch.setattr(handler, "get_uncategorized_merchants", _boom)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: FakeFeedRepo({}))
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(set()))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
     resp = handler.lambda_handler({
         "rawPath": "/transactions/uncategorized/merchants",
@@ -337,4 +329,4 @@ def test_unbounded_pagination_raises(handler):
             return [_charge(account_id, "2026-01-01", "x", "ALDI", "ALDI 771")], {"pk": "p", "sk": "s"}
 
     with pytest.raises(RuntimeError, match="did not terminate"):
-        handler.get_uncategorized_merchants(_NeverEndsRepo(), _FakeCategoryRepo(set()))
+        handler.get_uncategorized_merchants(_NeverEndsRepo(), FakeCategoryRepo(set()))

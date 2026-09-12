@@ -18,15 +18,7 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, _row, WritableFeedRepo
-
-
-class _FakeCategoryRepo:
-    def __init__(self, category_ids):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import ANZ, SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
 
 
 class _RecordingBankSync:
@@ -59,7 +51,7 @@ def _call(handler, monkeypatch, repo, body, banksync=None,
     monkeypatch.setattr(handler, "list_rules", banksync.list_rules)
     monkeypatch.setattr(handler, "create_rule", banksync.create_rule)
     resp = handler.apply_rules_to_uncategorized(
-        _event(body), repo, _FakeCategoryRepo(categories))
+        _event(body), repo, FakeCategoryRepo(categories))
     return resp, json.loads(resp["body"]), banksync
 
 
@@ -477,7 +469,7 @@ def test_the_route_carries_the_inline_rule_through(handler, monkeypatch):
     monkeypatch.setattr(handler, "list_rules", banksync.list_rules)
     monkeypatch.setattr(handler, "create_rule", banksync.create_rule)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo({"groceries"}))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo({"groceries"}))
 
     resp = handler.lambda_handler(
         _event({"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}}), None)

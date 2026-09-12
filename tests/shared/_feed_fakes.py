@@ -7,6 +7,13 @@ them instead of copying FakeFeedRepo (a copy drifts, and the multi-page no-dupe/
 assertions only mean anything while the fake models DynamoDB's resume-strictly-after
 ExclusiveStartKey exactly — WHIT-445).
 
+Also hosts FakeCategoryRepo — the trivial `list_categories()` taxonomy stub the
+uncategorized / apply-rules / merchant suites all need alongside the feed fake. It lives
+HERE (not in _category_fakes) on purpose: those suites are the "feed" domain in
+test_fakes_invariants.py, so the anti-drift guard [G1] only forbids re-copying it when the
+owned name sits in the feed module. WHIT-520 promoted it after nine suites each carried a
+byte-identical private copy (the same drift WHIT-508 promoted WritableFeedRepo for).
+
 Resolved by pytest.ini's `pythonpath = tests/shared`, the same way the category suites
 import `_category_fakes`. This module imports nothing from the shared layer at MODULE scope
 (stdlib `copy` only), so it imports with no shared/-layer module on the path and needs no
@@ -150,3 +157,19 @@ class WritableFeedRepo(FakeFeedRepo):
             return "changed", row.get("category")
         row["category"] = category
         return "written", category
+
+
+class FakeCategoryRepo:
+    """Read-only taxonomy stub: list_categories() over an iterable of category ids.
+
+    Promoted in WHIT-520 — nine feed/uncategorized/apply-rules suites each carried a
+    byte-identical private copy (named _FakeCategoryRepo / _CategoryRepo / _Taxonomy /
+    _TaxonomyRepo). No default on category_ids: two of those copies had DIFFERENT defaults
+    (`("groceries","petrol")` vs `()`), so one shared default would silently mean two things —
+    callers state their taxonomy explicitly instead."""
+
+    def __init__(self, category_ids):
+        self._categories = [{"id": category_id} for category_id in category_ids]
+
+    def list_categories(self):
+        return [dict(category) for category in self._categories]
