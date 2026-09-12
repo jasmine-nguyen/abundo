@@ -22,6 +22,7 @@ from constants import (
     INCOME_KEY,
     ROLLUP_KEY,
     ENRICHMENTS_PATH,
+    RULES_PATH,
     EXPO_TOKEN_MAX_LEN,
     FEED_PAGE_SIZE,
     FEED_WINDOW_DAYS,
@@ -75,6 +76,7 @@ from repository import (
     MilestoneRepository,
     PayCycleRepository,
     RuleClashError,
+    RuleNotFoundError,
     RuleRepository,
     TransactionRepository,
     VersionConflictError,
@@ -326,6 +328,22 @@ def lambda_handler(event, context):
 
         if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "DELETE":
             return delete_enrichment(event)
+
+        # Rules backed by our own store (WHIT-529) — the replacement for the /enrichments proxy
+        # above, which stays live until the app has moved (WHIT-533/535). Collection routes first;
+        # "/rules" does not startswith "/rules/", so the exact and item routes are disjoint. Inside
+        # this try, so a repo VersionConflictError becomes the shared 409 below.
+        if path == RULES_PATH and method == "GET":
+            return list_rules_route(RuleRepository())
+
+        if path == RULES_PATH and method == "POST":
+            return create_rule_route(event, RuleRepository(), CategoryRepository())
+
+        if path.startswith(f"{RULES_PATH}/") and method == "PUT":
+            return update_rule_route(event, RuleRepository(), CategoryRepository())
+
+        if path.startswith(f"{RULES_PATH}/") and method == "DELETE":
+            return delete_rule_route(event, RuleRepository())
 
         # Device push-token registration (it controls who receives the user's notifications).
         if path == DEVICES_PATH and method == "POST":
@@ -1085,6 +1103,134 @@ def delete_enrichment(event: dict) -> dict:
     return _json_response(200, {"id": enrichment_id})
 
 
+# --- Rules: our own store (WHIT-529) ------------------------------------------
+# GET/POST /rules and PUT/DELETE /rules/{id}, reading and writing RuleRepository. The wire shape
+# is identical to the /enrichments proxy above (so the app moves with a path swap only, WHIT-533),
+# but two guards the proxy lacked apply on every write into our store, matching the inline mint:
+#   * the value must carry at least MIN_RULE_VALUE_ALPHANUMERICS letters/digits for a
+#     "description contains" rule, so a near-empty value (".") can't match nearly every charge;
+#   * the categoryId must be one of the user's categories, so a rule can't file into a category
+#     that does not exist.
+# The route handlers are named with a _route suffix so they don't shadow the module-level
+# list_rules/create_rule/update_rule/delete_rule imported from banksync_enrichments (still used by
+# the proxy until WHIT-535).
+
+
+def _rule_value_floor_error() -> dict:
+    """The 400 for a rule value with too few letters/digits to match on. One definition so the
+    /rules write path and the apply-rules inline mint state the floor identically."""
+    return _json_response(
+        400, {"error": "rule value must contain at least "
+                       f"{MIN_RULE_VALUE_ALPHANUMERICS} letters or digits"})
+
+
+def _validate_rule_value_floor(value: str, field: str, operator: str) -> dict | None:
+    """A "description contains" value must carry enough letters/digits to rule on, the same floor
+    the merchant sweep's inline mint enforces (rule_value_is_safe). Other rule shapes (category
+    equals) match exactly, not by substring, so the floor doesn't apply. Returns a 400 or None."""
+    if field == "description" and operator == "contains" and not rule_value_is_safe(value):
+        return _rule_value_floor_error()
+    return None
+
+
+def _validate_rule_category(category_id: str, category_repo: CategoryRepository) -> dict | None:
+    """The rule's categoryId must be one of the user's categories, or it files nothing. Returns a
+    400 or None. One extra category read per write; a fault reading the categories propagates
+    uncaught, the same as the apply-rules category read (handler.py's apply_rules_to_uncategorized)."""
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+    if category_id not in taxonomy_ids:
+        return _json_response(400, {"error": "categoryId is not one of your categories"})
+    return None
+
+
+def _validate_rule_write(event: dict, category_repo: CategoryRepository):
+    """Parse + validate a create/update rule body for our store. Returns (parsed, None) on success
+    — parsed is (value, category_id, field, operator) — or (None, error_response) with a 400. One
+    place owns the write-validation contract for both POST and PUT: body shape (_validate_rule_body),
+    then the value floor, then the category check."""
+    parsed, error = _validate_rule_body(event)
+    if error:
+        return None, error
+    value, category_id, field, operator = parsed
+    return parsed, (_validate_rule_value_floor(value, field, operator)
+                    or _validate_rule_category(category_id, category_repo))
+
+
+def list_rules_route(rule_repo: RuleRepository) -> dict:
+    """GET /rules — every categorisation rule from our store, as a bare client-shaped array."""
+    try:
+        rules = rule_repo.list_rules()
+    except DatabaseError:
+        return _json_response(500, {"error": "could not read your rules"})
+    return _json_response(200, [_rule_to_client(row) for row in rules])
+
+
+def create_rule_route(event: dict, rule_repo: RuleRepository,
+                      category_repo: CategoryRepository) -> dict:
+    """POST /rules — create a rule in our store.
+
+    Returns 201 with the rule, whether it was newly created or the SAME text already existed
+    (parity with the old proxy; the app checks only response.ok). A same-text/different-category
+    write is a 409 carrying the existing rule.
+    """
+    parsed, error = _validate_rule_write(event, category_repo)
+    if error:
+        return error
+    value, category_id, field, operator = parsed
+
+    try:
+        rule, _created = rule_repo.create_rule(field, operator, value, category_id)
+    except RuleClashError as e:
+        return _rule_clash_response(_rule_to_client(e.existing))
+    except DatabaseError:
+        return _json_response(500, {"error": "could not save your rule"})
+
+    return _json_response(201, _rule_to_client(rule))
+
+
+def update_rule_route(event: dict, rule_repo: RuleRepository,
+                      category_repo: CategoryRepository) -> dict:
+    """PUT /rules/{id} — edit a rule in our store.
+
+    Editing the text changes the id (the id IS the text), so the returned rule may carry a NEW
+    id; the app swaps its row by the OLD id using the response body. Editing onto another rule's
+    text is a 409; editing a rule that no longer exists is a 404.
+    """
+    rule_id = (event.get("pathParameters") or {}).get("id")
+    if not rule_id:
+        return _json_response(404, {"error": "rule not found"})
+
+    parsed, error = _validate_rule_write(event, category_repo)
+    if error:
+        return error
+    value, category_id, field, operator = parsed
+
+    try:
+        rule = rule_repo.update_rule(rule_id, field, operator, value, category_id)
+    except RuleNotFoundError:
+        return _json_response(404, {"error": "rule not found"})
+    except RuleClashError as e:
+        return _rule_clash_response(_rule_to_client(e.existing))
+    except DatabaseError:
+        return _json_response(500, {"error": "could not save your rule"})
+
+    return _json_response(200, _rule_to_client(rule))
+
+
+def delete_rule_route(event: dict, rule_repo: RuleRepository) -> dict:
+    """DELETE /rules/{id} — remove a rule from our store. Idempotent: an unknown/already-gone id
+    still returns 200, so a double-tap never shows an error for a rule that is already gone."""
+    rule_id = (event.get("pathParameters") or {}).get("id")
+    if not rule_id:
+        return _json_response(404, {"error": "rule not found"})
+
+    try:
+        rule_repo.delete_rule(rule_id)
+    except DatabaseError:
+        return _json_response(500, {"error": "could not delete your rule"})
+    return _json_response(200, {"id": rule_id})
+
+
 # Safety ceiling on cursor-follow iterations per account. A bounded date-range
 # query terminates on its own (LastEvaluatedKey eventually None), so reaching this
 # many pages for a single account means the cursor is not advancing — a repo/
@@ -1345,9 +1491,7 @@ def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | No
 
     value = rule.get("value")
     if not isinstance(value, str) or not rule_value_is_safe(value):
-        return None, _json_response(
-            400, {"error": "rule value must contain at least "
-                           f"{MIN_RULE_VALUE_ALPHANUMERICS} letters or digits"})
+        return None, _rule_value_floor_error()
 
     category_id = rule.get("categoryId")
     if not isinstance(category_id, str) or category_id not in taxonomy_ids:

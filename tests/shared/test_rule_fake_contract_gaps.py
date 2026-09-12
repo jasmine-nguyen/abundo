@@ -87,6 +87,96 @@ def test_fake_and_real_dedup_case_and_spacing_variants_identically(rule_repo):
     assert len(fake.list_rules()) == len(rule_repo.list_rules()) == 1
 
 
+def test_fake_and_real_agree_on_in_place_update(rule_repo):
+    # A category-only edit keeps the id (the id is the TEXT), updates in place, and returns the
+    # new category. Both stores must agree and end with exactly one row.
+    fake = _fake()
+    args = ("description", "contains", "COLES", "groceries")
+    fake_created, _ = fake.create_rule(*args)
+    real_created, _ = rule_repo.create_rule(*args)
+
+    fake_updated = fake.update_rule(fake_created["id"], "description", "contains", "COLES", "petrol")
+    real_updated = rule_repo.update_rule(real_created["id"], "description", "contains", "COLES",
+                                         "petrol")
+
+    assert _project(fake_updated) == _project(real_updated)
+    assert fake_updated["id"] == real_updated["id"] == fake_created["id"]   # id unchanged
+    assert fake_updated["category_id"] == "petrol"
+    assert len(fake.list_rules()) == len(rule_repo.list_rules()) == 1
+
+
+def test_fake_and_real_agree_on_a_text_edit_moving_the_id(rule_repo):
+    # Editing the VALUE changes the derived id: the row moves to the new id and the old id is gone.
+    # Exactly one row survives in both stores, and the returned rule carries the new id.
+    fake = _fake()
+    args = ("description", "contains", "COLES", "groceries")
+    fake_created, _ = fake.create_rule(*args)
+    real_created, _ = rule_repo.create_rule(*args)
+    old_id = fake_created["id"]
+
+    fake_moved = fake.update_rule(old_id, "description", "contains", "COLES EXPRESS", "groceries")
+    real_moved = rule_repo.update_rule(old_id, "description", "contains", "COLES EXPRESS",
+                                       "groceries")
+
+    assert _project(fake_moved) == _project(real_moved)
+    assert fake_moved["id"] == real_moved["id"] != old_id
+    fake_ids = {r["id"] for r in fake.list_rules()}
+    real_ids = {r["id"] for r in rule_repo.list_rules()}
+    assert fake_ids == real_ids == {fake_moved["id"]}       # old id gone in both
+    assert len(fake.list_rules()) == len(rule_repo.list_rules()) == 1
+
+
+def test_fake_and_real_refuse_an_edit_onto_another_rules_text(rule_repo):
+    # Editing rule A's text onto rule B's text would merge two rules — both stores refuse with a
+    # RuleClashError carrying B (the existing rule), leaving both rows intact.
+    from repository_errors import RuleClashError
+
+    fake = _fake()
+    for store in (fake, rule_repo):
+        store.create_rule("description", "contains", "COLES", "groceries")
+        store.create_rule("description", "contains", "WOOLWORTHS", "groceries")
+
+    a_id = rule_engine_id("description", "contains", "COLES")
+
+    with pytest.raises(RuleClashError) as fake_err:
+        fake.update_rule(a_id, "description", "contains", "WOOLWORTHS", "groceries")
+    with pytest.raises(RuleClashError) as real_err:
+        rule_repo.update_rule(a_id, "description", "contains", "WOOLWORTHS", "groceries")
+
+    assert _project(fake_err.value.existing) == _project(real_err.value.existing)
+    assert fake_err.value.existing["value"] == "WOOLWORTHS"      # B, the rule edited onto
+    assert len(fake.list_rules()) == len(rule_repo.list_rules()) == 2
+
+
+def test_fake_and_real_raise_not_found_editing_an_unknown_id(rule_repo):
+    from repository_errors import RuleNotFoundError
+
+    fake = _fake()
+    with pytest.raises(RuleNotFoundError):
+        fake.update_rule("deadbeef", "description", "contains", "COLES", "groceries")
+    with pytest.raises(RuleNotFoundError):
+        rule_repo.update_rule("deadbeef", "description", "contains", "COLES", "groceries")
+
+
+def test_fake_and_real_delete_is_idempotent(rule_repo):
+    # Delete, then delete again: both succeed (no raise) and leave zero rows. This is the contract
+    # the idempotent HTTP DELETE relies on.
+    fake = _fake()
+    args = ("description", "contains", "COLES", "groceries")
+    fake_created, _ = fake.create_rule(*args)
+    real_created, _ = rule_repo.create_rule(*args)
+
+    for store, created in ((fake, fake_created), (rule_repo, real_created)):
+        store.delete_rule(created["id"])
+        store.delete_rule(created["id"])       # second delete is a no-op, not an error
+        assert store.list_rules() == []
+
+
+def rule_engine_id(field, operator, value):
+    import rule_engine
+    return rule_engine.rule_id_for(field, operator, value)
+
+
 def test_fake_and_real_list_rules_return_the_same_projected_rows(rule_repo):
     # After the same seeding, list_rules must return the same set of projected rows (order-free:
     # the handler maps and sweeps the whole list, it does not depend on order).

@@ -89,6 +89,11 @@ BANKSYNC_TIMEOUT_SECONDS = 30
 # API Gateway route path for the enrichments (categorisation-rule) endpoints.
 ENRICHMENTS_PATH = "/enrichments"
 
+# API Gateway route path for the rule endpoints backed by our own store (WHIT-529).
+# Handler-only, so no shared/constants.py mirror is needed (the WHIT-136 sync guard only
+# covers constants a shared repository_* module imports).
+RULES_PATH = "/rules"
+
 # --- AI spending insights (WHIT-104) ---------------------------------------
 # The Anthropic Messages API, called server-side from lambda_api/insights_ai.py
 # (urllib + SSM key + custom User-Agent, mirroring the BankSync client). The app
