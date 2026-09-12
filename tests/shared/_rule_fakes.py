@@ -18,9 +18,10 @@ Registered in the `rule` domain of test_fakes_invariants.py.
 
 
 class FakeRuleRepo:
-    """In-memory RuleRepository stand-in: list_rules + create_rule, snake_case store rows."""
+    """In-memory RuleRepository stand-in: list/get/create/update/delete, snake_case store rows."""
 
-    def __init__(self, rules=(), *, list_error=False, create_error=False):
+    def __init__(self, rules=(), *, list_error=False, create_error=False,
+                 update_error=False, delete_error=False):
         # Seed "existing rules" keyed by rule id (the real store's database-key dedup). A seed row
         # may omit its id — compute it the same way the store does so ids stay consistent.
         self._rows = {}
@@ -32,7 +33,11 @@ class FakeRuleRepo:
             self._rows[row["id"]] = row
         self.list_error = list_error
         self.create_error = create_error
+        self.update_error = update_error
+        self.delete_error = delete_error
         self.minted = []  # rows create_rule actually WROTE (a dedup hit does not append)
+        self.updated = []  # rows update_rule returned (in-place or moved)
+        self.deleted = []  # rule ids delete_rule (and a text-move update) removed
         self.list_calls = 0
 
     def list_rules(self):
@@ -68,3 +73,52 @@ class FakeRuleRepo:
         self._rows[rule_id] = row
         self.minted.append(dict(row))
         return dict(row), True
+
+    def get_rule(self, rule_id):
+        row = self._rows.get(rule_id)
+        return dict(row) if row is not None else None
+
+    def update_rule(self, rule_id, field, operator, value, category_id, *, source=None):
+        # Faithful to RuleRepository.update_rule: unknown id -> RuleNotFoundError; the id IS the
+        # text, so an id-preserving edit updates in place while a text edit MOVES the row to a new
+        # id (deleting the old); a move onto another rule's text -> RuleClashError.
+        if self.update_error:
+            from repository import DatabaseError
+            raise DatabaseError("rule update failed")
+        import rule_engine
+        from repository import RuleClashError, RuleNotFoundError
+        existing = self._rows.get(rule_id)
+        if existing is None:
+            raise RuleNotFoundError(rule_id)
+
+        new_id = rule_engine.rule_id_for(field, operator, value)
+        if new_id == rule_id:
+            existing["value"] = value
+            existing["category_id"] = category_id
+            if source is not None:
+                existing["source"] = source
+            self.updated.append(dict(existing))
+            return dict(existing)
+
+        clash = self._rows.get(new_id)
+        if clash is not None:
+            raise RuleClashError(clash)
+
+        new_row = {**existing, "id": new_id, "field": field, "operator": operator,
+                   "value": value, "category_id": category_id}
+        if source is not None:
+            new_row["source"] = source
+        self._rows[new_id] = new_row
+        del self._rows[rule_id]
+        self.updated.append(dict(new_row))
+        self.deleted.append(rule_id)
+        return dict(new_row)
+
+    def delete_rule(self, rule_id):
+        # Unguarded delete: a no-op on a missing id, so it is safe to run twice (the store's
+        # idempotent-delete contract). The import script's guarded delete is not modelled here.
+        if self.delete_error:
+            from repository import DatabaseError
+            raise DatabaseError("rule delete failed")
+        self._rows.pop(rule_id, None)
+        self.deleted.append(rule_id)
