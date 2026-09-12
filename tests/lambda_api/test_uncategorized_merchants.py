@@ -7,7 +7,7 @@ to shrink: N charges is nowhere near N merchants.
 
 The counts here are load-bearing — WHIT-516 mints a rule from a group and writes with it — so
 a group's count is what its rule would ACTUALLY file, evaluated the same literal
-`description contains VALUE` way rule_apply does. That is why COLES reports 50 when 12 of them
+`description contains VALUE` way rule_engine does. That is why COLES reports 50 when 12 of them
 are really COLES EXPRESS, and why it also has to say so.
 
 Reuses FakeFeedRepo so the deep-page case (a merchant whose charges sit beyond page 1) is
@@ -196,7 +196,7 @@ def test_groups_a_merchant_whose_charges_sit_beyond_the_first_page(handler):
     assert len([call for call in repo.calls if call[0] == ANZ]) > 1  # genuinely paged
 
 
-def test_every_group_count_is_what_the_rule_would_really_file(handler, rule_apply):
+def test_every_group_count_is_what_the_rule_would_really_file(handler, rule_engine):
     # FAIL-ON-REVERT for the invariant the whole feature rests on. Every other count assertion
     # here is computed by the module under test, so a matcher that drifted looser — stripping
     # punctuation, say — would pass all of them while quietly overstating. This checks the
@@ -219,7 +219,7 @@ def test_every_group_count_is_what_the_rule_would_really_file(handler, rule_appl
     for group in body["groups"]:
         rule = {"id": "r", "field": "description", "operator": "contains",
                 "value": group["rulePattern"], "categoryId": "groceries", "conditionCount": 1}
-        plan = rule_apply.plan_rule_application([rule], rows, still_unfiled)
+        plan = rule_engine.plan_rule_application([rule], rows, still_unfiled)
         assert plan["by_rule"][0]["count"] == group["count"], group["rulePattern"]
 
     coles = next(g for g in body["groups"] if g["rulePattern"] == "COLES")

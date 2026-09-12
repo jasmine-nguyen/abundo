@@ -230,7 +230,7 @@ def test_a_group_the_merchant_screen_offers_files_exactly_what_it_promised(handl
 @pytest.mark.parametrize("category_id", ["not-a-category", "", None, 7, "GROCERIES"])
 def test_a_category_she_does_not_have_is_rejected(handler, monkeypatch, category_id):
     # FAIL-ON-REVERT. Filing to a category that isn't hers leaves every charge STILL unfiled by
-    # the badge's own rule, so the next run would file them again — forever. rule_apply would
+    # the badge's own rule, so the next run would file them again — forever. rule_engine would
     # skip such a rule silently; here she gets told.
     repo = _coles_repo()
     resp, body, banksync = _call(handler, monkeypatch, repo,

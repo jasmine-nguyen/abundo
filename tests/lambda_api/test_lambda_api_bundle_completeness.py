@@ -3,7 +3,7 @@
 Same class of miss as the WHIT-506 route that terraform never declared: the code is perfect and
 the deploy is broken. `scripts/build_terraform_artifacts.sh` copies a hand-written allowlist
 (LAMBDA_API_SOURCES) into the deployment bundle — a NEW sibling module left off it is silently
-dropped, and `from rule_apply import ...` then raises ImportError at cold start. That takes out
+dropped, and `from merchant_groups import ...` then raises ImportError at cold start. That takes out
 EVERY route on the API, not just the new one.
 
 scripts/tests/build_artifacts_test.sh already checks the allowlist agrees with .gitignore and

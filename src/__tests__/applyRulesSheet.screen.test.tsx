@@ -95,7 +95,7 @@ it('says the rules match nothing when there are rules but no hits', async () => 
   expect(screen.queryByTestId('apply-rules-apply')).toBeNull();
 });
 
-// `matched === 0` does NOT mean the rules missed: rule_apply counts a rule's hits BEFORE the
+// `matched === 0` does NOT mean the rules missed: rule_engine counts a rule's hits BEFORE the
 // conflict check, so two rules that disagree on every charge they cover give matched 0 with a
 // non-empty breakdown. The old copy claimed "none of your rules match" directly above a list
 // showing them matching. Fail-on-revert: restore that sentence and this reddens.
@@ -166,7 +166,7 @@ it('shows conflicts with their samples and the disagreeing category names', asyn
 });
 
 // The reasons are authored server-side and already plain English, so they render verbatim — a
-// client re-wording map would drift from lambda_api/rule_apply.py with nothing to catch it.
+// client re-wording map would drift from shared/rule_engine.py with nothing to catch it.
 it('lists skipped rules with the server reason verbatim', async () => {
   await mountWithPreview(report({
     skippedRules: [{ id: 'r9', value: 'uber', reason: 'rule has more than one condition' }],

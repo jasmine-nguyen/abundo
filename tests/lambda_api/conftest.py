@@ -39,7 +39,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # leak across tests).
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
-    "banksync_enrichments", "insights_ai", "anthropic_client", "rule_apply",
+    "banksync_enrichments", "insights_ai", "anthropic_client", "rule_engine",
     "merchant_groups",
     "spend", "repayment_rules", "api_key",
 )
@@ -70,9 +70,10 @@ def handler():
 
 
 @pytest.fixture
-def rule_apply():
-    """Import lambda_api/rule_apply.py in isolation — the pure rule-matching logic, tested
-    without the handler's scan or writes."""
+def rule_engine():
+    """Import the shared rule_engine in isolation — the pure rule-matching logic, tested
+    without the handler's scan or writes. Lives in shared/ (WHIT-527) but the merchant/apply
+    suites here exercise it against the handler, so it is imported the same way as the siblings."""
     for d in (_SHARED_DIR, _LAMBDA_API_DIR):
         while d in sys.path:
             sys.path.remove(d)
@@ -80,10 +81,10 @@ def rule_apply():
     sys.path.insert(0, _LAMBDA_API_DIR)
 
     saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
-    import rule_apply as ra
+    import rule_engine as engine
 
     try:
-        yield ra
+        yield engine
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)
