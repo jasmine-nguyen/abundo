@@ -101,18 +101,37 @@ resource "aws_iam_role_policy" "app_api_dynamodb" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:Query",
-        "dynamodb:UpdateItem"
-      ]
-      Resource = [
-        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
-      "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"]
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:Query",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = [
+          "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"]
+      },
+      # DeleteItem is scoped to rule rows ONLY: the LeadingKeys condition restricts it to items
+      # whose partition key is "RULE" (WHIT-528, the RuleRepository store). Kept a SEPARATE
+      # statement — folding DeleteItem into the block above would grant table-wide delete, and
+      # ForAllValues on a statement whose other actions don't populate LeadingKeys can bypass.
+      # Base-table ARN only (you cannot delete through an index).
+      {
+        Effect = "Allow"
+        Action = ["dynamodb:DeleteItem"]
+        Resource = [
+          "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table"
+        ]
+        Condition = {
+          "ForAllValues:StringEquals" = {
+            "dynamodb:LeadingKeys" = ["RULE"]
+          }
+        }
+      }
+    ]
   })
 }
 

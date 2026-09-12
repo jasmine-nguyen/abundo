@@ -43,7 +43,7 @@ _REIMPORT = (
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
     "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
-    "balance_fetch", "rule_engine",
+    "balance_fetch", "rule_engine", "repository_rule",
 )
 
 
@@ -123,9 +123,11 @@ def shared():
         import milestones
         import repayment_alerts
         import repayment_rules
+        import repository_rule
 
         ns = types.SimpleNamespace(
             encoders=encoders, repository=repository_transaction,
+            rule=repository_rule,
             balance_fetch=balance_fetch,
             balance=repository_balance, loanfacts=repository_loanfacts,
             milestone=repository_milestone,
@@ -249,6 +251,14 @@ class FakeTable:
             if name_alias:
                 item.pop(ExpressionAttributeNames[name_alias], None)
 
+    def delete_item(self, Key, ConditionExpression=None):
+        # pop(..., None) makes a delete of a missing key a no-op, so delete-twice both succeed.
+        # Same strictness as put_item/update_item: an unrecognised condition must raise, not pass
+        # silently (no repository delete uses a condition today, so any is a drift to catch).
+        if ConditionExpression is not None:
+            raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
+        self.store.pop((Key["pk"], Key["sk"]), None)
+
     def query(self, KeyConditionExpression=None, FilterExpression=None,
               ScanIndexForward=None, Limit=None, IndexName=None,
               ExclusiveStartKey=None):
@@ -351,6 +361,14 @@ class ConfigItemTable:
 def repo(shared):
     """A shared TransactionRepository backed by an in-memory FakeTable."""
     r = shared.repository.TransactionRepository()
+    r._table = FakeTable()
+    return r
+
+
+@pytest.fixture
+def rule_repo(shared):
+    """A shared RuleRepository backed by an in-memory FakeTable (WHIT-528)."""
+    r = shared.rule.RuleRepository()
     r._table = FakeTable()
     return r
 

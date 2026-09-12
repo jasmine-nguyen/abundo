@@ -18,6 +18,8 @@ from repository_errors import (
     DatabaseError,
     DuplicateCategoryError,
     InvalidCategoryParentError,
+    RuleClashError,
+    RuleNotFoundError,
     VersionConflictError,
 )
 from repository_transaction import TransactionRepository, sanitise_transaction
@@ -45,10 +47,12 @@ from repository_loanfacts import LoanFactsRepository
 from repository_milestone import MilestoneRepository
 from repository_device import DeviceRepository
 from repository_insight import InsightRepository
+from repository_rule import RuleRepository
 
 __all__ = [
     "TransactionRepository",
     "CategoryRepository",
+    "RuleRepository",
     "BudgetRepository",
     "GoalsRepository",
     "PayCycleRepository",
@@ -61,6 +65,8 @@ __all__ = [
     "DuplicateCategoryError",
     "CategoryNotFoundError",
     "InvalidCategoryParentError",
+    "RuleClashError",
+    "RuleNotFoundError",
     "VersionConflictError",
     "DatabaseError",
     "SEED_CATEGORIES",
