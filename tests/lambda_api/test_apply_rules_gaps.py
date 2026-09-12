@@ -36,15 +36,7 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, HOMELOAN, SPENDING, WESTPAC, _row, WritableFeedRepo
-
-
-class _CategoryRepo:
-    def __init__(self, category_ids):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import ANZ, HOMELOAN, SPENDING, WESTPAC, _row, WritableFeedRepo, FakeCategoryRepo
 
 
 class _StepClock:
@@ -83,7 +75,7 @@ def _apply_event(body=None, raw=None, base64_encoded=False):
 def _call(handler, monkeypatch, repo, rules, body, categories=("groceries", "coffee"), **event_kw):
     monkeypatch.setattr(handler, "list_rules", lambda: list(rules))
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event(body, **event_kw), repo, _CategoryRepo(set(categories)))
+        _apply_event(body, **event_kw), repo, FakeCategoryRepo(set(categories)))
     return resp, json.loads(resp["body"])
 
 
@@ -131,7 +123,7 @@ def test_the_budget_covers_the_whole_request_but_still_guarantees_one_write(
 
     monkeypatch.setattr(handler, "list_rules", _slow_rules)
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event({"dryRun": False}), repo, _CategoryRepo({"groceries"}))
+        _apply_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}))
     body = json.loads(resp["body"])
 
     # The budget is long spent by the first row, but the floor still writes one.
@@ -431,7 +423,7 @@ def test_the_previews_unfiled_total_equals_the_badge_count_endpoint(handler, mon
     }
     taxonomy = {"groceries", "coffee"}
 
-    count_resp = handler.get_uncategorized_count(WritableFeedRepo(rows), _CategoryRepo(taxonomy))
+    count_resp = handler.get_uncategorized_count(WritableFeedRepo(rows), FakeCategoryRepo(taxonomy))
     badge_count = json.loads(count_resp["body"])["count"]
 
     _, body = _call(handler, monkeypatch, WritableFeedRepo(rows), [_rule("zzz-matches-nothing")], {},
@@ -561,7 +553,6 @@ def test_a_charge_that_became_income_mid_run_is_already_filed_not_retried_foreve
     assert body["failed"] == []
     assert body["remaining"] == 0                       # nothing to come back for
     assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#t2")["category"] == "income"
-
 
 
 def test_a_row_that_changed_into_a_raw_label_is_retried_against_the_NEW_value(

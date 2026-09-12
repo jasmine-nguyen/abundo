@@ -57,15 +57,7 @@ import json
 
 import pytest
 
-from _feed_fakes import SPENDING, WESTPAC, _row, WritableFeedRepo
-
-
-class _Taxonomy:
-    def __init__(self, category_ids=("groceries", "petrol")):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import SPENDING, WESTPAC, _row, WritableFeedRepo, FakeCategoryRepo
 
 
 class _BankSync:
@@ -99,7 +91,7 @@ def _apply(handler, monkeypatch, repo, body, banksync=None,
         "requestContext": {"http": {"method": "POST"}},
         "body": json.dumps(body),
     }
-    response = handler.apply_rules_to_uncategorized(event, repo, _Taxonomy(categories))
+    response = handler.apply_rules_to_uncategorized(event, repo, FakeCategoryRepo(categories))
     return response, json.loads(response["body"]), banksync
 
 
@@ -142,7 +134,7 @@ def _messy_repo():
 
 
 def _offered_groups(handler):
-    response = handler.get_uncategorized_merchants(_messy_repo(), _Taxonomy())
+    response = handler.get_uncategorized_merchants(_messy_repo(), FakeCategoryRepo(("groceries", "petrol")))
     return json.loads(response["body"])["groups"]
 
 
@@ -267,7 +259,7 @@ def test_a_NESTED_existing_rule_is_refused_too_not_just_an_exact_repeat(handler,
     # screen warns about in `alsoCatches`, so it is the shape to catch, not an exotic one.
     # Refusing is the honest answer until the more specific rule can win (WHIT-518).
     offered = json.loads(
-        handler.get_uncategorized_merchants(_nested_coles_repo(), _Taxonomy())["body"])["groups"]
+        handler.get_uncategorized_merchants(_nested_coles_repo(), FakeCategoryRepo(("groceries", "petrol")))["body"])["groups"]
     group = next(g for g in offered if g["rulePattern"] == "COLES")
     assert group["count"] == 3
     assert group["alsoCatches"] == [{"merchant": "Coles Express", "count": 1}]

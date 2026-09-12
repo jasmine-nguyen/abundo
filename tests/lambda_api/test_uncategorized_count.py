@@ -14,15 +14,7 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, _row, FakeFeedRepo
-
-
-class _FakeCategoryRepo:
-    def __init__(self, category_ids):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import ANZ, SPENDING, HOMELOAN, WESTPAC, _row, FakeFeedRepo, FakeCategoryRepo
 
 
 def test_counts_uncategorized_across_all_accounts(handler):
@@ -36,7 +28,7 @@ def test_counts_uncategorized_across_all_accounts(handler):
         WESTPAC: [_row(WESTPAC, "2026-07-06", "w1", category="income")],    # income -> not
     })
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo({"groceries", "coffee"}))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo({"groceries", "coffee"}))
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"count": 3}  # a1, s1, h1
@@ -51,7 +43,7 @@ def test_counts_an_excluded_transfer_not_gated_on_budget(handler):
                    counts_to_budget=False, budget_excluded=True)],
     })
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo(set()))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo(set()))
 
     assert json.loads(resp["body"]) == {"count": 1}
 
@@ -65,7 +57,7 @@ def test_counts_an_uncategorized_charge_on_a_later_page(handler):
     rows.append(_row(ANZ, "2020-01-01", "old", category=None))  # oldest -> last page
     repo = FakeFeedRepo({ANZ: rows})
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo({"groceries"}))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo({"groceries"}))
 
     assert json.loads(resp["body"]) == {"count": 1}  # only "old"
     anz_calls = [call for call in repo.calls if call[0] == ANZ]
@@ -76,14 +68,14 @@ def test_scans_whole_history_with_no_date_floor(handler):
     # The count must query each account with start=end=None (whole partition), not a window.
     repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "a1", category=None)]})
 
-    handler.get_uncategorized_count(repo, _FakeCategoryRepo(set()))
+    handler.get_uncategorized_count(repo, FakeCategoryRepo(set()))
 
     anz_call = next(call for call in repo.calls if call[0] == ANZ)
     assert anz_call[1] is None and anz_call[2] is None  # no start/end date floor
 
 
 def test_empty_history_counts_zero(handler):
-    resp = handler.get_uncategorized_count(FakeFeedRepo({}), _FakeCategoryRepo({"groceries"}))
+    resp = handler.get_uncategorized_count(FakeFeedRepo({}), FakeCategoryRepo({"groceries"}))
     assert json.loads(resp["body"]) == {"count": 0}
 
 
@@ -91,7 +83,7 @@ def test_route_wires_to_get_uncategorized_count(handler, monkeypatch):
     # GET /transactions/uncategorized/count reaches get_uncategorized_count and returns {count}.
     repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "a1", category=None)]})
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(set()))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
     event = {
         "rawPath": "/transactions/uncategorized/count",
@@ -110,7 +102,7 @@ def test_unbounded_pagination_raises(handler):
             return [_row(account_id, "2026-01-01", "x", category=None)], {"pk": "p", "sk": "s"}
 
     with pytest.raises(RuntimeError, match="did not terminate"):
-        handler.get_uncategorized_count(_NeverEndsRepo(), _FakeCategoryRepo(set()))
+        handler.get_uncategorized_count(_NeverEndsRepo(), FakeCategoryRepo(set()))
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +119,7 @@ def test_counts_row_with_no_category_key_at_all(handler):
     # would KeyError (500) instead.
     repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "nokey")]})  # no category kwarg
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo({"groceries"}))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo({"groceries"}))
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"count": 1}
@@ -139,7 +131,7 @@ def test_counts_empty_string_category(handler):
     # category is NOT silently treated as mapped.
     repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "empty", category="")]})
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo({"groceries"}))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo({"groceries"}))
 
     assert json.loads(resp["body"]) == {"count": 1}
 
@@ -150,7 +142,7 @@ def test_counts_whitespace_category(handler):
     # falsy filter that would diverge server from client.
     repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "ws", category="   ")]})
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo(set()))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo(set()))
 
     assert json.loads(resp["body"]) == {"count": 1}
 
@@ -164,7 +156,7 @@ def test_income_match_is_case_sensitive_exact(handler):
               _row(ANZ, "2026-07-09", "real", category="income")],  # mapped income -> not
     })
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo(set()))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo(set()))
 
     assert json.loads(resp["body"]) == {"count": 1}  # only "INCOME"
 
@@ -181,7 +173,7 @@ def test_counts_deep_paged_rows_across_multiple_accounts(handler):
     wpc_rows.append(_row(WESTPAC, "2019-01-01", "w-old", category=None))
     repo = FakeFeedRepo({ANZ: anz_rows, WESTPAC: wpc_rows})
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo({"groceries"}))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo({"groceries"}))
 
     assert json.loads(resp["body"]) == {"count": 2}  # anz-old + w-old
     assert len([c for c in repo.calls if c[0] == ANZ]) > 1
@@ -197,7 +189,7 @@ def test_empty_taxonomy_counts_every_non_income_charge(handler):
               _row(ANZ, "2026-07-08", "i", category="income")],     # income -> not
     })
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo(set()))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo(set()))
 
     assert json.loads(resp["body"]) == {"count": 2}  # g + n, never i
 
@@ -211,7 +203,7 @@ def test_counts_a_pending_excluded_transfer(handler):
                    counts_to_budget=False, budget_excluded=True)],
     })
 
-    resp = handler.get_uncategorized_count(repo, _FakeCategoryRepo(set()))
+    resp = handler.get_uncategorized_count(repo, FakeCategoryRepo(set()))
 
     assert json.loads(resp["body"]) == {"count": 1}
 
@@ -225,7 +217,7 @@ def test_post_to_count_path_is_not_routed_to_count(handler, monkeypatch):
 
     monkeypatch.setattr(handler, "get_uncategorized_count", _boom)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: FakeFeedRepo({}))
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(set()))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
     event = {
         "rawPath": "/transactions/uncategorized/count",
@@ -246,7 +238,7 @@ def test_unbounded_pagination_propagates_through_handler(handler, monkeypatch):
             return [_row(account_id, "2026-01-01", "x", category=None)], {"pk": "p", "sk": "s"}
 
     monkeypatch.setattr(handler, "TransactionRepository", lambda: _NeverEndsRepo())
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(set()))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
     event = {
         "rawPath": "/transactions/uncategorized/count",

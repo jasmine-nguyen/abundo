@@ -14,15 +14,7 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, _row, WritableFeedRepo
-
-
-class _FakeCategoryRepo:
-    def __init__(self, category_ids):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import ANZ, SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
 
 
 def _rule(value, category_id="groceries", field="description", operator="contains", rule_id="r1"):
@@ -43,7 +35,7 @@ def _apply_event(body=None, method="POST"):
 def _call(handler, monkeypatch, repo, rules, body, categories=frozenset({"groceries", "coffee"})):
     monkeypatch.setattr(handler, "list_rules", lambda: list(rules))
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event(body), repo, _FakeCategoryRepo(categories))
+        _apply_event(body), repo, FakeCategoryRepo(categories))
     return resp, json.loads(resp["body"])
 
 
@@ -75,7 +67,7 @@ def test_a_non_boolean_dry_run_is_rejected_rather_than_guessed(handler, monkeypa
     repo = WritableFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "t1", category=None)]})
     monkeypatch.setattr(handler, "list_rules", lambda: [_rule("coles")])
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event({"dryRun": bad}), repo, _FakeCategoryRepo({"groceries"}))
+        _apply_event({"dryRun": bad}), repo, FakeCategoryRepo({"groceries"}))
 
     assert resp["statusCode"] == 400
     assert repo.writes == []
@@ -85,7 +77,7 @@ def test_a_missing_body_is_rejected_not_treated_as_a_write(handler, monkeypatch)
     repo = WritableFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "t1", category=None)]})
     monkeypatch.setattr(handler, "list_rules", lambda: [_rule("coles")])
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event(), repo, _FakeCategoryRepo({"groceries"}))
+        _apply_event(), repo, FakeCategoryRepo({"groceries"}))
 
     assert resp["statusCode"] == 400
     assert repo.writes == []
@@ -331,7 +323,7 @@ def test_a_banksync_failure_reads_no_history_and_writes_nothing(handler, monkeyp
 
     monkeypatch.setattr(handler, "list_rules", _boom)
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event({"dryRun": False}), repo, _FakeCategoryRepo({"groceries"}))
+        _apply_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}))
 
     assert resp["statusCode"] == 502
     assert repo.calls == [] and repo.writes == []
@@ -344,7 +336,7 @@ def test_post_routes_to_the_apply_handler(handler, monkeypatch):
     repo = WritableFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "t1",
                                               description="COLES", category=None)]})
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo({"groceries"}))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo({"groceries"}))
     monkeypatch.setattr(handler, "list_rules", lambda: [_rule("coles")])
 
     resp = handler.lambda_handler(_apply_event({"dryRun": True}), None)
@@ -362,7 +354,7 @@ def test_other_methods_on_the_apply_path_are_not_routed(handler, monkeypatch, me
 
     monkeypatch.setattr(handler, "apply_rules_to_uncategorized", _boom)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: WritableFeedRepo({}))
-    monkeypatch.setattr(handler, "CategoryRepository", lambda: _FakeCategoryRepo(set()))
+    monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(set()))
 
     resp = handler.lambda_handler(_apply_event({"dryRun": True}, method=method), None)
 

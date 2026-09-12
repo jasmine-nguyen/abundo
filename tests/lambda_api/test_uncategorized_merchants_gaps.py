@@ -52,15 +52,7 @@ import json
 
 import pytest
 
-from _feed_fakes import ANZ, SPENDING, WESTPAC, _row, FakeFeedRepo, WritableFeedRepo
-
-
-class _TaxonomyRepo:
-    def __init__(self, category_ids=()):
-        self._categories = [{"id": category_id} for category_id in category_ids]
-
-    def list_categories(self):
-        return [dict(category) for category in self._categories]
+from _feed_fakes import ANZ, SPENDING, WESTPAC, _row, FakeFeedRepo, WritableFeedRepo, FakeCategoryRepo
 
 
 def _txn(txn_id, merchant, description, date="2026-07-01", category=None, account_id=ANZ):
@@ -69,7 +61,7 @@ def _txn(txn_id, merchant, description, date="2026-07-01", category=None, accoun
 
 
 def _body(handler, repo, taxonomy=()):
-    response = handler.get_uncategorized_merchants(repo, _TaxonomyRepo(taxonomy))
+    response = handler.get_uncategorized_merchants(repo, FakeCategoryRepo(taxonomy))
     assert response["statusCode"] == 200
     assert response["headers"]["Content-Type"] == "application/json"
     return json.loads(response["body"])
@@ -164,7 +156,7 @@ def test_unfiled_equals_the_real_count_endpoint_on_the_same_rows(handler):
     # screen whose total disagrees with the tab badge.
     taxonomy = {"groceries"}
     badge = json.loads(
-        handler.get_uncategorized_count(_messy_repo(), _TaxonomyRepo(taxonomy))["body"]
+        handler.get_uncategorized_count(_messy_repo(), FakeCategoryRepo(taxonomy))["body"]
     )["count"]
     body = _body(handler, _messy_repo(), taxonomy=taxonomy)
 
@@ -422,7 +414,7 @@ def test_a_database_failure_mid_scan_is_not_swallowed_into_all_caught_up(handler
             raise RuntimeError("dynamodb unavailable")
 
     with pytest.raises(RuntimeError, match="dynamodb unavailable"):
-        handler.get_uncategorized_merchants(_FailsOnSecondPage(), _TaxonomyRepo())
+        handler.get_uncategorized_merchants(_FailsOnSecondPage(), FakeCategoryRepo(()))
 
 
 def test_a_length_changing_fold_never_lets_the_preview_disagree_with_the_rule(
