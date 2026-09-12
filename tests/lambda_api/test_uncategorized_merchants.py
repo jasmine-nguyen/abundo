@@ -144,6 +144,159 @@ def test_a_charge_with_no_merchant_name_is_ungrouped_not_dropped(handler):
     assert body["ungrouped"] == {"count": 1, "samples": ["OSKO PAYMENT 4471123"]}
 
 
+def test_nameless_charges_sharing_wording_become_one_actionable_group(handler):
+    # WHIT-519: the card's own example. Three OSKO payments carry no merchant name and a
+    # different reference each, so they never form a merchant group. Trimming the trailing
+    # reference leaves "OSKO PAYMENT", which repeats -> one actionable group, tagged as
+    # grouped-by-wording, and the pile is cleared.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "o1", "", "OSKO PAYMENT 4471123"),
+        _charge(ANZ, "2026-07-09", "o2", "", "OSKO PAYMENT 4471124"),
+        _charge(ANZ, "2026-07-08", "o3", "", "OSKO PAYMENT 4471125"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    assert len(body["groups"]) == 1
+    group = body["groups"][0]
+    assert group["rulePattern"] == "OSKO PAYMENT"
+    assert group["merchant"] == "OSKO PAYMENT"
+    assert group["groupedBy"] == "description"
+    assert group["count"] == 3
+    assert group["alsoCatches"] == []
+    assert body["ungrouped"] == {"count": 0, "samples": []}
+
+
+def test_a_lone_nameless_wording_stays_in_the_pile(handler):
+    # FAIL-ON-REVERT for MIN_DESCRIPTION_GROUP_SIZE. A wording seen once is one charge; grouping
+    # it would be the one-group-per-charge explosion. Set the minimum to 1 and this reddens.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "o1", "", "OSKO PAYMENT 4471123"),
+        _charge(ANZ, "2026-07-09", "w1", "WOOLWORTHS", "WOOLWORTHS 1234 KEW"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    assert [group["rulePattern"] for group in body["groups"]] == ["WOOLWORTHS"]
+    assert body["ungrouped"] == {"count": 1, "samples": ["OSKO PAYMENT 4471123"]}
+
+
+def test_wording_groups_do_not_merge_to_the_shared_opening(handler):
+    # FAIL-ON-REVERT against direction B's failure mode. Two DoorDash holds and two Uber holds
+    # all open "POS AUTHORISATION" — but trimming only the trailing reference keeps the payee,
+    # so they form TWO specific groups, never one "POS AUTHORISATION" rule that files every
+    # pending card hold as one thing.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "d1", "", "POS AUTHORISATION   DD *DOORDASH   +611800958316AU"),
+        _charge(ANZ, "2026-07-09", "d2", "", "POS AUTHORISATION   DD *DOORDASH   +611800958317AU"),
+        _charge(ANZ, "2026-07-08", "u1", "", "POS AUTHORISATION   DD *UBER   +611800111222AU"),
+        _charge(ANZ, "2026-07-07", "u2", "", "POS AUTHORISATION   DD *UBER   +611800111333AU"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    patterns = sorted(group["rulePattern"] for group in body["groups"])
+    assert patterns == ["POS AUTHORISATION   DD *DOORDASH", "POS AUTHORISATION   DD *UBER"]
+    assert all(group["count"] == 2 for group in body["groups"])
+    assert body["ungrouped"]["count"] == 0
+
+
+def test_a_digit_only_stem_mints_no_rule(handler):
+    # FAIL-ON-REVERT for the letter guard. A PayID-to-phone leaves a stem of pure digits; a rule
+    # on "0412" would file every charge carrying that run (COLES 0412 RICHMOND). Drop the
+    # "must contain a letter" guard in _description_stem and this reddens.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "n1", "", "0412 345 678"),
+        _charge(ANZ, "2026-07-09", "n2", "", "0412 345 678"),
+        _charge(ANZ, "2026-07-08", "c1", "COLES", "COLES 0412 RICHMOND"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    assert [group["rulePattern"] for group in body["groups"]] == ["COLES"]
+    assert body["ungrouped"]["count"] == 2  # the two nameless phone-number rows
+
+
+def test_a_nameless_stem_too_short_to_rule_on_stays_in_the_pile(handler):
+    # FAIL-ON-REVERT: the 4-letters/digits floor guards wording groups too. Two nameless "BP"
+    # holds trim to the stem "BP" (2 alnums) — a rule on that would file every BPAY transfer as
+    # petrol. Drop the floor check in _description_stem and this reddens.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "b1", "", "BP 4471123"),
+        _charge(ANZ, "2026-07-09", "b2", "", "BP 4471124"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    assert body["groups"] == []
+    assert body["ungrouped"]["count"] == 2
+
+
+def test_a_wording_group_discloses_the_nameless_charges_it_also_sweeps(handler):
+    # FAIL-ON-REVERT for the critic's blind-disclosure fix. A "TRANSFER TO" stem (from two
+    # PayID-to-phone rows) also reaches "TRANSFER TO JOHN" / "TRANSFER TO JANE". Those must be
+    # NAMED in alsoCatches by their own stem, not silently swept. Key nameless sweeps as one
+    # null line (the old behaviour) and this reddens.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "t1", "", "TRANSFER TO 0412345678"),
+        _charge(ANZ, "2026-07-09", "t2", "", "TRANSFER TO 0498765432"),
+        _charge(ANZ, "2026-07-08", "j1", "", "TRANSFER TO JOHN 20260710"),
+        _charge(ANZ, "2026-07-07", "k1", "", "TRANSFER TO JANE 20260711"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    transfer = next(g for g in body["groups"] if g["rulePattern"] == "TRANSFER TO")
+    assert transfer["count"] == 4  # honest: the rule really files all four
+    assert transfer["alsoCatches"] == [
+        {"merchant": "TRANSFER TO JANE", "count": 1},
+        {"merchant": "TRANSFER TO JOHN", "count": 1},
+    ]
+
+
+def test_a_wording_group_discloses_a_named_merchant_it_reaches(handler):
+    # The only route out for a merchant name too short to slice today: nameless "SQ*SEDDON EATRY"
+    # holds form a wording group, and a named SEDDONS EATERY charge whose description carries the
+    # same stem is disclosed (named), each keeping its own group.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "s1", "", "SQ*SEDDON EATRY 4412"),
+        _charge(ANZ, "2026-07-09", "s2", "", "SQ*SEDDON EATRY 4413"),
+        _charge(ANZ, "2026-07-08", "n1", "SEDDONS EATERY", "SQ*SEDDON EATRY 4414"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    stem_group = next(g for g in body["groups"] if g["groupedBy"] == "description")
+    assert stem_group["rulePattern"] == "SQ*SEDDON EATRY"
+    assert stem_group["count"] == 3
+    assert stem_group["alsoCatches"] == [{"merchant": "SEDDONS EATERY", "count": 1}]
+
+
+def test_wording_group_pattern_is_a_literal_substring_of_every_sample(handler):
+    # The minted value must be findable in the charges it claims to file (contains is literal
+    # and does not collapse whitespace), or the preview count is a lie.
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "o1", "", "OSKO PAYMENT 4471123"),
+        _charge(ANZ, "2026-07-09", "o2", "", "OSKO PAYMENT 4471124"),
+    ]})
+
+    body = _groups(handler, repo)
+    group = body["groups"][0]
+    for sample in group["samples"]:
+        assert group["rulePattern"].lower() in sample.lower()
+
+
+def test_existing_merchant_groups_are_tagged_grouped_by_merchant(handler):
+    repo = FakeFeedRepo({ANZ: [
+        _charge(ANZ, "2026-07-10", "w1", "WOOLWORTHS", "WOOLWORTHS 1234 KEW"),
+        _charge(ANZ, "2026-07-09", "w2", "WOOLWORTHS", "WOOLWORTHS 9987 KEW"),
+    ]})
+
+    body = _groups(handler, repo)
+
+    assert body["groups"][0]["groupedBy"] == "merchant"
+
+
 def test_already_filed_charges_are_excluded_everywhere(handler):
     # FAIL-ON-REVERT. A charge she has already filed must not swell a group's count, must not
     # appear in alsoCatches, and must not be in `unfiled` — otherwise the preview promises

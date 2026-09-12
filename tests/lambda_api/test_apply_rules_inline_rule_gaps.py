@@ -108,6 +108,31 @@ def _offered_groups(handler):
 # --- the seam with WHIT-515 ---------------------------------------------------
 
 
+def test_a_wording_group_pattern_is_accepted_and_files_its_count(handler):
+    # WHIT-519 seam: a nameless-charge WORDING group (grouped by trimming the trailing reference)
+    # offers "OSKO PAYMENT". The write half must accept that pattern and file exactly the count
+    # the screen showed — the same offered=accepted=filed contract merchant groups have.
+    def osko_repo():
+        return WritableFeedRepo({SPENDING: [
+            _row(SPENDING, "2026-07-03", "o1", description="OSKO PAYMENT 4471123",
+                 merchant_name="", category=None),
+            _row(SPENDING, "2026-07-02", "o2", description="OSKO PAYMENT 4471124",
+                 merchant_name="", category=None),
+        ]})
+
+    offered = json.loads(
+        handler.get_uncategorized_merchants(osko_repo(), FakeCategoryRepo(("groceries",)))["body"]
+    )["groups"]
+    wording = next(group for group in offered if group["groupedBy"] == "description")
+    assert wording["rulePattern"] == "OSKO PAYMENT"
+
+    _, body, rule_repo = _apply(
+        handler, osko_repo(),
+        {"dryRun": False, "rule": {"value": wording["rulePattern"], "categoryId": "groceries"}})
+    assert len(body["filed"]) == wording["count"] == 2
+    assert _minted(rule_repo) == [("description", "contains", "OSKO PAYMENT", "groceries")]
+
+
 def test_every_pattern_the_merchant_screen_offers_is_accepted_by_the_write_half(handler):
     # [A1] FAIL-ON-REVERT for the two halves agreeing on real data rather than on a shared
     # constant. The screen can only offer what group_unfiled_by_merchant produces; if this route
