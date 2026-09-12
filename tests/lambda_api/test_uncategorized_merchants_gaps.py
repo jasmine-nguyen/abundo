@@ -477,3 +477,226 @@ def test_a_double_spaced_charge_is_not_swept_in_by_a_single_spaced_rule(handler,
     )
     # The double-spaced charge is left for its own decision, never silently folded into the group.
     assert body["ungrouped"]["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# WHIT-519 — the nameless "leftovers" second pass (group-by-description stem).
+# The block above (through [A17]) locks the MERCHANT pass; nothing there exercises
+# _description_stem / _bucket_nameless_by_stem / the by_stem=True disclosure. These do,
+# and deliberately do NOT duplicate test_uncategorized_merchants.py's WHIT-519 cases
+# (OSKO x3 group, lone-in-pile, DOORDASH-vs-UBER no-merge, digit-only/too-short no rule,
+# TRANSFER-TO discloses JOHN/JANE, discloses a named merchant, literal substring,
+# groupedBy merchant tag).
+# ---------------------------------------------------------------------------
+
+
+def test_a_wording_group_and_a_merchant_group_can_both_claim_a_row_without_breaking_the_partition(
+    handler, rule_engine
+):
+    # [A18] FAIL-ON-REVERT for the second pass's grouped_positions accounting. The two nameless
+    # "OSKO PAYMENT" rows form a wording group whose pattern "OSKO PAYMENT" ALSO reaches the two
+    # NAMED "OSKO PAYMENT DESK" charges (a merchant group in its own right). Those two rows are
+    # legitimately in BOTH group counts (like COLES / COLES EXPRESS) — but each row must be marked
+    # grouped exactly once, so `unfiled == reached + ungrouped` stays exact and no reached row also
+    # shows up in `ungrouped`. Drop the stem pass's grouped_positions.update and the two
+    # pure-nameless rows fall into ungrouped while still reached -> partition breaks -> red.
+    repo = FakeFeedRepo({ANZ: [
+        _txn("o1", "", "OSKO PAYMENT 4471123", "2026-07-10"),
+        _txn("o2", "", "OSKO PAYMENT 4471124", "2026-07-09"),
+        _txn("d1", "OSKO PAYMENT DESK", "OSKO PAYMENT DESK 999", "2026-07-08"),
+        _txn("d2", "OSKO PAYMENT DESK", "OSKO PAYMENT DESK 998", "2026-07-07"),
+    ]})
+
+    body = _body(handler, repo)
+
+    wording = next(g for g in body["groups"] if g["groupedBy"] == "description")
+    merchant = next(g for g in body["groups"] if g["groupedBy"] == "merchant")
+    assert (wording["rulePattern"], wording["count"]) == ("OSKO PAYMENT", 4)
+    assert wording["alsoCatches"] == [{"merchant": "OSKO PAYMENT DESK", "count": 2}]
+    assert (merchant["rulePattern"], merchant["count"]) == ("OSKO PAYMENT DESK", 2)
+
+    # Counts deliberately overlap (4 + 2 = 6 > 4 unfiled) — that is the disclosure the feature
+    # exists for. But the PARTITION over the raw rows is still exact and single-count.
+    eligible = [r for r in repo._rows[ANZ] if handler._is_unmapped_category(r.get("category"), set())]
+    patterns = [g["rulePattern"] for g in body["groups"]]
+    reached = {r["transaction_id"] for r in eligible
+               if any(p.lower() in r["description"].lower() for p in patterns)}
+    assert body["unfiled"] == 4
+    assert len(reached) + body["ungrouped"]["count"] == body["unfiled"]  # never both / neither
+    assert body["ungrouped"] == {"count": 0, "samples": []}
+
+    for group in body["groups"]:
+        would_file = sum(1 for r in eligible
+                         if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), r))
+        assert would_file == group["count"], group["rulePattern"]
+
+
+def test_unfiled_equals_the_real_count_endpoint_when_wording_groups_form(handler):
+    # [A19] FAIL-ON-REVERT, the [A2] guarantee extended to the second pass. The wording pass must
+    # not add to or drop from `eligible`: `unfiled` still reconciles with the tab badge even when
+    # nameless charges get grouped. Asserted against the count endpoint itself.
+    rows_by_account = {
+        ANZ: [
+            _txn("o1", "", "OSKO PAYMENT 4471123", "2026-07-10"),
+            _txn("o2", "", "OSKO PAYMENT 4471124", "2026-07-09"),
+            _txn("w1", "WOOLWORTHS", "WOOLWORTHS 1234 KEW", "2026-07-08"),
+        ],
+        SPENDING: [_txn("i1", "EMPLOYER", "SALARY", "2026-07-07", category="income",
+                        account_id=SPENDING)],
+    }
+    taxonomy = {"groceries"}
+    badge = json.loads(
+        handler.get_uncategorized_count(FakeFeedRepo(rows_by_account), FakeCategoryRepo(taxonomy))["body"]
+    )["count"]
+    body = _body(handler, FakeFeedRepo(rows_by_account), taxonomy=taxonomy)
+
+    assert badge == 3  # two OSKO + WOOLWORTHS; never the income row
+    assert body["unfiled"] == badge
+    assert any(g["groupedBy"] == "description" for g in body["groups"])
+
+
+def test_a_wording_group_and_a_merchant_group_of_equal_size_order_by_pattern(handler):
+    # [A20] FAIL-ON-REVERT for a stable order ACROSS the two kinds. Wording groups are appended
+    # AFTER the merchant loop, so without the final sort the wording group would trail regardless
+    # of its pattern. Both size 2; "OSKO PAYMENT" sorts before "WOOLWORTHS".
+    repo = FakeFeedRepo({ANZ: [
+        _txn("w1", "WOOLWORTHS", "WOOLWORTHS 1234 KEW", "2026-07-10"),
+        _txn("w2", "WOOLWORTHS", "WOOLWORTHS 9987 KEW", "2026-07-09"),
+        _txn("o1", "", "OSKO PAYMENT 4471123", "2026-07-08"),
+        _txn("o2", "", "OSKO PAYMENT 4471124", "2026-07-07"),
+    ]})
+
+    body = _body(handler, repo)
+
+    assert [(g["rulePattern"], g["groupedBy"]) for g in body["groups"]] == [
+        ("OSKO PAYMENT", "description"), ("WOOLWORTHS", "merchant"),
+    ]
+
+
+def test_a_stem_bucket_mints_the_commonest_spelling_not_the_alphabetical_one(handler):
+    # [A21] FAIL-ON-REVERT for _rule_value_for_stem_bucket picking the COMMONEST stem spelling via
+    # _commonest, not the first row's or the alphabetical one. Same folded stem, three rows: ONE
+    # upper-case and TWO lower-case. Case-tie alphabetics favour the UPPER-case spelling, so if the
+    # tiebreak alone decided (drop the -counts weight in _commonest) the pattern would be upper.
+    # The commonest is lower-case. The upper-case row is first so a representative-row impl reddens.
+    repo = FakeFeedRepo({ANZ: [
+        _txn("o1", "", "OSKO PAYMENT 4471123", "2026-07-10"),
+        _txn("o2", "", "osko payment 4471124", "2026-07-09"),
+        _txn("o3", "", "osko payment 4471125", "2026-07-08"),
+    ]})
+
+    body = _body(handler, repo)
+
+    assert len(body["groups"]) == 1
+    assert body["groups"][0]["rulePattern"] == "osko payment"  # commonest, not alphabetical
+    assert body["groups"][0]["count"] == 3                      # matching stays case-insensitive
+
+
+def test_a_double_spaced_stem_mints_a_value_that_literally_matches_its_originals(handler, rule_engine):
+    # [A22] FAIL-ON-REVERT for slicing the stem from the ORIGINAL string, so interior spacing
+    # survives. `contains` does not collapse whitespace, so a value that normalised the run to one
+    # space would match NONE of these triple-spaced charges and preview 0 while claiming a group.
+    repo = FakeFeedRepo({ANZ: [
+        _txn("o1", "", "OSKO   PAYMENT 4471123", "2026-07-10"),
+        _txn("o2", "", "OSKO   PAYMENT 4471124", "2026-07-09"),
+    ]})
+
+    body = _body(handler, repo)
+
+    group = body["groups"][0]
+    assert group["rulePattern"] == "OSKO   PAYMENT"  # the triple space is preserved
+    for sample in group["samples"]:
+        assert group["rulePattern"].lower() in sample.lower()  # literally findable
+    would_file = sum(1 for r in repo._rows[ANZ]
+                     if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), r))
+    assert group["count"] == would_file == 2
+
+
+def test_two_spacing_variants_of_one_stem_stay_separate_groups(handler, rule_engine):
+    # [A22b] FAIL-ON-REVERT for bucketing on strip().lower(), NOT rule_engine.fold. Single- and
+    # double-spaced descriptions of the same wording must NOT collapse into one bucket: a
+    # single-space rule literally cannot contain a double-spaced charge, so one value can't honestly
+    # cover both. If the bucket key used the whitespace-collapsing fold, they would merge and lie.
+    repo = FakeFeedRepo({ANZ: [
+        _txn("s1", "", "OSKO PAYMENT 4471123", "2026-07-10"),
+        _txn("s2", "", "OSKO PAYMENT 4471124", "2026-07-09"),
+        _txn("d1", "", "OSKO  PAYMENT 4471125", "2026-07-08"),
+        _txn("d2", "", "OSKO  PAYMENT 4471126", "2026-07-07"),
+    ]})
+
+    body = _body(handler, repo)
+
+    assert sorted(g["rulePattern"] for g in body["groups"]) == ["OSKO  PAYMENT", "OSKO PAYMENT"]
+    assert all(g["count"] == 2 for g in body["groups"])
+    single = next(g for g in body["groups"] if g["rulePattern"] == "OSKO PAYMENT")
+    would_file = sum(1 for r in repo._rows[ANZ]
+                     if rule_engine.rule_matches(_contains_rule(single["rulePattern"]), r))
+    assert would_file == 2
+    assert body["ungrouped"]["count"] == 0
+
+
+def test_a_wording_group_discloses_many_swept_stems_biggest_first_and_a_no_stem_row_as_null(handler):
+    # [A23] FAIL-ON-REVERT for two things in the by_stem=True disclosure: (a) alsoCatches is
+    # biggest-first with an alphabetical tiebreak across MULTIPLE swept stems, and (b) a swept
+    # nameless row whose OWN stem is None ("XX PAYID99" -> trailing digit token trimmed leaves
+    # "XX", under the floor -> None) falls back to the single null line instead of crashing on
+    # `.strip()` of None. The PAYID pattern reaches all of these; ALICE (x2) leads, then the null
+    # line and BOB (x1) split the tie alphabetically (None sorts as "").
+    repo = FakeFeedRepo({ANZ: [
+        _txn("p1", "", "PAYID 111", "2026-07-10"),
+        _txn("p2", "", "PAYID 222", "2026-07-09"),
+        _txn("a1", "", "PAYID TO ALICE 1", "2026-07-08"),
+        _txn("a2", "", "PAYID TO ALICE 2", "2026-07-07"),
+        _txn("b1", "", "PAYID TO BOB 9", "2026-07-06"),
+        _txn("x1", "", "XX PAYID99", "2026-07-05"),
+    ]})
+
+    body = _body(handler, repo)
+
+    payid = next(g for g in body["groups"] if g["rulePattern"] == "PAYID")
+    assert payid["count"] == 6  # honest: the PAYID rule reaches every one of these
+    assert payid["alsoCatches"] == [
+        {"merchant": "PAYID TO ALICE", "count": 2},  # biggest first
+        {"merchant": None, "count": 1},              # the no-stem sweep, null line, sorts as ""
+        {"merchant": "PAYID TO BOB", "count": 1},
+    ]
+
+
+def test_interior_reference_digits_are_not_stripped_from_a_stem(handler, rule_engine):
+    # [A24] FAIL-ON-REVERT for TRAILING-only trimming. The trailing token "DEBIT" carries no digit,
+    # so _TRAILING_REFERENCE matches nothing and the WHOLE description — interior "1111" and all —
+    # is the stem. Two identical ones group on that full stem. If the regex stripped digit tokens
+    # anywhere (not just the tail), "1111" would vanish and the pattern would over-reach. No COLES
+    # merchant here, so this is a pure wording group (unlike [A6] where such rows join a COLES group).
+    repo = FakeFeedRepo({ANZ: [
+        _txn("x1", "", "COLES 1111 DIRECT DEBIT", "2026-07-10"),
+        _txn("x2", "", "COLES 1111 DIRECT DEBIT", "2026-07-09"),
+    ]})
+
+    body = _body(handler, repo)
+
+    assert len(body["groups"]) == 1
+    group = body["groups"][0]
+    assert group["rulePattern"] == "COLES 1111 DIRECT DEBIT"  # interior 1111 preserved
+    assert group["groupedBy"] == "description"
+    assert group["count"] == 2
+    would_file = sum(1 for r in repo._rows[ANZ]
+                     if rule_engine.rule_matches(_contains_rule(group["rulePattern"]), r))
+    assert would_file == 2
+
+
+def test_the_wording_pass_writes_nothing(handler):
+    # [A25] FAIL-ON-REVERT for read-only, extended to the second pass. [A14] proves it for merchant
+    # groups; this proves the nameless-stem pass mints a group without a single write against a repo
+    # that CAN write. (Mid-scan DB-failure is covered by [A15]: the second pass is pure logic over
+    # the already-fetched rows and issues no I/O of its own.)
+    repo = WritableFeedRepo({ANZ: [
+        _txn("o1", "", "OSKO PAYMENT 4471123", "2026-07-10"),
+        _txn("o2", "", "OSKO PAYMENT 4471124", "2026-07-09"),
+    ]})
+
+    body = _body(handler, repo)
+
+    assert body["groups"][0]["rulePattern"] == "OSKO PAYMENT"
+    assert body["groups"][0]["count"] == 2
+    assert repo.writes == []
