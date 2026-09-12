@@ -2,8 +2,8 @@
 
 These do NOT duplicate tests/lambda_api/test_apply_rules.py or test_rule_engine.py. Those suites
 lock the preview-by-default safety property, the write-by-own-keys path, run-twice, the
-vanished-vs-failed split, the cap, the budget floor, the deep-history page walk, the BankSync
-502, and the pure matcher's case/space/conflict rules.
+vanished-vs-failed split, the cap, the budget floor, the deep-history page walk, the rules-read
+500, and the pure matcher's case/space/conflict rules.
 
 What they do NOT lock, and this file does:
 
@@ -27,8 +27,9 @@ What they do NOT lock, and this file does:
   * [A40] parity with the badge — the preview's `unfiled` equals the real count endpoint on the
     same rows and taxonomy, asserted against that endpoint rather than a re-implementation.
 
-Reuses the shared paged date-index fake (_feed_fakes), so this suite is registered in the
-`feed` domain tuple of tests/shared/test_fakes_invariants.py.
+The handler path drives a FakeRuleRepo (WHIT-531 moved the rule read into our own store); the
+matcher-edge tests ([A30]-[A36]) drive rule_engine directly. Reuses the shared paged date-index
+fake (_feed_fakes), so this suite is registered in the `feed` domain of test_fakes_invariants.py.
 """
 
 import base64
@@ -37,6 +38,7 @@ import json
 import pytest
 
 from _feed_fakes import ANZ, HOMELOAN, SPENDING, WESTPAC, _row, WritableFeedRepo, FakeCategoryRepo
+from _rule_fakes import FakeRuleRepo
 
 
 class _StepClock:
@@ -54,8 +56,16 @@ class _StepClock:
 
 
 def _rule(value, category_id="groceries", field="description", operator="contains", rule_id="r1"):
+    # CLIENT/engine shape (camelCase) — the matcher-edge tests feed it straight to rule_engine.
     return {"id": rule_id, "field": field, "operator": operator, "value": value,
             "categoryId": category_id}
+
+
+def _store_row(rule):
+    # The STORE shape (snake_case) FakeRuleRepo/RuleRepository hold. The handler maps it back to
+    # the client shape at its boundary, so driving the fake with store rows exercises that mapper.
+    return {"id": rule.get("id"), "field": rule["field"], "operator": rule["operator"],
+            "value": rule["value"], "category_id": rule["categoryId"]}
 
 
 def _apply_event(body=None, raw=None, base64_encoded=False):
@@ -72,10 +82,10 @@ def _apply_event(body=None, raw=None, base64_encoded=False):
     return event
 
 
-def _call(handler, monkeypatch, repo, rules, body, categories=("groceries", "coffee"), **event_kw):
-    monkeypatch.setattr(handler, "list_rules", lambda: list(rules))
+def _call(handler, repo, rules, body, categories=("groceries", "coffee"), **event_kw):
+    rule_repo = FakeRuleRepo(rules=[_store_row(r) for r in rules])
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event(body, **event_kw), repo, FakeCategoryRepo(set(categories)))
+        _apply_event(body, **event_kw), repo, FakeCategoryRepo(set(categories)), rule_repo)
     return resp, json.loads(resp["body"])
 
 
@@ -96,7 +106,7 @@ def test_the_budget_tripping_mid_run_files_what_it_managed_and_reports_the_rest(
     monkeypatch.setattr(handler, "time", _StepClock(step=4))
     repo = WritableFeedRepo({SPENDING: _coles_rows(SPENDING, 5)})
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert body["matched"] == 5
     assert len(body["filed"]) == 3          # partial, not all-or-nothing
@@ -107,23 +117,25 @@ def test_the_budget_tripping_mid_run_files_what_it_managed_and_reports_the_rest(
 
 def test_the_budget_covers_the_whole_request_but_still_guarantees_one_write(
         handler, monkeypatch):
-    # [A11] `started` is stamped BEFORE list_rules and the whole-history scan, so a slow read
-    # eats the write budget — that is the point (the API Gateway window covers the whole
-    # request). But the progress floor guarantees at least ONE write anyway, so a slow read can
-    # never starve the loop into returning "0 filed, N remaining" forever.
+    # [A11] `started` is stamped BEFORE the rule read and the whole-history scan, so a slow read
+    # eats the write budget — that is the point (the API Gateway window covers the whole request).
+    # But the progress floor guarantees at least ONE write anyway, so a slow read can never
+    # starve the loop into returning "0 filed, N remaining" forever. The slow read is modelled by
+    # a FakeRuleRepo whose list_rules burns the clock (WHIT-531: the read is rule_repo.list_rules).
     monkeypatch.setattr(handler, "APPLY_RULES_TIME_BUDGET_SECONDS", 10)
     clock = _StepClock(step=4)
     monkeypatch.setattr(handler, "time", clock)
     repo = WritableFeedRepo({SPENDING: _coles_rows(SPENDING, 3)})
 
-    def _slow_rules():
-        clock.monotonic()                   # the read burns 4s of the budget
-        clock.monotonic()                   # ...and the scan another 4s
-        return [_rule("coles")]
+    class _SlowRuleRepo(FakeRuleRepo):
+        def list_rules(self):
+            clock.monotonic()               # the read burns 4s of the budget
+            clock.monotonic()               # ...and the scan another 4s
+            return super().list_rules()
 
-    monkeypatch.setattr(handler, "list_rules", _slow_rules)
+    rule_repo = _SlowRuleRepo(rules=[_store_row(_rule("coles"))])
     resp = handler.apply_rules_to_uncategorized(
-        _apply_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}))
+        _apply_event({"dryRun": False}), repo, FakeCategoryRepo({"groceries"}), rule_repo)
     body = json.loads(resp["body"])
 
     # The budget is long spent by the first row, but the floor still writes one.
@@ -141,7 +153,7 @@ def test_a_row_whose_write_failed_is_counted_as_attempted_not_as_remaining(handl
     repo = WritableFeedRepo({SPENDING: _coles_rows(SPENDING, 5)})
     repo.error_ids = {"t4"}                 # scan order is newest-first: t5, t4, t3, t2, t1
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert body["failed"] == ["t4"]
     assert [entry["id"] for entry in body["filed"]] == ["t5", "t3"]
@@ -160,7 +172,7 @@ def test_a_row_filed_by_the_user_mid_run_consumes_a_cap_slot_and_leaves_no_remai
     repo.scan_shows = {"t4": None}          # the scan is behind...
     repo.set_category("t4", "coffee")       # ...the user already filed it
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False},
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False},
                     categories=("groceries", "coffee"))
 
     assert body["alreadyFiled"] == ["t4"]
@@ -169,15 +181,14 @@ def test_a_row_filed_by_the_user_mid_run_consumes_a_cap_slot_and_leaves_no_remai
     assert len(repo.writes) == 3            # the lost race consumed a cap slot
 
 
-def test_a_run_where_every_write_fails_reports_remaining_zero_while_nothing_was_filed(
-        handler, monkeypatch):
+def test_a_run_where_every_write_fails_reports_remaining_zero_while_nothing_was_filed(handler):
     # [A13] The honesty boundary. Every row still needs filing, yet `remaining` is 0 because
     # every row was ATTEMPTED. The caller must read `failed` (not `remaining`) to know a retry
     # is worthwhile. Pinned so a change to this semantic is a deliberate one.
     repo = WritableFeedRepo({SPENDING: _coles_rows(SPENDING, 3)})
     repo.error_ids = {"t1", "t2", "t3"}
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert body["filed"] == []
     assert sorted(body["failed"]) == ["t1", "t2", "t3"]
@@ -185,14 +196,13 @@ def test_a_run_where_every_write_fails_reports_remaining_zero_while_nothing_was_
     assert body["matched"] == 3             # ...but `matched` still tells the true story
 
 
-def test_a_run_where_every_row_vanished_files_nothing_and_leaves_nothing_remaining(
-        handler, monkeypatch):
+def test_a_run_where_every_row_vanished_files_nothing_and_leaves_nothing_remaining(handler):
     # [A13b] The other all-or-nothing exit: every row was deleted between scan and write.
     # Nothing to retry, so remaining 0 here IS honest.
     repo = WritableFeedRepo({SPENDING: _coles_rows(SPENDING, 3)})
     repo.vanished_ids = {"t1", "t2", "t3"}
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert body["filed"] == [] and body["failed"] == []
     assert sorted(body["vanished"]) == ["t1", "t2", "t3"]
@@ -202,7 +212,7 @@ def test_a_run_where_every_row_vanished_files_nothing_and_leaves_nothing_remaini
 # --- [A14]-[A17] scope of the scan, and the write path's breakdown -------------------------
 
 
-def test_matches_in_every_account_are_filed_in_scan_order(handler, monkeypatch):
+def test_matches_in_every_account_are_filed_in_scan_order(handler):
     # [A14] The scan walks all four accounts in ACCOUNT_ID_MAP order, each newest-first. An
     # account silently dropped from the scan is otherwise invisible: the response would still
     # look like a clean success.
@@ -214,7 +224,7 @@ def test_matches_in_every_account_are_filed_in_scan_order(handler, monkeypatch):
         WESTPAC: [_row(WESTPAC, "2026-07-07", "west", description="COLES", category=None)],
     })
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert [entry["id"] for entry in body["filed"]] == [
         "anz-new", "anz-old", "spend", "loan", "west"]
@@ -227,7 +237,7 @@ def test_by_category_describes_the_plan_while_filed_describes_the_write(handler,
     monkeypatch.setattr(handler, "APPLY_RULES_MAX_WRITES", 2)
     repo = WritableFeedRepo({SPENDING: _coles_rows(SPENDING, 5)})
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert body["byCategory"] == {"groceries": 5}     # the PLAN
     assert len(body["filed"]) == 2                    # the WRITE
@@ -235,7 +245,7 @@ def test_by_category_describes_the_plan_while_filed_describes_the_write(handler,
     assert sum(entry["count"] for entry in body["byRule"]) == 5
 
 
-def test_a_conflicted_charge_is_never_written_even_on_a_real_write_run(handler, monkeypatch):
+def test_a_conflicted_charge_is_never_written_even_on_a_real_write_run(handler):
     # [A16] The impl suite only proves conflicts in the PREVIEW. A conflict must never be
     # silently decided by the WRITE path either.
     repo = WritableFeedRepo({SPENDING: [
@@ -245,7 +255,7 @@ def test_a_conflicted_charge_is_never_written_even_on_a_real_write_run(handler, 
     rules = [_rule("coles", "groceries", rule_id="r-coles"),
              _rule("richmond", "coffee", rule_id="r-richmond")]
 
-    _, body = _call(handler, monkeypatch, repo, rules, {"dryRun": False})
+    _, body = _call(handler, repo, rules, {"dryRun": False})
 
     assert body["conflicted"] == 1
     assert [entry["id"] for entry in body["filed"]] == ["clean"]
@@ -255,7 +265,7 @@ def test_a_conflicted_charge_is_never_written_even_on_a_real_write_run(handler, 
         {"description": "COLES RICHMOND", "categoryIds": ["coffee", "groceries"]}]
 
 
-def test_skipped_rules_are_reported_on_the_write_path_and_file_nothing(handler, monkeypatch):
+def test_skipped_rules_are_reported_on_the_write_path_and_file_nothing(handler):
     # [A17] Same: the impl suite reports skipped rules only from the pure planner.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-02", "t1", description="COLES", category=None)]})
@@ -263,7 +273,7 @@ def test_skipped_rules_are_reported_on_the_write_path_and_file_nothing(handler, 
              _rule("x", field="amount", rule_id="unsupported"),
              _rule("   ", rule_id="blank")]
 
-    _, body = _call(handler, monkeypatch, repo, rules, {"dryRun": False})
+    _, body = _call(handler, repo, rules, {"dryRun": False})
 
     assert {entry["id"]: entry["reason"] for entry in body["skippedRules"]} == {
         "dangling": "category no longer exists",
@@ -277,8 +287,7 @@ def test_skipped_rules_are_reported_on_the_write_path_and_file_nothing(handler, 
 # --- [A18]-[A20] the taxonomy coupling ------------------------------------------------------
 
 
-def test_an_empty_taxonomy_skips_every_rule_but_still_honours_an_income_rule(
-        handler, monkeypatch):
+def test_an_empty_taxonomy_skips_every_rule_but_still_honours_an_income_rule(handler):
     # [A18] A brand-new user with no categories yet: every normal rule's target is "unfiled" by
     # the badge's own predicate, so it is skipped and nothing is written — filing to a
     # non-existent category would leave the charge unfiled and the next run would re-file it
@@ -290,7 +299,7 @@ def test_an_empty_taxonomy_skips_every_rule_but_still_honours_an_income_rule(
     rules = [_rule("coles", "groceries", rule_id="r-shop"),
              _rule("salary", "income", rule_id="r-pay")]
 
-    _, body = _call(handler, monkeypatch, repo, rules, {"dryRun": False}, categories=())
+    _, body = _call(handler, repo, rules, {"dryRun": False}, categories=())
 
     assert [entry["reason"] for entry in body["skippedRules"]] == ["category no longer exists"]
     assert body["skippedRules"][0]["id"] == "r-shop"
@@ -298,34 +307,32 @@ def test_an_empty_taxonomy_skips_every_rule_but_still_honours_an_income_rule(
     assert [write[1] for write in repo.writes] == ["TXN#pay"]
 
 
-def test_a_rule_targeting_a_category_id_that_differs_only_by_case_is_skipped(
-        handler, monkeypatch):
+def test_a_rule_targeting_a_category_id_that_differs_only_by_case_is_skipped(handler):
     # [A19] Category ids are compared EXACTLY. "Groceries" is not "groceries", so the rule is
     # skipped rather than filing charges to an id the taxonomy does not contain — which would
     # leave them unfiled forever.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]})
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles", "Groceries")],
+    _, body = _call(handler, repo, [_rule("coles", "Groceries")],
                     {"dryRun": False}, categories=("groceries",))
 
     assert body["skippedRules"][0]["reason"] == "category no longer exists"
     assert repo.writes == []
 
 
-def test_deleting_the_targeted_category_between_runs_neither_writes_nor_loops(
-        handler, monkeypatch):
+def test_deleting_the_targeted_category_between_runs_neither_writes_nor_loops(handler):
     # [A20] Safe-to-run-twice under a CHANGING taxonomy. Run 1 files t1 -> groceries. The user
     # then deletes "groceries". Run 2 sees t1 as unfiled again (its category is now a dangling
     # id) but the rule is now skipped, so nothing is re-written and nothing loops.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]})
 
-    _, first = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False},
+    _, first = _call(handler, repo, [_rule("coles")], {"dryRun": False},
                      categories=("groceries",))
     assert first["filed"] == [{"id": "t1", "category": "groceries"}]
 
-    _, second = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False},
+    _, second = _call(handler, repo, [_rule("coles")], {"dryRun": False},
                       categories=("coffee",))
 
     assert second["unfiled"] == 1           # the row reads as unfiled again...
@@ -337,26 +344,26 @@ def test_deleting_the_targeted_category_between_runs_neither_writes_nor_loops(
 # --- [A21]-[A25] body parsing on this route -------------------------------------------------
 
 
-def test_a_base64_encoded_gateway_body_is_honoured(handler, monkeypatch):
+def test_a_base64_encoded_gateway_body_is_honoured(handler):
     # [A21] API Gateway may deliver the body base64-encoded. If this route stopped decoding it,
     # every write request would 400 — and the preview default makes that failure look benign.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]})
     encoded = base64.b64encode(json.dumps({"dryRun": False}).encode()).decode()
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], None,
+    _, body = _call(handler, repo, [_rule("coles")], None,
                     raw=encoded, base64_encoded=True)
 
     assert body["dryRun"] is False
     assert body["filed"] == [{"id": "t1", "category": "groceries"}]
 
 
-def test_a_malformed_base64_body_is_a_400_and_writes_nothing(handler, monkeypatch):
+def test_a_malformed_base64_body_is_a_400_and_writes_nothing(handler):
     # [A22] A binary/garbage base64 payload must 400, not 500 and not fall through to a write.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]})
 
-    resp, _ = _call(handler, monkeypatch, repo, [_rule("coles")], None,
+    resp, _ = _call(handler, repo, [_rule("coles")], None,
                     raw="!!!not-base64!!!", base64_encoded=True)
 
     assert resp["statusCode"] == 400
@@ -364,38 +371,38 @@ def test_a_malformed_base64_body_is_a_400_and_writes_nothing(handler, monkeypatc
 
 
 @pytest.mark.parametrize("raw", ['[{"dryRun": false}]', '"dryRun"', "42", "true", "{not json"])
-def test_a_non_object_or_garbage_body_is_a_400_and_writes_nothing(handler, monkeypatch, raw):
+def test_a_non_object_or_garbage_body_is_a_400_and_writes_nothing(handler, raw):
     # [A23] A JSON ARRAY is the one that matters: `body.get("dryRun", True)` would raise
     # AttributeError (a 500) if the object check were dropped, and a 500 tells the user
     # nothing about whether anything was written.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]})
 
-    resp, _ = _call(handler, monkeypatch, repo, [_rule("coles")], None, raw=raw)
+    resp, _ = _call(handler, repo, [_rule("coles")], None, raw=raw)
 
     assert resp["statusCode"] == 400
     assert repo.writes == []
 
 
-def test_unknown_extra_body_keys_are_ignored_and_do_not_narrow_the_run(handler, monkeypatch):
+def test_unknown_extra_body_keys_are_ignored_and_do_not_narrow_the_run(handler):
     # [A24] There is no `limit`/`categoryId`/`ruleId` knob: a client sending one gets a FULL
     # run, not a filtered one. Pinned so nobody assumes the endpoint honours a scope it doesn't.
     repo = WritableFeedRepo({SPENDING: _coles_rows(SPENDING, 4)})
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")],
+    _, body = _call(handler, repo, [_rule("coles")],
                     {"dryRun": False, "limit": 1, "ruleId": "r-other", "categoryId": "coffee"})
 
     assert len(body["filed"]) == 4
     assert {entry["category"] for entry in body["filed"]} == {"groceries"}
 
 
-def test_an_empty_json_object_body_previews_rather_than_writing(handler, monkeypatch):
+def test_an_empty_json_object_body_previews_rather_than_writing(handler):
     # [A25] Boundary next to the impl suite's missing-body 400: `{}` is a VALID object, so it is
     # accepted and previews (dryRun defaults to True). Missing body -> 400; `{}` -> preview.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]})
 
-    resp, body = _call(handler, monkeypatch, repo, [_rule("coles")], None, raw="{}")
+    resp, body = _call(handler, repo, [_rule("coles")], None, raw="{}")
 
     assert resp["statusCode"] == 200 and body["dryRun"] is True
     assert repo.writes == []
@@ -404,7 +411,7 @@ def test_an_empty_json_object_body_previews_rather_than_writing(handler, monkeyp
 # --- [A40] parity with the badge ------------------------------------------------------------
 
 
-def test_the_previews_unfiled_total_equals_the_badge_count_endpoint(handler, monkeypatch):
+def test_the_previews_unfiled_total_equals_the_badge_count_endpoint(handler):
     # [A40] The acceptance criterion "the unfiled set matches the badge's rule", asserted
     # against the REAL count endpoint on the same rows and taxonomy — not a re-implementation.
     # The mix deliberately includes an income row, a raw-enum row, an excluded transfer, and a
@@ -426,7 +433,7 @@ def test_the_previews_unfiled_total_equals_the_badge_count_endpoint(handler, mon
     count_resp = handler.get_uncategorized_count(WritableFeedRepo(rows), FakeCategoryRepo(taxonomy))
     badge_count = json.loads(count_resp["body"])["count"]
 
-    _, body = _call(handler, monkeypatch, WritableFeedRepo(rows), [_rule("zzz-matches-nothing")], {},
+    _, body = _call(handler, WritableFeedRepo(rows), [_rule("zzz-matches-nothing")], {},
                     categories=tuple(taxonomy))
 
     assert body["unfiled"] == badge_count
@@ -532,8 +539,7 @@ def test_a_charge_whose_category_is_an_empty_string_is_eligible_and_filable(rule
 # lost race resolves: filed rows leave the set for good, and unfiled ones converge on the next run.
 
 
-def test_a_charge_that_became_income_mid_run_is_already_filed_not_retried_forever(
-        handler, monkeypatch):
+def test_a_charge_that_became_income_mid_run_is_already_filed_not_retried_forever(handler):
     # [A44] `income` is the one category that counts as FILED without being a taxonomy id
     # (_is_unmapped_category). A settlement or a tap that lands it on income leaves nothing to
     # retry. Classify it as unfiled instead and the write is refused every round while the app
@@ -547,7 +553,7 @@ def test_a_charge_that_became_income_mid_run_is_already_filed_not_retried_foreve
     repo.refile_hook = lambda transaction_id, r: (
         r.set_category("t2", "income") if transaction_id == "t1" else None)
 
-    _, body = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, body = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert body["alreadyFiled"] == ["t2"]
     assert body["failed"] == []
@@ -555,8 +561,7 @@ def test_a_charge_that_became_income_mid_run_is_already_filed_not_retried_foreve
     assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#t2")["category"] == "income"
 
 
-def test_a_row_that_changed_into_a_raw_label_is_retried_against_the_NEW_value(
-        handler, monkeypatch):
+def test_a_row_that_changed_into_a_raw_label_is_retried_against_the_NEW_value(handler):
     # [A46] The other half of termination. A row that changed into something still unfiled (a
     # re-sync carrying the bank's own label back on) lands in `failed`, so the app offers another
     # round — and that round must actually be able to win, or the retry is a lie. The second run
@@ -570,11 +575,11 @@ def test_a_row_that_changed_into_a_raw_label_is_retried_against_the_NEW_value(
     repo.refile_hook = lambda transaction_id, r: (
         r.set_category("t2", "TRANSFER_OUT") if transaction_id == "t1" else None)
 
-    _, first = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, first = _call(handler, repo, [_rule("coles")], {"dryRun": False})
     assert first["failed"] == ["t2"]
 
     repo.refile_hook = None
-    _, second = _call(handler, monkeypatch, repo, [_rule("coles")], {"dryRun": False})
+    _, second = _call(handler, repo, [_rule("coles")], {"dryRun": False})
 
     assert second["filed"] == [{"id": "t2", "category": "groceries"}]
     assert second["failed"] == [] and second["remaining"] == 0

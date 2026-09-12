@@ -4,53 +4,32 @@
 These do NOT duplicate tests/lambda_api/test_apply_rules_inline_rule.py. That suite locks the
 card's spine: one request mints + files, a preview mints nothing, the inline rule is swept ALONE
 (the existing rules read only to refuse a clash — WHIT-523), an absent rule is the old path,
-mint-before-sweep ordering, create_rule
-failing, the floor / taxonomy / field-operator / non-object / non-string fences, the shared
-floor identity, WHIT-508's hand-filed charge, create_rule's dedup pass-through, and the route
-wiring.
+mint-before-sweep ordering, create_rule failing, the floor / taxonomy / field-operator /
+non-object / non-string fences, the shared floor identity, WHIT-508's hand-filed charge,
+create_rule's dedup pass-through, and the route wiring.
 
 What it does NOT lock, and this file does:
 
-  * [A1] EVERY `rulePattern` the WHIT-515 merchant screen offers is ACCEPTED by this write half
-         — asserted by feeding real output of `get_uncategorized_merchants` into the real
-         `apply_rules_to_uncategorized`, on deliberately awkward names: unicode, punctuation,
-         and one whose only letters/digits are DIGITS. The screen offering a group this route
-         refuses is the worst bug available at this seam.
-  * [A2] and the `count` the screen SHOWS is the number this route really FILES — same seam,
-         arithmetic half. The fixture includes a nameless "PAYPAL *..." charge the wider rule
-         sweeps in, so a count taken from the merchant bucket rather than from the rule's real
-         members is caught.
-  * [A3] an existing rule on the same TEXT filing elsewhere is refused (409), including across
-         casing and spacing variants of the same merchant.
-  * [A4] that refusal lands on the PREVIEW too, not only on the commit.
-  * [A5] but the same text to the SAME category is NOT a clash — the re-tap after a capped run
-         must still work, or every charge past the cap is stranded.
-  * [A6] a NESTED existing rule is refused too, from either side ("COLES EXPRESS -> petrol"
-         against an inline "COLES -> groceries" and the reverse). Different text, but every
-         EXPRESS charge matches both, so they fight and that charge is never filed — exactly the
-         nesting WHIT-515 discloses via `alsoCatches`. An equality-only guard waves it through.
-         Nested rules that AGREE on the category are still fine.
-  * [A7] a failure to READ her rules mints nothing (the impl suite covers create_rule failing,
-         not list_rules failing while an inline rule is in flight).
-  * [A8] a rejected inline rule costs no BankSync round trip at all (the impl suite asserts the
-         history is not scanned; this asserts list_rules is never even called).
-  * [A9] both BankSync calls succeed but every write errors: 200, rows in `failed`, and the rule
-         STAYS minted — the recoverable state the mint-first comment claims.
-  * [A10] the write cap with an inline rule: minted once, exactly the cap attempted, honest
-          `remaining`.
-  * [A11] tapping again after the cap finishes the job and rewrites NOTHING — the DB-write half
-          of "safe to run twice", which the impl suite's rule-dedup test does not cover.
-  * [A12] the TIME budget with an inline rule: the rule is minted, at least one row is still
-          filed, and the rest is reported as `remaining`.
-  * [A13] an accepted value is minted TRIMMED (the impl suite only covers whitespace values that
-          are REJECTED, so the strip on the accepted path was unasserted).
+  * [A1] EVERY `rulePattern` the WHIT-515 merchant screen offers is ACCEPTED by this write half.
+  * [A2] and the `count` the screen SHOWS is the number this route really FILES.
+  * [A3] an existing rule on the same TEXT filing elsewhere is refused (409), across casing/spacing.
+  * [A4] that refusal lands on the PREVIEW too.
+  * [A5] but the same text to the SAME category is NOT a clash — the re-tap after a capped run works.
+  * [A6] a NESTED existing rule is refused too, from either side. Nested rules that AGREE are fine.
+  * [A7] a failure to READ her rules mints nothing.
+  * [A8] a rejected inline rule costs no rules-read round trip at all (list_rules never called).
+  * [A9] the read + write both reachable but every write errors: 200, rows in `failed`, rule STAYS minted.
+  * [A10] the write cap with an inline rule: minted once, exactly the cap attempted, honest `remaining`.
+  * [A11] tapping again after the cap finishes the job and rewrites NOTHING.
+  * [A12] the TIME budget with an inline rule.
+  * [A13] an accepted value is minted TRIMMED.
   * [A14] an explicit `"rule": null` is the plain sweep, not a 400.
-  * [A15] DOCUMENTS A GAP: there is no maximum length, so a 500-character value is minted
-          verbatim and files nothing. Ranked in the critique; the test pins today's behaviour so
-          adding a cap has to be a deliberate change.
+  * [A15] DOCUMENTS A GAP: no maximum length, so a 500-character value is minted verbatim.
 
-Reuses the shared paged date-index fake (_feed_fakes), so this suite is registered in the
-`feed` domain tuple of tests/shared/test_fakes_invariants.py.
+The rule store is a FakeRuleRepo (WHIT-531). Like the old fake it makes a minted rule VISIBLE to
+the next request's list_rules — which is what really happens between two taps of the same button.
+Reuses the shared paged date-index fake (_feed_fakes), so this suite is registered in the `feed`
+domain tuple of tests/shared/test_fakes_invariants.py.
 """
 
 import json
@@ -58,41 +37,29 @@ import json
 import pytest
 
 from _feed_fakes import SPENDING, WESTPAC, _row, WritableFeedRepo, FakeCategoryRepo
+from _rule_fakes import FakeRuleRepo
 
 
-class _BankSync:
-    """Records mints and, unlike the impl suite's fake, makes a minted rule VISIBLE to the next
-    request's list_rules — which is what really happens between two taps of the same button."""
-
-    def __init__(self, existing=()):
-        self.existing = [dict(rule) for rule in existing]
-        self.minted = []
-        self.list_calls = 0
-
-    def list_rules(self):
-        self.list_calls += 1
-        return [dict(rule) for rule in self.existing]
-
-    def create_rule(self, field, operator, value, category_id):
-        self.minted.append((field, operator, value, category_id))
-        rule = {"id": f"enr_{len(self.minted)}", "field": field, "operator": operator,
-                "value": value, "categoryId": category_id, "conditionCount": 1}
-        self.existing.append(rule)
-        return dict(rule)
+def _store_row(rule):
+    return {"id": rule.get("id"), "field": rule["field"], "operator": rule["operator"],
+            "value": rule["value"], "category_id": rule["categoryId"]}
 
 
-def _apply(handler, monkeypatch, repo, body, banksync=None,
-           categories=("groceries", "petrol")):
-    banksync = banksync if banksync is not None else _BankSync()
-    monkeypatch.setattr(handler, "list_rules", banksync.list_rules)
-    monkeypatch.setattr(handler, "create_rule", banksync.create_rule)
+def _minted(rule_repo):
+    return [(r["field"], r["operator"], r["value"], r["category_id"]) for r in rule_repo.minted]
+
+
+def _apply(handler, repo, body, existing=(), categories=("groceries", "petrol"), rule_repo=None):
+    if rule_repo is None:
+        rule_repo = FakeRuleRepo(rules=[_store_row(r) for r in existing])
     event = {
         "rawPath": "/transactions/uncategorized/apply-rules",
         "requestContext": {"http": {"method": "POST"}},
         "body": json.dumps(body),
     }
-    response = handler.apply_rules_to_uncategorized(event, repo, FakeCategoryRepo(categories))
-    return response, json.loads(response["body"]), banksync
+    response = handler.apply_rules_to_uncategorized(
+        event, repo, FakeCategoryRepo(categories), rule_repo)
+    return response, json.loads(response["body"]), rule_repo
 
 
 def _coles_repo():
@@ -141,9 +108,7 @@ def _offered_groups(handler):
 # --- the seam with WHIT-515 ---------------------------------------------------
 
 
-def test_every_pattern_the_merchant_screen_offers_is_accepted_by_the_write_half(
-    handler, monkeypatch
-):
+def test_every_pattern_the_merchant_screen_offers_is_accepted_by_the_write_half(handler):
     # [A1] FAIL-ON-REVERT for the two halves agreeing on real data rather than on a shared
     # constant. The screen can only offer what group_unfiled_by_merchant produces; if this route
     # refuses any of it she taps "file this shop" and gets a 400 with no way forward.
@@ -153,25 +118,22 @@ def test_every_pattern_the_merchant_screen_offers_is_accepted_by_the_write_half(
     assert patterns == ["CAFÉ MÖRK", "1300 655 506", "J.B. HI-FI", "NETFLIX"]
 
     for pattern in patterns:
-        response, body, banksync = _apply(
-            handler, monkeypatch, _messy_repo(),
+        response, body, rule_repo = _apply(
+            handler, _messy_repo(),
             {"dryRun": True, "rule": {"value": pattern, "categoryId": "groceries"}})
         assert response["statusCode"] == 200, (pattern, body)
-        assert banksync.minted == []
+        assert rule_repo.minted == []
 
 
-def test_the_count_the_merchant_screen_shows_is_the_number_this_route_really_files(
-    handler, monkeypatch
-):
+def test_the_count_the_merchant_screen_shows_is_the_number_this_route_really_files(handler):
     # [A2] FAIL-ON-REVERT for the seam's arithmetic, asserted between two REAL production
     # functions: merchant_groups' count and the sweep's own `filed` list. "COLES — 38 charges"
     # shown immediately before a bulk write has to be the 38 that move.
     for group in _offered_groups(handler):
         repo = _messy_repo()
         _, body, _ = _apply(
-            handler, monkeypatch, repo,
-            {"dryRun": False, "rule": {"value": group["rulePattern"],
-                                       "categoryId": "groceries"}})
+            handler, repo,
+            {"dryRun": False, "rule": {"value": group["rulePattern"], "categoryId": "groceries"}})
         assert len(body["filed"]) == group["count"], group["rulePattern"]
         assert body["byCategory"] == {"groceries": group["count"]}
         assert len(repo.writes) == group["count"]
@@ -194,61 +156,55 @@ def _nested_coles_repo():
 
 
 @pytest.mark.parametrize("existing_value", ["COLES", "coles", "  Coles  "])
-def test_an_existing_rule_on_the_same_text_filing_elsewhere_is_refused(
-    handler, monkeypatch, existing_value
-):
+def test_an_existing_rule_on_the_same_text_filing_elsewhere_is_refused(handler, existing_value):
     # [A3] She already has COLES -> petrol and the screen offers COLES; filing it to groceries
     # would leave the two rules permanently disagreeing, so every COLES charge is conflicted and
     # NEVER filed — on this run or any future one. Refused outright, and the casing/spacing
     # variants must be caught too (the same merchant is spelled inconsistently in real rules).
     repo = _nested_coles_repo()
     existing = [{"id": "r1", "field": "description", "operator": "contains",
-                 "value": existing_value, "categoryId": "petrol", "conditionCount": 1}]
-    response, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+                 "value": existing_value, "categoryId": "petrol"}]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 409
     assert body["existingRule"]["id"] == "r1"
     assert "petrol" in body["error"]
-    assert banksync.minted == [] and repo.writes == []
+    assert rule_repo.minted == [] and repo.writes == []
 
 
-def test_the_preview_refuses_that_clash_too(handler, monkeypatch):
+def test_the_preview_refuses_that_clash_too(handler):
     # [A4] The refusal must land on the PREVIEW, not only the commit — otherwise the screen
     # shows her a number, she taps, and only then is she told it can't be done.
     repo = _nested_coles_repo()
     existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
-                 "categoryId": "petrol", "conditionCount": 1}]
-    response, _, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+                 "categoryId": "petrol"}]
+    response, _, rule_repo = _apply(
+        handler, repo, {"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 409
-    assert banksync.minted == [] and repo.writes == []
+    assert rule_repo.minted == [] and repo.writes == []
 
 
-def test_an_existing_rule_on_the_same_text_to_the_SAME_category_is_not_a_clash(
-    handler, monkeypatch
-):
+def test_an_existing_rule_on_the_same_text_to_the_SAME_category_is_not_a_clash(handler):
     # [A5] The guard must not eat the legitimate re-tap: after a capped run the rule EXISTS, and
     # tapping again sends the same inline rule to the same category. A 409 there would strand
-    # every charge past the cap, permanently unfilable through this screen.
+    # every charge past the cap, permanently unfilable through this screen. Seeded id-less so the
+    # inline mint dedups onto it (create_rule keys on the real rule_id_for id).
     repo = _nested_coles_repo()
-    existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "coles",
-                 "categoryId": "groceries", "conditionCount": 1}]
+    existing = [{"field": "description", "operator": "contains", "value": "coles",
+                 "categoryId": "groceries"}]
     response, body, _ = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 200
     assert sorted(filed["id"] for filed in body["filed"]) == ["e1", "t1", "t2"]
 
 
-def test_a_NESTED_existing_rule_is_refused_too_not_just_an_exact_repeat(handler, monkeypatch):
+def test_a_NESTED_existing_rule_is_refused_too_not_just_an_exact_repeat(handler):
     # [A6] The likeliest conflict of the lot, and the one an equality-only guard waves straight
     # through. An existing "COLES EXPRESS -> petrol" is different TEXT from an inline
     # "COLES -> groceries", but every EXPRESS charge matches both — so they fight, and a charge
@@ -266,45 +222,42 @@ def test_a_NESTED_existing_rule_is_refused_too_not_just_an_exact_repeat(handler,
 
     repo = _nested_coles_repo()
     existing = [{"id": "r1", "field": "description", "operator": "contains",
-                 "value": "COLES EXPRESS", "categoryId": "petrol", "conditionCount": 1}]
-    response, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+                 "value": "COLES EXPRESS", "categoryId": "petrol"}]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 409
     assert body["existingRule"]["id"] == "r1"
-    assert banksync.minted == [] and repo.writes == []
+    assert rule_repo.minted == [] and repo.writes == []
 
 
-def test_the_nesting_check_catches_it_from_either_side(handler, monkeypatch):
+def test_the_nesting_check_catches_it_from_either_side(handler):
     # [A6] The same overlap the other way round: an existing rule on the WIDER text, an inline
     # rule on the narrower one. Checking containment in one direction only would leave half the
     # nested cases open.
     repo = _nested_coles_repo()
     existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
-                 "categoryId": "groceries", "conditionCount": 1}]
-    response, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES EXPRESS", "categoryId": "petrol"}},
-        banksync=_BankSync(existing))
+                 "categoryId": "groceries"}]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES EXPRESS", "categoryId": "petrol"}},
+        existing=existing)
 
     assert response["statusCode"] == 409
     assert body["existingRule"]["id"] == "r1"
-    assert banksync.minted == [] and repo.writes == []
+    assert rule_repo.minted == [] and repo.writes == []
 
 
-def test_a_nested_rule_to_the_SAME_category_is_still_fine(handler, monkeypatch):
+def test_a_nested_rule_to_the_SAME_category_is_still_fine(handler):
     # Overlap only matters when the two DISAGREE. "COLES EXPRESS -> groceries" and
     # "COLES -> groceries" both file to the same place, so nothing conflicts and the charges
     # file normally. Refusing on overlap alone would block a perfectly sensible pair.
     repo = _nested_coles_repo()
     existing = [{"id": "r1", "field": "description", "operator": "contains",
-                 "value": "COLES EXPRESS", "categoryId": "groceries", "conditionCount": 1}]
+                 "value": "COLES EXPRESS", "categoryId": "groceries"}]
     response, body, _ = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 200
     assert sorted(filed["id"] for filed in body["filed"]) == ["e1", "t1", "t2"]
@@ -313,63 +266,56 @@ def test_a_nested_rule_to_the_SAME_category_is_still_fine(handler, monkeypatch):
 # --- failure modes ------------------------------------------------------------
 
 
-def test_a_failure_to_read_her_rules_mints_nothing(handler, monkeypatch):
+def test_a_failure_to_read_her_rules_mints_nothing(handler):
     # [A7] The inline rule must not be minted when we could not read the rules it must check for
     # a clash before minting. Minting first would leave a rule behind for a request that failed.
+    # WHIT-531: the read is our store, so its failure is a DatabaseError -> 500 (our server).
     repo = _coles_repo()
-    banksync = _BankSync()
+    response, _, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        rule_repo=FakeRuleRepo(list_error=True))
 
-    def _explode():
-        raise handler.BankSyncError(503, "banksync down")
-
-    banksync.list_rules = _explode
-    response, _, _ = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=banksync)
-
-    assert response["statusCode"] >= 500
-    assert banksync.minted == [] and repo.writes == []
+    assert response["statusCode"] == 500
+    assert rule_repo.minted == [] and repo.writes == []
 
 
-def test_a_rejected_inline_rule_costs_no_banksync_round_trip(handler, monkeypatch):
+def test_a_rejected_inline_rule_costs_no_rules_read(handler):
     # [A8] A typo must be free. Reading her rules first and 400ing after makes every rejected
-    # tap pay for a BankSync call, and on a BankSync outage a plain typo would 502 instead of
-    # telling her what is actually wrong with the value.
+    # tap pay for a database read — the inline fences run BEFORE the rules read, so list_rules is
+    # never even called for a bad value.
     class _ExplodingRepo:
         def get_transactions_by_date_range(self, *args, **kwargs):
             raise AssertionError("history must not be scanned for a rejected rule")
 
-    response, _, banksync = _apply(
-        handler, monkeypatch, _ExplodingRepo(),
+    response, _, rule_repo = _apply(
+        handler, _ExplodingRepo(),
         {"dryRun": False, "rule": {"value": "BP", "categoryId": "groceries"}})
 
     assert response["statusCode"] == 400
-    assert banksync.list_calls == 0
-    assert banksync.minted == []
+    assert rule_repo.list_calls == 0
+    assert rule_repo.minted == []
 
 
-def test_the_rule_stays_minted_when_every_write_fails(handler, monkeypatch):
-    # [A9] The recoverable state handler.py:1408-1411 promises: the rule exists, the charges
-    # did not move, and tapping again finishes the job. A 500 here would be a lie (the rule DID
-    # get made) and would hide which rows still need retrying.
+def test_the_rule_stays_minted_when_every_write_fails(handler):
+    # [A9] The recoverable state the mint-before-sweep ordering promises: the rule exists, the
+    # charges did not move, and tapping again finishes the job. A 500 here would be a lie (the
+    # rule DID get made) and would hide which rows still need retrying.
     repo = _coles_repo()
     repo.error_ids = {"t1", "t2"}
-    response, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}})
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}})
 
     assert response["statusCode"] == 200
-    assert body["createdRule"]["id"] == "enr_1"
+    assert body["createdRule"]["id"] == rule_repo.minted[0]["id"]
     assert body["filed"] == []
     assert sorted(body["failed"]) == ["t1", "t2"]
-    assert len(banksync.minted) == 1
+    assert len(rule_repo.minted) == 1
 
 
 # --- the write cap and the time budget ----------------------------------------
 
 
-def test_the_write_cap_stops_the_sweep_with_the_rule_minted_once(handler, monkeypatch):
+def test_the_write_cap_stops_the_sweep_with_the_rule_minted_once(handler):
     # [A10] Asserted against the REAL cap constant, so raising or lowering it can't silently
     # desync this from production.
     cap = handler.APPLY_RULES_MAX_WRITES
@@ -378,34 +324,32 @@ def test_the_write_cap_stops_the_sweep_with_the_rule_minted_once(handler, monkey
              merchant_name="Coles", category=None)
         for index in range(cap + 25)
     ]})
-    _, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}})
+    _, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}})
 
-    assert len(banksync.minted) == 1
+    assert len(rule_repo.minted) == 1
     assert body["matched"] == cap + 25
     assert len(body["filed"]) == cap
     assert body["remaining"] == 25
 
 
-def test_tapping_again_after_the_cap_finishes_the_job_and_rewrites_nothing(
-    handler, monkeypatch
-):
+def test_tapping_again_after_the_cap_finishes_the_job_and_rewrites_nothing(handler):
     # [A11] The DB-write half of safe-to-run-twice across the cap boundary, which the impl
-    # suite's rule-dedup test does not reach. The first 300 are FILED, so the second request's
+    # suite's rule-dedup test does not reach. The first `cap` are FILED, so the second request's
     # scan no longer sees them — no row is written twice even though the rule is now BOTH in her
-    # rules and re-sent inline.
+    # store and re-sent inline. The SAME FakeRuleRepo spans both taps, so the mint from the first
+    # is visible (and deduped) on the second.
     cap = handler.APPLY_RULES_MAX_WRITES
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-01", f"t{index:04d}", description=f"COLES {index}",
              merchant_name="Coles", category=None)
         for index in range(cap + 25)
     ]})
-    banksync = _BankSync()
+    rule_repo = FakeRuleRepo()
     request = {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}}
 
-    _, first, _ = _apply(handler, monkeypatch, repo, request, banksync=banksync)
-    _, second, _ = _apply(handler, monkeypatch, repo, request, banksync=banksync)
+    _, first, _ = _apply(handler, repo, request, rule_repo=rule_repo)
+    _, second, _ = _apply(handler, repo, request, rule_repo=rule_repo)
 
     first_ids = {filed["id"] for filed in first["filed"]}
     second_ids = {filed["id"] for filed in second["filed"]}
@@ -414,16 +358,18 @@ def test_tapping_again_after_the_cap_finishes_the_job_and_rewrites_nothing(
     assert second["remaining"] == 0 and second["unfiled"] == 25
     # Exactly one write per row across BOTH requests — nothing refiled.
     assert len(repo.writes) == cap + 25
+    # The mint deduped on the second tap: one row minted in total, not two.
+    assert len(rule_repo.minted) == 1
     # WHIT-523: the sweep is the inline rule ALONE, even on the re-tap when a copy of it now
-    # exists in BankSync. So it is considered once, not twice.
+    # exists in the store. So it is considered once, not twice.
     assert second["rulesConsidered"] == 1
     assert [entry["ruleId"] for entry in second["byRule"]] == [None]
 
 
 def test_the_time_budget_stops_the_sweep_with_the_rule_already_minted(handler, monkeypatch):
-    # [A12] A fixed clock, never the ambient one. The `attempted and` guard at handler.py:1432
-    # is load-bearing: without it a slow rule read would return zero filed rows forever and the
-    # app would retry the same request for ever.
+    # [A12] A fixed clock, never the ambient one. The `attempted and` guard is load-bearing:
+    # without it a slow rule read would return zero filed rows forever and the app would retry
+    # the same request for ever.
     class _Clock:
         def __init__(self, ticks):
             self._ticks = iter(ticks)
@@ -442,11 +388,10 @@ def test_the_time_budget_stops_the_sweep_with_the_rule_already_minted(handler, m
     over = handler.APPLY_RULES_TIME_BUDGET_SECONDS + 1.0
     monkeypatch.setattr(handler, "time", _Clock([0.0] + [over] * 20))
 
-    _, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}})
+    _, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}})
 
-    assert len(banksync.minted) == 1
+    assert len(rule_repo.minted) == 1
     assert len(body["filed"]) == 1          # at least one row always moves
     assert body["matched"] == 3
     assert body["remaining"] == 2           # "tap again", and it is honest about how much
@@ -456,62 +401,56 @@ def test_the_time_budget_stops_the_sweep_with_the_rule_already_minted(handler, m
 
 
 @pytest.mark.parametrize("value", ["  COLES  ", "\tCOLES\n", "COLES "])
-def test_an_accepted_value_is_minted_trimmed(handler, monkeypatch, value):
+def test_an_accepted_value_is_minted_trimmed(handler, value):
     # [A13] The impl suite only covers whitespace values that are REJECTED, so the strip on the
-    # accepted path was unasserted. It matters beyond tidiness: the minted value is what
-    # BankSync stores and what the client's duplicate-rule guard folds against, and a stray
-    # trailing space would make the same rule mintable twice.
+    # accepted path was unasserted. It matters beyond tidiness: the minted value is what the store
+    # keeps and what the client's duplicate-rule guard folds against, and a stray trailing space
+    # would make the same rule mintable twice.
     repo = _coles_repo()
-    _, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": value, "categoryId": "groceries"}})
+    _, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": value, "categoryId": "groceries"}})
 
-    assert banksync.minted == [("description", "contains", "COLES", "groceries")]
+    assert _minted(rule_repo) == [("description", "contains", "COLES", "groceries")]
     assert body["createdRule"]["value"] == "COLES"
     assert sorted(filed["id"] for filed in body["filed"]) == ["t1", "t2"]
 
 
-def test_an_explicit_null_rule_is_the_plain_sweep_not_a_400(handler, monkeypatch):
+def test_an_explicit_null_rule_is_the_plain_sweep_not_a_400(handler):
     # [A14] The app serialising an absent rule as JSON null must not become a 400 — and must
     # not become a mint either.
     repo = _coles_repo()
     existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
-                 "categoryId": "groceries", "conditionCount": 1}]
-    response, body, banksync = _apply(
-        handler, monkeypatch, repo, {"dryRun": False, "rule": None},
-        banksync=_BankSync(existing))
+                 "categoryId": "groceries"}]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": None}, existing=existing)
 
     assert response["statusCode"] == 200
-    assert banksync.minted == [] and body["createdRule"] is None
+    assert rule_repo.minted == [] and body["createdRule"] is None
     assert sorted(filed["id"] for filed in body["filed"]) == ["t1", "t2"]
 
 
-def test_a_very_long_value_is_minted_verbatim_and_files_nothing(handler, monkeypatch):
-    # [A15] DOCUMENTS A GAP — there is no maximum length on the inline value (handler.py:1284).
-    # A 500-character value clears the letters/digits floor, is sent to BankSync as-is (inside
-    # the rule NAME, _rule_payload at banksync_enrichments.py:154), and matches nothing. Pinned
-    # so adding a cap is a deliberate change rather than a silent one. Ranked in the critique.
+def test_a_very_long_value_is_minted_verbatim_and_files_nothing(handler):
+    # [A15] DOCUMENTS A GAP — there is no maximum length on the inline value. A 500-character
+    # value clears the letters/digits floor, is stored as-is, and matches nothing. Pinned so
+    # adding a cap is a deliberate change rather than a silent one. Ranked in the critique.
     repo = _coles_repo()
     value = "COLES" + "X" * 500
-    response, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": value, "categoryId": "groceries"}})
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": value, "categoryId": "groceries"}})
 
     assert response["statusCode"] == 200
-    assert banksync.minted == [("description", "contains", value, "groceries")]
+    assert _minted(rule_repo) == [("description", "contains", value, "groceries")]
     assert body["filed"] == [] and repo.writes == []
 
 
 # --- WHIT-523 scope: what the inline rule sweeps vs what it must NOT --------------
 
 
-def test_the_plain_sweep_still_files_across_ALL_her_rules(handler, monkeypatch):
+def test_the_plain_sweep_still_files_across_ALL_her_rules(handler):
     # [A16] REGRESSION GUARD — the worst outcome of WHIT-523 would be the scoping leaking onto the
     # plain "Apply my rules" button (no inline rule), quietly filing only ONE of her rules. With no
     # inline `rule`, EVERY rule must still sweep: a COLES charge AND a BP charge both file, to their
-    # own categories, and both rules show in byRule. Does NOT duplicate
-    # test_no_inline_rule_behaves_exactly_as_before (impl suite) — that has ONE existing rule and so
-    # can't tell a full sweep from a truncated one; this pins multiple rules all firing.
+    # own categories, and both rules show in byRule.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-04", "t1", description="COLES 0342", category=None),
         _row(SPENDING, "2026-07-03", "t2", description="COLES ONLINE", category=None),
@@ -520,29 +459,27 @@ def test_the_plain_sweep_still_files_across_ALL_her_rules(handler, monkeypatch):
     ]})
     existing = [
         {"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
-         "categoryId": "groceries", "conditionCount": 1},
+         "categoryId": "groceries"},
         {"id": "r2", "field": "description", "operator": "contains", "value": "BP 2210",
-         "categoryId": "petrol", "conditionCount": 1},
+         "categoryId": "petrol"},
     ]
-    response, body, banksync = _apply(handler, monkeypatch, repo, {"dryRun": False},
-                                      banksync=_BankSync(existing))
+    response, body, rule_repo = _apply(handler, repo, {"dryRun": False}, existing=existing)
 
     assert response["statusCode"] == 200
-    assert banksync.minted == [] and body["createdRule"] is None    # plain path mints nothing
+    assert rule_repo.minted == [] and body["createdRule"] is None    # plain path mints nothing
     assert sorted(filed["id"] for filed in body["filed"]) == ["b1", "t1", "t2"]  # never n1
     assert body["byCategory"] == {"groceries": 2, "petrol": 1}
     assert body["rulesConsidered"] == 2
     assert sorted(entry["ruleId"] for entry in body["byRule"]) == ["r1", "r2"]
 
 
-def test_conflicted_cannot_arise_on_the_inline_path(handler, monkeypatch):
+def test_conflicted_cannot_arise_on_the_inline_path(handler):
     # [A17] The card's claim to pin: with only the inline rule sweeping, nothing is left to
     # disagree, so `conflicted` is always 0 on the inline path. Two of her EXISTING rules
     # (NETFLIX->groceries, FLIX->petrol) both hit the NETFLIX charge and disagree — under the OLD
     # "all rules + inline" sweep that charge is conflicted:1 with a sample. Neither existing rule
     # clashes with the inline COLES rule (different text), so no 409 masks it. Under WHIT-523 the
     # sweep is COLES alone: conflicted 0, no samples, and the NETFLIX charge just stays unfiled.
-    # FAIL-ON-REVERT: undo the one-liner -> conflicted becomes 1 and rulesConsidered 3.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-03", "t1", description="COLES 0342", category=None),
         _row(SPENDING, "2026-07-02", "t2", description="COLES ONLINE", category=None),
@@ -550,14 +487,13 @@ def test_conflicted_cannot_arise_on_the_inline_path(handler, monkeypatch):
     ]})
     existing = [
         {"id": "r1", "field": "description", "operator": "contains", "value": "NETFLIX",
-         "categoryId": "groceries", "conditionCount": 1},
+         "categoryId": "groceries"},
         {"id": "r2", "field": "description", "operator": "contains", "value": "FLIX",
-         "categoryId": "petrol", "conditionCount": 1},
+         "categoryId": "petrol"},
     ]
     response, body, _ = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 200
     assert body["conflicted"] == 0 and body["conflictedSamples"] == []
@@ -566,15 +502,12 @@ def test_conflicted_cannot_arise_on_the_inline_path(handler, monkeypatch):
     assert body["byCategory"] == {"groceries": 2}
 
 
-def test_a_nested_agreeing_rules_charge_stays_unfiled_only_inline_text_files(handler, monkeypatch):
+def test_a_nested_agreeing_rules_charge_stays_unfiled_only_inline_text_files(handler):
     # [A18] The exact boundary the card names. Existing COLES EXPRESS->groceries AND
     # WOOLWORTHS->groceries both AGREE with the inline COLES->groceries, so neither clashes (no
     # 409). Under WHIT-523 the inline COLES rule files what ITS OWN text matches — including the
     # nested-narrower COLES EXPRESS charge (its description contains "COLES") — but NOT the
-    # WOOLWORTHS charge, which only her other rule matches. FAIL-ON-REVERT: undo the one-liner and
-    # the WOOLWORTHS charge (w1) files too. Does NOT duplicate
-    # test_a_nested_rule_to_the_SAME_category_is_still_fine (impl suite): that fixture has no
-    # discriminating charge, so it passes under BOTH the scoped and the all-rules sweep.
+    # WOOLWORTHS charge, which only her other rule matches.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-04", "t1", description="COLES 0342 RICHMOND", category=None),
         _row(SPENDING, "2026-07-03", "t2", description="COLES ONLINE", category=None),
@@ -583,14 +516,13 @@ def test_a_nested_agreeing_rules_charge_stays_unfiled_only_inline_text_files(han
     ]})
     existing = [
         {"id": "r1", "field": "description", "operator": "contains", "value": "COLES EXPRESS",
-         "categoryId": "groceries", "conditionCount": 1},
+         "categoryId": "groceries"},
         {"id": "r2", "field": "description", "operator": "contains", "value": "WOOLWORTHS",
-         "categoryId": "groceries", "conditionCount": 1},
+         "categoryId": "groceries"},
     ]
     response, body, _ = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 200
     # e1 (COLES EXPRESS) files because the inline COLES text matches it; w1 (WOOLWORTHS) does not.
@@ -599,28 +531,24 @@ def test_a_nested_agreeing_rules_charge_stays_unfiled_only_inline_text_files(han
     assert body["rulesConsidered"] == 1
 
 
-def test_a_preview_with_other_rules_counts_only_the_inline_rule(handler, monkeypatch):
+def test_a_preview_with_other_rules_counts_only_the_inline_rule(handler):
     # [A19] The screen previews before minting, so the numbers it shows must be the scoped ones.
     # With an existing BP->petrol rule and a BP charge present, the preview must count ONLY the
     # inline COLES rule: matched 2, byCategory groceries-only, rulesConsidered 1, nothing minted.
-    # Does NOT duplicate test_a_preview_shows_the_numbers_without_minting_anything (impl suite):
-    # that fixture has no other rules, so its matched==2 holds under the all-rules sweep too.
-    # FAIL-ON-REVERT: undo the one-liner -> matched 3, byCategory gains petrol, rulesConsidered 2.
     repo = WritableFeedRepo({SPENDING: [
         _row(SPENDING, "2026-07-03", "t1", description="COLES 0342", category=None),
         _row(SPENDING, "2026-07-02", "t2", description="COLES ONLINE", category=None),
         _row(SPENDING, "2026-07-01", "b1", description="BP 2210 SERVO", category=None),
     ]})
     existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "BP 2210",
-                 "categoryId": "petrol", "conditionCount": 1}]
-    response, body, banksync = _apply(
-        handler, monkeypatch, repo,
-        {"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}},
-        banksync=_BankSync(existing))
+                 "categoryId": "petrol"}]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
 
     assert response["statusCode"] == 200
     assert body["dryRun"] is True
     assert body["matched"] == 2
     assert body["byCategory"] == {"groceries": 2}
     assert body["rulesConsidered"] == 1
-    assert body["createdRule"] is None and banksync.minted == [] and repo.writes == []
+    assert body["createdRule"] is None and rule_repo.minted == [] and repo.writes == []
