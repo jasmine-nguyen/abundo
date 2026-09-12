@@ -221,6 +221,35 @@ def test_overlaps_is_false_when_either_value_is_empty(rule_engine):
     assert not rule_engine.overlaps(_rule("COLES"), "description", "contains", "   ")
 
 
+# --- rule_id_for: the stable dedup id -----------------------------------------
+
+
+def test_rule_id_for_is_sixteen_lowercase_hex(rule_engine):
+    rule_id = rule_engine.rule_id_for("description", "contains", "COLES")
+    assert len(rule_id) == 16
+    assert all(character in "0123456789abcdef" for character in rule_id)
+
+
+def test_rule_id_for_folds_the_value_so_casing_and_spacing_variants_share_an_id(rule_engine):
+    base = rule_engine.rule_id_for("description", "contains", "coles online")
+    assert rule_engine.rule_id_for("description", "contains", "COLES ONLINE") == base
+    assert rule_engine.rule_id_for("description", "contains", "  coles   online  ") == base
+
+
+def test_rule_id_for_changes_with_field_operator_or_value(rule_engine):
+    base = rule_engine.rule_id_for("description", "contains", "coles")
+    assert rule_engine.rule_id_for("category", "contains", "coles") != base
+    assert rule_engine.rule_id_for("description", "equals", "coles") != base
+    assert rule_engine.rule_id_for("description", "contains", "woolworths") != base
+
+
+def test_rule_id_for_pins_the_recipe(rule_engine):
+    # FAIL-ON-REVERT: a hardcoded expected value locks the "field|operator|folded value" recipe —
+    # reordering the parts, dropping the fold, or changing the "|" separator all redden here.
+    assert rule_engine.rule_id_for("description", "contains", "COLES") == "e199355ab3c7aab5"
+    assert rule_engine.rule_id_for("category", "equals", "COLES") == "888b3f0ebce53244"
+
+
 # --- the run-twice property ---------------------------------------------------
 
 

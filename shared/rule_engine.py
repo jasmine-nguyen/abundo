@@ -12,9 +12,11 @@ A rule is by definition "description contains VALUE" / "category equals VALUE".
 
 No I/O and NO `from constants import`: this is a flat shared-layer module (the layer is
 staged with a non-recursive `cp shared/*.py`, and `lambda_api/constants.py` shadows the
-shared constants at runtime — AGENTS.md), so it stays pure and constants-free. `re` only.
+shared constants at runtime — AGENTS.md), so it stays pure and constants-free. Stdlib
+`re` + `hashlib` only.
 """
 
+import hashlib
 import re
 
 # Rule fields we can evaluate. `description` is the one the app authors (the client only
@@ -42,6 +44,19 @@ def fold(value: str) -> str:
     right latitude for dedup identity but too wide for matching. See `_normalise`.
     """
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def rule_id_for(field: str, operator: str, value: str) -> str:
+    """Stable dedup id for a leaf rule: the first 16 hex chars of
+    sha256("field|operator|folded value").
+
+    `field` and `operator` are matched literally (a closed vocabulary — description/contains,
+    category/equals), so they go in raw; only `value` is folded, so case- and spacing-variants
+    of the same merchant collapse to ONE id. The id IS the duplicate guard: our rule store keys
+    a row on it, so "the same rule twice" lands on the same row by construction (WHIT-528).
+    """
+    digest = hashlib.sha256(f"{field}|{operator}|{fold(value)}".encode("utf-8")).hexdigest()
+    return digest[:16]
 
 
 def _normalise(value) -> str:

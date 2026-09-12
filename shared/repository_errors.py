@@ -22,6 +22,21 @@ class VersionConflictError(Exception):
     to 409). Shared by every single-config-item repository."""
 
 
+class RuleClashError(Exception):
+    """A rule with the same text (field + operator + folded value) already exists but files
+    to a DIFFERENT category, so the write would silently fight the existing rule over the same
+    charges (handler maps this to 409). Carries the conflicting existing rule as `.existing`
+    so the caller can show what it clashed with."""
+
+    def __init__(self, existing: dict) -> None:
+        super().__init__("a rule with this text already files to a different category")
+        self.existing = existing
+
+
+class RuleNotFoundError(Exception):
+    """No rule with the given id exists (handler maps this to 404)."""
+
+
 class DatabaseError(Exception):
     """A DynamoDB operation failed — raised by handle_database_error, chaining the
     underlying botocore ClientError as its cause.
