@@ -14,6 +14,7 @@ on:
     paths:
       - "shared/**"
       - "lambda*/**"
+      - "scripts/**/*.py"
       - "tests/**"
       # No client-file (src/) entry here: the cross-language twin guards that read a
       # client file now run on any src/ change via twin-guards.yml (the `crosslang`
@@ -50,7 +51,7 @@ jobs:
           python -m pytest \
             --cov=shared --cov=lambda --cov=lambda_api --cov=lambda_sync_trigger \
             --cov=lambda_balance_poller --cov=lambda_presignup --cov=lambda_push_receipts \
-            --cov=lambda_goal_nudge \
+            --cov=lambda_goal_nudge --cov=scripts \
             --cov-report=term-missing \
             --cov-fail-under=72
 
