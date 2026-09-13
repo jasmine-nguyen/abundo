@@ -79,7 +79,7 @@ def test_list_budgets_drops_an_excluded_charge(handler):
     result = handler.list_budgets(budget_repo, txn_repo, _PayCycleRepo(),
                                   _CategoryRepo([{"id": "coffee", "bucket": "Lifestyle"}]))
 
-    assert result == {"coffee": {"target": Decimal("100"),
+    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"),
                                  "posted": Decimal("50"), "pending": Decimal("0")}}
 
 

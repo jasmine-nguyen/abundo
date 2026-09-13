@@ -184,7 +184,7 @@ def test_a_non_rollover_budget_is_byte_identical_to_before(handler):
     txns = FakeTransactionRepo([_txn("food", -40, "2026-08-08")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), FakeCategoryRepo(_spend_cat("food")))
 
-    assert result == {"food": {"target": Decimal(250), "posted": Decimal(40), "pending": Decimal(0)}}
+    assert result == {"food": {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(40), "pending": Decimal(0)}}
     assert budget_repo.settle_calls == []
 
 

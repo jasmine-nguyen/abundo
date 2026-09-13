@@ -160,7 +160,7 @@ def test_a_finished_plan_shows_nothing_and_is_cleared_best_effort(handler):
     budget_repo = FakeBudgetRepo({"insurance": _entry(spread_from="2026-03-09")})
     result = _list(handler, budget_repo)
 
-    assert result["insurance"] == {"target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
+    assert result["insurance"] == {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
     assert budget_repo.clear_spread_calls == ["insurance"]
 
 
@@ -315,7 +315,7 @@ def test_a_plain_budget_row_is_byte_identical_to_before(handler):
     budget_repo = FakeBudgetRepo({"food": {"target": Decimal(250)}})
     result = _list(handler, budget_repo, [_txn("food", -40, "2026-08-08")], _spend_cat("food"))
 
-    assert result == {"food": {"target": Decimal(250), "posted": Decimal(40), "pending": Decimal(0)}}
+    assert result == {"food": {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(40), "pending": Decimal(0)}}
 
 
 def test_a_failed_clear_never_500s_the_read(handler):
@@ -337,7 +337,7 @@ def test_a_partial_spread_entry_is_cleared_instead_of_500ing_the_whole_screen(ha
     })
     result = _list(handler, budget_repo, categories=_spend_cat() + _spend_cat("food"))
 
-    assert result["insurance"] == {"target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
+    assert result["insurance"] == {"available": Decimal(250), "target": Decimal(250), "posted": Decimal(0), "pending": Decimal(0)}
     assert result["food"]["target"] == Decimal(80)
     assert budget_repo.clear_spread_calls == ["insurance"]
 

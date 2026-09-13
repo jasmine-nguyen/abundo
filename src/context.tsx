@@ -73,6 +73,9 @@ export interface Budget {
   // A category has rollover OR a spread, never both, so at most one of carryover/spreadAdjustment
   // is ever non-zero.
   spreadAdjustment: number; spread?: SpreadPlan;
+  // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549).
+  // Absent on a server that predates it — the screen falls back to the old parts-sum below.
+  available?: number;
 }
 export interface Transaction {
   transaction_id: string;
@@ -530,6 +533,9 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
     id, budget: rollup.target, posted: rollup.posted, pending: rollup.pending,
     rollover: rollup.rollover ?? false, carryover: rollup.carryover ?? 0,
     spreadAdjustment: rollup.spread?.adjustment ?? 0, spread: rollup.spread,
+    // Pass through the server-computed spendable; stays undefined when the server omits it,
+    // so the screens' `?? <parts-sum>` fallback fires (WHIT-549).
+    available: rollup.available,
   };
 }
 
@@ -2227,7 +2233,9 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     // fund adds room; a prior spike's deficit removes it). A bill spread adds its own signed
     // adjustment (a cushion this cycle, a slice in a payback cycle). Rollover XOR spread, so
     // at most one term is non-zero; Non-rollover/non-spend/Income => both 0, available == budget.
-    const available = b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment;
+    // Prefer the server-computed spendable (WHIT-549); fall back to the parts-sum for a server
+    // that predates it. `??` (not `||`) so a legitimate 0 from the server is kept, not overridden.
+    const available = b.available ?? (b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment);
     // Bars/remain divide by `available`, but it can be 0 or negative (a drained/borrowed
     // envelope) — fall back to the base target, then 1, so a percentage is never NaN.
     const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
@@ -3153,7 +3161,9 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   // Rollover: the spendable envelope this cycle is target + buffer (see budgetViews); a bill
   // spread adds its signed adjustment instead (rollover XOR spread). `den` guards the bar
   // percentages against a 0/negative envelope. No rollover/spend adjustment => available == budget.
-  const available = b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment;
+  // Prefer the server-computed spendable (WHIT-549); fall back to the parts-sum for a server
+  // that predates it. `??` (not `||`) so a legitimate 0 from the server is kept, not overridden.
+  const available = b.available ?? (b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment);
   const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
   const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
   // The list is already the cycle's whole subtree, contributing rows only, newest-first

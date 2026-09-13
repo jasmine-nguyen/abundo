@@ -195,7 +195,7 @@ def test_cleared_entry_serialises_through_list_budgets_with_no_leftover_rollover
     result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(), cat_repo)
 
     wire = json.loads(handler._json_response(200, result)["body"])
-    assert wire["sink"] == {"target": 100, "posted": 0, "pending": 0}
+    assert wire["sink"] == {"available": 100, "target": 100, "posted": 0, "pending": 0}
 
 
 # --- best-effort FAILURE is a KNOWN LIMITATION, not corruption ----------------
