@@ -433,3 +433,527 @@ def test_handler_non_dict_event_stays_dry_run(lam, repo, monkeypatch):
         assert body["dry_run"] is True, bad
         assert body["reaped"] == 0, bad
     assert "ghost" in _rows(repo)
+
+
+# --- WHIT-511: rescue a filed pending's category onto its settled twin before the reap ------
+#
+# The bug: a settled charge that misses all six reconcile tiers lands unfiled while its
+# already-categorised pending twin waits; the sweep then reaps the pending and the filing is
+# lost. Option C (strict): before reaping a FILED pending, carry its user fields onto a
+# confident unfiled settled twin, then reap — so the filing survives and nothing double-counts.
+# No confident twin -> reap exactly as today.
+
+
+class _FakeCategoryRepo:
+    """Local read-only taxonomy stub. A shared FakeCategoryRepo lives in
+    tests/shared/_feed_fakes.py but isn't on the lambda test path, and WHIT-520 is still
+    consolidating the per-suite copies on its own branch — so the sibling suites
+    (test_rule_ingest) keep a local one and this does too, to avoid colliding with it."""
+
+    def __init__(self, category_ids, *, error=False):
+        self._categories = [{"id": cid} for cid in category_ids]
+        self._error = error
+
+    def list_categories(self):
+        if self._error:
+            raise RuntimeError("taxonomy read boom")
+        return [dict(category) for category in self._categories]
+
+
+def _norm(lam, txn_id, date_str, *, pending, amount=-5.50, account=_ACCOUNT_A,
+          description="SQ *KKV INTERNATIONAL PTY", category=None):
+    """A normalised row (as it sits in the store), with an optional category to mark it filed."""
+    raw = _raw_row(txn_id, date_str, pending=pending, amount=amount, account=account)
+    raw["description"] = description
+    raw["merchantName"] = description
+    raw["category"] = category
+    return lam.banksync.BankSyncClient.normalise(raw)
+
+
+def _sweep_tax(lam, repo, category_ids, *, dry_run=False, error=False):
+    return lam.age_out.age_out_stale_pendings(
+        repo, _FakeCategoryRepo(category_ids, error=error), today=_TODAY, dry_run=dry_run)
+
+
+def test_rescue_carries_filing_onto_settled_twin_then_reaps(lam, repo, caplog):
+    # A filed stale pending + its unfiled settled twin (same amount, shop, within 3 days).
+    # The twin's raw category is a NON-budget one, so recompute must FLIP counts_to_budget
+    # to the filed category's value. Fail-on-revert: without the rescue the pending is reaped
+    # and the twin stays unfiled (category unchanged); without the recompute counts_to_budget
+    # stays False.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="TRANSFER_OUT")
+    repo.insert_transactions([filed, twin])
+    assert twin["counts_to_budget"] is False  # TRANSFER_OUT is non-budget
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="age_out"):
+        summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows            # reaped
+    assert summary["rescued"] == 1 and summary["reaped"] == 1
+    carried = rows["settled_twin"]
+    assert carried["category"] == "groceries"     # filing carried onto the twin
+    assert carried["counts_to_budget"] is True    # recomputed for the new category
+    assert "rescue: carried category" in caplog.text
+
+
+def test_rescue_carries_notes_and_tags_when_category_unfiled(lam, repo):
+    # "Filed" is not only a category: a note/tag/exclusion the user set is carried too. A
+    # pending with an unfiled category but a note IS worth rescuing. Fail-on-revert: drop the
+    # notes/tags/budget_excluded arm of _pending_is_filed and this pending isn't rescued.
+    filed = _norm(lam, "noted_pending", "2026-06-10", pending=True, category=None)
+    filed["notes"] = "work lunch"
+    filed["tags"] = ["reimbursable"]
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "noted_pending" not in rows and summary["rescued"] == 1
+    assert rows["settled_twin"]["notes"] == "work lunch"
+    assert rows["settled_twin"]["tags"] == ["reimbursable"]
+
+
+def test_no_rescue_when_amount_differs(lam, repo):
+    # Strict: a different amount is not the same charge. Reaped as today, no carry.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, amount=-5.50, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, amount=-9.99, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows and summary["rescued"] == 0
+    assert rows["settled_twin"].get("category") is None   # untouched
+
+
+def test_no_rescue_when_merchant_differs(lam, repo):
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False,
+                 description="TOTALLY DIFFERENT SHOP", category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    assert "filed_pending" not in _rows(repo) and summary["rescued"] == 0
+    assert _rows(repo)["settled_twin"].get("category") is None
+
+
+def test_no_rescue_when_dates_more_than_window_apart(lam, repo):
+    # 2026-06-10 vs 2026-06-20 is 10 days > the 3-day carry window. No carry.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-20", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    assert "filed_pending" not in _rows(repo) and summary["rescued"] == 0
+    assert _rows(repo)["settled_twin"].get("category") is None
+
+
+def test_ambiguous_tie_carries_nothing(lam, repo, caplog):
+    # Two unfiled settled twins both match -> strict refuses to guess. Reaped as today,
+    # both twins untouched. Fail-on-revert: relax "exactly one" and it would carry onto one.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin1 = _norm(lam, "twin_1", "2026-06-11", pending=False, category=None)
+    twin2 = _norm(lam, "twin_2", "2026-06-12", pending=False, category=None)
+    repo.insert_transactions([filed, twin1, twin2])
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="age_out"):
+        summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows and summary["rescued"] == 0
+    assert rows["twin_1"].get("category") is None and rows["twin_2"].get("category") is None
+    assert "no confident twin" in caplog.text
+
+
+def test_unfiled_ghost_is_reaped_without_rescue(lam, repo):
+    # A genuinely unfiled pending (no category, no user fields) is reaped exactly as before —
+    # no regression. Fail-on-revert guard for the existing behaviour under the new code path.
+    _store(lam, repo, _raw_row("ghost", "2026-06-10"))  # category None, no notes
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    assert "ghost" not in _rows(repo) and summary["rescued"] == 0
+    assert _rows(repo)["settled_twin"].get("category") is None  # not carried onto
+
+
+def test_already_filed_twin_is_excluded_so_override_is_lost(lam, repo):
+    # WHIT-553 (accepted gap): if the settled twin is ALREADY filed — e.g. a rule filed it at
+    # ingest — it is not an unfiled candidate, so strict carries nothing and the user's manual
+    # filing is lost. Pinned as DELIBERATE (strict never overwrites a filed charge); the clean
+    # fix waits on provenance (WHIT-536).
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="petrol")  # rule-filed
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries", "petrol"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows and summary["rescued"] == 0
+    assert rows["settled_twin"]["category"] == "petrol"  # rule's guess stands; override lost
+
+
+def test_dry_run_writes_nothing_but_reports_would_rescue(lam, repo, caplog):
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="age_out"):
+        summary = _sweep_tax(lam, repo, ["groceries"], dry_run=True)
+
+    rows = _rows(repo)
+    assert "filed_pending" in rows                      # nothing deleted
+    assert rows["settled_twin"].get("category") is None     # nothing written
+    assert summary["reaped"] == 0 and summary["rescued"] == 0
+    assert "WOULD carry" in caplog.text
+
+
+def test_carry_write_failure_keeps_the_pending(lam, repo, monkeypatch, caplog):
+    # The filing must never be deleted before it is safely copied. If the carry write raises,
+    # the pending is NOT reaped (retried next sweep) and it is counted failed.
+    # Fail-on-revert: reap regardless of the write outcome and the filing is lost on a fault.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    def boom(_rows):
+        raise lam.age_out.DatabaseError("Database write failed: throttled")
+
+    monkeypatch.setattr(repo, "insert_transactions", boom)
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="age_out"):
+        summary = _sweep_tax(lam, repo, ["groceries"])
+
+    assert "filed_pending" in _rows(repo)               # kept for the retry
+    assert summary["failed"] == 1 and summary["rescued"] == 0 and summary["reaped"] == 0
+    assert "rescue carry FAILED" in caplog.text
+
+
+def test_taxonomy_read_failure_reaps_as_today(lam, repo):
+    # Fail-open: an unreadable taxonomy disables the rescue, so the sweep reaps exactly as
+    # before rather than blocking the ghost cleanup on a category-store outage.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"], error=True)
+
+    assert "filed_pending" not in _rows(repo)           # reaped as today
+    assert summary["reaped"] == 1 and summary["rescued"] == 0
+    assert _rows(repo)["settled_twin"].get("category") is None  # no rescue attempted
+
+
+def test_no_category_repo_reaps_as_before(lam, repo):
+    # The optional category_repo keeps every existing caller unchanged: with none passed, a
+    # filed pending is reaped with no rescue (the pre-WHIT-511 behaviour).
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = lam.age_out.age_out_stale_pendings(repo, today=_TODAY, dry_run=False)
+
+    assert "filed_pending" not in _rows(repo)
+    assert summary["rescued"] == 0
+    assert _rows(repo)["settled_twin"].get("category") is None
+
+
+def test_wrong_carry_onto_coincidental_same_chain_charge(lam, repo):
+    # [A20] (P1) A filed pending's REAL twin already reconciled away, leaving only a
+    # COINCIDENTAL settled charge at the same chain, same amount, within 3 days — a
+    # DIFFERENT purchase. Strict still carries onto it: exact-amount + chain-merchant + ±3d
+    # is NOT purchase-identity, so the filing lands on the wrong charge. ACCEPTED false-positive.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, amount=-5.50, category="groceries")
+    coincidental = _norm(lam, "other_purchase", "2026-06-11", pending=False, amount=-5.50, category=None)
+    coincidental["pending_transaction_id"] = "a-totally-different-pending"
+    repo.insert_transactions([filed, coincidental])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows
+    assert summary["rescued"] == 1
+    assert rows["other_purchase"]["category"] == "groceries"
+
+
+def test_tip_adjusted_settlement_is_not_rescued(lam, repo):
+    # [A21] (P1) A tipped settlement: pending -50.00 settles -55.00. The rescue uses EXACT
+    # amount (deliberately strict — narrower than the reconciler's tip tier), so the twin is
+    # rejected and the filing is lost when the pending is reaped. Pinned as an accepted miss.
+    filed = _norm(lam, "tipped_pending", "2026-06-10", pending=True, amount=-50.00, category="groceries")
+    tipped_twin = _norm(lam, "tipped_twin", "2026-06-11", pending=False, amount=-55.00, category=None)
+    repo.insert_transactions([filed, tipped_twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "tipped_pending" not in rows
+    assert summary["rescued"] == 0
+    assert rows["tipped_twin"].get("category") is None
+
+
+def test_one_day_clock_skew_twin_is_rescued(lam, repo):
+    # [A22] (P0) The common swipe->settle skew: pending dated one day off its twin (within ±3)
+    # IS rescued. Guards the window isn't so tight it drops the normal case.
+    filed = _norm(lam, "skew_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "skew_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    assert "skew_pending" not in _rows(repo) and summary["rescued"] == 1
+    assert _rows(repo)["skew_twin"]["category"] == "groceries"
+
+
+def test_budget_excluded_only_pending_is_rescued(lam, repo):
+    # [A23] (P0) No category/notes/tags — ONLY budget_excluded=True. That IS a filing worth
+    # saving, so it is rescued and the exclusion carries. Fail-on-revert: drop the
+    # budget_excluded arm of _pending_is_filed and this pending is reaped, exclusion lost.
+    filed = _norm(lam, "excluded_pending", "2026-06-10", pending=True, category=None)
+    filed["budget_excluded"] = True
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "excluded_pending" not in rows and summary["rescued"] == 1
+    assert rows["settled_twin"]["budget_excluded"] is True
+
+
+def test_income_pending_is_treated_as_filed_and_rescues(lam, repo):
+    # [A24] (P2) is_unfiled_category treats "income" as filed, so a bank-tagged "income"
+    # pending reads as filed and carries "income" onto the twin even when the user set
+    # nothing. Pinned as a known, deliberate consequence of the OR-arm.
+    filed = _norm(lam, "income_pending", "2026-06-10", pending=True, category="income")
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "income_pending" not in rows and summary["rescued"] == 1
+    assert rows["settled_twin"]["category"] == "income"
+
+
+def test_recompute_forces_counts_to_budget_false_on_homeloan(lam, repo):
+    # [A25] (P0) "groceries" WOULD count on a spending account, but the twin is on the
+    # home-loan account, where counts_to_budget is always False. The recompute keys on the
+    # account, not just the category — even against a stale True. Fail-on-revert: drop the
+    # recompute line and the stale True survives.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries", account=_ACCOUNT_C)
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None, account=_ACCOUNT_C)
+    repo.insert_transactions([filed, twin])
+    for v in repo._table.store.values():
+        if v.get("transaction_id") == "settled_twin":
+            v["counts_to_budget"] = True
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert summary["rescued"] == 1
+    assert rows["settled_twin"]["category"] == "groceries"
+    assert rows["settled_twin"]["counts_to_budget"] is False
+
+
+def test_two_filed_pendings_each_get_their_own_twin(lam, repo):
+    # [A26] (P1) Two filed pendings at DIFFERENT merchants, one twin each. The trim after the
+    # first carry must not starve the second — both are rescued onto the right twin.
+    p1 = _norm(lam, "p_coles", "2026-06-10", pending=True, amount=-5.50,
+               description="SQ *KKV INTERNATIONAL PTY", category="groceries")
+    t1 = _norm(lam, "t_coles", "2026-06-11", pending=False, amount=-5.50,
+               description="SQ *KKV INTERNATIONAL PTY", category=None)
+    p2 = _norm(lam, "p_woolies", "2026-06-10", pending=True, amount=-7.00,
+               description="WOOLWORTHS SUPERMARKET AU", category="petrol")
+    t2 = _norm(lam, "t_woolies", "2026-06-11", pending=False, amount=-7.00,
+               description="WOOLWORTHS SUPERMARKET AU", category=None)
+    repo.insert_transactions([p1, t1, p2, t2])
+
+    summary = _sweep_tax(lam, repo, ["groceries", "petrol"])
+
+    rows = _rows(repo)
+    assert summary["rescued"] == 2 and summary["reaped"] == 2
+    assert rows["t_coles"]["category"] == "groceries"
+    assert rows["t_woolies"]["category"] == "petrol"
+
+
+def test_two_filed_pendings_one_shared_twin_first_wins(lam, repo):
+    # [A27] (P0) Two filed pendings both match the SAME single twin. The trim gives it to the
+    # FIRST processed pending; the second finds an empty pool and is reaped with no carry —
+    # never carried onto twice. Fail-on-revert: drop the trim line and rescued==2.
+    first = _norm(lam, "first_pending", "2026-06-09", pending=True, category="groceries")
+    second = _norm(lam, "second_pending", "2026-06-10", pending=True, category="petrol")
+    twin = _norm(lam, "shared_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([first, second, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries", "petrol"])
+
+    rows = _rows(repo)
+    assert summary["rescued"] == 1 and summary["reaped"] == 2
+    assert "first_pending" not in rows and "second_pending" not in rows
+    assert rows["shared_twin"]["category"] == "groceries"
+
+
+def test_two_filed_pendings_two_identical_twins_is_ambiguous_for_both(lam, repo):
+    # [A28] (P1) Two filed pendings AND two identical twins. Each pending sees TWO matching
+    # twins -> ambiguous -> no carry -> no trim -> the second is ambiguous too. BOTH filings
+    # lost. Pinned as the accepted cost of "a wrong carry is worse than a missed one".
+    p1 = _norm(lam, "p1", "2026-06-09", pending=True, category="groceries")
+    p2 = _norm(lam, "p2", "2026-06-10", pending=True, category="groceries")
+    t1 = _norm(lam, "t1", "2026-06-11", pending=False, category=None)
+    t2 = _norm(lam, "t2", "2026-06-12", pending=False, category=None)
+    repo.insert_transactions([p1, p2, t1, t2])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert summary["rescued"] == 0 and summary["reaped"] == 2
+    assert rows["t1"].get("category") is None and rows["t2"].get("category") is None
+
+
+def test_no_cross_account_carry(lam, repo):
+    # [A29] (P0) A filed pending in account A + a matching twin in account B. The candidate
+    # pool is loaded PER ACCOUNT, so A's filing must never land on B's charge — A reaped with
+    # no rescue, B untouched. Fail-on-revert: make get_posted cross-account and rescued==1.
+    filed = _norm(lam, "filed_a", "2026-06-10", pending=True, category="groceries", account=_ACCOUNT_A)
+    twin_b = _norm(lam, "twin_b", "2026-06-11", pending=False, category=None, account=_ACCOUNT_B)
+    repo.insert_transactions([filed, twin_b])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "filed_a" not in rows
+    assert summary["rescued"] == 0
+    assert rows["twin_b"].get("category") is None
+
+
+def test_within_days_boundaries(lam):
+    # [A30] (P0) Symmetric, INCLUSIVE at exactly _CARRY_DATE_SKEW_DAYS. Fail-on-revert: change
+    # `<= days` to `< days` and the exactly-3 case flips.
+    w = lam.age_out._within_days
+    assert w("2026-06-10", "2026-06-13", 3) is True
+    assert w("2026-06-13", "2026-06-10", 3) is True
+    assert w("2026-06-10", "2026-06-14", 3) is False
+    assert w("2026-06-10", "2026-06-10", 3) is True
+    assert w(None, "2026-06-10", 3) is False
+    assert w("2026-06-10", "", 3) is False
+    assert w("not-a-date", "2026-06-10", 3) is False
+
+
+def test_rescue_at_exactly_three_days_but_not_four(lam, repo):
+    # [A31] (P0) Integration boundary: twin +3 days IS rescued; a fresh run with twin +4 is NOT.
+    filed3 = _norm(lam, "filed3", "2026-06-10", pending=True, category="groceries")
+    twin3 = _norm(lam, "twin3", "2026-06-13", pending=False, category=None)
+    repo.insert_transactions([filed3, twin3])
+    s3 = _sweep_tax(lam, repo, ["groceries"])
+    assert s3["rescued"] == 1 and _rows(repo)["twin3"]["category"] == "groceries"
+
+    filed4 = _norm(lam, "filed4", "2026-06-10", pending=True, category="groceries")
+    twin4 = _norm(lam, "twin4", "2026-06-14", pending=False, category=None)
+    repo.insert_transactions([filed4, twin4])
+    s4 = _sweep_tax(lam, repo, ["groceries"])
+    assert s4["rescued"] == 0 and _rows(repo)["twin4"].get("category") is None
+
+
+def test_second_sweep_after_rescue_does_not_recarry(lam, repo, monkeypatch):
+    # [A32] (P0) Sweep 1 carries but the delete FAILS, so the pending lingers. Sweep 2 sees
+    # the twin now FILED (excluded) -> reaps the pending with no second carry.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    real_delete = repo._delete_pending_if_present
+
+    def fail_delete(pk, sk):
+        raise lam.age_out.DatabaseError("Database delete pending failed: throttled")
+
+    monkeypatch.setattr(repo, "_delete_pending_if_present", fail_delete)
+    first = _sweep_tax(lam, repo, ["groceries"])
+    assert first["rescued"] == 1 and first["failed"] == 1 and first["reaped"] == 0
+    assert "filed_pending" in _rows(repo)
+    assert _rows(repo)["settled_twin"]["category"] == "groceries"
+
+    monkeypatch.setattr(repo, "_delete_pending_if_present", real_delete)
+    second = _sweep_tax(lam, repo, ["groceries"])
+    rows = _rows(repo)
+    assert second["rescued"] == 0 and second["reaped"] == 1
+    assert "filed_pending" not in rows
+    assert rows["settled_twin"]["category"] == "groceries"
+
+
+def test_get_posted_paginates_beyond_first_page(lam, repo):
+    # [A33] (P0) A posted row beyond the first query page must still be returned (WHIT-82).
+    # Fail-on-revert: drop the LastEvaluatedKey loop and the later-page posted disappears.
+    internal_a = lam.banksync.resolve_account_id(_ACCOUNT_A)
+    p1 = _norm(lam, "posted1", "2026-06-01", pending=False)
+    p2 = _norm(lam, "posted2", "2026-06-02", pending=False)
+    pend = _norm(lam, "pending1", "2026-06-03", pending=True)
+    target = _norm(lam, "posted_target", "2026-06-04", pending=False)
+    repo.insert_transactions([p1, p2, pend, target])
+    repo._table.page_size = 2
+
+    got = {r["transaction_id"] for r in repo.get_posted_transactions_for_account(internal_a)}
+
+    assert got == {"posted1", "posted2", "posted_target"}
+    assert "pending1" not in got
+
+
+def test_get_posted_returns_only_posted_rows(lam, repo):
+    # [A34] (P0) Only status==posted comes back — never a pending. Fail-on-revert: swap the
+    # filter to PENDING_STATUS and this returns the wrong row.
+    internal_a = lam.banksync.resolve_account_id(_ACCOUNT_A)
+    repo.insert_transactions([
+        _norm(lam, "the_posted", "2026-06-01", pending=False),
+        _norm(lam, "a_pending", "2026-06-02", pending=True),
+    ])
+
+    got = {r["transaction_id"] for r in repo.get_posted_transactions_for_account(internal_a)}
+
+    assert got == {"the_posted"}
+
+
+def test_get_posted_is_per_account(lam, repo):
+    # [A35] (P1) The query keys on the account partition — a posted in another account is not
+    # returned. This is what makes the rescue's candidate pool per-account.
+    internal_a = lam.banksync.resolve_account_id(_ACCOUNT_A)
+    repo.insert_transactions([
+        _norm(lam, "posted_a", "2026-06-01", pending=False, account=_ACCOUNT_A),
+        _norm(lam, "posted_b", "2026-06-01", pending=False, account=_ACCOUNT_B),
+    ])
+
+    got = {r["transaction_id"] for r in repo.get_posted_transactions_for_account(internal_a)}
+
+    assert got == {"posted_a"}
+
+
+def test_posted_read_failure_reaps_as_today_without_aborting(lam, repo, monkeypatch, caplog):
+    # A posted-scan fault on one account must NOT abort the unattended sweep — the rescue is
+    # skipped (reap as today) and the sweep completes. Fail-on-revert: drop the try/except
+    # around the posted read and the DatabaseError propagates out, stranding every later ghost.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    def boom(_account_id):
+        raise lam.age_out.DatabaseError("Database read failed: throttled")
+
+    monkeypatch.setattr(repo, "get_posted_transactions_for_account", boom)
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="age_out"):
+        summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows              # reaped as today (rescue skipped)
+    assert summary["rescued"] == 0 and summary["reaped"] == 1
+    assert rows["settled_twin"].get("category") is None
+    assert "could not read posted rows" in caplog.text
