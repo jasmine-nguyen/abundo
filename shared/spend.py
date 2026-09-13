@@ -155,6 +155,46 @@ def spread_adjustment(amount: Decimal, cycles: int, index: int) -> Decimal:
     return Decimal(-slice_cents) / 100
 
 
+# ── Unified "Smoothing" engine (WHIT-547, slice 1 of the WHIT-546 epic) ──────────────
+# Pure maths for the model that will replace Rollover + Spread: one signed buffer per
+# category + an even payback that STARTS the current cycle. Slice 1 is deliberately
+# invisible — these are new functions with no call site yet; the read path (slice 2) and
+# storage/migration (slice 5) wire them in later.
+
+
+def payback_slice(amount: Decimal, cycles: int, index: int) -> Decimal:
+    """The signed amount a unified smoothing plan takes off a category's spendable in the
+    cycle at `index` (0 = the cycle the bill lands in).
+
+    Unlike spread_adjustment — which gives a full +amount cushion in cycle 0 then claws it
+    back over the NEXT cycles — smoothing pays the bill back in equal slices STARTING the
+    current cycle: an even negative slice for index 0..cycles-1, and 0 outside the plan.
+    The slices reuse spread_adjustment's whole-cent split (index i -> ordinal i+1, so
+    ordinals 1..cycles), so they sum to exactly -amount — net-zero, no lost cent.
+    """
+    if index < 0 or index >= cycles:
+        return Decimal(0)
+    return spread_adjustment(amount, cycles, index + 1)
+
+
+def unified_available(budget: Decimal, buffer: Decimal, payback: Decimal) -> Decimal:
+    """A smoothed category's spendable this cycle: base budget + the signed running buffer
+    (leftover accrued from past cycles) + this cycle's payback slice (already negative, from
+    payback_slice). The single source of the `budget + buffer - slice` identity so the read
+    path (slice 2) can't re-derive it inconsistently."""
+    return budget + buffer + payback
+
+
+def accrue_buffer(buffer: Decimal, target: Decimal, spend: Decimal) -> Decimal:
+    """Fold ONE completed cycle's signed leftover (`target - spend`, spend = posted + pending)
+    into the running buffer: underspend grows it, overspend shrinks it (a sinking fund).
+
+    This is the per-cycle leftover rule ONLY — it mirrors the single-window leftover in
+    lambda_api/handler.py's rollover seal, NOT the seal/settle-lag or multi-window folding,
+    which the composed cycle-sealer adds in a later slice."""
+    return buffer + (target - spend)
+
+
 # The five fields a stored bill spread carries — mirrors repository_budget._SPREAD_FIELDS (a
 # test pins the two equal). A read only trusts an entry that has all of them.
 _SPREAD_ENTRY_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
