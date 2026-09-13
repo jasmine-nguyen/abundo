@@ -14,12 +14,14 @@ from standardwebhooks.webhooks import Webhook
 # (`repository_transaction`, a different module from the webhook's local
 # `repository`) because only it has get_transactions_by_date_range.
 import budget_alerts
+import rule_ingest
 from repository_transaction import TransactionRepository as WindowRepo
 from repository_budget import BudgetRepository
 from repository_category import CategoryRepository
 from repository_device import DeviceRepository
 from repository_notify import NotifyRepository
 from repository_paycycle import PayCycleRepository
+from repository_rule import RuleRepository
 
 logger = logging.getLogger(__name__)
 # The Text-format Lambda runtime leaves the root logger at WARNING, so INFO logs are
@@ -96,6 +98,16 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
             unmapped_transactions.append(row)
 
     repo.save_failed_transactions(unmapped_transactions)
+
+    # Apply the user's rules as each charge lands (WHIT-530): BankSync no longer labels charges
+    # for us, so our server files each unfiled one by our own rules here, BEFORE the budget
+    # snapshot and the write see the category. Best-effort inside `apply` — a rules-read failure
+    # leaves the charge unfiled and still writes it.
+    rule_ingest.apply(
+        normalised_transactions,
+        rule_repo=RuleRepository(),
+        category_repo=CategoryRepository(),
+    )
 
     # Budget-threshold alerts (WHIT-22): snapshot spend BEFORE the write, so a
     # crossing can be detected against the pre-write state. Best-effort — a failure

@@ -1,0 +1,106 @@
+"""Apply the user's own categorisation rules to charges as they arrive (WHIT-530).
+
+BankSync used to label every charge at sync time, before it reached us. Once rules live in our
+own store (WHIT-526), our server must do that labelling itself. This is the webhook-side twin of
+the "Apply my rules" sweep (lambda_api.apply_rules_to_uncategorized): both decide a charge's
+category through the SAME shared rule_engine, so incoming and stored-history filing can never
+diverge. No provenance stamp yet — that is WHIT-536.
+
+Best-effort on the READ: a failure reading the rules or taxonomy is caught, so every charge lands
+unfiled (the sweep catches up). The per-charge filing itself is not wrapped — but a charge that
+reached here came through `normalise`, which always sets `account_id`, so the recompute can't fault
+on real traffic. Only unfiled charges are touched; one agreed live category is set, disagreeing
+rules leave the charge unfiled, and a rule to a deleted category is skipped.
+
+Not a method on the transaction store — a plain function taking the stores as arguments (the same
+shape as budget_alerts.capture_pre_write), so the WHIT-454 subclass wiring stays untouched. Imports
+no shared `constants` (the lambda_api/constants.py shadow landmine); rule_engine is constants-free.
+"""
+
+import logging
+
+from banksync import counts_to_budget
+import rule_engine
+
+logger = logging.getLogger(__name__)
+
+
+def _to_engine_rule(row: dict) -> dict:
+    """Map a stored rule row (repository_rule, snake_case `category_id`) to the engine's Rule
+    shape (`categoryId`). Mirrors lambda_api/handler._rule_to_client so the webhook and the API
+    decide identically. conditionCount is always 1 — our store only holds single-leaf rules."""
+    return {
+        "id": row.get("id"),
+        "field": row.get("field"),
+        "operator": row.get("operator"),
+        "value": row.get("value"),
+        "categoryId": row.get("category_id"),
+        "conditionCount": 1,
+    }
+
+
+def load_rules(rule_repo, category_repo):
+    """Read the user's rules + taxonomy once and return `(applicable_rules, is_unfiled)` ready to
+    file charges, or None if the read failed (the caller then leaves charges unfiled). Splitting
+    the read from the filing lets a per-row caller (reprocess) read once, not once per charge.
+
+    `applicable_rules` are the store rules mapped to the engine shape and filtered through
+    `rule_engine._skip_reason` — dropping multi-condition, unsupported, category-less and
+    deleted-category rules — so `decide` can read each one's categoryId directly."""
+    try:
+        taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+        rules = [_to_engine_rule(row) for row in rule_repo.list_rules()]
+    except Exception:
+        logger.exception("rule ingest: could not read rules/taxonomy; charges land unfiled")
+        return None
+
+    def is_unfiled(category):
+        return rule_engine.is_unfiled_category(category, taxonomy_ids)
+
+    applicable = [rule for rule in rules if rule_engine._skip_reason(rule, is_unfiled) is None]
+    return applicable, is_unfiled
+
+
+def file_charge(charge: dict, applicable_rules: list, is_unfiled) -> None:
+    """File one charge in place, if it is unfiled and exactly one live category is agreed.
+
+    Disagreeing rules leave it unfiled (both ids logged); no match leaves it unchanged. When a
+    rule files it, the SPENDING flag is recomputed from the new category (counts_to_budget), so a
+    charge filed into a non-budget category stops counting."""
+    if not applicable_rules:
+        return
+    if not is_unfiled(charge.get("category")):
+        return
+    resolved, matched_indices, categories = rule_engine.decide(applicable_rules, charge)
+    if not categories:
+        return
+    if resolved is None:
+        logger.info(
+            "rule ingest: %s left unfiled — matching rules disagree %s",
+            charge.get("transaction_id"),
+            sorted({applicable_rules[index]["id"] for index in matched_indices}),
+        )
+        return
+    charge["category"] = resolved
+    charge["counts_to_budget"] = counts_to_budget(charge["account_id"], resolved)
+    logger.info(
+        "rule ingest: filed %s -> %s (rule %s)",
+        charge.get("transaction_id"), resolved, applicable_rules[matched_indices[0]]["id"],
+    )
+
+
+def apply(rows: list, *, rule_repo, category_repo) -> list:
+    """File each unfiled charge in `rows` by the user's rules, in place, and return `rows`.
+
+    Reads the rules + taxonomy once for the whole batch. A read failure leaves every charge
+    unfiled (still lands, logged). An empty rule store is a no-op — the rows are returned
+    untouched."""
+    if not rows:
+        return rows                      # a data-less delivery (summary event) pays for no reads
+    loaded = load_rules(rule_repo, category_repo)
+    if loaded is None:
+        return rows
+    applicable_rules, is_unfiled = loaded
+    for charge in rows:
+        file_charge(charge, applicable_rules, is_unfiled)
+    return rows

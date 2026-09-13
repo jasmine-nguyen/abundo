@@ -222,8 +222,11 @@ def test_insert_failure_leaves_failed_row_and_counts_error(lam, repo, monkeypatc
 
 def test_lambda_handler_runs_the_sweep_and_returns_the_summary(lam, monkeypatch):
     monkeypatch.setattr(lam.reprocess, "TransactionRepository", lambda: object())
+    monkeypatch.setattr(lam.reprocess, "RuleRepository", lambda: object())
+    monkeypatch.setattr(lam.reprocess, "CategoryRepository", lambda: object())
+    # lambda_handler now passes the rule/category stores (WHIT-530); accept and ignore them.
     monkeypatch.setattr(lam.reprocess, "reprocess_failed",
-                        lambda repo: {"reprocessed": 2, "skipped": 1, "errors": 0})
+                        lambda repo, **kwargs: {"reprocessed": 2, "skipped": 1, "errors": 0})
 
     resp = lam.reprocess.lambda_handler({}, None)
 
@@ -343,3 +346,51 @@ def test_lambda_handler_serialises_the_real_summary(lam, repo, monkeypatch):
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"reprocessed": 1, "skipped": 0, "errors": 0}
     assert _failed_keys(repo) == []
+
+
+# --- WHIT-530: rule filing on re-drive (opt-in via injected stores) ----------
+
+
+class _FakeRuleStore:
+    def __init__(self, rules=()):
+        self._rules = [dict(r) for r in rules]
+
+    def list_rules(self):
+        return [dict(r) for r in self._rules]
+
+
+class _FakeCategoryRepo:
+    def __init__(self, ids):
+        self._ids = list(ids)
+
+    def list_categories(self):
+        return [{"id": i} for i in self._ids]
+
+
+def test_reprocess_without_rule_stores_does_not_file(lam, repo):
+    # Default call (no rule/category stores) is unchanged: the row recovers wearing its raw
+    # category, never rule-filed. Documents the opt-in contract — filing only happens when both
+    # stores are supplied (the genuine fail-on-revert for filing lives in the with-stores test
+    # below, where dropping the file_charge call flips the category back to the raw one).
+    repo.save_failed_transactions([_raw_row(txn_id="r1", category="FOOD_AND_DRINK")])
+
+    summary = lam.reprocess.reprocess_failed(repo)
+
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
+    assert _txn_rows(repo)["TXN#r1"]["category"] == "FOOD_AND_DRINK"
+
+
+def test_reprocess_with_rule_stores_files_a_recovered_row(lam, repo):
+    # With stores injected, a re-driven charge is filed by the user's rules before insert. The
+    # raw description "SQ *KKV INTERNATIONAL PTY" contains "KKV". FAIL-ON-REVERT: drop the
+    # file_charge call and the category stays the raw FOOD_AND_DRINK.
+    repo.save_failed_transactions([_raw_row(txn_id="r1", category="FOOD_AND_DRINK")])
+
+    summary = lam.reprocess.reprocess_failed(
+        repo,
+        rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
+                                   "value": "KKV", "category_id": "groceries"}]),
+        category_repo=_FakeCategoryRepo(["groceries"]))
+
+    assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
+    assert _txn_rows(repo)["TXN#r1"]["category"] == "groceries"

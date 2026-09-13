@@ -63,7 +63,8 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
 _REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "age_out",
              "budget_alerts", "repayment_alerts", "spend", "push", "repository_base", "repository_transaction", "repository_budget",
-             "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine")
+             "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine",
+             "rule_ingest", "repository_rule")
 
 
 @pytest.fixture
@@ -98,13 +99,14 @@ def lam():
         import age_out
         import budget_alerts
         import repayment_alerts
+        import rule_ingest
 
         ns = types.SimpleNamespace(
             repository=repository, banksync=banksync, handler=handler, models=models,
             merchant=merchant, reprocess=reprocess,
             age_out=age_out,
             budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,
-            up_webhook=up_webhook,
+            up_webhook=up_webhook, rule_ingest=rule_ingest,
         )
         try:
             yield ns
