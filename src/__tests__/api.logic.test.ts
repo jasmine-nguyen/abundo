@@ -30,11 +30,11 @@ beforeEach(() => {
 const RULE = { id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' };
 
 describe('listEnrichments', () => {
-  it('GETs /enrichments with the Bearer token and returns the rules', async () => {
+  it('GETs /rules with the Bearer token and returns the rules', async () => {
     fetchMock.mockReturnValue(okJson([RULE]));
     const out = await listEnrichments();
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
-    expect(url).toBe(`${API}/enrichments`);
+    expect(url).toBe(`${API}/rules`);
     expect(opts.headers.Authorization).toBe('Bearer test-token');
     expect(out).toEqual([RULE]);
   });
@@ -89,7 +89,7 @@ describe('createEnrichment', () => {
     fetchMock.mockReturnValue(okJson(RULE));
     await createEnrichment({ value: 'NETFLIX', categoryId: 'subs' });
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
-    expect(url).toBe(`${API}/enrichments`);
+    expect(url).toBe(`${API}/rules`);
     expect(opts.method).toBe('POST');
     expect(opts.headers['Content-Type']).toBe('application/json');
     expect(opts.headers.Authorization).toBe('Bearer test-token');
@@ -105,11 +105,11 @@ describe('createEnrichment', () => {
 });
 
 describe('updateEnrichment', () => {
-  it('PUTs /enrichments/{id} url-encoded, with body + Bearer token', async () => {
+  it('PUTs /rules/{id} url-encoded, with body + Bearer token', async () => {
     fetchMock.mockReturnValue(okJson(RULE));
     await updateEnrichment('a/b', { value: 'NETFLIX', categoryId: 'subs' });
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
-    expect(url).toBe(`${API}/enrichments/a%2Fb`);
+    expect(url).toBe(`${API}/rules/a%2Fb`);
     expect(opts.method).toBe('PUT');
     expect(opts.headers['Content-Type']).toBe('application/json');
     expect(opts.headers.Authorization).toBe('Bearer test-token');
@@ -130,11 +130,11 @@ describe('updateEnrichment', () => {
 });
 
 describe('deleteEnrichment', () => {
-  it('DELETEs /enrichments/{id} url-encoded, with the Bearer token', async () => {
+  it('DELETEs /rules/{id} url-encoded, with the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ id: 'a/b' }));
     await deleteEnrichment('a/b');
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
-    expect(url).toBe(`${API}/enrichments/a%2Fb`);
+    expect(url).toBe(`${API}/rules/a%2Fb`);
     expect(opts.method).toBe('DELETE');
     expect(opts.headers.Authorization).toBe('Bearer test-token');
   });
