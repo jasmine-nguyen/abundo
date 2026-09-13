@@ -281,6 +281,19 @@ export interface ApplyRulesResult {
    *  independently — a released app must not crash against a server that predates this field. */
   alreadyFiled?: string[];
   remaining: number;
+  /** The rule minted by an inline "file by shop" run (WHIT-517), or null when the run carried no
+   *  inline rule. Client-shaped ({id, field, operator, value, categoryId}). OPTIONAL for the same
+   *  ship-independently reason as `alreadyFiled` — a plain "Apply my rules" run omits it. */
+  createdRule?: CreatedRule | null;
+}
+
+/** The client-shaped rule the server returns after minting via an inline "file by shop" run. */
+export interface CreatedRule {
+  id: string;
+  field: string;
+  operator: string;
+  value: string;
+  categoryId: string;
 }
 
 /**
@@ -299,11 +312,63 @@ export interface ApplyRulesResult {
  * @returns The plan summary plus this request's outcome.
  * @throws If the response status is not OK (the sheet shows phase-specific copy).
  */
-export async function applyRulesToUncategorized(dryRun: boolean): Promise<ApplyRulesResult> {
+export async function applyRulesToUncategorized(
+  dryRun: boolean,
+  rule?: { value: string; categoryId: string },
+): Promise<ApplyRulesResult> {
   const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules`, {
     method: "POST",
     headers: await buildHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ dryRun }),
+    // The inline rule is sent ONLY when present — "Apply my rules" (no rule) stays byte-identical
+    // on the wire ({dryRun}). "File by shop" (WHIT-517) sends {dryRun, rule} to mint + file in one call.
+    body: JSON.stringify(rule ? { dryRun, rule } : { dryRun }),
+  }, APPLY_RULES_TIMEOUT_MS);
+  // Throw an ApiError carrying the STATUS but NOT the server body: "file by shop" needs to spot a
+  // 409 clash (an existing rule already files this shop elsewhere) to show its own copy for it
+  // (WHIT-517), and the status is the only thing it reads. serverMessage stays null on purpose —
+  // this endpoint's 4xx wording ("dryRun must be a boolean", BankSync internals) is never shown to
+  // the user, so it must not be carried. The message is byte-identical to the old `API error: N`
+  // throw, so the plain "Apply my rules" path and its tests are unaffected.
+  if (response.ok == false) throw new ApiError(response.status, null);
+
+  return readJson(response, APPLY_RULES_TIMEOUT_MS);
+}
+
+/** One rule-group of unfiled charges the server proposes for "file by shop" (WHIT-517). The
+ *  `alsoCatches` list names other shops the same rule would sweep, so an over-broad rule is
+ *  visible before minting. `firstDate`/`lastDate` bound the group; `samples` are example
+ *  descriptions. `groupedBy` says whether the group keys on a cleaned merchant name or a raw
+ *  description stem. All fields are server-authored (lambda_api/merchant_groups.py). */
+export interface UncategorizedMerchantGroup {
+  merchant: string;
+  rulePattern: string;
+  groupedBy: 'merchant' | 'description';
+  count: number;
+  samples: string[];
+  firstDate: string | null;
+  lastDate: string | null;
+  alsoCatches: { merchant: string | null; count: number }[];
+}
+
+/** The "file by shop" payload: the unfiled total, the rule-able groups (biggest first), and the
+ *  leftover one-off charges that can't be grouped into a rule. */
+export interface UncategorizedMerchants {
+  unfiled: number;
+  groups: UncategorizedMerchantGroup[];
+  ungrouped: { count: number; samples: string[] };
+}
+
+/**
+ * Fetch the unfiled charges grouped by shop for the "file by shop" screen (WHIT-517). Whole-history
+ * server walk + grouping, so it gets APPLY_RULES_TIMEOUT_MS like the apply-rules call, not the 15s
+ * default.
+ *
+ * @returns The grouped shops plus the ungrouped one-offs.
+ * @throws If the response status is not OK.
+ */
+export async function fetchUncategorizedMerchants(): Promise<UncategorizedMerchants> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/merchants`, {
+    headers: await buildHeaders(),
   }, APPLY_RULES_TIMEOUT_MS);
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 

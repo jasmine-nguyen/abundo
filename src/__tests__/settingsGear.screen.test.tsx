@@ -43,6 +43,7 @@ jest.mock('../queries', () => ({
   }),
   // WHIT-501: no uncategorized charges in these fixtures — the server tally is 0, matching the empty list.
   useUncategorizedCount: () => 0,
+  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
   useInsightsScreenData: () => ({ breakdown: {}, earned: 0, incomeSources: [], category, isLoading: false, isError: false, categoriesError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
   useGoalsScreenData: () => ({
     goals: [], payCycle: { length: 14, last_pay_date: '2024-01-03' }, balanceFor: () => null,

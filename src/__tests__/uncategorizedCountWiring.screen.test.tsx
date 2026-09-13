@@ -24,6 +24,7 @@ jest.mock('../queries', () => ({
   useRecentTransactionsScreenData: () => mockRecent,
   useKeepTransactionsFeedWarm: () => {},
   useUncategorizedCount: () => mockServerCount,
+  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
 }));
 
 // Real selectors (countUncategorized / transactionGroups); only useAppContext is stubbed.

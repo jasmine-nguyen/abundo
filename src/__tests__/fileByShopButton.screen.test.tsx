@@ -1,20 +1,21 @@
-// WHIT-508 — the "Apply my rules" button on the Uncategorized tab.
+// WHIT-517 — the "File by shop" button on the Uncategorized tab.
 //
-// It is gated on the WHOLE-history count (the number the badge shows), not the loaded-page count:
-// after a capped run the loaded page can be empty while hundreds of unfiled charges remain deeper
-// in history — exactly when the button is still needed. And it is hidden behind the cold spinner
-// and the load-error state like every other control on this screen, so it never renders over
-// "Couldn't load your transactions."
+// It sits beside "Apply my rules" but has an EXTRA gate: it only shows when there is at least one
+// rule-able shop (merchants.groups). "Apply my rules" files what existing rules cover; "File by
+// shop" handles the shops with NO rule yet — so once every shop is filed it must hide, even while
+// stray one-off charges keep the count above zero. It shares the other gates (uncategorized tab,
+// whole-history count > 0, not selection mode, not the cold spinner / error state).
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 
 let mockTx: Record<string, unknown>;
 let mockServerCount: number | undefined;
+let mockMerchants: unknown;
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
   useUncategorizedCount: () => mockServerCount,
-  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
+  useUncategorizedMerchants: () => ({ merchants: mockMerchants, isLoading: false, isError: false }),
 }));
 
 const mockSetSheet = jest.fn();
@@ -49,26 +50,50 @@ function txData(over: Record<string, unknown> = {}) {
   };
 }
 
-const BUTTON = 'transactions-apply-rules';
+const merchants = (over: Record<string, unknown> = {}) => ({
+  unfiled: 20,
+  groups: [{ merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 20, samples: ['COLES 1'], firstDate: null, lastDate: null, alsoCatches: [] }],
+  ungrouped: { count: 0, samples: [] },
+  ...over,
+});
 
-/** Render and switch to the Uncategorized tab unless told otherwise. */
+const BUTTON = 'transactions-file-by-shop';
+
 function renderTab(tab: 'all' | 'uncategorized' = 'uncategorized') {
   render(<Transactions />);
   if (tab === 'uncategorized') fireEvent.press(screen.getByTestId('tab-uncategorized'));
 }
 
-beforeEach(() => { mockTx = txData(); mockServerCount = 5; mockSetSheet.mockClear(); });
+beforeEach(() => { mockTx = txData(); mockServerCount = 5; mockMerchants = merchants(); mockSetSheet.mockClear(); });
 
-describe('the "Apply my rules" button', () => {
-  it('shows on the Uncategorized tab when there are unfiled charges', () => {
+describe('the "File by shop" button', () => {
+  it('shows on the Uncategorized tab when there are rule-able shops', () => {
     renderTab();
     expect(screen.getByTestId(BUTTON)).toBeTruthy();
   });
 
-  it('opens the apply-rules sheet when pressed', () => {
+  it('opens the file-by-shop list sheet when pressed', () => {
     renderTab();
     fireEvent.press(screen.getByTestId(BUTTON));
-    expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'applyRules' });
+    expect(mockSetSheet).toHaveBeenCalledWith({ mode: 'fileByShopList' });
+  });
+
+  // The extra gate this button adds over "Apply my rules". Fail-on-revert: drop the
+  // `merchants?.groups.length > 0` clause and the button shows with an empty shop list — opening a
+  // sheet with nothing to pick. Every shop filed but a stray one-off keeps the count > 0.
+  it('is hidden when there are no rule-able shops, even with unfiled charges left', () => {
+    mockMerchants = merchants({ groups: [], unfiled: 1, ungrouped: { count: 1, samples: ['ONE OFF'] } });
+    mockServerCount = 1;
+    renderTab();
+    expect(screen.queryByTestId(BUTTON)).toBeNull();
+  });
+
+  // While the shops are still loading (or pre-auth) the hook is undefined — the button waits rather
+  // than flashing in and out.
+  it('is hidden while the shop list is still loading (merchants undefined)', () => {
+    mockMerchants = undefined;
+    renderTab();
+    expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
   it('is not on the All tab', () => {
@@ -76,7 +101,6 @@ describe('the "Apply my rules" button', () => {
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
-  // "All caught up" — offering a sweep with nothing to sweep is noise.
   it('is gone once the server count resolves to zero', () => {
     mockServerCount = 0;
     mockTx = txData({ transactions: [] });
@@ -84,18 +108,6 @@ describe('the "Apply my rules" button', () => {
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
-  // The whole-history gate: the loaded page is empty (the rows sit deeper in history), but the
-  // badge says 339 remain — which is exactly the state a capped run leaves behind. Fail-on-revert:
-  // gate on the local loaded-page count instead and the button vanishes mid-way through the job.
-  it('stays visible when the loaded page is empty but history still has unfiled charges', () => {
-    mockServerCount = 339;
-    mockTx = txData({ transactions: [], hasMore: true });
-    renderTab();
-    expect(screen.getByTestId(BUTTON)).toBeTruthy();
-  });
-
-  // Fail-on-revert for the two gates the review added: drop `!showSpinner` / `!showError` and the
-  // button renders over the cold spinner or alongside "Couldn't load your transactions."
   it('is hidden during the cold load', () => {
     mockTx = txData({ transactions: [], isLoading: true });
     renderTab();
@@ -108,8 +120,6 @@ describe('the "Apply my rules" button', () => {
     expect(screen.queryByTestId(BUTTON)).toBeNull();
   });
 
-  // Selection mode is its own task ("re-categorise these 6"); a whole-history sweep alongside it
-  // would be two competing bulk actions on one screen.
   it('is hidden in selection mode', () => {
     renderTab();
     fireEvent.press(screen.getByText('Select'));

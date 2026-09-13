@@ -25,6 +25,7 @@ jest.mock('../queries', () => ({
   // WHIT-501: the screen now reads the server tally for the count. Mirror the LOCAL count here so
   // the transfer keeps the tab out of the "All caught up" state exactly as before.
   useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
+  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
 }));
 
 // WHIT-459 fold: superset useAppContext serving both regimes. The list screen asserts on

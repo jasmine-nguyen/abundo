@@ -6,8 +6,8 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, UncategorizedMerchants } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
@@ -67,6 +67,11 @@ export const transactionsRecentKey = ['transactionsRecent'] as const;
 // delete-category writes invalidate in context.tsx (context imports queryClient directly, not
 // this key, to avoid a circular import).
 export const uncategorizedCountKey = ['uncategorizedCount'] as const;
+// The unfiled charges grouped by shop, behind the "File by shop" screen (WHIT-517). Whole-history
+// server grouping. Kept in sync with the literal ['uncategorizedMerchants'] that
+// refreshAfterApplyRules invalidates in context.tsx after any rule sweep (context imports
+// queryClient directly, not this key, to avoid a circular import), so a filed shop leaves the list.
+export const uncategorizedMerchantsKey = ['uncategorizedMerchants'] as const;
 // Loan facts (the Settings "Loan details" row + the loan form). Un-windowed flat key,
 // kept in sync with the literal ['loanFacts'] the saveLoanFacts write uses in context.tsx.
 export const loanFactsKey = ['loanFacts'] as const;
@@ -404,6 +409,32 @@ export function useMilestonesQuery(enabled: boolean) {
 // window (a raw-EnrichmentRule cache couldn't).
 export function useRulesQuery(enabled: boolean) {
   return useQuery({ queryKey: rulesKey, queryFn: async () => selectRules(await listEnrichments()), enabled });
+}
+
+// WHIT-517: the "file by shop" payload. Fail loudly on a malformed shape (missing / non-array
+// `groups`) so the screen shows its error card + Retry rather than crashing a downstream .map or
+// silently rendering an empty list over real data. Array.isArray also rejects null/undefined.
+export function selectUncategorizedMerchants(raw: UncategorizedMerchants): UncategorizedMerchants {
+  if (!raw || !Array.isArray(raw.groups)) {
+    throw new Error(
+      `selectUncategorizedMerchants: expected a groups array from /uncategorized/merchants, got ${typeof (raw as { groups?: unknown } | null)?.groups}`);
+  }
+  return raw;
+}
+
+// The unfiled charges grouped by shop for the "File by shop" screen (WHIT-517). Longer staleTime
+// (a whole-history server walk, like the count at useUncategorizedCountQuery) so it stays cached
+// during a filing session; refreshAfterApplyRules invalidates it after a sweep so a filed shop
+// leaves the list. selectUncategorizedMerchants guards the shape.
+export function useUncategorizedMerchantsQuery(enabled: boolean) {
+  return useQuery({ queryKey: uncategorizedMerchantsKey, queryFn: fetchUncategorizedMerchants, enabled, select: selectUncategorizedMerchants, staleTime: 5 * 60_000 });
+}
+
+// The grouped shops for the current user — `merchants` is undefined while loading / errored /
+// pre-auth (each consumer treats undefined as "not loaded yet", never as "no shops").
+export function useUncategorizedMerchants() {
+  const q = useUncategorizedMerchantsQuery(useIsAuthed());
+  return { merchants: q.data, isLoading: q.isLoading, isError: q.isError };
 }
 
 // WHIT-203: the shared category-taxonomy hook. Every screen/overlay that only needs to

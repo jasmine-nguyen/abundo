@@ -5,9 +5,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, categoryLabel, APPLY_RULES_MAX_WRITES } from '../context';
-import type { RuleConflict, ApplyRulesResult, Category } from '../context';
+import type { RuleConflict, ApplyRulesResult, Category, FileByShopOutcome } from '../context';
+import type { UncategorizedMerchantGroup } from '../api';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
-import { useTransactionResolver, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed } from '../queries';
+import { useTransactionResolver, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed, useUncategorizedMerchants } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
 // The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
@@ -161,6 +162,8 @@ function SheetHost() {
             {s.sheet?.mode === 'paycycle' && <PayCycleSheet />}
             {s.sheet?.mode === 'goalbalance' && <GoalBalanceSheet key={s.sheet.goalId} />}
             {s.sheet?.mode === 'applyRules' && <ApplyRulesSheet />}
+            {s.sheet?.mode === 'fileByShopList' && <FileByShopListSheet />}
+            {s.sheet?.mode === 'fileByShopConfirm' && <FileByShopConfirmSheet key={`${s.sheet.group.rulePattern}:${s.sheet.categoryId}`} />}
           </View>
         </Animated.View>
       </KeyboardAvoidingView>
@@ -968,6 +971,350 @@ function chargeNoun(count: number): string {
   return count === 1 ? 'charge' : 'charges';
 }
 
+// WHIT-517: "File by shop" step 1 — the shops (merchant groups) behind unfiled charges, biggest
+// first. Tapping a shop swaps this same sheet to a category tree; picking a category advances to
+// FileByShopConfirmSheet with the shop + category captured. The button that opens this only shows
+// when there is at least one rule-able shop, so the loading/error/empty arms here are the rare
+// background-refetch cases, not the normal open.
+function FileByShopListSheet() {
+  const s = useAppContext();
+  const { merchants, isLoading, isError } = useUncategorizedMerchants();
+  const { categories: cats } = useCategories();
+  // Which shop the user tapped: null → the shop list, set → the category tree for that shop.
+  const [selectedGroup, setSelectedGroup] = useState<UncategorizedMerchantGroup | null>(null);
+  // Folded parents in the category tree (same expand-by-default model as PickerSheet).
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = useCallback((id: string) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
+
+  if (isLoading && !merchants) {
+    return (
+      <View testID="file-by-shop-busy" style={styles.applyRulesBusy}>
+        <ActivityIndicator color={C.accent} />
+        <Text style={[styles.confirmSub, { marginTop: 14 }]}>Finding your shops…</Text>
+      </View>
+    );
+  }
+
+  if (isError || !merchants) {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Couldn't load your shops</Text>
+        <Text style={styles.confirmSub}>Nothing has been changed. Please pull down to refresh and try again.</Text>
+        <Pressable testID="file-by-shop-close" onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnGhost]}>
+          <Text style={styles.btnGhostText}>Close</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // Every shop filed (e.g. after filing the last one and returning here). The button that opens
+  // this is gated on groups > 0, so this is only reached mid-session, not on a cold open.
+  if (merchants.groups.length === 0) {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Every shop is filed</Text>
+        <Text style={styles.confirmSub}>
+          {merchants.ungrouped.count > 0
+            ? `Nice work. The last ${merchants.ungrouped.count} unfiled ${chargeNoun(merchants.ungrouped.count)} are one-offs — tap each on the list to file it.`
+            : 'Nice work — nothing left to file by shop.'}
+        </Text>
+        <Pressable testID="file-by-shop-close" onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Done</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // A shop is chosen: pick the category to file it (and every future charge from it) under.
+  if (selectedGroup) {
+    const treeRows = categoryTreeRows(cats);
+    const visibleIds = new Set<string>();
+    for (const row of treeRows) {
+      if (row.parentId === null || (visibleIds.has(row.parentId) && !collapsed.has(row.parentId))) {
+        visibleIds.add(row.category.id);
+      }
+    }
+    const visibleRows = treeRows.filter((row) => visibleIds.has(row.category.id));
+    return (
+      <View>
+        <Pressable testID="file-by-shop-back" onPress={() => setSelectedGroup(null)} hitSlop={8} style={styles.sheetBack}>
+          <Glyph name="back" size={15} color={C.textMid} />
+          <Text style={styles.sheetBackText}>All shops</Text>
+        </Pressable>
+        <Text style={styles.sheetTitle}>File {selectedGroup.merchant || 'this shop'} as…</Text>
+        <Text style={styles.sheetMerchant}>
+          {selectedGroup.count} unfiled {chargeNoun(selectedGroup.count)} — and every future charge from here.
+        </Text>
+        <ScrollView style={{ maxHeight: 340, marginTop: 12 }}>
+          {visibleRows.map(({ category: c, depth, hasChildren }) => {
+            const isCollapsed = collapsed.has(c.id);
+            return (
+              <View
+                key={c.id}
+                style={[styles.pickRow, depth > 0 && { marginLeft: depth * 18, borderLeftWidth: 2, borderLeftColor: c.color, paddingLeft: 11 }]}
+              >
+                <Pressable
+                  testID="file-by-shop-cat"
+                  onPress={() => s.setSheet({ mode: 'fileByShopConfirm', group: selectedGroup, categoryId: c.id })}
+                  style={styles.pickNameHit}
+                >
+                  <View style={[styles.pickChip, { backgroundColor: tint(c.color, 0.15) }]}>
+                    <Icon name={c.icon} size={19} color={c.color} />
+                  </View>
+                  <Text style={styles.pickName}>{c.name}</Text>
+                </Pressable>
+                {hasChildren && (
+                  <Pressable
+                    testID={`file-by-shop-cat-toggle-${c.id}`}
+                    onPress={() => toggle(c.id)}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: !isCollapsed }}
+                    style={styles.pickToggle}
+                  >
+                    <Glyph name={isCollapsed ? 'chevron' : 'chevronDown'} size={16} color={C.textFaint} />
+                  </Pressable>
+                )}
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // The shop list itself.
+  return (
+    <View>
+      <Text style={styles.sheetTitle}>File by shop</Text>
+      <Text style={styles.sheetMerchant}>
+        {merchants.unfiled} unfiled {chargeNoun(merchants.unfiled)}, grouped by shop. Pick a shop to file all its charges — and make a rule so future ones file themselves.
+      </Text>
+      <ScrollView style={styles.applyRulesScroll}>
+        {merchants.groups.map((group) => (
+          <Pressable
+            key={group.rulePattern}
+            testID="file-by-shop-group"
+            onPress={() => setSelectedGroup(group)}
+            style={styles.pickRow}
+          >
+            <View style={styles.fileByShopGroupText}>
+              <Text style={styles.applyRulesRuleText} numberOfLines={1}>{group.merchant || group.rulePattern}</Text>
+              {group.samples.filter((sample) => sample).slice(0, 1).map((sample, index) => (
+                <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>{sample}</Text>
+              ))}
+              {group.alsoCatches.length > 0 && (
+                <Text style={styles.applyRulesSample} numberOfLines={1}>
+                  + also files {alsoCatchesTotal(group)} from {group.alsoCatches.length} other {group.alsoCatches.length === 1 ? 'shop' : 'shops'}
+                </Text>
+              )}
+            </View>
+            <Text style={styles.fileByShopCount}>{group.count}</Text>
+            <Glyph name="chevron" size={15} color={C.textFaint} />
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+/** The charges this group's rule would ALSO sweep from other shops — the over-broad-rule number. */
+function alsoCatchesTotal(group: UncategorizedMerchantGroup): string {
+  const total = group.alsoCatches.reduce((sum, other) => sum + other.count, 0);
+  return `${total} ${chargeNoun(total)}`;
+}
+
+// WHIT-517: "File by shop" step 2 — preview then file one shop. On open it dry-runs the mint+file
+// so it can show the real count (what the rule ACTUALLY sweeps, including other shops) before any
+// write. A clash (an existing rule already files this shop elsewhere) surfaces here, from the
+// server's own check, so there is nothing to write; the write path re-checks in case a rule was
+// made between preview and confirm.
+function FileByShopConfirmSheet() {
+  // Destructure the STABLE context callbacks (each a useCallback), NOT the whole context value:
+  // the value's identity changes on every toast (a filed shop toasts, then it auto-clears 3.4s
+  // later), and depending on the whole value would re-fire runPreview — snapping the sheet back to
+  // its spinner and re-running a whole-history dry run, possibly during the write. This mirrors
+  // ApplyRulesSheet, built to dodge exactly this. `sheet` is read for the group/category; it only
+  // changes when setSheet is called (a toast never touches it), so runPreview's deps stay stable.
+  const { sheet, previewFileByShop, fileByShop, setSheet, showToast } = useAppContext();
+  const { category } = useCategories();
+  const runGuarded = useInFlightGuard();
+  const previewGuarded = useInFlightGuard();
+  const [report, setReport] = useState<ApplyRulesResult | null>(null);
+  const [phase, setPhase] = useState<FileByShopPhase>('loading');
+  // The sheet is dismissable mid-write (backdrop + drag are SheetHost's), so a run can finish with
+  // nothing on screen — report it as a toast instead of dropping it.
+  const onScreen = useRef(true);
+  useEffect(() => () => { onScreen.current = false; }, []);
+
+  const group = sheet?.mode === 'fileByShopConfirm' ? sheet.group : null;
+  const categoryId = sheet?.mode === 'fileByShopConfirm' ? sheet.categoryId : null;
+
+  const runPreview = useCallback(async () => {
+    if (!group || !categoryId) return;
+    setPhase('loading');
+    const outcome = await previewFileByShop(group, categoryId);
+    if (outcome.ok) { setReport(outcome.report); setPhase('preview'); return; }
+    setPhase(outcome.clash ? 'clash' : 'previewFailed');
+  }, [previewFileByShop, group, categoryId]);
+
+  useEffect(() => { previewGuarded(runPreview); }, [previewGuarded, runPreview]);
+
+  if (!group || !categoryId) return null;
+  const chosen = category(categoryId);
+  if (!chosen) return null;
+
+  const onConfirm = () => runGuarded(async () => {
+    setPhase('confirming');
+    const outcome = await fileByShop(group, categoryId);
+    if (outcome.ok) {
+      showToast(fileByShopFiledMessage(outcome.report, chosen.name, group.merchant));
+      // Back to the shop list, which the write invalidated — the filed shop is gone from it.
+      if (onScreen.current) setSheet({ mode: 'fileByShopList' });
+      return;
+    }
+    if (outcome.clash) { if (onScreen.current) setPhase('clash'); else showToast(`You already have a rule filing ${group.merchant || 'this shop'} somewhere else.`); return; }
+    if (onScreen.current) setPhase('writeFailed');
+    else showToast(`Couldn't file ${group.merchant || 'this shop'}. Some charges may already have been filed.`);
+  });
+
+  if (phase === 'loading' || phase === 'confirming') {
+    const label = phase === 'loading' ? 'Checking what this would file…' : 'Filing these charges…';
+    return (
+      <View testID="file-by-shop-confirm-busy" style={styles.applyRulesBusy}>
+        <ActivityIndicator color={C.accent} />
+        <Text style={[styles.confirmSub, { marginTop: 14 }]}>{label}</Text>
+      </View>
+    );
+  }
+
+  if (phase === 'clash') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>You already have a rule for this</Text>
+        <Text style={styles.confirmSub}>
+          You already have a rule filing {group.merchant || 'this shop'} somewhere else — edit it in Rules to change where these go. Nothing has been changed.
+        </Text>
+        <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+          <Text style={styles.btnGhostText}>Back to shops</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (phase === 'previewFailed') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Couldn't check this shop</Text>
+        <Text style={styles.confirmSub}>Nothing has been changed. Please try again.</Text>
+        <Pressable testID="file-by-shop-confirm-retry" onPress={() => previewGuarded(runPreview)} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Try again</Text>
+        </Pressable>
+        <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+          <Text style={styles.btnGhostText}>Back to shops</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (phase === 'writeFailed') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Couldn't finish</Text>
+        <Text style={styles.confirmSub}>
+          Some charges may already have been filed. Your unfiled list has been refreshed — open this again to see what's left.
+        </Text>
+        <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+          <Text style={styles.btnGhostText}>Back to shops</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (!report) return null;
+
+  // `matched` is the truthful count: what the rule ACTUALLY sweeps right now, across every unfiled
+  // charge (this shop plus anything in `alsoCatches`). A shop whose charges someone filed between
+  // opening the list and here can read 0 — say so rather than offer a no-op "File 0".
+  if (report.matched === 0) {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Nothing left to file here</Text>
+        <Text style={styles.confirmSub}>
+          These charges from {group.merchant || 'this shop'} were filed already. Pick another shop.
+        </Text>
+        <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Back to shops</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const dateRange = fileByShopDateRange(group);
+  // The server files at most APPLY_RULES_MAX_WRITES per call, so a shop bigger than that takes more
+  // than one tap. Say "up to N now" rather than promise the full matched count — the toast + the
+  // shop staying on the refreshed list then invites the next tap (mirrors ApplyRulesSheet's cap copy).
+  const capped = report.matched > APPLY_RULES_MAX_WRITES;
+  return (
+    <View>
+      <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
+        <Icon name={chosen.icon} size={26} color={chosen.color} />
+      </View>
+      <Text style={styles.confirmTitle}>File as {chosen.name}</Text>
+      <Text style={styles.confirmSub}>
+        Files {report.matched} {chargeNoun(report.matched)} from {group.merchant || 'this shop'}
+        {dateRange ? ` (${dateRange})` : ''} — and makes a rule so future ones file themselves.
+        {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
+      </Text>
+      {group.alsoCatches.length > 0 && (
+        <View testID="file-by-shop-also-catches" style={styles.ruleConflict}>
+          <Text style={styles.ruleConflictText}>
+            Heads up: this also files charges from {group.alsoCatches.length} other {group.alsoCatches.length === 1 ? 'shop' : 'shops'}.
+          </Text>
+          {group.alsoCatches.map((other, index) => (
+            <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>
+              {other.merchant || 'Unnamed shop'} — {other.count} {chargeNoun(other.count)}
+            </Text>
+          ))}
+        </View>
+      )}
+      <Pressable testID="file-by-shop-confirm-apply" onPress={onConfirm} style={[styles.btn, styles.btnPrimary]}>
+        <Text style={styles.btnPrimaryText}>
+          {capped ? `File up to ${APPLY_RULES_MAX_WRITES} now` : `File ${report.matched} ${chargeNoun(report.matched)}`}
+        </Text>
+      </Pressable>
+      <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+        <Text style={styles.btnGhostText}>Back to shops</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+type FileByShopPhase = 'loading' | 'preview' | 'clash' | 'previewFailed' | 'confirming' | 'writeFailed';
+
+/** The toast after a "file by shop" write. Nothing filed → someone beat us to it. A shop bigger than
+ *  the per-call cap files in batches, so `matched > cap` means the shop isn't done — say so, since the
+ *  shop reappears on the list and she needs to know why (mirrors ApplyRulesSheet's "still to go"). */
+function fileByShopFiledMessage(report: ApplyRulesResult, categoryName: string, merchant: string): string {
+  const filed = report.filed.length;
+  if (filed === 0) return `Nothing left to file for ${merchant || 'this shop'}.`;
+  const base = `Filed ${filed} ${chargeNoun(filed)} as ${categoryName}`;
+  return report.matched > APPLY_RULES_MAX_WRITES ? `${base} — more of this shop to go, tap it again.` : `${base}.`;
+}
+
+/** A "20 Jun 2026 – 4 Aug 2026" range for a group, or a single date, or '' when neither is known. */
+function fileByShopDateRange(group: UncategorizedMerchantGroup): string {
+  if (!group.firstDate && !group.lastDate) return '';
+  if (group.firstDate && group.lastDate && group.firstDate !== group.lastDate) {
+    return `${formatDayMonthYear(group.firstDate)} – ${formatDayMonthYear(group.lastDate)}`;
+  }
+  const only = group.lastDate ?? group.firstDate;
+  return only ? formatDayMonthYear(only) : '';
+}
+
 /** Why nothing can be filed, named from the report rather than guessed. Every arm is reachable:
  *  no rule survived the server's checks, the rules that did survive disagree, or they genuinely
  *  match nothing. */
@@ -1122,4 +1469,10 @@ const styles = StyleSheet.create({
   applyRulesRuleText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.textBright },
   applyRulesSample: { fontFamily: FONT.body, fontSize: 12.5, color: C.textDim, marginTop: 3 },
   applyRulesSkipped: { marginTop: 4 },
+  // WHIT-517: "File by shop" — a back link, the shop-row layout (name/samples grow, count + chevron
+  // pin right).
+  sheetBack: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, marginBottom: 4 },
+  sheetBackText: { fontFamily: FONT.body, fontSize: 14, color: C.textMid },
+  fileByShopGroupText: { flex: 1 },
+  fileByShopCount: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentSoft, marginRight: 4 },
 });

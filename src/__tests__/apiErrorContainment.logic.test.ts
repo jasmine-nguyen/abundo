@@ -34,6 +34,13 @@ beforeEach(() => {
 /** The three writes the card rewired — the ONLY endpoints allowed to carry a server reason. */
 const REASON_CARRYING = ['createCategory', 'updateCategory', 'deleteCategory'] as const;
 
+// WHIT-517: endpoints that throw an ApiError to expose the STATUS for control flow, but carry NO
+// server reason (serverMessage is null). "File by shop" reads a 409 to show its own clash copy; the
+// server's 4xx wording is never shown, so it is never carried. Adding one here is the same
+// deliberate decision as REASON_CARRYING, pointing the other way: an ApiError whose body stays
+// hidden. It must NOT overlap REASON_CARRYING.
+const STATUS_ONLY = ['applyRulesToUncategorized'] as const;
+
 // Every exported endpoint with plausible arguments. Keyed by name so the tripwire below can
 // prove none was skipped (and that a NEW endpoint can't be added without a decision here).
 const CALLS: Record<string, () => Promise<unknown>> = {
@@ -41,9 +48,11 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   fetchTransactionsFeed: () => api.fetchTransactionsFeed('cur', 25),
   fetchUncategorizedFeed: () => api.fetchUncategorizedFeed('cur', 25), // a read → generic error, NOT a reason-carrying write
   fetchUncategorizedCount: () => api.fetchUncategorizedCount(), // WHIT-501: a read → generic error, NOT a reason-carrying write
-  // WHIT-508: a write, but deliberately NOT reason-carrying. Its only 4xx are developer errors
-  // ("dryRun must be a boolean"), never copy for the user; a 502 body names BankSync internals.
-  // The sheet's own phase-specific wording is what the user reads, so the generic error is right.
+  fetchUncategorizedMerchants: () => api.fetchUncategorizedMerchants(), // WHIT-517: a read → generic error, NOT a reason-carrying write
+  // WHIT-508/WHIT-517: a write. It throws an ApiError so "file by shop" can read the 409 clash
+  // STATUS — but with serverMessage NULL, deliberately: its 4xx wording ("dryRun must be a
+  // boolean") and 502 BankSync internals are never shown, so the body is never carried. The sheet's
+  // own phase-specific + clash copy is what the user reads. STATUS_ONLY (below) pins that.
   applyRulesToUncategorized: () => api.applyRulesToUncategorized(true),
   fetchCategories: () => api.fetchCategories(),
   createCategory: () => api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),
@@ -115,6 +124,13 @@ describe('[A11] the server body reaches only the three category writes', () => {
     if ((REASON_CARRYING as readonly string[]).includes(name)) {
       expect(error).toBeInstanceOf(ApiError);
       expect(error.serverMessage).toBe(LEAK);
+    } else if ((STATUS_ONLY as readonly string[]).includes(name)) {
+      // WHIT-517: an ApiError for its STATUS, but the body is deliberately NOT carried — the 409
+      // clash drives control flow, the server's wording is never shown. serverMessage stays null.
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error.serverMessage).toBeNull();
+      // Still byte-identical: the leak must never reach the message either.
+      expect((error as Error).message).not.toContain(LEAK);
     } else {
       // Deliberate tripwire, not an accident: widening `failed()` to another endpoint is a
       // product decision (its 4xx wording becomes user-facing copy), so it must edit this list.

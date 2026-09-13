@@ -15,6 +15,7 @@ let mockServerCount: number | undefined;
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
   useUncategorizedCount: () => mockServerCount,
+  useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
 }));
 
 const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
