@@ -9,6 +9,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { applyRulesToUncategorized } from '../api';
 import type { ApplyRulesResult } from '../api';
+import { ApiError } from '../apiError';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn(async () => 'test-token') }));
 
@@ -61,6 +62,42 @@ describe('applyRulesToUncategorized', () => {
   it('passes the full server report through unchanged', async () => {
     okFetch();
     await expect(applyRulesToUncategorized(false)).resolves.toEqual(FULL_BODY);
+  });
+
+  // WHIT-517: "file by shop" sends the inline rule as {dryRun, rule}. Fail-on-revert: drop the
+  // `rule` branch and the body loses the rule key, so the server mints nothing and files nothing.
+  it('sends the inline rule as {dryRun, rule} when one is passed', async () => {
+    const fetchMock = okFetch({ ...FULL_BODY, createdRule: { id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' } });
+    await applyRulesToUncategorized(false, { value: 'COLES', categoryId: 'groceries' });
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ dryRun: false, rule: { value: 'COLES', categoryId: 'groceries' } });
+  });
+
+  // The no-rule call must NOT grow a rule key — "Apply my rules" stays byte-identical on the wire,
+  // or the server would try to mint an undefined rule.
+  it('omits the rule key entirely when no inline rule is passed', async () => {
+    const fetchMock = okFetch();
+    await applyRulesToUncategorized(true);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ dryRun: true });
+    expect(JSON.parse(init.body as string)).not.toHaveProperty('rule');
+  });
+
+  // WHIT-517: the 409 clash (an existing rule already files this shop elsewhere) must arrive as an
+  // ApiError carrying the STATUS, so the sheet can tell a clash from any other failure. Fail-on-
+  // revert: throw a plain Error and `instanceof ApiError` / `.status === 409` both go false.
+  it('throws an ApiError carrying the 409 status on a clash', async () => {
+    (globalThis as unknown as { fetch: unknown }).fetch =
+      jest.fn(async () => ({ ok: false, status: 409, json: async () => ({ error: "you already have a rule for that" }) }));
+
+    const error = await applyRulesToUncategorized(false, { value: 'COLES', categoryId: 'groceries' })
+      .then(() => null, (e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).status).toBe(409);
+    // The server's wording is NOT carried — the sheet uses its own clash copy.
+    expect((error as ApiError).serverMessage).toBeNull();
   });
 
   // A zero `remaining` and an empty `filed` are real values the sheet branches on — they must not

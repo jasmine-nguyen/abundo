@@ -5,7 +5,7 @@ import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
 import { transactionGroups, transactionMatchesSearch, countUncategorized, useAppContext } from '../../src/context';
-import { useTransactionsScreenData, useUncategorizedCount } from '../../src/queries';
+import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
@@ -56,6 +56,10 @@ export default function Transactions() {
   // Badge headline: the server's whole-history number once resolved, else the loaded-page count.
   // `??` uses a resolved 0 (0 isn't nullish); it only falls through to local while serverCount is undefined.
   const uncategorizedCount = serverCount ?? localUncategorized;
+  // WHIT-517: the shops (merchant groups) behind unfiled charges, for the "File by shop" button.
+  // `groups` is undefined while loading/errored, so the button only shows once we KNOW there is at
+  // least one rule-able shop — a filing session that has cleared them all hides it, like the count.
+  const { merchants } = useUncategorizedMerchants();
   // "All caught up" is the strong "every transaction is filed" claim — true ONLY on a RESOLVED server
   // 0, never during loading/error (undefined). Named once so the empty state and the two controls it
   // must exclude (search-no-results, Load More) can't drift.
@@ -173,6 +177,23 @@ export default function Transactions() {
             style={styles.applyRules}
           >
             <Text style={styles.applyRulesText}>Apply my rules</Text>
+          </Pressable>
+        )}
+
+        {/* WHIT-517: the rest of the backlog — shops with NO rule yet. "Apply my rules" can't touch
+            them (nothing covers them); this opens the shop list to file them a shop at a time,
+            minting a rule as it goes. Same visibility gate as "Apply my rules", plus it needs at
+            least one rule-able shop (merchants.groups), so it hides once every shop is filed even
+            while stray one-offs keep the count above zero. */}
+        {tab === 'uncategorized' && !selectionMode && !showSpinner && !showError && uncategorizedCount > 0 && (merchants?.groups.length ?? 0) > 0 && (
+          <Pressable
+            testID="transactions-file-by-shop"
+            onPress={() => setSheet({ mode: 'fileByShopList' })}
+            accessibilityRole="button"
+            accessibilityLabel="File your unfiled charges by shop"
+            style={styles.fileByShop}
+          >
+            <Text style={styles.fileByShopText}>File by shop</Text>
           </Pressable>
         )}
 
@@ -340,4 +361,8 @@ const styles = StyleSheet.create({
   // "Apply my rules" (WHIT-508): the Load More treatment, sitting under the hint.
   applyRules: { marginTop: 10, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
   applyRulesText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
+  // WHIT-517: filled accent (primary) — this clears the bulk of the backlog, so it reads louder
+  // than the outlined "Apply my rules" above it.
+  fileByShop: { marginTop: 10, paddingVertical: 12, borderRadius: 13, backgroundColor: C.accent, alignItems: 'center' },
+  fileByShopText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '700', color: C.accentInk },
 });

@@ -32,6 +32,10 @@ export type ScreenState = Record<string, unknown> & {
   // server value is loading. A consumer that wants the resolved "All caught up" empty state (which is
   // gated on the server value being exactly 0) sets this explicitly.
   uncategorizedCount?: number;
+  // WHIT-517: the shops behind unfiled charges, for the "File by shop" button/sheet. Undefined here
+  // by default so the button hides (the real hook is undefined while loading/pre-auth); a test that
+  // wants the button visible sets it to { unfiled, groups, ungrouped }.
+  uncategorizedMerchants?: unknown;
 };
 
 const noop = () => {};
@@ -64,5 +68,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
     useLoanFactsQuery: () => ({ data: st().loanFacts }),
     // WHIT-501: whole-history uncategorized tally. Undefined by default (see ScreenState.uncategorizedCount).
     useUncategorizedCount: () => st().uncategorizedCount,
+    // WHIT-517: shops behind unfiled charges. Undefined by default (see ScreenState.uncategorizedMerchants).
+    useUncategorizedMerchants: () => ({ merchants: st().uncategorizedMerchants, isLoading: false, isError: false }),
   };
 }

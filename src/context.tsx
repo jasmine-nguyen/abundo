@@ -2,15 +2,22 @@ import React, { createContext, useContext, useMemo, useRef, useState, useCallbac
 import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './theme';
 import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
-import { writeFailureMessage } from './apiError';
+import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
 
 export type { LoanFacts, LoanFactsInput } from './api';
 export type { ApplyRulesResult } from './api';
+// WHIT-517: the outcome of a "file by shop" preview or write. On failure, `clash` carries the
+// server's 409 ApiError when an existing rule would fight this one (so the sheet can explain it),
+// and is null for any other failure. Kept distinct from applyRulesToHistory's plain null, which
+// erases that difference.
+export type FileByShopOutcome =
+  | { ok: true; report: ApplyRulesResult }
+  | { ok: false; clash: ApiError | null };
 // WHIT-190a: the categorise write double-writes the query cache (for the migrated
 // Transactions list) alongside the old store (for the tab badge + budget detail).
 // Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
@@ -114,6 +121,11 @@ export type Sheet =
   // WHIT-508: preview then apply the user's existing rules to charges already stored. No params —
   // everything it shows comes from the server's own plan summary.
   | { mode: 'applyRules' }
+  // WHIT-517: "File by shop" — pick a shop from the server's grouped list, then confirm minting a
+  // rule + filing that shop's charges. The confirm carries the whole group (captured at pick time)
+  // plus the chosen category, so the "shown what will happen" step needs no refetch.
+  | { mode: 'fileByShopList' }
+  | { mode: 'fileByShopConfirm'; group: UncategorizedMerchantGroup; categoryId: string }
   | null;
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
@@ -451,6 +463,10 @@ export interface AppContext {
   // WHIT-508: file what the rules cover, capped at APPLY_RULES_MAX_WRITES per call. Returns the
   // server's report (null on failure, where the outcome is unknown and the caches are refreshed).
   applyRulesToHistory: () => Promise<ApplyRulesResult | null>;
+  // WHIT-517: preview / file one shop from the "File by shop" screen. Both return a distinct 409
+  // clash outcome (an existing rule would fight this one) instead of a bare null.
+  previewFileByShop: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>;
+  fileByShop: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
@@ -1183,6 +1199,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // another session during the run would leave its charges sitting in the Uncategorized list
     // while the badge dropped — list and badge disagreeing. Re-read the taxonomy too.
     queryClient.invalidateQueries({ queryKey: ['categories'] });
+    // WHIT-517: a rule sweep files charges (shrinking the shop groups) and — for "file by shop" —
+    // mints a rule. Refresh the "file by shop" list so a filed shop leaves it, and the rules list
+    // so a minted rule appears. Harmless (and correct) for plain "Apply my rules" too, which also
+    // shrinks the groups.
+    queryClient.invalidateQueries({ queryKey: ['rules'] });
+    queryClient.invalidateQueries({ queryKey: ['uncategorizedMerchants'] });
   }, []);
 
   // WHIT-508: preview what the user's existing rules would file, writing nothing. Lives here
@@ -1246,6 +1268,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       applyRulesInFlight.current = false;
     }
   }, [patchTransactions, refreshAfterApplyRules]);
+
+  // WHIT-517: preview one shop's file-by-shop run — mint-and-file with dryRun, writing nothing —
+  // so the confirm sheet can show the count + overlap before she commits. A 409 (an existing rule
+  // would fight this one) is kept DISTINCT from a generic failure so the sheet can explain it; the
+  // server runs its clash check before the dry-run branch, so a clash surfaces even here.
+  const previewFileByShop = useCallback(
+    async (group: UncategorizedMerchantGroup, categoryId: string): Promise<FileByShopOutcome> => {
+      const epoch = sessionEpoch.current;
+      try {
+        const report = await applyRulesToUncategorized(true, { value: group.rulePattern, categoryId });
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+        return { ok: true, report };
+      } catch (e) {
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+        return { ok: false, clash: e instanceof ApiError && e.status === 409 ? e : null };
+      }
+    }, []);
+
+  // WHIT-517: file one shop — mint the rule AND file that shop's stored charges in one call. Shares
+  // applyRulesInFlight with applyRulesToHistory, so "Apply my rules" and "File by shop" can never
+  // run at once. A 409 clash returns { clash } and writes/refreshes NOTHING (the server minted
+  // nothing). Unlike applyRulesToHistory, this does NOT collapse the 409 to a bare null.
+  const fileByShop = useCallback(
+    async (group: UncategorizedMerchantGroup, categoryId: string): Promise<FileByShopOutcome> => {
+      if (applyRulesInFlight.current) return { ok: false, clash: null };
+      applyRulesInFlight.current = true;
+      const epoch = sessionEpoch.current;
+      try {
+        const report = await applyRulesToUncategorized(false, { value: group.rulePattern, categoryId });
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+
+        const filedBy = new Map(report.filed.map((row) => [row.id, row.category]));
+        const vanished = new Set(report.vanished);
+        if (filedBy.size > 0 || vanished.size > 0) {
+          patchTransactions((prev) => prev
+            .filter((existing) => !vanished.has(existing.transaction_id))
+            .map((existing) => (filedBy.has(existing.transaction_id)
+              ? { ...existing, category: filedBy.get(existing.transaction_id)! }
+              : existing)));
+        }
+        refreshAfterApplyRules();
+        return { ok: true, report };
+      } catch (e) {
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+        // A 409 clash wrote nothing — surface it, refresh nothing. Any other error has an unknown
+        // outcome (row-by-row writes, late failure), so refresh like applyRulesToHistory does.
+        if (e instanceof ApiError && e.status === 409) return { ok: false, clash: e };
+        refreshAfterApplyRules();
+        return { ok: false, clash: null };
+      } finally {
+        applyRulesInFlight.current = false;
+      }
+    }, [patchTransactions, refreshAfterApplyRules]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
@@ -1789,9 +1864,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
