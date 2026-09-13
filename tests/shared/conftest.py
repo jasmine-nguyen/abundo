@@ -217,6 +217,11 @@ class ConfigItemTable:
         expected = ExpressionAttributeValues[":expected"]
         if not self.present or expected != self.item["version"]:
             raise _client_error("ConditionalCheckFailedException")
+        if ":items" in ExpressionAttributeValues:
+            # Whole-map rewrite: SET #items = :items, #v = :next (WHIT-548 backfill_unified).
+            self.item["items"] = ExpressionAttributeValues[":items"]
+            self.item["version"] = ExpressionAttributeValues[":next"]
+            return
         item_id = ExpressionAttributeNames["#id"]
         if UpdateExpression.startswith("REMOVE"):
             self.item["items"].pop(item_id, None)                    # REMOVE #items.#id

@@ -260,8 +260,11 @@ def test_rollover_fields_tuple_matches_what_the_writes_persist(shared, budget_re
         "carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01"})
     budget_repo.settle_carryover("coffee", Decimal(20), "2026-08-06", 30, "2026-01-01")
 
+    # WHIT-548: the writes now persist the old rollover family PLUS the unified buffer mirror, and
+    # clear_rollover strips both (_ROLLOVER_FIELDS + _BUFFER_FIELDS). The guard tracks the union so
+    # a new field added to a write but to neither tuple still fails HERE (it'd survive a clear).
     persisted_rollover_keys = set(table.item["items"]["coffee"].keys()) - {"target"}
-    assert persisted_rollover_keys == set(shared.budget._ROLLOVER_FIELDS)
+    assert persisted_rollover_keys == set(shared.budget._ROLLOVER_FIELDS) | set(shared.budget._BUFFER_FIELDS)
 
 
 # --- set_spread / clear_spread: a bill spread on a budget entry (WHIT-504) ---
@@ -407,8 +410,10 @@ def test_spread_fields_tuple_matches_what_set_spread_persists(shared, budget_rep
 
     budget_repo.set_spread("insurance", Decimal("1390.91"), 4, "2026-08-06", 30, "2026-01-01")
 
+    # WHIT-548: set_spread now persists the spread family PLUS the unified payback mirror, and
+    # clear_spread strips both (_SPREAD_FIELDS + _PAYBACK_FIELDS). Track the union so drift fails here.
     persisted_spread_keys = set(table.item["items"]["insurance"].keys()) - {"target"}
-    assert persisted_spread_keys == set(shared.budget._SPREAD_FIELDS)
+    assert persisted_spread_keys == set(shared.budget._SPREAD_FIELDS) | set(shared.budget._PAYBACK_FIELDS)
     assert not set(shared.budget._SPREAD_FIELDS) & set(shared.budget._ROLLOVER_FIELDS)
 
 
@@ -494,3 +499,155 @@ def test_clear_spread_strips_a_partial_spread_entry(shared, budget_repo, config_
 
     assert table.item["items"]["insurance"] == {"target": Decimal(250)}
     assert table.update_calls == 1
+
+
+# ── WHIT-548: unified "Smoothing" mirror (buffer + payback_*) dual-write + backfill ──
+# The mirror is written ALONGSIDE the old rollover/spread fields and kept in sync; the old
+# fields stay the source of truth (nothing reads the mirror until WHIT-549). These pin that
+# the mirror can't drift, that it's stripped with its old family, and that the one-shot
+# backfill is idempotent + balance-preserving.
+
+
+def test_set_budget_rollover_dual_writes_the_buffer_mirror(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {"target": Decimal(250), "rollover": True, "carryover": Decimal("50")}})
+    _with_table(budget_repo, table)
+    budget_repo.set_budget("groceries", Decimal(250), rollover=True,
+                           anchor={"carryover_from": "2026-07-01", "carryover_len": Decimal(14), "carryover_paydate": "2026-07-01"})
+    entry = table.item["items"]["groceries"]
+    assert entry["carryover"] == Decimal("50")          # old field preserved (source of truth)
+    assert entry["buffer"] == Decimal("50")             # FAIL-ON-REVERT: mirror equals carryover
+    assert entry["buffer_from"] == "2026-07-01"
+    assert entry["buffer_len"] == Decimal(14)
+    assert entry["buffer_paydate"] == "2026-07-01"
+
+
+def test_set_spread_dual_writes_payback_and_strips_the_buffer_mirror(shared, budget_repo, config_item_table):
+    # A category that had rollover (+buffer mirror) now gets a spread: old rollover/carryover AND
+    # the buffer mirror must go; spread + payback mirror land (the XOR holds for the mirror too).
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(250), "rollover": True, "carryover": Decimal("50"),
+        "buffer": Decimal("50"), "buffer_from": "2026-07-01",
+    }})
+    _with_table(budget_repo, table)
+    budget_repo.set_spread("groceries", Decimal("1390.91"), 4, "2026-07-01", 14, "2026-07-01")
+    entry = table.item["items"]["groceries"]
+    assert "rollover" not in entry and "carryover" not in entry     # old rollover dropped
+    assert not any(k in entry for k in ("buffer", "buffer_from"))   # buffer mirror gone
+    assert entry["spread_amount"] == Decimal("1390.91")
+    assert entry["payback_amount"] == Decimal("1390.91")           # payback mirror
+    assert entry["payback_cycles"] == Decimal(4)
+    assert entry["payback_from"] == "2026-07-01"
+
+
+def test_rollover_on_with_no_carryover_yet_mirrors_buffer_zero(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={})
+    _with_table(budget_repo, table)
+    budget_repo.set_budget("newcat", Decimal(100), rollover=True,
+                           anchor={"carryover_from": "2026-07-01", "carryover_len": Decimal(14), "carryover_paydate": "2026-07-01"})
+    entry = table.item["items"]["newcat"]
+    assert "carryover" not in entry            # not accrued yet
+    assert entry["buffer"] == Decimal(0)       # mirror defaults to 0, never crashes on absent carryover
+    assert entry["buffer_from"] == "2026-07-01"
+
+
+def test_rollover_toggled_off_strips_buffer_mirror_but_keeps_frozen_carryover(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(250), "rollover": True, "carryover": Decimal("50"),
+        "carryover_from": "2026-07-01", "carryover_len": Decimal(14), "carryover_paydate": "2026-07-01",
+        "buffer": Decimal("50"), "buffer_from": "2026-07-01", "buffer_len": Decimal(14), "buffer_paydate": "2026-07-01",
+    }})
+    _with_table(budget_repo, table)
+    budget_repo.set_budget("groceries", Decimal(250), rollover=False)
+    entry = table.item["items"]["groceries"]
+    assert entry["rollover"] is False
+    assert entry["carryover"] == Decimal("50")       # frozen carryover retained (source of truth)
+    assert not any(k in entry for k in shared.budget._BUFFER_FIELDS)  # buffer mirror only tracks an ACTIVE rollover
+
+
+def test_settle_carryover_keeps_the_buffer_mirror_in_sync(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {"target": Decimal(250), "rollover": True}})
+    _with_table(budget_repo, table)
+    budget_repo.settle_carryover("groceries", Decimal("-1043.77"), "2026-07-01", 14, "2026-07-01")
+    entry = table.item["items"]["groceries"]
+    assert entry["carryover"] == Decimal("-1043.77")
+    assert entry["buffer"] == Decimal("-1043.77")     # mirror follows the seal (incl. a deficit)
+    assert entry["buffer_from"] == "2026-07-01"
+
+
+def test_plain_budget_writes_no_mirror(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={})
+    _with_table(budget_repo, table)
+    budget_repo.set_budget("groceries", Decimal(250))
+    assert table.item["items"]["groceries"] == {"target": Decimal(250)}   # nothing but target
+
+
+def test_clear_rollover_strips_the_buffer_mirror(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(250), "rollover": True, "carryover": Decimal("50"),
+        "buffer": Decimal("50"), "buffer_from": "2026-07-01",
+    }})
+    _with_table(budget_repo, table)
+    budget_repo.clear_rollover("groceries")
+    assert table.item["items"]["groceries"] == {"target": Decimal(250)}   # old family + mirror gone
+
+
+def test_clear_spread_strips_the_payback_mirror(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(250), "spread_amount": Decimal("1390.91"), "spread_cycles": Decimal(4),
+        "spread_from": "2026-07-01", "spread_len": Decimal(14), "spread_paydate": "2026-07-01",
+        "payback_amount": Decimal("1390.91"), "payback_cycles": Decimal(4), "payback_from": "2026-07-01",
+        "payback_len": Decimal(14), "payback_paydate": "2026-07-01",
+    }})
+    _with_table(budget_repo, table)
+    budget_repo.clear_spread("groceries")
+    assert table.item["items"]["groceries"] == {"target": Decimal(250)}
+
+
+def test_backfill_mirrors_a_rollover_only_entry_idempotently(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(250), "rollover": True, "carryover": Decimal("50"),
+        "carryover_from": "2026-07-01", "carryover_len": Decimal(14), "carryover_paydate": "2026-07-01",
+    }})
+    _with_table(budget_repo, table)
+    changed = budget_repo.backfill_unified()
+    entry = table.item["items"]["groceries"]
+    assert changed == 1
+    assert entry["carryover"] == Decimal("50")        # old field untouched -> balance preserved
+    assert entry["buffer"] == Decimal("50")           # FAIL-ON-REVERT: mirror added, equal to carryover
+    assert entry["buffer_from"] == "2026-07-01"
+    assert table.update_calls == 1
+    # Second run rebuilds an identical map -> no write, no version bump.
+    assert budget_repo.backfill_unified() == 0
+    assert table.update_calls == 1
+
+
+def test_backfill_mirrors_a_spread_only_entry(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(250), "spread_amount": Decimal("1390.91"), "spread_cycles": Decimal(4),
+        "spread_from": "2026-07-01", "spread_len": Decimal(14), "spread_paydate": "2026-07-01",
+    }})
+    _with_table(budget_repo, table)
+    changed = budget_repo.backfill_unified()
+    entry = table.item["items"]["groceries"]
+    assert changed == 1
+    assert entry["spread_amount"] == Decimal("1390.91")   # preserved (balance)
+    assert entry["payback_amount"] == Decimal("1390.91")  # mirror
+    assert entry["payback_cycles"] == Decimal(4)
+
+
+def test_backfill_leaves_a_plain_budget_untouched(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {"target": Decimal(250)}})
+    _with_table(budget_repo, table)
+    assert budget_repo.backfill_unified() == 0
+    assert table.update_calls == 0                        # nothing to mirror -> no write
+    assert table.item["items"]["groceries"] == {"target": Decimal(250)}
+
+
+def test_with_mirror_is_idempotent(shared):
+    # The mirror is a pure function of the old fields, so re-deriving changes nothing.
+    entry = {"target": Decimal(250), "rollover": True, "carryover": Decimal("50"),
+             "carryover_from": "2026-07-01", "carryover_len": Decimal(14), "carryover_paydate": "2026-07-01"}
+    once = shared.budget._with_mirror(entry)
+    assert once == shared.budget._with_mirror(once)
+    assert once["buffer"] == Decimal("50")
+
