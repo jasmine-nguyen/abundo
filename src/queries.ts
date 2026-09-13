@@ -104,11 +104,11 @@ export function selectCategories(raw: unknown[]): Category[] {
 // isNew:false for loaded rules). Reuses the same toRule the store uses, so the cache and
 // the store's optimistic double-write agree field-for-field.
 export function selectRules(raw: EnrichmentRule[]): Rule[] {
-  // Fail LOUDLY on a malformed /enrichments payload (a wrapped or changed shape) — the
+  // Fail LOUDLY on a malformed /rules payload (a wrapped or changed shape) — the
   // query rejects → the Rules screen shows its error card + Retry — rather than a cryptic
   // "raw.map is not a function" or silently rendering "0 rules" over data the user has.
   // Array.isArray also rejects null/undefined.
-  if (!Array.isArray(raw)) throw new Error(`selectRules: expected an array from /enrichments, got ${typeof raw}`);
+  if (!Array.isArray(raw)) throw new Error(`selectRules: expected an array from /rules, got ${typeof raw}`);
   return raw.map(toRule);
 }
 export function selectBudgets(rollups: Record<string, BudgetRollup>): Budget[] {

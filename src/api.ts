@@ -125,7 +125,7 @@ async function apiFetch(input: string, init?: RequestInit, timeoutMs: number = R
   }
 }
 
-/** A BankSync-backed categorisation rule, as returned by the /enrichments API. */
+/** A categorisation rule, as returned by the /rules API (our own store). */
 export interface EnrichmentRule {
   id: string;
   field: "description" | "category";
@@ -1044,13 +1044,13 @@ export async function deleteSpread(categoryId: string): Promise<{ id: string }> 
 }
 
 /**
- * List every categorisation rule from the enrichments API. Auth-gated.
+ * List every categorisation rule from the /rules API. Auth-gated.
  *
- * @returns The rules currently held by BankSync (source of truth).
+ * @returns The rules currently held in our own rule store.
  * @throws If the response status is not OK (401 when the token is wrong/missing).
  */
 export async function listEnrichments(): Promise<EnrichmentRule[]> {
-  const response = await apiFetch(`${API_BASE}/enrichments`, { headers: await buildHeaders() });
+  const response = await apiFetch(`${API_BASE}/rules`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return readJson(response);
@@ -1062,13 +1062,13 @@ export async function listEnrichments(): Promise<EnrichmentRule[]> {
  * rule UI produces. Auth-gated.
  *
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
- * @returns The created rule, including its BankSync-assigned id.
+ * @returns The created rule, including its store-assigned id.
  * @throws If the response status is not OK (400 on an invalid rule, 401 on auth).
  */
 export async function createEnrichment(
   input: { value: string; categoryId: string; field?: string; operator?: string }
 ): Promise<EnrichmentRule> {
-  const response = await apiFetch(`${API_BASE}/enrichments`, {
+  const response = await apiFetch(`${API_BASE}/rules`, {
     method: "POST",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
@@ -1082,7 +1082,7 @@ export async function createEnrichment(
  * Update (replace) a categorisation rule. `field`/`operator` are omitted by
  * default so the server keeps its "description contains" default. Auth-gated.
  *
- * @param id - The BankSync enrichment id to update.
+ * @param id - The id of the rule to update.
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
  * @returns The updated rule.
  * @throws If the response status is not OK (404 unknown id, 400 invalid, 401 auth).
@@ -1091,7 +1091,7 @@ export async function updateEnrichment(
   id: string,
   input: { value: string; categoryId: string; field?: string; operator?: string }
 ): Promise<EnrichmentRule> {
-  const response = await apiFetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
@@ -1105,12 +1105,12 @@ export async function updateEnrichment(
  * Delete a categorisation rule. Idempotent server-side (an unknown id still
  * returns 200). Auth-gated.
  *
- * @param id - The BankSync enrichment id to remove.
+ * @param id - The id of the rule to remove.
  * @returns The id of the deleted rule.
  * @throws If the response status is not OK (401 on auth).
  */
 export async function deleteEnrichment(id: string): Promise<{ id: string }> {
-  const response = await apiFetch(`${API_BASE}/enrichments/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: await buildHeaders(),
   });
@@ -1173,7 +1173,7 @@ export type AiGoalSignal =
  * Read the cached AI insights for the current pay cycle WITHOUT generating (no
  * paid call). Returns a null-summary shape when none has been generated yet.
  * Auth-gated (the endpoint costs money, so it sits behind the token like
- * /enrichments).
+ * /rules).
  *
  * @throws If the response status is not OK (401 on auth).
  */
