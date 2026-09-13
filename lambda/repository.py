@@ -11,6 +11,7 @@ from constants import (
     AUTH_DATE_SKEW_DAYS,
     FEED_WINDOW_DAYS,
     PENDING_STATUS,
+    POSTED_STATUS,
     TIP_HEADROOM,
 )
 from repository_base import handle_database_error
@@ -213,6 +214,35 @@ class TransactionRepository(_SharedTransactionRepository):
                 kwargs = {
                     "KeyConditionExpression": key_condition,
                     "FilterExpression": Attr("status").eq(PENDING_STATUS),
+                }
+                if start_key is not None:
+                    kwargs["ExclusiveStartKey"] = start_key
+                response = table.query(**kwargs)
+                items.extend(response.get("Items", []))
+                start_key = response.get("LastEvaluatedKey")
+                if not start_key:
+                    break
+            return items
+        except ClientError as e:
+            handle_database_error(e, "read")
+
+    def get_posted_transactions_for_account(self, account_id: str) -> list[dict]:
+        """Retrieves all posted (settled) transactions of an account.
+
+        Mirrors get_pending_transactions_for_account exactly — same paginated per-account
+        query, only the status filter differs — so both stay drift-proof. Used by the
+        age-out rescue (WHIT-511), which scans an account's posted rows for the settled
+        twin of a filed pending it is about to reap.
+        """
+        try:
+            table = self._get_table()
+            key_condition = Key("pk").eq(_build_pk(account_id))
+            items: list[dict] = []
+            start_key = None
+            while True:
+                kwargs = {
+                    "KeyConditionExpression": key_condition,
+                    "FilterExpression": Attr("status").eq(POSTED_STATUS),
                 }
                 if start_key is not None:
                     kwargs["ExclusiveStartKey"] = start_key
