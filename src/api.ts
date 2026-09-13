@@ -473,6 +473,10 @@ export interface BudgetRollup {
   // Bill spread (WHIT-504): present only for a spend category with an active plan (see SpreadPlan).
   // A category has rollover OR a spread, never both. Absent = no plan; the client defaults it.
   spread?: SpreadPlan;
+  // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549):
+  // target + this-cycle cushion (rollover carryover OR spread adjustment). Absent on a server
+  // that predates this field — the client falls back to computing it from the parts above.
+  available?: number;
 }
 
 /**

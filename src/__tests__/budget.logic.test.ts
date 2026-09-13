@@ -553,3 +553,90 @@ describe('budgetViews sub-category tree — gaps (WHIT-221)', () => {
     expect(rows.find((r) => r.id === 'odd')).toMatchObject({ depth: 0, parentId: null });
   });
 });
+
+// The spendable "available" is now computed server-side and read straight off the Budget
+// (WHIT-549). The client keeps a fallback (target + cushion) only for a server that predates
+// the field. These pin: the server value wins when present, the fallback fires when absent,
+// and a legitimate server 0 is honoured (guarded with `??`, not `||`).
+describe('budgetViews — server-computed available (WHIT-549)', () => {
+  it('uses the server available when present, not the client parts-sum', () => {
+    // budget 100 but the server sends available 500 (a big smoothing cushion). The row spends the
+    // SERVER envelope: remain / "of" read 500, not the 100 the parts-sum fallback would give.
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, available: 500 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.remainAmount).toBe('$500');
+    expect(row.spentLabel).toBe('$0 spent of $500');
+  });
+
+  it('falls back to the parts-sum when the server omits available', () => {
+    // available undefined (old server): envelope = budget + carryover = 100 + 200.
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: 200 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.remainAmount).toBe('$300');
+  });
+
+  it('honours a server available of 0 (?? not ||): a smoothed-away envelope, not the target', () => {
+    // available 0 must be kept, not treated as missing (|| would fall back to the 100 sum). remain
+    // reads 0 and the bar denominator stays finite (falls back to the base target for the % only).
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, available: 0 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.remainAmount).toBe('$0');
+    expect(Number.isNaN(row.postedPct)).toBe(false);
+  });
+});
+
+describe('budgetDetail — server-computed available (WHIT-549)', () => {
+  const detail = (b: object) => budgetDetail(makeState({
+    categories: [cat()], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7,
+  }), 'coffee')!;
+
+  it('uses the server available for the header envelope', () => {
+    expect(detail({ budget: 100, posted: 0, pending: 0, available: 500 }).ofBudget).toBe('of $500');
+  });
+
+  it('honours a server available of 0 (?? not ||)', () => {
+    expect(detail({ budget: 100, posted: 0, pending: 0, available: 0 }).ofBudget).toBe('of $0');
+  });
+});
+
+// WHIT-549 GAP — a NEGATIVE server available (a payback cycle or a rollover deficit drains the
+// envelope below 0). The implementer pinned available 500 / 0 / undefined; these pin that a
+// negative server value is read verbatim and drives over/den, not clamped or bypassed.
+describe('budgetViews/budgetDetail — negative server available (WHIT-549 gap)', () => {
+  it('[Gc1] a negative server available reads as over, with a finite bar % from the base-target den', () => {
+    // The server sends available -50 (envelope borrowed past 0); the parts-sum fallback would be
+    // +100 (calm, under). posted 20 is the discriminator: the `den = available>0 ? available : base`
+    // guard makes postedPct = 20/100 = 20; if den wrongly used the -50 envelope, clamp() floors it
+    // to 0. So this pins the fallback den guard, not merely non-NaN. over = 20 > -50 = true.
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 20, pending: 0, available: -50 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.over).toBe(true);
+    expect(row.remainLabel).toBe('over');
+    expect(row.postedPct).toBeCloseTo(20, 5);   // finite AND correct: den fell back to the base target
+    // "of" reflects the SERVER envelope (fmt drops the sign, so it prints as $50) — proving it isn't
+    // the +100 the fallback parts-sum would have produced.
+    expect(row.spentLabel).toBe('$20 spent of $50');
+  });
+
+  it('[Gc2] budgetDetail reads a negative server available as over budget', () => {
+    const d = budgetDetail(makeState({ categories: [cat()],
+      budgets: [budget({ id: 'coffee', budget: 100, posted: 0, pending: 0, available: -50 })],
+      cycleLen: 14, daysLeft: 7 }), 'coffee')!;
+    expect(d.ofBudget).toBe('of $50');       // the server envelope, not the fallback +100
+    expect(d.statusLabel).toBe('Over budget — ease up');
+  });
+
+  it('[Gc3] a negative available still feeds hero totals from available, not budget', () => {
+    // Hero totBudget/totRemain sum `available`, not the base budget. A -50 envelope must contribute
+    // -50 to totBudget, proving the totals read the server value too (fallback would add +100).
+    const { totBudget, totRemain } = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, available: -50 })],
+      cycleLen: 14, daysLeft: 7 }));
+    expect(totBudget).toBe(-50);
+    expect(totRemain).toBe(-50);
+  });
+});

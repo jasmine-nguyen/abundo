@@ -2126,3 +2126,28 @@ def test_spread_basis_just_above_zero_still_crosses(alerts, monkeypatch):
     assert len(sent) == 1
     assert sent[0][0] == "Budget hit"
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80", "groceries#100"}
+
+
+# --- WHIT-549: rollover carryover / stored buffer stays OUT of the alert basis -----------
+# The /budgets screen's spendable folds the LIVE rollover buffer, but the over-budget alert
+# deliberately does NOT (WHIT-509 excluded it; WHIT-549 confirmed folding the STORED, sealed-
+# only buffer would raise the basis and could SUPPRESS a real overspend push). These lock the
+# exclusion so nobody re-introduces the blocker by folding carryover/buffer into `basis`.
+
+
+def test_rollover_carryover_does_not_raise_the_alert_basis(alerts, monkeypatch):
+    # A rollover category saved up a big buffer (carryover 500, stored mirror buffer 500) on a
+    # $100 target. Spend crosses the RAW target: before $70, +$15 → $85 = 85% of $100 → fires 80%.
+    # Fail-on-revert: fold carryover/buffer into basis → basis 600, 80% = $480, $85 never crosses
+    # → NO push → a real overspend goes silent (the exact WHIT-549 blocker).
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("500"),
+        "buffer": Decimal("500"), "carryover_from": "2026-06-17",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}

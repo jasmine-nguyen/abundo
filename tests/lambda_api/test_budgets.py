@@ -324,8 +324,8 @@ def test_list_budgets_rollup_shape(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
     assert result == {
-        "coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("12")},
-        "groceries": {"target": Decimal("320"), "posted": Decimal("30"), "pending": Decimal("0")},
+        "coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("12")},
+        "groceries": {"available": Decimal("320"), "target": Decimal("320"), "posted": Decimal("30"), "pending": Decimal("0")},
     }
 
 
@@ -334,7 +334,7 @@ def test_list_budgets_no_spend_is_zero(handler):
 
     result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]), FakePayCycleRepo(), FakeCategoryRepo())
 
-    assert result == {"coffee": {"target": Decimal("58"), "posted": Decimal("0"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
 
 def test_list_budgets_empty_skips_txn_scan(handler):
@@ -388,8 +388,8 @@ def test_list_budgets_income_target_rolls_up_positive_earnings(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     assert result == {
-        "salary": {"target": Decimal("5000"), "posted": Decimal("3000"), "pending": Decimal("500")},
-        "coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")},
+        "salary": {"available": Decimal("5000"), "target": Decimal("5000"), "posted": Decimal("3000"), "pending": Decimal("500")},
+        "coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")},
     }
 
 
@@ -401,7 +401,7 @@ def test_list_budgets_income_target_no_earnings_is_zero(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"salary": {"target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}}
+    assert result == {"salary": {"available": Decimal("5000"), "target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
 
 def test_list_budgets_income_clawback_clamps_to_zero(handler):
@@ -429,7 +429,7 @@ def test_list_budgets_income_id_named_income_still_counts(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["income"] == {"target": Decimal("5000"), "posted": Decimal("3000"), "pending": Decimal("0")}
+    assert result["income"] == {"available": Decimal("5000"), "target": Decimal("5000"), "posted": Decimal("3000"), "pending": Decimal("0")}
 
 
 def test_list_budgets_savings_bucket_target_treated_as_spend(handler):
@@ -442,7 +442,7 @@ def test_list_budgets_savings_bucket_target_treated_as_spend(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["nest_egg"] == {"target": Decimal("1000"), "posted": Decimal("0"), "pending": Decimal("0")}
+    assert result["nest_egg"] == {"available": Decimal("1000"), "target": Decimal("1000"), "posted": Decimal("0"), "pending": Decimal("0")}
 
 
 def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
@@ -455,7 +455,7 @@ def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     # Positive amount summed as spend clamps to 0 (not earnings) -> ceiling default.
-    assert result["ghost"] == {"target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}
+    assert result["ghost"] == {"available": Decimal("5000"), "target": Decimal("5000"), "posted": Decimal("0"), "pending": Decimal("0")}
 
 
 # --- handler-level: GET /budgets sub-category roll-up (WHIT-220) --------------
@@ -487,9 +487,9 @@ def test_list_budgets_parent_rolls_up_leaf_children(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     assert result == {
-        "car": {"target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("10")},
-        "parking": {"target": Decimal("50"), "posted": Decimal("30"), "pending": Decimal("10")},
-        "other": {"target": Decimal("80"), "posted": Decimal("45"), "pending": Decimal("0")},
+        "car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("10")},
+        "parking": {"available": Decimal("50"), "target": Decimal("50"), "posted": Decimal("30"), "pending": Decimal("10")},
+        "other": {"available": Decimal("80"), "target": Decimal("80"), "posted": Decimal("45"), "pending": Decimal("0")},
     }
 
 
@@ -509,7 +509,7 @@ def test_list_budgets_untargeted_leaf_still_rolls_into_parent(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
+    assert result == {"car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
 
 
 def test_list_budgets_multilevel_grandchild_rolls_up(handler):
@@ -529,7 +529,7 @@ def test_list_budgets_multilevel_grandchild_rolls_up(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("15")}}
+    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("15")}}
 
 
 def test_list_budgets_income_parent_rolls_up_income_leaves(handler):
@@ -548,7 +548,7 @@ def test_list_budgets_income_parent_rolls_up_income_leaves(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("250")}}
+    assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("250")}}
 
 
 def test_list_budgets_parent_and_child_both_budgeted_are_independent(handler):
@@ -586,7 +586,7 @@ def test_list_budgets_flat_leaf_rolls_up_only_itself(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"coffee": {"target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"available": Decimal("58"), "target": Decimal("58"), "posted": Decimal("50"), "pending": Decimal("0")}}
 
 
 # --- handler-level: GET /budgets parent-DIRECT spend (WHIT-228) ---------------
@@ -612,7 +612,7 @@ def test_list_budgets_parent_direct_spend_counts_with_children(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("100"), "pending": Decimal("0")}}
+    assert result == {"car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("100"), "pending": Decimal("0")}}
 
 
 def test_list_budgets_mid_level_direct_spend_counts(handler):
@@ -632,7 +632,7 @@ def test_list_budgets_mid_level_direct_spend_counts(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("25"), "pending": Decimal("60")}}
+    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("25"), "pending": Decimal("60")}}
 
 
 def test_list_budgets_income_parent_direct_earnings_count(handler):
@@ -650,7 +650,7 @@ def test_list_budgets_income_parent_direct_earnings_count(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4500"), "pending": Decimal("0")}}
+    assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("4500"), "pending": Decimal("0")}}
 
 
 # --- handler-level: dispatch -------------------------------------------------
@@ -668,7 +668,7 @@ def test_get_budgets_dispatch(handler, monkeypatch):
         {"rawPath": "/budgets", "requestContext": {"http": {"method": "GET"}}}, None)
 
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"coffee": {"target": 58, "posted": 50, "pending": 0}}
+    assert json.loads(resp["body"]) == {"coffee": {"available": 58, "target": 58, "posted": 50, "pending": 0}}
 
 
 def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
@@ -1161,7 +1161,7 @@ def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monk
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
-    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][2] == "2024-01-16"  # queried end bound is today, not today+1
 
 
@@ -1180,7 +1180,7 @@ def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatc
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
-    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("10"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("10"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][1] == "2024-01-03"  # queried start bound is cycle_start
 
 
@@ -1198,7 +1198,7 @@ def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatc
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), FakeCategoryRepo())
 
-    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("0"), "pending": Decimal("10")}}
+    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("0"), "pending": Decimal("10")}}
 
 
 def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
@@ -1216,7 +1216,7 @@ def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(length=30), FakeCategoryRepo())
 
-    assert result == {"coffee": {"target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
+    assert result == {"coffee": {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("20"), "pending": Decimal("0")}}
     assert txn_repo.calls[0][2] == "2024-02-01"  # end bound is today regardless of length
 
 
@@ -1282,7 +1282,7 @@ def test_noncounting_leaf_txn_excluded_from_parent(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
+    assert result == {"car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("75"), "pending": Decimal("0")}}
 
 
 def test_pending_posted_mix_folds_across_leaves(handler):
@@ -1302,7 +1302,7 @@ def test_pending_posted_mix_folds_across_leaves(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("75"), "pending": Decimal("25")}}
+    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("75"), "pending": Decimal("25")}}
 
 
 def test_income_clawback_on_one_leaf_nets_into_parent(handler):
@@ -1326,7 +1326,7 @@ def test_income_clawback_on_one_leaf_nets_into_parent(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     # salary 4000 + side net -750 = 3250 (nets across the subtree, then clamped once).
-    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("3250"), "pending": Decimal("0")}}
+    assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("3250"), "pending": Decimal("0")}}
 
 
 def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
@@ -1348,8 +1348,8 @@ def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     assert result == {
-        "car": {"target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")},
-        "coffee": {"target": Decimal("60"), "posted": Decimal("50"), "pending": Decimal("0")},
+        "car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")},
+        "coffee": {"available": Decimal("60"), "target": Decimal("60"), "posted": Decimal("50"), "pending": Decimal("0")},
     }
 
 
@@ -1377,8 +1377,8 @@ def test_two_disjoint_parents_do_not_cross_contaminate(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     assert result == {
-        "car": {"target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("20")},
-        "food": {"target": Decimal("400"), "posted": Decimal("100"), "pending": Decimal("40")},
+        "car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("20")},
+        "food": {"available": Decimal("400"), "target": Decimal("400"), "posted": Decimal("100"), "pending": Decimal("40")},
     }
 
 
@@ -1399,7 +1399,7 @@ def test_five_level_chain_rolls_to_top(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"l1": {"target": Decimal("500"), "posted": Decimal("60"), "pending": Decimal("10")}}
+    assert result == {"l1": {"available": Decimal("500"), "target": Decimal("500"), "posted": Decimal("60"), "pending": Decimal("10")}}
 
 
 def test_midlevel_and_ancestor_both_budgeted_double_count(handler):
@@ -1475,7 +1475,7 @@ def test_list_budgets_parent_direct_refund_reduces_whole_budget(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("200"), "posted": Decimal("0"), "pending": Decimal("0")}}
+    assert result == {"car": {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
 
 def test_list_budgets_net_positive_subtree_header_matches_signed_rows(handler):
@@ -1498,7 +1498,7 @@ def test_list_budgets_net_positive_subtree_header_matches_signed_rows(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["car"] == {"target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")}
+    assert result["car"] == {"available": Decimal("200"), "target": Decimal("200"), "posted": Decimal("30"), "pending": Decimal("0")}
     # The card's promise: the header equals the signed spend of the rows the list shows
     # (spend is -amount), i.e. the number a user eyeballs from the transaction list.
     signed_row_total = sum((Decimal(str(-t["amount"])) for t in txns), Decimal(0))
@@ -1552,7 +1552,7 @@ def test_list_budgets_parent_direct_mixed_posted_and_pending_no_leaf_spend(handl
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("40"), "pending": Decimal("25")}}
+    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("40"), "pending": Decimal("25")}}
 
 
 def test_list_budgets_cross_bucket_child_excluded_by_server_guard(handler):
@@ -1572,7 +1572,7 @@ def test_list_budgets_cross_bucket_child_excluded_by_server_guard(handler):
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
     # The cross-bucket child's spend is excluded from the Living parent (WHIT-229 guard).
-    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}}
+    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
 
 def test_list_budgets_same_bucket_grandchild_under_cross_bucket_child_still_folds(handler):
@@ -1595,7 +1595,7 @@ def test_list_budgets_same_bucket_grandchild_under_cross_bucket_child_still_fold
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"car": {"target": Decimal("300"), "posted": Decimal("70"), "pending": Decimal("0")}}
+    assert result == {"car": {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("70"), "pending": Decimal("0")}}
 
 
 def test_list_budgets_cross_bucket_child_that_is_itself_budgeted_still_correct(handler):
@@ -1616,8 +1616,8 @@ def test_list_budgets_cross_bucket_child_that_is_itself_budgeted_still_correct(h
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}
-    assert result["oddball"] == {"target": Decimal("100"), "posted": Decimal("40"), "pending": Decimal("0")}
+    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("0")}
+    assert result["oddball"] == {"available": Decimal("100"), "target": Decimal("100"), "posted": Decimal("40"), "pending": Decimal("0")}
 
 
 def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
@@ -1640,7 +1640,7 @@ def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("0")}}
+    assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("4000"), "pending": Decimal("0")}}
 
 
 # ===========================================================================
@@ -1674,7 +1674,7 @@ def test_wh343_gap_posted_negative_pending_positive_independent_bucket_clamp(han
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("40")}
+    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("0"), "pending": Decimal("40")}
     # DOCUMENTED SEAM (see critique): the combined header (0+40=40) is > the TRUE signed
     # net of the rows (-30 posted + 40 pending = 10). The posted/pending buckets floor
     # independently, so a refund stranded in the posted bucket can't offset positive
@@ -1705,7 +1705,7 @@ def test_wh343_gap_grandchild_net_negative_nets_across_deep_subtree(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("10"), "pending": Decimal("0")}
+    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("10"), "pending": Decimal("0")}
 
 
 def test_wh343_gap_cross_bucket_net_negative_sibling_not_netted_into_parent(handler):
@@ -1727,7 +1727,7 @@ def test_wh343_gap_cross_bucket_net_negative_sibling_not_netted_into_parent(hand
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result["car"] == {"target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("0")}
+    assert result["car"] == {"available": Decimal("300"), "target": Decimal("300"), "posted": Decimal("60"), "pending": Decimal("0")}
 
 
 def test_wh343_gap_income_whole_subtree_net_negative_floors_to_zero(handler):
@@ -1748,7 +1748,7 @@ def test_wh343_gap_income_whole_subtree_net_negative_floors_to_zero(handler):
 
     result = handler.list_budgets(budget_repo, txn_repo, FakePayCycleRepo(), category_repo)
 
-    assert result == {"income": {"target": Decimal("6000"), "posted": Decimal("0"), "pending": Decimal("0")}}
+    assert result == {"income": {"available": Decimal("6000"), "target": Decimal("6000"), "posted": Decimal("0"), "pending": Decimal("0")}}
 
 
 def test_wh343_gap_single_category_default_clamp_still_true(handler):

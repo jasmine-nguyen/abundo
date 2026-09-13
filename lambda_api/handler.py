@@ -112,6 +112,7 @@ from spend import (
     summarise_transactions,
     summarise_uncategorized,
     transactions_in_window,
+    unified_available,
 )
 from anthropic_client import AnthropicError
 from insights_ai import generate_suggestions
@@ -1967,6 +1968,11 @@ def list_budgets(
             "posted": folded["posted"],
             "pending": folded["pending"],
         }
+        # The two signed cushions this cycle's spendable moves by. Exactly one is ever
+        # non-zero on real data (a category is rollover OR spread, never both), so
+        # unified_available below reproduces the client's old sum byte-for-byte.
+        buffer_term = Decimal(0)
+        adjustment_term = Decimal(0)
         # Only a rollover category carries the extra keys — a non-rollover (or legacy)
         # budget's wire shape stays byte-identical; the client defaults rollover/carryover.
         if cat_id in rollover_ids:
@@ -1981,14 +1987,22 @@ def list_budgets(
                     settlements[cat_id] = persist
             row["rollover"] = True
             row["carryover"] = carryover
+            buffer_term = carryover
         if cat_id in spread_ids:
             spread_row, finished, reanchor = _spread_state(entry, cycle_start, length, last_pay_date, today)
             if spread_row is not None:
                 row["spread"] = spread_row
+                # Rollover wins if a corrupt row is in BOTH sets, so available never sums two
+                # cushions — matching set_budget, which strips spread when rollover turns on.
+                if cat_id not in rollover_ids:
+                    adjustment_term = spread_row["adjustment"]
             if finished:
                 finished_spreads.append(cat_id)
             if reanchor is not None:
                 reanchored_spreads[cat_id] = reanchor
+        # The spendable the screen shows — computed server-side from the LIVE terms (not the
+        # stored buffer/payback_* mirror) so it equals the client's old formula exactly.
+        row["available"] = unified_available(entry["target"], buffer_term, adjustment_term)
         result[cat_id] = row
 
     _persist_rollover_settlements(budget_repo, settlements, length, last_pay_date)
