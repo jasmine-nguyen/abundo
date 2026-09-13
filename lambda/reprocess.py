@@ -17,20 +17,32 @@ import logging
 
 from banksync import BankSyncClient
 from repository import TransactionRepository
+import rule_ingest
+from repository_rule import RuleRepository
+from repository_category import CategoryRepository
 
 logger = logging.getLogger(__name__)
 
 
-def reprocess_failed(repo) -> dict:
+def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
     """Re-drive every dead-lettered row and return a summary of what happened:
     ``{"reprocessed": n, "skipped": n, "errors": n}``.
 
     Never raises for a single bad row — a poison row is skipped (left in place) so
     it can't halt recovery for the rows behind it. A row is deleted ONLY after its
     insert durably succeeds, so nothing is lost if the sweep is interrupted.
+
+    When ``rule_repo`` and ``category_repo`` are both supplied, a re-driven charge is filed by
+    the user's rules (WHIT-530), the same as a fresh webhook delivery. The rules + taxonomy are
+    read ONCE for the whole sweep, not per row. Omitting them (the default) skips rule filing, so
+    any existing caller is unchanged.
     """
     rows = repo.get_failed_transactions()
     summary = {"reprocessed": 0, "skipped": 0, "errors": 0}
+
+    loaded_rules = None
+    if rule_repo is not None and category_repo is not None:
+        loaded_rules = rule_ingest.load_rules(rule_repo, category_repo)
 
     for row in rows:
         # Decode the stored raw BankSync row. A missing/undecodable `raw` can never
@@ -53,6 +65,10 @@ def reprocess_failed(repo) -> dict:
             summary["skipped"] += 1
             continue
 
+        # File it by the user's rules before inserting, if the stores were supplied (WHIT-530).
+        if loaded_rules is not None:
+            rule_ingest.file_charge(txn, *loaded_rules)
+
         # Insert, THEN delete the dead-letter — the delete only ever follows a durable
         # insert. A DB error here leaves the row untouched to retry next run.
         try:
@@ -70,5 +86,9 @@ def reprocess_failed(repo) -> dict:
 def lambda_handler(event, context):
     """Manual-invoke entrypoint (WHIT-55). Ignores the event; runs the sweep and
     returns the summary as the response body."""
-    summary = reprocess_failed(TransactionRepository())
+    summary = reprocess_failed(
+        TransactionRepository(),
+        rule_repo=RuleRepository(),
+        category_repo=CategoryRepository(),
+    )
     return {"statusCode": 200, "body": json.dumps(summary)}

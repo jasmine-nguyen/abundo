@@ -63,6 +63,7 @@ lambda/*
 !lambda/merchant.py
 !lambda/reprocess.py
 !lambda/age_out.py
+!lambda/rule_ingest.py
 !lambda/requirements.txt
 
 lambda_api/*
