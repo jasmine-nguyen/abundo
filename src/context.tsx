@@ -1363,7 +1363,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       };
       const BUDGET_AND_CATEGORY = [['budgetTransactions'], ['categoryTransactions']] as const;
-      const CATEGORY_ONLY = [['categoryTransactions']] as const;
 
       const transaction =
         readTransactionsCache().find((t) => t.transaction_id === txId) ?? findInScopedLists(txId);
@@ -1379,36 +1378,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       patchTransactions((prev) =>
         prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...patch } : existing)));
 
-      // WHIT-344: excluding a charge also drops it from every budget's cycle list. Optimistically
-      // remove it from each cached ['budgetTransactions', *] entry so the budget-detail list
-      // updates before the refetch lands, snapshotting them for rollback (mirrors deleteBudget).
-      // Removal only: re-including (budget_excluded: false) adds a row back, which needs the
-      // server's window + newest-first sort, so that stays on the invalidate below.
-      // WHIT-360: snapshot ONLY the lists this exclusion actually removes the row from (the ones
-      // holding txId), so a failed-save rollback restores exactly those — restoring untouched lists
-      // would clobber a concurrent refetch of an unrelated budget.
-      const budgetTxSnapshots =
-        patch.budget_excluded === true
-          ? queryClient
-              .getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] })
-              .filter(([, data]) => data?.some((t) => t.transaction_id === txId))
-          : [];
-      budgetTxSnapshots.forEach(([key, data]) => {
-        queryClient.setQueryData<Transaction[]>(key, data!.filter((t) => t.transaction_id !== txId));
-      });
-
-      // A note/tag edit must also reflect on the budget-detail + category-drill lists (their own
-      // caches, untouched by patchTransactions above).
-      // For an exclude, the budget list already dropped the row above (WHIT-344); the category-drill
-      // caches have no such instant-drop rule, so MARK the row there instead — that both moves the
-      // detail screen's toggle for a charge that lives ONLY in a category cache and keeps the screen
-      // showing it (removing it would blank the screen to "not found"). The success invalidate then
-      // refetches those lists.
-      if ('budget_excluded' in patch) {
-        patchScopedLists(CATEGORY_ONLY, stamp(patch));
-      } else {
-        patchScopedLists(BUDGET_AND_CATEGORY, stamp(patch));
-      }
+      // WHIT-525: stamp the row in BOTH scoped caches (budget + category) uniformly. The old
+      // approach (WHIT-344) removed the row from budgetTransactions, which blanked a budget-only
+      // charge's detail screen to "not found." Now the row stays findable; budgetDetail filters
+      // out excluded rows at the view-model level so the budget list still drops them visually.
+      // Re-including (budget_excluded: false) still relies on the invalidate (no optimistic add).
+      patchScopedLists(BUDGET_AND_CATEGORY, stamp(patch));
 
       // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate the late
       // failure toast on the epoch so a save settling after sign-out doesn't toast the next session.
@@ -1430,15 +1405,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch {
         patchTransactions((prev) =>
           prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...previous } : existing)));
-        // Mirror the optimistic scoped-cache patch back. Guarded (prev ? map : prev), so it no-ops
-        // on a cleared cache and needs no epoch gate — unlike the raw budgetTxSnapshots restore
-        // below. Same prefix split as the optimistic write above (category-only for an exclude).
-        patchScopedLists('budget_excluded' in patch ? CATEGORY_ONLY : BUDGET_AND_CATEGORY, stamp(previous));
-        // WHIT-344/WHIT-271: the budget-list restore is a raw setQueryData (it recreates the
-        // entry), so — unlike guarded patchTransactions — it must be epoch-gated, or a save
-        // failing after sign-out would re-seat the previous account's rows into the cleared cache.
+        patchScopedLists(BUDGET_AND_CATEGORY, stamp(previous));
         if (epoch === sessionEpoch.current) {
-          budgetTxSnapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
           showToast('Could not save. Please try again.');
         }
       }
@@ -3199,10 +3167,9 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const available = b.available ?? (b.budget + (b.rollover ? b.carryover : 0) + b.spreadAdjustment);
   const den = available > 0 ? available : (b.budget > 0 ? b.budget : 1);
   const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
-  // The list is already the cycle's whole subtree, contributing rows only, newest-first
-  // (server-filtered), so it sums to the header. No client-side filtering — the screen
-  // groups a paged slice of relItems by date for display.
-  const relItems = s.transactions;
+  // The server already filters to contributing rows; during the optimistic window an
+  // excluded row may linger, so gate on contributesToBudget before display (WHIT-525).
+  const relItems = s.transactions.filter(contributesToBudget);
   const daysLeftLabel = `${s.daysLeft} ${s.daysLeft === 1 ? 'day' : 'days'} remaining`;
   const targetPct = Math.round(elapsed * 100);
   // One line for the accumulated buffer, shown only when rollover is on and it's non-trivial.

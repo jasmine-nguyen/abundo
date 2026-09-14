@@ -61,10 +61,12 @@ function mount(transactions: Transaction[] = [txn()]) {
   return result;
 }
 
-// [O-exclude-sync] excluding a charge removes it from the cached budget-detail list SYNCHRONOUSLY,
-// before the server call resolves. FAIL-ON-REVERT: deleting the budgetTxSnapshots removal loop
-// leaves 't1' in the list here (the invalidate alone can't drop it until a refetch lands).
-it('exclude removes the row from the cached budget list before the server confirms', async () => {
+// [O-exclude-sync] excluding a charge MARKS the row in the cached budget-detail list SYNCHRONOUSLY,
+// before the server call resolves. WHIT-525: the row stays present (so the detail screen can still
+// find it) but stamped budget_excluded:true; budgetDetail filters it at the view-model level.
+// FAIL-ON-REVERT: reverting WHIT-525 removes the stamp path → the row is physically removed → the
+// detail screen blanks to "not found" for a budget-only charge.
+it('exclude marks the row in the cached budget list before the server confirms', async () => {
   let resolveSave: (v: { transaction_id: string; budget_excluded: boolean }) => void = () => {};
   mockApi.setTransactionFields.mockReturnValue(new Promise((r) => { resolveSave = r; }));
   const result = mount();
@@ -73,15 +75,15 @@ it('exclude removes the row from the cached budget list before the server confir
   let pending: Promise<void> = Promise.resolve();
   act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
-  // The optimistic patch ran synchronously; the save promise is still pending (unresolved).
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([]);
+  // The optimistic patch ran synchronously; the row is marked, not removed.
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn({ budget_excluded: true })]);
 
   await act(async () => { resolveSave({ transaction_id: 't1', budget_excluded: true }); await pending; });
 });
 
 // [O-exclude-all-entries] a charge on a child category also shows in a budgeted parent's list, so
-// exclude must drop it from EVERY cached ['budgetTransactions', *] entry.
-it('exclude removes the row from every cached budget list (parent + child)', async () => {
+// exclude must MARK it in EVERY cached ['budgetTransactions', *] entry (WHIT-525).
+it('exclude marks the row in every cached budget list (parent + child)', async () => {
   mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true });
   const result = mount();
   queryClient.setQueryData(['budgetTransactions', 'groceries'], [txn()]);
@@ -89,14 +91,15 @@ it('exclude removes the row from every cached budget list (parent + child)', asy
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([]);
-  expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([]);
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn({ budget_excluded: true })]);
+  expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([txn({ budget_excluded: true })]);
 });
 
-// [O-rollback] a failed save restores the whole cached list in its original newest-first order.
-// FAIL-ON-REVERT: rolling back by re-inserting individual rows (instead of restoring the snapshot)
-// would not guarantee this exact order; dropping the catch restore leaves the row missing.
-it('rolls back the removal (in original order) when the save fails', async () => {
+// [O-rollback] a failed save un-stamps the row back to its original state. WHIT-525: the stamp
+// approach means rollback just re-stamps the original value (undefined → absent field), which
+// toEqual matches against the original object. FAIL-ON-REVERT: dropping the catch rollback
+// stamp leaves budget_excluded:true on the row.
+it('rolls back the exclude stamp when the save fails', async () => {
   mockApi.setTransactionFields.mockRejectedValue(new Error('network'));
   const result = mount([txn(), txn({ transaction_id: 't2', date: '2026-06-20' })]);
   const original = [txn(), txn({ transaction_id: 't2', date: '2026-06-20' })];
@@ -135,12 +138,10 @@ it('exclude no-ops when no budget list is cached', async () => {
   expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toBeUndefined();
 });
 
-// [WHIT-360] a failed exclude rollback restores ONLY the shrunk list, never an unrelated list that
-// was refetched mid-save. groceries holds t1; the 'food' list never held it, so excluding t1 shrinks
-// only groceries. While the save is pending a background refetch replaces food's list; on failure the
-// rollback must restore groceries but NOT clobber food's fresh data. FAIL-ON-REVERT: restoring ALL
-// snapshots (the old behaviour) stamps food back to its stale pre-save value.
-it('[WHIT-360] exclude rollback restores only the shrunk list, not an unrelated refetched list', async () => {
+// [WHIT-360] a failed exclude rollback un-stamps the marked list without clobbering an unrelated
+// list that was refetched mid-save. WHIT-525: the row is now MARKED (not removed), so rollback
+// un-stamps it. The 'food' list never held t1, so its refetched data survives untouched.
+it('[WHIT-360] exclude rollback un-stamps only the marked list, not an unrelated refetched list', async () => {
   let rejectSave: (e: unknown) => void = () => {};
   mockApi.setTransactionFields.mockReturnValue(new Promise((_res, rej) => { rejectSave = rej; }));
   const result = mount();
@@ -149,14 +150,14 @@ it('[WHIT-360] exclude rollback restores only the shrunk list, not an unrelated 
 
   let pending: Promise<void> = Promise.resolve();
   act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([]); // shrank; food untouched
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn({ budget_excluded: true })]); // marked, not removed
 
   // A background refetch of the unrelated 'food' list lands while the save is still pending.
   act(() => { queryClient.setQueryData(['budgetTransactions', 'food'], [txn({ transaction_id: 't9new' })]); });
 
   await act(async () => { rejectSave(new Error('network')); await pending; });
 
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn()]);                    // shrunk list restored
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn()]);                    // un-stamped back to original
   expect(queryClient.getQueryData(['budgetTransactions', 'food'])).toEqual([txn({ transaction_id: 't9new' })]); // fresh data NOT clobbered
 });
 
@@ -165,10 +166,10 @@ it('[WHIT-360] exclude rollback restores only the shrunk list, not an unrelated 
 // [G1] siblings untouched, [G2] a list without the id is preserved, [G3] rollback restores MULTIPLE
 // cached entries, [G4] the ['transactions'] row survives the exclude (it is patched, not dropped).
 
-// [G1] (P0) A budget list holds several charges; excluding ONE drops only that row and leaves the
-// others in their original newest-first order. FAIL-ON-REVERT: neutralising the removal filter to a
-// no-op leaves t1 present, so this reddens.
-it('exclude removes ONLY the excluded row, leaving siblings intact and ordered', async () => {
+// [G1] (P0) A budget list holds several charges; excluding ONE marks only that row and leaves the
+// others unchanged. WHIT-525: the row stays in the list (stamped budget_excluded:true) so the
+// detail screen can still find it; budgetDetail filters it out at the view-model level.
+it('exclude marks ONLY the excluded row, leaving siblings intact and ordered', async () => {
   mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 't1', budget_excluded: true } as never);
   const t1 = txn();
   const t2 = txn({ transaction_id: 't2', date: '2026-06-28', description: 'WOOLIES' });
@@ -178,7 +179,7 @@ it('exclude removes ONLY the excluded row, leaving siblings intact and ordered',
 
   await act(async () => { await result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
 
-  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([t2, t3]);
+  expect(queryClient.getQueryData(['budgetTransactions', 'groceries'])).toEqual([txn({ budget_excluded: true }), t2, t3]);
 });
 
 // [G2] (P1) A cached budget list that does NOT contain the excluded id must keep every row it holds
@@ -196,9 +197,9 @@ it('a budget list without the excluded id keeps all its rows', async () => {
   expect(queryClient.getQueryData(['budgetTransactions', 'transport'])).toEqual([other1, other2]);
 });
 
-// [G3] (P0) A failed save restores EVERY snapshotted list, not just the first. The implementer's
-// [O-rollback] proves one list; this proves the forEach restore covers multiple entries.
-// FAIL-ON-REVERT: deleting the catch restore line leaves both lists emptied → reddens.
+// [G3] (P0) A failed save un-stamps EVERY cached list, not just the first. WHIT-525: the stamp
+// approach means rollback un-stamps (restores the original row) rather than re-inserting from a
+// snapshot. FAIL-ON-REVERT: deleting the catch rollback stamp leaves both lists with stale flags.
 it('rolls back every cached budget list when the save fails', async () => {
   mockApi.setTransactionFields.mockRejectedValue(new Error('network'));
   const parent = [txn(), txn({ transaction_id: 't2', date: '2026-06-20' })];
@@ -313,10 +314,9 @@ describe('budgetTxInvalidation (folded)', () => {
 });
 
 // ===== WHIT-344 / WHIT-271 (folded from budgetTxOptimisticSignOut.provider.screen.test.tsx)
-// The optimistic budget-list rollback in applyTransactionEdit is the only rollback writer that is
-// neither epoch-guarded nor cache-existence-guarded; this pins the WHIT-271 invariant that a writer
-// settling after sign-out re-seats nothing. Uses the module-level (groceries) `txn` (byte-identical
-// to this suite's original) and the shared live auth store / deferred / signOut.
+// WHIT-525: the rollback now uses patchScopedLists (guarded: no-ops on a cleared cache) instead of
+// raw setQueryData snapshots, so it's safe after sign-out without a separate epoch guard. The toast
+// is still epoch-gated. This pins the WHIT-271 invariant that nothing from a prior session reappears.
 describe('WHIT-344 exclude rollback settling after sign-out', () => {
   it('does NOT re-seat the old account budget list into the cleared cache', async () => {
     seedTransactionsCache(queryClient, [txn()]);
@@ -536,31 +536,28 @@ describe('budgetTxRefileOptimistic (folded)', () => {
     });
 
     describe('WHIT-360 exclude path — narrowed rollback', () => {
-      it('[G2] a failed exclude rollback issues NO setQueryData write to an unrelated list refetched mid-save', async () => {
-        // Stronger than value-equality (structural sharing can mask a re-write): assert the rollback
-        // never even CALLS setQueryData for the unrelated key. Spy is installed AFTER the mid-save
-        // refetch so the refetch's own write isn't counted.
+      it('[G2] an unrelated list refetched mid-save survives a failed exclude rollback', async () => {
+        // WHIT-525: the stamp approach maps over every budget list during rollback, but the map is an
+        // identity for lists that never held the target row — data is unchanged. The meaningful guard
+        // is that the refetched shopping data survives the rollback.
         let rejectSave: (e: unknown) => void = () => {};
         mockApi.setTransactionFields.mockReturnValue(
           new Promise((_res, rej) => { rejectSave = rej; }) as ReturnType<typeof api.setTransactionFields>);
         const result = mount([txn('t1')]);
-        queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);        // holds t1 → shrinks
+        queryClient.setQueryData(['budgetTransactions', 'food'], [txn('t1')]);        // holds t1 → gets stamped
         queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s0', { category: 'shopping' })]); // never held t1
 
         let pending: Promise<void> = Promise.resolve();
         act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-        expect(foodList()).toEqual([]);
+        // WHIT-525: the row is stamped budget_excluded in place (not removed).
+        expect(foodList()).toEqual([txn('t1', { budget_excluded: true })]);
 
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
 
-        const spy = jest.spyOn(queryClient, 'setQueryData');
         await act(async () => { rejectSave(new Error('boom')); await pending; });
 
-        const shoppingWrites = spy.mock.calls.filter(
-          (c: unknown[]) => Array.isArray(c[0]) && c[0][0] === 'budgetTransactions' && c[0][1] === 'shopping');
-        expect(shoppingWrites).toEqual([]);                                             // rollback never wrote the unrelated key
-        spy.mockRestore();
-        expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // and the fresh data survived
+        expect(foodList()).toEqual([txn('t1')]);                                        // stamped list restored
+        expect(budgetList('shopping')).toEqual([txn('s1new', { category: 'shopping' })]); // refetched data survived
       });
 
       it('[G4] a note/tag edit optimistically patches the budget lists IN PLACE, then rolls back on a failed save', async () => {
@@ -623,7 +620,8 @@ describe('budgetTxRefileOptimistic (folded)', () => {
 
         let pending: Promise<void> = Promise.resolve();
         act(() => { pending = result.current.applyTransactionEdit('t1', { budget_excluded: true }); });
-        expect(foodList()).toEqual([]);
+        // WHIT-525: the row is stamped budget_excluded in place (not removed).
+        expect(foodList()).toEqual([txn('t1', { budget_excluded: true })]);
 
         // shopping's refetch lands mid-save, now holding real rows.
         act(() => { queryClient.setQueryData(['budgetTransactions', 'shopping'], [txn('s1new', { category: 'shopping' })]); });
