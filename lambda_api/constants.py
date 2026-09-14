@@ -316,9 +316,8 @@ PAYCYCLE_LENGTHS = frozenset({7, 14, 30})
 # would bake in a spend figure that later changes; until then the leftover is recomputed
 # live on each read. Kept equal to shared PENDING_AGE_OUT_DAYS (the point past which
 # BankSync no longer re-sends a transaction — it is genuinely frozen); a test asserts the
-# two stay in lockstep. Handler-only, so it lives here, not in shared/constants.py.
-# Mirrors shared/constants.py (WHIT-555 moved the source of truth there so the webhook
-# alert path can import them too). WHIT-136 sync guard keeps these equal.
+# two stay in lockstep. Mirrors shared/constants.py (WHIT-555 moved the source of truth
+# there so the webhook alert path can import them too). WHIT-136 sync guard keeps these equal.
 ROLLOVER_SETTLE_LAG_DAYS = 10
 ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 
