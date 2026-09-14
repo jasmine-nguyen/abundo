@@ -104,6 +104,16 @@ def test_the_write_files_matching_charges_by_their_own_keys(handler):
     assert repo.writes == [(f"ACCOUNT#{SPENDING}", "TXN#hit", "groceries", None)]
 
 
+def test_the_write_stamps_the_rule_that_filed_each_charge(handler):
+    # WHIT-536: a rule-filed row remembers which rule filed it. FAIL-ON-REVERT: drop the
+    # filed_by_rule=stamp arg in the handler and the stored row carries no stamp.
+    repo = WritableFeedRepo({
+        SPENDING: [_row(SPENDING, "2026-07-02", "hit", description="COLES 1", category=None)],
+    })
+    _call(handler, repo, [_rule("coles", rule_id="r-coles")], {"dryRun": False})
+    assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#hit")["filed_by_rule"] == "r-coles"
+
+
 # --- the race the user can actually lose (WHIT-508) --------------------------
 # The pass reads all of history, decides, then writes — up to 15s later. A tap in that gap used to
 # be silently overwritten by the rule. These lock the rule backing off instead.
@@ -164,7 +174,13 @@ def test_a_stale_scan_does_not_overwrite_the_stored_category(handler):
 
     assert body["filed"] == []
     assert body["alreadyFiled"] == ["t1"]
-    assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#t1")["category"] == "coffee"
+    row = repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#t1")
+    assert row["category"] == "coffee"
+    # [WHIT-536] documents the handler-integration expectation: a refused write lands no rule
+    # stamp on the row the user just claimed. The load-bearing fail-on-revert guard for this is
+    # test_whit536_rejected_write_lands_no_stamp_on_hand_filed_row (real conditional write); here
+    # the fake refuses before writing, so this line is a readability check, not a revert guard.
+    assert "filed_by_rule" not in row
 
 
 def test_running_twice_files_nothing_the_second_time(handler):

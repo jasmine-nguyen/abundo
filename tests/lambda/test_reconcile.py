@@ -2319,6 +2319,52 @@ def test_dedupe_guard_keeps_a_post_settlement_override(lam, repo):
     assert carried["budget_excluded"] is True
 
 
+# --- WHIT-536: the filed_by_rule stamp rides the carry in lockstep with the category -----
+
+def test_carry_brings_the_rule_stamp_with_the_category(lam, repo):
+    # A rule-filed pending settling onto a posted with no category → both carry across.
+    posted = {"transaction_id": "B", "counts_to_budget": True}
+    source = {"category": "groceries", "filed_by_rule": "rule-1"}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["category"] == "groceries"
+    assert carried["filed_by_rule"] == "rule-1"
+
+
+def test_hand_filed_pending_strips_an_incoming_rule_stamp(lam, repo):
+    # Fail-on-revert anchor: pending the user filed by hand (category, NO stamp); the incoming
+    # posted arrived rule-stamped (rule_ingest stamps unfiled posted rows). The category is
+    # carried from the hand-filed pending, so its (absent) stamp must win — strip the posted's.
+    # Dropping the `pop` in _with_carried_category leaves "rule-1" and this goes red.
+    posted = {"transaction_id": "B", "category": "AUTO", "filed_by_rule": "rule-1", "counts_to_budget": True}
+    source = {"category": "groceries"}  # hand-filed: a category, no stamp
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["category"] == "groceries"
+    assert "filed_by_rule" not in carried
+
+
+def test_posted_keeps_its_own_stamp_when_no_category_is_carried(lam, repo):
+    # Source has nothing to carry → the posted keeps its own category AND its own stamp.
+    posted = {"transaction_id": "B", "category": "groceries", "filed_by_rule": "rule-2", "counts_to_budget": True}
+    source = {"notes": "x"}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["filed_by_rule"] == "rule-2"
+
+
+def test_dedupe_sweep_carries_the_rule_stamp_with_the_category(lam, repo):
+    posted = {"transaction_id": "B", "counts_to_budget": True}
+    source = {"category": "groceries", "filed_by_rule": "rule-3"}
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried["filed_by_rule"] == "rule-3"
+
+
 def test_dedupe_guard_does_not_carry_a_stale_exclude_onto_a_reincluded_posted(lam, repo):
     # The user RE-INCLUDED the posted (override cleared -> absent). On the sweep a stale
     # pending twin still marked excluded must NOT re-exclude it — that's the WHIT-300 bug.
@@ -2685,3 +2731,64 @@ def test_batch_mixes_pending_resend_posted_resync_and_settlement(lam, repo):
     assert store[(acc, "TXN#RS")]["budget_excluded"] is True
     assert store[(acc, "TXN#NEW")]["category"] == "coffee"
     assert (acc, "TXN#SP") not in store
+
+
+# --- WHIT-536 GAP: the stamp through the FULL reconcile path (not the helper in isolation) ---
+
+def _rule_stamped(txn, rule_id):
+    txn["filed_by_rule"] = rule_id
+    return txn
+
+
+# [G1] [A13] End-to-end: a RULE-filed pending settles onto its posted twin -> the stored posted
+# row keeps BOTH the carried category and the rule stamp. FAIL-ON-REVERT: drop the carry block
+# in _with_carried_category and the stamp is gone from the settled row.
+def test_whit536_rule_filed_pending_settles_and_posted_keeps_the_stamp(lam, repo):
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="groceries")
+    _rule_stamped(pending, "rule-7")
+    repo.insert_transactions([pending])
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "groceries"
+    assert row["filed_by_rule"] == "rule-7"
+    assert (_acc(posted), "TXN#A") not in repo._table.store   # stale pending removed
+
+
+# [G3] [A14] End-to-end: a HAND-filed pending (category, NO stamp) settles onto a posted twin
+# that arrived rule-stamped (rule_ingest stamps unfiled incoming). The hand-filed category wins
+# the carry, so the posted's own stamp must be STRIPPED — no unexplained "a rule filed this" on a
+# row the user filed. FAIL-ON-REVERT: drop the else/pop branch and "rule-1" survives.
+def test_whit536_hand_filed_pending_settles_and_strips_incoming_stamp(lam, repo):
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="groceries")
+    repo.insert_transactions([pending])                       # hand-filed: category, no stamp
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    _rule_stamped(posted, "rule-1")                           # rule_ingest stamped the incoming posted
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "groceries"
+    assert "filed_by_rule" not in row
+
+
+# [G2] [A15] A rule-filed PENDING re-sent while STILL pending goes through the partial
+# _update_bank_fields path (WHIT-513): bank fields update in place, but the rule category AND
+# the stamp (neither is bank-owned) must survive. FAIL-ON-REVERT: revert the pending branch to a
+# full insert/overwrite and the bank's raw category clobbers both.
+def test_whit536_pending_resend_keeps_category_and_stamp(lam, repo):
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True,
+                    category="groceries", description="OLD DESC")
+    _rule_stamped(pending, "rule-5")
+    repo.insert_transactions([pending])
+    resend = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True,
+                   category="FOOD_AND_DRINK", description="NEW DESC FROM BANK")
+
+    repo.insert_or_reconcile([resend])
+
+    row = repo._table.store[(_acc(resend), "TXN#A")]
+    assert row["description"] == "NEW DESC FROM BANK"   # bank field updated in place
+    assert row["category"] == "groceries"              # rule category untouched
+    assert row["filed_by_rule"] == "rule-5"            # stamp survives the re-send

@@ -957,3 +957,21 @@ def test_posted_read_failure_reaps_as_today_without_aborting(lam, repo, monkeypa
     assert summary["rescued"] == 0 and summary["reaped"] == 1
     assert rows["settled_twin"].get("category") is None
     assert "could not read posted rows" in caplog.text
+
+
+# [G8] [A17] A rule-filed stale pending (category + stamp) is rescued onto its settled twin
+# before the reap. The rescue reuses _with_carried_category, so the stamp must ride onto the twin
+# — history still explains the carried category. FAIL-ON-REVERT: drop the carry block in
+# _with_carried_category and the rescued twin keeps the category but loses the stamp.
+def test_age_out_rescue_carries_the_rule_stamp_onto_the_twin(lam, repo):
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
+    filed["filed_by_rule"] = "rule-7"
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category=None)
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert summary["rescued"] == 1 and "filed_pending" not in rows
+    assert rows["settled_twin"]["category"] == "groceries"
+    assert rows["settled_twin"]["filed_by_rule"] == "rule-7"

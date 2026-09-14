@@ -81,6 +81,25 @@ def test_one_matching_rule_files_the_charge(lam):
     assert charge["category"] == "groceries"
 
 
+def test_filing_stamps_the_winning_rule_id(lam):
+    # WHIT-536: a rule-filed charge remembers which rule filed it.
+    charge = _charge(description="COLES 55", category=None)
+    lam.rule_ingest.apply(
+        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries", rule_id="rule-9")]),
+        category_repo=FakeCategoryRepo(["groceries"]))
+    assert charge["category"] == "groceries"
+    assert charge["filed_by_rule"] == "rule-9"     # FAIL-ON-REVERT: stamp line removed -> absent
+
+
+def test_an_unfiled_charge_gets_no_stamp(lam):
+    # No rule matches → not filed → nothing to explain, so no stamp is written.
+    charge = _charge(description="WOOLIES", category=None)
+    lam.rule_ingest.apply(
+        [charge], rule_repo=FakeRuleStore([_rule("COLES", "groceries")]),
+        category_repo=FakeCategoryRepo(["groceries"]))
+    assert "filed_by_rule" not in charge
+
+
 def test_filing_recomputes_counts_to_budget(lam):
     # A rule that files into a NON-budget category must flip counts_to_budget off. The charge
     # starts counting (True); after filing to TRANSFER_OUT it must not count.

@@ -85,8 +85,9 @@ def _load_is_unfiled(category_repo):
 
 def _pending_is_filed(pending: dict, is_unfiled) -> bool:
     """Whether the user actually filed this pending — a real category, OR a note/tag/exclusion
-    they set. These are exactly the fields _with_carried_category carries, so losing any of
-    them to the reap is the harm WHIT-511 fixes."""
+    they set. These are the user-owned fields _with_carried_category carries (plus filed_by_rule,
+    which never exists without a category and so is already covered by the category check), so
+    losing any of them to the reap is the harm WHIT-511 fixes."""
     if not is_unfiled(pending.get("category")):
         return True
     return bool(pending.get("notes") or pending.get("tags") or pending.get("budget_excluded"))

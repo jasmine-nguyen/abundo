@@ -170,8 +170,10 @@ class TransactionRepository:
         try:
             self._get_table().update_item(
                 Key={"pk": pk, "sk": sk},
-                UpdateExpression="SET #c = :category",
-                ExpressionAttributeNames={"#c": "category"},
+                # Filing by hand clears any rule stamp (WHIT-536) — REMOVE of an absent
+                # attribute is a harmless no-op on a never-stamped row.
+                UpdateExpression="SET #c = :category REMOVE #p",
+                ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
                 ExpressionAttributeValues={":category": category},
                 ConditionExpression="attribute_exists(pk)",
             )
@@ -182,7 +184,8 @@ class TransactionRepository:
             handle_database_error(e, "write")
 
     def update_transaction_category_if_unchanged(
-        self, pk: str, sk: str, category: str, expected_category: Optional[str]
+        self, pk: str, sk: str, category: str, expected_category: Optional[str],
+        filed_by_rule: Optional[str] = None,
     ) -> tuple[str, Optional[str]]:
         """Set a transaction's category ONLY IF it still holds `expected_category` (WHIT-508).
 
@@ -208,16 +211,24 @@ class TransactionRepository:
         therefore only ever returned on a clean, definite absence — a failed read raises.
         """
         condition = "attribute_exists(pk) AND attribute_not_exists(#c)"
+        names = {"#c": "category"}
         values = {":category": category}
+        update_expression = "SET #c = :category"
         if expected_category is not None:
             condition = "attribute_exists(pk) AND #c = :expected"
             values[":expected"] = expected_category
+        # A rule filed this (WHIT-536): stamp filed_by_rule alongside the category, in the one
+        # conditional write, so the stamp can never land on a row the tap-wins guard rejected.
+        if filed_by_rule is not None:
+            names["#p"] = "filed_by_rule"
+            values[":rule"] = filed_by_rule
+            update_expression = "SET #c = :category, #p = :rule"
 
         try:
             self._get_table().update_item(
                 Key={"pk": pk, "sk": sk},
-                UpdateExpression="SET #c = :category",
-                ExpressionAttributeNames={"#c": "category"},
+                UpdateExpression=update_expression,
+                ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
                 ConditionExpression=condition,
             )
@@ -284,6 +295,13 @@ class TransactionRepository:
                 set_clauses.append(f"{name_alias} = {value_alias}")
             else:
                 remove_clauses.append(name_alias)
+
+        # Filing by hand clears the rule stamp (WHIT-536): whenever the CATEGORY is touched
+        # (any value, even a clear), REMOVE filed_by_rule. A notes/tags/budget-only edit leaves
+        # category _UNSET, so the stamp survives. REMOVE of an absent stamp is a no-op.
+        if category is not _UNSET:
+            names["#p"] = "filed_by_rule"
+            remove_clauses.append("#p")
 
         # No field supplied (all _UNSET) — nothing to write. Return without issuing a
         # malformed empty-expression UpdateItem.

@@ -822,3 +822,123 @@ def test_a_deleted_row_is_gone_on_the_compare_branch_too(repo):
     repo._table.store = {}
     assert repo.update_transaction_category_if_unchanged(
         "ACCOUNT#x", "TXN#gone", "groceries", "FOOD_AND_DRINK") == ("gone", None)
+
+
+# --------------------------------------------------------------------------- #
+# filed_by_rule stamp (WHIT-536) — written on rule-file, cleared on hand-file. #
+# --------------------------------------------------------------------------- #
+
+def test_hand_file_single_removes_the_rule_stamp(repo):
+    # Filing by hand via update_transaction_fields(category=...) clears the rule stamp.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "AUTO", "filed_by_rule": "rule-1"}}
+    assert repo.update_transaction_fields(key[0], key[1], category="GROCERIES") is True
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"
+    assert "filed_by_rule" not in row     # stamp gone
+
+
+def test_notes_only_edit_keeps_the_rule_stamp(repo):
+    # A notes/tags/budget-only edit leaves category untouched → the stamp survives.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "AUTO", "filed_by_rule": "rule-1"}}
+    assert repo.update_transaction_fields(key[0], key[1], notes="lunch") is True
+    row = repo._table.store[key]
+    assert row["filed_by_rule"] == "rule-1"   # stamp kept
+    assert row["notes"] == "lunch"
+
+
+def test_hand_file_batch_removes_the_rule_stamp(repo):
+    # The batch hand-file path (update_transaction_category) clears the stamp too.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "AUTO", "filed_by_rule": "rule-1"}}
+    assert repo.update_transaction_category(key[0], key[1], "GROCERIES") is True
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"
+    assert "filed_by_rule" not in row
+
+
+def test_hand_file_batch_on_an_unstamped_row_is_a_safe_noop_remove(repo):
+    # REMOVE of an absent stamp must not error — a never-ruled charge files fine.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "OLD"}}
+    assert repo.update_transaction_category(key[0], key[1], "GROCERIES") is True
+    assert repo._table.store[key]["category"] == "GROCERIES"
+
+
+def test_on_demand_rule_file_stamps_the_rule_id(repo):
+    # update_transaction_category_if_unchanged writes the stamp when given a rule id.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1]}}   # unfiled (no category)
+    status, _ = repo.update_transaction_category_if_unchanged(
+        key[0], key[1], "GROCERIES", None, filed_by_rule="rule-9")
+    assert status == "written"
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"
+    assert row["filed_by_rule"] == "rule-9"
+
+
+def test_on_demand_without_a_rule_id_writes_no_stamp(repo):
+    # Back-compat: the default filed_by_rule=None leaves the write stamp-free.
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1]}}
+    status, _ = repo.update_transaction_category_if_unchanged(key[0], key[1], "GROCERIES", None)
+    assert status == "written"
+    assert "filed_by_rule" not in repo._table.store[key]
+
+# --- WHIT-536 GAP: clear-by-hand and the tap-wins guard vs the stamp ---
+
+def _seed_row(repo, **item):
+    key = ("ACCOUNT#acct", "TXN#t1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], **item}}
+    return key
+
+
+# [G4] [A2] Clearing the category by HAND (category="") also removes the stamp. The impl
+# hand-file test uses a truthy category (SET+REMOVE branch); the "" clear goes down the
+# REMOVE-only branch. FAIL-ON-REVERT: drop the `if category is not _UNSET` REMOVE #p and the
+# stamp survives a category clear.
+def test_whit536_clearing_category_by_hand_removes_the_stamp(repo):
+    key = _seed_row(repo, category="GROCERIES", filed_by_rule="rule-1", notes="n")
+    assert repo.update_transaction_fields(*key, category="") is True
+    row = repo._table.store[key]
+    assert "category" not in row
+    assert "filed_by_rule" not in row
+    assert row["notes"] == "n"
+
+
+# [G5] [A6] The tap-wins guard REFUSES to stamp a row it rejects. A charge already hand-filed
+# ("coffee") is matched by the sweep, which calls the conditional write with expected=None and a
+# rule stamp. attribute_not_exists(#c) fails -> the whole write is refused atomically, so NEITHER
+# the rule category NOR the stamp lands. FAIL-ON-REVERT: make the stamped write drop the
+# attribute_not_exists guard and the stamp overwrites the hand-filed row.
+def test_whit536_rejected_write_lands_no_stamp_on_hand_filed_row(repo):
+    key = _seed_row(repo, category="coffee")
+    status, current = repo.update_transaction_category_if_unchanged(
+        *key, "groceries", None, filed_by_rule="rule-9")
+    assert status == "changed"
+    assert current == "coffee"
+    row = repo._table.store[key]
+    assert row["category"] == "coffee"
+    assert "filed_by_rule" not in row
+
+
+# [G6] [A7] Wire-level: the STAMPED conditional write against a scanned value must not declare an
+# unused ExpressionAttributeValue (DynamoDB 500s on that). FAIL-ON-REVERT: build values with
+# :rule but leave #p out of the expression -> red.
+def test_whit536_stamped_write_declares_no_unused_expression_value(repo, monkeypatch):
+    key = _seed_row(repo, category="OLD")
+    captured = {}
+    original = repo._table.update_item
+    def spy(**kwargs):
+        captured.update(kwargs)
+        return original(**kwargs)
+    monkeypatch.setattr(repo._table, "update_item", spy)
+
+    repo.update_transaction_category_if_unchanged(*key, "groceries", "OLD", filed_by_rule="rule-9")
+
+    expr = captured["UpdateExpression"] + " " + captured["ConditionExpression"]
+    declared = set(captured["ExpressionAttributeValues"])
+    assert declared == {":category", ":expected", ":rule"}
+    for value_alias in declared:
+        assert value_alias in expr

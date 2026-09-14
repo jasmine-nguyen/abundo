@@ -83,6 +83,18 @@ def test_one_request_mints_the_rule_and_files_the_charges_it_already_has(handler
     ]
 
 
+def test_the_minted_inline_rule_stamps_the_charges_it_files(handler):
+    # WHIT-536: the plan is computed BEFORE the inline rule is minted, so its plan-time id is
+    # None; the filed rows must carry the freshly-created rule's real id, not None.
+    repo = _coles_repo()
+    _resp, _body, rule_repo = _call(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES", "categoryId": "groceries"}})
+    minted_id = rule_repo.minted[0]["id"]
+    assert minted_id
+    for txn_id in ("t1", "t2"):
+        assert repo._find_row(f"ACCOUNT#{SPENDING}", f"TXN#{txn_id}")["filed_by_rule"] == minted_id
+
+
 def test_a_preview_shows_the_numbers_without_minting_anything(handler):
     # FAIL-ON-REVERT. The screen shows what would happen BEFORE she commits, so a preview must
     # not leave a rule behind — a rule she never confirmed would go on filing every future charge

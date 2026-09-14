@@ -530,7 +530,7 @@ def test_a_charge_whose_category_is_an_empty_string_is_eligible_and_filable(rule
         [_rule("coles")], [_txn("t1", "COLES", category="")], _is_unfiled({"groceries"}))
 
     assert plan["unfiled"] == 1
-    assert [t["transaction_id"] for t, _ in plan["matched"]] == ["t1"]
+    assert [t["transaction_id"] for t, _, _ in plan["matched"]] == ["t1"]
 
 
 # --- [A44]-[A46] WHIT-508: the taxonomy edge, and proof the loop ENDS -------------------

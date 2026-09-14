@@ -83,7 +83,7 @@ def test_only_unfiled_charges_are_eligible(rule_engine):
     plan = rule_engine.plan_rule_application([_rule("coles")], rows, _is_unfiled(taxonomy))
 
     assert plan["unfiled"] == 2
-    assert sorted(t["transaction_id"] for t, _ in plan["matched"]) == ["rawenum", "unfiled"]
+    assert sorted(t["transaction_id"] for t, _, _ in plan["matched"]) == ["rawenum", "unfiled"]
 
 
 def test_an_excluded_transfer_is_still_eligible(rule_engine):
@@ -109,7 +109,10 @@ def test_rules_that_agree_file_the_charge_once(rule_engine):
     plan = rule_engine.plan_rule_application(
         rules, [_txn("t1", "COLES RICHMOND")], _is_unfiled({"groceries"}))
 
-    assert [t["transaction_id"] for t, _ in plan["matched"]] == ["t1"]
+    assert [t["transaction_id"] for t, _, _ in plan["matched"]] == ["t1"]
+    # WHIT-536: matched carries the WINNING rule's id — the first match (index 0), the same
+    # choice rule_ingest makes — so the on-demand path stamps filed_by_rule consistently.
+    assert [rule_id for _, _, rule_id in plan["matched"]] == ["r1"]
     assert plan["by_category"] == {"groceries": 1}
     assert plan["conflicted"] == 0
 
@@ -130,7 +133,7 @@ def test_a_rule_targeting_income_is_applied_not_skipped(rule_engine):
     plan = rule_engine.plan_rule_application(
         [_rule("salary", "income")], [_txn("t1", "ACME SALARY")], _is_unfiled({"groceries"}))
 
-    assert [c for _, c in plan["matched"]] == ["income"]
+    assert [c for _, c, _ in plan["matched"]] == ["income"]
     assert plan["skipped_rules"] == []
 
 
@@ -261,7 +264,7 @@ def test_filing_removes_a_charge_from_the_unfiled_set(rule_engine):
     first = rule_engine.plan_rule_application([_rule("coles")], rows, _is_unfiled(taxonomy))
     assert len(first["matched"]) == 2
 
-    for transaction, category_id in first["matched"]:
+    for transaction, category_id, _ in first["matched"]:
         transaction["category"] = category_id      # what the handler's write does
 
     second = rule_engine.plan_rule_application([_rule("coles")], rows, _is_unfiled(taxonomy))
