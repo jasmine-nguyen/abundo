@@ -204,25 +204,24 @@ class TransactionRepository(_SharedTransactionRepository):
         except ClientError as e:
             handle_database_error(e, "read")
 
-    def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
-        """Retrieves all pending transactions of an account using the account_id.
+    def _paginated_query(self, *, key_condition, filter_expression=None, action: str = "read") -> list[dict]:
+        """Run a query to completion, following LastEvaluatedKey and accumulating every page.
 
-        Follows pagination (WHIT-82): DynamoDB caps a query at 1MB per page and the
-        ``status == pending`` FilterExpression is applied AFTER that scan, per page.
-        Reading only the first page would leave a pending row that sits beyond it
-        invisible to reconciliation — a silent duplicate + lost category, no error.
-        So we loop on LastEvaluatedKey and accumulate across every page.
+        The single owner of the pagination loop the transaction readers share (WHIT-554).
+        DynamoDB caps a query at 1MB per page and applies a FilterExpression AFTER that scan,
+        per page — so reading only the first page would silently drop a matching row beyond it
+        (WHIT-82). `filter_expression` is optional: a partition read that wants every row (the
+        FAILED dead-letter partition) passes none, and it is omitted from the query entirely
+        rather than sent as None.
         """
         try:
             table = self._get_table()
-            key_condition = Key("pk").eq(_build_pk(account_id))
             items: list[dict] = []
             start_key = None
             while True:
-                kwargs = {
-                    "KeyConditionExpression": key_condition,
-                    "FilterExpression": Attr("status").eq(PENDING_STATUS),
-                }
+                kwargs = {"KeyConditionExpression": key_condition}
+                if filter_expression is not None:
+                    kwargs["FilterExpression"] = filter_expression
                 if start_key is not None:
                     kwargs["ExclusiveStartKey"] = start_key
                 response = table.query(**kwargs)
@@ -232,59 +231,37 @@ class TransactionRepository(_SharedTransactionRepository):
                     break
             return items
         except ClientError as e:
-            handle_database_error(e, "read")
+            handle_database_error(e, action)
+
+    def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
+        """Retrieves all pending transactions of an account using the account_id.
+
+        Follows pagination (WHIT-82) via _paginated_query: a pending row beyond the first
+        1MB page must stay visible to reconciliation, else a silent duplicate + lost category.
+        """
+        return self._paginated_query(
+            key_condition=Key("pk").eq(_build_pk(account_id)),
+            filter_expression=Attr("status").eq(PENDING_STATUS),
+        )
 
     def get_posted_transactions_for_account(self, account_id: str) -> list[dict]:
         """Retrieves all posted (settled) transactions of an account.
 
-        Mirrors get_pending_transactions_for_account exactly — same paginated per-account
-        query, only the status filter differs — so both stay drift-proof. Used by the
-        age-out rescue (WHIT-511), which scans an account's posted rows for the settled
-        twin of a filed pending it is about to reap.
+        Same paginated per-account query as get_pending, only the status filter differs. Used by
+        the age-out rescue (WHIT-511), which scans an account's posted rows for the settled twin
+        of a filed pending it is about to reap.
         """
-        try:
-            table = self._get_table()
-            key_condition = Key("pk").eq(_build_pk(account_id))
-            items: list[dict] = []
-            start_key = None
-            while True:
-                kwargs = {
-                    "KeyConditionExpression": key_condition,
-                    "FilterExpression": Attr("status").eq(POSTED_STATUS),
-                }
-                if start_key is not None:
-                    kwargs["ExclusiveStartKey"] = start_key
-                response = table.query(**kwargs)
-                items.extend(response.get("Items", []))
-                start_key = response.get("LastEvaluatedKey")
-                if not start_key:
-                    break
-            return items
-        except ClientError as e:
-            handle_database_error(e, "read")
+        return self._paginated_query(
+            key_condition=Key("pk").eq(_build_pk(account_id)),
+            filter_expression=Attr("status").eq(POSTED_STATUS),
+        )
 
     def get_failed_transactions(self) -> list[dict]:
         """Retrieve all dead-lettered rows — the ``pk="FAILED"`` partition written by
         save_failed_transactions. Paginated (WHIT-82 pattern) so a large backlog isn't
         truncated at DynamoDB's 1MB page. Read-only; the reprocess sweep (WHIT-55)
         drives it."""
-        try:
-            table = self._get_table()
-            key_condition = Key("pk").eq("FAILED")
-            items: list[dict] = []
-            start_key = None
-            while True:
-                kwargs = {"KeyConditionExpression": key_condition}
-                if start_key is not None:
-                    kwargs["ExclusiveStartKey"] = start_key
-                response = table.query(**kwargs)
-                items.extend(response.get("Items", []))
-                start_key = response.get("LastEvaluatedKey")
-                if not start_key:
-                    break
-            return items
-        except ClientError as e:
-            handle_database_error(e, "read")
+        return self._paginated_query(key_condition=Key("pk").eq("FAILED"))
 
     def delete_failed_transaction(self, sk: str) -> None:
         """Delete a dead-letter row after it has been successfully reprocessed
