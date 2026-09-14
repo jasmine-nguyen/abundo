@@ -15,7 +15,10 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from constants import PENDING_STATUS, POSTED_STATUS
+from constants import (
+    PENDING_STATUS, POSTED_STATUS,
+    ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
+)
 
 _MELBOURNE = None  # ZoneInfo("Australia/Melbourne"), built lazily on first use.
 
@@ -550,3 +553,58 @@ def fold_subtree(per_id: dict[str, dict], ids: set[str]) -> dict[str, Decimal]:
     posted = sum((per_id[cid]["posted"] for cid in ids if cid in per_id), Decimal(0))
     pending = sum((per_id[cid]["pending"] for cid in ids if cid in per_id), Decimal(0))
     return {"posted": max(Decimal(0), posted), "pending": max(Decimal(0), pending)}
+
+
+def rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: str):
+    """Pure date math for one rollover category: the completed pay cycles to fold,
+    and a re-anchor payload if accumulation must restart.
+
+    Returns (windows, reanchor). `windows` is the completed-cycle [(start, end), ...]
+    since the stored anchor (oldest-first, capped). `reanchor` is a
+    {carryover, carryover_from} payload when the stored anchor is missing or was sealed
+    under a DIFFERENT pay cycle (length or payday changed); `windows` is then [] (a
+    changed cycle makes the old windows fictional).
+    """
+    anchor = entry.get("carryover_from")
+    aligned = (
+        anchor is not None
+        and int(entry.get("carryover_len", 0)) == length
+        and entry.get("carryover_paydate") == last_pay_date
+    )
+    if not aligned:
+        reanchor = {"carryover": entry.get("carryover", Decimal(0)), "carryover_from": cycle_start}
+        return [], reanchor
+    windows = completed_cycle_windows(anchor, cycle_start, length, ROLLOVER_MAX_LOOKBACK_CYCLES)
+    return windows, None
+
+
+def seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
+                  length: int, today: str):
+    """Fold each completed cycle's leftover (target - spend) for one rollover category,
+    sealing cycles older than the settle lag into the stored balance.
+
+    Returns (display_carryover, persist). `display_carryover` is the full buffer =
+    sealed + not-yet-sealed completed-cycle leftovers (signed). `persist` is a
+    {carryover, carryover_from} payload when the sealed balance or anchor advanced,
+    else None. The current in-progress cycle is NOT in `windows`.
+    """
+    stored_carryover = entry.get("carryover", Decimal(0))
+    target = entry["target"]
+    lag_cutoff = date.fromisoformat(today) - timedelta(days=ROLLOVER_SETTLE_LAG_DAYS)
+    sealed = stored_carryover
+    unsealed = Decimal(0)
+    new_anchor = windows[0][0] if windows else entry.get("carryover_from")
+    for window_start, window_end in windows:
+        cycle_txns = transactions_in_window(transactions, window_start, window_end)
+        per_id = summarise_transactions(cycle_txns, subtree, clamp=False)
+        spend = fold_subtree(per_id, subtree)
+        leftover = target - (spend["posted"] + spend["pending"])
+        if date.fromisoformat(window_end) < lag_cutoff:
+            sealed += leftover
+            new_anchor = (date.fromisoformat(window_start) + timedelta(days=length)).isoformat()
+        else:
+            unsealed += leftover
+    persist = None
+    if sealed != stored_carryover or new_anchor != entry.get("carryover_from"):
+        persist = {"carryover": sealed, "carryover_from": new_anchor}
+    return sealed + unsealed, persist

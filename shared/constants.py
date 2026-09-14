@@ -160,6 +160,19 @@ assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
     "every BALANCE_SOURCES `aid` must be a key in ACCOUNT_ID_MAP"
 )
 
+# --- Budget rollover (envelope carryover) -----------------------------------
+# A completed pay cycle's leftover is SEALED into the stored carryover balance only
+# once the cycle ended at least this many days ago. Transactions keep moving (pendings
+# settle, refunds land) for a while after their date, so sealing sooner would bake in
+# a spend figure that later changes. Kept equal to PENDING_AGE_OUT_DAYS; a test asserts
+# lockstep. Shared so both the /budgets read (lambda_api) and the budget-alert webhook
+# path can seal/compute the live buffer identically.
+ROLLOVER_SETTLE_LAG_DAYS = 10
+
+# Upper bound on how many completed cycles one read folds. Bounds a first-open-after-a-
+# long-gap read; older leftovers are dropped and the anchor jumps forward.
+ROLLOVER_MAX_LOOKBACK_CYCLES = 12
+
 # API Gateway route path for the read API that the abundo app calls.
 TRANSACTION_PATH = "/transactions"
 # All-accounts transactions feed route (Load More over full history). Consumed only by

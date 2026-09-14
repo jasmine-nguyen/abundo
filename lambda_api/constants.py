@@ -317,11 +317,9 @@ PAYCYCLE_LENGTHS = frozenset({7, 14, 30})
 # live on each read. Kept equal to shared PENDING_AGE_OUT_DAYS (the point past which
 # BankSync no longer re-sends a transaction — it is genuinely frozen); a test asserts the
 # two stay in lockstep. Handler-only, so it lives here, not in shared/constants.py.
+# Mirrors shared/constants.py (WHIT-555 moved the source of truth there so the webhook
+# alert path can import them too). WHIT-136 sync guard keeps these equal.
 ROLLOVER_SETTLE_LAG_DAYS = 10
-
-# Upper bound on how many completed cycles one /budgets read folds. Bounds a first-open-
-# after-a-long-gap read to ~this many cycles of history instead of an unbounded year-scan;
-# older leftovers are dropped and the anchor jumps forward (an accepted cold-start limit).
 ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 
 # --- Budget bill spread (WHIT-504) -------------------------------------------
