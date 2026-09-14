@@ -837,3 +837,60 @@ describe('WHIT-437 — categorise sheet quick-create reason', () => {
     });
   });
 });
+
+// ===== WHIT-538 — the add-rule preview confirm step: "Back" must return to the form with the typed
+// pattern + picked category STILL filled. The mocked-context screen tests ([A30]) prove "Back" calls
+// setSheet({mode:'addrule'}); this proves the REAL round trip — real setSheet, real useSheetDraft,
+// real clear-on-close (context.tsx: drafts clear ONLY when sheet===null). A regression that cleared
+// the draft on any setSheet call would make "Back" silently drop the half-typed rule, and this reddens.
+describe('WHIT-538 — Back from the add-rule preview restores the form draft', () => {
+  let ctx!: ReturnType<typeof useAppContext>;
+  function Probe() { ctx = useAppContext(); return <Text testID="probe">probe</Text>; }
+  function renderOverlays() {
+    return render(
+      <AppProvider>
+        <Probe />
+        <Overlays />
+      </AppProvider>,
+    );
+  }
+
+  const RULE_INPUT = 'e.g. NETFLIX';
+  const CATS = [
+    { id: 'groceries', name: 'Groceries', icon: 'cart', color: '#7fd49b', bucket: 'Living', recent: 0 },
+    { id: 'subs', name: 'Subscriptions', icon: 'film', color: '#f0b27a', bucket: 'Lifestyle', recent: 0 },
+  ];
+  const previewReport = {
+    dryRun: true, rulesConsidered: 1, unfiled: 5, matched: 5, conflicted: 0, conflictedSamples: [],
+    byCategory: { groceries: 5 },
+    byRule: [{ ruleId: null, value: 'SPOTIFY', categoryId: 'groceries', count: 5, samples: ['SPOTIFY AB'] }],
+    skippedRules: [], filed: [], vanished: [], failed: [], alreadyFiled: [], remaining: 5, createdRule: null,
+  };
+
+  beforeEach(() => {
+    mockStatus = 'authed';
+    mockListeners.clear();
+    mockState = { categories: CATS, rules: [] };
+    queryClient.clear();
+    mockApi.applyRulesToUncategorized.mockResolvedValue(previewReport as never);
+  });
+
+  it('restores the typed pattern after transitioning to the confirm step and pressing Back', async () => {
+    renderOverlays();
+    act(() => ctx.setSheet({ mode: 'addrule' }));
+    fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
+    fireEvent.press(screen.getByText('Subscriptions')); // pick a category so Add rule is enabled
+
+    // Submit → the REAL write() transitions to the confirm step (not saveManualRule).
+    await act(async () => { fireEvent.press(screen.getByText('Add rule')); });
+    expect(ctx.sheet).toEqual({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'subs' });
+    // The preview resolved and the confirm card (with its Back button) is on screen.
+    expect(screen.getByTestId('add-rule-confirm-back')).toBeTruthy();
+    expect(screen.queryByPlaceholderText(RULE_INPUT)).toBeNull(); // form is gone, confirm is up
+
+    // Back → the form remounts and the draft (never cleared, since the sheet never went null) restores.
+    await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-back')); });
+    expect(ctx.sheet).toEqual({ mode: 'addrule' });
+    expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
+  });
+});

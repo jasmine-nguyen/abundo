@@ -164,6 +164,7 @@ function SheetHost() {
             {s.sheet?.mode === 'applyRules' && <ApplyRulesSheet />}
             {s.sheet?.mode === 'fileByShopList' && <FileByShopListSheet />}
             {s.sheet?.mode === 'fileByShopConfirm' && <FileByShopConfirmSheet key={`${s.sheet.group.rulePattern}:${s.sheet.categoryId}`} />}
+            {s.sheet?.mode === 'addRuleConfirm' && <AddRuleConfirmSheet key={`${s.sheet.pattern}:${s.sheet.categoryId}`} />}
           </View>
         </Animated.View>
       </KeyboardAvoidingView>
@@ -455,8 +456,14 @@ function AddRuleSheet() {
   // Doesn't fire after submit (submit sets `conflict` without changing pattern/categoryId).
   useEffect(() => { if (conflict) setConflict(null); }, [pattern, categoryId]);
   const write = () => {
-    if (editing) s.updateRule(editing.id, pattern, categoryId!);
-    else s.saveManualRule(pattern, categoryId!);
+    if (editing) { s.updateRule(editing.id, pattern, categoryId!); return; }
+    // WHIT-538: a NEW rule goes through the preview/confirm step, which owns the save itself —
+    // either "mint + file the matching stored charges" or "rule only" (the old saveManualRule
+    // path). Pass the trimmed pattern so the preview and the eventual write see the value the
+    // form validated. Editing an existing rule never re-files history, so it stays a direct save.
+    // The draft survives this transition (drafts clear only when the sheet closes), so "Back"
+    // from the confirm step restores the typed pattern + category.
+    s.setSheet({ mode: 'addRuleConfirm', pattern: pattern.trim(), categoryId: categoryId! });
   };
   const submit = () => {
     if (!canSave) return;
@@ -1313,6 +1320,191 @@ function fileByShopDateRange(group: UncategorizedMerchantGroup): string {
   }
   const only = group.lastDate ?? group.firstDate;
   return only ? formatDayMonthYear(only) : '';
+}
+
+// WHIT-538: the confirm step after typing a NEW rule. Previews how many stored charges the typed
+// pattern would file (dry run), then either mints the rule + files them (fileNewRule) or saves the
+// rule for future charges only (saveManualRule). Mirrors FileByShopConfirmSheet's state machine —
+// same phases, same in-flight/onScreen guards, same "dismissable mid-write" handling.
+function AddRuleConfirmSheet() {
+  // Destructure the STABLE context callbacks, NOT the whole value: its identity changes on every
+  // toast, and depending on it would re-fire runPreview and snap the sheet back to its spinner —
+  // possibly during the write. `sheet` only changes when setSheet is called, so the deps stay stable.
+  const { sheet, previewNewRule, fileNewRule, saveManualRule, setSheet, showToast } = useAppContext();
+  const { category } = useCategories();
+  const runGuarded = useInFlightGuard();
+  const previewGuarded = useInFlightGuard();
+  const [report, setReport] = useState<ApplyRulesResult | null>(null);
+  const [phase, setPhase] = useState<FileByShopPhase>('loading');
+  // The sheet is dismissable mid-write (backdrop + drag are SheetHost's), so a run can finish with
+  // nothing on screen — report it as a toast instead of dropping it.
+  const onScreen = useRef(true);
+  useEffect(() => () => { onScreen.current = false; }, []);
+
+  const pattern = sheet?.mode === 'addRuleConfirm' ? sheet.pattern : null;
+  const categoryId = sheet?.mode === 'addRuleConfirm' ? sheet.categoryId : null;
+
+  const runPreview = useCallback(async () => {
+    if (!pattern || !categoryId) return;
+    setPhase('loading');
+    const outcome = await previewNewRule(pattern, categoryId);
+    if (outcome.ok) { setReport(outcome.report); setPhase('preview'); return; }
+    setPhase(outcome.clash ? 'clash' : 'previewFailed');
+  }, [previewNewRule, pattern, categoryId]);
+
+  useEffect(() => { previewGuarded(runPreview); }, [previewGuarded, runPreview]);
+
+  if (!pattern || !categoryId) return null;
+  const chosen = category(categoryId);
+  if (!chosen) return null;
+
+  // Save the rule for future charges only — the old direct-save path. saveManualRule closes the
+  // sheet and shows its own toast, so nothing else is needed here. Guarded against a same-frame
+  // double-tap (WHIT-241): saveManualRule mints a temp id + POSTs with no latch of its own, so two
+  // taps would mint two rules. Shares the commit guard with onFile — the two are mutually exclusive
+  // and neither should fire twice.
+  const onRuleOnly = () => runGuarded(() => saveManualRule(pattern, categoryId));
+  const goBack = () => setSheet({ mode: 'addrule' });
+
+  const onFile = () => runGuarded(async () => {
+    setPhase('confirming');
+    const outcome = await fileNewRule(pattern, categoryId);
+    if (outcome.ok) {
+      showToast(addRuleFiledMessage(outcome.report, chosen.name));
+      if (onScreen.current) setSheet(null);
+      return;
+    }
+    if (outcome.clash) {
+      if (onScreen.current) setPhase('clash');
+      else showToast(`You already have a rule for “${pattern}”.`);
+      return;
+    }
+    if (onScreen.current) setPhase('writeFailed');
+    else showToast(`Couldn't add the rule for “${pattern}”. Some charges may already have been filed.`);
+  });
+
+  if (phase === 'loading' || phase === 'confirming') {
+    const label = phase === 'loading' ? 'Checking what this would file…' : 'Adding your rule…';
+    return (
+      <View testID="add-rule-confirm-busy" style={styles.applyRulesBusy}>
+        <ActivityIndicator color={C.accent} />
+        <Text style={[styles.confirmSub, { marginTop: 14 }]}>{label}</Text>
+      </View>
+    );
+  }
+
+  if (phase === 'clash') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>You already have a rule for this</Text>
+        <Text style={styles.confirmSub}>
+          A rule already files “{pattern}” somewhere else — edit it in Rules to change where these go. Nothing has been changed.
+        </Text>
+        <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Done</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (phase === 'previewFailed') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Couldn't check this rule</Text>
+        <Text style={styles.confirmSub}>Nothing has been changed. Try again, or just save the rule for future charges.</Text>
+        <Pressable testID="add-rule-confirm-retry" onPress={() => previewGuarded(runPreview)} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Try again</Text>
+        </Pressable>
+        <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
+          <Text style={styles.btnGhostText}>Add rule only</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (phase === 'writeFailed') {
+    return (
+      <View>
+        <Text style={styles.confirmTitle}>Couldn't finish</Text>
+        <Text style={styles.confirmSub}>
+          Some charges may already have been filed. Your lists have been refreshed — open Rules to see whether the rule was added.
+        </Text>
+        <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Done</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (!report) return null;
+
+  // No stored charge matches yet — there is nothing to file, so offer only "save the rule" (future
+  // charges) plus a way back to fix a mistyped pattern.
+  if (report.matched === 0) {
+    return (
+      <View>
+        <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
+          <Icon name={chosen.icon} size={26} color={chosen.color} />
+        </View>
+        <Text style={styles.confirmTitle}>No past charges match</Text>
+        <Text style={styles.confirmSub}>
+          “{pattern}” doesn't match any of your unfiled charges. The rule will still file matching future charges as {chosen.name}.
+        </Text>
+        <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>Add rule</Text>
+        </Pressable>
+        <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
+          <Text style={styles.btnGhostText}>Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // The server files at most APPLY_RULES_MAX_WRITES per call, so a big match takes more than one go.
+  const capped = report.matched > APPLY_RULES_MAX_WRITES;
+  // The inline rule is the only rule in the plan, so its samples live at byRule[0]. Guard the index
+  // (an empty byRule is possible) and drop null descriptions.
+  const samples = (report.byRule[0]?.samples ?? []).filter((sample): sample is string => !!sample);
+  return (
+    <View>
+      <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
+        <Icon name={chosen.icon} size={26} color={chosen.color} />
+      </View>
+      <Text style={styles.confirmTitle}>File past charges too?</Text>
+      <Text style={styles.confirmSub}>
+        “{pattern}” matches {report.matched} past {chargeNoun(report.matched)} you haven't filed. File them as {chosen.name} now,
+        or just save the rule for future charges.
+        {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
+      </Text>
+      {samples.length > 0 && (
+        <View testID="add-rule-confirm-samples" style={styles.ruleConflict}>
+          {samples.map((sample, index) => (
+            <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>{sample}</Text>
+          ))}
+        </View>
+      )}
+      <Pressable testID="add-rule-confirm-file" onPress={onFile} style={[styles.btn, styles.btnPrimary]}>
+        <Text style={styles.btnPrimaryText}>
+          {capped ? `Add rule + file up to ${APPLY_RULES_MAX_WRITES}` : `Add rule + file ${report.matched} ${chargeNoun(report.matched)}`}
+        </Text>
+      </Pressable>
+      <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
+        <Text style={styles.btnGhostText}>Add rule only</Text>
+      </Pressable>
+      <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
+        <Text style={styles.btnGhostText}>Back</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/** The success toast after "Add rule + file N". A capped run leaves more to go, so it points at
+ *  "Apply my rules" to finish the rest (the rule now exists, so that sweep will catch them). */
+function addRuleFiledMessage(report: ApplyRulesResult, categoryName: string): string {
+  const filed = report.filed.length;
+  if (filed === 0) return `Rule added — it files as ${categoryName}.`;
+  const base = `Rule added — filed ${filed} past ${chargeNoun(filed)} as ${categoryName}`;
+  return report.matched > APPLY_RULES_MAX_WRITES ? `${base}. More to go — use “Apply my rules” to finish.` : `${base}.`;
 }
 
 /** Why nothing can be filed, named from the report rather than guessed. Every arm is reachable:

@@ -149,7 +149,7 @@ describe('WHIT-158 income category interaction (folded)', () => {
     });
   });
 
-  it('New-rule sheet: an income category can be selected AND saved (WHIT-158)', () => {
+  it('New-rule sheet: an income category can be selected AND submitted (WHIT-158)', () => {
     mockState = {
       sheet: { mode: 'addrule' }, rules: [], categories: [INCOME_CAT, SPEND_CAT],
       toast: null, ...fns,
@@ -158,7 +158,8 @@ describe('WHIT-158 income category interaction (folded)', () => {
     fireEvent.changeText(screen.getByPlaceholderText('e.g. NETFLIX'), 'PAYROLL');
     fireEvent.press(screen.getByText('Salary'));   // income pill now offered
     fireEvent.press(screen.getByText('Add rule'));
-    expect(fns.saveManualRule).toHaveBeenCalledWith('PAYROLL', 'salary');
+    // WHIT-538: a new rule now opens the preview/confirm step, which owns the save.
+    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'PAYROLL', categoryId: 'salary' });
   });
 
   describe('Categories list — Income group visibility (WHIT-158)', () => {
