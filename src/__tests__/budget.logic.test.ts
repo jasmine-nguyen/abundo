@@ -249,6 +249,33 @@ describe('budgetDetail', () => {
     }), 'coffee')!;
     expect(bd.relItems.map((t) => t.transaction_id)).toEqual(['parent', 'sub']);
   });
+
+  // WHIT-525: during the optimistic window, a just-excluded row lingers in the budget cache
+  // (stamped budget_excluded:true). budgetDetail must filter it out so the budget-detail list
+  // doesn't show it. FAIL-ON-REVERT: removing the contributesToBudget filter lets the excluded
+  // row through → relItems includes it → the budget list shows a charge it shouldn't.
+  it('filters out a budget_excluded row from relItems (WHIT-525)', () => {
+    const bd = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7,
+      transactions: [
+        txn({ transaction_id: 'kept', category: 'coffee' }),
+        txn({ transaction_id: 'excluded', category: 'coffee', budget_excluded: true }),
+      ],
+    }), 'coffee')!;
+    expect(bd.relItems.map((t) => t.transaction_id)).toEqual(['kept']);
+    expect(bd.relEmpty).toBe(false);
+  });
+
+  it('relEmpty is true when all rows are budget_excluded (WHIT-525)', () => {
+    const bd = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7,
+      transactions: [
+        txn({ transaction_id: 'only', category: 'coffee', budget_excluded: true }),
+      ],
+    }), 'coffee')!;
+    expect(bd.relItems).toEqual([]);
+    expect(bd.relEmpty).toBe(true);
+  });
 });
 
 // The detail status must be pace-aware, matching the list (budgetViews): spending past

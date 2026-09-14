@@ -61,18 +61,18 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
   });
 
   // [E2] The EXCLUDE path on a budget-ONLY row (absent from feed/recent). The fallback must find it
-  // so the budget_excluded snapshot/remove still fires and the row vanishes from the budget list.
+  // so the budget_excluded stamp fires and the row is MARKED in the budget list (WHIT-525).
   // Every existing exclude test also seeds the feed, so this is the only guard on the fallback arm
   // of the exclude path. FAIL-ON-REVERT: reverting context.tsx → readTransactionsCache is empty and
-  // there is no fallback → early return → budgetTxSnapshots never runs → the row stays in the list.
-  it('[E2] excluding a budget-only row (feed empty) still removes it from the budget list', async () => {
+  // there is no fallback → early return → stamp never runs → the row stays unmarked.
+  it('[E2] excluding a budget-only row (feed empty) marks it in the budget list', async () => {
     mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'bill', budget_excluded: true });
     const result = mount([]); // feed + recent empty
     queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill'), txn('other')]);
 
     await act(async () => { await result.current.applyTransactionEdit('bill', { budget_excluded: true }); });
 
-    expect(budgetList('insurance')).toEqual([txn('other')]); // only the excluded row dropped
+    expect(budgetList('insurance')).toEqual([txn('bill', { budget_excluded: true }), txn('other')]);
   });
 
   // [E3] One note edit must patch BOTH scoped caches (budget + category) in a single call, then roll
@@ -99,10 +99,26 @@ describe('[E] applyTransactionEdit — scoped-cache fallback + patch gaps', () =
     expect(queryClient.getQueryData(drillKey)).toEqual([txn('bill')]);
   });
 
-  // [E4] Excluding a charge that lives ONLY in an Insights category-drill cache. Unlike the budget
-  // list (which DROPS the row, WHIT-344), the category cache is MARKED (budget_excluded: true) in
-  // place, so the detail screen's toggle moves and the screen keeps showing the row instead of
-  // blanking to "not found". FAIL-ON-REVERT: reverting the category-mark arm leaves the row's
+  // [E5] WHIT-525 regression: a charge living ONLY in a budget list is excluded → the row must stay
+  // findable (stamped budget_excluded:true in the budget cache). Before the fix, the row was removed
+  // from the budget cache, making it unfindable and blanking the detail screen to "not found."
+  // FAIL-ON-REVERT: reverting WHIT-525 removes the row from the budget cache → findInScopedLists
+  // returns undefined → the detail screen flashes "Transaction not found."
+  it('[E5] WHIT-525: excluding a budget-only row keeps it findable in the cache', async () => {
+    mockApi.setTransactionFields.mockResolvedValue({ transaction_id: 'bill', budget_excluded: true });
+    const result = mount([]); // feed empty — the row lives ONLY in the budget cache
+    queryClient.setQueryData(['budgetTransactions', 'insurance'], [txn('bill')]);
+
+    await act(async () => { await result.current.applyTransactionEdit('bill', { budget_excluded: true }); });
+
+    // The row is still in the budget cache, marked excluded — the detail screen can find it.
+    expect(budgetList('insurance')).toEqual([txn('bill', { budget_excluded: true })]);
+  });
+
+  // [E4] Excluding a charge that lives ONLY in an Insights category-drill cache. The category cache
+  // is MARKED (budget_excluded: true) in place, so the detail screen's toggle moves and the screen
+  // keeps showing the row instead of blanking to "not found".
+  // FAIL-ON-REVERT: reverting the category-mark arm leaves the row's
   // budget_excluded false → the toggle would never move. Rollback restores it on a failed save.
   it('[E4] excluding a category-only row marks it in place (toggle moves), and rolls back on failure', async () => {
     let rejectSave: (e: unknown) => void = () => {};
