@@ -18,6 +18,8 @@ jest.mock('../queries', () => ({
     transactions: mockTx.transactions,
     findTx: (id: string) => (mockTx.transactions as { transaction_id: string }[]).find((t) => t.transaction_id === id),
   }),
+  // WHIT-556: the screen reads budgets for the "Spread this bill" prompt; empty here (unrelated).
+  useBudgetsScreenData: () => ({ budgets: [] }),
 }));
 
 jest.mock('../context', () => {

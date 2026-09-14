@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
-import { transactionView, useAppContext, Transaction } from '../../src/context';
+import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, Transaction } from '../../src/context';
 import { formatDayMonthYear } from '../../src/dateutil';
-import { useTransactionsScreenData, useTransactionResolver } from '../../src/queries';
+import { useTransactionsScreenData, useTransactionResolver, useBudgetsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
@@ -24,9 +24,13 @@ const TAG_MAX_COUNT = 20;
 
 export default function TransactionDetail() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { openPicker } = useAppContext();
   const { category, isLoading, isError, refetch } = useTransactionsScreenData();
+  // Budgets feed the "Spread this bill" prompt below; cached + deduped by query key, so this adds
+  // no real cost. On a cold open `budgets` is [] → eligibility 'hidden' → the button just waits.
+  const { budgets } = useBudgetsScreenData();
   // Resolve the charge across every list cache — feed, uncategorized feed, the bounded recent
   // window, AND the budget-detail / Insights category-drill caches — via the shared resolver, so a
   // row tapped anywhere (incl. a deep-history unfiled charge on the Uncategorized tab, or an older
@@ -35,6 +39,13 @@ export default function TransactionDetail() {
   const { findTx, transactions } = useTransactionResolver();
   const transaction = findTx(id);
   const view = transaction ? transactionView({ category }, transaction) : null;
+  // "Spread this bill" (WHIT-556): offer the shared spread flow from the transaction itself, using
+  // the SAME eligibility rule as the budget screen. Only a real spend charge that counts to budget
+  // (not a refund/credit — amount >= 0 — and not an excluded transfer) on an over-budget category.
+  const spreadCategory = transaction?.category ? category(transaction.category) : undefined;
+  const spreadBudget = transaction?.category ? budgets.find((b) => b.id === transaction.category) : undefined;
+  const spreadElig = budgetSpreadEligibility(spreadCategory, spreadBudget);
+  const showSpread = !!transaction && transaction.amount < 0 && contributesToBudget(transaction) && spreadElig.entry !== 'hidden';
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -96,6 +107,25 @@ export default function TransactionDetail() {
                 <BudgetExcludeToggle transaction={transaction} />
               ) : (
                 <BudgetExcludedNote />
+              )}
+
+              {/* WHIT-556: spread a bill in this (over-budget) category over pay cycles. Same shared
+                  flow + eligibility the budget screen uses; 'start' prefills the category's overage,
+                  'edit' opens the active plan with no prefill (never a second plan). */}
+              {showSpread && (
+                <Pressable
+                  testID="transaction-spread"
+                  onPress={() => router.push(
+                    spreadElig.entry === 'edit'
+                      ? `/budget/spread?categoryId=${transaction.category}`
+                      : `/budget/spread?categoryId=${transaction.category}&prefill=${spreadElig.overspend}`,
+                  )}
+                  style={styles.spreadBtn}
+                >
+                  <Text style={styles.spreadText}>
+                    {spreadElig.entry === 'edit' ? 'Edit or remove bill spread' : 'Spread a bill in this category'}
+                  </Text>
+                </Pressable>
               )}
 
               {/* Keyed by id so switching transactions reseeds the local note text. */}
@@ -337,6 +367,9 @@ const styles = StyleSheet.create({
   tagText: { fontFamily: FONT.body, fontSize: 13, color: C.textBright },
   tagRemove: { fontFamily: FONT.body, fontSize: 17, lineHeight: 18, color: C.textDim, fontWeight: '600' },
   tagInput: { backgroundColor: C.card, borderWidth: 1, borderColor: C.hairline, borderRadius: 12, paddingVertical: 11, paddingHorizontal: 14, marginTop: 10, fontFamily: FONT.body, fontSize: 14, color: C.textBright },
+
+  spreadBtn: { marginTop: 12, paddingVertical: 15, borderRadius: 15, borderWidth: 1, borderColor: tint(C.accentAlt, 0.22), backgroundColor: tint(C.accentAlt, 0.1), alignItems: 'center' },
+  spreadText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: C.accentSofter },
 
   empty: { alignItems: 'center', paddingVertical: 64, paddingHorizontal: 30, gap: 8 },
   emptyTitle: { fontFamily: FONT.display, fontSize: 18, fontWeight: '700', color: C.textBright, marginTop: 4 },

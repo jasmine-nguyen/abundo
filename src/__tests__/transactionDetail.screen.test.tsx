@@ -6,9 +6,11 @@
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { makeState, cat, txn } from './factory';
+import { makeState, cat, txn, budget } from './factory';
+import type { Budget } from '../context';
 
 let mockTx: ReturnType<typeof txData>;
+let mockBudgets: Budget[] = [];
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
   // The detail screen resolves the row via the shared resolver; back it with the same fixture list.
@@ -16,6 +18,8 @@ jest.mock('../queries', () => ({
     transactions: mockTx.transactions,
     findTx: (id: string) => (mockTx.transactions as { transaction_id: string }[]).find((t) => t.transaction_id === id),
   }),
+  // WHIT-556: the "Spread this bill" prompt reads budgets from here.
+  useBudgetsScreenData: () => ({ budgets: mockBudgets }),
 }));
 
 // WHIT-275: the screen's note/tags editor reads applyTransactionEdit from the context; stub
@@ -40,9 +44,10 @@ jest.mock('../context', () => {
 });
 
 let mockId = 't1';
+const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: mockId }),
-  useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
+  useRouter: () => ({ back: jest.fn(), push: mockPush }),
 }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 
@@ -63,6 +68,8 @@ function txData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isE
 beforeEach(() => {
   mockId = 't1';
   mockTx = txData();
+  mockBudgets = [];
+  mockPush.mockClear();
   mockApplyTransactionEdit.mockClear();
   mockToast.mockClear();
   mockOpenPicker.mockClear();
@@ -210,4 +217,75 @@ it('the picker targets the routed transaction id (not a hardcoded one)', () => {
   render(<TransactionDetail />);
   fireEvent.press(screen.getByLabelText('Change category, currently Cafes & Coffee'));
   expect(mockOpenPicker).toHaveBeenCalledWith('t2');
+});
+
+// ── WHIT-556: the "Spread this bill" prompt ──────────────────────────────────
+describe('spread this bill prompt', () => {
+  // A spend charge on 'coffee' (the fixture category). Eligibility is driven by the BUDGET's
+  // over/under state (mockBudgets), while the prefill comes from the transaction's amount.
+  const spendTx = (over = {}) => txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', amount: -130, ...over })] });
+
+  it('over-budget spend, no plan → shows "Spread a bill in this category" and prefills the OVERAGE', () => {
+    mockTx = spendTx();  // the tapped charge is -130, but the prefill is the category overage, not the charge
+    mockBudgets = [budget({ id: 'coffee', budget: 100, posted: 130, pending: 0 })];  // over by 30 → start
+    render(<TransactionDetail />);
+
+    fireEvent.press(screen.getByTestId('transaction-spread'));
+    expect(screen.getByText('Spread a bill in this category')).toBeTruthy();
+    expect(mockPush).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30');
+  });
+
+  it('prefills the OVERAGE, not the tapped charge — a small charge in an over category spreads the overage', () => {
+    mockTx = spendTx({ amount: -5 });  // a $5 coffee…
+    mockBudgets = [budget({ id: 'coffee', budget: 100, posted: 130.1, pending: 0 })];  // …category over by 30.10
+    render(<TransactionDetail />);
+    fireEvent.press(screen.getByTestId('transaction-spread'));
+    expect(mockPush).toHaveBeenCalledWith('/budget/spread?categoryId=coffee&prefill=30.1');  // not 5
+  });
+
+  it('active plan → shows "Edit or remove" and routes with NO prefill (never a second plan)', () => {
+    mockTx = spendTx();
+    mockBudgets = [budget({ id: 'coffee', budget: 100, posted: 0, pending: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } })];
+    render(<TransactionDetail />);
+
+    fireEvent.press(screen.getByTestId('transaction-spread'));
+    expect(screen.getByText('Edit or remove bill spread')).toBeTruthy();
+    expect(mockPush).toHaveBeenCalledWith('/budget/spread?categoryId=coffee');
+  });
+
+  it('hidden on a rollover category, even over budget (rollover XOR spread)', () => {
+    mockTx = spendTx();
+    mockBudgets = [budget({ id: 'coffee', budget: 100, posted: 200, pending: 0, rollover: true, carryover: 0 })];
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('transaction-spread')).toBeNull();
+  });
+
+  it('hidden for an excluded charge (contributesToBudget false)', () => {
+    mockTx = spendTx({ budget_excluded: true });
+    mockBudgets = [budget({ id: 'coffee', budget: 100, posted: 130, pending: 0 })];
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('transaction-spread')).toBeNull();
+  });
+
+  it('hidden for a refund / credit (amount >= 0)', () => {
+    mockTx = spendTx({ amount: 50 });
+    mockBudgets = [budget({ id: 'coffee', budget: 100, posted: 130, pending: 0 })];
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('transaction-spread')).toBeNull();
+  });
+
+  it('hidden when the category has no budget', () => {
+    mockTx = spendTx();
+    mockBudgets = [];  // no budget row for coffee
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('transaction-spread')).toBeNull();
+  });
+
+  it('does not crash on a not-found transaction (derivations null-guard)', () => {
+    mockId = 'missing';
+    mockBudgets = [budget({ id: 'coffee', budget: 100, posted: 130, pending: 0 })];
+    render(<TransactionDetail />);
+    expect(screen.getByText('Transaction not found')).toBeTruthy();
+    expect(screen.queryByTestId('transaction-spread')).toBeNull();
+  });
 });
