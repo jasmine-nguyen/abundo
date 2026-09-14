@@ -20,6 +20,8 @@ jest.mock('../queries', () => ({
   }),
   // WHIT-556: the screen reads budgets for the "Spread this bill" prompt; empty here (unrelated).
   useBudgetsScreenData: () => ({ budgets: [] }),
+  // WHIT-539: the detail screen reads the rules cache for the rule-attribution line; empty here.
+  useRulesScreenData: () => ({ rules: [], isLoading: false }),
 }));
 
 jest.mock('../context', () => {

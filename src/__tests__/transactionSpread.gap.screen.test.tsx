@@ -18,6 +18,8 @@ jest.mock('../queries', () => ({
     findTx: (id: string) => (mockTx.transactions as { transaction_id: string }[]).find((t) => t.transaction_id === id),
   }),
   useBudgetsScreenData: () => ({ budgets: mockBudgets }),
+  // WHIT-539: the detail screen reads the rules cache for the rule-attribution line; empty here.
+  useRulesScreenData: () => ({ rules: [], isLoading: false }),
 }));
 
 const mockApplyTransactionEdit = jest.fn();

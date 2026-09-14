@@ -7,10 +7,19 @@ import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { makeState, cat, txn, budget } from './factory';
-import type { Budget } from '../context';
+import type { Budget, Rule } from '../context';
+
+// WHIT-539: a client Rule fixture (isNew is required on the interface). Defaults to a
+// description/contains rule filing into 'coffee', the fixture transaction's category.
+function rule(over: Partial<Rule> = {}): Rule {
+  return { id: 'r1', pattern: 'COLES', categoryId: 'coffee', isNew: false, field: 'description', operator: 'contains', ...over };
+}
 
 let mockTx: ReturnType<typeof txData>;
 let mockBudgets: Budget[] = [];
+// WHIT-539: the rule-attribution line reads the rules cache from here. Default is loaded + empty,
+// so the existing tests (no filed_by_rule) render no line; the rule tests set rules/isLoading.
+let mockRules: { rules: Rule[]; isLoading: boolean } = { rules: [], isLoading: false };
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
   // The detail screen resolves the row via the shared resolver; back it with the same fixture list.
@@ -20,6 +29,9 @@ jest.mock('../queries', () => ({
   }),
   // WHIT-556: the "Spread this bill" prompt reads budgets from here.
   useBudgetsScreenData: () => ({ budgets: mockBudgets }),
+  // WHIT-539: the rule-attribution line. Omitting this crashes every test in the file (the screen
+  // destructures its result every render), so it must live in the shared mock.
+  useRulesScreenData: () => mockRules,
 }));
 
 // WHIT-275: the screen's note/tags editor reads applyTransactionEdit from the context; stub
@@ -69,6 +81,7 @@ beforeEach(() => {
   mockId = 't1';
   mockTx = txData();
   mockBudgets = [];
+  mockRules = { rules: [], isLoading: false };
   mockPush.mockClear();
   mockApplyTransactionEdit.mockClear();
   mockToast.mockClear();
@@ -287,5 +300,62 @@ describe('spread this bill prompt', () => {
     render(<TransactionDetail />);
     expect(screen.getByText('Transaction not found')).toBeTruthy();
     expect(screen.queryByTestId('transaction-spread')).toBeNull();
+  });
+});
+
+// ── WHIT-539: "why this category" — name the rule that auto-filed the charge ──
+describe('rule attribution line', () => {
+  it('names the rule when a description rule filed the charge (happy path)', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r1' })] });
+    mockRules = { rules: [rule({ id: 'r1', field: 'description', operator: 'contains', pattern: 'COLES', categoryId: 'coffee' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.getByTestId('filed-by-rule')).toBeTruthy();
+    expect(screen.getByText('Filed by your rule: contains "COLES"')).toBeTruthy();
+  });
+
+  // Fail-on-revert (MAJOR-2): a category/equals rule's pattern is a raw enum, not human text.
+  // Reverting the field branch in ruleFiledLabel would print "equals FOOD_AND_DRINK".
+  it('shows the generic line (not the raw enum) when a category rule filed it', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r1' })] });
+    mockRules = { rules: [rule({ id: 'r1', field: 'category', operator: 'equals', pattern: 'FOOD_AND_DRINK', categoryId: 'coffee' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.getByText('Filed automatically by one of your rules')).toBeTruthy();
+    expect(screen.queryByText(/FOOD_AND_DRINK/)).toBeNull();
+  });
+
+  // The card's key requirement: a dangling id (rule renamed/deleted) shows a graceful fallback,
+  // never a raw id, never an error.
+  it('shows the generic fallback for a dangling id, never the raw id', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'ghost' })] });
+    mockRules = { rules: [rule({ id: 'r1' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.getByText('Filed automatically by one of your rules')).toBeTruthy();
+    expect(screen.queryByText(/ghost/)).toBeNull();
+  });
+
+  // Fail-on-revert (MAJOR-3): while the rules cache is loading, show NOTHING — not the generic
+  // fallback — so a valid rule-filed charge doesn't flash generic→named on every cold open.
+  it('shows no line (and does not crash) while the rules cache is still loading', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r1' })] });
+    mockRules = { rules: [], isLoading: true };
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
+  });
+
+  // Fail-on-revert (BLOCKER): the server clears filed_by_rule on a hand re-file, but the client
+  // cache keeps the stale stamp. The category-match gate hides the line when the tagged rule no
+  // longer owns the current category. Reverting the gate shows a false "filed by your rule" line.
+  it('shows no line when the charge was re-filed by hand (stamp no longer owns the category)', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'groceries', filed_by_rule: 'r1' })] });
+    mockRules = { rules: [rule({ id: 'r1', categoryId: 'coffee' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
+  });
+
+  it('shows no line when no rule filed the charge (no stamp)', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee' })] });
+    mockRules = { rules: [rule({ id: 'r1' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
   });
 });
