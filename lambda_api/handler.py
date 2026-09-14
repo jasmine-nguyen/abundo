@@ -1650,7 +1650,7 @@ def apply_rules_to_uncategorized(
     failed: list[str] = []
     already_filed: list[str] = []
     attempted = 0  # counts ATTEMPTS, not successes — it bounds the work this request does
-    for transaction, category_id in plan["matched"]:
+    for transaction, category_id, rule_id in plan["matched"]:
         if attempted >= APPLY_RULES_MAX_WRITES:
             break
         # Stop well inside the API Gateway window so the response the app sees is an honest
@@ -1661,11 +1661,15 @@ def apply_rules_to_uncategorized(
             break
         transaction_id = transaction.get("transaction_id")
         attempted += 1
+        # Stamp which rule filed it (WHIT-536). For an inline "file this shop" rule the plan's
+        # rule_id is None (it's minted after planning), so use the freshly-created rule's id.
+        stamp = created_rule["id"] if inline_rule is not None else rule_id
         try:
             # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
             # since keeps their choice (WHIT-508). Their tap always beats a rule.
             status, current_category = transaction_repo.update_transaction_category_if_unchanged(
-                transaction["pk"], transaction["sk"], category_id, transaction.get("category")
+                transaction["pk"], transaction["sk"], category_id, transaction.get("category"),
+                filed_by_rule=stamp,
             )
         except DatabaseError:
             failed.append(transaction_id)

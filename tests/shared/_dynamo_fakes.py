@@ -94,9 +94,10 @@ class FakeTable:
         ):
             raise _client_error("ConditionalCheckFailedException")
         item = self.store.setdefault(key, {"pk": Key["pk"], "sk": Key["sk"]})
-        # The repository builds "SET ... [REMOVE ...]" — either clause optional
-        # (update_transaction_fields; update_transaction_category is SET-only). SET
-        # assigns aliased name = value; REMOVE deletes each aliased attribute, so a
+        # The repository builds "SET ... [REMOVE ...]" — either clause optional, and SET may
+        # assign several comma-separated pairs (e.g. update_transaction_category's
+        # "SET #c = :category REMOVE #p", or the rule-stamp "SET #c = :category, #p = :rule").
+        # SET assigns each aliased name = value; REMOVE deletes each aliased attribute, so a
         # cleared field reads back ABSENT (not ""/[]). ExpressionAttributeValues is
         # omitted for a REMOVE-only update, matching real DynamoDB.
         set_part, _, remove_part = UpdateExpression.strip().partition("REMOVE")

@@ -36,6 +36,10 @@ class Transaction(TypedDict):
     # of the bank value can't wipe the user's choice; carried across re-sync like
     # notes/tags.
     budget_excluded: Optional[bool]
+    # Id of the rule that auto-filed this charge's category (WHIT-536). Sparse: set only on
+    # a rule-filed row, carried onto the posted charge when it settles, and REMOVEd the moment
+    # the user files by hand. Absent/None = filed by hand or by the bank, never by a rule.
+    filed_by_rule: Optional[str]
 
 
 class Category(TypedDict):

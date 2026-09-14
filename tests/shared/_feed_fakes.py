@@ -138,7 +138,8 @@ class WritableFeedRepo(FakeFeedRepo):
             raise AssertionError(f"no row {transaction_id!r} in account {account_id!r}")
         row["category"] = category
 
-    def update_transaction_category_if_unchanged(self, pk, sk, category, expected_category):
+    def update_transaction_category_if_unchanged(self, pk, sk, category, expected_category,
+                                                  filed_by_rule=None):
         transaction_id = sk.split("#", 1)[1]
         if self.refile_hook is not None:
             self.refile_hook(transaction_id, self)
@@ -156,6 +157,8 @@ class WritableFeedRepo(FakeFeedRepo):
         if row.get("category") != expected_category:
             return "changed", row.get("category")
         row["category"] = category
+        if filed_by_rule is not None:
+            row["filed_by_rule"] = filed_by_rule
         return "written", category
 
 

@@ -134,7 +134,7 @@ def test_plan_matches_a_hand_computed_decide_over_the_eligible_rows(rule_engine)
         resolved, _idx, _cats = rule_engine.decide(rules, row)
         if resolved is not None:
             expected.append((row["transaction_id"], resolved))
-    assert [(t["transaction_id"], c) for t, c in plan["matched"]] == expected
+    assert [(t["transaction_id"], c) for t, c, _ in plan["matched"]] == expected
 
 
 # --- contains() primitive on its own ------------------------------------------

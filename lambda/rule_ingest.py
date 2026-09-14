@@ -83,6 +83,8 @@ def file_charge(charge: dict, applicable_rules: list, is_unfiled) -> None:
         return
     charge["category"] = resolved
     charge["counts_to_budget"] = counts_to_budget(charge["account_id"], resolved)
+    # Remember which rule filed it (WHIT-536), so history can always explain the category.
+    charge["filed_by_rule"] = applicable_rules[matched_indices[0]]["id"]
     logger.info(
         "rule ingest: filed %s -> %s (rule %s)",
         charge.get("transaction_id"), resolved, applicable_rules[matched_indices[0]]["id"],

@@ -808,6 +808,16 @@ class TransactionRepository(_SharedTransactionRepository):
             value = source_row.get(field)
             if value:
                 carried[field] = value
+        # Carry the rule stamp in lockstep with the category (WHIT-536): whoever owns the
+        # category owns the stamp. If the category came from source_row, take its stamp too —
+        # or clear it when the source was hand-filed and has none, so the posted's own stamp
+        # doesn't wrongly persist. If the posted kept its own category, its own stamp stands.
+        if source_row.get("category"):
+            source_stamp = source_row.get("filed_by_rule")
+            if source_stamp:
+                carried["filed_by_rule"] = source_stamp
+            else:
+                carried.pop("filed_by_rule", None)
         return carried
 
     def _delete_pending_if_present(self, pk: str, sk: str) -> None:
