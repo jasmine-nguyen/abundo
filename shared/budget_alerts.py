@@ -45,6 +45,7 @@ send-failed retry queue would be a separate, larger change.
 import logging
 from decimal import Decimal
 
+import rule_engine
 from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
 from push import send_push
 from spend import (
@@ -151,12 +152,16 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
     }
 
 
-def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
+def _simulate_after(ctx, normalised, webhook_repo, is_unfiled=None) -> list[dict]:
     """The windowed row set AFTER `insert_or_reconcile` applies `normalised`, built
     in memory from the pre-write snapshot — never a second (GSI-lagging) read. Mirrors
     the reconcile decisions by driving the repo's own `_reconcile_matches` /
     `_with_carried_category`, so it can't drift from the real write — including the
-    WHIT-117 two-pass (exact-before-tip across the batch)."""
+    WHIT-117 two-pass (exact-before-tip across the batch).
+
+    `is_unfiled` (WHIT-545) is passed only to the first-settlement carry, matching the
+    real write: the re-send / pending-resync paths go through `_update_bank_fields`, which
+    never gates the stored category or recomputes the flag, so gating them here would drift."""
     by_id = {r["transaction_id"]: r for r in ctx["before_rows"] if r.get("transaction_id") is not None}
     pools = {a: list(rows) for a, rows in ctx["pending_pools"].items()}  # copy: the matcher pops
 
@@ -195,7 +200,7 @@ def _simulate_after(ctx, normalised, webhook_repo) -> list[dict]:
             continue
         _, match = next(posted_matches, (None, None))  # defensive: over-run -> no-match (see repo)
         if match is not None:
-            merged = webhook_repo._with_carried_category(txn, match)
+            merged = webhook_repo._with_carried_category(txn, match, is_unfiled=is_unfiled)
             webhook_repo._inherit_swipe_date(merged, txn, match)  # parity with the real write
             by_id[merged["transaction_id"]] = dict(merged)
             twin_id = match.get("transaction_id")
@@ -269,7 +274,17 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     # Unclamped per id (clamp=False) so _combined_target can net a refunded sibling
     # across the subtree before clamping the total — aggregate-then-clamp, WHIT-343.
     before = summarise_transactions(ctx["before_rows"], needed_ids, clamp=False)
-    after = summarise_transactions(_simulate_after(ctx, normalised, webhook_repo), needed_ids, clamp=False)
+    # WHIT-545: mirror the write's settlement carry gate, so the preview buckets a charge
+    # under the category that will actually land. Built from the categories already read
+    # above; a best-effort second read of the taxonomy, like the write's own.
+    taxonomy_ids = {c["id"] for c in categories}
+
+    def is_unfiled(category):
+        return rule_engine.is_unfiled_category(category, taxonomy_ids)
+
+    after = summarise_transactions(
+        _simulate_after(ctx, normalised, webhook_repo, is_unfiled), needed_ids, clamp=False
+    )
 
     # (cat_id, pct_to_send, [all newly-crossed pcts]) — pct_to_send is the highest.
     crossings = []

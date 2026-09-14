@@ -103,7 +103,10 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # for us, so our server files each unfiled one by our own rules here, BEFORE the budget
     # snapshot and the write see the category. Best-effort inside `apply` — a rules-read failure
     # leaves the charge unfiled and still writes it.
-    rule_ingest.apply(
+    # `is_unfiled` (the taxonomy check) is threaded into the write below so a stored raw
+    # category can't clobber a rule-fill on settlement, and counts_to_budget is recomputed
+    # for the carried category (WHIT-545). None on a rules-read failure -> carry unchanged.
+    _, is_unfiled = rule_ingest.apply(
         normalised_transactions,
         rule_repo=RuleRepository(),
         category_repo=CategoryRepository(),
@@ -130,7 +133,7 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # swallowed the error into an ignored return dict, so the handler reported 200 "ok"
     # with nothing written; it was also dead — handle_database_error converts every
     # ClientError to a DatabaseError before it could reach here (WHIT-83, WHIT-127).
-    repo.insert_or_reconcile(normalised_transactions)
+    repo.insert_or_reconcile(normalised_transactions, is_unfiled=is_unfiled)
 
     # After the write succeeds, fire any budget-threshold crossing (best-effort).
     if alert_ctx is not None:

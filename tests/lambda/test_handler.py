@@ -51,7 +51,7 @@ class _Repo:
     def save_failed_transactions(self, rows):
         self.failed_batches.append(rows)
 
-    def insert_or_reconcile(self, txns):
+    def insert_or_reconcile(self, txns, *, is_unfiled=None):
         pass
 
 
@@ -315,7 +315,7 @@ def test_client_error_during_insert_is_not_reported_as_ok(lam, monkeypatch):
     handler = lam.handler
 
     class _RaisingRepo(_Repo):
-        def insert_or_reconcile(self, txns):
+        def insert_or_reconcile(self, txns, *, is_unfiled=None):
             raise botocore.exceptions.ClientError()
 
     valid_row = {

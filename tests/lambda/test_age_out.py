@@ -975,3 +975,27 @@ def test_age_out_rescue_carries_the_rule_stamp_onto_the_twin(lam, repo):
     assert summary["rescued"] == 1 and "filed_pending" not in rows
     assert rows["settled_twin"]["category"] == "groceries"
     assert rows["settled_twin"]["filed_by_rule"] == "rule-7"
+
+
+# --- WHIT-545: the rescue carry now gates a stored raw category ------------------------------
+
+def test_whit545_note_rescue_does_not_carry_the_pendings_raw_enum_onto_the_twin(lam, repo):
+    # A pending with a raw (unfiled) category BUT a user note is rescued for the note's sake.
+    # WHIT-545 wires is_unfiled into the rescue carry, so the pending's raw enum ("FOOD_AND_DRINK")
+    # must NOT be copied onto the twin — the twin keeps its own category — while the note DOES
+    # carry. FAIL-ON-REVERT: drop the is_unfiled gate in _with_carried_category and the twin's
+    # category is clobbered to "FOOD_AND_DRINK" (and its budget flag flips with it).
+    filed = _norm(lam, "noted_pending", "2026-06-10", pending=True, category="FOOD_AND_DRINK")
+    filed["notes"] = "work lunch"
+    twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category="TRANSFER_OUT")
+    repo.insert_transactions([filed, twin])
+    assert twin["counts_to_budget"] is False   # TRANSFER_OUT is a non-budget enum
+
+    summary = _sweep_tax(lam, repo, ["groceries"])   # neither raw enum is a real taxonomy id
+
+    rows = _rows(repo)
+    assert "noted_pending" not in rows and summary["rescued"] == 1
+    carried = rows["settled_twin"]
+    assert carried["notes"] == "work lunch"          # the note (the reason for the rescue) carries
+    assert carried["category"] == "TRANSFER_OUT"     # raw enum NOT clobbered onto the twin
+    assert carried["counts_to_budget"] is False       # flag recomputed for the category that stays
