@@ -59,7 +59,10 @@ export default function Transactions() {
   // WHIT-517: the shops (merchant groups) behind unfiled charges, for the "File by shop" button.
   // `groups` is undefined while loading/errored, so the button only shows once we KNOW there is at
   // least one rule-able shop — a filing session that has cleared them all hides it, like the count.
-  const { merchants } = useUncategorizedMerchants();
+  // WHIT-552: only run the heavy whole-history walk when the count says there's a backlog — a
+  // caught-up user skips it. Same `uncategorizedCount > 0` the button gate below reads, so the
+  // fetch and the button can't disagree.
+  const { merchants } = useUncategorizedMerchants(uncategorizedCount > 0);
   // "All caught up" is the strong "every transaction is filed" claim — true ONLY on a RESOLVED server
   // 0, never during loading/error (undefined). Named once so the empty state and the two controls it
   // must exclude (search-no-results, Load More) can't drift.

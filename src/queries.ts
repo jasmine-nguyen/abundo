@@ -432,8 +432,11 @@ export function useUncategorizedMerchantsQuery(enabled: boolean) {
 
 // The grouped shops for the current user — `merchants` is undefined while loading / errored /
 // pre-auth (each consumer treats undefined as "not loaded yet", never as "no shops").
-export function useUncategorizedMerchants() {
-  const q = useUncategorizedMerchantsQuery(useIsAuthed());
+// `enabled` (WHIT-552) lets the caller also gate on having a backlog, so a caught-up user skips
+// the whole-history walk; it defaults to on so the "File by shop" sheet — only reachable once the
+// button has shown (count > 0) — keeps its auth-only behaviour.
+export function useUncategorizedMerchants(enabled: boolean = true) {
+  const q = useUncategorizedMerchantsQuery(useIsAuthed() && enabled);
   return { merchants: q.data, isLoading: q.isLoading, isError: q.isError };
 }
 
