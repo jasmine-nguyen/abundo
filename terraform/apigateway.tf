@@ -63,10 +63,6 @@ locals {
     "GET /goals",
     "PUT /goals/{id}",
     "DELETE /goals/{id}",
-    "GET /enrichments",
-    "POST /enrichments",
-    "PUT /enrichments/{id}",
-    "DELETE /enrichments/{id}",
     "GET /rules",
     "POST /rules",
     "PUT /rules/{id}",
@@ -154,22 +150,6 @@ moved {
 moved {
   from = aws_apigatewayv2_route.put_paycycle_route
   to   = aws_apigatewayv2_route.app["PUT /paycycle"]
-}
-moved {
-  from = aws_apigatewayv2_route.get_enrichments_route
-  to   = aws_apigatewayv2_route.app["GET /enrichments"]
-}
-moved {
-  from = aws_apigatewayv2_route.post_enrichment_route
-  to   = aws_apigatewayv2_route.app["POST /enrichments"]
-}
-moved {
-  from = aws_apigatewayv2_route.put_enrichment_route
-  to   = aws_apigatewayv2_route.app["PUT /enrichments/{id}"]
-}
-moved {
-  from = aws_apigatewayv2_route.delete_enrichment_route
-  to   = aws_apigatewayv2_route.app["DELETE /enrichments/{id}"]
 }
 moved {
   from = aws_apigatewayv2_route.post_device_route

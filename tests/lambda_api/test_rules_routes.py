@@ -1,14 +1,12 @@
 """HTTP-layer tests for GET/POST /rules and PUT/DELETE /rules/{id} (WHIT-529).
 
-These routes back the app's Rules screen with our OWN store (RuleRepository) instead of the
-BankSync /enrichments proxy, which stays live until the app moves (WHIT-533/535). Everything is
+These routes back the app's Rules screen with our OWN store (RuleRepository). Everything is
 driven through lambda_handler with a FakeRuleRepo injected as handler.RuleRepository, so the
 dispatch, the store->client mapping (_rule_to_client), and the two write guards this route adds
-over the proxy (the value floor and the category check) are all exercised end to end.
+(the value floor and the category check) are all exercised end to end.
 
 The fake-vs-real faithfulness of FakeRuleRepo lives in tests/shared/test_rule_fake_contract_gaps.py;
-this suite does not re-check it. The re-homed validation cases mirror test_enrichments.py's — the
-proxy keeps its own copies until WHIT-535 deletes it.
+this suite does not re-check it.
 """
 
 import base64
@@ -59,11 +57,10 @@ def test_get_rules_returns_a_bare_client_shaped_array(handler, monkeypatch):
     assert resp["statusCode"] == 200
     assert isinstance(body, list) and len(body) == 2
     by_value = {rule["value"]: rule for rule in body}
-    # Client shape: category_id -> categoryId, and the mapper's constant conditionCount.
+    # Client shape: category_id -> categoryId.
     assert by_value["COLES"]["categoryId"] == "groceries"
     assert by_value["BP 2210"]["categoryId"] == "petrol"
-    assert set(by_value["COLES"]) == {"id", "field", "operator", "value", "categoryId",
-                                      "conditionCount"}
+    assert set(by_value["COLES"]) == {"id", "field", "operator", "value", "categoryId"}
 
 
 def test_get_rules_empty_store_is_an_empty_array(handler, monkeypatch):

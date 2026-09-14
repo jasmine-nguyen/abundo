@@ -47,8 +47,7 @@ class FakeRuleRepo:
             raise DatabaseError("rules read failed")
         return [dict(row) for row in self._rows.values()]
 
-    def create_rule(self, field, operator, value, category_id, *, source="app",
-                    imported_at=None, banksync_enrichment_ids=None):
+    def create_rule(self, field, operator, value, category_id):
         if self.create_error:
             from repository import DatabaseError
             raise DatabaseError("rule write failed")
@@ -64,12 +63,8 @@ class FakeRuleRepo:
             return dict(existing), False
         row = {
             "id": rule_id, "field": field, "operator": operator, "value": value,
-            "category_id": category_id, "source": source,
+            "category_id": category_id, "source": "app",
         }
-        if imported_at:
-            row["imported_at"] = imported_at
-        if banksync_enrichment_ids:
-            row["banksync_enrichment_ids"] = list(banksync_enrichment_ids)
         self._rows[rule_id] = row
         self.minted.append(dict(row))
         return dict(row), True
@@ -78,7 +73,7 @@ class FakeRuleRepo:
         row = self._rows.get(rule_id)
         return dict(row) if row is not None else None
 
-    def update_rule(self, rule_id, field, operator, value, category_id, *, source=None):
+    def update_rule(self, rule_id, field, operator, value, category_id):
         # Faithful to RuleRepository.update_rule: unknown id -> RuleNotFoundError; the id IS the
         # text, so an id-preserving edit updates in place while a text edit MOVES the row to a new
         # id (deleting the old); a move onto another rule's text -> RuleClashError.
@@ -95,8 +90,6 @@ class FakeRuleRepo:
         if new_id == rule_id:
             existing["value"] = value
             existing["category_id"] = category_id
-            if source is not None:
-                existing["source"] = source
             self.updated.append(dict(existing))
             return dict(existing)
 
@@ -106,8 +99,6 @@ class FakeRuleRepo:
 
         new_row = {**existing, "id": new_id, "field": field, "operator": operator,
                    "value": value, "category_id": category_id}
-        if source is not None:
-            new_row["source"] = source
         self._rows[new_id] = new_row
         del self._rows[rule_id]
         self.updated.append(dict(new_row))

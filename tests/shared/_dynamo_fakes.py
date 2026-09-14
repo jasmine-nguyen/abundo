@@ -80,9 +80,6 @@ class FakeTable:
             return item is not None and "category" not in item
         if ConditionExpression == "attribute_exists(pk) AND #c = :expected":
             return item is not None and item.get("category") == values[":expected"]
-        # WHIT-532: the rule store's stamp_import / conditional delete_rule guard on updated_at.
-        if ConditionExpression == "attribute_exists(pk) AND #u = :expected":
-            return item is not None and item.get("updated_at") == values[":expected"]
         raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,

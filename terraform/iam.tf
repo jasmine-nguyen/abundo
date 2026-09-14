@@ -185,7 +185,7 @@ resource "aws_iam_role_policy" "app_api_logs" {
   })
 }
 
-# app_api: read the BankSync API key to call the Enrichments API (WHIT-52).
+# app_api: read the BankSync API key for the live balance refresh (WHIT-535).
 # ssm:GetParameter alone decrypts the SecureString via the AWS-managed key (same
 # pattern as transaction_trigger_ssm).
 resource "aws_iam_role_policy" "app_api_ssm" {

@@ -58,18 +58,6 @@ def test_create_dedups_case_and_spacing_variants_onto_one_row(rule_repo):
     assert len(rule_repo.list_rules()) == 1
 
 
-def test_create_omits_empty_optional_fields_but_keeps_supplied_ones(rule_repo):
-    plain, _ = _make(rule_repo, value="COLES")
-    assert "imported_at" not in plain and "banksync_enrichment_ids" not in plain
-
-    imported, _ = _make(rule_repo, value="ALDI", source="import",
-                        imported_at="2026-01-01T00:00:00+00:00",
-                        banksync_enrichment_ids=["enr_1", "enr_2"])
-    assert imported["source"] == "import"
-    assert imported["imported_at"] == "2026-01-01T00:00:00+00:00"
-    assert imported["banksync_enrichment_ids"] == ["enr_1", "enr_2"]
-
-
 # --- get + list ---------------------------------------------------------------
 
 
@@ -130,18 +118,14 @@ def test_update_case_only_edit_keeps_the_id(rule_repo):
     assert len(rule_repo.list_rules()) == 1
 
 
-def test_update_to_free_text_moves_the_row_and_copies_import_metadata(rule_repo):
-    original, _ = _make(rule_repo, value="COLE", source="import",
-                        imported_at="2026-01-01T00:00:00+00:00",
-                        banksync_enrichment_ids=["enr_1"])
+def test_update_to_free_text_moves_the_row_and_carries_created_at(rule_repo):
+    original, _ = _make(rule_repo, value="COLE")
     updated = rule_repo.update_rule(original["id"], "description", "contains", "COLES", "groceries")
 
     assert updated["id"] != original["id"]
     assert rule_repo.get_rule(original["id"]) is None          # old row gone
     assert rule_repo.get_rule(updated["id"]) == updated        # new row present
     assert updated["created_at"] == original["created_at"]     # created_at carried over
-    assert updated["banksync_enrichment_ids"] == ["enr_1"]     # import metadata carried over
-    assert updated["imported_at"] == "2026-01-01T00:00:00+00:00"
     assert len(rule_repo.list_rules()) == 1
 
 
@@ -187,6 +171,21 @@ def test_delete_rule_removes_it_and_is_safe_to_run_twice(rule_repo):
     assert rule_repo.get_rule(rule["id"]) is None
     rule_repo.delete_rule(rule["id"])                          # second delete is a no-op
     assert rule_repo.get_rule(rule["id"]) is None
+
+
+def test_delete_calls_delete_item_with_key_only(rule_repo):
+    # The delete is a bare no-op-on-missing call; the recording stub asserts no ConditionExpression
+    # rides along (the pk is a literal "RULE", the value the IAM DeleteItem grant pins).
+    rule, _ = _make(rule_repo)
+    seen = {}
+
+    def record(Key, **kwargs):
+        seen["Key"] = Key
+        seen["kwargs"] = kwargs
+    rule_repo._table.delete_item = record
+    rule_repo.delete_rule(rule["id"])
+    assert seen["Key"] == {"pk": "RULE", "sk": f"RULE#{rule['id']}"}
+    assert seen["kwargs"] == {}
 
 
 # --- the constants-free landmine ----------------------------------------------

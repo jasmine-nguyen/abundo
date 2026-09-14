@@ -5,6 +5,7 @@ from constants import (
     ACCOUNT_BALANCES_REFRESH_PATH,
     ACCOUNT_ID_MAP,
     BALANCE_SOURCES,
+    BANKSYNC_API_KEY_PATH,
     BANKSYNC_BASE_URL,
     BANKSYNC_USER_AGENT,
     REFRESH_FETCH_TIMEOUT_SECONDS,
@@ -21,7 +22,6 @@ from constants import (
     EARNED_KEY,
     INCOME_KEY,
     ROLLUP_KEY,
-    ENRICHMENTS_PATH,
     RULES_PATH,
     EXPO_TOKEN_MAX_LEN,
     FEED_PAGE_SIZE,
@@ -80,14 +80,7 @@ from repository import (
     VersionConflictError,
 )
 from repayment_rules import is_repayment_credit, is_number
-from banksync_enrichments import (
-    BankSyncError,
-    create_rule,
-    delete_rule,
-    get_api_key,
-    list_rules,
-    update_rule,
-)
+from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
 # The pay-cycle window + spend summariser live in the shared layer (WHIT-22) so the
 # webhook's budget-alert detection computes spend identically to this read API.
@@ -138,6 +131,13 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+
+
+def get_api_key() -> str:
+    """The BankSync API key for the balance refresh (fetched + cached in shared/api_key.py, keyed
+    by path). Kept as a one-line wrapper passing this lambda's own SSM path (AGENTS.md landmine);
+    the balance refresh and its tests monkeypatch `handler.get_api_key`."""
+    return _fetch_api_key(BANKSYNC_API_KEY_PATH)
 
 
 def lambda_handler(event, context):
@@ -260,7 +260,7 @@ def lambda_handler(event, context):
 
         # AI spending insights (WHIT-104). GET reads the per-cycle cache (never
         # pays); POST generates (the paid Anthropic call). Both are authorizer-gated
-        # at the API Gateway route, like /enrichments.
+        # at the API Gateway route, like every mutating route.
         if path == INSIGHTS_AI_PATH and method == "GET":
             return _json_response(200, get_ai_insights(
                 InsightRepository(), PayCycleRepository()))
@@ -316,24 +316,9 @@ def lambda_handler(event, context):
         if path.startswith(f"{GOALS_PATH}/") and method == "DELETE":
             return delete_goal(event, GoalsRepository())
 
-        # Enrichments (BankSync categorisation rules) — they mutate BankSync, our source of
-        # truth for rules. Like every app route, they sit behind the API Gateway JWT authorizer.
-        if path == ENRICHMENTS_PATH and method == "GET":
-            return get_enrichments()
-
-        if path == ENRICHMENTS_PATH and method == "POST":
-            return create_enrichment(event)
-
-        if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "PUT":
-            return update_enrichment(event)
-
-        if path.startswith(f"{ENRICHMENTS_PATH}/") and method == "DELETE":
-            return delete_enrichment(event)
-
-        # Rules backed by our own store (WHIT-529) — the replacement for the /enrichments proxy
-        # above, which stays live until the app has moved (WHIT-533/535). Collection routes first;
-        # "/rules" does not startswith "/rules/", so the exact and item routes are disjoint. Inside
-        # this try, so a repo VersionConflictError becomes the shared 409 below.
+        # Rules backed by our own store (WHIT-529). Collection routes first; "/rules" does not
+        # startswith "/rules/", so the exact and item routes are disjoint. Inside this try, so a
+        # repo VersionConflictError becomes the shared 409 below.
         if path == RULES_PATH and method == "GET":
             return list_rules_route(RuleRepository())
 
@@ -984,27 +969,6 @@ def delete_category(
     return _json_response(200, {"id": cat_id})
 
 
-def _banksync_error_response(error: BankSyncError) -> dict:
-    """Translate a BankSync failure into the status WE return to the app.
-
-    A bad rule we sent (400/422) is the client's fault -> 400. Everything else —
-    an auth failure on OUR key (401/403), a BankSync 5xx, or an unreachable host
-    (upstream_status None) — is an upstream problem, not the caller's -> 502. The
-    raw upstream error and the API key are never surfaced.
-    """
-    if error.upstream_status in (400, 422):
-        return _json_response(400, {"error": "invalid enrichment rule"})
-    return _json_response(502, {"error": "enrichment service unavailable"})
-
-
-def get_enrichments() -> dict:
-    """GET /enrichments — list the categorisation rules from BankSync."""
-    try:
-        return _json_response(200, list_rules())
-    except BankSyncError as e:
-        return _banksync_error_response(e)
-
-
 def _validate_rule_body(event: dict):
     """Parse + validate a create/update rule body, returning the NORMALISED
     values so create and update trim/default identically.
@@ -1038,83 +1002,15 @@ def _validate_rule_body(event: dict):
     return (value.strip(), category_id.strip(), field, operator), None
 
 
-def create_enrichment(event: dict) -> dict:
-    """POST /enrichments — create a categorisation rule in BankSync.
-
-    Body: {"value": <str>, "categoryId": <slug>, "field"?, "operator"?}. `field`
-    and `operator` default to a plain "description contains" match (what the
-    current in-app UI produces) and are otherwise restricted to the Tier-1
-    verified vocabulary — an unverified operator is rejected 400 before it can
-    reach BankSync.
-    """
-    parsed, error = _validate_rule_body(event)
-    if error:
-        return error
-    value, category_id, field, operator = parsed
-
-    try:
-        rule = create_rule(field, operator, value, category_id)
-    except BankSyncError as e:
-        return _banksync_error_response(e)
-
-    return _json_response(201, rule)
-
-
-def update_enrichment(event: dict) -> dict:
-    """PUT /enrichments/{id} — replace a categorisation rule in BankSync.
-
-    Same body + validation as create. Editing a rule that no longer exists is a
-    real 404 (not an idempotent no-op like delete), so an upstream 404 is mapped
-    to 404 rather than the default 502.
-    """
-    enrichment_id = (event.get("pathParameters") or {}).get("id")
-    if not enrichment_id:
-        return _json_response(404, {"error": "enrichment not found"})
-
-    parsed, error = _validate_rule_body(event)
-    if error:
-        return error
-    value, category_id, field, operator = parsed
-
-    try:
-        rule = update_rule(enrichment_id, field, operator, value, category_id)
-    except BankSyncError as e:
-        if e.upstream_status == 404:
-            return _json_response(404, {"error": "enrichment not found"})
-        return _banksync_error_response(e)
-
-    return _json_response(200, rule)
-
-
-def delete_enrichment(event: dict) -> dict:
-    """DELETE /enrichments/{id} — remove a categorisation rule from BankSync.
-
-    Idempotent: an unknown/already-gone id still returns 200 (the underlying
-    client swallows BankSync's 404).
-    """
-    enrichment_id = (event.get("pathParameters") or {}).get("id")
-    if not enrichment_id:
-        return _json_response(404, {"error": "enrichment not found"})
-
-    try:
-        delete_rule(enrichment_id)
-    except BankSyncError as e:
-        return _banksync_error_response(e)
-
-    return _json_response(200, {"id": enrichment_id})
-
-
 # --- Rules: our own store (WHIT-529) ------------------------------------------
-# GET/POST /rules and PUT/DELETE /rules/{id}, reading and writing RuleRepository. The wire shape
-# is identical to the /enrichments proxy above (so the app moves with a path swap only, WHIT-533),
-# but two guards the proxy lacked apply on every write into our store, matching the inline mint:
+# GET/POST /rules and PUT/DELETE /rules/{id}, reading and writing RuleRepository. Two guards apply
+# on every write into our store, matching the inline mint:
 #   * the value must carry at least MIN_RULE_VALUE_ALPHANUMERICS letters/digits for a
 #     "description contains" rule, so a near-empty value (".") can't match nearly every charge;
 #   * the categoryId must be one of the user's categories, so a rule can't file into a category
 #     that does not exist.
-# The route handlers are named with a _route suffix so they don't shadow the module-level
-# list_rules/create_rule/update_rule/delete_rule imported from banksync_enrichments (still used by
-# the proxy until WHIT-535).
+# The route handlers carry a _route suffix to distinguish them from RuleRepository's own
+# list_rules/create_rule/update_rule/delete_rule methods.
 
 
 def _rule_value_floor_error() -> dict:
@@ -1390,16 +1286,13 @@ def get_uncategorized_merchants(
 
 
 def _as_leaf_rule(inline_rule: dict) -> dict:
-    """The inline rule in the shape rule_engine evaluates. `conditionCount` 1 is not decoration:
-    rule_engine refuses to act on anything it read only the first condition of, and this rule has
-    exactly one by construction."""
+    """The inline rule in the shape rule_engine evaluates."""
     return {
         "id": None,
         "field": DEFAULT_RULE_FIELD,
         "operator": DEFAULT_RULE_OPERATOR,
         "value": inline_rule["value"],
         "categoryId": inline_rule["categoryId"],
-        "conditionCount": 1,
     }
 
 
@@ -1407,9 +1300,7 @@ def _rule_to_client(row: dict) -> dict:
     """Map a stored rule row (repository_rule, snake_case) to the client/engine Rule shape.
 
     Our store speaks `category_id`; rule_engine and the apply-rules responses read `categoryId`.
-    This is the single point translating between the two. `conditionCount` is always 1 — our
-    store only ever holds single-leaf rules (create_rule mints one condition), so a stored rule
-    can never be the multi-condition foreign rule the sweep would otherwise refuse to broaden.
+    This is the single point translating between the two.
     """
     return {
         "id": row.get("id"),
@@ -1417,7 +1308,6 @@ def _rule_to_client(row: dict) -> dict:
         "operator": row.get("operator"),
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
-        "conditionCount": 1,
     }
 
 
@@ -1476,7 +1366,7 @@ def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | No
         than ignored — silently narrowing an "equals" to a "contains" would file the wrong
         charges, and the caller would never know.
 
-    `income` is deliberately NOT accepted, unlike POST /enrichments: it is a valid rule target
+    `income` is deliberately NOT accepted, unlike the /rules write: it is a valid rule target
     (filed, but not a taxonomy id) and rule_engine honours it, but this route mints from the
     merchant screen, where income categories aren't pickable (WHIT-158). Unreachable today.
     """
@@ -3038,10 +2928,9 @@ def delete_budget(event: dict, repo: BudgetRepository) -> dict:
     """DELETE /budgets/{category} — remove a category's budget target.
 
     Idempotent: an unknown/already-gone id still returns 200 (the repo's
-    delete_budget is a no-op when no target exists), mirroring delete_goal /
-    delete_enrichment. The category itself is untouched — only its target is
-    dropped, so its spend keeps being tracked; the user can set a new target
-    later via PUT.
+    delete_budget is a no-op when no target exists), mirroring delete_goal.
+    The category itself is untouched — only its target is dropped, so its spend
+    keeps being tracked; the user can set a new target later via PUT.
     """
     cat_id = (event.get("pathParameters") or {}).get("category")
     if not cat_id:
@@ -3395,7 +3284,7 @@ def _celebrate_manual_goal_crossing(goal_id, old_goal, saved_goal, notify_repo, 
 
 def delete_goal(event: dict, repo: GoalsRepository) -> dict:
     """DELETE /goals/{id} — remove a goal. Idempotent: an unknown/already-gone id
-    still returns 200 (mirrors delete_enrichment / delete_budget)."""
+    still returns 200 (mirrors delete_budget)."""
     goal_id = (event.get("pathParameters") or {}).get("id")
     if not goal_id:
         return _json_response(404, {"error": "goal not found"})

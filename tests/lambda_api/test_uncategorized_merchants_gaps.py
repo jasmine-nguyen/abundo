@@ -78,7 +78,7 @@ def _eligible_rows(handler):
 def _contains_rule(pattern):
     """The leaf rule WHIT-516 would mint from a group — the shape rule_engine evaluates."""
     return {"field": "description", "operator": "contains", "value": pattern,
-            "conditionCount": 1, "categoryId": "groceries"}
+            "categoryId": "groceries"}
 
 
 # A deliberately messy but REALISTIC spread: nested merchants, a merchant that only appears

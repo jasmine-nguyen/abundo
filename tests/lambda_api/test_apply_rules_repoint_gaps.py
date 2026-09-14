@@ -9,7 +9,6 @@ introduced, which those suites do not isolate:
     `category_id`, never a stray `categoryId`; it is the ONLY snake->camel translation.
   * [G2] the mapper never raises on a sparse/oversupplied row, and never leaks `category_id`
     downstream (a downstream reader of `category_id` would silently see None post-map).
-  * [G3] conditionCount is pinned to 1 regardless of what the row carries.
   * [G4] the clash guard reads the FULL store list — a clash on a rule PAST BankSync's old
     100-row first page is still found (the whole point of the repoint).
   * [G5] a rules-read failure on a PREVIEW (the default) is a 500 too, not only on a write run.
@@ -82,17 +81,16 @@ def test_rule_to_client_reads_snake_case_category_id_not_a_stray_camel_case(hand
 
 
 def test_rule_to_client_maps_a_full_store_row_to_exactly_the_client_shape(handler):
-    # [G1]/[G2] A real store row carries pk/sk/source/created_at/updated_at/imported_at. The
-    # mapper must project to EXACTLY the engine/client keys and drop the rest — a leaked store
-    # key downstream is a silent shape drift.
+    # [G1]/[G2] A real store row carries pk/sk/source/created_at/updated_at. The mapper must
+    # project to EXACTLY the engine/client keys and drop the rest — a leaked store key downstream
+    # is a silent shape drift.
     mapped = handler._rule_to_client({
         "pk": "RULE", "sk": "RULE#abc", "id": "abc", "field": "description",
-        "operator": "contains", "value": "ALDI", "category_id": "groceries", "source": "import",
-        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-02T00:00:00+00:00",
-        "imported_at": "2026-01-01T00:00:00+00:00", "banksync_enrichment_ids": ["e1"]})
+        "operator": "contains", "value": "ALDI", "category_id": "groceries", "source": "app",
+        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-02T00:00:00+00:00"})
 
     assert mapped == {"id": "abc", "field": "description", "operator": "contains",
-                      "value": "ALDI", "categoryId": "groceries", "conditionCount": 1}
+                      "value": "ALDI", "categoryId": "groceries"}
 
 
 def test_rule_to_client_never_raises_on_a_sparse_row(handler):
@@ -101,16 +99,7 @@ def test_rule_to_client_never_raises_on_a_sparse_row(handler):
     mapped = handler._rule_to_client({})
 
     assert mapped == {"id": None, "field": None, "operator": None, "value": None,
-                      "categoryId": None, "conditionCount": 1}
-
-
-def test_rule_to_client_pins_condition_count_to_one_regardless_of_the_row(handler):
-    # [G3] conditionCount is hardcoded 1: our store only ever holds single-leaf rules, so the
-    # sweep's multi-condition refusal (_skip_reason) can never trip on our own rules. Even a row
-    # that (impossibly) carried its own conditionCount must be reported as 1.
-    mapped = handler._rule_to_client(_store_row("COLES", "groceries", conditionCount=5))
-
-    assert mapped["conditionCount"] == 1
+                      "categoryId": None}
 
 
 # --- [G4] the clash guard reads the WHOLE store, not a capped first page ----------------------

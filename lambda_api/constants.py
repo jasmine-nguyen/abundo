@@ -72,10 +72,10 @@ TRANSACTION_BATCH_MAX = 100
 # Lookback window, in days, for the recent-transactions feed (get_recent_transactions).
 FEED_WINDOW_DAYS = 7
 
-# --- BankSync Enrichments (categorisation rules) ---------------------------
+# --- BankSync (balance refresh + API key) ----------------------------------
 # lambda_api ships its OWN constants.py (it shadows the shared layer at
 # /var/task), so the BankSync values the shared layer already defines have to be
-# repeated here for the enrichments proxy to import them. Keep equal to
+# repeated here for the balance refresh to import them. Keep equal to
 # shared/constants.py.
 BANKSYNC_BASE_URL = "https://api.banksync.io"
 BANKSYNC_API_KEY_PATH = "/abundo/banksync-api-key"
@@ -83,11 +83,6 @@ BANKSYNC_API_KEY_PATH = "/abundo/banksync-api-key"
 # User-Agent (error 1010). Send our own on every request (matches the
 # transaction-trigger lambda, which uses its own "abundo-transaction-trigger").
 BANKSYNC_USER_AGENT = "abundo-app-api"
-# HTTP timeout, in seconds, for a single enrichments request to BankSync.
-BANKSYNC_TIMEOUT_SECONDS = 30
-
-# API Gateway route path for the enrichments (categorisation-rule) endpoints.
-ENRICHMENTS_PATH = "/enrichments"
 
 # API Gateway route path for the rule endpoints backed by our own store (WHIT-529).
 # Handler-only, so no shared/constants.py mirror is needed (the WHIT-136 sync guard only
@@ -131,10 +126,10 @@ INSIGHTS_PRIOR_CYCLES = 1
 # AI trend can't silently change the breakdown lookback.
 BREAKDOWN_MAX_LOOKBACK = 12
 
-# Tier-1 rule vocabulary we let the app author. Kept to what we've VERIFIED
-# against BankSync (description contains / category equals, 2026-07-02); the
-# create handler rejects anything outside these so an unverified operator never
-# reaches BankSync. Widen only after a /enrich/preview dry-run confirms support.
+# Tier-1 rule vocabulary we let the app author, matching what our own rule engine
+# (shared/rule_engine.py) evaluates: description contains / category equals. The
+# create handler rejects anything outside these, so an unsupported operator can't
+# reach the store. Widen only alongside the engine's matching support.
 RULE_FIELDS = frozenset({"description", "category"})
 RULE_OPERATORS = frozenset({"contains", "equals"})
 # Applied when a create request omits them: the plain "description contains X"
@@ -298,8 +293,8 @@ PAYCYCLE_PATH = "/paycycle"
 
 # --- Device push-token registration (POST /devices) ------------------------
 # API Gateway route path for registering an Expo push token. Gated behind the
-# shared-secret authorizer (like /enrichments): it controls who receives the
-# user's notifications, so it is NOT left open like the read routes.
+# shared-secret authorizer (like the other mutating routes): it controls who
+# receives the user's notifications, so it is NOT left open like the read routes.
 DEVICES_PATH = "/devices"
 # Upper bound on an accepted Expo push token's length — a sanity guard, not a real
 # limit (a real ExpoPushToken[...] value is ~40 chars).

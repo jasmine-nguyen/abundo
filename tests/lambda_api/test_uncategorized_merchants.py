@@ -371,7 +371,7 @@ def test_every_group_count_is_what_the_rule_would_really_file(handler, rule_engi
 
     for group in body["groups"]:
         rule = {"id": "r", "field": "description", "operator": "contains",
-                "value": group["rulePattern"], "categoryId": "groceries", "conditionCount": 1}
+                "value": group["rulePattern"], "categoryId": "groceries"}
         plan = rule_engine.plan_rule_application([rule], rows, still_unfiled)
         assert plan["by_rule"][0]["count"] == group["count"], group["rulePattern"]
 

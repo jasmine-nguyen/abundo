@@ -161,40 +161,7 @@ def test_update_move_new_put_refused_but_row_gone_is_surfaced_as_database_error(
     assert rule_repo.get_rule(original["id"]) is not None
 
 
-# --- empty + sparse round-trips -----------------------------------------------------------
+# --- empty round-trip -----------------------------------------------------------
 
 def test_list_rules_empty_table_returns_empty_list(rule_repo):
     assert rule_repo.list_rules() == []
-
-
-def test_create_omits_falsy_import_metadata(rule_repo):
-    # imported_at="" and banksync_enrichment_ids=[] are falsy -> omitted, not stored empty.
-    rule, _ = _make(rule_repo, value="COLES", imported_at="", banksync_enrichment_ids=[])
-    assert "imported_at" not in rule
-    assert "banksync_enrichment_ids" not in rule
-    assert rule_repo.get_rule(rule["id"]) == rule
-
-
-def test_update_move_of_a_plain_rule_keeps_the_new_row_sparse(rule_repo):
-    # Implementer only tested the move WITH import metadata. A plain app rule moved to free text
-    # must NOT sprout empty imported_at / banksync_enrichment_ids on the new row.
-    original, _ = _make(rule_repo, value="COLE")
-    assert "imported_at" not in original and "banksync_enrichment_ids" not in original
-    updated = rule_repo.update_rule(original["id"], "description", "contains", "COLES", "groceries")
-    assert updated["id"] != original["id"]
-    assert "imported_at" not in updated
-    assert "banksync_enrichment_ids" not in updated
-    assert rule_repo.get_rule(updated["id"]) == updated
-    assert rule_repo.get_rule(original["id"]) is None
-
-
-def test_update_in_place_carries_an_explicit_source(rule_repo):
-    # in-place edit (same id) that also changes source -> the source alias branch fires and the
-    # returned + stored row reflect it. Implementer only edited category in place.
-    original, _ = _make(rule_repo, value="COLES", category="groceries", source="app")
-    updated = rule_repo.update_rule(
-        original["id"], "description", "contains", "COLES", "coffee", source="import"
-    )
-    assert updated["source"] == "import"
-    assert updated["category_id"] == "coffee"
-    assert rule_repo.get_rule(original["id"])["source"] == "import"
