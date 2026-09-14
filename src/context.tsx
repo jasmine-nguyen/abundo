@@ -2146,7 +2146,7 @@ export interface BudgetView {
   spentLabel: string; remainAmount: string; remainLabel: string; remainColor: string;
   postedPct: number; pendingPct: number; targetPct: number; postedColor: string;
   pendingTint: string; paceLabel: string; paceColor: string; over: boolean;
-  // Rollover chip: "+$40 rolled over" / "$20 borrowed", or '' when off / near zero.
+  // Smoothing chip: "+$40 carried over" / "$20 borrowed", or '' when off / near zero.
   carryoverLabel: string;
   // Sub-category tree (WHIT-221): `depth` is the indent level — the number of the
   // row's ancestors that are ALSO budgeted rows (0 = top-level or a sub whose parent
@@ -2244,7 +2244,7 @@ export function budgetViews(s: BudgetViewsInput): { rows: BudgetView[]; totBudge
     const target = b.budget * elapsed;
     const postedPct = Math.max(0, Math.min(100, (posted / den) * 100));
     let carryoverLabel = '';
-    if (b.rollover && b.carryover > 0.5) carryoverLabel = `+${fmt(b.carryover)} rolled over`;
+    if (b.rollover && b.carryover > 0.5) carryoverLabel = `+${fmt(b.carryover)} carried over`;
     else if (b.rollover && b.carryover < -0.5) carryoverLabel = `${fmt(-b.carryover)} borrowed`;
 
     if (c.bucket === 'Income') {
@@ -3174,7 +3174,7 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const targetPct = Math.round(elapsed * 100);
   // One line for the accumulated buffer, shown only when rollover is on and it's non-trivial.
   let carryoverLine = '';
-  if (b.rollover && b.carryover > 0.5) carryoverLine = `Includes ${fmt(b.carryover)} rolled over from past cycles`;
+  if (b.rollover && b.carryover > 0.5) carryoverLine = `Includes ${fmt(b.carryover)} carried over from past cycles`;
   else if (b.rollover && b.carryover < -0.5) carryoverLine = `Includes ${fmt(-b.carryover)} borrowed from this cycle`;
   // Bill spread status line: the dollar effect this cycle (never a bare "X of N"), with a
   // "last cycle" tag on the final slice. The screen shows this while a plan is active.
@@ -3252,8 +3252,9 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
   // meaningless as an income floor — for income we suppress the recommendation and
   // the spend-history stats and reframe the copy as earnings (WHIT-169).
   const isIncome = c?.bucket === 'Income';
-  // Rollover and a bill spread are mutually exclusive — the toggle is disabled while a
-  // spread is active, and the edit screen tells the user to remove it first.
+  // Smoothing (the unified name for rollover) and a bill spread are mutually exclusive.
+  // While a spread is active the Smoothing switch is shown but locked ON — a spread is itself
+  // a form of smoothing (see smoothingLocked below).
   const spreadActive = !!existing?.spread;
   const avg = c ? Math.round(c.recent) : 0;
   const last = Math.round(avg * 0.92);
@@ -3277,9 +3278,19 @@ export function budgetEditInfo(s: BudgetEditInput, categoryId: string) {
     histBars,
     title: existing ? 'Edit budget' : 'Set budget',
     saveText: existing ? 'Update budget' : 'Add budget',
-    // Rollover: spend-only (never Income earn-targets or Savings), and never alongside an
-    // active bill spread. `rolloverOn` seeds the editor toggle from the stored flag.
-    rolloverAllowed: !isIncome && c?.bucket !== 'Savings' && !spreadActive,
+    // Smoothing switch (writes the rollover flag until WHIT-551 unifies the storage).
+    // `smoothingShown` renders the row — spend-only, never Income earn-targets or Savings.
+    // `smoothingLocked` shows it ON-but-disabled while a bill spread is active: a spread is a
+    // form of smoothing, so the switch reads on, and save() must NOT write the flag then
+    // (rollover XOR spread — the server 400s a rollover write on a spread category).
+    // `rolloverOn` seeds the switch from the stored flag.
+    smoothingShown: !isIncome && c?.bucket !== 'Savings',
+    smoothingLocked: spreadActive,
+    smoothingTitle: 'Smoothing',
+    smoothingHelp:
+      'Unused budget carries forward for next cycle — great for saving toward a bigger, less-frequent bill. Overspending is paid back from the cycles around it.',
+    smoothingLockedHelp:
+      'On while this bill is spread over several cycles. Manage the spread from the bill instead.',
     rolloverOn: existing?.rollover ?? false,
     spreadActive,
   };

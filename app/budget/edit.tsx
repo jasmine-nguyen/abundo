@@ -61,8 +61,11 @@ export default function BudgetEdit() {
     if (!canSave) return;
     setSubmitting(true);
     try {
-      // Rollover is spend-only — pass the flag only when it applies (else leave it untouched).
-      const ok = await s.saveBudget(categoryId, num, info.rolloverAllowed ? rollover : undefined);
+      // Smoothing is spend-only — pass the flag only when the switch is shown AND editable.
+      // While locked (a bill spread is active) send undefined: the server 400s a rollover
+      // write on a spread category (rollover XOR spread).
+      const smoothingEditable = info.smoothingShown && !info.smoothingLocked;
+      const ok = await s.saveBudget(categoryId, num, smoothingEditable ? rollover : undefined);
       if (ok) {
         // WHIT-188: the Budgets tab now reads the query cache, so mark budgets stale —
         // otherwise the just-saved change wouldn't show until the 45s staleTime elapsed.
@@ -134,17 +137,18 @@ export default function BudgetEdit() {
           </View>
         )}
 
-        {info.rolloverAllowed && (
-          <View style={styles.rolloverRow}>
+        {info.smoothingShown && (
+          <View style={[styles.rolloverRow, info.smoothingLocked && { opacity: 0.6 }]}>
             <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text style={styles.rolloverTitle}>Roll over unused budget</Text>
+              <Text style={styles.rolloverTitle}>{info.smoothingTitle}</Text>
               <Text style={styles.rolloverHelp}>
-                Leftover builds up for next cycle — great for saving toward a bigger, less-frequent bill. Overspending is paid back from the cycles around it.
+                {info.smoothingLocked ? info.smoothingLockedHelp : info.smoothingHelp}
               </Text>
             </View>
             <Switch
-              value={rollover}
+              value={info.smoothingLocked ? true : rollover}
               onValueChange={setRollover}
+              disabled={info.smoothingLocked}
               trackColor={{ true: C.accent, false: tint(C.accentAlt, 0.25) }}
             />
           </View>

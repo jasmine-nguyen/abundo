@@ -23,7 +23,7 @@ describe('budgetViews — positive carryover (sinking fund)', () => {
     expect(row.remainLabel).toBe('left');
     expect(row.over).toBe(false);
     expect(row.spentLabel).toBe('$0 spent of $300'); // "of" is the available envelope
-    expect(row.carryoverLabel).toBe('+$200 rolled over');
+    expect(row.carryoverLabel).toBe('+$200 carried over');
     // Hero totals count the envelope so the top number matches the rows.
     expect([totBudget, totSpent, totRemain]).toEqual([300, 0, 300]);
   });
@@ -92,7 +92,7 @@ describe('budgetDetail — carryover', () => {
     // Not over budget (250 < 300), but far past this cycle's base pace (target = 100 × 0.5 = 50):
     // amber "ahead of pace", matching the list's "over pace" for the same drawn-down sinking fund.
     expect(d.statusLabel).toBe('Ahead of pace — ease up');
-    expect(d.carryoverLine).toBe('Includes $200 rolled over from past cycles');
+    expect(d.carryoverLine).toBe('Includes $200 carried over from past cycles');
   });
 
   it('negative buffer over the envelope reads over + shows the borrowed line', () => {
@@ -148,8 +148,8 @@ describe('carryover chip/line deadband (|value| must EXCEED 0.5 to show)', () =>
 
   it('just past +0.5 shows the rolled-over chip + line', () => {
     expect(rowFor(0.51).carryoverLabel.startsWith('+')).toBe(true);
-    expect(rowFor(0.51).carryoverLabel).toContain('rolled over');
-    expect(detailFor(0.51).carryoverLine).toContain('rolled over');
+    expect(rowFor(0.51).carryoverLabel).toContain('carried over');
+    expect(detailFor(0.51).carryoverLine).toContain('carried over');
   });
 
   it('just past -0.5 shows the borrowed chip', () => {
