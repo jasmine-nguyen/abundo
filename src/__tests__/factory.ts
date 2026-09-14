@@ -4,7 +4,7 @@
 // no React, so these run headlessly anywhere (incl. the CI merge gate).
 import { cycleName, ROLLUP_KEY } from '../context';
 import { MILESTONES } from '../milestones';
-import type { Category, Transaction, Budget, HomeLoanState } from '../context';
+import type { Category, Transaction, Budget, HomeLoanState, Rule } from '../context';
 import type { AiGoalSignal, BreakdownRollup, CategorySpend, LoanFacts, MilestoneRecord, Repayment } from '../api';
 import type { GoalScreenData } from '../queries';
 
@@ -46,6 +46,12 @@ export function txn(over: Partial<Transaction> = {}): Transaction {
     account_id: 'a1', account_name: 'Everyday', category: 'groceries',
     status: 'posted', type: 'purchase', counts_to_budget: true, ...over,
   };
+}
+
+// WHIT-539: a client Rule fixture (isNew is required on the interface). Defaults to a
+// description/contains rule filing into 'coffee', the fixture transaction's category.
+export function rule(over: Partial<Rule> = {}): Rule {
+  return { id: 'r1', pattern: 'COLES', categoryId: 'coffee', isNew: false, field: 'description', operator: 'contains', ...over };
 }
 
 export function budget(over: Partial<Budget> = {}): Budget {

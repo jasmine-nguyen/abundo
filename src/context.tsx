@@ -97,12 +97,31 @@ export interface Transaction {
   // WHIT-296: user override to exclude this transaction from budgets ("mark as
   // transfer"). Absent (undefined) = not excluded; only True is stored server-side.
   budget_excluded?: boolean;
+  // WHIT-536/539: the store id of the rule that auto-filed this charge's category.
+  // Server-stamped, sparse — absent when filed by hand or by the bank. The detail
+  // screen resolves it against the rules cache to explain the category (WHIT-539).
+  filed_by_rule?: string;
 }
 // `pattern` mirrors the server rule's `value`; `field`/`operator` carry the
 // server facts (default description/contains for app-authored rules) so a rule
 // surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
 // is client-only (server rules load as isNew:false).
 export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; }
+// WHIT-539: the line shown when a rule auto-filed a charge but there is no readable
+// merchant text to name it — a rule that matched on category type (its pattern is a raw
+// enum, not human text), or a stamp whose rule was since renamed/deleted (a dangling id).
+// Never echoes a raw id.
+export const RULE_FILED_FALLBACK = 'Filed automatically by one of your rules';
+// WHIT-539: human text for the rule that auto-filed a charge, e.g.
+// `Filed by your rule: contains "COLES"`. A category/equals rule matches on the raw
+// category enum, so it falls back to the generic line rather than echoing the enum.
+export function ruleFiledLabel(rule: Rule): string {
+  // No readable merchant text to name: a category/equals rule matches on a raw enum, and a
+  // blank pattern (a malformed rule) has nothing to quote. Both fall back to the generic line.
+  if (rule.field === 'category' || !rule.pattern?.trim()) return RULE_FILED_FALLBACK;
+  const operator = rule.operator ?? 'contains';
+  return `Filed by your rule: ${operator} "${rule.pattern}"`;
+}
 // The live home-loan balance from BankSync (WHIT-8). `balance` is the outstanding
 // mortgage principal as a positive number, null until the balance poller's first
 // run lands.

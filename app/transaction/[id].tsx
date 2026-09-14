@@ -3,9 +3,9 @@ import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
-import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, Transaction } from '../../src/context';
+import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK, Transaction } from '../../src/context';
 import { formatDayMonthYear } from '../../src/dateutil';
-import { useTransactionsScreenData, useTransactionResolver, useBudgetsScreenData } from '../../src/queries';
+import { useTransactionsScreenData, useTransactionResolver, useBudgetsScreenData, useRulesScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
@@ -46,6 +46,25 @@ export default function TransactionDetail() {
   const spreadBudget = transaction?.category ? budgets.find((b) => b.id === transaction.category) : undefined;
   const spreadElig = budgetSpreadEligibility(spreadCategory, spreadBudget);
   const showSpread = !!transaction && transaction.amount < 0 && contributesToBudget(transaction) && spreadElig.entry !== 'hidden';
+
+  // WHIT-539: explain a rule-filed category. Resolve the stamped rule against the rules cache.
+  // Gate on the rule STILL owning the current category: the server clears filed_by_rule on a hand
+  // re-file, but the client's optimistic write keeps the old stamp and the feed isn't refetched
+  // (context.tsx invalidateAfterCategorise), so a hand-refiled charge would otherwise show a stale
+  // "filed by your rule" line under a category the user chose. While the rules are still loading,
+  // show nothing rather than flashing the generic fallback; a dangling id (loaded, unmatched) shows
+  // the generic fallback, never a raw id.
+  const { rules, isLoading: rulesLoading } = useRulesScreenData();
+  const filedRuleId = transaction?.filed_by_rule;
+  const filedRule = filedRuleId ? rules.find((r) => r.id === filedRuleId) : undefined;
+  let ruleFiledText: string | null = null;
+  if (filedRuleId) {
+    if (filedRule) {
+      if (filedRule.categoryId === transaction?.category) ruleFiledText = ruleFiledLabel(filedRule);
+    } else if (!rulesLoading) {
+      ruleFiledText = RULE_FILED_FALLBACK;
+    }
+  }
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -98,6 +117,11 @@ export default function TransactionDetail() {
                 <Field label="Status" value={view.isPending ? 'Pending' : 'Posted'} last />
               </View>
 
+              {/* WHIT-539: name the rule that auto-filed this category, right under the details
+                  card so it reads as a footnote to the Category row. Hidden entirely when no rule
+                  filed it (or the stamp is stale / still loading — see ruleFiledText above). */}
+              {ruleFiledText && <RuleFiledNote text={ruleFiledText} />}
+
               {/* WHIT-298: a bank-excluded charge (transfer / card payment) can't be manually
                   un-excluded, so show a read-only note in place of the WHIT-296 manual toggle.
                   A normal charge keeps the toggle so the user can still exclude it themselves.
@@ -142,6 +166,19 @@ export default function TransactionDetail() {
           )}
         </DetailStates>
       </ScrollView>
+    </View>
+  );
+}
+
+// WHIT-539: read-only note naming the rule that auto-filed this charge's category
+// ("Filed by your rule: contains \"COLES\""), or a generic fallback when the rule can't be
+// named. Same card as BudgetExcludedNote, but a single legible line (toggleTitle weight, not
+// the dim sub) — it stands alone, so a faint line would read as unbalanced. No numberOfLines
+// cap, so a long merchant wraps rather than truncating.
+function RuleFiledNote({ text }: { text: string }) {
+  return (
+    <View style={styles.excludedNote} accessible accessibilityLabel={text} testID="filed-by-rule">
+      <Text style={styles.toggleTitle}>{text}</Text>
     </View>
   );
 }
