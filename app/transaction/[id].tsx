@@ -170,13 +170,15 @@ export default function TransactionDetail() {
   );
 }
 
-// WHIT-539: read-only footnote naming the rule that auto-filed this charge's category
+// WHIT-539: read-only note naming the rule that auto-filed this charge's category
 // ("Filed by your rule: contains \"COLES\""), or a generic fallback when the rule can't be
-// named. Same card style as BudgetExcludedNote; a single line, so it never truncates.
+// named. Same card as BudgetExcludedNote, but a single legible line (toggleTitle weight, not
+// the dim sub) — it stands alone, so a faint line would read as unbalanced. No numberOfLines
+// cap, so a long merchant wraps rather than truncating.
 function RuleFiledNote({ text }: { text: string }) {
   return (
     <View style={styles.excludedNote} accessible accessibilityLabel={text} testID="filed-by-rule">
-      <Text style={styles.toggleSub}>{text}</Text>
+      <Text style={styles.toggleTitle}>{text}</Text>
     </View>
   );
 }

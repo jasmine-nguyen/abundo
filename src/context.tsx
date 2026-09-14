@@ -116,7 +116,9 @@ export const RULE_FILED_FALLBACK = 'Filed automatically by one of your rules';
 // `Filed by your rule: contains "COLES"`. A category/equals rule matches on the raw
 // category enum, so it falls back to the generic line rather than echoing the enum.
 export function ruleFiledLabel(rule: Rule): string {
-  if (rule.field === 'category') return RULE_FILED_FALLBACK;
+  // No readable merchant text to name: a category/equals rule matches on a raw enum, and a
+  // blank pattern (a malformed rule) has nothing to quote. Both fall back to the generic line.
+  if (rule.field === 'category' || !rule.pattern?.trim()) return RULE_FILED_FALLBACK;
   const operator = rule.operator ?? 'contains';
   return `Filed by your rule: ${operator} "${rule.pattern}"`;
 }

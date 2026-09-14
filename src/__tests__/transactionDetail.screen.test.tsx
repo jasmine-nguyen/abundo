@@ -6,14 +6,8 @@
 import { it, expect, jest, beforeEach, describe } from '@jest/globals';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
-import { makeState, cat, txn, budget } from './factory';
+import { makeState, cat, txn, budget, rule } from './factory';
 import type { Budget, Rule } from '../context';
-
-// WHIT-539: a client Rule fixture (isNew is required on the interface). Defaults to a
-// description/contains rule filing into 'coffee', the fixture transaction's category.
-function rule(over: Partial<Rule> = {}): Rule {
-  return { id: 'r1', pattern: 'COLES', categoryId: 'coffee', isNew: false, field: 'description', operator: 'contains', ...over };
-}
 
 let mockTx: ReturnType<typeof txData>;
 let mockBudgets: Budget[] = [];
@@ -357,5 +351,50 @@ describe('rule attribution line', () => {
     mockRules = { rules: [rule({ id: 'r1' })], isLoading: false };
     render(<TransactionDetail />);
     expect(screen.queryByTestId('filed-by-rule')).toBeNull();
+  });
+
+  // [A-mult] Fail-on-revert: two rules file into the SAME category; the stamp points at r2. The
+  // lookup must match by ID, not by category — matching by category would name r1's pattern.
+  it('resolves the stamped rule by id, not by category, when two rules share a category', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r2' })] });
+    mockRules = {
+      rules: [
+        rule({ id: 'r1', pattern: 'COLES', categoryId: 'coffee' }),
+        rule({ id: 'r2', pattern: 'WOOLIES', categoryId: 'coffee' }),
+      ],
+      isLoading: false,
+    };
+    render(<TransactionDetail />);
+    expect(screen.getByText('Filed by your rule: contains "WOOLIES"')).toBeTruthy();
+    expect(screen.queryByText(/COLES/)).toBeNull();
+  });
+
+  // [A-empty] An empty-string stamp is a falsy, malformed id: treat it as "no rule" — no line,
+  // no crash, no fallback. Fail-on-revert: a `!== undefined` guard would make '' truthy → an
+  // unmatched find → a false generic fallback.
+  it('shows no line for an empty-string filed_by_rule (falsy id)', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: '' })] });
+    mockRules = { rules: [rule({ id: 'r1' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
+  });
+
+  // [A-nullcat] A matched rule but the charge's category is null (re-filed to Uncategorized while the
+  // stale stamp lingers): the category-match gate fails → no line. Fail-on-revert: dropping the gate
+  // would show "filed by your rule" on an uncategorised row.
+  it('shows no line when the charge category is null even though the rule is present', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: null, filed_by_rule: 'r1' })] });
+    mockRules = { rules: [rule({ id: 'r1', categoryId: 'coffee' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.queryByTestId('filed-by-rule')).toBeNull();
+  });
+
+  // [A-acc] The note carries the same human text as its screen-reader label. Fail-on-revert:
+  // removing accessibilityLabel={text} from RuleFiledNote makes getByLabelText miss.
+  it('exposes the rule text as the accessibility label', () => {
+    mockTx = txData({ transactions: [txn({ transaction_id: 't1', category: 'coffee', filed_by_rule: 'r1' })] });
+    mockRules = { rules: [rule({ id: 'r1', pattern: 'COLES', field: 'description', operator: 'contains', categoryId: 'coffee' })], isLoading: false };
+    render(<TransactionDetail />);
+    expect(screen.getByLabelText('Filed by your rule: contains "COLES"')).toBeTruthy();
   });
 });
