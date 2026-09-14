@@ -6,6 +6,7 @@
 // rollover toggle off while a spread is active; spreadPreview mirrors the server's cent split.
 import { describe, it, expect } from '@jest/globals';
 import { budgetViews, budgetDetail, budgetEditInfo, toBudget, spreadPreview, cycleName } from '../context';
+import type { Category } from '../context';
 import { makeState, cat, budget } from './factory';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });
@@ -112,21 +113,56 @@ describe('budgetDetail — spread', () => {
   });
 });
 
-// ── budgetEditInfo greys the rollover toggle off under an active spread ──────
-describe('budgetEditInfo — rollover vs spread', () => {
+// ── budgetEditInfo: the Smoothing switch, shown-but-locked under an active spread (WHIT-550) ──
+describe('budgetEditInfo — Smoothing switch vs spread', () => {
   const editInfo = (b: object) => budgetEditInfo({
     budgets: [budget({ id: 'sink', ...b })], category: (id: string) => (id === 'sink' ? sink() : undefined),
     cycleName: () => cycleName(14),
   }, 'sink');
 
-  it('disallows rollover while a spread is active', () => {
-    expect(editInfo({ spread: plan() }).rolloverAllowed).toBe(false);
-    expect(editInfo({ spread: plan() }).spreadActive).toBe(true);
+  it('shows the switch but locks it ON while a spread is active', () => {
+    const info = editInfo({ spread: plan() });
+    expect(info.smoothingShown).toBe(true);    // still rendered — a spread IS smoothing
+    expect(info.smoothingLocked).toBe(true);   // but not editable
+    expect(info.spreadActive).toBe(true);
   });
 
-  it('allows rollover on a plain spend budget', () => {
-    expect(editInfo({}).rolloverAllowed).toBe(true);
-    expect(editInfo({}).spreadActive).toBe(false);
+  it('shows an editable switch on a plain spend budget', () => {
+    const info = editInfo({});
+    expect(info.smoothingShown).toBe(true);
+    expect(info.smoothingLocked).toBe(false);
+    expect(info.spreadActive).toBe(false);
+  });
+
+  it('hides the switch for Income and Savings (no smoothing on a floor)', () => {
+    const infoFor = (category: Category) => budgetEditInfo({
+      budgets: [budget({ id: 'x' })],
+      category: () => category,
+      cycleName: () => cycleName(14),
+    }, 'x');
+    expect(infoFor(cat({ id: 'x', name: 'X', bucket: 'Income' })).smoothingShown).toBe(false);
+    expect(infoFor(cat({ id: 'x', name: 'X', bucket: 'Savings' })).smoothingShown).toBe(false);
+  });
+
+  // GAP [A-L1] WHIT-550 — a spend budget with rollover already ON but NO spread must NOT be
+  // locked: the switch stays editable so save() writes the flag. Guards against a regression
+  // that keys `smoothingLocked` off `rolloverOn`/`existing` instead of `spread`.
+  it('does NOT lock the switch for a rollover-ON budget without a spread', () => {
+    const info = editInfo({ rollover: true, carryover: 40 });
+    expect(info.smoothingShown).toBe(true);
+    expect(info.smoothingLocked).toBe(false);   // editable — not accidentally locked
+    expect(info.rolloverOn).toBe(true);         // seeds the switch ON from the stored flag
+    expect(info.spreadActive).toBe(false);
+  });
+
+  // GAP [A-L2] WHIT-550 — the locked help copy is a DISTINCT string from the normal help, and
+  // names the spread as the reason. Fail-on-revert: point smoothingLockedHelp at smoothingHelp
+  // (or drop the "Manage the spread" sentence) and this goes red.
+  it('exposes a distinct locked-help string that points the user at the spread', () => {
+    const info = editInfo({ spread: plan() });
+    expect(info.smoothingLockedHelp).toBe('On while this bill is spread over several cycles. Manage the spread from the bill instead.');
+    expect(info.smoothingLockedHelp).not.toBe(info.smoothingHelp);
+    expect(info.smoothingHelp).toContain('carries forward');   // normal copy still the smoothing pitch
   });
 });
 

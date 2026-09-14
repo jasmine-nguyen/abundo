@@ -178,12 +178,12 @@ describe('budgetEditRollover (folded)', () => {
 
   beforeEach(() => { mockSaveBudget.mockClear(); mockReplace.mockClear(); });
 
-  it('spend budget: flipping the rollover toggle ON makes Save pass rollover=true', async () => {
+  it('spend budget: flipping the Smoothing toggle ON makes Save pass rollover=true', async () => {
     mockParams = { categoryId: 'coffee' };
     mockState = { categories: [SPEND], budgets: [], saveBudget: mockSaveBudget } as unknown as AppContext;
     const { UNSAFE_getByType } = render(<BudgetEdit />);
 
-    expect(screen.getByText('Roll over unused budget')).toBeTruthy();   // the toggle row is shown
+    expect(screen.getByText('Smoothing')).toBeTruthy();                 // the toggle row is shown
     fireEvent.changeText(screen.getByPlaceholderText('0'), '300');
     fireEvent(UNSAFE_getByType(Switch), 'valueChange', true);           // user turns rollover ON
     await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
@@ -213,12 +213,90 @@ describe('budgetEditRollover (folded)', () => {
     mockState = { categories: [INCOME], budgets: [], saveBudget: mockSaveBudget } as unknown as AppContext;
     const { UNSAFE_queryAllByType } = render(<BudgetEdit />);
 
-    expect(screen.queryByText('Roll over unused budget')).toBeNull();   // toggle hidden for Income
+    expect(screen.queryByText('Smoothing')).toBeNull();                 // toggle hidden for Income
     expect(UNSAFE_queryAllByType(Switch)).toHaveLength(0);
     fireEvent.changeText(screen.getByPlaceholderText('0'), '5000');
     await act(async () => { fireEvent.press(screen.getByText('Add budget')); });
 
     expect(mockSaveBudget).toHaveBeenCalledWith('salary', 5000, undefined);
+  });
+
+  // WHIT-550: a bill spread IS a form of smoothing, so the switch shows ON but locked —
+  // and Save must send rollover=undefined (never a forced true: the server 400s a rollover
+  // write on a spread category).
+  it('active bill spread: Smoothing shows ON+disabled, and Save passes rollover=undefined', async () => {
+    mockParams = { categoryId: 'coffee' };
+    mockState = {
+      categories: [SPEND],
+      budgets: [{
+        id: 'coffee', budget: 100, posted: 0, pending: 0, rollover: false, carryover: 0,
+        spreadAdjustment: -25, spread: { amount: 200, cycles: 4, index: 1, adjustment: -25 },
+      }],
+      saveBudget: mockSaveBudget,
+    } as unknown as AppContext;
+    const { UNSAFE_getByType } = render(<BudgetEdit />);
+
+    expect(screen.getByText('Smoothing')).toBeTruthy();                 // row shown, not hidden
+    const smoothingSwitch = UNSAFE_getByType(Switch);
+    expect(smoothingSwitch.props.value).toBe(true);                     // reads ON (a spread is smoothing)
+    expect(smoothingSwitch.props.disabled).toBe(true);                  // but locked
+    await act(async () => { fireEvent.press(screen.getByText('Update budget')); });
+
+    expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 100, undefined);  // never a forced true
+  });
+
+  // GAP [A-S1] WHIT-550 — the LOCKED help copy must render while a spread is active (and the
+  // normal smoothing help must NOT). Fail-on-revert: swap the locked/normal help ternary.
+  it('active bill spread: shows the locked help copy, not the normal smoothing help', async () => {
+    mockParams = { categoryId: 'coffee' };
+    mockState = {
+      categories: [SPEND],
+      budgets: [{
+        id: 'coffee', budget: 100, posted: 0, pending: 0, rollover: false, carryover: 0,
+        spreadAdjustment: -25, spread: { amount: 200, cycles: 4, index: 1, adjustment: -25 },
+      }],
+      saveBudget: mockSaveBudget,
+    } as unknown as AppContext;
+    render(<BudgetEdit />);
+
+    expect(screen.getByText(/Manage the spread from the bill instead/)).toBeTruthy();  // locked branch
+    expect(screen.queryByText(/Unused budget carries forward/)).toBeNull();            // normal help hidden
+  });
+
+  // GAP [A-S1b] WHIT-550 — the reverse branch: a plain spend budget shows the normal help, not locked.
+  it('plain spend budget: shows the normal smoothing help, not the locked copy', async () => {
+    mockParams = { categoryId: 'coffee' };
+    mockState = { categories: [SPEND], budgets: [], saveBudget: mockSaveBudget } as unknown as AppContext;
+    render(<BudgetEdit />);
+
+    expect(screen.getByText(/Unused budget carries forward/)).toBeTruthy();            // normal branch
+    expect(screen.queryByText(/Manage the spread from the bill instead/)).toBeNull();  // locked help hidden
+  });
+
+  // GAP [A-S2] WHIT-550 — defensive: an existing budget with BOTH rollover=true AND a spread.
+  // The seeded ON flag must NOT leak into save() while locked, and a stray valueChange on the
+  // disabled switch must not change what Save sends. Fail-on-revert: send `rollover` while locked.
+  it('spread + rollover-ON seed: a stray toggle cannot leak the flag past the lock', async () => {
+    mockParams = { categoryId: 'coffee' };
+    mockState = {
+      categories: [SPEND],
+      budgets: [{
+        id: 'coffee', budget: 100, posted: 0, pending: 0, rollover: true, carryover: 40,
+        spreadAdjustment: -25, spread: { amount: 200, cycles: 4, index: 1, adjustment: -25 },
+      }],
+      saveBudget: mockSaveBudget,
+    } as unknown as AppContext;
+    const { UNSAFE_getByType } = render(<BudgetEdit />);
+
+    const smoothingSwitch = UNSAFE_getByType(Switch);
+    expect(smoothingSwitch.props.value).toBe(true);     // reads ON (spread is smoothing) despite the seed
+    expect(smoothingSwitch.props.disabled).toBe(true);  // locked
+    fireEvent(smoothingSwitch, 'valueChange', false);   // stray interaction the platform shouldn't allow
+    await act(async () => { fireEvent.press(screen.getByText('Update budget')); });
+
+    // Never a boolean while locked — not the seeded true, not the toggled false. Only undefined.
+    expect(mockSaveBudget).toHaveBeenCalledWith('coffee', 100, undefined);
+    expect(UNSAFE_getByType(Switch).props.value).toBe(true);  // still ON — the lock ignores the stray toggle
   });
 });
 
