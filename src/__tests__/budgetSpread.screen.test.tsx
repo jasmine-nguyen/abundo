@@ -55,6 +55,19 @@ describe('app/budget/spread.tsx', () => {
     await waitFor(() => expect(mockBack).toHaveBeenCalled());
   });
 
+  it('no budget target → shows the "set a budget first" guard, not the amount field (WHIT-556)', async () => {
+    // A spend category with NO budget row (e.g. a list-render→navigate race, or the tx-screen
+    // entry landing before a target exists). A save would 400, so the screen guides instead.
+    mockParams = { categoryId: 'coffee', prefill: '120' };
+    mockState = { categories: [SPEND], budgets: [], saveSpread: mockSaveSpread, removeSpread: mockRemoveSpread } as unknown as AppContext;
+    render(<BudgetSpread />);
+
+    expect(screen.getByTestId('spread-no-budget')).toBeTruthy();
+    expect(screen.getByText('Set a budget for this category before spreading a bill.')).toBeTruthy();
+    expect(screen.queryByTestId('spread-amount')).toBeNull();   // no doomed save path
+    expect(screen.queryByTestId('spread-save')).toBeNull();
+  });
+
   it('the cycle stepper changes how many cycles the bill spreads over', async () => {
     mockParams = { categoryId: 'coffee', prefill: '120' };
     mockState = { categories: [SPEND], budgets: [spendBudget()], saveSpread: mockSaveSpread, removeSpread: mockRemoveSpread } as unknown as AppContext;

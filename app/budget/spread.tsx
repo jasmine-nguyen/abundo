@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmtExact } from '../../src/theme';
 import { Icon } from '../../src/icons';
 import { useAppContext, spreadPreview, SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES } from '../../src/context';
+import type { Category } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { useInFlightGuard } from '../../src/hooks/useInFlightGuard';
@@ -46,17 +47,18 @@ export default function BudgetSpread() {
   // A bill spread is spend-only (server rejects Income/Savings). Guard the deep-link so the
   // user lands on a coherent state rather than a doomed save.
   if (cat.bucket === 'Savings' || cat.bucket === 'Income') {
+    return <SpreadNotice cat={cat} insets={insets} note="Only spend categories can spread a bill." />;
+  }
+
+  // No budget target for this category yet → a save would 400 (the server spreads against a
+  // target), and a list-render→navigate race can land here before one exists (WHIT-556). Guide
+  // the user rather than dead-ending on a doomed save. Sits after all hooks + the bucket guard.
+  if (!existing) {
     return (
-      <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
-        <Header title="Spread a bill" />
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
-          <View style={styles.categoryRow}>
-            <View style={[styles.chip, { backgroundColor: tint(cat.color, 0.15) }]}><Icon name={cat.icon} size={30} color={cat.color} /></View>
-            <View><Text style={styles.categoryName}>{cat.name}</Text></View>
-          </View>
-          <Text style={styles.note}>Only spend categories can spread a bill.</Text>
-        </ScrollView>
-      </View>
+      <SpreadNotice
+        cat={cat} insets={insets} noteTestID="spread-no-budget"
+        note="Set a budget for this category before spreading a bill."
+      />
     );
   }
 
@@ -158,6 +160,28 @@ export default function BudgetSpread() {
             <Text style={styles.removeText}>Remove spread</Text>
           </Pressable>
         )}
+      </ScrollView>
+    </View>
+  );
+}
+
+// A coherent "can't spread here" state for the deep-link guards (wrong bucket / no budget target):
+// the category chip + name and a one-line note, instead of dead-ending on a doomed save.
+function SpreadNotice({ cat, insets, note, noteTestID }: {
+  cat: Category;
+  insets: { top: number; bottom: number };
+  note: string;
+  noteTestID?: string;
+}) {
+  return (
+    <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
+      <Header title="Spread a bill" />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: insets.bottom + 30 }} showsVerticalScrollIndicator={false}>
+        <View style={styles.categoryRow}>
+          <View style={[styles.chip, { backgroundColor: tint(cat.color, 0.15) }]}><Icon name={cat.icon} size={30} color={cat.color} /></View>
+          <View><Text style={styles.categoryName}>{cat.name}</Text></View>
+        </View>
+        <Text testID={noteTestID} style={styles.note}>{note}</Text>
       </ScrollView>
     </View>
   );

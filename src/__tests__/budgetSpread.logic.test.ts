@@ -5,8 +5,8 @@
 // entry-point gating (spreadActive / canStartSpread / overspend); budgetEditInfo greys the
 // rollover toggle off while a spread is active; spreadPreview mirrors the server's cent split.
 import { describe, it, expect } from '@jest/globals';
-import { budgetViews, budgetDetail, budgetEditInfo, toBudget, spreadPreview, cycleName } from '../context';
-import type { Category } from '../context';
+import { budgetViews, budgetDetail, budgetEditInfo, budgetSpreadEligibility, toBudget, spreadPreview, cycleName } from '../context';
+import type { Category, Budget } from '../context';
 import { makeState, cat, budget } from './factory';
 
 const sink = (over = {}) => cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle', ...over });
@@ -186,5 +186,69 @@ describe('spreadPreview — cent-exact slices', () => {
     const p = spreadPreview(1390.91, 4);
     expect(p.firstSlice).toBe(347.73);
     expect(p.lastSlice).toBe(347.72);
+  });
+});
+
+// ── budgetSpreadEligibility: the shared rule both entry points read (WHIT-556) ────────────────
+describe('budgetSpreadEligibility — shared entry + overspend', () => {
+  const spend = cat({ id: 'sink', name: 'Sink', bucket: 'Lifestyle' });
+  const bud = (over = {}) => budget({ id: 'sink', budget: 100, posted: 0, pending: 0, ...over });
+
+  it('hidden with no category or no budget', () => {
+    expect(budgetSpreadEligibility(undefined, bud()).entry).toBe('hidden');
+    expect(budgetSpreadEligibility(spend, undefined).entry).toBe('hidden');
+  });
+
+  it('hidden for Income and Savings (spend-only)', () => {
+    expect(budgetSpreadEligibility(cat({ id: 'sink', bucket: 'Income' }), bud({ posted: 500 })).entry).toBe('hidden');
+    expect(budgetSpreadEligibility(cat({ id: 'sink', bucket: 'Savings' }), bud({ posted: 500 })).entry).toBe('hidden');
+  });
+
+  it('edit when a plan is active — even if the cushion cleared "over"', () => {
+    expect(budgetSpreadEligibility(spend, bud({ posted: 0, spread: plan() })).entry).toBe('edit');
+  });
+
+  it('hidden when rollover is on, even over budget (rollover XOR spread)', () => {
+    expect(budgetSpreadEligibility(spend, bud({ posted: 200, rollover: true, carryover: 0 })).entry).toBe('hidden');
+  });
+
+  it('start when over by at least a whole cent, and reports the whole-cent overspend', () => {
+    const r = budgetSpreadEligibility(spend, bud({ posted: 130.1 }));
+    expect(r.entry).toBe('start');
+    expect(r.overspend).toBe(30.1);   // spent - available, rounded to cents (the prefill)
+  });
+
+  it('hidden on a sub-cent overshoot (would spread an unsaveable $0)', () => {
+    const r = budgetSpreadEligibility(spend, bud({ posted: 100.004 }));
+    expect(r.entry).toBe('hidden');
+    expect(r.overspend).toBe(0);
+  });
+
+  it('hidden exactly at budget (strict over)', () => {
+    expect(budgetSpreadEligibility(spend, bud({ posted: 100 })).entry).toBe('hidden');
+  });
+
+  it('honours the server-computed available over the parts-sum fallback', () => {
+    // available 300 sent by the server → spent 130 is NOT over → hidden, even though budget is 100.
+    expect(budgetSpreadEligibility(spend, bud({ posted: 130, available: 300 })).entry).toBe('hidden');
+  });
+});
+
+// ── parity: budgetDetail.canStartSpread + overspend come from the shared rule (WHIT-556) ────────
+describe('budgetDetail.{canStartSpread,overspend} ≡ budgetSpreadEligibility', () => {
+  const cases: Array<[string, object]> = [
+    ['over budget, no plan', { budget: 100, posted: 130.1, pending: 0 }],
+    ['active plan', { budget: 100, posted: 0, pending: 0, spread: { amount: 200, cycles: 4, index: 1, adjustment: -50 } }],
+    ['rollover on + over', { budget: 100, posted: 200, pending: 0, rollover: true, carryover: 0 }],
+    ['sub-cent overshoot', { budget: 100, posted: 100.004, pending: 0 }],
+    ['under budget', { budget: 100, posted: 40, pending: 0 }],
+  ];
+  it.each(cases)('parity: %s', (_label, over) => {
+    const c = sink();
+    const b = budget({ id: 'sink', ...over }) as Budget;
+    const detailResult = budgetDetail(makeState({ categories: [c], budgets: [b], cycleLen: 14, daysLeft: 7 }), 'sink')!;
+    const elig = budgetSpreadEligibility(c, b);
+    expect(detailResult.canStartSpread).toBe(elig.entry === 'start');
+    expect(detailResult.overspend).toBe(elig.overspend);
   });
 });

@@ -3145,6 +3145,39 @@ export interface BudgetEditInput {
   cycleName: () => string;
 }
 
+export type SpreadEligibility = 'hidden' | 'start' | 'edit';
+export interface SpreadEligibilityResult {
+  entry: SpreadEligibility;
+  // Whole-cent amount the category is over its spendable envelope (0 unless over). The 'start'
+  // entry prefills the spread with this, so both entry points spread the same overage (WHIT-556).
+  overspend: number;
+}
+
+// The ONE rule the budget-detail button and the transaction-screen prompt both read (WHIT-556),
+// so the two entry points can never diverge. Mirrors budgetDetail's spend branch exactly:
+//   - spend bucket only (the server rejects a spread on Income/Savings),
+//   - a real budget target (an absent budget → hidden),
+//   - rollover XOR spread.
+// 'edit' when a plan is already active (still reachable to edit/remove even if the cushion has
+// cleared "over"); 'start' when spend is over the available envelope by at least a whole cent
+// (a sub-cent overshoot would spread $0, which can't be saved); 'hidden' otherwise.
+export function budgetSpreadEligibility(
+  category: Category | undefined,
+  budget: Budget | undefined,
+): SpreadEligibilityResult {
+  if (!category || !budget || category.bucket === 'Savings' || category.bucket === 'Income') {
+    return { entry: 'hidden', overspend: 0 };
+  }
+  if (budget.spread) return { entry: 'edit', overspend: 0 };
+  // Matches budgetDetail's spendable envelope exactly (WHIT-549 server value, else the parts-sum).
+  const available = budget.available ?? (budget.budget + (budget.rollover ? budget.carryover : 0) + budget.spreadAdjustment);
+  const spent = budget.posted + budget.pending;
+  const overspend = Math.round(Math.max(0, spent - available) * 100) / 100;
+  if (budget.rollover) return { entry: 'hidden', overspend };
+  const entry: SpreadEligibility = spent > available && overspend >= 0.01 ? 'start' : 'hidden';
+  return { entry, overspend };
+}
+
 export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const c = s.category(categoryId);
   const b = s.budgets.find((x) => x.id === categoryId);
@@ -3220,9 +3253,9 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
   const pendingPct = over ? Math.max(0, 100 - postedPct) : Math.max(0, Math.min((pending / den) * 100, 100 - postedPct));
   const remain = available - spent;
   const daily = remain > 0 ? remain / Math.max(1, s.daysLeft) : 0;
-  // How much a bill has pushed the category over, in whole cents (no float dust in the URL).
-  // No active plan/rollover when canStartSpread is true, so available == budget here.
-  const overspend = Math.round(Math.max(0, spent - available) * 100) / 100;
+  // The shared eligibility rule (same one the transaction-screen prompt reads) also computes the
+  // whole-cent overspend used as the spread prefill — one source, so the two screens can't diverge.
+  const spreadElig = budgetSpreadEligibility(c, b);
   let statusLabel = 'On target — keep it up';
   let statusColor: string = C.good;
   if (over) { statusLabel = 'Over budget — ease up'; statusColor = C.bad; }
@@ -3239,8 +3272,8 @@ export function budgetDetail(s: BudgetDetailInput, categoryId: string) {
     // prefills with `overspend`, so requiring >= 0.01 avoids offering an unsaveable $0 spread on
     // a sub-cent overshoot) and it has no plan or rollover yet. Once a plan is active the cushion
     // can flip `over` false, so the edit/remove entry keys off `spreadActive`, NOT `over`.
-    overspend,
-    canStartSpread: over && overspend >= 0.01 && !spreadActive && !b.rollover,
+    overspend: spreadElig.overspend,
+    canStartSpread: spreadElig.entry === 'start',
   };
 }
 

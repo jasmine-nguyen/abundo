@@ -26,6 +26,8 @@ jest.mock('../queries', () => ({
   // the transfer keeps the tab out of the "All caught up" state exactly as before.
   useUncategorizedCount: () => (jest.requireActual('../context') as typeof import('../context')).countUncategorized(mockTx as any),
   useUncategorizedMerchants: () => ({ merchants: undefined, isLoading: false, isError: false }),
+  // WHIT-556: the detail screen reads budgets for the "Spread this bill" prompt; empty here (unrelated).
+  useBudgetsScreenData: () => ({ budgets: [] }),
 }));
 
 // WHIT-459 fold: superset useAppContext serving both regimes. The list screen asserts on
