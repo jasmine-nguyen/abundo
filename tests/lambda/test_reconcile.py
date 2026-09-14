@@ -292,7 +292,9 @@ def test_pending_resync_preserves_notes_tags_and_budget_excluded(lam, repo):
 
 
 def test_pending_resync_does_not_carry_a_cleared_field(lam, repo):
-    # Truthy carry guard: a cleared note on the stored pending must not resurrect.
+    # WHIT-513: partial update leaves user fields untouched, so a cleared note ("")
+    # stays as-is — the bank update never touches it. This is correct: the user
+    # explicitly cleared the note, and the partial update respects that.
     pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
                             pending=True, category="health")
     acc = _acc(pending)
@@ -302,7 +304,7 @@ def test_pending_resync_does_not_carry_a_cleared_field(lam, repo):
                    pending=True, category="FOOD_AND_DRINK")
     repo.insert_or_reconcile([resent])
 
-    assert "notes" not in repo._table.store[(acc, "TXN#A")]
+    assert repo._table.store[(acc, "TXN#A")]["notes"] == ""
 
 
 def test_first_sight_of_pending_inserts_plainly(lam, repo):
@@ -2467,3 +2469,219 @@ def test_blank_auth_tie_break_consumes_lowest_transaction_id(lam, repo):
     assert store[(acc, "TXN#A2")]["category"] == "treats"
     assert store[(acc, "TXN#B")]["category"] == "coffee"   # A1's category carried across
     assert len(store) == 2                                  # exactly one pending consumed
+
+
+# --- WHIT-513: partial update — re-sends only touch bank-owned fields --------
+
+
+def test_pending_resync_uses_partial_update_not_full_put(lam, repo):
+    # The pending re-send path must use update_item (partial), not a full put_item.
+    # Fail-on-revert: reverting to the old full-put path means the row goes through
+    # insert_transactions (batch_writer put_item), so the update_item call count stays 0.
+    seeded = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                           pending=True, category="health")
+    acc = _acc(seeded)
+    repo._table.store[(acc, "TXN#A")]["notes"] = "gap fee"
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+
+    table = repo._table
+    update_calls = []
+    orig_update = table.update_item
+
+    def tracking_update(*a, **kw):
+        update_calls.append(kw)
+        return orig_update(*a, **kw)
+
+    table.update_item = tracking_update
+    repo.insert_or_reconcile([resent])
+
+    assert len(update_calls) == 1
+    assert update_calls[0]["Key"] == {"pk": acc, "sk": "TXN#A"}
+
+
+def test_posted_resync_uses_partial_update_not_full_put(lam, repo):
+    # The posted re-sync path must also use update_item, not a full put.
+    _seed_pending(repo, lam, txn_id="B", amount=Decimal("-5.50"),
+                  pending=False, category="Groceries")
+    resync = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="FOOD_AND_DRINK")
+
+    table = repo._table
+    update_calls = []
+    orig_update = table.update_item
+
+    def tracking_update(*a, **kw):
+        update_calls.append(kw)
+        return orig_update(*a, **kw)
+
+    table.update_item = tracking_update
+    repo.insert_or_reconcile([resync])
+
+    assert len(update_calls) == 1
+
+
+def test_pending_resync_updates_bank_fields(lam, repo):
+    # Bank-owned fields (description, merchant_name, amount, etc.) MUST be updated
+    # even though user fields are preserved.
+    seeded = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                           pending=True, category="health",
+                           description="SQ *OLD MERCHANT", merchant_name="SQ *OLD MERCHANT")
+    acc = _acc(seeded)
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-265.00"),
+                   pending=True, category="FOOD_AND_DRINK",
+                   description="SQ *NEW MERCHANT", merchant_name="SQ *NEW MERCHANT")
+    repo.insert_or_reconcile([resent])
+
+    row = repo._table.store[(acc, "TXN#A")]
+    assert row["amount"] == Decimal("-265.00")
+    assert row["category"] == "health"  # user field untouched
+
+
+def test_pending_resync_falls_back_to_insert_when_row_gone(lam, repo):
+    # If the row was deleted between pool scan and the update, the partial update
+    # returns False (ConditionalCheckFailedException), and the row is inserted fresh.
+    txn = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([txn])
+
+    acc = _acc(txn)
+    assert (acc, "TXN#A") in repo._table.store
+    assert repo._table.store[(acc, "TXN#A")]["category"] == "FOOD_AND_DRINK"
+
+
+def test_posted_resync_preserves_category_via_partial_update(lam, repo):
+    # A re-import of an already-stored posted row must keep the user's category.
+    # Regression guard: all four user-owned fields must survive a posted re-sync.
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="Groceries")
+    repo.insert_transactions([posted])
+    acc = _acc(posted)
+    repo._table.store[(acc, "TXN#B")]["category"] = "coffee"
+    repo._table.store[(acc, "TXN#B")]["notes"] = "weekly shop"
+    repo._table.store[(acc, "TXN#B")]["tags"] = ["food"]
+    repo._table.store[(acc, "TXN#B")]["budget_excluded"] = True
+
+    reimport = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                     pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([reimport])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["category"] == "coffee"
+    assert row["notes"] == "weekly shop"
+    assert row["tags"] == ["food"]
+    assert row["budget_excluded"] is True
+
+
+def test_settlement_re_reads_twin_with_consistent_read(lam, repo):
+    # The first-time settlement path re-reads the twin with ConsistentRead=True to
+    # close the race window between pool scan and carry.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+
+    table = repo._table
+    consistent_reads = []
+    orig_get = table.get_item
+
+    def tracking_get(Key, ConsistentRead=False):
+        consistent_reads.append(ConsistentRead)
+        return orig_get(Key, ConsistentRead=ConsistentRead)
+
+    table.get_item = tracking_get
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    # The first get_item is the resync-check (eventually consistent), the second is
+    # _refresh_carried_fields (must be ConsistentRead=True).
+    assert True in consistent_reads
+
+
+def test_settlement_carries_fresh_category_after_re_read(lam, repo):
+    # Simulates the race: user categorises between pool scan and settlement insert.
+    # The re-read picks up the fresh category.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+    # Simulate the user updating after the pool was scanned but before settlement:
+    repo._table.store[(acc, "TXN#A")]["category"] = "eating out"
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["category"] == "eating out"  # the fresh category, not the stale "coffee"
+
+
+def test_bank_owned_fields_excludes_user_fields(lam):
+    # category, notes, tags, budget_excluded must NOT be in _BANK_OWNED_FIELDS.
+    # If any were, _update_bank_fields would overwrite the user's edits.
+    fields = lam.repository._BANK_OWNED_FIELDS
+    for user_field in ("category", "notes", "tags", "budget_excluded"):
+        assert user_field not in fields
+
+
+def test_posted_resync_falls_back_to_insert_when_row_vanishes(lam, repo):
+    # A posted re-sync whose stored row vanishes between get_transaction and
+    # _update_bank_fields must fall back to insert (not crash).
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="Groceries")
+    repo.insert_transactions([posted])
+    acc = _acc(posted)
+
+    table = repo._table
+    orig_update = table.update_item
+
+    def sabotaging_update(*a, **kw):
+        table.store.pop((acc, "TXN#B"), None)
+        return orig_update(*a, **kw)
+
+    table.update_item = sabotaging_update
+
+    resync = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([resync])
+
+    assert (acc, "TXN#B") in repo._table.store
+    assert repo._table.store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+
+
+def test_batch_mixes_pending_resend_posted_resync_and_settlement(lam, repo):
+    # A batch containing all three WHIT-513 paths must handle each correctly.
+    pending_resend = _seed_pending(repo, lam, txn_id="PR", amount=Decimal("-10.00"),
+                                   pending=True, category="transport")
+    acc = _acc(pending_resend)
+    repo._table.store[(acc, "TXN#PR")]["notes"] = "uber to work"
+
+    posted_resync = _norm(lam, txn_id="RS", amount=Decimal("-20.00"),
+                          pending=False, category="Groceries")
+    repo.insert_transactions([posted_resync])
+    repo._table.store[(acc, "TXN#RS")]["category"] = "weekly shop"
+    repo._table.store[(acc, "TXN#RS")]["budget_excluded"] = True
+
+    _seed_pending(repo, lam, txn_id="SP", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+
+    batch = [
+        _norm(lam, txn_id="PR", amount=Decimal("-10.00"),
+              pending=True, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="RS", amount=Decimal("-20.00"),
+              pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="NEW", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    assert store[(acc, "TXN#PR")]["category"] == "transport"
+    assert store[(acc, "TXN#PR")]["notes"] == "uber to work"
+    assert store[(acc, "TXN#RS")]["category"] == "weekly shop"
+    assert store[(acc, "TXN#RS")]["budget_excluded"] is True
+    assert store[(acc, "TXN#NEW")]["category"] == "coffee"
+    assert (acc, "TXN#SP") not in store

@@ -19,6 +19,7 @@ from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
     _build_pk,
     _build_sk,
+    sanitise_transaction,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 # dropped unless we opt in — matching lambda/handler.py.
 logger.setLevel(logging.INFO)
 
+_BANK_OWNED_FIELDS = (
+    "date", "authorized_date", "description", "merchant_name", "amount",
+    "account_id", "account_name", "status", "type",
+    "counts_to_budget", "pending_transaction_id",
+)
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -185,10 +191,12 @@ class TransactionRepository(_SharedTransactionRepository):
     adds the webhook-only reconcile pipeline below (WHIT-454 removed the duplicated
     copies of the inherited methods)."""
 
-    def get_transaction(self, pk: str, sk: str) -> Optional[dict[str, Any]]:
+    def get_transaction(self, pk: str, sk: str, *, consistent: bool = False) -> Optional[dict[str, Any]]:
         """Retrieves a single record document. Returns None if it is missing."""
         try:
-            response = self._get_table().get_item(Key={"pk": pk, "sk": sk})
+            response = self._get_table().get_item(
+                Key={"pk": pk, "sk": sk}, ConsistentRead=consistent,
+            )
             # Absent is a normal result — the reconcile paths read here to check for an
             # existing row on every pending/posted re-send, so a miss is the common
             # first-sight case, not something to log (WHIT-329).
@@ -343,32 +351,23 @@ class TransactionRepository(_SharedTransactionRepository):
 
         for txn in transactions:
             if txn.get("status") == PENDING_STATUS:
-                # A pending charge the bank re-sends under the same id (~7 days until it
-                # settles) must keep the fields the user set while it was pending. Read the
-                # stored row and carry category/notes/tags/budget_excluded before the
-                # full-item put_item overwrites them, mirroring the posted re-sync below
-                # (WHIT-329). No swipe-date inherit here: a pending re-send carries its own
-                # authorized_date, so the settled-path date guard doesn't apply.
-                # NOTE: a posted twin arriving in this SAME payload won't see this pending
-                # (the pool is the DB scan), so both would insert -> a duplicate. Real
-                # settlements arrive in separate webhooks; a backfill payload containing
-                # both is an accepted edge, cleaned by the age-out follow-up.
+                # WHIT-513: partial update — only overwrite bank-owned fields, so the
+                # user's category/notes/tags/budget_excluded stay untouched. No pre-read
+                # needed. Falls back to a plain insert when the row doesn't exist yet.
                 own_pk = _build_pk(txn["account_id"])
                 own_sk = _build_sk(txn["transaction_id"])
-                existing = self.get_transaction(own_pk, own_sk)
-                if existing is not None:
-                    to_insert.append(self._with_carried_category(txn, existing))
-                else:
+                if not self._update_bank_fields(own_pk, own_sk, txn):
                     to_insert.append(txn)
                 continue
 
-            # A re-send: carry the user's fields off the stored row and keep its corrected
-            # date. It never enters the twin search, so it can't consume a fresh pending.
+            # A re-send: partial-update the bank fields in place, keeping the user's
+            # fields and the already-corrected date. Never enters the twin search.
             existing = resync_rows.get(txn["transaction_id"])
             if existing is not None:
-                merged = self._with_carried_category(txn, existing)
-                self._inherit_swipe_date(merged, txn, existing)  # don't regress a corrected date
-                to_insert.append(merged)
+                own_pk = _build_pk(txn["account_id"])
+                own_sk = _build_sk(txn["transaction_id"])
+                if not self._update_bank_fields(own_pk, own_sk, txn, inherit_date_from=existing):
+                    to_insert.append(txn)
                 continue
 
             # A first-time settlement. `to_match` and this branch share the same predicate
@@ -377,8 +376,9 @@ class TransactionRepository(_SharedTransactionRepository):
             # plain insert (no reconcile) instead of a StopIteration that 500s the webhook.
             _, match = next(posted_matches, (None, None))
             if match is not None:
-                merged = self._with_carried_category(txn, match)
-                self._inherit_swipe_date(merged, txn, match)  # take the twin's swipe date
+                fresh = self._refresh_carried_fields(match)
+                merged = self._with_carried_category(txn, fresh)
+                self._inherit_swipe_date(merged, txn, fresh)
                 to_insert.append(merged)
                 match_key = (match["pk"], match["sk"])
                 own_key = (_build_pk(txn["account_id"]), _build_sk(txn["transaction_id"]))
@@ -654,6 +654,78 @@ class TransactionRepository(_SharedTransactionRepository):
             and _merchant_matches_pending(merchant, item.get("merchant_name") or "",
                                           item.get("description") or ""),
         )
+
+    def _refresh_carried_fields(self, twin: dict) -> dict:
+        """Re-read a matched twin with ConsistentRead to close the race window (WHIT-513).
+
+        Between the initial pool scan (eventually consistent) and now, the user may
+        have categorised / noted the pending. A stale read would silently drop that
+        edit. Returns the fresh row, or the original twin if the row is gone (the
+        insert path's sanitise_transaction strips None, so a vanished twin degrades
+        to a plain insert with no user fields — safe).
+        """
+        fresh = self.get_transaction(twin["pk"], twin["sk"], consistent=True)
+        return fresh if fresh is not None else twin
+
+    def _update_bank_fields(
+        self, pk: str, sk: str, txn: Transaction, *, inherit_date_from: Optional[dict] = None,
+    ) -> bool:
+        """Partial-update the bank-owned fields of an existing row (WHIT-513).
+
+        Only touches the fields the bank sends (amount, description, status, etc.);
+        user-owned fields (category, notes, tags, budget_excluded) stay untouched.
+        Returns True on success, False if the row no longer exists.
+
+        inherit_date_from: when set, date/authorized_date are taken from this row
+        instead of from the incoming txn, via the same inherit-swipe-date logic.
+        """
+        sanitised = sanitise_transaction(txn)
+
+        names: dict[str, str] = {}
+        values: dict[str, Any] = {}
+        set_clauses: list[str] = []
+
+        for index, field in enumerate(_BANK_OWNED_FIELDS):
+            val = sanitised.get(field)
+            if val is None:
+                continue
+            name_alias = f"#b{index}"
+            value_alias = f":b{index}"
+            names[name_alias] = field
+            values[value_alias] = val
+            set_clauses.append(f"{name_alias} = {value_alias}")
+
+        if inherit_date_from is not None:
+            merged_dates: dict[str, Any] = {}
+            self._inherit_swipe_date(merged_dates, txn, inherit_date_from)
+            for field in ("date", "authorized_date"):
+                if field in merged_dates:
+                    idx = _BANK_OWNED_FIELDS.index(field)
+                    name_alias = f"#b{idx}"
+                    value_alias = f":b{idx}"
+                    names[name_alias] = field
+                    values[value_alias] = merged_dates[field]
+                    set_clauses = [c for c in set_clauses if not c.startswith(name_alias + " ")]
+                    set_clauses.append(f"{name_alias} = {value_alias}")
+
+        if not set_clauses:
+            return True
+
+        update_kwargs: dict[str, Any] = {
+            "Key": {"pk": pk, "sk": sk},
+            "UpdateExpression": "SET " + ", ".join(set_clauses),
+            "ExpressionAttributeNames": names,
+            "ExpressionAttributeValues": values,
+            "ConditionExpression": "attribute_exists(pk)",
+        }
+
+        try:
+            self._get_table().update_item(**update_kwargs)
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "write")
 
     @staticmethod
     def _inherit_swipe_date(merged: Transaction, posted_txn: Transaction, source_row: dict) -> None:
