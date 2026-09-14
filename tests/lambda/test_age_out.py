@@ -585,20 +585,75 @@ def test_unfiled_ghost_is_reaped_without_rescue(lam, repo):
     assert _rows(repo)["settled_twin"].get("category") is None  # not carried onto
 
 
-def test_already_filed_twin_is_excluded_so_override_is_lost(lam, repo):
-    # WHIT-553 (accepted gap): if the settled twin is ALREADY filed — e.g. a rule filed it at
-    # ingest — it is not an unfiled candidate, so strict carries nothing and the user's manual
-    # filing is lost. Pinned as DELIBERATE (strict never overwrites a filed charge); the clean
-    # fix waits on provenance (WHIT-536).
+def test_user_filed_twin_is_never_overwritten(lam, repo):
+    # WHIT-553: a settled twin the USER (or bank) filed — a real category with NO filed_by_rule
+    # stamp — is never overwritten by the rescue. Only a rule-filed twin can be overridden; a
+    # user's own filing on the twin is left alone (user-over-user is refused). The twin here has
+    # category "petrol" and no stamp, so it is excluded from the candidate pool and nothing carries.
     filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
-    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="petrol")  # rule-filed
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="petrol")  # user/bank-filed, no stamp
     repo.insert_transactions([filed, twin])
 
     summary = _sweep_tax(lam, repo, ["groceries", "petrol"])
 
     rows = _rows(repo)
     assert "filed_pending" not in rows and summary["rescued"] == 0
-    assert rows["settled_twin"]["category"] == "petrol"  # rule's guess stands; override lost
+    assert rows["settled_twin"]["category"] == "petrol"  # the twin's own filing stands
+
+
+def test_user_override_beats_a_rule_filed_twin(lam, repo):
+    # WHIT-553 (the fix): a user-set pending category (real category, NO filed_by_rule stamp)
+    # carries onto a settled twin a rule auto-filed at ingest, and the twin's rule stamp is
+    # cleared so the twin becomes user-owned. FAIL-ON-REVERT: without broadening the candidate
+    # pool to include rule-stamped twins, the twin is excluded and rescued stays 0.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="dining")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="groceries")
+    twin["filed_by_rule"] = "rule-3"  # a rule auto-filed the settled copy at ingest
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["dining", "groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows and summary["rescued"] == 1
+    assert rows["settled_twin"]["category"] == "dining"       # user's override won
+    assert rows["settled_twin"].get("filed_by_rule") is None  # stamp cleared -> twin is user-owned now
+
+
+def test_rule_set_pending_does_not_override_a_rule_filed_twin(lam, repo):
+    # A rule-stamped pending must never override a rule-filed twin (rule-over-rule is refused):
+    # the twin keeps its own rule category. FAIL-ON-REVERT: drop the per-pending narrowing and a
+    # rule-set pending would carry onto the rule-filed twin.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="dining")
+    filed["filed_by_rule"] = "rule-1"
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="groceries")
+    twin["filed_by_rule"] = "rule-2"
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["dining", "groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows and summary["rescued"] == 0
+    assert rows["settled_twin"]["category"] == "groceries"       # the twin's rule filing stands
+    assert rows["settled_twin"]["filed_by_rule"] == "rule-2"
+
+
+def test_user_override_with_both_an_unfiled_and_a_rule_twin_is_ambiguous(lam, repo):
+    # Broadening the pool means a user-set pending can now match BOTH an unfiled twin AND a
+    # rule-filed twin. Two candidates -> ambiguous -> carries nothing (a wrong carry is worse than
+    # a missed one, WHIT-511). Both twins are left untouched.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="dining")
+    unfiled_twin = _norm(lam, "unfiled_twin", "2026-06-11", pending=False, category=None)
+    rule_twin = _norm(lam, "rule_twin", "2026-06-12", pending=False, category="groceries")
+    rule_twin["filed_by_rule"] = "rule-9"
+    repo.insert_transactions([filed, unfiled_twin, rule_twin])
+
+    summary = _sweep_tax(lam, repo, ["dining", "groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows and summary["rescued"] == 0
+    assert rows["unfiled_twin"].get("category") is None          # untouched
+    assert rows["rule_twin"]["category"] == "groceries"          # untouched
+    assert rows["rule_twin"]["filed_by_rule"] == "rule-9"
 
 
 def test_dry_run_writes_nothing_but_reports_would_rescue(lam, repo, caplog):
@@ -975,6 +1030,135 @@ def test_age_out_rescue_carries_the_rule_stamp_onto_the_twin(lam, repo):
     assert summary["rescued"] == 1 and "filed_pending" not in rows
     assert rows["settled_twin"]["category"] == "groceries"
     assert rows["settled_twin"]["filed_by_rule"] == "rule-7"
+
+
+# ============================================================================
+# WHIT-553 GAP TESTS (adversarial, added by QA) — override matrix corners the
+# implementer's own tests don't reach. Each carries the scenario id it pins.
+# ============================================================================
+
+
+def test_income_pending_overrides_a_rule_filed_twin(lam, repo):
+    # WHIT-553 [G-INCOME] (P1) CONTRACT PIN, not a wish: is_unfiled_category treats "income"
+    # as FILED (rule_engine.is_unfiled_category: category != "income" ...), so a bank-tagged
+    # "income" pending with NO filed_by_rule stamp reads as user-set and is allowed to OVERRIDE
+    # a rule-filed twin — same power as a hand-set category. Pinned so the consequence is a
+    # conscious contract. FAIL-ON-REVERT: narrow the candidate pool back to unfiled-only and the
+    # rule twin is excluded -> rescued 0.
+    filed = _norm(lam, "income_pending", "2026-06-10", pending=True, category="income")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="groceries")
+    twin["filed_by_rule"] = "rule-4"
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])  # "income" is filed regardless of taxonomy
+
+    rows = _rows(repo)
+    assert "income_pending" not in rows and summary["rescued"] == 1
+    assert rows["settled_twin"]["category"] == "income"          # income beat the rule's guess
+    assert rows["settled_twin"].get("filed_by_rule") is None     # hand/bank carry clears the stamp
+
+
+def test_notes_only_pending_never_overrides_a_rule_twin(lam, repo):
+    # WHIT-553 [G-NOTES-A] (P0) A pending filed ONLY by a note (category unfiled) is NOT a
+    # user-set CATEGORY, so it may carry onto an unfiled twin only — never override a rule twin.
+    # Here the only candidate is a rule-filed twin, so eligible is empty -> no carry, rule twin
+    # untouched (keeps category + stamp + no note). FAIL-ON-REVERT: drop the per-pending
+    # narrowing (eligible = carry_candidates) and the note carries onto the rule twin -> rescued 1.
+    filed = _norm(lam, "noted_pending", "2026-06-10", pending=True, category=None)
+    filed["notes"] = "work lunch"
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="groceries")
+    twin["filed_by_rule"] = "rule-5"
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "noted_pending" not in rows and summary["rescued"] == 0  # reaped, filing lost (accepted)
+    assert rows["settled_twin"]["category"] == "groceries"
+    assert rows["settled_twin"]["filed_by_rule"] == "rule-5"
+    assert rows["settled_twin"].get("notes") is None               # note did NOT land on the rule twin
+
+
+def test_notes_only_pending_prefers_the_unfiled_twin_over_a_rule_twin(lam, repo):
+    # WHIT-553 [G-NOTES-B] (P1) Same notes-only pending, but now BOTH an unfiled twin and a
+    # rule twin match. The narrowing means eligible = the unfiled twin ONLY, so it is not
+    # ambiguous — the note carries onto the unfiled twin and the rule twin is left alone.
+    # FAIL-ON-REVERT: drop the narrowing and BOTH match -> ambiguous -> rescued 0 (flips).
+    filed = _norm(lam, "noted_pending", "2026-06-10", pending=True, category=None)
+    filed["notes"] = "work lunch"
+    unfiled_twin = _norm(lam, "unfiled_twin", "2026-06-11", pending=False, category=None)
+    rule_twin = _norm(lam, "rule_twin", "2026-06-12", pending=False, category="groceries")
+    rule_twin["filed_by_rule"] = "rule-6"
+    repo.insert_transactions([filed, unfiled_twin, rule_twin])
+
+    summary = _sweep_tax(lam, repo, ["groceries"])
+
+    rows = _rows(repo)
+    assert "noted_pending" not in rows and summary["rescued"] == 1
+    assert rows["unfiled_twin"]["notes"] == "work lunch"           # landed on the unfiled twin
+    assert rows["rule_twin"]["category"] == "groceries"            # rule twin untouched
+    assert rows["rule_twin"]["filed_by_rule"] == "rule-6"
+    assert rows["rule_twin"].get("notes") is None
+
+
+def test_claim_once_two_user_pendings_one_rule_twin(lam, repo):
+    # WHIT-553 [G-CLAIM] (P0) Two USER-set pendings both match the SAME single rule-filed twin.
+    # The broadened pool includes the rule twin, and the claim-once trim must work across it:
+    # the first pending overrides it (category carried, stamp cleared) and trims it away, so the
+    # second finds an empty pool and is reaped with no carry — the rule twin is never overridden
+    # twice. FAIL-ON-REVERT: drop the trim line and both carry -> rescued 2.
+    first = _norm(lam, "first_pending", "2026-06-09", pending=True, category="dining")
+    second = _norm(lam, "second_pending", "2026-06-10", pending=True, category="petrol")
+    twin = _norm(lam, "shared_twin", "2026-06-11", pending=False, category="groceries")
+    twin["filed_by_rule"] = "rule-7"
+    repo.insert_transactions([first, second, twin])
+
+    summary = _sweep_tax(lam, repo, ["dining", "petrol", "groceries"])
+
+    rows = _rows(repo)
+    assert summary["rescued"] == 1 and summary["reaped"] == 2
+    assert "first_pending" not in rows and "second_pending" not in rows
+    assert rows["shared_twin"]["category"] == "dining"            # first claimed it
+    assert rows["shared_twin"].get("filed_by_rule") is None       # stamp cleared by the override
+
+
+def test_dry_run_override_writes_nothing_but_logs_would_carry(lam, repo, caplog):
+    # WHIT-553 [G-DRYRUN] (P1) The override case under dry-run: NOTHING is written (pending kept,
+    # rule twin keeps its category + stamp) but the "WOULD carry" line is logged. FAIL-ON-REVERT:
+    # narrow the candidate pool back to unfiled-only and no twin is found -> no "WOULD carry" line.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="dining")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="groceries")
+    twin["filed_by_rule"] = "rule-8"
+    repo.insert_transactions([filed, twin])
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="age_out"):
+        summary = _sweep_tax(lam, repo, ["dining", "groceries"], dry_run=True)
+
+    rows = _rows(repo)
+    assert "filed_pending" in rows                                # nothing deleted
+    assert rows["settled_twin"]["category"] == "groceries"        # nothing written
+    assert rows["settled_twin"]["filed_by_rule"] == "rule-8"      # stamp intact
+    assert summary["reaped"] == 0 and summary["rescued"] == 0
+    assert "WOULD carry" in caplog.text
+
+
+def test_pre_whit536_unstamped_rule_twin_is_protected(lam, repo):
+    # WHIT-553 [G-PRE536] (P1) DOCUMENTED CONSERVATIVE LIMITATION: a twin a rule filed BEFORE
+    # provenance existed (WHIT-536) has a real category but NO filed_by_rule stamp — so it is
+    # indistinguishable from a user filing and is excluded from the candidate pool. The user's
+    # override on the pending is therefore lost, exactly as for a real user-filed twin. Pinned so
+    # the limitation is a conscious contract, not a silent regression.
+    filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="dining")
+    twin = _norm(lam, "settled_twin", "2026-06-12", pending=False, category="groceries")  # pre-536: no stamp
+    repo.insert_transactions([filed, twin])
+
+    summary = _sweep_tax(lam, repo, ["dining", "groceries"])
+
+    rows = _rows(repo)
+    assert "filed_pending" not in rows and summary["rescued"] == 0  # override lost (accepted)
+    assert rows["settled_twin"]["category"] == "groceries"          # untouched
+    assert rows["settled_twin"].get("filed_by_rule") is None
 
 
 # --- WHIT-545: the rescue carry now gates a stored raw category ------------------------------
