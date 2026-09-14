@@ -72,7 +72,11 @@ def reprocess_failed(repo, *, rule_repo=None, category_repo=None) -> dict:
         # Insert, THEN delete the dead-letter — the delete only ever follows a durable
         # insert. A DB error here leaves the row untouched to retry next run.
         try:
-            repo.insert_or_reconcile([txn])
+            # WHIT-545: thread the taxonomy check so a stored raw category can't clobber a
+            # rule-fill on settlement. loaded_rules is (applicable, is_unfiled) or None.
+            repo.insert_or_reconcile(
+                [txn], is_unfiled=(loaded_rules[1] if loaded_rules else None)
+            )
             repo.delete_failed_transaction(row["sk"])
             summary["reprocessed"] += 1
         except Exception:

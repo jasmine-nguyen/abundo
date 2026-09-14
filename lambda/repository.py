@@ -5,6 +5,7 @@ import re
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr, Key
 from typing import Any, Callable, Optional
+from banksync import counts_to_budget
 from merchant import clean_merchant, is_anz_pending, pending_merchant_column
 from models import Transaction
 from constants import (
@@ -204,25 +205,24 @@ class TransactionRepository(_SharedTransactionRepository):
         except ClientError as e:
             handle_database_error(e, "read")
 
-    def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
-        """Retrieves all pending transactions of an account using the account_id.
+    def _paginated_query(self, *, key_condition, filter_expression=None, action: str = "read") -> list[dict]:
+        """Run a query to completion, following LastEvaluatedKey and accumulating every page.
 
-        Follows pagination (WHIT-82): DynamoDB caps a query at 1MB per page and the
-        ``status == pending`` FilterExpression is applied AFTER that scan, per page.
-        Reading only the first page would leave a pending row that sits beyond it
-        invisible to reconciliation — a silent duplicate + lost category, no error.
-        So we loop on LastEvaluatedKey and accumulate across every page.
+        The single owner of the pagination loop the transaction readers share (WHIT-554).
+        DynamoDB caps a query at 1MB per page and applies a FilterExpression AFTER that scan,
+        per page — so reading only the first page would silently drop a matching row beyond it
+        (WHIT-82). `filter_expression` is optional: a partition read that wants every row (the
+        FAILED dead-letter partition) passes none, and it is omitted from the query entirely
+        rather than sent as None.
         """
         try:
             table = self._get_table()
-            key_condition = Key("pk").eq(_build_pk(account_id))
             items: list[dict] = []
             start_key = None
             while True:
-                kwargs = {
-                    "KeyConditionExpression": key_condition,
-                    "FilterExpression": Attr("status").eq(PENDING_STATUS),
-                }
+                kwargs = {"KeyConditionExpression": key_condition}
+                if filter_expression is not None:
+                    kwargs["FilterExpression"] = filter_expression
                 if start_key is not None:
                     kwargs["ExclusiveStartKey"] = start_key
                 response = table.query(**kwargs)
@@ -232,59 +232,37 @@ class TransactionRepository(_SharedTransactionRepository):
                     break
             return items
         except ClientError as e:
-            handle_database_error(e, "read")
+            handle_database_error(e, action)
+
+    def get_pending_transactions_for_account(self, account_id: str) -> list[dict]:
+        """Retrieves all pending transactions of an account using the account_id.
+
+        Follows pagination (WHIT-82) via _paginated_query: a pending row beyond the first
+        1MB page must stay visible to reconciliation, else a silent duplicate + lost category.
+        """
+        return self._paginated_query(
+            key_condition=Key("pk").eq(_build_pk(account_id)),
+            filter_expression=Attr("status").eq(PENDING_STATUS),
+        )
 
     def get_posted_transactions_for_account(self, account_id: str) -> list[dict]:
         """Retrieves all posted (settled) transactions of an account.
 
-        Mirrors get_pending_transactions_for_account exactly — same paginated per-account
-        query, only the status filter differs — so both stay drift-proof. Used by the
-        age-out rescue (WHIT-511), which scans an account's posted rows for the settled
-        twin of a filed pending it is about to reap.
+        Same paginated per-account query as get_pending, only the status filter differs. Used by
+        the age-out rescue (WHIT-511), which scans an account's posted rows for the settled twin
+        of a filed pending it is about to reap.
         """
-        try:
-            table = self._get_table()
-            key_condition = Key("pk").eq(_build_pk(account_id))
-            items: list[dict] = []
-            start_key = None
-            while True:
-                kwargs = {
-                    "KeyConditionExpression": key_condition,
-                    "FilterExpression": Attr("status").eq(POSTED_STATUS),
-                }
-                if start_key is not None:
-                    kwargs["ExclusiveStartKey"] = start_key
-                response = table.query(**kwargs)
-                items.extend(response.get("Items", []))
-                start_key = response.get("LastEvaluatedKey")
-                if not start_key:
-                    break
-            return items
-        except ClientError as e:
-            handle_database_error(e, "read")
+        return self._paginated_query(
+            key_condition=Key("pk").eq(_build_pk(account_id)),
+            filter_expression=Attr("status").eq(POSTED_STATUS),
+        )
 
     def get_failed_transactions(self) -> list[dict]:
         """Retrieve all dead-lettered rows — the ``pk="FAILED"`` partition written by
         save_failed_transactions. Paginated (WHIT-82 pattern) so a large backlog isn't
         truncated at DynamoDB's 1MB page. Read-only; the reprocess sweep (WHIT-55)
         drives it."""
-        try:
-            table = self._get_table()
-            key_condition = Key("pk").eq("FAILED")
-            items: list[dict] = []
-            start_key = None
-            while True:
-                kwargs = {"KeyConditionExpression": key_condition}
-                if start_key is not None:
-                    kwargs["ExclusiveStartKey"] = start_key
-                response = table.query(**kwargs)
-                items.extend(response.get("Items", []))
-                start_key = response.get("LastEvaluatedKey")
-                if not start_key:
-                    break
-            return items
-        except ClientError as e:
-            handle_database_error(e, "read")
+        return self._paginated_query(key_condition=Key("pk").eq("FAILED"))
 
     def delete_failed_transaction(self, sk: str) -> None:
         """Delete a dead-letter row after it has been successfully reprocessed
@@ -295,7 +273,10 @@ class TransactionRepository(_SharedTransactionRepository):
         except ClientError as e:
             handle_database_error(e, "delete failed")
 
-    def insert_or_reconcile(self, transactions: list[Transaction]) -> None:
+    def insert_or_reconcile(
+        self, transactions: list[Transaction], *,
+        is_unfiled: Optional[Callable[[Optional[str]], bool]] = None,
+    ) -> None:
         """Insert transactions, reconciling pending->posted so a user's category
         survives settlement.
 
@@ -320,6 +301,10 @@ class TransactionRepository(_SharedTransactionRepository):
 
         Pending rows are inserted as-is. All inserts are batched at the end; stale
         pendings are deleted after.
+
+        WHIT-545: `is_unfiled` (the caller's taxonomy check) gates the first-settlement
+        carry so a stored raw category can't clobber a rule-fill, and recomputes
+        counts_to_budget for the carried category. Absent -> the carry is unchanged.
         """
         if not transactions:
             return
@@ -377,7 +362,7 @@ class TransactionRepository(_SharedTransactionRepository):
             _, match = next(posted_matches, (None, None))
             if match is not None:
                 fresh = self._refresh_carried_fields(match)
-                merged = self._with_carried_category(txn, fresh)
+                merged = self._with_carried_category(txn, fresh, is_unfiled=is_unfiled)
                 self._inherit_swipe_date(merged, txn, fresh)
                 to_insert.append(merged)
                 match_key = (match["pk"], match["sk"])
@@ -766,7 +751,8 @@ class TransactionRepository(_SharedTransactionRepository):
 
     @staticmethod
     def _with_carried_category(
-        posted_txn: Transaction, source_row: dict, *, dedupe_sweep: bool = False
+        posted_txn: Transaction, source_row: dict, *, dedupe_sweep: bool = False,
+        is_unfiled: Optional[Callable[[Optional[str]], bool]] = None,
     ) -> Transaction:
         """A copy of the posted txn with the user-owned fields — `category`, `notes`,
         `tags` and `budget_excluded` — carried from `source_row` (the matched pending
@@ -797,8 +783,15 @@ class TransactionRepository(_SharedTransactionRepository):
         DIRECTLY on the posted when it can't detect it — category always (no bank-vs-
         user signal), and a CLEARED note/tag (a falsy posted value reads as absent, so
         the pending's old one refills). Only reachable on the manual sweep when a stale
-        pending twin survived reconciliation."""
+        pending twin survived reconciliation.
+
+        is_unfiled (WHIT-545): on a settlement-style carry the caller passes the taxonomy
+        check. A source category it reports UNFILED (a raw bank enum) never overrides the
+        posted's own — so a stored raw category can't clobber a rule-fill — and
+        counts_to_budget is recomputed from whichever category actually lands. Absent
+        (the dedupe sweep / re-send simulation) keeps the old behaviour byte-identical."""
         carried = posted_txn.copy()
+        carried_category = False
         for field in ("category", "notes", "tags", "budget_excluded"):
             if dedupe_sweep:
                 if field == "budget_excluded":
@@ -806,18 +799,29 @@ class TransactionRepository(_SharedTransactionRepository):
                 if field in ("notes", "tags") and posted_txn.get(field):
                     continue  # WHIT-279: posted already holds a user note/tag — don't clobber
             value = source_row.get(field)
-            if value:
-                carried[field] = value
+            if not value:
+                continue
+            if field == "category":
+                if is_unfiled is not None and is_unfiled(value):
+                    continue  # WHIT-545: a raw unfiled stored category never clobbers a rule-fill
+                carried_category = True
+            carried[field] = value
         # Carry the rule stamp in lockstep with the category (WHIT-536): whoever owns the
-        # category owns the stamp. If the category came from source_row, take its stamp too —
+        # category owns the stamp. When the source category was carried, take its stamp too —
         # or clear it when the source was hand-filed and has none, so the posted's own stamp
         # doesn't wrongly persist. If the posted kept its own category, its own stamp stands.
-        if source_row.get("category"):
+        if carried_category:
             source_stamp = source_row.get("filed_by_rule")
             if source_stamp:
                 carried["filed_by_rule"] = source_stamp
             else:
                 carried.pop("filed_by_rule", None)
+        # WHIT-545: on a settlement-style carry, recompute the budget flag so it always
+        # matches the category that landed (as file_charge does on first filing).
+        if is_unfiled is not None:
+            carried["counts_to_budget"] = counts_to_budget(
+                carried.get("account_id"), carried.get("category")
+            )
         return carried
 
     def _delete_pending_if_present(self, pk: str, sk: str) -> None:

@@ -394,3 +394,28 @@ def test_reprocess_with_rule_stores_files_a_recovered_row(lam, repo):
 
     assert summary == {"reprocessed": 1, "skipped": 0, "errors": 0}
     assert _txn_rows(repo)["TXN#r1"]["category"] == "groceries"
+
+
+# --- WHIT-545: reprocess threads the taxonomy check into the settlement carry --------------
+
+def test_whit545_reprocess_threads_is_unfiled_so_a_rule_fill_survives_settlement(lam, repo):
+    # A dead-letter posted row re-driven with rule stores is rule-filled to "groceries" and then
+    # settles onto a pending twin holding the bank's raw enum. reprocess must pass loaded_rules[1]
+    # (is_unfiled) into insert_or_reconcile so the raw enum can't clobber the rule-fill.
+    # FAIL-ON-REVERT: change reprocess.py to is_unfiled=None and the twin's raw enum wins.
+    pending = lam.banksync.BankSyncClient.normalise(
+        _raw_row(txn_id="PEND", amount=-5.50, pending=True, category="FOOD_AND_DRINK"))
+    repo.insert_transactions([pending])
+    repo.save_failed_transactions([_raw_row(txn_id="POST", amount=-5.50, pending=False,
+                                            category="FOOD_AND_DRINK")])
+
+    summary = lam.reprocess.reprocess_failed(
+        repo,
+        rule_repo=_FakeRuleStore([{"id": "r-kkv", "field": "description", "operator": "contains",
+                                   "value": "KKV", "category_id": "groceries"}]),
+        category_repo=_FakeCategoryRepo(["groceries"]))
+
+    assert summary["reprocessed"] == 1
+    rows = _txn_rows(repo)
+    assert rows["TXN#POST"]["category"] == "groceries"     # rule-fill kept; unfiled twin gated
+    assert "TXN#PEND" not in rows                           # stale pending twin reaped
