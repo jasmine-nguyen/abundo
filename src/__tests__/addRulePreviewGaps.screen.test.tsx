@@ -252,3 +252,43 @@ it('[A40] filters out null sample descriptions', async () => {
   expect(screen.getByText('COLES RICHMOND')).toBeTruthy();
   expect(screen.getByText('COLES CBD')).toBeTruthy();
 });
+
+// --- cross-action double-tap (WHIT-557 shared commit latch) --------------------
+
+// [A41] "File" and "rule only" share ONE commit latch (the shell's runGuarded). A same-frame double-
+// tap across the TWO different buttons must fire exactly one write — never both. [A39] only covers
+// the same button. Fail-on-revert: give the rule-only action its OWN useInFlightGuard (a separate
+// latch) and both fire → a rule minted twice.
+it('[A41] a cross-action double-tap (file then rule-only) fires exactly one write', async () => {
+  const pending = deferred<FileByShopOutcome>();
+  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
+  fns.fileNewRule.mockReturnValue(pending.promise); // holds the shared latch
+  await mountConfirm();
+
+  await act(async () => {
+    fireEvent.press(screen.getByTestId('add-rule-confirm-file'));
+    fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only')); // same frame — latch held
+  });
+  expect(fns.fileNewRule).toHaveBeenCalledTimes(1);
+  expect(fns.saveManualRule).toHaveBeenCalledTimes(0);
+
+  await act(async () => { pending.resolve({ ok: true, report: report({ dryRun: false, matched: 2, filed: [{ id: 't1', category: 'groceries' }, { id: 't2', category: 'groceries' }] }) }); });
+});
+
+// [A42] The same guarantee the other way round: rule-only first holds the latch, so a following File
+// tap in the same frame is swallowed. Fail-on-revert: same as [A41].
+it('[A42] a cross-action double-tap (rule-only then file) fires exactly one write', async () => {
+  const pending = deferred<void>();
+  fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 2 }) });
+  fns.saveManualRule.mockReturnValue(pending.promise); // holds the shared latch
+  await mountConfirm();
+
+  await act(async () => {
+    fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
+    fireEvent.press(screen.getByTestId('add-rule-confirm-file')); // same frame — latch held
+  });
+  expect(fns.saveManualRule).toHaveBeenCalledTimes(1);
+  expect(fns.fileNewRule).toHaveBeenCalledTimes(0);
+
+  await act(async () => { pending.resolve(); });
+});
