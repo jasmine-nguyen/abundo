@@ -52,8 +52,11 @@ from spend import (
     build_category_children,
     current_cycle_window,
     fold_subtree,
+    rollover_windows,
+    seal_rollover,
     subtree_ids,
     summarise_transactions,
+    transactions_in_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -109,7 +112,26 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
     cycle = paycycle_repo.get_paycycle()
     last_pay_date, length = cycle["last_pay_date"], cycle["length"]
     start, end = current_cycle_window(last_pay_date, length)
-    before_rows = _window_rows(window_repo, start, end)
+
+    # Rollover: compute the completed-cycle windows each rollover target needs, and
+    # widen the single fetch if any look further back than the current cycle. The wider
+    # rows are stored separately as `rollover_txns` — `before_rows` stays current-cycle-
+    # only so `before` spend (line ~245) is never inflated by prior-cycle transactions.
+    rollover_ids = {cat_id for cat_id, e in targets.items() if e.get("rollover")}
+    windows_by_id = {}
+    reanchor_by_id = {}
+    fetch_start = start
+    for cat_id in rollover_ids:
+        windows, reanchor = rollover_windows(targets[cat_id], start, length, last_pay_date)
+        windows_by_id[cat_id] = windows
+        if reanchor is not None:
+            reanchor_by_id[cat_id] = reanchor
+        if windows:
+            fetch_start = min(fetch_start, windows[0][0])
+
+    all_rows = _window_rows(window_repo, fetch_start, end)
+    before_rows = (all_rows if fetch_start == start
+                   else transactions_in_window(all_rows, start, end))
 
     # Pre-load the pending pools reconcile will consume, so the Δ simulation matches
     # pending twins against the SAME pre-write pool the real write saw (post-write the
@@ -122,6 +144,10 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
         "last_pay_date": last_pay_date, "length": length,
         "start": start, "end": end,
         "before_rows": before_rows, "pending_pools": pending_pools,
+        "rollover_txns": all_rows,
+        "rollover_ids": rollover_ids,
+        "windows_by_id": windows_by_id,
+        "reanchor_by_id": reanchor_by_id,
     }
 
 
@@ -247,26 +273,36 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
 
     # (cat_id, pct_to_send, [all newly-crossed pcts]) — pct_to_send is the highest.
     crossings = []
+    rollover_ids = ctx.get("rollover_ids", set())
     for cat_id in target_ids:
         entry = targets[cat_id]
         target = Decimal(str(entry["target"]))
-        # Fold the bill-spread cushion into the threshold basis so the push agrees with the
-        # /budgets screen. The screen's spendable for a spread category is target + the signed
-        # spread adjustment (WHIT-504): a full +amount cushion in the cycle the bill lands, an
-        # equal slice taken back over the next N cycles. Crossing against the raw target only
-        # (the WHIT-509 bug) fired a false "over budget" on a cushioned category that the screen
-        # shows as in-budget. Same helper + same args as list_budgets, so the two can't disagree.
-        # ONLY the spread cushion is folded — rollover carryover is deliberately out of scope
-        # (it needs prior-cycle reads and a shared seal/persist → a bigger change with a write
-        # race). Read-only here: _spread_state's finished/reanchor outcomes are ignored; the
-        # /budgets read owns persistence and re-derives the same state on every GET.
-        adjustment = Decimal(0)
-        if "spread_amount" in entry:
+        # Fold BOTH smoothing cushions into the threshold basis so the push agrees with the
+        # /budgets screen's spendable (WHIT-504 spread, WHIT-555 rollover). Same helpers + same
+        # args as list_budgets, so the two can't disagree. The two cushions are mutually exclusive
+        # on real data (a category is rollover OR spread); rollover wins if a corrupt row has both,
+        # matching set_budget which strips spread when rollover turns on.
+        # Read-only: _spread_state's finished/reanchor and seal_rollover's persist are ignored;
+        # the /budgets read owns persistence and re-derives the same state on every GET.
+        buffer_term = Decimal(0)
+        adjustment_term = Decimal(0)
+        if cat_id in rollover_ids:
+            if cat_id in ctx.get("reanchor_by_id", {}):
+                buffer_term = ctx["reanchor_by_id"][cat_id]["carryover"]
+            else:
+                windows = ctx.get("windows_by_id", {}).get(cat_id, [])
+                if windows:
+                    buffer_term, _ = seal_rollover(
+                        entry, windows, ids_by_target[cat_id],
+                        ctx["rollover_txns"], ctx["length"], ctx["end"])
+                else:
+                    buffer_term = entry.get("carryover", Decimal(0))
+        if "spread_amount" in entry and cat_id not in rollover_ids:
             spread_row, _, _ = _spread_state(
                 entry, ctx["start"], ctx["length"], ctx["last_pay_date"], ctx["end"])
             if spread_row is not None:
-                adjustment = spread_row["adjustment"]
-        basis = target + adjustment
+                adjustment_term = spread_row["adjustment"]
+        basis = target + buffer_term + adjustment_term
         # basis <= 0 (a payback slice bigger than the whole target) can't cross: with a, b >= 0
         # the test b < frac*basis <= a is already vacuously false, so this just skips the work.
         # Such a cycle reads over-budget on screen but sends no push — a push the user couldn't

@@ -2128,21 +2128,220 @@ def test_spread_basis_just_above_zero_still_crosses(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80", "groceries#100"}
 
 
-# --- WHIT-549: rollover carryover / stored buffer stays OUT of the alert basis -----------
-# The /budgets screen's spendable folds the LIVE rollover buffer, but the over-budget alert
-# deliberately does NOT (WHIT-509 excluded it; WHIT-549 confirmed folding the STORED, sealed-
-# only buffer would raise the basis and could SUPPRESS a real overspend push). These lock the
-# exclusion so nobody re-introduces the blocker by folding carryover/buffer into `basis`.
+# --- WHIT-555: rollover live buffer is folded INTO the alert basis ---------------------
+# The /budgets screen's spendable = target + live rollover buffer. The alert must agree:
+# `basis = target + buffer`, so a category with leftover from prior cycles has a higher
+# crossing threshold (the user sees more room), and one with a deficit has a lower one.
 
 
-def test_rollover_carryover_does_not_raise_the_alert_basis(alerts, monkeypatch):
-    # A rollover category saved up a big carryover (500) on a
-    # $100 target. Spend crosses the RAW target: before $70, +$15 → $85 = 85% of $100 → fires 80%.
-    # Fail-on-revert: fold carryover/buffer into basis → basis 600, 80% = $480, $85 never crosses
-    # → NO push → a real overspend goes silent (the exact WHIT-549 blocker).
+def test_rollover_sealed_buffer_raises_basis_and_suppresses_premature_80(alerts, monkeypatch):
+    # $100 target with $50 sealed carryover → basis = 150, 80% = $120.
+    # Before $70, +$15 → $85. $85 < $120 → NO push (the user still has room per the screen).
+    # Fail-on-revert: without the buffer, basis = 100, 80% = $80, $85 crosses → false push
+    # that contradicts the screen.
     budget = {
-        "target": Decimal("100"), "rollover": True, "carryover": Decimal("500"),
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("50"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 0
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_rollover_sealed_buffer_fires_when_spend_crosses_raised_80(alerts, monkeypatch):
+    # $100 target + $50 buffer → basis = 150, 80% = $120.
+    # Before $110, +$15 → $125 crosses $120 → fires 80%.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("50"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -110, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert "80%" in sent[0][1]
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
+
+
+def test_rollover_negative_buffer_lowers_basis(alerts, monkeypatch):
+    # $100 target with -$30 carryover (overspent last cycle) → basis = 70, 80% = $56.
+    # Before $50, +$10 → $60 crosses $56 → fires 80%.
+    # Fail-on-revert: without the buffer, basis = 100, 80% = $80, $60 never crosses → miss.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("-30"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -50, "posted")]
+    new = _txn("new1", "groceries", -10, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert "80%" in sent[0][1]
+
+
+def test_rollover_wins_over_spread_on_corrupt_entry(alerts, monkeypatch):
+    # A corrupt entry has BOTH rollover and spread. Rollover wins: buffer_term = carryover,
+    # spread adjustment is ignored. basis = 100 + 50 = 150, 80% = $120.
+    # Before $0, +$45 → $45. $45 < $120 → NO push.
+    # Fail-on-revert: without buffer fold, basis = 100 (old code ignores rollover),
+    # and the spread -50 payback makes basis = 50, 80% = $40. 0 < 40 <= 45 → fires a push.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("50"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+        "spread_amount": Decimal("200"), "spread_cycles": Decimal("4"),
+        "spread_from": "2026-06-17", "spread_len": Decimal("14"),
+        "spread_paydate": "2026-07-01",
+    }
+    before = []
+    new = _txn("new1", "groceries", -45, "posted")
+    sent, _, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                      before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 0
+
+
+def test_rollover_reanchor_uses_stored_carryover_as_buffer(alerts, monkeypatch):
+    # Misaligned anchor (different length) → reanchor path. The stored carryover ($40) is
+    # still used as buffer_term. basis = 100 + 40 = 140, 80% = $112.
+    # Before $105, +$10 → $115 crosses $112 → fires 80%.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("40"),
+        "carryover_from": "2026-06-15",
+        "carryover_len": Decimal("7"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -105, "posted")]
+    new = _txn("new1", "groceries", -10, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert "80%" in sent[0][1]
+
+
+def test_rollover_buffer_folds_live_from_prior_cycle_txns(alerts, monkeypatch):
+    # One completed cycle [2026-06-17, 2026-06-30] with $60 spend on a $100 target → leftover $40.
+    # Stored carryover = $0, so live buffer = 0 + 40 = $40. basis = 100 + 40 = 140, 80% = $112.
+    # Current-cycle spend before $105, +$10 → $115 crosses $112 → fires.
+    # Fail-on-revert: without live seal, buffer = 0, basis = 100, 80% = $80, $105 already past → miss.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
         "carryover_from": "2026-06-17",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    prior_txn = _txn("prior1", "groceries", -60, "posted", date="2026-06-20")
+    current_before = _txn("old", "groceries", -105, "posted")
+    before = [prior_txn, current_before]
+    new = _txn("new1", "groceries", -10, "posted")
+    sent, _, ctx = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                        before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert "80%" in sent[0][1]
+    # before_rows must be current-cycle only (prior_txn filtered out)
+    assert all(r["date"] >= "2026-07-01" for r in ctx["before_rows"])
+
+
+def test_non_rollover_budget_unaffected_by_rollover_logic(alerts, monkeypatch):
+    # A plain budget (no rollover, no spread): basis = target only, exactly as before.
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert "80%" in sent[0][1]
+    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
+
+
+# --- WHIT-555 adversarial gap tests (QA) -----------------------------------------------
+
+
+def test_rollover_huge_negative_carryover_makes_basis_non_positive_skips_alert(alerts, monkeypatch):
+    # basis goes non-positive from a massive deficit: $100 target + (-$110) = -10.
+    # basis <= 0 → no crossing check → no push.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("-110"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 0
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_rollover_raised_basis_suppresses_premature_100_crossing(alerts, monkeypatch):
+    # $100 target + $60 buffer → basis = 160. 100% = $160, 80% = $128.
+    # Before $95, +$10 → $105. $105 > raw $100 but < $128 → no push at all.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("60"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -95, "posted")]
+    new = _txn("new1", "groceries", -10, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 0
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_rollover_fresh_toggle_no_carryover_from_basis_equals_target(alerts, monkeypatch):
+    # Freshly-toggled rollover: rollover=True but no carryover_from → reanchor path,
+    # buffer_term = 0, basis = target = 100. $85 crosses 80%.
+    budget = {"target": Decimal("100"), "rollover": True}
+    before = [_txn("old", "groceries", -70, "posted")]
+    new = _txn("new1", "groceries", -15, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 1
+    assert "80%" in sent[0][1]
+
+
+def test_rollover_two_categories_independent_buffers(alerts, monkeypatch):
+    # Two rollover categories: groceries ($100 + $50 buffer = basis 150) and
+    # coffee ($50 + $0 buffer = basis 50). Only coffee should fire.
+    groc_budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("50"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    coffee_budget = {
+        "target": Decimal("50"), "rollover": True, "carryover": Decimal("0"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [
+        _txn("old1", "groceries", -70, "posted"),
+        _txn("old2", "coffee", -35, "posted"),
+    ]
+    new_groc = _txn("new1", "groceries", -15, "posted")
+    new_coffee = _txn("new2", "coffee", -10, "posted")
+    cats = [
+        {"id": "groceries", "name": "Groceries", "bucket": "Living"},
+        {"id": "coffee", "name": "Coffee", "bucket": "Living"},
+    ]
+    sent, notify, _ = _run(
+        alerts, monkeypatch,
+        budgets={"groceries": groc_budget, "coffee": coffee_budget},
+        before=before, normalised=[new_groc, new_coffee], cats=cats,
+    )
+    assert len(sent) == 1
+    assert "Coffee" in sent[0][1]
+    assert notify.fired_markers("2026-07-01", 14) == {"coffee#80"}
+
+
+def test_rollover_zero_carryover_aligned_basis_equals_target(alerts, monkeypatch):
+    # Rollover=True, aligned, zero carryover. buffer_term = 0, basis = target.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
+        "carryover_from": "2026-07-01",
         "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
     }
     before = [_txn("old", "groceries", -70, "posted")]
@@ -2150,4 +2349,41 @@ def test_rollover_carryover_does_not_raise_the_alert_basis(alerts, monkeypatch):
     sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
                            before=before, normalised=[new], cats=_SPREAD_CATS)
     assert len(sent) == 1
-    assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
+    assert "80%" in sent[0][1]
+
+
+def test_rollover_basis_exactly_zero_skips_no_crash(alerts, monkeypatch):
+    # basis = target + buffer = $50 + (-$50) = 0. Guard catches it, no crash, no push.
+    budget = {
+        "target": Decimal("50"), "rollover": True, "carryover": Decimal("-50"),
+        "carryover_from": "2026-07-01",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    before = [_txn("old", "groceries", -30, "posted")]
+    new = _txn("new1", "groceries", -10, "posted")
+    sent, notify, _ = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                           before=before, normalised=[new], cats=_SPREAD_CATS)
+    assert len(sent) == 0
+    assert notify.fired_markers("2026-07-01", 14) == set()
+
+
+def test_rollover_ctx_rollover_txns_includes_prior_cycle_rows(alerts, monkeypatch):
+    # ctx["rollover_txns"] carries both prior- and current-cycle rows.
+    # ctx["before_rows"] carries only current-cycle rows.
+    budget = {
+        "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
+        "carryover_from": "2026-06-17",
+        "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
+    }
+    prior_txn = _txn("prior1", "groceries", -40, "posted", date="2026-06-20")
+    current_txn = _txn("cur1", "groceries", -50, "posted")
+    before = [prior_txn, current_txn]
+    new = _txn("new1", "groceries", -5, "posted")
+    _, _, ctx = _run(alerts, monkeypatch, budgets={"groceries": budget},
+                     before=before, normalised=[new], cats=_SPREAD_CATS)
+    rollover_ids = {r["transaction_id"] for r in ctx["rollover_txns"]}
+    assert "prior1" in rollover_ids
+    assert "cur1" in rollover_ids
+    before_ids = {r["transaction_id"] for r in ctx["before_rows"]}
+    assert "prior1" not in before_ids
+    assert "cur1" in before_ids

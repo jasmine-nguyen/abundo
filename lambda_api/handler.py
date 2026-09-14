@@ -40,8 +40,6 @@ from constants import (
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
     REPAYMENT_PATH,
-    ROLLOVER_MAX_LOOKBACK_CYCLES,
-    ROLLOVER_SETTLE_LAG_DAYS,
     RULE_FIELDS,
     RULE_OPERATORS,
     SAVINGS_BUCKET,
@@ -104,6 +102,8 @@ from spend import (
     current_cycle_window,
     fold_subtree,
     nth_prior_cycle_window,
+    rollover_windows,
+    seal_rollover,
     spread_adjustment,
     spread_index,
     subtree_ids,
@@ -1743,68 +1743,9 @@ def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
     return {**cycle, "days_left": (next_payday - date.fromisoformat(today)).days}
 
 
-def _rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: str):
-    """Pure date math for one rollover category: the completed pay cycles to fold this
-    read, and a re-anchor payload if accumulation must restart.
-
-    Returns (windows, reanchor). `windows` is the completed-cycle [(start, end), ...] since
-    the stored anchor (oldest-first, capped). `reanchor` is a {carryover, carryover_from}
-    payload — freeze the balance and re-anchor to the current cycle — when the stored anchor
-    is missing or was sealed under a DIFFERENT pay cycle (length or payday changed); in that
-    case `windows` is [] (a changed cycle makes the old windows fictional, so nothing is
-    folded that read). Alignment is checked on the exact length+payday, NOT a modular test:
-    e.g. 14->7 keeps `% length == 0` yet doubles the cycles.
-    """
-    anchor = entry.get("carryover_from")
-    aligned = (
-        anchor is not None
-        and int(entry.get("carryover_len", 0)) == length
-        and entry.get("carryover_paydate") == last_pay_date
-    )
-    if not aligned:
-        reanchor = {"carryover": entry.get("carryover", Decimal(0)), "carryover_from": cycle_start}
-        return [], reanchor
-    windows = completed_cycle_windows(anchor, cycle_start, length, ROLLOVER_MAX_LOOKBACK_CYCLES)
-    return windows, None
-
-
-def _seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
-                   length: int, today: str):
-    """Fold each completed cycle's leftover (target - spend) for one rollover category,
-    sealing cycles older than the settle lag into the stored balance.
-
-    Returns (display_carryover, persist). `display_carryover` is the full buffer to show =
-    sealed balance + not-yet-sealed completed-cycle leftovers (signed — a spike cycle's
-    overspend carries as a deficit). `persist` is a {carryover, carryover_from} payload when
-    the sealed balance or anchor advanced, else None. The current in-progress cycle is NOT
-    in `windows`, so its spend is never double-counted here (it shows as posted/pending).
-
-    Leftover uses the category's CURRENT target (no per-cycle target history is stored); the
-    ~10-day lag means a regularly-opened app seals each cycle with the target in force around
-    then, and a later target edit only moves the not-yet-sealed cycles.
-    """
-    stored_carryover = entry.get("carryover", Decimal(0))
-    target = entry["target"]
-    lag_cutoff = date.fromisoformat(today) - timedelta(days=ROLLOVER_SETTLE_LAG_DAYS)
-    sealed = stored_carryover
-    unsealed = Decimal(0)
-    # Floor the anchor at the oldest window we actually fetched: if the cap dropped older
-    # cycles, advance past them rather than re-scanning them forever.
-    new_anchor = windows[0][0] if windows else entry.get("carryover_from")
-    for window_start, window_end in windows:
-        cycle_txns = transactions_in_window(transactions, window_start, window_end)
-        per_id = summarise_transactions(cycle_txns, subtree, clamp=False)
-        spend = fold_subtree(per_id, subtree)
-        leftover = target - (spend["posted"] + spend["pending"])
-        if date.fromisoformat(window_end) < lag_cutoff:
-            sealed += leftover
-            new_anchor = (date.fromisoformat(window_start) + timedelta(days=length)).isoformat()
-        else:
-            unsealed += leftover
-    persist = None
-    if sealed != stored_carryover or new_anchor != entry.get("carryover_from"):
-        persist = {"carryover": sealed, "carryover_from": new_anchor}
-    return sealed + unsealed, persist
+# _rollover_windows and _seal_rollover extracted to shared/spend.py (WHIT-555) as
+# rollover_windows / seal_rollover so the budget-alert webhook path can reuse them.
+# The handler imports them at the top of this file.
 
 
 def _persist_spread_settlements(budget_repo: BudgetRepository, finished: list, reanchored: dict) -> None:
@@ -1932,7 +1873,7 @@ def list_budgets(
     reanchor_by_id = {}
     fetch_start = cycle_start
     for cat_id in rollover_ids:
-        windows, reanchor = _rollover_windows(targets[cat_id], cycle_start, length, last_pay_date)
+        windows, reanchor = rollover_windows(targets[cat_id], cycle_start, length, last_pay_date)
         windows_by_id[cat_id] = windows
         if reanchor is not None:
             reanchor_by_id[cat_id] = reanchor
@@ -1980,7 +1921,7 @@ def list_budgets(
                 carryover = reanchor_by_id[cat_id]["carryover"]
                 settlements[cat_id] = reanchor_by_id[cat_id]
             else:
-                carryover, persist = _seal_rollover(
+                carryover, persist = seal_rollover(
                     entry, windows_by_id[cat_id], ids_by_target[cat_id], transactions, length, today
                 )
                 if persist is not None:
