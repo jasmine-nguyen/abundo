@@ -58,9 +58,9 @@ def _charge(txn_id="t1", description="COLES 123 RICHMOND", category=None,
 def test_empty_store_is_a_noop(lam):
     charge = _charge(category=None)
     before = dict(charge)
-    out = lam.rule_ingest.apply(
+    rows, _ = lam.rule_ingest.apply(
         [charge], rule_repo=FakeRuleStore([]), category_repo=FakeCategoryRepo(["groceries"]))
-    assert out[0] == before                 # returned untouched
+    assert rows[0] == before                 # returned untouched
     assert charge["category"] is None       # nothing filed
 
 
@@ -68,8 +68,9 @@ def test_empty_batch_reads_nothing(lam):
     # A data-less delivery (summary event) must not pay for the rules/taxonomy reads.
     # FAIL-ON-REVERT: drop the `if not rows` guard and list_rules is called once.
     store = FakeRuleStore([_rule("COLES", "groceries")])
-    out = lam.rule_ingest.apply([], rule_repo=store, category_repo=FakeCategoryRepo(["groceries"]))
-    assert out == []
+    rows, is_unfiled = lam.rule_ingest.apply([], rule_repo=store, category_repo=FakeCategoryRepo(["groceries"]))
+    assert rows == []
+    assert is_unfiled is None                 # data-less delivery reads no taxonomy -> no carry gate
     assert store.list_calls == 0
 
 
@@ -136,9 +137,10 @@ def test_rule_to_a_deleted_category_is_skipped(lam):
 def test_rules_read_failure_leaves_the_charge_unfiled_and_logs(lam, caplog):
     charge = _charge(description="COLES", category=None)
     with caplog.at_level(logging.ERROR):
-        out = lam.rule_ingest.apply(
+        rows, is_unfiled = lam.rule_ingest.apply(
             [charge], rule_repo=FakeRuleStore(error=True), category_repo=FakeCategoryRepo(["groceries"]))
-    assert out[0]["category"] is None                 # best-effort: charge still lands, unfiled
+    assert rows[0]["category"] is None                 # best-effort: charge still lands, unfiled
+    assert is_unfiled is None                          # read failed: no gate for the carry
     assert "could not read rules" in caplog.text      # FAIL-ON-REVERT: no try/except -> raises
 
 

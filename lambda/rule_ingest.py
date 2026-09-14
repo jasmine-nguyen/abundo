@@ -18,6 +18,7 @@ no shared `constants` (the lambda_api/constants.py shadow landmine); rule_engine
 """
 
 import logging
+from typing import Callable, Optional
 
 from banksync import counts_to_budget
 import rule_engine
@@ -90,18 +91,24 @@ def file_charge(charge: dict, applicable_rules: list, is_unfiled) -> None:
     )
 
 
-def apply(rows: list, *, rule_repo, category_repo) -> list:
-    """File each unfiled charge in `rows` by the user's rules, in place, and return `rows`.
+def apply(rows: list, *, rule_repo, category_repo) -> tuple[list, Optional[Callable]]:
+    """File each unfiled charge in `rows` by the user's rules, in place, and return
+    `(rows, is_unfiled)`.
+
+    `is_unfiled` is the taxonomy check the reconcile carry needs (WHIT-545) so a stored raw
+    category can't clobber a rule-fill on settlement. It is None when no rules/taxonomy were
+    read — a data-less delivery or a read failure — in which case the caller leaves the carry
+    unchanged.
 
     Reads the rules + taxonomy once for the whole batch. A read failure leaves every charge
     unfiled (still lands, logged). An empty rule store is a no-op — the rows are returned
     untouched."""
     if not rows:
-        return rows                      # a data-less delivery (summary event) pays for no reads
+        return rows, None                # a data-less delivery (summary event) pays for no reads
     loaded = load_rules(rule_repo, category_repo)
     if loaded is None:
-        return rows
+        return rows, None
     applicable_rules, is_unfiled = loaded
     for charge in rows:
         file_charge(charge, applicable_rules, is_unfiled)
-    return rows
+    return rows, is_unfiled

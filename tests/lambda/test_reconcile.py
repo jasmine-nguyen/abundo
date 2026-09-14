@@ -625,7 +625,7 @@ def test_process_transaction_uses_insert_or_reconcile(lam):
         def save_failed_transactions(self, rows):
             calls["failed"] = rows
 
-        def insert_or_reconcile(self, txns):
+        def insert_or_reconcile(self, txns, *, is_unfiled=None):
             calls["reconcile"] = txns
 
         def insert_transactions(self, txns):
@@ -2792,3 +2792,204 @@ def test_whit536_pending_resend_keeps_category_and_stamp(lam, repo):
     assert row["description"] == "NEW DESC FROM BANK"   # bank field updated in place
     assert row["category"] == "groceries"              # rule category untouched
     assert row["filed_by_rule"] == "rule-5"            # stamp survives the re-send
+
+
+# --- WHIT-545: a stored unfiled raw category must not clobber a rule-fill; recompute the flag ---
+
+def _unfiled_check(taxonomy_ids):
+    """Stand-in for the reconcile's taxonomy check (rule_engine.is_unfiled_category for the
+    non-income case the reconcile carry sees): a category is unfiled when it is not one of the
+    user's real categories."""
+    def is_unfiled(category):
+        return category not in taxonomy_ids
+    return is_unfiled
+
+
+def test_whit545_unfiled_stored_category_loses_to_a_rule_fill(lam, repo):
+    # Unit: the pending twin holds a raw bank enum (unfiled); the incoming posted was
+    # rule-filled. The unfiled stored category must NOT clobber the rule-fill, and the posted
+    # keeps its own stamp. FAIL-ON-REVERT: drop the is_unfiled gate -> "FOOD_AND_DRINK" carries.
+    posted = {"transaction_id": "B", "category": "groceries", "filed_by_rule": "rule-1",
+              "account_id": "up-spending", "counts_to_budget": True}
+    source = {"category": "FOOD_AND_DRINK"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+
+    assert carried["category"] == "groceries"
+    assert carried["filed_by_rule"] == "rule-1"
+
+
+def test_whit545_filed_stored_category_still_wins(lam, repo):
+    # Unit: a real-taxonomy stored category still carries over — the gate only blocks unfiled
+    # source categories, never over-gates a genuine hand-fill.
+    posted = {"transaction_id": "B", "category": "AUTO", "account_id": "up-spending",
+              "counts_to_budget": True}
+    source = {"category": "groceries"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+
+    assert carried["category"] == "groceries"
+
+
+def test_whit545_counts_to_budget_recomputed_for_the_carried_category(lam, repo):
+    # Unit: the incoming posted's flag was computed for its OWN (non-budget) raw category, but a
+    # budget category is carried in — the flag must be recomputed to match what lands.
+    # FAIL-ON-REVERT: remove the recompute and counts_to_budget stays False.
+    posted = {"transaction_id": "B", "category": "TRANSFER_OUT", "account_id": "up-spending",
+              "counts_to_budget": False}
+    source = {"category": "groceries"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+
+    assert carried["category"] == "groceries"
+    assert carried["counts_to_budget"] is True
+
+
+def test_whit545_settlement_unfiled_twin_does_not_clobber_the_rule_fill(lam, repo):
+    # End-to-end through insert_or_reconcile: a pending holds the bank's raw enum, the incoming
+    # posted was rule-filled. The stored posted keeps the rule category + stamp, its flag
+    # matches, and the stale pending is gone. FAIL-ON-REVERT: drop the gate -> raw enum wins.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="FOOD_AND_DRINK")
+    repo.insert_transactions([pending])
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="groceries")
+    posted["filed_by_rule"] = "rule-1"
+
+    repo.insert_or_reconcile([posted], is_unfiled=_unfiled_check({"groceries"}))
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "groceries"
+    assert row["filed_by_rule"] == "rule-1"
+    assert row["counts_to_budget"] is True
+    assert (_acc(posted), "TXN#A") not in repo._table.store
+
+
+def test_whit545_hand_filed_pending_category_still_wins_on_settlement(lam, repo):
+    # Regression: a real-taxonomy pending category still carries onto the posted with is_unfiled
+    # wired — the everyday settlement path is unchanged.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="coffee")
+    repo.insert_transactions([pending])
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted], is_unfiled=_unfiled_check({"coffee"}))
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "coffee"
+
+
+# ============================================================================
+# WHIT-545 QA GAP TESTS (adversarial half — not duplicating the implementer's four)
+# ============================================================================
+
+
+class _QAFakeRuleStore:
+    def __init__(self, rules=()):
+        self._rules = [dict(r) for r in rules]
+
+    def list_rules(self):
+        return [dict(r) for r in self._rules]
+
+
+class _QAFakeCategoryRepo:
+    def __init__(self, ids):
+        self._ids = list(ids)
+
+    def list_categories(self):
+        return [{"id": i} for i in self._ids]
+
+
+class _QANoTokensDevice:
+    def list_tokens(self):
+        return []
+
+
+def _qa_real_is_unfiled(taxonomy_ids):
+    """The REAL production taxonomy check the reconcile carry actually receives — NOT the
+    implementer's `_unfiled_check` stand-in, which reimplements it as bare set-membership and
+    silently omits the income exclusion. Using the real one guards that exclusion too."""
+    import rule_engine
+    return lambda category: rule_engine.is_unfiled_category(category, taxonomy_ids)
+
+
+# [A4] Income is filed-but-not-a-taxonomy-id: is_unfiled_category excludes "income", so a
+# carried "income" source category must NOT be gated as unfiled. FAIL-ON-REVERT: drop the
+# `category != "income"` arm of is_unfiled_category and income is wrongly gated -> the raw enum
+# survives instead of income.
+def test_whit545_income_source_category_is_never_gated_as_unfiled(lam, repo):
+    is_unfiled = _qa_real_is_unfiled({"groceries"})   # "income" is deliberately NOT a taxonomy id
+    posted = {"transaction_id": "B", "category": "FOOD_AND_DRINK", "account_id": "up-spending",
+              "counts_to_budget": True}
+    source = {"category": "income"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=is_unfiled)
+
+    assert carried["category"] == "income"            # income carried, never gated as "unfiled"
+
+
+# [A5] The dedupe sweep (is_unfiled is None) must stay byte-identical to before WHIT-545: it
+# still carries even a raw enum category AND must NOT recompute counts_to_budget. FAIL-ON-REVERT:
+# make either the gate or the recompute unconditional and this flips.
+def test_whit545_dedupe_sweep_carries_raw_category_and_never_recomputes_the_flag(lam, repo):
+    posted = {"transaction_id": "B", "category": "groceries", "account_id": "up-spending",
+              "counts_to_budget": "SENTINEL"}
+    source = {"category": "FOOD_AND_DRINK"}          # a raw bank enum
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried["category"] == "FOOD_AND_DRINK"   # raw category still carries — no gate applied
+    assert carried["counts_to_budget"] == "SENTINEL"  # flag untouched — no recompute on the sweep
+
+
+# [A6] One batch, one is_unfiled, two settlements: B's twin is an unfiled raw enum + B was
+# rule-filled (rule-fill must win + keep its stamp); D's twin is a hand-filed real category (must
+# win). FAIL-ON-REVERT: drop the gate -> B lands as the raw enum.
+def test_whit545_batch_mixes_rule_fill_and_hand_fill_settlements(lam, repo):
+    is_unfiled = _qa_real_is_unfiled({"groceries", "coffee"})
+    pend_unfiled = _norm(lam, txn_id="A", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                         pending=True, category="FOOD_AND_DRINK")
+    pend_handfiled = _norm(lam, txn_id="C", amount=Decimal("-9.00"), authorized_date="2026-06-29",
+                           pending=True, category="coffee")
+    repo.insert_transactions([pend_unfiled, pend_handfiled])
+    posted_rulefill = _norm(lam, txn_id="B", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                            pending=False, category="groceries")
+    posted_rulefill["filed_by_rule"] = "rule-1"
+    posted_over_handfill = _norm(lam, txn_id="D", amount=Decimal("-9.00"), authorized_date="2026-06-29",
+                                 pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted_rulefill, posted_over_handfill], is_unfiled=is_unfiled)
+
+    store = repo._table.store
+    acc = _acc(posted_rulefill)
+    assert store[(acc, "TXN#B")]["category"] == "groceries"     # unfiled twin gated -> rule-fill kept
+    assert store[(acc, "TXN#B")]["filed_by_rule"] == "rule-1"   # posted's own stamp stands
+    assert store[(acc, "TXN#D")]["category"] == "coffee"        # hand-filed twin still wins
+    assert (acc, "TXN#A") not in store and (acc, "TXN#C") not in store   # both stale pendings reaped
+
+
+# [A7] End-to-end through process_transaction: the handler must thread the taxonomy check
+# returned by rule_ingest.apply into insert_or_reconcile. A pending twin holds the raw enum; the
+# incoming posted is rule-filled by the user's KKV rule. FAIL-ON-REVERT: change handler.py's
+# insert_or_reconcile call to is_unfiled=None and the raw enum clobbers the rule-fill.
+def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
+    h = lam.handler
+    monkeypatch.setattr(h, "RuleRepository",
+                        lambda: _QAFakeRuleStore([{"id": "r-kkv", "field": "description",
+                                                   "operator": "contains", "value": "KKV",
+                                                   "category_id": "groceries"}]))
+    monkeypatch.setattr(h, "CategoryRepository", lambda: _QAFakeCategoryRepo(["groceries"]))
+    # Neutralise the budget-alert side path (no device tokens -> capture returns None early).
+    monkeypatch.setattr(h, "DeviceRepository", lambda: _QANoTokensDevice())
+    monkeypatch.setattr(h, "BudgetRepository", lambda: None)
+    monkeypatch.setattr(h, "PayCycleRepository", lambda: None)
+    monkeypatch.setattr(h, "WindowRepo", lambda: None)
+    monkeypatch.setattr(h, "NotifyRepository", lambda: None)
+
+    _seed_pending(repo, lam, txn_id="P", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                  pending=True, category="FOOD_AND_DRINK")
+    payload = {"data": [_bank_row("POST", Decimal("-5.50"), authorized_date="2026-06-29",
+                                  pending=False, category="FOOD_AND_DRINK")]}
+
+    h.process_transaction(payload, repo)
+
+    row = repo._table.store[(_acc(_norm(lam, txn_id="POST", amount=Decimal("-5.50"))), "TXN#POST")]
+    assert row["category"] == "groceries"                        # rule-fill survives settlement
+    assert (_acc(_norm(lam, txn_id="P", amount=Decimal("-5.50"))), "TXN#P") not in repo._table.store

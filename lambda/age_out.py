@@ -30,7 +30,6 @@ import logging
 from datetime import date, timedelta
 
 import rule_engine
-from banksync import counts_to_budget
 from constants import ACCOUNT_ID_MAP, PENDING_AGE_OUT_DAYS
 from repository import TransactionRepository, _merchant_matches_pending
 from repository_category import CategoryRepository
@@ -189,10 +188,10 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
             continue
 
         if twin is not None:
-            carried = repo._with_carried_category(twin, pending)
-            # The pending's category can differ from the twin's raw one, so the twin's stored
-            # budget flag is now stale — recompute it for the carried category (as file_charge does).
-            carried["counts_to_budget"] = counts_to_budget(carried["account_id"], carried.get("category"))
+            # WHIT-545: the carry now recomputes counts_to_budget for the carried category
+            # itself (given is_unfiled), so no separate recompute here. The rescue only runs
+            # on a filed pending, so the is_unfiled category gate never skips this carry.
+            carried = repo._with_carried_category(twin, pending, is_unfiled=is_unfiled)
             try:
                 repo.insert_transactions([carried])
             except DatabaseError as exc:

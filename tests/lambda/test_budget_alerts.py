@@ -599,7 +599,7 @@ class _WriteRecordingRepo:
     def save_failed_transactions(self, rows):
         pass
 
-    def insert_or_reconcile(self, txns):
+    def insert_or_reconcile(self, txns, *, is_unfiled=None):
         self.wrote = True
 
 
@@ -2387,3 +2387,48 @@ def test_rollover_ctx_rollover_txns_includes_prior_cycle_rows(alerts, monkeypatc
     before_ids = {r["transaction_id"] for r in ctx["before_rows"]}
     assert "prior1" not in before_ids
     assert "cur1" in before_ids
+
+
+# --- WHIT-545: the crossing preview mirrors the write's settlement carry gate ----------------
+
+def _bal_bank_row(txn_id, amount, *, pending, category, date="2026-07-10"):
+    # A raw BankSync row resolving to the anz-rewards-black-visa account (a budget-counting one).
+    return {
+        "id": txn_id, "date": date, "authorizedDate": date,
+        "description": "SQ *KKV INTERNATIONAL PTY", "merchantName": "SQ *KKV INTERNATIONAL PTY",
+        "amount": Decimal(str(amount)),
+        "accountId": "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0",
+        "accountName": "ANZ Rewards Black Visa", "category": category, "pending": pending,
+        "type": "PAYMENT", "pendingTransactionId": None,
+    }
+
+
+def test_whit545_preview_buckets_a_settlement_under_the_landed_category(alerts, repo, monkeypatch):
+    # A pending twin holds the bank's raw enum (unfiled); the settling posted was rule-filled to
+    # "groceries". The preview must bucket the -$15 under groceries (what actually lands), so
+    # before $70 + $15 = $85 crosses 80%. FAIL-ON-REVERT: drop the is_unfiled arg on
+    # fire_if_crossed's `_simulate_after(...)` call and the raw enum carries in the preview, so the
+    # -$15 buckets under FOOD_AND_DRINK, groceries stays at $70, and no push fires.
+    ba = alerts.budget_alerts
+    sent = []
+    monkeypatch.setattr(ba, "send_push",
+                        lambda title, body, toks, data=None: sent.append((title, body)) or
+                        {"sent": len(list(toks)), "ok": 1, "pruned": []})
+
+    pending = alerts.banksync.BankSyncClient.normalise(
+        _bal_bank_row("PEND", -15, pending=True, category="FOOD_AND_DRINK"))
+    repo.insert_transactions([pending])
+    posted = alerts.banksync.BankSyncClient.normalise(
+        _bal_bank_row("POST", -15, pending=False, category="groceries"))
+
+    before = [_txn("old", "groceries", -70, "posted")]
+    ctx = ba.capture_pre_write(
+        [posted], device_repo=FakeDeviceRepo(), budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),
+        paycycle_repo=FakePaycycleRepo("2026-07-01", 14), window_repo=FakeWindowRepo(before), webhook_repo=repo)
+    ba.fire_if_crossed(
+        ctx, [posted], webhook_repo=repo,
+        category_repo=FakeCategoryRepo([{"id": "groceries", "name": "Groceries"}]),
+        notify_repo=FakeNotifyRepo())
+
+    assert len(sent) == 1
+    assert sent[0][1] == "Groceries is at 80% of its budget this cycle."
