@@ -25,58 +25,6 @@ _ROLLOVER_FIELDS = ("rollover", "carryover", "carryover_from", "carryover_len", 
 # rollover, and cleared on a reclassify out of spend. Kept local for the same WHIT-136 reason.
 _SPREAD_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
 
-# The unified "Smoothing" mirror (WHIT-548, slice 2 of the WHIT-546 epic): one signed `buffer`
-# (generalises the rollover carryover) + a `payback_*` schedule (generalises the bill spread).
-# This slice writes the mirror ALONGSIDE the old fields and keeps it in sync; the old fields stay
-# the source of truth (nothing reads the mirror until the read switch, WHIT-549). Kept local — NOT
-# imported from shared/constants.py — for the same WHIT-136 reason as the tuples above.
-_BUFFER_FIELDS = ("buffer", "buffer_from", "buffer_len", "buffer_paydate")
-_PAYBACK_FIELDS = ("payback_amount", "payback_cycles", "payback_from", "payback_len", "payback_paydate")
-_MIRROR_FIELDS = _BUFFER_FIELDS + _PAYBACK_FIELDS
-
-
-def _unified_mirror(entry: dict) -> dict:
-    """Derive the unified smoothing mirror (buffer + payback_*) from one entry's OLD
-    rollover/spread fields. Pure and deterministic — a function only of the old fields — so
-    re-deriving is idempotent (a second backfill rebuilds identical values).
-
-    Rules (a category has rollover XOR spread today, so at most one family is produced):
-      * rollover ON  -> `buffer` = the stored `carryover` (0 if not accrued yet), plus the
-        accrual anchor (`buffer_from/len/paydate`) copied from `carryover_*` when present.
-        rollover OFF/absent -> no buffer (a frozen carryover is inert until rollover resumes,
-        so the mirror only tracks an ACTIVE rollover; re-enabling re-derives it).
-      * a COMPLETE spread (all five spread_* fields) -> `payback_*` copied across. This is a
-        placeholder mirror: the stored numbers are preserved, but the payback TIMING differs
-        from the old spread cushion, so WHIT-549 must recompute payback from spread_* before any
-        reader trusts payback_*, and WHIT-551 must not delete spread_* until it does.
-    """
-    mirror: dict = {}
-    if entry.get("rollover"):
-        mirror["buffer"] = entry.get("carryover", Decimal(0))
-        for old_field, new_field in (
-            ("carryover_from", "buffer_from"),
-            ("carryover_len", "buffer_len"),
-            ("carryover_paydate", "buffer_paydate"),
-        ):
-            if old_field in entry:
-                mirror[new_field] = entry[old_field]
-    if all(field in entry for field in _SPREAD_FIELDS):
-        mirror["payback_amount"] = entry["spread_amount"]
-        mirror["payback_cycles"] = entry["spread_cycles"]
-        mirror["payback_from"] = entry["spread_from"]
-        mirror["payback_len"] = entry["spread_len"]
-        mirror["payback_paydate"] = entry["spread_paydate"]
-    return mirror
-
-
-def _with_mirror(entry: dict) -> dict:
-    """Return `entry` with a freshly-derived mirror: drop any stale mirror keys, then overlay
-    the mirror derived from the entry's CURRENT old fields — so the mirror can never drift from
-    the fields it mirrors, on any write path."""
-    base = {k: v for k, v in entry.items() if k not in _MIRROR_FIELDS}
-    return {**base, **_unified_mirror(base)}
-
-
 class BudgetRepository:
     """Stores per-category budget targets as a single DynamoDB config item.
 
@@ -154,10 +102,7 @@ class BudgetRepository:
             item = self._get_config()
             version = item["version"]
             existing = {k: v for k, v in item["items"].get(cat_id, {}).items() if k not in drop}
-            # WHIT-548: keep the unified mirror (buffer + payback_*) in sync on every write —
-            # re-derived from the merged old fields, so it can't drift. Inert to all current
-            # readers (they read only the old named fields); the read switch is WHIT-549.
-            entry = _with_mirror({**existing, **fields})
+            entry = {**existing, **fields}
             try:
                 self._get_table().update_item(
                     Key=_BUDGETS_KEY,
@@ -290,18 +235,16 @@ class BudgetRepository:
 
         The buffer itself is discarded: it is meaningless on an Income earn-target, and
         re-enabling rollover later starts fresh. No-op/lock semantics per _strip_fields.
-        Also strips the unified `buffer*` mirror (WHIT-548) so no orphan mirror lingers.
         """
-        self._strip_fields(cat_id, _ROLLOVER_FIELDS + _BUFFER_FIELDS, "clear rollover")
+        self._strip_fields(cat_id, _ROLLOVER_FIELDS, "clear rollover")
 
     def clear_spread(self, cat_id: str) -> None:
         """Strip the bill-spread fields (see _SPREAD_FIELDS) from a category's budget entry,
         KEEPING its `target` and rollover fields — run when the user removes the spread, when
         a plan has run its course or been settled after a pay-cycle change (best-effort from
         the read path), and on a reclassify out of spend. No-op/lock semantics per _strip_fields.
-        Also strips the unified `payback_*` mirror (WHIT-548) so no orphan mirror lingers.
         """
-        self._strip_fields(cat_id, _SPREAD_FIELDS + _PAYBACK_FIELDS, "clear spread")
+        self._strip_fields(cat_id, _SPREAD_FIELDS, "clear spread")
 
     def _strip_fields(self, cat_id: str, fields: tuple, operation: str) -> None:
         """Remove `fields` from ONE category's budget entry, keeping everything else.
@@ -341,45 +284,3 @@ class BudgetRepository:
                 # The version moved under us; loop re-reads and retries once.
         raise VersionConflictError(f"{operation}: exhausted retries under write contention")
 
-    def backfill_unified(self) -> int:
-        """One-shot migration (WHIT-548): derive the unified mirror (buffer + payback_*) for
-        every stored budget entry from its old rollover/spread fields, in a single
-        read-modify-write over the `items` map. Returns the number of entries whose mirror
-        changed.
-
-        Idempotent: the mirror is a pure function of the old fields, so a second run rebuilds an
-        identical map and skips the write (no version bump) — like _strip_fields when nothing is
-        present. Balance-preserving: it only ADDS derived mirror keys; no old field is touched, so
-        every reader keeps seeing today's numbers. A larger retry budget than the per-entry writes
-        because it rewrites the whole map and so is likelier to race a concurrent per-entry write;
-        run it in a low-write window.
-        """
-        for _attempt in range(5):
-            item = self._get_config()
-            if item is None:
-                self._ensure_seeded()
-                item = self._get_config()
-            items = item["items"]
-            rebuilt = {cat_id: _with_mirror(entry) for cat_id, entry in items.items()}
-            changed = sum(1 for cat_id in items if rebuilt[cat_id] != items[cat_id])
-            if changed == 0:
-                return 0  # already mirrored -> no write, no version bump
-            version = item["version"]
-            try:
-                self._get_table().update_item(
-                    Key=_BUDGETS_KEY,
-                    UpdateExpression="SET #items = :items, #v = :next",
-                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
-                    ExpressionAttributeNames={"#items": "items", "#v": "version"},
-                    ExpressionAttributeValues={
-                        ":items": rebuilt,
-                        ":expected": version,
-                        ":next": version + Decimal(1),
-                    },
-                )
-                return changed
-            except ClientError as e:
-                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
-                    handle_database_error(e, "backfill unified")
-                # The version moved under us; loop re-reads and retries.
-        raise VersionConflictError("backfill_unified: exhausted retries under write contention")

@@ -2136,13 +2136,13 @@ def test_spread_basis_just_above_zero_still_crosses(alerts, monkeypatch):
 
 
 def test_rollover_carryover_does_not_raise_the_alert_basis(alerts, monkeypatch):
-    # A rollover category saved up a big buffer (carryover 500, stored mirror buffer 500) on a
+    # A rollover category saved up a big carryover (500) on a
     # $100 target. Spend crosses the RAW target: before $70, +$15 → $85 = 85% of $100 → fires 80%.
     # Fail-on-revert: fold carryover/buffer into basis → basis 600, 80% = $480, $85 never crosses
     # → NO push → a real overspend goes silent (the exact WHIT-549 blocker).
     budget = {
         "target": Decimal("100"), "rollover": True, "carryover": Decimal("500"),
-        "buffer": Decimal("500"), "carryover_from": "2026-06-17",
+        "carryover_from": "2026-06-17",
         "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
     }
     before = [_txn("old", "groceries", -70, "posted")]
