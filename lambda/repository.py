@@ -19,6 +19,7 @@ from repository_transaction import (
     TransactionRepository as _SharedTransactionRepository,
     _build_pk,
     _build_sk,
+    sanitise_transaction,
 )
 
 logger = logging.getLogger(__name__)
@@ -678,8 +679,6 @@ class TransactionRepository(_SharedTransactionRepository):
         inherit_date_from: when set, date/authorized_date are taken from this row
         instead of from the incoming txn, via the same inherit-swipe-date logic.
         """
-        from repository_transaction import sanitise_transaction
-
         sanitised = sanitise_transaction(txn)
 
         names: dict[str, str] = {}
@@ -706,7 +705,7 @@ class TransactionRepository(_SharedTransactionRepository):
                     value_alias = f":b{idx}"
                     names[name_alias] = field
                     values[value_alias] = merged_dates[field]
-                    set_clauses = [c for c in set_clauses if not c.startswith(name_alias)]
+                    set_clauses = [c for c in set_clauses if not c.startswith(name_alias + " ")]
                     set_clauses.append(f"{name_alias} = {value_alias}")
 
         if not set_clauses:
