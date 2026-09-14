@@ -140,7 +140,7 @@ class FakeTable:
         # order), so a row a filter would keep can hide on a later page (WHIT-82).
         self.page_size = None
 
-    def get_item(self, Key):
+    def get_item(self, Key, ConsistentRead=False):
         item = self.store.get((Key["pk"], Key["sk"]))
         return {"Item": dict(item)} if item is not None else {}
 
@@ -166,6 +166,31 @@ class FakeTable:
         # No attribute_exists guard here → deleting a missing key is a no-op,
         # matching _delete_pending_if_present's tolerant delete.
         self.store.pop((Key["pk"], Key["sk"]), None)
+
+    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
+                    ExpressionAttributeValues=None, ConditionExpression=None):
+        key = (Key["pk"], Key["sk"])
+        if ConditionExpression is not None:
+            if ConditionExpression != "attribute_exists(pk)":
+                raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
+            if key not in self.store:
+                err = sys.modules["botocore.exceptions"].ClientError()
+                err.response = {"Error": {"Code": "ConditionalCheckFailedException", "Message": "boom"}}
+                raise err
+        item = self.store.setdefault(key, {"pk": Key["pk"], "sk": Key["sk"]})
+        values = ExpressionAttributeValues or {}
+        set_part, _, remove_part = UpdateExpression.strip().partition("REMOVE")
+        set_part = set_part.strip()
+        if set_part.startswith("SET"):
+            for pair in set_part[len("SET"):].split(","):
+                if not pair.strip():
+                    continue
+                name_alias, value_alias = (part.strip() for part in pair.split("="))
+                item[ExpressionAttributeNames[name_alias]] = values[value_alias]
+        for name_alias in remove_part.split(","):
+            name_alias = name_alias.strip()
+            if name_alias:
+                item.pop(ExpressionAttributeNames[name_alias], None)
 
     def query(self, KeyConditionExpression=None, FilterExpression=None,
               ScanIndexForward=None, Limit=None, IndexName=None,
