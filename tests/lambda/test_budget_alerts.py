@@ -2142,7 +2142,7 @@ def test_rollover_carryover_does_not_raise_the_alert_basis(alerts, monkeypatch):
     # → NO push → a real overspend goes silent (the exact WHIT-549 blocker).
     budget = {
         "target": Decimal("100"), "rollover": True, "carryover": Decimal("500"),
-        "buffer": Decimal("500"), "carryover_from": "2026-06-17",
+        "carryover_from": "2026-06-17",
         "carryover_len": Decimal("14"), "carryover_paydate": "2026-07-01",
     }
     before = [_txn("old", "groceries", -70, "posted")]

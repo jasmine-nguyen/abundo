@@ -2000,8 +2000,7 @@ def list_budgets(
                 finished_spreads.append(cat_id)
             if reanchor is not None:
                 reanchored_spreads[cat_id] = reanchor
-        # The spendable the screen shows — computed server-side from the LIVE terms (not the
-        # stored buffer/payback_* mirror) so it equals the client's old formula exactly.
+        # The spendable the screen shows — computed server-side from the LIVE rollover/spread terms.
         row["available"] = unified_available(entry["target"], buffer_term, adjustment_term)
         result[cat_id] = row
 

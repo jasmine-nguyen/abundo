@@ -218,7 +218,7 @@ class ConfigItemTable:
         if not self.present or expected != self.item["version"]:
             raise _client_error("ConditionalCheckFailedException")
         if ":items" in ExpressionAttributeValues:
-            # Whole-map rewrite: SET #items = :items, #v = :next (WHIT-548 backfill_unified).
+            # Whole-map rewrite: SET #items = :items, #v = :next.
             self.item["items"] = ExpressionAttributeValues[":items"]
             self.item["version"] = ExpressionAttributeValues[":next"]
             return
