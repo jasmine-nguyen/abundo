@@ -495,5 +495,3 @@ def test_clear_spread_strips_a_partial_spread_entry(shared, budget_repo, config_
     assert table.item["items"]["insurance"] == {"target": Decimal(250)}
     assert table.update_calls == 1
 
-
-
