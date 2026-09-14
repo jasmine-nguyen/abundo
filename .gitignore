@@ -69,7 +69,6 @@ lambda/*
 lambda_api/*
 !lambda_api/handler.py
 !lambda_api/constants.py
-!lambda_api/banksync_enrichments.py
 !lambda_api/insights_ai.py
 !lambda_api/anthropic_client.py
 !lambda_api/merchant_groups.py

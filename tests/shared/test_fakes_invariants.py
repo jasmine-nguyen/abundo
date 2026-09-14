@@ -105,7 +105,9 @@ _REGISTRY = [
          _API_TESTS / "test_uncategorized_merchants.py",
          _API_TESTS / "test_uncategorized_merchants_gaps.py",
          _API_TESTS / "test_rules_routes.py",
-         _API_TESTS / "test_rules_routes_gaps.py"),
+         _API_TESTS / "test_rules_routes_gaps.py",
+         _API_TESTS / "test_rules_routes_legacy_rows.py",
+         _API_TESTS / "test_enrichments_routes_removed.py"),
     ),
     _Domain(
         "rule",
@@ -120,6 +122,8 @@ _REGISTRY = [
          _API_TESTS / "test_apply_rules_repoint_gaps.py",
          _API_TESTS / "test_rules_routes.py",
          _API_TESTS / "test_rules_routes_gaps.py",
+         _API_TESTS / "test_rules_routes_legacy_rows.py",
+         _API_TESTS / "test_enrichments_routes_removed.py",
          _SHARED_TESTS / "test_rule_fake_contract_gaps.py"),
     ),
     _Domain(

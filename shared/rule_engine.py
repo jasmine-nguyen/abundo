@@ -35,8 +35,8 @@ def fold(value: str) -> str:
     """Fold a rule value for duplicate-matching, mirroring the client's
     normaliseRuleIdentity (src/context.tsx): trim, lowercase, collapse internal
     whitespace runs. Case + spacing vary for the same merchant, so an exact-value
-    compare would miss real duplicates. `str(...)` guards a non-string value from a
-    foreign enrichment so the fail-open lookup can't raise. The two folds are only
+    compare would miss real duplicates. `str(...)` guards a non-string value so the
+    fail-open lookup can't raise. The two folds are only
     guaranteed equal for ASCII (Python `.lower()` and JS `toLowerCase()` disagree on
     a few non-ASCII chars) — fine for the AU merchant strings this matches.
 
@@ -144,11 +144,6 @@ def _skip_reason(rule: dict, is_unfiled) -> str | None:
     charges makes "filing a charge removes it from the unfiled set" true by
     construction (and correctly accepts `income`, which is filed but not a taxonomy id).
     """
-    # We only ever read a rule's FIRST condition, so a foreign multi-condition rule reaches us
-    # broadened (see banksync_enrichments._to_rule). Listing that is harmless; filing hundreds of
-    # charges on it is not — the narrowing condition we dropped is exactly what kept it in check.
-    if rule.get("conditionCount", 1) != 1:
-        return "rule has more than one condition"
     if (rule.get("field"), rule.get("operator")) not in (_DESCRIPTION_CONTAINS, _CATEGORY_EQUALS):
         return "unsupported rule type"
     if not _normalise(rule.get("value")):

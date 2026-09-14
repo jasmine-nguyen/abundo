@@ -137,24 +137,8 @@ def test_a_rule_targeting_income_is_applied_not_skipped(rule_engine):
     assert plan["skipped_rules"] == []
 
 
-def test_a_multi_condition_rule_is_skipped_not_applied_broadened(rule_engine):
-    # We only read a rule's FIRST condition, so "description contains UBER AND amount > 50"
-    # arrives as the far broader "contains UBER". Applying that to history would mis-file every
-    # Uber charge — the dropped condition was exactly what kept it in check.
-    broad = _rule("uber", rule_id="r-multi")
-    broad["conditionCount"] = 2
-    plan = rule_engine.plan_rule_application(
-        [broad], [_txn("t1", "UBER TRIP")], _is_unfiled({"groceries"}))
-
-    assert plan["matched"] == []
-    assert plan["skipped_rules"][0]["reason"] == "rule has more than one condition"
-
-
 def test_a_single_condition_rule_is_applied_normally(rule_engine):
-    # The counterpart: conditionCount 1 (or absent, for a rule built before the field existed)
-    # applies as usual, so the guard can't accidentally block every rule.
     single = _rule("uber", rule_id="r-single")
-    single["conditionCount"] = 1
     plan = rule_engine.plan_rule_application(
         [single], [_txn("t1", "UBER TRIP")], _is_unfiled({"groceries"}))
     assert len(plan["matched"]) == 1

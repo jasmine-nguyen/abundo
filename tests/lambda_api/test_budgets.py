@@ -742,7 +742,7 @@ def test_delete_budget_success(handler):
 
 def test_delete_budget_unknown_id_is_idempotent_200(handler):
     # No stored target for this id -> the repo no-ops, the handler still returns 200
-    # (mirrors delete_goal / delete_enrichment).
+    # (mirrors delete_goal).
     repo = FakeBudgetRepo()
 
     resp = handler.delete_budget(_delete_budget_event(category="never_budgeted"), repo)

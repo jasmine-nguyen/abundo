@@ -53,7 +53,7 @@ def test_the_scan_finds_real_modules_on_both_sides():
     # and would "pass" while checking nothing.
     local_imports = _handler_local_module_imports()
     allowlist = _allowlisted_sources()
-    assert "constants" in local_imports and "banksync_enrichments" in local_imports
+    assert "constants" in local_imports and "insights_ai" in local_imports
     assert "handler.py" in allowlist and len(allowlist) > 3
 
 

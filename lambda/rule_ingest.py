@@ -28,14 +28,13 @@ logger = logging.getLogger(__name__)
 def _to_engine_rule(row: dict) -> dict:
     """Map a stored rule row (repository_rule, snake_case `category_id`) to the engine's Rule
     shape (`categoryId`). Mirrors lambda_api/handler._rule_to_client so the webhook and the API
-    decide identically. conditionCount is always 1 — our store only holds single-leaf rules."""
+    decide identically."""
     return {
         "id": row.get("id"),
         "field": row.get("field"),
         "operator": row.get("operator"),
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
-        "conditionCount": 1,
     }
 
 
@@ -45,8 +44,8 @@ def load_rules(rule_repo, category_repo):
     the read from the filing lets a per-row caller (reprocess) read once, not once per charge.
 
     `applicable_rules` are the store rules mapped to the engine shape and filtered through
-    `rule_engine._skip_reason` — dropping multi-condition, unsupported, category-less and
-    deleted-category rules — so `decide` can read each one's categoryId directly."""
+    `rule_engine._skip_reason` — dropping unsupported, category-less and deleted-category
+    rules — so `decide` can read each one's categoryId directly."""
     try:
         taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
         rules = [_to_engine_rule(row) for row in rule_repo.list_rules()]
