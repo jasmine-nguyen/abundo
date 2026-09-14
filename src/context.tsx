@@ -129,6 +129,11 @@ export type Sheet =
   // plus the chosen category, so the "shown what will happen" step needs no refetch.
   | { mode: 'fileByShopList' }
   | { mode: 'fileByShopConfirm'; group: UncategorizedMerchantGroup; categoryId: string }
+  // WHIT-538: after the user types a new rule, this confirm step previews how many stored charges
+  // the rule would file (with samples) before Save, then either mints + files them in one call or
+  // saves the rule for future charges only. Carries the typed pattern + chosen category captured
+  // from the add-rule form. Reuses the FileByShopConfirm flow (dry-run preview, then commit).
+  | { mode: 'addRuleConfirm'; pattern: string; categoryId: string }
   | null;
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
@@ -470,6 +475,11 @@ export interface AppContext {
   // clash outcome (an existing rule would fight this one) instead of a bare null.
   previewFileByShop: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>;
   fileByShop: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<FileByShopOutcome>;
+  // WHIT-538: preview / file the stored charges a NOT-YET-CREATED rule would catch. previewNewRule
+  // dry-runs the typed pattern (writes nothing); fileNewRule mints the rule AND files those charges
+  // in one call. Both return the same 409-clash-aware outcome as the file-by-shop pair.
+  previewNewRule: (pattern: string, categoryId: string) => Promise<FileByShopOutcome>;
+  fileNewRule: (pattern: string, categoryId: string) => Promise<FileByShopOutcome>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
@@ -1189,7 +1199,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // up to their 45s staleTime — accepted: the storm argument still holds, the Uncategorized tab and
   // the badge (the numbers this feature is about) are correct immediately, and focus reconciles the
   // rest. The sheet's failure copy is worded to match, claiming only the unfiled list and count.
-  const refreshAfterApplyRules = useCallback(() => {
+  // `skipRules` leaves the ['rules'] cache alone. WHIT-538's fileNewRule has already prepended the
+  // minted rule optimistically (with its "NEW" badge); invalidating here would refetch and reset
+  // that badge to false, so it flashes then vanishes. Every other caller mints no rule (or mints
+  // one it does NOT show optimistically), so they invalidate as before.
+  const refreshAfterApplyRules = useCallback((opts?: { skipRules?: boolean }) => {
     queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed'], (prev) =>
       prev && prev.pages.length > 1
         ? { ...prev, pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
@@ -1209,7 +1223,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // mints a rule. Refresh the "file by shop" list so a filed shop leaves it, and the rules list
     // so a minted rule appears. Harmless (and correct) for plain "Apply my rules" too, which also
     // shrinks the groups.
-    queryClient.invalidateQueries({ queryKey: ['rules'] });
+    if (!opts?.skipRules) queryClient.invalidateQueries({ queryKey: ['rules'] });
     queryClient.invalidateQueries({ queryKey: ['uncategorizedMerchants'] });
   }, []);
 
@@ -1327,6 +1341,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         applyRulesInFlight.current = false;
       }
     }, [patchTransactions, refreshAfterApplyRules]);
+
+  // WHIT-538: dry-run the typed pattern before the rule exists, so the add-rule confirm sheet can
+  // show how many stored charges it would file. Mirrors previewFileByShop but takes the raw pattern
+  // (a shop passes its precomputed rulePattern; here the user typed it). Writes nothing.
+  const previewNewRule = useCallback(
+    async (pattern: string, categoryId: string): Promise<FileByShopOutcome> => {
+      const epoch = sessionEpoch.current;
+      try {
+        const report = await applyRulesToUncategorized(true, { value: pattern.trim(), categoryId });
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+        return { ok: true, report };
+      } catch (e) {
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+        return { ok: false, clash: e instanceof ApiError && e.status === 409 ? e : null };
+      }
+    }, []);
+
+  // WHIT-538: mint the typed rule AND file the stored charges it catches, in one call. Mirrors
+  // fileByShop (shared applyRulesInFlight guard, same filed/vanished patch, same 409-clash outcome),
+  // with one addition: the user is on the Rules screen, so the minted rule (returned as createdRule)
+  // is prepended to the ['rules'] cache with its "NEW" badge and the refresh SKIPS re-fetching rules,
+  // so the badge survives. When the server omits createdRule (older build), fall back to the normal
+  // refresh so the rule still lands in the list on refetch.
+  const fileNewRule = useCallback(
+    async (pattern: string, categoryId: string): Promise<FileByShopOutcome> => {
+      if (applyRulesInFlight.current) return { ok: false, clash: null };
+      applyRulesInFlight.current = true;
+      const epoch = sessionEpoch.current;
+      try {
+        const report = await applyRulesToUncategorized(false, { value: pattern.trim(), categoryId });
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+
+        const filedBy = new Map(report.filed.map((row) => [row.id, row.category]));
+        const vanished = new Set(report.vanished);
+        if (filedBy.size > 0 || vanished.size > 0) {
+          patchTransactions((prev) => prev
+            .filter((existing) => !vanished.has(existing.transaction_id))
+            .map((existing) => (filedBy.has(existing.transaction_id)
+              ? { ...existing, category: filedBy.get(existing.transaction_id)! }
+              : existing)));
+        }
+        if (report.createdRule) {
+          const minted = report.createdRule;
+          patchRules((prev) => [{ ...toRule(minted as EnrichmentRule), isNew: true }, ...prev]);
+          refreshAfterApplyRules({ skipRules: true });
+        } else {
+          refreshAfterApplyRules();
+        }
+        return { ok: true, report };
+      } catch (e) {
+        if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
+        if (e instanceof ApiError && e.status === 409) return { ok: false, clash: e };
+        refreshAfterApplyRules();
+        return { ok: false, clash: null };
+      } finally {
+        applyRulesInFlight.current = false;
+      }
+    }, [patchTransactions, patchRules, refreshAfterApplyRules]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
@@ -1838,9 +1910,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
