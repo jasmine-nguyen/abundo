@@ -465,8 +465,15 @@ export interface AppContext {
   alerts: boolean;
   // ephemeral ui
   sheet: Sheet; toast: string | null;
+  // WHIT-544: a one-shot intent set by the "File by shop" leftover sheet so the Transactions
+  // screen can jump the user into the Uncategorized tab's multi-select. Consumed-and-cleared
+  // by that screen; the sheet can't reach its local selection state directly.
+  pendingUncategorizedSelect: boolean;
   // actions
   setSheet: (s: Sheet) => void;
+  // WHIT-544: arm / disarm the multi-select jump above.
+  requestUncategorizedSelect: () => void;
+  clearUncategorizedSelect: () => void;
   // WHIT-277: read/write a pop-up sheet's draft so it survives a Face ID lock (cleared on close + sign-out).
   readSheetDraft: (key: string) => unknown;
   writeSheetDraft: (key: string, value: unknown) => void;
@@ -656,6 +663,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // WHIT-544: one-shot flag bridging the "File by shop" sheet → the Uncategorized tab's
+  // multi-select (the sheet can't touch that screen's local selection state).
+  const [pendingUncategorizedSelect, setPendingUncategorizedSelect] = useState(false);
   // WHIT-277: a half-typed pop-up sheet's draft must survive a Face ID lock. The sheet UNMOUNTS
   // while locked — Overlays' WHIT-268 privacy shield returns null (a native Modal would otherwise
   // float above the lock cover) — so its local useState is destroyed. Stash the draft here in the
@@ -765,6 +775,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSheet(null);
     sheetDrafts.current.clear(); // WHIT-277: wipe any half-typed draft on sign-out (WHIT-268 parity)
     setToast(null);
+    setPendingUncategorizedSelect(false); // WHIT-544: don't carry a pending jump into the next session
     setAiInsights(null);
     setAiInsightsError(false);
     setAiInsightsLoading(false);
@@ -775,6 +786,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3400);
   }, []);
+
+  // WHIT-544: arm / disarm the one-shot Uncategorized-tab multi-select jump.
+  const requestUncategorizedSelect = useCallback(() => setPendingUncategorizedSelect(true), []);
+  const clearUncategorizedSelect = useCallback(() => setPendingUncategorizedSelect(false), []);
 
   // Persist a changed pay cycle: optimistically write the ['payCycle'] cache the
   // migrated sheet + Settings row read, PUT the full cycle (the server replaces both
@@ -1926,12 +1941,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppContext>(() => ({
     alerts,
     sheet, toast,
+    pendingUncategorizedSelect,
     setSheet, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast,
+    requestUncategorizedSelect, clearUncategorizedSelect,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
     openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

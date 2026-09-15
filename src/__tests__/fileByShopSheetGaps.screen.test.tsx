@@ -43,6 +43,7 @@ const CATEGORIES = [
 const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
+  requestUncategorizedSelect: jest.fn(),  // WHIT-544: the "Select to file" jump
   previewFileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
   fileByShop: jest.fn<(g: UncategorizedMerchantGroup, c: string) => Promise<FileByShopOutcome>>(),
 };
@@ -272,5 +273,24 @@ describe('the shop list — background states', () => {
     mountList({ merchants: merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }), isLoading: false, isError: false });
     expect(screen.getByText('Every shop is filed')).toBeTruthy();
     expect(screen.getByText(/last 3 unfiled charges are one-offs/)).toBeTruthy();
+  });
+
+  // WHIT-544 — [A28d] with one-offs present, the "Select to file" button shows and, when tapped,
+  // arms the Uncategorized multi-select jump AND closes the sheet. Fail-on-revert: drop the button
+  // and getByTestId throws; drop either onPress call and its assertion fails.
+  it('[A28d] "Select to file" arms the multi-select jump and closes the sheet', () => {
+    mountList({ merchants: merchants([], { unfiled: 3, ungrouped: { count: 3, samples: ['ONE OFF'] } }), isLoading: false, isError: false });
+    fireEvent.press(screen.getByTestId('file-by-shop-one-offs'));
+    expect(fns.requestUncategorizedSelect).toHaveBeenCalledTimes(1);
+    expect(fns.setSheet).toHaveBeenCalledWith(null);
+  });
+
+  // WHIT-544 — [A28e] the negative gate: no one-offs → no "Select to file" button (only "Done").
+  // Fail-on-revert: drop the `oneOffCount > 0` guard on the button and it renders here.
+  it('[A28e] hides "Select to file" when there are no one-offs left', () => {
+    mountList({ merchants: merchants([], { unfiled: 0, ungrouped: { count: 0, samples: [] } }), isLoading: false, isError: false });
+    expect(screen.getByText(/nothing left to file by shop/)).toBeTruthy();
+    expect(screen.queryByTestId('file-by-shop-one-offs')).toBeNull();
+    expect(screen.getByTestId('file-by-shop-close')).toBeTruthy();
   });
 });
