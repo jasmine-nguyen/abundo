@@ -88,18 +88,23 @@ class RuleRepository:
         operator: str,
         value: str,
         category_id: str,
+        budget_excluded: bool = False,
     ) -> tuple[dict, bool]:
         """Create a rule, returning ``(rule, created)``.
 
         The id is derived from the text, so re-creating the SAME text is idempotent:
-          - same text + same category -> the existing row, ``created=False``.
-          - same text + DIFFERENT category -> ``RuleClashError`` (the two would fight over the
-            same charges, and a conflicted charge is never filed).
+          - same text + same category + same budget_excluded -> the existing row, ``created=False``.
+          - same text but a DIFFERENT category OR a different budget_excluded -> ``RuleClashError``
+            (the two would fight over the same charges — over the category, or over whether the
+            charge is kept out of the budget — and a conflicted charge is never filed).
         The ``attribute_not_exists(pk)`` condition is the dedup guard — dropping it would let the
-        second create silently overwrite the first.
+        second create silently overwrite the first. ``budget_excluded`` is deliberately NOT part of
+        the id (the id stays the rule TEXT, rule_engine.rule_id_for), so it can only ever collide,
+        never mint a second row for the same text.
         """
         rule_id = rule_engine.rule_id_for(field, operator, value)
-        item = _rule_row(rule_id, field, operator, value, category_id, created_at=_now())
+        item = _rule_row(rule_id, field, operator, value, category_id,
+                         budget_excluded=budget_excluded, created_at=_now())
         try:
             self._get_table().put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
             return item, True
@@ -111,7 +116,8 @@ class RuleRepository:
                 # The row vanished between the refused put and the read — a genuine race,
                 # not a clash. Surface it as a DB fault rather than inventing a clash.
                 handle_database_error(e, "create rule")
-            if existing.get("category_id") != category_id:
+            if (existing.get("category_id") != category_id
+                    or bool(existing.get("budget_excluded")) != budget_excluded):
                 raise RuleClashError(existing)
             return existing, False
 
@@ -122,12 +128,14 @@ class RuleRepository:
         operator: str,
         value: str,
         category_id: str,
+        budget_excluded: bool = False,
     ) -> dict:
         """Edit a rule, returning the updated rule.
 
         Editing the text changes the id (the id IS the text), so this is not always an in-place
         update:
-          - id unchanged (a category change, or a case-/spacing-only value edit) -> update in place.
+          - id unchanged (a category change, a budget_excluded toggle, or a case-/spacing-only value
+            edit) -> update in place.
           - id changed onto ANOTHER existing rule's text -> ``RuleClashError`` (merging two rules
             into one on an edit is ambiguous; refuse it).
           - id changed onto free text -> write the new row (carrying the old row's created_at), then
@@ -142,15 +150,16 @@ class RuleRepository:
         now = _now()
 
         if new_id == rule_id:
-            self._update_in_place(rule_id, value, category_id, now)
-            return {**existing, "value": value, "category_id": category_id, "updated_at": now}
+            self._update_in_place(rule_id, value, category_id, budget_excluded, now)
+            return {**existing, "value": value, "category_id": category_id,
+                    "budget_excluded": budget_excluded, "updated_at": now}
 
         clash = self.get_rule(new_id)
         if clash is not None:
             raise RuleClashError(clash)
 
         new_row = _rule_row(
-            new_id, field, operator, value, category_id,
+            new_id, field, operator, value, category_id, budget_excluded=budget_excluded,
             created_at=existing.get("created_at", now), updated_at=now,
         )
         try:
@@ -176,11 +185,12 @@ class RuleRepository:
                 "exist until the edit is retried", new_id, rule_id)
         return new_row
 
-    def _update_in_place(self, rule_id: str, value: str, category_id: str, now: str) -> None:
+    def _update_in_place(self, rule_id: str, value: str, category_id: str,
+                         budget_excluded: bool, now: str) -> None:
         # `value` is a DynamoDB reserved word, so every name goes through an alias.
-        names = {"#v": "value", "#c": "category_id", "#u": "updated_at"}
-        values = {":v": value, ":c": category_id, ":u": now}
-        assignments = ["#v = :v", "#c = :c", "#u = :u"]
+        names = {"#v": "value", "#c": "category_id", "#b": "budget_excluded", "#u": "updated_at"}
+        values = {":v": value, ":c": category_id, ":b": budget_excluded, ":u": now}
+        assignments = ["#v = :v", "#c = :c", "#b = :b", "#u = :u"]
         try:
             self._get_table().update_item(
                 Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
@@ -209,11 +219,18 @@ class RuleRepository:
 
 
 def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: str,
-              *, created_at: str, updated_at: Optional[str] = None) -> dict:
-    """Build a rule item. Every rule is app-authored, so ``source`` is always "app"."""
+              *, budget_excluded: bool = False, created_at: str,
+              updated_at: Optional[str] = None) -> dict:
+    """Build a rule item. Every rule is app-authored, so ``source`` is always "app".
+
+    ``budget_excluded`` is stored ALWAYS as a bool (not sparse): a rule row is never budget-summed,
+    so the transaction sparse-false convention doesn't apply, and an always-present flag keeps the
+    in-place update and the clash compare uniform. An old row written before this field reads back
+    ``.get("budget_excluded", False)``.
+    """
     return {
         "pk": _PK, "sk": f"RULE#{rule_id}", "id": rule_id,
         "field": field, "operator": operator, "value": value,
-        "category_id": category_id, "source": "app",
+        "category_id": category_id, "budget_excluded": budget_excluded, "source": "app",
         "created_at": created_at, "updated_at": updated_at or created_at,
     }

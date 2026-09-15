@@ -883,7 +883,7 @@ describe('WHIT-538 — Back from the add-rule preview restores the form draft', 
 
     // Submit → the REAL write() transitions to the confirm step (not saveManualRule).
     await act(async () => { fireEvent.press(screen.getByText('Add rule')); });
-    expect(ctx.sheet).toEqual({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'subs' });
+    expect(ctx.sheet).toEqual({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'subs', budgetExcluded: false });
     // The preview resolved and the confirm card (with its Back button) is on screen.
     expect(screen.getByTestId('add-rule-confirm-back')).toBeTruthy();
     expect(screen.queryByPlaceholderText(RULE_INPUT)).toBeNull(); // form is gone, confirm is up

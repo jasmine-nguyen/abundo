@@ -36,6 +36,7 @@ def _to_engine_rule(row: dict) -> dict:
         "operator": row.get("operator"),
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
+        "budgetExcluded": bool(row.get("budget_excluded")),
     }
 
 
@@ -83,8 +84,13 @@ def file_charge(charge: dict, applicable_rules: list, is_unfiled) -> None:
         return
     charge["category"] = resolved
     charge["counts_to_budget"] = counts_to_budget(charge["account_id"], resolved)
+    winning_rule = applicable_rules[matched_indices[0]]
     # Remember which rule filed it (WHIT-536), so history can always explain the category.
-    charge["filed_by_rule"] = applicable_rules[matched_indices[0]]["id"]
+    charge["filed_by_rule"] = winning_rule["id"]
+    # Keep it out of the budget too, if the winning rule says so (WHIT-558). Only ever SET True —
+    # never write False — so the charge stays sparse and a later hand-set exclusion is untouched.
+    if winning_rule.get("budgetExcluded"):
+        charge["budget_excluded"] = True
     logger.info(
         "rule ingest: filed %s -> %s (rule %s)",
         charge.get("transaction_id"), resolved, applicable_rules[matched_indices[0]]["id"],

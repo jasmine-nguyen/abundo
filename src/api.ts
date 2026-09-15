@@ -132,6 +132,8 @@ export interface EnrichmentRule {
   operator: "contains" | "equals";
   value: string;
   categoryId: string;
+  /** When true, a charge this rule files is also kept out of the budget (WHIT-558). */
+  budgetExcluded?: boolean;
 }
 
 /**
@@ -294,6 +296,8 @@ export interface CreatedRule {
   operator: string;
   value: string;
   categoryId: string;
+  /** When true, charges this rule files are kept out of the budget (WHIT-558). */
+  budgetExcluded?: boolean;
 }
 
 /**
@@ -314,7 +318,7 @@ export interface CreatedRule {
  */
 export async function applyRulesToUncategorized(
   dryRun: boolean,
-  rule?: { value: string; categoryId: string },
+  rule?: { value: string; categoryId: string; budgetExcluded?: boolean },
 ): Promise<ApplyRulesResult> {
   const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules`, {
     method: "POST",
@@ -1135,7 +1139,7 @@ export async function listEnrichments(): Promise<EnrichmentRule[]> {
  * @throws If the response status is not OK (400 on an invalid rule, 401 on auth).
  */
 export async function createEnrichment(
-  input: { value: string; categoryId: string; field?: string; operator?: string }
+  input: { value: string; categoryId: string; field?: string; operator?: string; budgetExcluded?: boolean }
 ): Promise<EnrichmentRule> {
   const response = await apiFetch(`${API_BASE}/rules`, {
     method: "POST",
@@ -1158,7 +1162,7 @@ export async function createEnrichment(
  */
 export async function updateEnrichment(
   id: string,
-  input: { value: string; categoryId: string; field?: string; operator?: string }
+  input: { value: string; categoryId: string; field?: string; operator?: string; budgetExcluded?: boolean }
 ): Promise<EnrichmentRule> {
   const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
     method: "PUT",

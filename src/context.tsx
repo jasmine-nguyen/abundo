@@ -106,7 +106,7 @@ export interface Transaction {
 // server facts (default description/contains for app-authored rules) so a rule
 // surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
 // is client-only (server rules load as isNew:false).
-export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; }
+export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; }
 // WHIT-539: the line shown when a rule auto-filed a charge but there is no readable
 // merchant text to name it — a rule that matched on category type (its pattern is a raw
 // enum, not human text), or a stamp whose rule was since renamed/deleted (a dangling id).
@@ -152,7 +152,7 @@ export type Sheet =
   // the rule would file (with samples) before Save, then either mints + files them in one call or
   // saves the rule for future charges only. Carries the typed pattern + chosen category captured
   // from the add-rule form. Reuses the FileByShopConfirm flow (dry-run preview, then commit).
-  | { mode: 'addRuleConfirm'; pattern: string; categoryId: string }
+  | { mode: 'addRuleConfirm'; pattern: string; categoryId: string; budgetExcluded: boolean }
   | null;
 
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
@@ -504,8 +504,8 @@ export interface AppContext {
   // WHIT-538: preview / file the stored charges a NOT-YET-CREATED rule would catch. previewNewRule
   // dry-runs the typed pattern (writes nothing); fileNewRule mints the rule AND files those charges
   // in one call. Both return the same 409-clash-aware outcome as the file-by-shop pair.
-  previewNewRule: (pattern: string, categoryId: string) => Promise<FileByShopOutcome>;
-  fileNewRule: (pattern: string, categoryId: string) => Promise<FileByShopOutcome>;
+  previewNewRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>;
+  fileNewRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
@@ -515,8 +515,8 @@ export interface AppContext {
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
-  saveManualRule: (pattern: string, categoryId: string) => Promise<void>;
-  updateRule: (id: string, pattern: string, categoryId: string) => Promise<void>;
+  saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<void>;
+  updateRule: (id: string, pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<void>;
   saveGoal: (editId: string | null, body: GoalWriteBody) => Promise<boolean>;
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
@@ -600,7 +600,7 @@ export function spreadPreview(amount: number, cycles: number): { cushion: number
 // (what the list renders); loaded rules are never "new". Module-level + exported
 // (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
 export function toRule(raw: EnrichmentRule): Rule {
-  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator };
+  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded };
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -1380,10 +1380,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // show how many stored charges it would file. Mirrors previewFileByShop but takes the raw pattern
   // (a shop passes its precomputed rulePattern; here the user typed it). Writes nothing.
   const previewNewRule = useCallback(
-    async (pattern: string, categoryId: string): Promise<FileByShopOutcome> => {
+    async (pattern: string, categoryId: string, budgetExcluded = false): Promise<FileByShopOutcome> => {
       const epoch = sessionEpoch.current;
       try {
-        const report = await applyRulesToUncategorized(true, { value: pattern.trim(), categoryId });
+        const report = await applyRulesToUncategorized(true, { value: pattern.trim(), categoryId, budgetExcluded });
         if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
         return { ok: true, report };
       } catch (e) {
@@ -1399,12 +1399,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // so the badge survives. When the server omits createdRule (older build), fall back to the normal
   // refresh so the rule still lands in the list on refetch.
   const fileNewRule = useCallback(
-    async (pattern: string, categoryId: string): Promise<FileByShopOutcome> => {
+    async (pattern: string, categoryId: string, budgetExcluded = false): Promise<FileByShopOutcome> => {
       if (applyRulesInFlight.current) return { ok: false, clash: null };
       applyRulesInFlight.current = true;
       const epoch = sessionEpoch.current;
       try {
-        const report = await applyRulesToUncategorized(false, { value: pattern.trim(), categoryId });
+        const report = await applyRulesToUncategorized(false, { value: pattern.trim(), categoryId, budgetExcluded });
         if (epoch !== sessionEpoch.current) return { ok: false, clash: null };
 
         const filedBy = new Map(report.filed.map((row) => [row.id, row.category]));
@@ -1814,14 +1814,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
   // not upper-cased) so both rule-creation paths POST a consistent `value`.
-  const saveManualRule = useCallback(async (pattern: string, categoryId: string) => {
+  const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false) => {
     const value = pattern.trim();
     if (!value || !categoryId) return;
     // WHIT-192: the toast copy needs the category name — sourced from the ['categories']
     // query cache the screens read, not a store useState.
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
     const tempRuleId = 'tmp-' + Date.now();
-    patchRules((prev) => [{ id: tempRuleId, pattern: value, categoryId, isNew: true }, ...prev]);
+    patchRules((prev) => [{ id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded }, ...prev]);
     setSheet(null);
     if (c) showToast(`Rule added — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
@@ -1830,7 +1830,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // charge changes category here, so ['uncategorizedCount'] is intentionally NOT invalidated. Any later
     // bank-side re-tag arrives via the webhook, already covered by the count's staleTime + pull-to-refresh.
     try {
-      const created = await createEnrichment({ value, categoryId });
+      const created = await createEnrichment({ value, categoryId, budgetExcluded });
       // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
       // false for the load path, where rules genuinely aren't new).
       patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
@@ -1843,14 +1843,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
   // failure. The rule's field/operator are preserved (passed through) so a
   // non-default rule isn't silently reset to description/contains.
-  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string) => {
+  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false) => {
     const value = pattern.trim();
     if (!value || !categoryId) return;
     // WHIT-192: source the `before` snapshot (for rollback) + the category name from the
     // query caches the screens read, not store useStates.
     const before = queryClient.getQueryData<Rule[]>(['rules'])?.find((r) => r.id === id);
     if (!before) return;
-    patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, pattern: value, categoryId } : r)));
+    patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, pattern: value, categoryId, budgetExcluded } : r)));
     setSheet(null);
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
     if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
@@ -1861,7 +1861,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // reads DO move — refresh the count, feed, budgets and merchant groups. `skipRules` leaves the
     // ['rules'] cache alone: the optimistic edit above already patched this rule's row.
     try {
-      const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator });
+      const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator, budgetExcluded });
       patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
       if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
     } catch {

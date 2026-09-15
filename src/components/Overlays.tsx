@@ -411,14 +411,15 @@ function AddRuleSheet() {
   // share one object state so a single draft round-trips; the alias setters keep the JSX below
   // byte-identical and bail on an unchanged value, so re-selecting the same category writes nothing.
   // The aliases take a plain value (not a functional updater) — every call site passes one.
-  const [draft, setDraft] = useSheetDraft<{ pattern: string; categoryId: string | null }>(
+  const [draft, setDraft] = useSheetDraft<{ pattern: string; categoryId: string | null; budgetExcluded: boolean }>(
     draftKey,
     (stored) => ({
       pattern: stored?.pattern ?? editing?.pattern ?? '',
       categoryId: stored?.categoryId ?? editing?.categoryId ?? null,
+      budgetExcluded: stored?.budgetExcluded ?? editing?.budgetExcluded ?? false,
     }),
   );
-  const { pattern, categoryId } = draft;
+  const { pattern, categoryId, budgetExcluded } = draft;
   const setPattern = (value: string) => setDraft((prev) => {
     if (prev.pattern === value) return prev;
     return { ...prev, pattern: value };
@@ -426,6 +427,10 @@ function AddRuleSheet() {
   const setCategoryId = (value: string | null) => setDraft((prev) => {
     if (prev.categoryId === value) return prev;
     return { ...prev, categoryId: value };
+  });
+  const setBudgetExcluded = (value: boolean) => setDraft((prev) => {
+    if (prev.budgetExcluded === value) return prev;
+    return { ...prev, budgetExcluded: value };
   });
   // WHIT-284: once the category list has LOADED, drop a restored/prefilled categoryId that no longer
   // exists (its category was deleted — e.g. on another device while locked). This clears the (invisible)
@@ -456,14 +461,14 @@ function AddRuleSheet() {
   // Doesn't fire after submit (submit sets `conflict` without changing pattern/categoryId).
   useEffect(() => { if (conflict) setConflict(null); }, [pattern, categoryId]);
   const write = () => {
-    if (editing) { s.updateRule(editing.id, pattern, categoryId!); return; }
+    if (editing) { s.updateRule(editing.id, pattern, categoryId!, budgetExcluded); return; }
     // WHIT-538: a NEW rule goes through the preview/confirm step, which owns the save itself —
     // either "mint + file the matching stored charges" or "rule only" (the old saveManualRule
     // path). Pass the trimmed pattern so the preview and the eventual write see the value the
     // form validated. Editing an existing rule never re-files history, so it stays a direct save.
     // The draft survives this transition (drafts clear only when the sheet closes), so "Back"
     // from the confirm step restores the typed pattern + category.
-    s.setSheet({ mode: 'addRuleConfirm', pattern: pattern.trim(), categoryId: categoryId! });
+    s.setSheet({ mode: 'addRuleConfirm', pattern: pattern.trim(), categoryId: categoryId!, budgetExcluded });
   };
   const submit = () => {
     if (!canSave) return;
@@ -475,7 +480,7 @@ function AddRuleSheet() {
   // Replace is only offered when CREATING (editing is undefined): retarget the existing rule to
   // the new pattern + category, so exactly one row survives. On the edit path a "replace" would
   // change the OTHER rule and strand the one being edited, so edit clashes are warn + cancel only.
-  const replace = () => { if (conflict) s.updateRule(conflict.existing.id, pattern, categoryId!); };
+  const replace = () => { if (conflict) s.updateRule(conflict.existing.id, pattern, categoryId!, budgetExcluded); };
   const existingName = conflict ? (category(conflict.existing.categoryId)?.name ?? 'another category') : '';
   const conflictBlock = () => {
     if (!conflict) return null;
@@ -543,6 +548,15 @@ function AddRuleSheet() {
           })}
         </View>
       </ScrollView>
+      <Pressable
+        onPress={() => setBudgetExcluded(!budgetExcluded)}
+        testID="rule-budget-excluded"
+        style={[styles.cycleRow, { marginTop: 14, backgroundColor: budgetExcluded ? tint(C.accentAlt, 0.14) : C.cardAlt, borderColor: budgetExcluded ? C.accent : C.hairline }]}
+      >
+        <Text style={[styles.cycleText, { color: budgetExcluded ? C.accentSofter : C.textMid }]}>Keep out of budget</Text>
+        {budgetExcluded && <Glyph name="check" size={18} color={C.accent} />}
+      </Pressable>
+      <Text style={styles.cycleSectionHint}>Charges this rule files won’t count toward your budget — for reimbursed spend or transfers.</Text>
       {conflict ? conflictBlock() : (
         <Pressable
           onPress={submit}
@@ -1394,11 +1408,12 @@ function AddRuleConfirmSheet() {
   const { category } = useCategories();
   const pattern = sheet?.mode === 'addRuleConfirm' ? sheet.pattern : null;
   const categoryId = sheet?.mode === 'addRuleConfirm' ? sheet.categoryId : null;
+  const budgetExcluded = sheet?.mode === 'addRuleConfirm' ? !!sheet.budgetExcluded : false;
   // Non-null-asserted: the guard below returns null before the shell mounts, so `preview` is never
   // invoked while pattern/categoryId are null. useCallback must precede the early return (hooks rule).
   const preview = useCallback(
-    () => previewNewRule(pattern!, categoryId!),
-    [previewNewRule, pattern, categoryId],
+    () => previewNewRule(pattern!, categoryId!, budgetExcluded),
+    [previewNewRule, pattern, categoryId, budgetExcluded],
   );
 
   if (!pattern || !categoryId) return null;
@@ -1408,7 +1423,7 @@ function AddRuleConfirmSheet() {
   return (
     <ConfirmPreviewSheet
       preview={preview}
-      commit={() => fileNewRule(pattern, categoryId)}
+      commit={() => fileNewRule(pattern, categoryId, budgetExcluded)}
       filedToast={(report) => showToast(addRuleFiledMessage(report, chosen.name))}
       onNavigate={() => setSheet(null)}
       clashToast={() => showToast(`You already have a rule for “${pattern}”.`)}
@@ -1418,7 +1433,7 @@ function AddRuleConfirmSheet() {
         // sheet and shows its own toast. Routed through runCommit (the shell's commit latch, shared
         // with the primary File action) so a same-frame double-tap can't fire both and mint two rules
         // (WHIT-241): saveManualRule has no latch of its own.
-        const onRuleOnly = () => runCommit(() => saveManualRule(pattern, categoryId));
+        const onRuleOnly = () => runCommit(() => saveManualRule(pattern, categoryId, budgetExcluded));
         const goBack = () => setSheet({ mode: 'addrule' });
 
         if (phase === 'loading' || phase === 'confirming') {

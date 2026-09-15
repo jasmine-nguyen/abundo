@@ -386,6 +386,34 @@ def test_conditional_write_reads_the_row_back_only_when_the_write_is_refused(rep
     assert repo._table.consistent_reads == [True]
 
 
+def test_conditional_write_sets_budget_excluded_alongside_the_category(repo):
+    # WHIT-558: a rule that keeps the charge out of budget sets the flag in the SAME write as the
+    # category. FAIL-ON-REVERT: drop the `if budget_excluded:` clause and the flag never lands.
+    key = _seed(repo)
+    assert repo.update_transaction_category_if_unchanged(
+        *key, "groceries", None, budget_excluded=True) == ("written", "groceries")
+    assert repo._table.store[key]["category"] == "groceries"
+    assert repo._table.store[key]["budget_excluded"] is True
+
+
+def test_conditional_write_omits_budget_excluded_when_false(repo):
+    # Sparse storage: a rule that does NOT exclude must not write budget_excluded at all (a stored
+    # False would read back as an exclusion). FAIL-ON-REVERT: write it unconditionally and this reddens.
+    key = _seed(repo)
+    repo.update_transaction_category_if_unchanged(*key, "groceries", None, budget_excluded=False)
+    assert "budget_excluded" not in repo._table.store[key]
+
+
+def test_conditional_write_does_not_exclude_a_row_the_user_filed_mid_run(repo):
+    # THE "user hand wins" GUARANTEE at the write: the scan saw the row unfiled and the rule wants to
+    # exclude it, but the user filed it in the gap. The whole conditional write is refused, so
+    # budget_excluded can NEVER land on a row the tap-wins guard rejected.
+    key = _seed(repo, "coffee")
+    assert repo.update_transaction_category_if_unchanged(
+        *key, "eatingout", None, budget_excluded=True) == ("changed", "coffee")
+    assert "budget_excluded" not in repo._table.store[key]
+
+
 def test_conditional_write_maps_other_database_error(repo, client_error, database_error, monkeypatch):
     def boom(**kwargs):
         raise client_error("InternalServerError")

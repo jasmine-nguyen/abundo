@@ -18,7 +18,7 @@ from _feed_fakes import FakeCategoryRepo
 from _rule_fakes import FakeRuleRepo
 
 
-_CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId"}
+_CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded"}
 
 
 def _legacy_row(value="COLES", category_id="groceries"):
