@@ -48,3 +48,22 @@ def test_order_independent_id_dedups_the_same_conditions(rule_repo):
                                            conditions=reversed_conditions, logic="all")
     assert created is False                       # same canonical id -> dedup, not a second row
     assert len(rule_repo.list_rules()) == 1
+
+
+def test_in_place_edit_of_a_multi_rule_preserves_its_conditions(rule_repo):
+    # An in-place edit (same conditions -> same id, only the target category changes) must RE-WRITE
+    # conditions/logic on the row, not drop them. FAIL-ON-REVERT: if _update_in_place stopped SETting
+    # conditions on a multi rule, the stored row would keep the OLD category but could lose its
+    # conditions, and decide's multi-rule guard would then read a lying (single-shaped) row.
+    created, _ = rule_repo.create_rule("merchant", "contains", "uber", "transport",
+                                       conditions=_conditions(), logic="all")
+    rule_id = created["id"]
+    updated = rule_repo.update_rule(rule_id, "merchant", "contains", "uber", "groceries",
+                                    conditions=_conditions(), logic="all")
+    assert updated["id"] == rule_id                         # in place: id unchanged
+    assert updated["category_id"] == "groceries"
+    assert updated["conditions"] == _conditions() and updated["logic"] == "all"
+    stored = rule_repo.get_rule(rule_id)
+    assert stored["conditions"] == _conditions() and stored["logic"] == "all"
+    assert stored["category_id"] == "groceries"
+    assert len(rule_repo.list_rules()) == 1                 # still one row, not a new id

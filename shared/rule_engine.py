@@ -212,13 +212,32 @@ def _conditions_of(rule: dict) -> tuple[list[dict], str]:
 
 def rule_matches(rule: dict, transaction: dict) -> bool:
     """Does this rule match this stored charge? Evaluates each condition and combines them by the
-    rule's logic — "all" (AND) or "any" (OR); a single-condition rule reads as one condition. An
-    empty condition list matches nothing. Unknown field/operator -> that condition is False."""
+    rule's logic — "all" (AND) or "any" (OR); a single-condition rule reads as one condition.
+    Unknown field/operator -> that condition is False.
+
+    `_conditions_of` always yields a non-empty list (a rule with no `conditions` reads as its one
+    flat condition), so the empty-list guard below is only defensive — no stored rule reaches it."""
     conditions, logic = _conditions_of(rule)
     if not conditions:
         return False
     combine = all if logic == "all" else any
     return combine(_condition_matches(condition, transaction) for condition in conditions)
+
+
+def reevaluatable_after_fill(rule: dict) -> bool:
+    """After this rule FILED a charge, can re-running ``rule_matches`` on that charge be trusted?
+
+    Yes, UNLESS the rule matches on the ``category`` field: filing overwrites the charge's category
+    with the rule's target, so a ``category equals X`` condition would no longer match its own
+    already-filed charge and re-evaluation would wrongly un-file it. Every other field the engine
+    reads (description, merchant, amount, direction, account) is untouched by filing, so a match on
+    those stays authoritative. Reads the same ``conditions``/flat shape as ``rule_matches``, so a
+    single-condition rule and each condition of a multi rule (WHIT-541) are both checked — the whole
+    reason a multi ``merchant AND amount`` rule is safe to re-evaluate even though only its FIRST
+    flat field is ``merchant``. Used by the WHIT-540 edit re-file to decide between re-evaluating and
+    a blind re-file."""
+    conditions, _logic = _conditions_of(rule)
+    return all(condition.get("field") != "category" for condition in conditions)
 
 
 def existing_at_least_as_specific(rule: dict, field: str, operator: str, value: str) -> bool:

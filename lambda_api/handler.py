@@ -124,7 +124,7 @@ from merchant_groups import (
 from milestones import mint_migration_markers
 from rule_engine import (
     plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
-    rule_id_for)
+    rule_id_for, reevaluatable_after_fill)
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -1233,15 +1233,17 @@ def _refile_rule_touched(
     transactions = _fetch_windowed_transactions(transaction_repo, None, None)
     touched = [t for t in transactions if t.get("filed_by_rule") == old_rule_id]
 
-    # Re-evaluate (drop charges the edit no longer covers) ONLY for a description rule whose value
-    # materially changed. A category rule can't be re-evaluated (filing overwrote the category it
-    # matched on), and an in-place edit (same id) keeps the match set — both just re-file every
-    # owned charge to the new target. Testing `== "description"` (not `!= "category"`) means any
-    # other/legacy field also takes the safe re-file path rather than a match that would clear it.
+    # Re-evaluate (drop charges the edit no longer covers) when the edit MATERIALLY changed the rule
+    # (its id moved) AND re-running rule_matches on an already-filed charge can be trusted. That trust
+    # holds for any rule that does NOT match on the `category` field (filing overwrote that field, so
+    # a `category equals` condition would no longer match its own charge) — reevaluatable_after_fill
+    # reads the full conditions, so a multi `merchant AND amount` rule re-evaluates correctly even
+    # though its first flat field is `merchant`, not `description` (WHIT-561). An in-place edit (same
+    # id) keeps the match set, so it takes the blind re-file path regardless.
     reevaluate = (
         edited_rule is not None
-        and edited_rule.get("field") == "description"
         and edited_rule.get("id") != old_rule_id
+        and reevaluatable_after_fill(edited_rule)
     )
 
     attempted = 0
