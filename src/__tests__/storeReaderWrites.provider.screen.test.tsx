@@ -139,7 +139,7 @@ describe('WHIT-203 live observers (QueryClientProvider + real reader hooks)', ()
     mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
     mockApi.fetchLoanFacts.mockResolvedValue({ original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null });
     mockApi.fetchRepayment.mockResolvedValue({ amount: null, date: null, principal: null, interest: null });
-    mockApi.listEnrichments.mockResolvedValue([]);
+    mockApi.listRules.mockResolvedValue([]);
   });
 
   const wrapper = ({ children }: { children: React.ReactNode }) => (

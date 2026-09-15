@@ -38,7 +38,7 @@ it('does not eager-fetch any server data on mount (the query layer loads on dema
   expect(mockApi.fetchHomeLoan).not.toHaveBeenCalled();
   expect(mockApi.fetchLoanFacts).not.toHaveBeenCalled();
   expect(mockApi.fetchRepayment).not.toHaveBeenCalled();
-  expect(mockApi.listEnrichments).not.toHaveBeenCalled();
+  expect(mockApi.listRules).not.toHaveBeenCalled();
 
   // …and the provider populated no server-data cache of its own.
   expect(queryClient.getQueryData(['transactions'])).toBeUndefined();

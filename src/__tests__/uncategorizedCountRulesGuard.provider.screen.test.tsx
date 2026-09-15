@@ -26,7 +26,7 @@ const mockApi = api as jest.Mocked<typeof api>;
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' };
-const ENRICHMENT = { id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as const;
+const RULE_RECORD = { id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as const;
 
 function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
   return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
@@ -34,9 +34,9 @@ function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.createEnrichment.mockResolvedValue({ ...ENRICHMENT } as never);
-  mockApi.updateEnrichment.mockResolvedValue({ ...ENRICHMENT } as never);
-  mockApi.deleteEnrichment.mockResolvedValue({ id: 'r1' } as never);
+  mockApi.createRule.mockResolvedValue({ ...RULE_RECORD } as never);
+  mockApi.updateRule.mockResolvedValue({ ...RULE_RECORD } as never);
+  mockApi.deleteRule.mockResolvedValue({ id: 'r1' } as never);
 });
 afterEach(() => { queryClient.clear(); });
 

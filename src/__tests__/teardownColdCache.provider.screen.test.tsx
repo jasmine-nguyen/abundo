@@ -78,7 +78,7 @@ it('applyCategory(all) no-ops on a cold cache — mints no rule, sends no batch'
 
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createEnrichment).not.toHaveBeenCalled();
+  expect(mockApi.createRule).not.toHaveBeenCalled();
   expect(mockApi.setTransactionCategories).not.toHaveBeenCalled();
   expect(result.current.sheet).toBeNull();
 });
@@ -134,13 +134,13 @@ it('saveBudget "updated" copy scans EVERY budget window, not just the current on
 it('saveManualRule writes the rule but shows no toast when [categories] is cold', async () => {
   // Rules cache warm (so patchRules has something to patch), categories cold → the name lookup
   // returns undefined and the success toast is skipped, but the rule is still created + cached.
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
   queryClient.setQueryData<Rule[]>(['rules'], []);
   const result = mount(); // NO categories seed
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
   expect(queryClient.getQueryData<Rule[]>(['rules'])?.[0]).toMatchObject({ id: 'e9', isNew: true });
   expect(result.current.toast).toBeNull(); // cold taxonomy → no "Rule added — …" toast, no crash
 });
@@ -148,12 +148,12 @@ it('saveManualRule writes the rule but shows no toast when [categories] is cold'
 // --- updateRule: cold ['rules'] cache means no `before` snapshot → bail, no server write -------
 
 it('updateRule bails on a cold [rules] cache — no PUT, no toast, cache untouched', async () => {
-  mockApi.updateEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'X', categoryId: 'subs' });
+  mockApi.updateRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'X', categoryId: 'subs' });
   const result = mount(); // NO rules seed
 
   await act(async () => { await result.current.updateRule('e1', 'DISNEY', 'subs'); });
 
-  expect(mockApi.updateEnrichment).not.toHaveBeenCalled(); // no `before` → guarded early return
+  expect(mockApi.updateRule).not.toHaveBeenCalled(); // no `before` → guarded early return
   // Assert the early return fired, not merely that the (undefined before.field) PUT threw:
   // removing the `if (!before) return` guard surfaces the caught-error toast + touches nothing,
   // so a null toast + absent cache only hold when the guard short-circuits.

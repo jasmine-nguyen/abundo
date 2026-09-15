@@ -19,7 +19,7 @@ const mockApi = api as jest.Mocked<typeof api>;
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const RULE: Rule = { id: 'r1', pattern: 'COLES', categoryId: 'groceries', isNew: false, field: 'description', operator: 'contains' };
-const ENRICHMENT = { id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as const;
+const RULE_RECORD = { id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as const;
 
 function invalidatedKeys(spy: ReturnType<typeof jest.spyOn>) {
   return spy.mock.calls.map((c: unknown[]) => (c[0] as { queryKey: string[] }).queryKey[0]);
@@ -30,9 +30,9 @@ function rulesCache() {
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.createEnrichment.mockResolvedValue({ ...ENRICHMENT } as never);
-  mockApi.updateEnrichment.mockResolvedValue({ ...ENRICHMENT } as never);
-  mockApi.deleteEnrichment.mockResolvedValue({ id: 'r1' } as never);
+  mockApi.createRule.mockResolvedValue({ ...RULE_RECORD } as never);
+  mockApi.updateRule.mockResolvedValue({ ...RULE_RECORD } as never);
+  mockApi.deleteRule.mockResolvedValue({ id: 'r1' } as never);
 });
 afterEach(() => { queryClient.clear(); });
 
@@ -49,7 +49,7 @@ it('updateRule that FAILS does not refresh the count and rolls the edit back', a
   // so a reject skips it. FAIL-ON-REVERT: move refreshAfterApplyRules into a finally / before the
   // await and 'uncategorizedCount' appears here.
   const result = mount();
-  mockApi.updateEnrichment.mockRejectedValueOnce(new Error('500') as never);
+  mockApi.updateRule.mockRejectedValueOnce(new Error('500') as never);
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.updateRule('r1', 'COLES SYDNEY', 'groceries'); });
@@ -64,7 +64,7 @@ it('deleteRule that FAILS does not refresh the count and reinserts the rule', as
   // FAIL-ON-REVERT: move the refresh out of the try and a failed delete refetches an unchanged
   // count (and the reinserted rule races a ['rules'] refetch).
   const result = mount();
-  mockApi.deleteEnrichment.mockRejectedValueOnce(new Error('500') as never);
+  mockApi.deleteRule.mockRejectedValueOnce(new Error('500') as never);
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.deleteRule('r1'); });
@@ -79,7 +79,7 @@ it('a successful text edit swaps the rule id in the cache and skipRules leaves i
   // id; skipRules must NOT invalidate ['rules'], or a refetch would race that swap. FAIL-ON-REVERT:
   // drop skipRules and 'rules' shows up in the invalidated keys.
   const result = mount();
-  mockApi.updateEnrichment.mockResolvedValueOnce({
+  mockApi.updateRule.mockResolvedValueOnce({
     id: 'coles-sydney', value: 'COLES SYDNEY', categoryId: 'groceries',
     field: 'description', operator: 'contains',
   } as never);

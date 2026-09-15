@@ -1,4 +1,4 @@
-// WHIT-160/162 — the BARE-HEADER DELETE call sites (deleteCategory / deleteEnrichment)
+// WHIT-160/162 — the BARE-HEADER DELETE call sites (deleteCategory / deleteRule)
 // must also flow through buildHeaders so they carry the Cognito ID token and throw
 // (never send an empty Bearer) when there's no session. authHeaders.logic.test.ts
 // proves the GET + the two spread POST sites; these two DELETEs pass NO extra
@@ -8,7 +8,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
 
 import { getAuthToken } from '../auth';
-import { deleteCategory, deleteEnrichment } from '../api';
+import { deleteCategory, deleteRule } from '../api';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
 let fetchMock: jest.Mock;
@@ -36,15 +36,15 @@ describe('deleteCategory (bare-header DELETE)', () => {
   });
 });
 
-describe('deleteEnrichment (bare-header DELETE)', () => {
+describe('deleteRule (bare-header DELETE)', () => {
   it('carries the Cognito ID token', async () => {
     mockGetAuthToken.mockResolvedValue('COGNITO_ID_TOKEN');
-    await deleteEnrichment('e1');
+    await deleteRule('e1');
     expect(lastHeaders().Authorization).toBe('Bearer COGNITO_ID_TOKEN');
   });
   it('throws "Not signed in" with no session', async () => {
     mockGetAuthToken.mockResolvedValue(undefined);
-    await expect(deleteEnrichment('e1')).rejects.toThrow('Not signed in');
+    await expect(deleteRule('e1')).rejects.toThrow('Not signed in');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

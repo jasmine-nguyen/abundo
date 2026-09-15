@@ -151,7 +151,7 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
   // description happens to contain the "COLES" token but whose merchant_name is
   // Woolworths → must be EXCLUDED by the same-merchant gate, proving the sweep
   // keys on merchant_name, not a loose description match.
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed([
     { ...TXN, transaction_id: 't1' },
     { ...TXN, transaction_id: 't2' },
@@ -166,7 +166,7 @@ it('applyCategory(all) files every same-merchant charge — and ONLY that mercha
   expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);
   expect(mockApi.setTransactionCategory).not.toHaveBeenCalled();
   expect(mockApi.setTransactionCategories.mock.calls[0][0].map((u) => u.id).sort()).toEqual(['t1', 't2']);
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
 
   const byId = Object.fromEntries(txns().map((t) => [t.transaction_id, t.category]));
   expect(byId.t1).toBe('groceries');
@@ -182,7 +182,7 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
   // FOOD_AND_DRINK), NOT null. The sweep must catch those too — a plain
   // category==null check silently skipped them (the KKV bug). A charge already
   // filed under a real user category must NOT be swept (don't overwrite it).
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed([
     { ...TXN, transaction_id: 't1', category: null },              // tapped origin (null)
     { ...TXN, transaction_id: 't2', category: 'FOOD_AND_DRINK' },  // raw enum, same merchant -> MUST sweep
@@ -204,7 +204,7 @@ it('applyCategory(all) sweeps same-merchant charges tagged with a RAW bank categ
 it('applyCategory(all) rolls back only the ids the batch reports as not saved', async () => {
   // Partial server success: the batch files t1 but reports t2 not_found. Only t2
   // reverts (to uncategorised); t1 stays filed. Rollback keys BY ID, not position.
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   mockApi.setTransactionCategories.mockResolvedValue({
     results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }],
   });
@@ -224,7 +224,7 @@ it('applyCategory(all) rolls back only the ids the batch reports as not saved', 
 });
 
 it('applyCategory(all) rolls back ALL ids when the whole batch call rejects', async () => {
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   mockApi.setTransactionCategories.mockRejectedValue(new Error('network'));
   seed([
     { ...TXN, transaction_id: 't1', category: null },
@@ -244,14 +244,14 @@ it('applyCategory(all) rolls back ALL ids when the whole batch call rejects', as
 it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule rolled back) when the rule fails but the batch succeeds', async () => {
   // WHIT-292 gap: the rule-only-failure branch (context.tsx "Filed, but could not save the
   // rule…") had ZERO coverage, and it's exactly the branch the batch/rule extraction moves.
-  // createEnrichment rejects while every charge saves -> charges stay filed, the optimistic
+  // createRule rejects while every charge saves -> charges stay filed, the optimistic
   // rule is removed, and the toast is the rule-only copy (NOT the generic "some categories").
   // Also locks the concurrency structure: the rule is ISSUED before the batch, and its
   // rejection never floats as an unhandled rejection (allSettled attached synchronously).
   const unhandled: unknown[] = [];
   const onUnhandled = (reason: unknown) => unhandled.push(reason);
   process.on('unhandledRejection', onUnhandled);
-  mockApi.createEnrichment.mockRejectedValue(new Error('banksync down'));
+  mockApi.createRule.mockRejectedValue(new Error('banksync down'));
   mockApi.setTransactionCategories.mockResolvedValue({
     results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }],
   });
@@ -270,8 +270,8 @@ it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule 
   expect(rules()).toHaveLength(0);                   // optimistic rule rolled back (rule failed)
   expect(result.current.toast).toBe('Filed, but could not save the rule for future charges.');
   // Concurrency: the rule is issued BEFORE the batch (prior call order), matching the old
-  // single Promise.allSettled([createEnrichment, ...chunks]).
-  expect(mockApi.createEnrichment.mock.invocationCallOrder[0])
+  // single Promise.allSettled([createRule, ...chunks]).
+  expect(mockApi.createRule.mock.invocationCallOrder[0])
     .toBeLessThan(mockApi.setTransactionCategories.mock.invocationCallOrder[0]);
 
   process.off('unhandledRejection', onUnhandled);
@@ -279,7 +279,7 @@ it('applyCategory(all) toasts rule-only failure (charges filed, optimistic rule 
 });
 
 it('applyCategory(all) invalidates budgets + breakdown when at least one charge saved', async () => {
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   // Partial: t1 saved, t2 not — still >=1 saved, so spend changed -> a refresh MUST fire.
   mockApi.setTransactionCategories.mockResolvedValue({
     results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'not_found' }],
@@ -302,7 +302,7 @@ it('applyCategory(all) invalidates budgets + breakdown when at least one charge 
 });
 
 it('applyCategory(all) does NOT invalidate budgets/breakdown when the whole batch fails', async () => {
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   mockApi.setTransactionCategories.mockRejectedValue(new Error('network'));
   seed([
     { ...TXN, transaction_id: 't1', category: null },
@@ -324,7 +324,7 @@ it('applyCategory(all) files the tapped charge even when the sweep is empty (nev
   // WHIT-324: the tapped charge doesn't count to a budget, so the merchant SWEEP is empty — but
   // the charge the user explicitly picked is still filed. The batch therefore carries exactly
   // that one id, and is never sent empty (a real server 400s on {updates:[]}; the E1 guard).
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed([{ ...TXN, transaction_id: 't1', category: null, counts_to_budget: false }]);
   const result = mount();
 
@@ -339,7 +339,7 @@ it('applyCategory(all) splits a >100 sweep into chunks of 100 (WHIT-70 chunking)
   // 150 same-merchant uncategorised charges -> the sweep must send TWO batch calls
   // (100 + 50), not one oversized request the server would 400.
   const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   seed(many);
   const result = mount();
 
@@ -355,7 +355,7 @@ it('applyCategory(all) splits a >100 sweep into chunks of 100 (WHIT-70 chunking)
 
 it('applyCategory(all) reverts only the failed chunk when one of several rejects', async () => {
   const many = Array.from({ length: 150 }, (_, i) => ({ ...TXN, transaction_id: `t${i}`, category: null }));
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   // First chunk (100) succeeds; second chunk (50) rejects -> only those 50 revert.
   mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) => {
     if (updates.length !== 100) throw new Error('chunk failed');

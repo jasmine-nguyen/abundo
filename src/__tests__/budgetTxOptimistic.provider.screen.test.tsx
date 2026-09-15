@@ -250,7 +250,7 @@ describe('budgetTxInvalidation (folded)', () => {
 
   beforeEach(() => {
     queryClient.clear();
-    mockApi.createEnrichment.mockResolvedValue({ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+    mockApi.createRule.mockResolvedValue({ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
     mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'groceries' });
   });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore spies (config has clearMocks, not restoreMocks)
@@ -365,7 +365,7 @@ describe('budgetTxRefileOptimistic (folded)', () => {
     mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'transport' });
     mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) =>
       ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
-    mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'CAFE', categoryId: 'transport' });
+    mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'CAFE', categoryId: 'transport' });
   });
   afterEach(() => { queryClient.clear(); }); // clear the singleton's gcTime timers
 
@@ -666,7 +666,7 @@ describe('budgetTxRefileParentSubtree (folded)', () => {
     mockApi.setTransactionCategory.mockResolvedValue({ transaction_id: 't1', category: 'transport' });
     mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) =>
       ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
-    mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'CAFE', categoryId: 'transport' });
+    mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'CAFE', categoryId: 'transport' });
   });
   afterEach(() => { queryClient.clear(); jest.restoreAllMocks(); }); // clear the singleton + restore the [NOOP] setQueryData spy
 

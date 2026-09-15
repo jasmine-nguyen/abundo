@@ -39,7 +39,7 @@ const mockApi = api as jest.Mocked<typeof api>;
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 // A deferred promise whose resolve/reject the test controls, so the writer is genuinely
-// in-flight when the session ends (mirrors [A10]'s createEnrichment control).
+// in-flight when the session ends (mirrors [A10]'s createRule control).
 function deferred<T>() {
   let resolve!: (v: T) => void;
   let reject!: (e?: unknown) => void;
@@ -240,7 +240,7 @@ describe('WHIT-271 — a writer settling after sign-out re-seats nothing and sho
     // account A's rule into B's list. Only the epoch guard drops the write.
     queryClient.setQueryData(['rules'], [{ id: 'rA', pattern: 'COLES', categoryId: 'cA', isNew: false }]);
     const d = deferred<{ id: string }>();
-    mockApi.deleteEnrichment.mockImplementation(() => d.promise as never);
+    mockApi.deleteRule.mockImplementation(() => d.promise as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -321,7 +321,7 @@ describe('WHIT-271 gaps — toast-only writers settling AFTER sign-out show no t
   it('[A-DR] deleteRule FAILURE after sign-out shows no toast and does not resurrect the rule', async () => {
     queryClient.setQueryData(['rules'], [{ id: 'r1', pattern: 'COLES', categoryId: 'c1', isNew: false }]);
     const d = deferred<{ id: string }>();
-    mockApi.deleteEnrichment.mockImplementation(() => d.promise as never);
+    mockApi.deleteRule.mockImplementation(() => d.promise as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -338,7 +338,7 @@ describe('WHIT-271 gaps — toast-only writers settling AFTER sign-out show no t
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     queryClient.setQueryData(['rules'], []);
     const d = deferred<unknown>();
-    mockApi.createEnrichment.mockImplementation(() => d.promise as never);
+    mockApi.createRule.mockImplementation(() => d.promise as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -354,7 +354,7 @@ describe('WHIT-271 gaps — toast-only writers settling AFTER sign-out show no t
     queryClient.setQueryData(['rules'], [{ id: 'r1', pattern: 'OLD', categoryId: 'c1', isNew: false, field: 'description', operator: 'contains' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
     const d = deferred<unknown>();
-    mockApi.updateEnrichment.mockImplementation(() => d.promise as never);
+    mockApi.updateRule.mockImplementation(() => d.promise as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -383,7 +383,7 @@ describe('WHIT-271 gaps — toast-only writers settling AFTER sign-out show no t
   it('[A-ACALL] applyCategory("all") FAILURE after sign-out shows no toast (the :701 leak)', async () => {
     seedTransactionsCache(queryClient, [{ transaction_id: 't1', category: null, counts_to_budget: true, description: 'COLES' }]);
     queryClient.setQueryData(['categories'], [cat('c1', 'Groceries')]);
-    mockApi.createEnrichment.mockResolvedValue({ id: 'r1', value: 'COLES', categoryId: 'c1' } as never);
+    mockApi.createRule.mockResolvedValue({ id: 'r1', value: 'COLES', categoryId: 'c1' } as never);
     const dBatch = deferred<unknown>();
     mockApi.setTransactionCategories.mockImplementation(() => dBatch.promise as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
@@ -420,7 +420,7 @@ describe('WHIT-271 gaps — in-session control: the guard does not break the hap
   it('[A-CTRL-DR] deleteRule failure (no sign-out) toasts AND reinserts the rule', async () => {
     jest.useFakeTimers();
     queryClient.setQueryData(['rules'], [{ id: 'r1', pattern: 'COLES', categoryId: 'c1', isNew: false }]);
-    mockApi.deleteEnrichment.mockRejectedValue(new Error('network') as never);
+    mockApi.deleteRule.mockRejectedValue(new Error('network') as never);
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     await act(async () => { await result.current.deleteRule('r1'); await flush(); });

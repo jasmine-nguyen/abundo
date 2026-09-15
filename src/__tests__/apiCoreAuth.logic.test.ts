@@ -14,8 +14,8 @@ import {
   fetchTransactions, fetchCategories, createCategory, updateCategory, deleteCategory,
   fetchBudgets, fetchBreakdown, setTransactionCategory, setTransactionCategories,
   fetchPayCycle, setPayCycle, setBudget, deleteBudget, fetchHomeLoan, fetchRepayment,
-  fetchLoanFacts, setLoanFacts, listEnrichments, createEnrichment, updateEnrichment,
-  deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice,
+  fetchLoanFacts, setLoanFacts, listRules, createRule, updateRule,
+  deleteRule, fetchAiInsights, generateAiInsights, registerDevice,
 } from '../api';
 
 const mockGetAuthToken = getAuthToken as jest.MockedFunction<typeof getAuthToken>;
@@ -53,10 +53,10 @@ const ALL_FETCHERS: [string, () => Promise<unknown>][] = [
   ['fetchRepayment', () => fetchRepayment()],
   ['fetchLoanFacts', () => fetchLoanFacts()],
   ['setLoanFacts', () => setLoanFacts({ original: 1, homeValue: 1, lvr: 0.1, ratePct: 1, baseRepay: 1, extra: 0 })],
-  ['listEnrichments', () => listEnrichments()],
-  ['createEnrichment', () => createEnrichment({ value: 'X', categoryId: 'c' })],
-  ['updateEnrichment', () => updateEnrichment('e1', { value: 'X', categoryId: 'c' })],
-  ['deleteEnrichment', () => deleteEnrichment('e1')],
+  ['listRules', () => listRules()],
+  ['createRule', () => createRule({ value: 'X', categoryId: 'c' })],
+  ['updateRule', () => updateRule('e1', { value: 'X', categoryId: 'c' })],
+  ['deleteRule', () => deleteRule('e1')],
   ['fetchAiInsights', () => fetchAiInsights()],
   ['generateAiInsights', () => generateAiInsights()],
   ['registerDevice', () => registerDevice('ExpoPushToken[x]')],

@@ -1,9 +1,9 @@
-// Logic test: the enrichments api-client functions. Verifies the Authorization
+// Logic test: the rules api-client functions. Verifies the Authorization
 // header (Bearer + Cognito ID token, getAuthToken mocked), the request
 // body/method/url shape (incl. encodeURIComponent + server-default field/operator
 // omission), and the not-OK throw. fetch is mocked; no network. (WHIT-52, WHIT-162)
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { listEnrichments, createEnrichment, updateEnrichment, deleteEnrichment, fetchAiInsights, generateAiInsights, registerDevice, fetchCategoryTransactions, fetchTransactionsFeed, fetchUncategorizedFeed } from '../api';
+import { listRules, createRule, updateRule, deleteRule, fetchAiInsights, generateAiInsights, registerDevice, fetchCategoryTransactions, fetchTransactionsFeed, fetchUncategorizedFeed } from '../api';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
 import { getAuthToken } from '../auth';
@@ -29,10 +29,10 @@ beforeEach(() => {
 
 const RULE = { id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' };
 
-describe('listEnrichments', () => {
+describe('listRules', () => {
   it('GETs /rules with the Bearer token and returns the rules', async () => {
     fetchMock.mockReturnValue(okJson([RULE]));
-    const out = await listEnrichments();
+    const out = await listRules();
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
     expect(url).toBe(`${API}/rules`);
     expect(opts.headers.Authorization).toBe('Bearer test-token');
@@ -84,10 +84,10 @@ describe('AI insights (WHIT-104)', () => {
   });
 });
 
-describe('createEnrichment', () => {
+describe('createRule', () => {
   it('POSTs value+categoryId only (server applies field/operator defaults)', async () => {
     fetchMock.mockReturnValue(okJson(RULE));
-    await createEnrichment({ value: 'NETFLIX', categoryId: 'subs' });
+    await createRule({ value: 'NETFLIX', categoryId: 'subs' });
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
     expect(url).toBe(`${API}/rules`);
     expect(opts.method).toBe('POST');
@@ -98,16 +98,16 @@ describe('createEnrichment', () => {
 
   it('passes field/operator through when supplied', async () => {
     fetchMock.mockReturnValue(okJson(RULE));
-    await createEnrichment({ value: 'FOOD_AND_DRINK', categoryId: 'eatingout', field: 'category', operator: 'equals' });
+    await createRule({ value: 'FOOD_AND_DRINK', categoryId: 'eatingout', field: 'category', operator: 'equals' });
     const [, opts] = fetchMock.mock.calls[0] as [string, any];
     expect(JSON.parse(opts.body)).toEqual({ value: 'FOOD_AND_DRINK', categoryId: 'eatingout', field: 'category', operator: 'equals' });
   });
 });
 
-describe('updateEnrichment', () => {
+describe('updateRule', () => {
   it('PUTs /rules/{id} url-encoded, with body + Bearer token', async () => {
     fetchMock.mockReturnValue(okJson(RULE));
-    await updateEnrichment('a/b', { value: 'NETFLIX', categoryId: 'subs' });
+    await updateRule('a/b', { value: 'NETFLIX', categoryId: 'subs' });
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
     expect(url).toBe(`${API}/rules/a%2Fb`);
     expect(opts.method).toBe('PUT');
@@ -118,21 +118,21 @@ describe('updateEnrichment', () => {
 
   it('passes field/operator through when supplied', async () => {
     fetchMock.mockReturnValue(okJson(RULE));
-    await updateEnrichment('e1', { value: 'X', categoryId: 'c', field: 'category', operator: 'equals' });
+    await updateRule('e1', { value: 'X', categoryId: 'c', field: 'category', operator: 'equals' });
     const [, opts] = fetchMock.mock.calls[0] as [string, any];
     expect(JSON.parse(opts.body)).toEqual({ value: 'X', categoryId: 'c', field: 'category', operator: 'equals' });
   });
 
   it('throws on a not-OK response (e.g. 404 unknown id)', async () => {
     fetchMock.mockReturnValue(notOk(404));
-    await expect(updateEnrichment('gone', { value: 'X', categoryId: 'c' })).rejects.toThrow('API error: 404');
+    await expect(updateRule('gone', { value: 'X', categoryId: 'c' })).rejects.toThrow('API error: 404');
   });
 });
 
-describe('deleteEnrichment', () => {
+describe('deleteRule', () => {
   it('DELETEs /rules/{id} url-encoded, with the Bearer token', async () => {
     fetchMock.mockReturnValue(okJson({ id: 'a/b' }));
-    await deleteEnrichment('a/b');
+    await deleteRule('a/b');
     const [url, opts] = fetchMock.mock.calls[0] as [string, any];
     expect(url).toBe(`${API}/rules/a%2Fb`);
     expect(opts.method).toBe('DELETE');
@@ -168,13 +168,13 @@ describe('registerDevice', () => {
 describe('auth + error handling', () => {
   it('throws (never calls fetch) when there is no Cognito session', async () => {
     mockGetAuthToken.mockResolvedValue(undefined);
-    await expect(listEnrichments()).rejects.toThrow('Not signed in');
+    await expect(listRules()).rejects.toThrow('Not signed in');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('throws on a not-OK response', async () => {
     fetchMock.mockReturnValue(notOk(401));
-    await expect(createEnrichment({ value: 'X', categoryId: 'c' })).rejects.toThrow('API error: 401');
+    await expect(createRule({ value: 'X', categoryId: 'c' })).rejects.toThrow('API error: 401');
   });
 });
 

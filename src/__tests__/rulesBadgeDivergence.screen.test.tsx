@@ -18,8 +18,8 @@ import type { Rule } from '../context';
 
 jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
 
-const mockListEnrichments = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({ listEnrichments: () => mockListEnrichments() }));
+const mockListRules = jest.fn<() => Promise<unknown>>();
+jest.mock('../api', () => ({ listRules: () => mockListRules() }));
 
 import { useRulesScreenData, rulesKey } from '../queries';
 
@@ -28,7 +28,7 @@ const SERVER = [{ id: 'e1', field: 'description', operator: 'contains', value: '
 // The cache after an optimistic create: the same rule but flagged NEW (badge showing).
 const CACHED_NEW: Rule = { id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: true, field: 'description', operator: 'contains' };
 
-beforeEach(() => { mockListEnrichments.mockReset().mockResolvedValue(SERVER); });
+beforeEach(() => { mockListRules.mockReset().mockResolvedValue(SERVER); });
 
 it('a rules-query refetch remaps via selectRules and CLEARS the NEW badge (isNew:true → false)', async () => {
   // staleTime Infinity so mounting over the seeded cache does NOT auto-refetch — we control
@@ -48,5 +48,5 @@ it('a rules-query refetch remaps via selectRules and CLEARS the NEW badge (isNew
 
   // The refetch remapped the server payload → isNew:false → the "NEW" badge is gone.
   await waitFor(() => expect(result.current.rules[0].isNew).toBe(false));
-  expect(mockListEnrichments).toHaveBeenCalledTimes(1);
+  expect(mockListRules).toHaveBeenCalledTimes(1);
 });

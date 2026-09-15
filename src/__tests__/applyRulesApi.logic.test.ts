@@ -112,7 +112,7 @@ describe('applyRulesToUncategorized', () => {
 
   it('throws the generic API error on a not-OK response', async () => {
     (globalThis as unknown as { fetch: unknown }).fetch =
-      jest.fn(async () => ({ ok: false, status: 502, json: async () => ({ error: 'enrichment service unavailable' }) }));
+      jest.fn(async () => ({ ok: false, status: 502, json: async () => ({ error: 'rules service unavailable' }) }));
 
     await expect(applyRulesToUncategorized(true)).rejects.toThrow('API error: 502');
   });

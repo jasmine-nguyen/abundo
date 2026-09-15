@@ -103,7 +103,7 @@ describe('deleteRule — cache evicted mid-flight is a NO-OP (asymmetry vs delet
     // against an evicted (undefined) cache is silently skipped — the failed rule delete is NOT
     // restored. deleteGoal recovers here; deleteRule does not. Flagged in the critique.
     let reject!: (e: Error) => void;
-    mockApi.deleteEnrichment.mockImplementation(() => new Promise((_res, rej) => { reject = rej; }));
+    mockApi.deleteRule.mockImplementation(() => new Promise((_res, rej) => { reject = rej; }));
     queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2')]);
     const result = mountAppContext();
     let p!: Promise<void>;
@@ -145,7 +145,7 @@ describe('deleteGoal — two failed deletes at once restore order', () => {
 });
 
 describe('deleteRule — two failed deletes at once restore order', () => {
-  beforeEach(() => { mockApi.deleteEnrichment.mockRejectedValue(new Error('API error: 500')); });
+  beforeEach(() => { mockApi.deleteRule.mockRejectedValue(new Error('API error: 500')); });
 
   it('a GAP pair (r1 + r3) rolls back to [r1,r2,r3,r4]', async () => {
     queryClient.setQueryData<Rule[]>(['rules'], [rule('r1'), rule('r2'), rule('r3'), rule('r4')]);
