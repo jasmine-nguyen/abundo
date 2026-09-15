@@ -116,7 +116,7 @@ from merchant_groups import (
     rule_value_is_safe,
 )
 from milestones import mint_migration_markers
-from rule_engine import plan_rule_application, is_unfiled_category, overlaps, rule_matches
+from rule_engine import plan_rule_application, is_unfiled_category, overlaps, rule_matches, rule_id_for
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -1445,6 +1445,24 @@ def _rule_that_would_fight(rules: list[dict], inline_rule: dict) -> dict | None:
     return None
 
 
+def _rule_that_would_clash_on_exclusion(rules: list[dict], inline_rule: dict) -> dict | None:
+    """An existing rule with the SAME text and category as the inline one but a DIFFERENT
+    `budgetExcluded` (WHIT-558), or None.
+
+    Such a rule agrees on category, so `_rule_that_would_fight` waves it through — but `create_rule`
+    refuses it (two same-text rows can't disagree on the exclusion any more than on the category).
+    Detecting it in the pre-scan keeps the dry-run preview honest: without this, the preview promises
+    "will file N" and the commit then 409s. The existing-rule's flag is edited from the Rules screen.
+    """
+    inline_id = rule_id_for(DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR, inline_rule["value"])
+    for rule in rules:
+        if (rule.get("id") == inline_id
+                and rule.get("categoryId") == inline_rule["categoryId"]
+                and bool(rule.get("budgetExcluded")) != inline_rule["budgetExcluded"]):
+            return rule
+    return None
+
+
 def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | None, dict | None]:
     """The optional `rule` on an apply-rules request — the one this run should mint and sweep
     with (WHIT-516), so making a rule for a merchant and filing that merchant's existing charges
@@ -1603,7 +1621,8 @@ def apply_rules_to_uncategorized(
         rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
 
     if inline_rule is not None:
-        clash = _rule_that_would_fight(rules, inline_rule)
+        clash = (_rule_that_would_fight(rules, inline_rule)
+                 or _rule_that_would_clash_on_exclusion(rules, inline_rule))
         if clash is not None:
             return _rule_clash_response(clash)
         # File ONLY this shop (WHIT-523). The clash check above has already read the user's
@@ -1639,9 +1658,10 @@ def apply_rules_to_uncategorized(
                 budget_excluded=inline_rule["budgetExcluded"],
             )
         except RuleClashError as e:
-            # A rule with this exact text but a different category appeared between the pre-scan
-            # clash check and here (a race). create_rule is safe to run twice, so same-text +
-            # same-category returns the existing rule (created=False) rather than raising.
+            # A rule with this exact text but a different category (or a different budget_excluded,
+            # WHIT-558) appeared between the pre-scan clash checks and here (a race). create_rule is
+            # safe to run twice, so same-text + same-category + same-flag returns the existing rule
+            # (created=False) rather than raising.
             return _rule_clash_response(_rule_to_client(e.existing))
         except DatabaseError:
             return _json_response(500, {"error": "could not save your rule"})

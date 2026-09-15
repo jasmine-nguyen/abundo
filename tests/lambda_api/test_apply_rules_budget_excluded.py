@@ -85,6 +85,24 @@ def test_user_hand_set_exclusion_survives_a_non_excluding_rule(handler):
     assert row["budget_excluded"] is True
 
 
+def test_inline_mint_clashing_only_on_the_flag_is_refused_in_the_preview(handler):
+    # WHIT-558 coherence: an existing "ALDI -> groceries" (not excluded); the inline mint wants
+    # "ALDI -> groceries + keep out of budget". create_rule would clash on the differing flag, so the
+    # DRY-RUN preview must report the clash too — else it promises a filing the commit then 409s.
+    # FAIL-ON-REVERT: drop `_rule_that_would_clash_on_exclusion` from the pre-scan and the preview
+    # returns 200 "would file" instead of 409. The existing rule carries its REAL derived id (no
+    # hardcoded id) so the pre-scan's id match is exercised.
+    existing = {"field": "description", "operator": "contains", "value": "ALDI",
+                "category_id": "groceries", "budget_excluded": False}
+    repo = WritableFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "t1",
+                                             description="ALDI 1", category=None)]})
+    body = {"dryRun": True,
+            "rule": {"value": "ALDI", "categoryId": "groceries", "budgetExcluded": True}}
+    resp, _ = _call(handler, repo, [existing], body)
+    assert resp["statusCode"] == 409
+    assert repo.writes == []
+
+
 def test_inline_rule_rejects_a_non_boolean_budget_excluded(handler):
     repo = WritableFeedRepo({SPENDING: [_row(SPENDING, "2026-07-01", "t1",
                                              description="ALDI 1", category=None)]})
