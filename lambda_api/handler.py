@@ -1615,8 +1615,9 @@ def apply_rules_to_uncategorized(
     # target).
     rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
     # Each rule's "keep out of budget" action (WHIT-558), captured against the WHOLE store before the
-    # inline path narrows `rules` — so the sweep can set budget_excluded from the winning rule. The
-    # inline "file this shop" mint carries no flag, and its plan rule_id is None, so it never excludes.
+    # inline path narrows `rules` — so the plain sweep can set budget_excluded from the winning rule.
+    # The inline "file this shop" path doesn't consult this map: its plan rule_id is None, so it reads
+    # the flag straight off `inline_rule` below.
     rule_excluded_by_id = {
         rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
 

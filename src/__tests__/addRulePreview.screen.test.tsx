@@ -31,8 +31,8 @@ const fns = {
   setSheet: jest.fn(),
   showToast: jest.fn(),
   saveManualRule: jest.fn(),
-  previewNewRule: jest.fn<(pattern: string, categoryId: string) => Promise<FileByShopOutcome>>(),
-  fileNewRule: jest.fn<(pattern: string, categoryId: string) => Promise<FileByShopOutcome>>(),
+  previewNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
+  fileNewRule: jest.fn<(pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>>(),
 };
 
 const CATEGORIES = [
