@@ -1214,16 +1214,18 @@ def _refile_rule_touched(
     WHIT-536), so these are exactly the rule-owned, user-untouched charges — and:
 
       * delete (edited_rule is None) — clears each back to unfiled (undo).
-      * edit whose id changed (a material value edit) on a DESCRIPTION rule — re-evaluates: a charge
-        that still matches the new value is re-filed to the new target and re-keyed to the new id;
-        one that no longer matches is cleared.
+      * edit whose id changed (a material edit) AND the rule does NOT match on `category`
+        (reevaluatable_after_fill) — re-evaluates: a charge that still matches the new rule is
+        re-filed to the new target and re-keyed to the new id; one that no longer matches is cleared.
+        Filing leaves every other condition field (description/merchant/amount/direction/account)
+        untouched, so `rule_matches` stays authoritative — a multi `merchant AND amount` rule
+        re-evaluates correctly even though its first flat field isn't `description` (WHIT-561).
       * every other edit — re-files every owned charge to the new target WITHOUT re-evaluating. Two
-        cases fall here. (1) A CATEGORY rule: filing overwrote the very category a `category equals`
-        rule matched on, so re-running it would never match and would wrongly un-file a correctly
-        filed charge — the app only ever authors description rules, so this is rare. (2) An IN-PLACE
-        edit (same id: a target-only or cosmetic value change): the match set is unchanged, so
-        re-evaluating could only spuriously drop a charge (e.g. `_normalise` doesn't collapse the
-        whitespace `fold` does), never legitimately.
+        cases fall here. (1) A CATEGORY rule (a condition matches on `category`): filing overwrote the
+        very category that condition matched on, so re-running it would never match and would wrongly
+        un-file a correctly filed charge. (2) An IN-PLACE edit (same id: a target-only or cosmetic
+        value change): the match set is unchanged, so re-evaluating could only spuriously drop a
+        charge (e.g. `_normalise` doesn't collapse the whitespace `fold` does), never legitimately.
 
     Bounded by the SAME write cap / time budget as apply_rules_to_uncategorized, sharing `started`.
     A tail beyond the budget is finished by that route's reconcile sweep on the next "Apply my
