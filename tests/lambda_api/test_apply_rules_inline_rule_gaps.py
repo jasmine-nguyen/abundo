@@ -236,9 +236,10 @@ def test_a_NESTED_existing_rule_is_refused_too_not_just_an_exact_repeat(handler)
     # two rules disagree about is never filed, on this run or any future one.
     #
     # Minting would file the 2 plain COLES charges, strand the EXPRESS one for good, and return
-    # 200 with a bare `conflicted: 1`. The screen said 3. Nesting is exactly what the merchant
-    # screen warns about in `alsoCatches`, so it is the shape to catch, not an exotic one.
-    # Refusing is the honest answer until the more specific rule can win (WHIT-518).
+    # 200 with a bare `conflicted: 1`. The screen said 3. This is the inline-MORE-GENERAL direction:
+    # the sweep narrows to the inline COLES rule, which would steamroll the existing COLES EXPRESS
+    # rule's charge into groceries. WHIT-518 keeps refusing THIS direction (the reverse — a more
+    # specific inline — is now allowed; see the next test).
     offered = json.loads(
         handler.get_uncategorized_merchants(_nested_coles_repo(), FakeCategoryRepo(("groceries", "petrol")))["body"])["groups"]
     group = next(g for g in offered if g["rulePattern"] == "COLES")
@@ -257,10 +258,13 @@ def test_a_NESTED_existing_rule_is_refused_too_not_just_an_exact_repeat(handler)
     assert rule_repo.minted == [] and repo.writes == []
 
 
-def test_the_nesting_check_catches_it_from_either_side(handler):
-    # [A6] The same overlap the other way round: an existing rule on the WIDER text, an inline
-    # rule on the narrower one. Checking containment in one direction only would leave half the
-    # nested cases open.
+def test_a_more_specific_inline_rule_is_now_allowed(handler):
+    # [WHIT-518] The reverse of the case above: an existing rule on the WIDER text ("COLES" ->
+    # groceries), an inline rule on the NARROWER one ("COLES EXPRESS" -> petrol). This is the
+    # inline-MORE-SPECIFIC direction, now ALLOWED — the narrowed sweep files only the inline rule's
+    # OWN charges (e1), and a full "Apply my rules" would resolve the same charge to petrol by
+    # most-specific-wins, so the two paths agree. The plain COLES charges (t1, t2) are untouched.
+    # FAIL-ON-REVERT: a symmetric (two-way) clash check would 409 this and file nothing.
     repo = _nested_coles_repo()
     existing = [{"id": "r1", "field": "description", "operator": "contains", "value": "COLES",
                  "categoryId": "groceries"}]
@@ -268,9 +272,66 @@ def test_the_nesting_check_catches_it_from_either_side(handler):
         handler, repo, {"dryRun": False, "rule": {"value": "COLES EXPRESS", "categoryId": "petrol"}},
         existing=existing)
 
+    assert response["statusCode"] == 200
+    assert [filed["id"] for filed in body["filed"]] == ["e1"]      # only the EXPRESS charge
+    assert body["byCategory"] == {"petrol": 1}
+    assert len(rule_repo.minted) == 1 and rule_repo.minted[0]["value"] == "COLES EXPRESS"
+    assert [write[1] for write in repo.writes] == ["TXN#e1"]        # t1/t2 never touched
+
+
+def test_a_nested_more_general_inline_is_refused_on_the_PREVIEW_too(handler):
+    # The more-general inline clash must 409 on the PREVIEW (dryRun), not only on commit — otherwise
+    # the screen shows a number then fails when she taps. FAIL-ON-REVERT: an allow-all predicate -> 200.
+    repo = _nested_coles_repo()
+    existing = [{"id": "r1", "field": "description", "operator": "contains",
+                 "value": "COLES EXPRESS", "categoryId": "petrol"}]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": True, "rule": {"value": "COLES", "categoryId": "groceries"}},
+        existing=existing)
+
     assert response["statusCode"] == 409
     assert body["existingRule"]["id"] == "r1"
     assert rule_repo.minted == [] and repo.writes == []
+
+
+def test_inline_between_a_more_general_and_a_more_specific_existing_rule_is_refused(handler):
+    # A three-rule store the per-rule loop must judge one at a time: the existing "COLES" is MORE
+    # GENERAL than the inline "COLES EXPRESS" (safe to be more specific than), but the existing
+    # "COLES EXPRESS STATION" is MORE SPECIFIC than it and would be steamrolled. Minting must 409,
+    # naming the specific rule — not be waved through just because one existing rule is safe.
+    repo = _nested_coles_repo()
+    existing = [
+        {"id": "r-coles", "field": "description", "operator": "contains",
+         "value": "COLES", "categoryId": "groceries"},
+        {"id": "r-station", "field": "description", "operator": "contains",
+         "value": "COLES EXPRESS STATION", "categoryId": "coffee"},
+    ]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES EXPRESS", "categoryId": "petrol"}},
+        existing=existing, categories=("groceries", "petrol", "coffee"))
+
+    assert response["statusCode"] == 409
+    assert body["existingRule"]["id"] == "r-station"
+    assert rule_repo.minted == [] and repo.writes == []
+
+
+def test_inline_specific_files_a_co_occurring_charge_a_full_sweep_would_conflict(handler):
+    # BEHAVIOUR-LOCK (acceptable-for-scope, pre-dates WHIT-518): an unrelated existing "5512" ->
+    # utilities rule is NOT nested with the inline "COLES EXPRESS", so it is not a clash and minting
+    # is allowed. The narrowed "file this shop" sweep runs ONLY the inline rule (WHIT-523), so
+    # "COLES EXPRESS 5512" is filed to petrol — even though a full "Apply my rules" would leave it
+    # conflicted. Locked as CURRENT behaviour so any future change is a conscious one.
+    repo = _nested_coles_repo()
+    existing = [{"id": "r-5512", "field": "description", "operator": "contains",
+                 "value": "5512", "categoryId": "utilities"}]
+    response, body, rule_repo = _apply(
+        handler, repo, {"dryRun": False, "rule": {"value": "COLES EXPRESS", "categoryId": "petrol"}},
+        existing=existing, categories=("groceries", "petrol", "utilities"))
+
+    assert response["statusCode"] == 200
+    assert [filed["id"] for filed in body["filed"]] == ["e1"]
+    assert body["byCategory"] == {"petrol": 1}
+    assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#e1")["category"] == "petrol"
 
 
 def test_a_nested_rule_to_the_SAME_category_is_still_fine(handler):

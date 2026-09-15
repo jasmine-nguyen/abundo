@@ -100,30 +100,30 @@ def rule_matches(rule: dict, transaction: dict) -> bool:
     return False
 
 
-def overlaps(rule: dict, field: str, operator: str, value: str) -> bool:
-    """Is this existing rule GUARANTEED to fight over charges with `<field> <operator> <value>`?
+def existing_at_least_as_specific(rule: dict, field: str, operator: str, value: str) -> bool:
+    """Would minting a rule for `<field> <operator> <value>` be unsafe against this EXISTING rule,
+    so the caller must refuse it?
 
-    The value half of a rule's dedup identity, WITHOUT the category — so a caller can find a rule
-    that reaches the same charges but files them somewhere else. That pair is the damaging case:
-    two rules disagreeing over a charge leaves it conflicted, and conflicted charges are never
-    filed (see `plan_rule_application`), on this run or any future one.
+    True when the existing rule is at least as specific as (or identical to) the candidate — i.e.
+    the candidate's folded value is a substring of the existing rule's folded value. The candidate
+    is then more GENERAL (or exact): it matches a superset of the existing rule's charges, and the
+    "file this shop" flow narrows the sweep to ONLY the minted rule, so minting the general
+    candidate would file the existing specific rule's charges to the candidate's category —
+    steamrolling it. The caller refuses that (a clash).
 
-    True when either value CONTAINS the other, not only when they are equal. Two `contains`
-    rules where one value sits inside the other necessarily overlap: every description matching
-    "COLES EXPRESS" also matches "COLES". Equality alone would wave the nested pair straight
-    through — and nesting is the common shape, not the exotic one (it is what the merchant
-    screen's `alsoCatches` exists to warn about).
-
-    Values that merely CAN co-occur ("COLES" and "RICHMOND", both inside "COLES 0342 RICHMOND")
-    are not detectable from the values alone — they depend on the data, and are reported as
-    `conflicted`.
+    False when the candidate is STRICTLY more specific (the existing value sits inside it, e.g.
+    existing "COLES" vs candidate "COLES EXPRESS"): minting is safe — the narrowed sweep files only
+    the candidate's own charges, and a full "Apply my rules" resolves any overlap the same way by
+    most-specific-wins (WHIT-518). Non-nested values ("COLES" vs "RICHMOND") are also False: they
+    may co-occur in one description but that isn't decidable from the values, so it isn't refused
+    here (reported as `conflicted` if it ever bites).
     """
     if (rule.get("field"), rule.get("operator")) != (field, operator):
         return False
     existing, candidate = fold(rule.get("value")), fold(value)
     if not existing or not candidate:
         return False
-    return existing in candidate or candidate in existing
+    return candidate in existing
 
 
 def is_unfiled_category(category: str | None, taxonomy_ids) -> bool:
@@ -182,7 +182,33 @@ def decide(rules: list[dict], charge: dict) -> tuple[str | None, list[int], set[
             continue
         matched_indices.append(index)
         categories.add(rule["categoryId"])
-    resolved = next(iter(categories)) if len(categories) == 1 else None
+
+    # No match, or matching rules all agree — the sole (or absent) category resolves it.
+    if len(categories) <= 1:
+        return next(iter(categories), None), matched_indices, categories
+
+    # They disagree: the MORE SPECIFIC rule wins (WHIT-518). A matching rule is "dominant" when it
+    # is more specific than every OTHER match — SAME field+operator AND its folded value contains
+    # theirs ("coles express" contains "coles"). The field+operator guard matters: containment
+    # across kinds ("transfer" sitting inside the raw enum "transfer_out") is a coincidence, not
+    # specificity, so a mixed-kind disagreement has no winner. If the dominant rules agree on one
+    # category, file to it and float that rule to matched_indices[0] (both stamp sites read index
+    # 0). Otherwise (a genuine ambiguity like "coles" vs "richmond") the charge stays conflicted.
+    matched_rules = [rules[index] for index in matched_indices]
+    folded_values = [fold(rule.get("value")) for rule in matched_rules]
+    targets = [(rule.get("field"), rule.get("operator")) for rule in matched_rules]
+    dominant_positions = [
+        position for position in range(len(matched_rules))
+        if all(targets[other] == targets[position] and folded_values[other] in folded_values[position]
+               for other in range(len(matched_rules)))
+    ]
+    winning_categories = {matched_rules[position]["categoryId"] for position in dominant_positions}
+    if len(winning_categories) != 1:
+        return None, matched_indices, categories
+
+    resolved = winning_categories.pop()
+    winner = dominant_positions[0]
+    matched_indices.insert(0, matched_indices.pop(winner))
     return resolved, matched_indices, categories
 
 
