@@ -37,6 +37,10 @@ def _to_engine_rule(row: dict) -> dict:
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
         "budgetExcluded": bool(row.get("budget_excluded")),
+        # WHIT-541: a multi-condition rule carries these; the engine reads them, else falls back to
+        # the flat field/operator/value. None for a single-condition rule.
+        "conditions": row.get("conditions"),
+        "logic": row.get("logic"),
     }
 
 
