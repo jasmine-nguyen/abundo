@@ -53,8 +53,24 @@ it('submitting calls updateRule with the id, not saveManualRule', () => {
   mockState = editState();
   render(<Overlays />);
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs');
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false);
   expect(fns.saveManualRule).not.toHaveBeenCalled();
+});
+
+// WHIT-558: the "keep out of budget" toggle threads its value into updateRule (edit path).
+it('toggling "keep out of budget" passes budgetExcluded:true to updateRule', () => {
+  mockState = editState();
+  render(<Overlays />);
+  fireEvent.press(screen.getByTestId('rule-budget-excluded'));
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true);
+});
+
+it('prefills the toggle from the edited rule (budgetExcluded:true stays on and is submitted)', () => {
+  mockState = { ...editState(), rules: [{ id: 'e1', pattern: 'NETFLIX', categoryId: 'subs', isNew: false, budgetExcluded: true }] } as AppContext;
+  render(<Overlays />);
+  fireEvent.press(screen.getByText('Update rule'));
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', true);
 });
 
 // WHIT-284 — a restored/prefilled categoryId whose category no longer exists must be dropped:
@@ -94,7 +110,7 @@ it('[WHIT-284] a VALID restored categoryId is NOT cleared — submit reaches the
   render(<Overlays />);
   fireEvent.press(screen.getByText('Add rule'));
   // WHIT-538: a valid new rule now opens the preview/confirm step, which owns the save itself.
-  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs' });
+  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
 });
 
 it('[WHIT-284] a valid restored id survives the LOADING window: save is held disabled, then re-enables once the list arrives', () => {
@@ -111,7 +127,7 @@ it('[WHIT-284] a valid restored id survives the LOADING window: save is held dis
   rerender(<Overlays />);
   fireEvent.press(screen.getByText('Add rule'));
   // WHIT-538: valid id kept through load → submit now reaches the confirm step.
-  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs' });
+  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
 });
 
 it('[WHIT-284] re-picking a real category after a dead one re-enables save', () => {
@@ -119,7 +135,7 @@ it('[WHIT-284] re-picking a real category after a dead one re-enables save', () 
   render(<Overlays />);
   fireEvent.press(screen.getByText('Groceries')); // pick a valid category
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'groceries');
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'groceries', false);
 });
 
 // WHIT-355 — conflict/duplicate detection in the add-rule sheet.
@@ -135,7 +151,7 @@ it('[WHIT-355] creating a CLASHING rule warns and does not mint until Replace', 
   expect(fns.saveManualRule).not.toHaveBeenCalled(); // nothing minted yet
 
   fireEvent.press(screen.getByTestId('rule-conflict-replace'));
-  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries'); // retarget the surviving rule
+  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false); // retarget the surviving rule
   expect(fns.saveManualRule).not.toHaveBeenCalled();                          // no second row
 });
 
@@ -170,7 +186,7 @@ it('[WHIT-355] creating a NON-clashing rule proceeds to the confirm step (happy 
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByText('Add rule'));
   // WHIT-538: no clash → the preview/confirm step opens (it owns the actual save).
-  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'subs' });
+  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'subs', budgetExcluded: false });
   expect(screen.queryByTestId('rule-conflict')).toBeNull();
 });
 
@@ -206,7 +222,7 @@ it('[WHIT-355] editing the pattern after a warning clears it and restores the su
   expect(screen.getByTestId('rule-submit')).toBeTruthy();
   // And submitting now opens the confirm step for the new rule, never touching the existing NETFLIX one.
   fireEvent.press(screen.getByText('Add rule'));
-  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'groceries' });
+  expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'SPOTIFY', categoryId: 'groceries', budgetExcluded: false });
   expect(fns.updateRule).not.toHaveBeenCalled();
 });
 
@@ -218,7 +234,7 @@ it('[WHIT-355] Replace overwrites the surviving rule with the newly-typed raw pa
   fireEvent.press(screen.getByText('Groceries'));
   fireEvent.press(screen.getByText('Add rule'));
   fireEvent.press(screen.getByTestId('rule-conflict-replace'));
-  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries'); // raw NEW pattern, not 'netflix'
+  expect(fns.updateRule).toHaveBeenCalledWith('b1', 'NETFLIX', 'groceries', false); // raw NEW pattern, not 'netflix'
 });
 
 // ===== WHIT-284 drop effect (folded from AddRuleSheetDrop) — the persist effect re-cleans a dead
@@ -291,7 +307,7 @@ describe('AddRuleSheet — WHIT-284 drop effect (draft re-clean)', () => {
     expect(lastDraftCategoryId()).toBe('subs');
     fireEvent.press(screen.getByText('Add rule'));
     // WHIT-538: recovered → submit reaches the confirm step.
-    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs' });
+    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
   });
 
   // [A8] — an in-session delete: the sheet is open with a valid selection, then that
@@ -393,7 +409,7 @@ describe('AddRuleSheet — WHIT-355 conflict adversarial', () => {
     fireEvent.press(screen.getByText('Subscriptions'));
     fireEvent.press(screen.getByText('Add rule'));
     // WHIT-538: no clash → the preview/confirm step opens (it owns the save).
-    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs' });
+    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
     expect(screen.queryByTestId('rule-conflict')).toBeNull();
   });
 });

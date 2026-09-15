@@ -185,7 +185,7 @@ class TransactionRepository:
 
     def update_transaction_category_if_unchanged(
         self, pk: str, sk: str, category: str, expected_category: Optional[str],
-        filed_by_rule: Optional[str] = None,
+        filed_by_rule: Optional[str] = None, budget_excluded: bool = False,
     ) -> tuple[str, Optional[str]]:
         """Set a transaction's category ONLY IF it still holds `expected_category` (WHIT-508).
 
@@ -213,7 +213,7 @@ class TransactionRepository:
         condition = "attribute_exists(pk) AND attribute_not_exists(#c)"
         names = {"#c": "category"}
         values = {":category": category}
-        update_expression = "SET #c = :category"
+        assignments = ["#c = :category"]
         if expected_category is not None:
             condition = "attribute_exists(pk) AND #c = :expected"
             values[":expected"] = expected_category
@@ -222,7 +222,15 @@ class TransactionRepository:
         if filed_by_rule is not None:
             names["#p"] = "filed_by_rule"
             values[":rule"] = filed_by_rule
-            update_expression = "SET #c = :category, #p = :rule"
+            assignments.append("#p = :rule")
+        # The winning rule keeps this charge out of the budget (WHIT-558): set budget_excluded in the
+        # SAME conditional write, for the same reason. Only ever SET True — never write False — so a
+        # user's hand-set exclusion is never cleared by a rule (the user's tap always wins).
+        if budget_excluded:
+            names["#b"] = "budget_excluded"
+            values[":bexcl"] = True
+            assignments.append("#b = :bexcl")
+        update_expression = "SET " + ", ".join(assignments)
 
         try:
             self._get_table().update_item(

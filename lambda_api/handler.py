@@ -50,6 +50,7 @@ from constants import (
     TRANSACTION_PATH,
     TRANSACTIONS_FEED_PATH,
     UNCATEGORIZED_APPLY_RULES_PATH,
+    UNCATEGORIZED_APPLY_RULES_JOBS_PATH,
     UNCATEGORIZED_COUNT_PATH,
     UNCATEGORIZED_FEED_PATH,
     UNCATEGORIZED_KEY,
@@ -69,6 +70,7 @@ from repository import (
     GoalsRepository,
     HomeLoanBalanceRepository,
     InsightRepository,
+    JobRepository,
     InvalidCategoryParentError,
     LoanFactsRepository,
     MilestoneRepository,
@@ -79,6 +81,7 @@ from repository import (
     TransactionRepository,
     VersionConflictError,
 )
+from repository_job import STATUS_RUNNING, STATUS_FAILED
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -117,15 +120,18 @@ from merchant_groups import (
 )
 from milestones import mint_migration_markers
 from rule_engine import (
-    plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches)
+    plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
+    rule_id_for)
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
 import base64
+import boto3
 import hashlib
 import json
 import logging
 import math
+import os
 import re
 import time
 import uuid
@@ -185,6 +191,19 @@ def lambda_handler(event, context):
         if path == UNCATEGORIZED_APPLY_RULES_PATH and method == "POST":
             return apply_rules_to_uncategorized(
                 event, TransactionRepository(), CategoryRepository(), RuleRepository())
+
+        # Async apply-rules job (WHIT-537): start a background sweep with no 300/15s cap. POST
+        # starts a job (returns its id, 202); the {id} GET reports progress. The POST path is an
+        # EXACT match, disjoint from the sync apply-rules POST above; the GET uses startswith on
+        # ".../jobs/" (the id is a path parameter) and is method-gated, so it can't collide with
+        # the PATCH "/transactions/{id}" item route below.
+        if path == UNCATEGORIZED_APPLY_RULES_JOBS_PATH and method == "POST":
+            return start_apply_rules_job(
+                event, CategoryRepository(), RuleRepository(), JobRepository())
+
+        if (path.startswith(f"{UNCATEGORIZED_APPLY_RULES_JOBS_PATH}/")
+                and method == "GET"):
+            return get_apply_rules_job(event, JobRepository())
 
         # Collection route (batch) BEFORE the item route. "/transactions" does not
         # start with "/transactions/", so the two are disjoint regardless of order.
@@ -975,9 +994,9 @@ def _validate_rule_body(event: dict):
     """Parse + validate a create/update rule body, returning the NORMALISED
     values so create and update trim/default identically.
 
-    Returns ((value, category_id, field, operator), None) on success — value and
-    category_id already stripped, field/operator defaulted to the Tier-1
-    "description contains" and restricted to the verified vocabulary — or
+    Returns ((value, category_id, field, operator, budget_excluded), None) on success — value and
+    category_id already stripped, field/operator defaulted to the Tier-1 "description contains" and
+    restricted to the verified vocabulary, budget_excluded defaulted to False — or
     (None, error_response) with a 400.
     """
     body, error = _parse_json_body(event)
@@ -1001,7 +1020,11 @@ def _validate_rule_body(event: dict):
         return None, _json_response(
             400, {"error": f"operator must be one of {sorted(RULE_OPERATORS)}"})
 
-    return (value.strip(), category_id.strip(), field, operator), None
+    budget_excluded = body.get("budgetExcluded", False)
+    if not isinstance(budget_excluded, bool):
+        return None, _json_response(400, {"error": "budgetExcluded must be a boolean"})
+
+    return (value.strip(), category_id.strip(), field, operator, budget_excluded), None
 
 
 # --- Rules: our own store (WHIT-529) ------------------------------------------
@@ -1050,7 +1073,7 @@ def _validate_rule_write(event: dict, category_repo: CategoryRepository):
     parsed, error = _validate_rule_body(event)
     if error:
         return None, error
-    value, category_id, field, operator = parsed
+    value, category_id, field, operator, _budget_excluded = parsed
     return parsed, (_validate_rule_value_floor(value, field, operator)
                     or _validate_rule_category(category_id, category_repo))
 
@@ -1075,10 +1098,11 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
     parsed, error = _validate_rule_write(event, category_repo)
     if error:
         return error
-    value, category_id, field, operator = parsed
+    value, category_id, field, operator, budget_excluded = parsed
 
     try:
-        rule, _created = rule_repo.create_rule(field, operator, value, category_id)
+        rule, _created = rule_repo.create_rule(
+            field, operator, value, category_id, budget_excluded=budget_excluded)
     except RuleClashError as e:
         return _rule_clash_response(_rule_to_client(e.existing))
     except DatabaseError:
@@ -1178,10 +1202,11 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     parsed, error = _validate_rule_write(event, category_repo)
     if error:
         return error
-    value, category_id, field, operator = parsed
+    value, category_id, field, operator, budget_excluded = parsed
 
     try:
-        rule = rule_repo.update_rule(rule_id, field, operator, value, category_id)
+        rule = rule_repo.update_rule(
+            rule_id, field, operator, value, category_id, budget_excluded=budget_excluded)
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
@@ -1397,6 +1422,7 @@ def _rule_to_client(row: dict) -> dict:
         "operator": row.get("operator"),
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
+        "budgetExcluded": bool(row.get("budget_excluded")),
     }
 
 
@@ -1440,6 +1466,24 @@ def _rule_that_would_fight(rules: list[dict], inline_rule: dict) -> dict | None:
     return None
 
 
+def _rule_that_would_clash_on_exclusion(rules: list[dict], inline_rule: dict) -> dict | None:
+    """An existing rule with the SAME text and category as the inline one but a DIFFERENT
+    `budgetExcluded` (WHIT-558), or None.
+
+    Such a rule agrees on category, so `_rule_that_would_fight` waves it through — but `create_rule`
+    refuses it (two same-text rows can't disagree on the exclusion any more than on the category).
+    Detecting it in the pre-scan keeps the dry-run preview honest: without this, the preview promises
+    "will file N" and the commit then 409s. The existing-rule's flag is edited from the Rules screen.
+    """
+    inline_id = rule_id_for(DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR, inline_rule["value"])
+    for rule in rules:
+        if (rule.get("id") == inline_id
+                and rule.get("categoryId") == inline_rule["categoryId"]
+                and bool(rule.get("budgetExcluded")) != inline_rule["budgetExcluded"]):
+            return rule
+    return None
+
+
 def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | None, dict | None]:
     """The optional `rule` on an apply-rules request — the one this run should mint and sweep
     with (WHIT-516), so making a rule for a merchant and filing that merchant's existing charges
@@ -1478,7 +1522,12 @@ def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | No
     if not isinstance(category_id, str) or category_id not in taxonomy_ids:
         return None, _json_response(400, {"error": "rule categoryId is not one of your categories"})
 
-    return {"value": value.strip(), "categoryId": category_id}, None
+    budget_excluded = rule.get("budgetExcluded", False)
+    if not isinstance(budget_excluded, bool):
+        return None, _json_response(400, {"error": "rule budgetExcluded must be a boolean"})
+
+    return {"value": value.strip(), "categoryId": category_id,
+            "budgetExcluded": budget_excluded}, None
 
 
 def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanished: list = (),
@@ -1530,6 +1579,135 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
         "remaining": remaining,
         "createdRule": created_rule,
     })
+
+
+def _apply_rules_write_phase(
+    transaction_repo: TransactionRepository, plan: dict, transactions: list[dict],
+    rule_target_by_id: dict, rule_excluded_by_id: dict,
+    is_unfiled: Callable[[str | None], bool], *,
+    inline_stamp: str | None, inline_excluded: bool = False, run_reconcile: bool,
+    max_writes: int | None = None, time_budget: float | None = None,
+    started: float | None = None, on_progress: Callable[[dict], None] | None = None,
+) -> tuple[list[dict], list[str], list[str], list[str], int]:
+    """The write half of apply-rules, shared by the synchronous route and the async worker
+    (WHIT-537).
+
+    The route passes the cap + budget (APPLY_RULES_MAX_WRITES / APPLY_RULES_TIME_BUDGET_SECONDS)
+    so one request stays inside the API Gateway window; the async worker passes None for both, so
+    it files the whole matched set with no ceiling — which is the point of the card. `started` is
+    read only when `time_budget` is set.
+
+    The "keep out of budget" action (WHIT-558) rides the SAME conditional write: an inline "file
+    this shop" run stamps `inline_excluded` on every row (its plan rule_id is None); the plain sweep
+    reads the flag off the winning rule via `rule_excluded_by_id`.
+
+    Runs the file loop over ``plan["matched"]``, then — only when `run_reconcile` (the plain full
+    sweep, never the inline "file this shop" path) — the WHIT-540 self-healing reconcile sweep,
+    sharing ONE `attempted` count and ONE budget so the primary filing is never starved. Returns
+    (filed, vanished, failed, already_filed, matched_remaining). `on_progress` is called with the
+    running counts after each write so the worker can persist job progress; the route passes None.
+    """
+    filed: list[dict] = []
+    vanished: list[str] = []
+    failed: list[str] = []
+    already_filed: list[str] = []
+    attempted = 0  # counts ATTEMPTS, not successes — it bounds the work this request does
+
+    def over_budget() -> bool:
+        if max_writes is not None and attempted >= max_writes:
+            return True
+        # Stop well inside the API Gateway window. `attempted and` guarantees at least one write,
+        # so a slow rule read or a long scan can never starve the loop into zero progress.
+        return bool(time_budget is not None and attempted
+                    and time.monotonic() - started >= time_budget)
+
+    def emit_progress() -> None:
+        if on_progress is not None:
+            on_progress({
+                "filed": len(filed), "vanished": len(vanished), "failed": len(failed),
+                "alreadyFiled": len(already_filed), "attempted": attempted,
+            })
+
+    for transaction, category_id, rule_id in plan["matched"]:
+        if over_budget():
+            break
+        transaction_id = transaction.get("transaction_id")
+        attempted += 1
+        # Stamp which rule filed it (WHIT-536), and carry its "keep out of budget" action (WHIT-558)
+        # in the SAME write. An inline "file this shop" rule is minted after planning, so its matched
+        # rule_id is None — use the freshly-created rule's id and the inline flag; the plain sweep
+        # reads both by the winning rule's id.
+        if inline_stamp is not None:
+            stamp, budget_excluded = inline_stamp, inline_excluded
+        else:
+            stamp, budget_excluded = rule_id, rule_excluded_by_id.get(rule_id, False)
+        try:
+            # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
+            # since keeps their choice (WHIT-508). Their tap always beats a rule.
+            status, current_category = transaction_repo.update_transaction_category_if_unchanged(
+                transaction["pk"], transaction["sk"], category_id, transaction.get("category"),
+                filed_by_rule=stamp, budget_excluded=budget_excluded,
+            )
+        except DatabaseError:
+            failed.append(transaction_id)
+            emit_progress()
+            continue
+        if status == "written":
+            filed.append({"id": transaction_id, "category": category_id})
+        # The row was deleted between the scan and the write (a pending aged out, or its posted
+        # twin replaced it). Nothing to retry — it is gone from the next scan too.
+        elif status == "gone":
+            vanished.append(transaction_id)
+        # It changed underneath. Only the taxonomy says whether that counts as FILED: a tap files
+        # it (leave it alone), but a re-sync carrying the bank's own raw label back leaves it
+        # unfiled, and reporting THAT as filed would let the app claim the job was done while the
+        # badge still counted the charge.
+        elif is_unfiled(current_category):
+            failed.append(transaction_id)
+        else:
+            already_filed.append(transaction_id)
+        emit_progress()
+
+    # `matched_remaining` reports only the file loop's unreached matches — capture it BEFORE the
+    # sweep below, which shares `attempted` for the budget but must not be subtracted from matched.
+    matched_remaining = len(plan["matched"]) - attempted
+
+    # WHIT-540 self-healing reconcile sweep. A rule edit/delete re-files the charges it touched
+    # immediately, but only up to its own write budget; a rule on a huge history leaves a tail. The
+    # plain "Apply my rules" sweep already reads every charge, so while it is here it brings each
+    # rule-owned charge back in line with no client cooperation:
+    #   * stamp points at a rule that no longer exists -> undo the fill (delete tail, value-edit's
+    #     old id).
+    #   * stamp points at a live rule but the charge sits off that rule's current target -> move it
+    #     to the target (an in-place target edit's tail; also heals a settlement re-put that carried
+    #     a stale category back onto a stamped row, WHIT-513).
+    # It shares this request's write cap and clock (the file loop above runs first, so the primary
+    # action is never starved), and the stamp guards make each write a no-op if the user has since
+    # taken the charge over. ONLY the plain full sweep runs it: the "file this shop" path narrowed
+    # `rules` to the single minted rule, so it can't judge the store.
+    if run_reconcile:
+        for transaction in transactions:
+            if over_budget():
+                break
+            stamp = transaction.get("filed_by_rule")
+            if not stamp:
+                continue
+            target = rule_target_by_id.get(stamp)
+            try:
+                if target is None:
+                    attempted += 1
+                    transaction_repo.clear_rule_fill(transaction["pk"], transaction["sk"], stamp)
+                    emit_progress()
+                elif not is_unfiled(target) and transaction.get("category") != target:
+                    attempted += 1
+                    transaction_repo.refile_rule_fill(
+                        transaction["pk"], transaction["sk"], target, stamp, stamp)
+                    emit_progress()
+            except DatabaseError:
+                # Best-effort cleanup — a later sweep retries the tail.
+                continue
+
+    return filed, vanished, failed, already_filed, matched_remaining
 
 
 def apply_rules_to_uncategorized(
@@ -1586,9 +1764,16 @@ def apply_rules_to_uncategorized(
     # orphaned stamp (rule gone) from a drifted one (rule still here, but the charge is off its
     # target).
     rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
+    # Each rule's "keep out of budget" action (WHIT-558), captured against the WHOLE store before the
+    # inline path narrows `rules` — so the plain sweep can set budget_excluded from the winning rule.
+    # The inline "file this shop" path doesn't consult this map: its plan rule_id is None, so it reads
+    # the flag straight off `inline_rule` below.
+    rule_excluded_by_id = {
+        rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
 
     if inline_rule is not None:
-        clash = _rule_that_would_fight(rules, inline_rule)
+        clash = (_rule_that_would_fight(rules, inline_rule)
+                 or _rule_that_would_clash_on_exclusion(rules, inline_rule))
         if clash is not None:
             return _rule_clash_response(clash)
         # File ONLY this shop (WHIT-523). The clash check above has already read the user's
@@ -1621,107 +1806,155 @@ def apply_rules_to_uncategorized(
             row, _created = rule_repo.create_rule(
                 DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
                 inline_rule["value"], inline_rule["categoryId"],
+                budget_excluded=inline_rule["budgetExcluded"],
             )
         except RuleClashError as e:
-            # A rule with this exact text but a different category appeared between the pre-scan
-            # clash check and here (a race). create_rule is safe to run twice, so same-text +
-            # same-category returns the existing rule (created=False) rather than raising.
+            # A rule with this exact text but a different category (or a different budget_excluded,
+            # WHIT-558) appeared between the pre-scan clash checks and here (a race). create_rule is
+            # safe to run twice, so same-text + same-category + same-flag returns the existing rule
+            # (created=False) rather than raising.
             return _rule_clash_response(_rule_to_client(e.existing))
         except DatabaseError:
             return _json_response(500, {"error": "could not save your rule"})
         created_rule = _rule_to_client(row)
 
-    filed: list[dict] = []
-    vanished: list[str] = []
-    failed: list[str] = []
-    already_filed: list[str] = []
-    attempted = 0  # counts ATTEMPTS, not successes — it bounds the work this request does
-    for transaction, category_id, rule_id in plan["matched"]:
-        if attempted >= APPLY_RULES_MAX_WRITES:
-            break
-        # Stop well inside the API Gateway window so the response the app sees is an honest
-        # account of what was written; the rest is reported as `remaining` ("tap again").
-        # `attempted and` guarantees at least one write per request, so a slow rule read or a
-        # long scan can never starve the loop into looping forever with nothing to show.
-        if attempted and time.monotonic() - started >= APPLY_RULES_TIME_BUDGET_SECONDS:
-            break
-        transaction_id = transaction.get("transaction_id")
-        attempted += 1
-        # Stamp which rule filed it (WHIT-536). For an inline "file this shop" rule the plan's
-        # rule_id is None (it's minted after planning), so use the freshly-created rule's id.
-        stamp = created_rule["id"] if inline_rule is not None else rule_id
-        try:
-            # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
-            # since keeps their choice (WHIT-508). Their tap always beats a rule.
-            status, current_category = transaction_repo.update_transaction_category_if_unchanged(
-                transaction["pk"], transaction["sk"], category_id, transaction.get("category"),
-                filed_by_rule=stamp,
-            )
-        except DatabaseError:
-            failed.append(transaction_id)
-            continue
-        if status == "written":
-            filed.append({"id": transaction_id, "category": category_id})
-            continue
-        # The row was deleted between the scan and the write (a pending aged out, or its posted
-        # twin replaced it). Nothing to retry — it is gone from the next scan too.
-        if status == "gone":
-            vanished.append(transaction_id)
-            continue
-        # It changed underneath. Only the taxonomy says whether that counts as FILED: a tap files
-        # it (leave it alone, say so), but a re-sync carrying the bank's own raw label back on
-        # leaves it unfiled, and reporting THAT as filed would let the app claim the job was done
-        # while the badge still counted the charge.
-        if is_unfiled(current_category):
-            failed.append(transaction_id)
-            continue
-        already_filed.append(transaction_id)
-
-    # `remaining` reports only the file loop's unreached matches — capture it BEFORE the sweep
-    # below, which shares `attempted` for the budget but must not be subtracted from `matched`.
-    matched_remaining = len(plan["matched"]) - attempted
-
-    # WHIT-540 self-healing reconcile sweep. A rule edit/delete re-files the charges it touched
-    # immediately, but only up to its own write budget; a rule on a huge history leaves a tail. The
-    # plain "Apply my rules" sweep already reads every charge, so while it is here it brings each
-    # rule-owned charge back in line with no client cooperation — delivering the "stragglers heal on
-    # the next run" guarantee for EVERY tail shape:
-    #   * stamp points at a rule that no longer exists -> undo the fill (delete tail, value-edit's
-    #     old id).
-    #   * stamp points at a live rule but the charge sits off that rule's current target -> move it
-    #     to the target (an in-place target edit's tail; also heals a settlement re-put that carried
-    #     a stale category back onto a stamped row, WHIT-513).
-    # It shares this request's write cap and clock (the file loop above runs first, so the primary
-    # action is never starved), and the stamp guards make each write a no-op if the user has since
-    # taken the charge over. ONLY the plain full sweep runs it: the "file this shop" path
-    # (inline_rule) narrowed `rules` to the single minted rule, so it can't judge the store.
-    if inline_rule is None:
-        for transaction in transactions:
-            if attempted >= APPLY_RULES_MAX_WRITES:
-                break
-            if attempted and time.monotonic() - started >= APPLY_RULES_TIME_BUDGET_SECONDS:
-                break
-            stamp = transaction.get("filed_by_rule")
-            if not stamp:
-                continue
-            target = rule_target_by_id.get(stamp)
-            try:
-                if target is None:
-                    attempted += 1
-                    transaction_repo.clear_rule_fill(transaction["pk"], transaction["sk"], stamp)
-                elif not is_unfiled(target) and transaction.get("category") != target:
-                    attempted += 1
-                    transaction_repo.refile_rule_fill(
-                        transaction["pk"], transaction["sk"], target, stamp, stamp)
-            except DatabaseError:
-                # Best-effort cleanup — a later sweep retries the tail.
-                continue
+    filed, vanished, failed, already_filed, matched_remaining = _apply_rules_write_phase(
+        transaction_repo, plan, transactions, rule_target_by_id, rule_excluded_by_id, is_unfiled,
+        inline_stamp=(created_rule["id"] if inline_rule is not None else None),
+        inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
+        run_reconcile=(inline_rule is None),
+        max_writes=APPLY_RULES_MAX_WRITES, time_budget=APPLY_RULES_TIME_BUDGET_SECONDS,
+        started=started,
+    )
 
     return _apply_rules_response(
         plan, False, filed=filed, vanished=vanished, failed=failed,
         already_filed=already_filed, remaining=matched_remaining,
         created_rule=created_rule,
     )
+
+
+# The async apply-rules worker function name comes from the environment (set on the app_api
+# lambda in terraform). A module-level boto3 client, created lazily so importing the handler needs
+# no AWS.
+_lambda_client = None
+
+
+def _get_lambda_client():
+    global _lambda_client
+    if _lambda_client is None:
+        # boto3 reads the region from the AWS_REGION the Lambda runtime always sets.
+        _lambda_client = boto3.client("lambda")
+    return _lambda_client
+
+
+def _invoke_apply_rules_worker(payload: dict) -> None:
+    """Fire-and-return: async-invoke the worker (InvocationType="Event") so the POST returns the
+    job id well inside the 30s gateway window instead of waiting out the whole sweep. Raises on a
+    permission/throttle error at the invoke itself; a worker-runtime failure surfaces only via the
+    job record + CloudWatch (the whole reason the job row carries a status/error)."""
+    _get_lambda_client().invoke(
+        FunctionName=os.environ["APPLY_RULES_WORKER_FUNCTION"],
+        InvocationType="Event",
+        Payload=json.dumps(payload).encode("utf-8"),
+    )
+
+
+def _job_to_client(job: dict) -> dict:
+    """Map a stored job row (repository_job) to the client shape: camelCase counts + status, no
+    DynamoDB keys or TTL. The single point translating the job row for the app."""
+    return {
+        "jobId": job.get("id"),
+        "status": job.get("status"),
+        "matched": job.get("matched", 0),
+        "attempted": job.get("attempted", 0),
+        "filed": job.get("filed", 0),
+        "vanished": job.get("vanished", 0),
+        "failed": job.get("failed", 0),
+        "alreadyFiled": job.get("alreadyFiled", 0),
+        "remaining": job.get("remaining", 0),
+        "createdRule": job.get("createdRule"),
+        "error": job.get("error"),
+        "createdAt": job.get("created_at"),
+        "updatedAt": job.get("updated_at"),
+        "completedAt": job.get("completed_at"),
+    }
+
+
+def start_apply_rules_job(
+    event: dict, category_repo: CategoryRepository, rule_repo: RuleRepository,
+    job_repo: JobRepository,
+) -> dict:
+    """POST /transactions/uncategorized/apply-rules/jobs — start an async apply-rules sweep and
+    return its id immediately (WHIT-537).
+
+    Same body shape as the synchronous route's write, minus dryRun (a job is always a write; the
+    app previews via the sync route first):
+      * no rule — sweep ALL the user's rules over full history.
+      * {"rule": {"value", "categoryId"}} — mint that rule and sweep with ONLY it (file this shop).
+
+    The request is VALIDATED synchronously here (a bad rule -> 400, a clash -> 409) so a malformed
+    request never spawns a worker; the id + async invoke follow. The worker then runs the sweep
+    with NO write cap and records progress on the job row (it builds its own transaction repo).
+    """
+    body, error = _parse_json_body(event)
+    if error is not None:
+        return error
+
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+    inline_rule, error = _validate_inline_rule(body, taxonomy_ids)
+    if error is not None:
+        return error
+
+    # An inline "file this shop" rule must not fight an existing rule — refuse it up front, exactly
+    # as the sync route does, rather than minting a permanent contradiction inside the worker.
+    if inline_rule is not None:
+        try:
+            rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+        except DatabaseError:
+            return _json_response(500, {"error": "could not read your rules"})
+        clash = (_rule_that_would_fight(rules, inline_rule)
+                 or _rule_that_would_clash_on_exclusion(rules, inline_rule))
+        if clash is not None:
+            return _rule_clash_response(clash)
+
+    job_id = uuid.uuid4().hex
+    try:
+        job_repo.create_job(job_id)
+    except DatabaseError:
+        return _json_response(500, {"error": "could not start the job"})
+
+    payload: dict = {"jobId": job_id}
+    if inline_rule is not None:
+        payload["rule"] = inline_rule
+    try:
+        _invoke_apply_rules_worker(payload)
+    except Exception as e:
+        # The worker couldn't be dispatched (permission/throttle). Mark the job failed so a poll
+        # reports it honestly rather than leaving it stuck "running" until its TTL.
+        logger.error("could not invoke apply-rules worker for job %s: %s", job_id, e)
+        try:
+            job_repo.finish_job(job_id, STATUS_FAILED, {}, error="could not start the job")
+        except DatabaseError:
+            pass
+        return _json_response(502, {"error": "could not start the job"})
+
+    return _json_response(202, {"jobId": job_id, "status": STATUS_RUNNING})
+
+
+def get_apply_rules_job(event: dict, job_repo: JobRepository) -> dict:
+    """GET /transactions/uncategorized/apply-rules/jobs/{id} — the current state of a job, so the
+    app can poll it to completion. 404 for an unknown or expired id."""
+    job_id = (event.get("pathParameters") or {}).get("id")
+    if not job_id:
+        return _json_response(404, {"error": "no such job"})
+    try:
+        job = job_repo.get_job(job_id)
+    except DatabaseError:
+        return _json_response(500, {"error": "could not read the job"})
+    if job is None:
+        return _json_response(404, {"error": "no such job"})
+    return _json_response(200, _job_to_client(job))
 
 
 def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) -> tuple[str, str]:

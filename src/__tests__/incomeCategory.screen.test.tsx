@@ -159,7 +159,7 @@ describe('WHIT-158 income category interaction (folded)', () => {
     fireEvent.press(screen.getByText('Salary'));   // income pill now offered
     fireEvent.press(screen.getByText('Add rule'));
     // WHIT-538: a new rule now opens the preview/confirm step, which owns the save.
-    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'PAYROLL', categoryId: 'salary' });
+    expect(fns.setSheet).toHaveBeenCalledWith({ mode: 'addRuleConfirm', pattern: 'PAYROLL', categoryId: 'salary', budgetExcluded: false });
   });
 
   describe('Categories list — Income group visibility (WHIT-158)', () => {

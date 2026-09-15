@@ -219,12 +219,44 @@ resource "aws_lambda_function" "app_api" {
   environment {
     variables = {
       TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+      # WHIT-537: the async apply-rules POST invokes this worker (InvocationType=Event). The name
+      # is passed in (not hard-coded) so the handler asks the environment which function to invoke.
+      APPLY_RULES_WORKER_FUNCTION = aws_lambda_function.apply_rules_worker.function_name
     }
   }
 
   logging_config {
     log_format = "Text"
     log_group  = aws_cloudwatch_log_group.app_api.name
+  }
+}
+
+# WHIT-537: runs the uncapped "Apply my rules over all history" sweep as a background job. Reuses
+# the app_api zip (the sweep IS lambda_api code — apply_rules_worker.py + the shared write phase in
+# handler.py) rather than the webhook zip, so no apply-rules logic has to move into shared/ (which
+# would drag APPLY_RULES_* into shared/constants.py, the WHIT-136 landmine). Async-invoked by
+# app_api (no API integration, no event source, like transaction_reprocess); 300s so a large sweep
+# finishes; 512 MB to match app_api (same whole-history windowed read + in-memory plan).
+resource "aws_lambda_function" "apply_rules_worker" {
+  function_name    = "${var.project_name}-apply-rules-worker"
+  role             = aws_iam_role.apply_rules_worker_exec.arn
+  handler          = "apply_rules_worker.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 300
+  memory_size      = 512
+  filename         = data.archive_file.lambda_api_zip.output_path
+  source_code_hash = data.archive_file.lambda_api_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.apply_rules_worker.name
   }
 }
 
@@ -386,6 +418,11 @@ resource "aws_cloudwatch_log_group" "up_webhook" {
 
 resource "aws_cloudwatch_log_group" "app_api" {
   name              = "/aws/lambda/${var.project_name}-app-api"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "apply_rules_worker" {
+  name              = "/aws/lambda/${var.project_name}-apply-rules-worker"
   retention_in_days = 30
 }
 

@@ -44,7 +44,7 @@ it('saveManualRule creates the rule and swaps the temp id for the server id', as
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
   // Sent as typed (trimmed, not upper-cased); no field/operator (server defaults).
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs' });
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
   // Reconciled to the server id, but keeps isNew:true so the "NEW" badge survives.
   expect(rules()[0]).toEqual({ id: 'e9', pattern: 'spotify', categoryId: 'subs', isNew: true, field: 'description', operator: 'contains' });
 });
@@ -80,7 +80,7 @@ it('updateRule edits in place and preserves the rule field/operator', async () =
 
   await act(async () => { await result.current.updateRule('e1', 'GROCERIES', 'groceries'); });
 
-  expect(mockApi.updateEnrichment).toHaveBeenCalledWith('e1', { value: 'GROCERIES', categoryId: 'groceries', field: 'category', operator: 'equals' });
+  expect(mockApi.updateEnrichment).toHaveBeenCalledWith('e1', { value: 'GROCERIES', categoryId: 'groceries', field: 'category', operator: 'equals', budgetExcluded: false });
   expect(rules()[0]).toEqual({ id: 'e1', pattern: 'GROCERIES', categoryId: 'groceries', isNew: false, field: 'category', operator: 'equals' });
 });
 

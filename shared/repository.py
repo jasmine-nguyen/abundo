@@ -48,11 +48,13 @@ from repository_milestone import MilestoneRepository
 from repository_device import DeviceRepository
 from repository_insight import InsightRepository
 from repository_rule import RuleRepository
+from repository_job import JobRepository
 
 __all__ = [
     "TransactionRepository",
     "CategoryRepository",
     "RuleRepository",
+    "JobRepository",
     "BudgetRepository",
     "GoalsRepository",
     "PayCycleRepository",
