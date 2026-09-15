@@ -114,6 +114,24 @@ def test_the_write_stamps_the_rule_that_filed_each_charge(handler):
     assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#hit")["filed_by_rule"] == "r-coles"
 
 
+def test_a_nested_disagreement_files_to_the_more_specific_rule_end_to_end(handler):
+    # WHIT-518 end to end on the full sweep: a stored "COLES EXPRESS" charge that two disagreeing
+    # nested rules match is filed to the SPECIFIC rule's category (petrol) and stamped with it, not
+    # left conflicted. FAIL-ON-REVERT: without the decide tie-break the charge stays unfiled.
+    repo = WritableFeedRepo({
+        SPENDING: [_row(SPENDING, "2026-07-02", "hit", description="COLES EXPRESS 1123", category=None)],
+    })
+    rules = [_rule("coles", category_id="groceries", rule_id="r-coles"),
+             _rule("coles express", category_id="petrol", rule_id="r-express")]
+    _, body = _call(handler, repo, rules, {"dryRun": False},
+                    categories=frozenset({"groceries", "petrol"}))
+
+    assert body["filed"] == [{"id": "hit", "category": "petrol"}]
+    assert body["conflicted"] == 0
+    row = repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#hit")
+    assert row["category"] == "petrol" and row["filed_by_rule"] == "r-express"
+
+
 # --- the race the user can actually lose (WHIT-508) --------------------------
 # The pass reads all of history, decides, then writes — up to 15s later. A tap in that gap used to
 # be silently overwritten by the rule. These lock the rule backing off instead.

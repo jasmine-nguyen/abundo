@@ -117,6 +117,140 @@ def test_rules_that_agree_file_the_charge_once(rule_engine):
     assert plan["conflicted"] == 0
 
 
+# --- WHIT-518: the more specific rule wins ------------------------------------
+
+
+def test_the_more_specific_rule_wins_when_matches_disagree(rule_engine):
+    # "COLES EXPRESS" contains "COLES", so it is the most specific match and its category wins.
+    rules = [_rule("COLES", "groceries", rule_id="r-coles"),
+             _rule("COLES EXPRESS", "petrol", rule_id="r-express")]
+    resolved, matched_indices, categories = rule_engine.decide(rules, _txn("t1", "COLES EXPRESS 1123"))
+
+    assert resolved == "petrol"
+    assert categories == {"groceries", "petrol"}
+    # The winner is floated to index 0, so both stamp sites name the specific rule.
+    assert rules[matched_indices[0]]["id"] == "r-express"
+
+
+def test_plan_files_a_nested_disagreement_to_the_specific_rule(rule_engine):
+    rules = [_rule("COLES", "groceries", rule_id="r-coles"),
+             _rule("COLES EXPRESS", "petrol", rule_id="r-express")]
+    plan = rule_engine.plan_rule_application(
+        rules, [_txn("t1", "COLES EXPRESS 1123", category=None)], _is_unfiled({"groceries", "petrol"}))
+
+    assert [category for _, category, _ in plan["matched"]] == ["petrol"]
+    assert [rule_id for _, _, rule_id in plan["matched"]] == ["r-express"]   # stamped with the winner
+    assert plan["conflicted"] == 0
+    # by_rule still counts COLES's hit on the EXPRESS charge — a per-rule signal, not a total.
+    assert {entry["ruleId"] for entry in plan["by_rule"]} == {"r-coles", "r-express"}
+
+
+def test_a_strictly_nested_three_way_resolves_to_the_longest(rule_engine):
+    # COLES ⊂ COLES EXPRESS ⊂ COLES EXPRESS 1123 — the deepest contains all the others, so it wins.
+    # (Locks against encoding the wrong "nested three-way -> conflicted".)
+    rules = [_rule("COLES", "groceries", rule_id="r1"),
+             _rule("COLES EXPRESS", "petrol", rule_id="r2"),
+             _rule("COLES EXPRESS 1123", "coffee", rule_id="r3")]
+    resolved, matched_indices, _ = rule_engine.decide(rules, _txn("t1", "COLES EXPRESS 1123"))
+
+    assert resolved == "coffee"
+    assert rules[matched_indices[0]]["id"] == "r3"
+
+
+def test_two_non_nested_matches_stay_conflicted(rule_engine):
+    # "COLES EXPRESS" and "COLES METRO" — neither contains the other, so there is no single most-
+    # specific winner: the charge stays conflicted.
+    rules = [_rule("COLES EXPRESS", "petrol", rule_id="r1"),
+             _rule("COLES METRO", "coffee", rule_id="r2")]
+    resolved, _, categories = rule_engine.decide(rules, _txn("t1", "COLES EXPRESS AND COLES METRO"))
+
+    assert resolved is None
+    assert categories == {"petrol", "coffee"}
+
+
+def test_dominant_rules_that_agree_resolve_over_a_shorter_disagreeing_rule(rule_engine):
+    # Two fold-equal "COLES EXPRESS" rules (single vs double space) both -> petrol dominate the
+    # shorter, disagreeing "COLES" -> groceries. Among the DOMINANT rules only petrol is named, so
+    # it resolves even though the full match set names two categories.
+    rules = [_rule("COLES", "groceries", rule_id="r1"),
+             _rule("COLES EXPRESS", "petrol", rule_id="r2"),
+             _rule("COLES  EXPRESS", "petrol", rule_id="r3")]
+    resolved, _, categories = rule_engine.decide(rules, _txn("t1", "COLES EXPRESS COLES  EXPRESS"))
+
+    assert resolved == "petrol"
+    assert categories == {"groceries", "petrol"}
+
+
+def test_fold_equal_rules_that_disagree_stay_conflicted(rule_engine):
+    # The tie-break folds text, so "COLES EXPRESS" and "COLES  EXPRESS" are equally specific. Sent
+    # to DIFFERENT categories they can't be told apart, so the charge stays conflicted — the same
+    # answer the store's exact-clash guard gives.
+    rules = [_rule("COLES EXPRESS", "petrol", rule_id="r2"),
+             _rule("COLES  EXPRESS", "coffee", rule_id="r3")]
+    resolved, _, categories = rule_engine.decide(rules, _txn("t1", "COLES EXPRESS COLES  EXPRESS"))
+
+    assert resolved is None
+    assert categories == {"petrol", "coffee"}
+
+
+def test_winner_floats_to_index0_when_non_matching_rules_sit_before_it(rule_engine):
+    # The reorder pops by POSITION-in-matched (then reads the rule index); with non-matching rules
+    # interleaved the two differ, so a pop-by-rule-index bug would float the WRONG rule.
+    rules = [_rule("WOOLWORTHS", "shopping", rule_id="r-nomatch1"),
+             _rule("COLES", "groceries", rule_id="r-coles"),
+             _rule("ALDI", "shopping", rule_id="r-nomatch2"),
+             _rule("COLES EXPRESS", "petrol", rule_id="r-express")]
+    resolved, matched_indices, categories = rule_engine.decide(rules, _txn("t1", "COLES EXPRESS 1123"))
+
+    assert resolved == "petrol"
+    assert categories == {"groceries", "petrol"}
+    assert matched_indices[0] == 3 and rules[matched_indices[0]]["id"] == "r-express"
+    assert sorted(matched_indices) == [1, 3]
+
+
+def test_two_category_equals_rules_never_co_match_so_never_conflict(rule_engine):
+    # A category-equals rule matches on EXACT category equality, so two of them to different values
+    # can never both match one charge — only one matches, so it resolves via the fast path.
+    rules = [_rule("FOOD", "petrol", field="category", operator="equals", rule_id="r-food"),
+             _rule("FOOD_AND_DRINK", "groceries", field="category", operator="equals", rule_id="r-fad")]
+    resolved, matched_indices, categories = rule_engine.decide(
+        rules, _txn("t1", "anything", category="FOOD_AND_DRINK"))
+
+    assert resolved == "groceries"
+    assert categories == {"groceries"}
+    assert [rules[i]["id"] for i in matched_indices] == ["r-fad"]
+
+
+def test_cross_field_nested_fold_stays_conflicted(rule_engine):
+    # A description rule ("food") and a category rule ("food_and_drink") can BOTH match one charge,
+    # and "food_and_drink" folds to CONTAIN "food" — but that is a coincidence across rule KINDS,
+    # not real specificity. The tie-break is scoped to the same field+operator, so this stays
+    # conflicted rather than silently filing to the category rule.
+    # FAIL-ON-REVERT: drop the `targets[other] == targets[position]` guard and this resolves.
+    rules = [_rule("food", "eating-out", field="description", operator="contains", rule_id="r-desc"),
+             _rule("FOOD_AND_DRINK", "groceries", field="category", operator="equals", rule_id="r-cat")]
+    resolved, _, categories = rule_engine.decide(
+        rules, _txn("t1", "FOOD TRUCK 42", category="FOOD_AND_DRINK"))
+
+    assert resolved is None
+    assert categories == {"eating-out", "groceries"}
+
+
+def test_desc_rule_that_would_swallow_a_category_rule_stays_conflicted(rule_engine):
+    # The MIRROR of the case above: here the DESCRIPTION rule's folded value ("food and drink")
+    # would swallow the CATEGORY rule's ("food"), so a field-agnostic tie-break would crown the
+    # description rule. The field+operator guard says these are different KINDS, not nested
+    # specificity, so the charge stays conflicted from this direction too.
+    # FAIL-ON-REVERT: drop the `targets[other] == targets[position]` guard and this resolves.
+    rules = [_rule("food and drink", "eating-out", field="description", operator="contains", rule_id="r-desc"),
+             _rule("food", "groceries", field="category", operator="equals", rule_id="r-cat")]
+    resolved, _, categories = rule_engine.decide(
+        rules, _txn("t1", "FOOD AND DRINK STORE", category="FOOD"))
+
+    assert resolved is None
+    assert categories == {"eating-out", "groceries"}
+
+
 def test_a_rule_targeting_a_deleted_category_is_skipped(rule_engine):
     # Load-bearing for run-twice: filing to a dangling id would leave the row unfiled, so the
     # next run would file it again, forever.
@@ -184,28 +318,41 @@ def test_no_rules_and_no_rows_plans_nothing(rule_engine):
                     "by_category": {}, "by_rule": [], "skipped_rules": [], "rules_considered": 0}
 
 
-# --- overlaps: would two rules fight over the same charges? -------------------
+# --- existing_at_least_as_specific: is minting `value` unsafe against this existing rule? ------
+# WHIT-518 made the clash ONE-DIRECTIONAL: minting a candidate that is more GENERAL than (or equal
+# to) a disagreeing existing rule is refused (it would steamroll the specific rule under the "file
+# this shop" narrowing); minting a STRICTLY more-specific candidate is allowed.
 
 
-def test_overlaps_is_true_when_either_value_contains_the_other(rule_engine):
-    # Nesting is the damaging case: every "COLES EXPRESS" charge also matches "COLES".
-    coles = _rule("COLES")
-    assert rule_engine.overlaps(coles, "description", "contains", "COLES EXPRESS")
-    assert rule_engine.overlaps(_rule("COLES EXPRESS"), "description", "contains", "coles")
-    # Values that only CAN co-occur (not nested) are not detectable from the values alone.
-    assert not rule_engine.overlaps(coles, "description", "contains", "RICHMOND")
+def test_more_general_or_equal_candidate_is_a_clash(rule_engine):
+    # Candidate "COLES" is a substring of the existing "COLES EXPRESS" -> candidate is more general
+    # -> clash (True). Exact-equal is also more-general-or-equal -> clash.
+    assert rule_engine.existing_at_least_as_specific(
+        _rule("COLES EXPRESS"), "description", "contains", "COLES")
+    assert rule_engine.existing_at_least_as_specific(
+        _rule("COLES"), "description", "contains", "coles")
 
 
-def test_overlaps_needs_the_same_field_and_operator(rule_engine):
-    # A description rule and a category rule target different text, so they never overlap.
+def test_strictly_more_specific_candidate_is_allowed(rule_engine):
+    # Candidate "COLES EXPRESS" contains the existing "COLES" -> candidate is strictly more specific
+    # -> NOT a clash (WHIT-518 lets it win its own charges).
+    assert not rule_engine.existing_at_least_as_specific(
+        _rule("COLES"), "description", "contains", "COLES EXPRESS")
+    # Non-nested values only CAN co-occur — not decidable from the values alone, so not a clash.
+    assert not rule_engine.existing_at_least_as_specific(
+        _rule("COLES"), "description", "contains", "RICHMOND")
+
+
+def test_specificity_check_needs_the_same_field_and_operator(rule_engine):
+    # A description rule and a category rule target different text, so neither constrains the other.
     rule = _rule("COLES", field="description", operator="contains")
-    assert not rule_engine.overlaps(rule, "category", "contains", "COLES")
-    assert not rule_engine.overlaps(rule, "description", "equals", "COLES")
+    assert not rule_engine.existing_at_least_as_specific(rule, "category", "contains", "COLES")
+    assert not rule_engine.existing_at_least_as_specific(rule, "description", "equals", "COLES")
 
 
-def test_overlaps_is_false_when_either_value_is_empty(rule_engine):
-    assert not rule_engine.overlaps(_rule("   "), "description", "contains", "COLES")
-    assert not rule_engine.overlaps(_rule("COLES"), "description", "contains", "   ")
+def test_specificity_check_is_false_when_either_value_is_empty(rule_engine):
+    assert not rule_engine.existing_at_least_as_specific(_rule("   "), "description", "contains", "COLES")
+    assert not rule_engine.existing_at_least_as_specific(_rule("COLES"), "description", "contains", "   ")
 
 
 # --- rule_id_for: the stable dedup id -----------------------------------------

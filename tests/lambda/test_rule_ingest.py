@@ -112,14 +112,28 @@ def test_filing_recomputes_counts_to_budget(lam):
     assert charge["counts_to_budget"] is False        # FAIL-ON-REVERT: recompute line removed -> True
 
 
-def test_disagreeing_rules_leave_the_charge_unfiled_and_log_both(lam, caplog):
+def test_nested_disagreeing_rules_file_to_the_more_specific_rule(lam):
+    # WHIT-518: "COLES EXPRESS" contains "COLES", so the more-specific rule wins on the webhook too.
+    # FAIL-ON-REVERT: without the tie-break `decide` returns None and the charge stays unfiled.
     charge = _charge(description="COLES EXPRESS", category=None)
     rules = [_rule("COLES", "groceries", rule_id="r-groceries"),
              _rule("COLES EXPRESS", "petrol", rule_id="r-petrol")]
+    lam.rule_ingest.apply(
+        [charge], rule_repo=FakeRuleStore(rules), category_repo=FakeCategoryRepo(["groceries", "petrol"]))
+    assert charge["category"] == "petrol"
+    assert charge["filed_by_rule"] == "r-petrol"      # stamped with the WINNING (specific) rule
+
+
+def test_non_nested_disagreeing_rules_leave_the_charge_unfiled_and_log_both(lam, caplog):
+    # Neither "COLES" nor "RICHMOND" contains the other, so there is no most-specific winner — the
+    # charge stays conflicted (never silently decided) and both rule ids are logged.
+    charge = _charge(description="COLES 0342 RICHMOND", category=None)
+    rules = [_rule("COLES", "groceries", rule_id="r-groceries"),
+             _rule("RICHMOND", "petrol", rule_id="r-petrol")]
     with caplog.at_level(logging.INFO):
         lam.rule_ingest.apply(
             [charge], rule_repo=FakeRuleStore(rules), category_repo=FakeCategoryRepo(["groceries", "petrol"]))
-    assert charge["category"] is None                 # conflict -> never silently decided
+    assert charge["category"] is None
     assert "r-groceries" in caplog.text and "r-petrol" in caplog.text
 
 

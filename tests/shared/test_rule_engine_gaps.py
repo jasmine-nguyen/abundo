@@ -1,7 +1,7 @@
 """WHIT-527 ADVERSARIAL gap tests for shared/rule_engine.py.
 
 Does NOT duplicate tests/shared/test_rule_engine.py (predicate, conflict rule, eligibility,
-run-twice, overlaps, by_rule sort) or tests/lambda_api/test_apply_rules_gaps.py ([A30]-[A36]:
+run-twice, specificity clash, by_rule sort) or tests/lambda_api/test_apply_rules_gaps.py ([A30]-[A36]:
 non-string values, accents, prefix-equals, empty-string category). This file locks the pieces
 those suites reach only THROUGH plan_rule_application:
 

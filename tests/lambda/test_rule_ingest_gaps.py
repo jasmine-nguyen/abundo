@@ -111,18 +111,20 @@ def test_rule_filing_to_income_is_applied(lam):
 
 def test_mixed_batch_each_charge_resolved_independently(lam):
     # [A5] filed / conflict / already-filed / no-match together in ONE apply call. Each row is
-    # decided on its own; one conflict or already-filed row must not stop the others.
+    # decided on its own; one conflict or already-filed row must not stop the others. The conflict
+    # is a genuinely NON-nested disagreement (COLES vs RICHMOND, neither contains the other) — a
+    # nested disagreement now resolves to the more specific rule (WHIT-518).
     filed = _charge(txn_id="filed", description="ALDI STORE", category=None)
-    conflict = _charge(txn_id="conflict", description="COLES EXPRESS", category=None)
+    conflict = _charge(txn_id="conflict", description="COLES 0342 RICHMOND", category=None)
     prefiled = _charge(txn_id="prefiled", description="COLES 1", category="eating-out")
     nomatch = _charge(txn_id="nomatch", description="WOOLWORTHS", category=None)
     rules = [_rule("ALDI", "groceries", rule_id="r-aldi"),
              _rule("COLES", "groceries", rule_id="r-coles"),
-             _rule("COLES EXPRESS", "petrol", rule_id="r-petrol")]
+             _rule("RICHMOND", "coffee", rule_id="r-richmond")]
     lam.rule_ingest.apply(
         [filed, conflict, prefiled, nomatch],
         rule_repo=FakeRuleStore(rules),
-        category_repo=FakeCategoryRepo(["groceries", "petrol", "eating-out"]))
+        category_repo=FakeCategoryRepo(["groceries", "coffee", "eating-out"]))
     assert filed["category"] == "groceries"
     assert conflict["category"] is None
     assert prefiled["category"] == "eating-out"

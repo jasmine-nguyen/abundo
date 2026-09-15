@@ -119,7 +119,9 @@ from merchant_groups import (
     rule_value_is_safe,
 )
 from milestones import mint_migration_markers
-from rule_engine import plan_rule_application, is_unfiled_category, overlaps, rule_matches, rule_id_for
+from rule_engine import (
+    plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
+    rule_id_for)
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -1445,11 +1447,12 @@ def _rule_that_would_fight(rules: list[dict], inline_rule: dict) -> dict | None:
     The realistic way in: a rule she wrote months ago never touched her stored charges (WHIT-502),
     so that merchant still appears on the merchant screen with its charges unfiled.
 
-    Nesting counts, not just an exact repeat: an existing "COLES EXPRESS -> petrol" fights an
-    inline "COLES -> groceries" over every EXPRESS charge, and that is the shape the merchant
-    screen already warns about in `alsoCatches`. Refusing is the honest answer until the more
-    specific rule can win (WHIT-518) — minting files the non-overlapping charges and strands
-    the rest for good.
+    The clash is ONE-DIRECTIONAL now (WHIT-518). Minting a MORE-GENERAL (or exact) inline rule
+    while a more-specific existing rule disagrees IS a clash: the sweep narrows to the inline rule,
+    so the general one would steamroll the specific rule's charges into the wrong category. Minting
+    a more-SPECIFIC inline rule ("COLES EXPRESS") while a general one exists ("COLES") is NOW
+    ALLOWED — the narrowed sweep files only the specific rule's own charges, and a full "Apply my
+    rules" resolves any overlap the same way by most-specific-wins.
 
     A rule to the SAME category is not a clash at any width: it agrees, so nothing conflicts, and
     the re-tap after a capped run depends on that (create_rule is safe to run twice, WHIT-497).
@@ -1457,8 +1460,8 @@ def _rule_that_would_fight(rules: list[dict], inline_rule: dict) -> dict | None:
     for rule in rules:
         if rule.get("categoryId") == inline_rule["categoryId"]:
             continue
-        if overlaps(rule, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
-                    inline_rule["value"]):
+        if existing_at_least_as_specific(rule, DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
+                                         inline_rule["value"]):
             return rule
     return None
 
