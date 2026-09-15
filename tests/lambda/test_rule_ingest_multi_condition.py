@@ -55,8 +55,9 @@ def test_webhook_any_logic_files_on_a_single_matching_condition(lam):
     any_rule = _multi_row([{"field": "merchant", "operator": "equals", "value": "uber"},
                            {"field": "amount", "operator": "greater_than", "value": "9999"}],
                           logic="any")
-    # merchant matches the raw description (WHIT-561 follow-up), so equals compares to it.
-    charge = _charge(description="UBER", amount=Decimal("-25.00"))  # only the merchant condition holds
+    # merchant matches the raw description (WHIT-561 follow-up), so equals compares to it; a
+    # non-matching merchant_name also pins that the source is the description, not merchant_name.
+    charge = _charge(description="UBER", merchant_name="LYFT", amount=Decimal("-25.00"))
     lam.rule_ingest.apply([charge], rule_repo=_Store([any_rule]),
                           category_repo=_Cats(["transport"]))
     assert charge["category"] == "transport"
