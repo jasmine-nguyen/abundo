@@ -116,7 +116,7 @@ from merchant_groups import (
     rule_value_is_safe,
 )
 from milestones import mint_migration_markers
-from rule_engine import plan_rule_application, is_unfiled_category, overlaps
+from rule_engine import plan_rule_application, is_unfiled_category, overlaps, rule_matches
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -326,10 +326,11 @@ def lambda_handler(event, context):
             return create_rule_route(event, RuleRepository(), CategoryRepository())
 
         if path.startswith(f"{RULES_PATH}/") and method == "PUT":
-            return update_rule_route(event, RuleRepository(), CategoryRepository())
+            return update_rule_route(
+                event, RuleRepository(), CategoryRepository(), TransactionRepository())
 
         if path.startswith(f"{RULES_PATH}/") and method == "DELETE":
-            return delete_rule_route(event, RuleRepository())
+            return delete_rule_route(event, RuleRepository(), TransactionRepository())
 
         # Device push-token registration (it controls who receives the user's notifications).
         if path == DEVICES_PATH and method == "POST":
@@ -1085,14 +1086,90 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
     return _json_response(201, _rule_to_client(rule))
 
 
+def _refile_rule_touched(
+    old_rule_id: str, edited_rule: dict | None,
+    transaction_repo: TransactionRepository, started: float,
+) -> int:
+    """Re-file or undo the stored charges a rule ALREADY filed, after that rule is edited or
+    deleted (WHIT-540). Returns how many owned charges this request did NOT reach (`remaining`).
+
+    Neither BankSync (incoming charges only) nor "Apply my rules" (unfiled charges only) reaches a
+    charge a now-edited rule already filed (WHIT-502), so a rule change would otherwise never move
+    its own history. This walks ALL history for charges still stamped `filed_by_rule == old_rule_id`
+    — the stamp survives ONLY while the user hasn't hand-filed the charge (a manual file REMOVEs it,
+    WHIT-536), so these are exactly the rule-owned, user-untouched charges — and:
+
+      * delete (edited_rule is None) — clears each back to unfiled (undo).
+      * edit whose id changed (a material value edit) on a DESCRIPTION rule — re-evaluates: a charge
+        that still matches the new value is re-filed to the new target and re-keyed to the new id;
+        one that no longer matches is cleared.
+      * every other edit — re-files every owned charge to the new target WITHOUT re-evaluating. Two
+        cases fall here. (1) A CATEGORY rule: filing overwrote the very category a `category equals`
+        rule matched on, so re-running it would never match and would wrongly un-file a correctly
+        filed charge — the app only ever authors description rules, so this is rare. (2) An IN-PLACE
+        edit (same id: a target-only or cosmetic value change): the match set is unchanged, so
+        re-evaluating could only spuriously drop a charge (e.g. `_normalise` doesn't collapse the
+        whitespace `fold` does), never legitimately.
+
+    Bounded by the SAME write cap / time budget as apply_rules_to_uncategorized, sharing `started`.
+    A tail beyond the budget is finished by that route's reconcile sweep on the next "Apply my
+    rules" run — it undoes a deleted rule's leftover stamps AND moves an in-place edit's leftover
+    charges to the rule's new target.
+    """
+    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    touched = [t for t in transactions if t.get("filed_by_rule") == old_rule_id]
+
+    # Re-evaluate (drop charges the edit no longer covers) ONLY for a description rule whose value
+    # materially changed. A category rule can't be re-evaluated (filing overwrote the category it
+    # matched on), and an in-place edit (same id) keeps the match set — both just re-file every
+    # owned charge to the new target. Testing `== "description"` (not `!= "category"`) means any
+    # other/legacy field also takes the safe re-file path rather than a match that would clear it.
+    reevaluate = (
+        edited_rule is not None
+        and edited_rule.get("field") == "description"
+        and edited_rule.get("id") != old_rule_id
+    )
+
+    attempted = 0
+    for transaction in touched:
+        if attempted >= APPLY_RULES_MAX_WRITES:
+            break
+        # Stop well inside the API Gateway window, exactly like the apply-rules loop. `attempted and`
+        # guarantees at least one write, so a long scan can never starve it to zero progress.
+        if attempted and time.monotonic() - started >= APPLY_RULES_TIME_BUDGET_SECONDS:
+            break
+        attempted += 1
+        pk, sk = transaction["pk"], transaction["sk"]
+        try:
+            if edited_rule is None:
+                transaction_repo.clear_rule_fill(pk, sk, old_rule_id)
+            elif not reevaluate or rule_matches(edited_rule, transaction):
+                transaction_repo.refile_rule_fill(
+                    pk, sk, edited_rule["categoryId"], old_rule_id, edited_rule["id"])
+            else:
+                transaction_repo.clear_rule_fill(pk, sk, old_rule_id)
+        except DatabaseError:
+            # Best-effort: skip this row (the orphan-stamp sweep or the next edit finishes it)
+            # rather than failing the whole edit/delete the user already saw succeed.
+            continue
+
+    return len(touched) - attempted
+
+
 def update_rule_route(event: dict, rule_repo: RuleRepository,
-                      category_repo: CategoryRepository) -> dict:
-    """PUT /rules/{id} — edit a rule in our store.
+                      category_repo: CategoryRepository,
+                      transaction_repo: TransactionRepository) -> dict:
+    """PUT /rules/{id} — edit a rule in our store, then re-file the stored charges it touched.
 
     Editing the text changes the id (the id IS the text), so the returned rule may carry a NEW
     id; the app swaps its row by the OLD id using the response body. Editing onto another rule's
     text is a 409; editing a rule that no longer exists is a 404.
+
+    After the rule row is saved, the charges it already filed are re-filed to the new target (or
+    cleared where the edit no longer matches them) — WHIT-540. `remaining` on the response reports
+    charges beyond this request's write budget; the "Apply my rules" sweep finishes any tail.
     """
+    started = time.monotonic()
     rule_id = (event.get("pathParameters") or {}).get("id")
     if not rule_id:
         return _json_response(404, {"error": "rule not found"})
@@ -1111,12 +1188,21 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     except DatabaseError:
         return _json_response(500, {"error": "could not save your rule"})
 
-    return _json_response(200, _rule_to_client(rule))
+    edited = _rule_to_client(rule)
+    remaining = _refile_rule_touched(rule_id, edited, transaction_repo, started)
+    return _json_response(200, {**edited, "remaining": remaining})
 
 
-def delete_rule_route(event: dict, rule_repo: RuleRepository) -> dict:
-    """DELETE /rules/{id} — remove a rule from our store. Idempotent: an unknown/already-gone id
-    still returns 200, so a double-tap never shows an error for a rule that is already gone."""
+def delete_rule_route(event: dict, rule_repo: RuleRepository,
+                      transaction_repo: TransactionRepository) -> dict:
+    """DELETE /rules/{id} — remove a rule from our store, then undo the fills it left on stored
+    charges (WHIT-540). Idempotent: an unknown/already-gone id still returns 200, so a double-tap
+    never shows an error for a rule that is already gone (the undo pass simply finds nothing).
+
+    `remaining` reports charges beyond this request's write budget still carrying the deleted id;
+    the "Apply my rules" orphan-stamp sweep clears that tail.
+    """
+    started = time.monotonic()
     rule_id = (event.get("pathParameters") or {}).get("id")
     if not rule_id:
         return _json_response(404, {"error": "rule not found"})
@@ -1125,7 +1211,9 @@ def delete_rule_route(event: dict, rule_repo: RuleRepository) -> dict:
         rule_repo.delete_rule(rule_id)
     except DatabaseError:
         return _json_response(500, {"error": "could not delete your rule"})
-    return _json_response(200, {"id": rule_id})
+
+    remaining = _refile_rule_touched(rule_id, None, transaction_repo, started)
+    return _json_response(200, {"id": rule_id, "remaining": remaining})
 
 
 # Safety ceiling on cursor-follow iterations per account. A bounded date-range
@@ -1491,6 +1579,12 @@ def apply_rules_to_uncategorized(
         # whole-history scan and the write loop) guarantees nothing is written.
         return _json_response(500, {"error": "could not read your rules"})
 
+    # WHIT-540: each live rule's id -> its current target, captured BEFORE the inline path narrows
+    # `rules` to the single minted rule below — the reconcile sweep needs the WHOLE store to tell an
+    # orphaned stamp (rule gone) from a drifted one (rule still here, but the charge is off its
+    # target).
+    rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
+
     if inline_rule is not None:
         clash = _rule_that_would_fight(rules, inline_rule)
         if clash is not None:
@@ -1581,9 +1675,49 @@ def apply_rules_to_uncategorized(
             continue
         already_filed.append(transaction_id)
 
+    # `remaining` reports only the file loop's unreached matches — capture it BEFORE the sweep
+    # below, which shares `attempted` for the budget but must not be subtracted from `matched`.
+    matched_remaining = len(plan["matched"]) - attempted
+
+    # WHIT-540 self-healing reconcile sweep. A rule edit/delete re-files the charges it touched
+    # immediately, but only up to its own write budget; a rule on a huge history leaves a tail. The
+    # plain "Apply my rules" sweep already reads every charge, so while it is here it brings each
+    # rule-owned charge back in line with no client cooperation — delivering the "stragglers heal on
+    # the next run" guarantee for EVERY tail shape:
+    #   * stamp points at a rule that no longer exists -> undo the fill (delete tail, value-edit's
+    #     old id).
+    #   * stamp points at a live rule but the charge sits off that rule's current target -> move it
+    #     to the target (an in-place target edit's tail; also heals a settlement re-put that carried
+    #     a stale category back onto a stamped row, WHIT-513).
+    # It shares this request's write cap and clock (the file loop above runs first, so the primary
+    # action is never starved), and the stamp guards make each write a no-op if the user has since
+    # taken the charge over. ONLY the plain full sweep runs it: the "file this shop" path
+    # (inline_rule) narrowed `rules` to the single minted rule, so it can't judge the store.
+    if inline_rule is None:
+        for transaction in transactions:
+            if attempted >= APPLY_RULES_MAX_WRITES:
+                break
+            if attempted and time.monotonic() - started >= APPLY_RULES_TIME_BUDGET_SECONDS:
+                break
+            stamp = transaction.get("filed_by_rule")
+            if not stamp:
+                continue
+            target = rule_target_by_id.get(stamp)
+            try:
+                if target is None:
+                    attempted += 1
+                    transaction_repo.clear_rule_fill(transaction["pk"], transaction["sk"], stamp)
+                elif not is_unfiled(target) and transaction.get("category") != target:
+                    attempted += 1
+                    transaction_repo.refile_rule_fill(
+                        transaction["pk"], transaction["sk"], target, stamp, stamp)
+            except DatabaseError:
+                # Best-effort cleanup — a later sweep retries the tail.
+                continue
+
     return _apply_rules_response(
         plan, False, filed=filed, vanished=vanished, failed=failed,
-        already_filed=already_filed, remaining=len(plan["matched"]) - attempted,
+        already_filed=already_filed, remaining=matched_remaining,
         created_rule=created_rule,
     )
 

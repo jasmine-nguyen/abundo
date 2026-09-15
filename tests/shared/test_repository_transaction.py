@@ -942,3 +942,82 @@ def test_whit536_stamped_write_declares_no_unused_expression_value(repo, monkeyp
     assert declared == {":category", ":expected", ":rule"}
     for value_alias in declared:
         assert value_alias in expr
+
+
+# --------------------------------------------------------------------------- #
+# clear_rule_fill / refile_rule_fill (WHIT-540) — undo / re-file a rule's fill #
+# on ONE charge, guarded by the STAMP so a user's tap in the gap always wins.  #
+# --------------------------------------------------------------------------- #
+
+def test_clear_rule_fill_removes_category_and_stamp_when_the_stamp_matches(repo):
+    # The delete-undo (and edit-no-longer-matches) path: a rule-owned charge goes back to unfiled.
+    key = _seed_row(repo, category="groceries", filed_by_rule="rule-1", notes="keep")
+    assert repo.clear_rule_fill(*key, "rule-1") is True
+    row = repo._table.store[key]
+    assert "category" not in row
+    assert "filed_by_rule" not in row
+    assert row["notes"] == "keep"          # only the fill is undone, not the user's own fields
+
+
+def test_clear_rule_fill_leaves_a_charge_whose_stamp_no_longer_matches(repo):
+    # THE TAP-WINS GUARD. The user hand-filed since (the stamp was REMOVEd, so it's now absent or a
+    # different rule), so deleting the OLD rule must not touch their choice. FAIL-ON-REVERT: condition
+    # on attribute_exists(pk) alone (drop the `#p = :rule_id`) and this charge is wrongly un-filed.
+    key = _seed_row(repo, category="coffee")          # user re-filed; stamp gone
+    assert repo.clear_rule_fill(*key, "rule-1") is False
+    assert repo._table.store[key]["category"] == "coffee"
+
+
+def test_clear_rule_fill_leaves_a_charge_owned_by_a_different_rule(repo):
+    key = _seed_row(repo, category="petrol", filed_by_rule="rule-2")
+    assert repo.clear_rule_fill(*key, "rule-1") is False
+    row = repo._table.store[key]
+    assert row["category"] == "petrol" and row["filed_by_rule"] == "rule-2"
+
+
+def test_clear_rule_fill_on_a_vanished_row_is_a_false_noop(repo):
+    repo._table.store = {}
+    assert repo.clear_rule_fill("ACCOUNT#x", "TXN#gone", "rule-1") is False
+
+
+def test_clear_rule_fill_is_idempotent(repo):
+    # Running it twice is safe: the second call finds the stamp already gone and no-ops.
+    key = _seed_row(repo, category="groceries", filed_by_rule="rule-1")
+    assert repo.clear_rule_fill(*key, "rule-1") is True
+    assert repo.clear_rule_fill(*key, "rule-1") is False
+
+
+def test_refile_rule_fill_moves_category_and_rekeys_the_stamp(repo):
+    # The edit-still-matches path: a charge the rule owns moves to the new target and the stamp is
+    # re-keyed to the (possibly new) id. Here the text changed, so old id -> new id.
+    key = _seed_row(repo, category="groceries", filed_by_rule="old-id", notes="keep")
+    assert repo.refile_rule_fill(*key, "eatingout", "old-id", "new-id") is True
+    row = repo._table.store[key]
+    assert row["category"] == "eatingout"
+    assert row["filed_by_rule"] == "new-id"
+    assert row["notes"] == "keep"
+
+
+def test_refile_rule_fill_in_place_edit_keeps_the_id_moves_the_category(repo):
+    # A target-only (or cosmetic) edit keeps the id: old == new, only the category moves.
+    key = _seed_row(repo, category="groceries", filed_by_rule="same-id")
+    assert repo.refile_rule_fill(*key, "petrol", "same-id", "same-id") is True
+    row = repo._table.store[key]
+    assert row["category"] == "petrol" and row["filed_by_rule"] == "same-id"
+
+
+def test_refile_rule_fill_leaves_a_charge_the_user_refiled_in_the_gap(repo):
+    # TAP-WINS for the re-file path. The user hand-filed to the SAME category during the scan->write
+    # gap (so the stamp was REMOVEd). A CATEGORY guard would pass and re-capture their charge; the
+    # STAMP guard refuses. FAIL-ON-REVERT: condition this write on the category and the stamp lands
+    # back on a charge the user just took ownership of.
+    key = _seed_row(repo, category="eatingout")       # user re-filed to the new target; stamp gone
+    assert repo.refile_rule_fill(*key, "eatingout", "old-id", "new-id") is False
+    row = repo._table.store[key]
+    assert row["category"] == "eatingout"
+    assert "filed_by_rule" not in row                 # not re-stamped
+
+
+def test_refile_rule_fill_on_a_vanished_row_is_a_false_noop(repo):
+    repo._table.store = {}
+    assert repo.refile_rule_fill("ACCOUNT#x", "TXN#gone", "groceries", "old", "new") is False

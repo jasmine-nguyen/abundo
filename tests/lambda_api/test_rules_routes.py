@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo
+from _feed_fakes import FakeCategoryRepo, WritableFeedRepo
 from _rule_fakes import FakeRuleRepo
 
 
@@ -39,9 +39,14 @@ def _event(method, path, body=None, path_params=None, base64_body=False):
     return event
 
 
-def _inject(handler, monkeypatch, rule_repo, categories=_CATEGORIES):
+def _inject(handler, monkeypatch, rule_repo, categories=_CATEGORIES, transaction_repo=None):
     monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
+    # WHIT-540: PUT/DELETE now re-file the stored charges a rule touched, so the routes build a
+    # TransactionRepository. Default to an empty store (no charges → nothing to re-file, remaining
+    # 0); the re-file BEHAVIOUR is covered in test_rule_refile.py with seeded charges.
+    monkeypatch.setattr(
+        handler, "TransactionRepository", lambda: transaction_repo or WritableFeedRepo({}))
 
 
 # --- GET /rules ---------------------------------------------------------------
@@ -326,7 +331,7 @@ def test_delete_rule_removes_it_and_returns_200(handler, monkeypatch):
         _event("DELETE", f"/rules/{rule_id}", path_params={"id": rule_id}), None)
 
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"id": rule_id}
+    assert json.loads(resp["body"]) == {"id": rule_id, "remaining": 0}
     assert repo.list_rules() == []
 
 
@@ -349,7 +354,7 @@ def test_delete_rule_unknown_id_is_200(handler, monkeypatch):
     resp = handler.lambda_handler(
         _event("DELETE", "/rules/deadbeef", path_params={"id": "deadbeef"}), None)
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"]) == {"id": "deadbeef"}
+    assert json.loads(resp["body"]) == {"id": "deadbeef", "remaining": 0}
 
 
 def test_delete_rule_missing_path_id_is_404(handler, monkeypatch):

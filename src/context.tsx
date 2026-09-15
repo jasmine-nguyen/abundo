@@ -1794,10 +1794,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     patchRules((prev) => prev.filter((r) => r.id !== id));
     // WHIT-271: patchRules is guarded (no-ops on the evicted cache); gate the toast on the epoch.
     const epoch = sessionEpoch.current;
-    // WHIT-502: deleting a rule doesn't re-tag existing charges (rules apply at bank-sync time, to
-    // incoming charges), so the ['uncategorizedCount'] tally can't move here — intentionally NOT invalidated.
+    // WHIT-540: deleting a rule now UNDOES the fills it left on stored charges (the server clears
+    // them back to unfiled), so the server-derived reads DO move — refresh the count, feed, budgets
+    // and merchant groups. `skipRules` leaves the ['rules'] cache alone: the optimistic removal
+    // above already dropped this rule, and a refetch would just race that.
     try {
       await deleteEnrichment(id);
+      if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
     } catch {
       // WHIT-271: guard the CACHE write too, not just the toast — reinsertBefore appends the rule
       // when its successorIds aren't found, so on the NEXT session's repopulated ['rules'] cache
@@ -1806,7 +1809,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       patchRules((prev) => reinsertBefore(prev, removed, successorIds));
       showToast('Could not delete rule. Please try again.');
     }
-  }, [showToast, patchRules]);
+  }, [showToast, patchRules, refreshAfterApplyRules]);
 
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
@@ -1853,16 +1856,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
     const epoch = sessionEpoch.current;
-    // WHIT-502: editing a rule re-files only future charges, not stored ones — ['uncategorizedCount']
-    // intentionally NOT invalidated (see saveManualRule).
+    // WHIT-540: editing a rule now RE-FILES the stored charges it already touched (the server moves
+    // them to the new target, or clears the ones the edit no longer matches), so the server-derived
+    // reads DO move — refresh the count, feed, budgets and merchant groups. `skipRules` leaves the
+    // ['rules'] cache alone: the optimistic edit above already patched this rule's row.
     try {
       const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator });
       patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
+      if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
     } catch {
       patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
       if (epoch === sessionEpoch.current) showToast('Could not update rule. Please try again.');
     }
-  }, [showToast, patchRules]);
+  }, [showToast, patchRules, refreshAfterApplyRules]);
 
   // Save a goal — one method for create AND edit (an upsert, mirroring the server). A
   // create mints a client id (Crypto.randomUUID) and APPENDS; an edit (editId set) REPLACES
