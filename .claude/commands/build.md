@@ -1,5 +1,5 @@
 ---
-description: Take one backlog card from plan to reviewed, tested code. Two sign-offs — you approve the plan (Plan Sign-off), then approve the finished change (Implementation Sign-off) before it's pushed. Never commits or pushes without your go.
+description: Take one backlog card from plan to reviewed, tested code. One sign-off — you approve the plan (Plan Sign-off) before any code is written. Never commits or pushes without your go.
 ---
 
 Run the full backlog pipeline for ONE card. You are the orchestrator AND the
@@ -11,9 +11,8 @@ can't do.
 
 Two words, kept distinct:
 
-- **Sign-off** — a human stop where YOU say go. There are exactly two: the **Plan
-  Sign-off** (before any code) and the **Implementation Sign-off** (before anything
-  ships). You stop at both.
+- **Sign-off** — a human stop where YOU say go. There is exactly one: the **Plan
+  Sign-off** (before any code).
 - **gate** — an automated / agent quality bar that passes or fails on its own (green
   suite, coverage floor, code-critic / qa verdicts). No human click.
 
@@ -38,10 +37,11 @@ Target card (optional): $ARGUMENTS
 
    - **Move the card to In Progress — you own this, not the planner.** As soon as
      the planner's `## Card validity` verdict comes back **VALID**, set the card's
-     `Status` To Do → In Progress via `notion-update-page` (idempotent — skip if it's
-     already In Progress). If the verdict is anything else (ALREADY DONE / DEAD CODE /
-     WRONG PREMISE / ALREADY COVERED), do NOT move it — leave it in To Do and follow
-     the verdict (close / retarget). Echo the board change (or why you skipped it).
+     `Status` To Do → In Progress via `notion-update-page` (safe to run twice —
+     doing it again changes nothing — skip if it's already In Progress). If the
+     verdict is anything else (ALREADY DONE / DEAD CODE / WRONG PREMISE / ALREADY
+     COVERED), do NOT move it — leave it in To Do and follow the verdict (close /
+     retarget). Echo the board change (or why you skipped it).
 
 3. **Critique (subagent).** Spawn the `solution-critic` agent with the card AND the
    plan. It returns an adversarial review. If it says NEEDS REWORK, send the
@@ -57,12 +57,11 @@ Target card (optional): $ARGUMENTS
    swap) — call that out explicitly and say why. Slicing is not a reason to weaken the
    review agents: code-critic and qa stay full-strength on every slice.
 
-4. **Present + PAUSE (Plan Sign-off).** First run a **plain-language pass** (AGENTS.md
-   "How to communicate" + the jargon glossary): lead with an **"In plain words:"**
-   summary — 2–3 sentences a non-coder gets — then swap or gloss every technical term
-   in the detail. No unexplained jargon reaches Jasmine. Then show, concisely: the
-   card and its "done" definition, the final approach, the exact files that would
-   change, any escalation / open question needing a human call, and the test plan.
+4. **Present + PAUSE (Plan Sign-off).** Show only:
+   - **Problem:** What's wrong or missing, in plain English. 1–2 sentences.
+   - **Solution:** How we'll fix it. 2 lines tops. If there are multiple viable
+     approaches, list each with a one-line pro/con and name the recommended one.
+
    Then ask:
    **"Approve this plan? Say go and I'll implement it."** Do not proceed until the
    user approves. Fold any changes they ask for into the plan first.
@@ -75,6 +74,10 @@ Target card (optional): $ARGUMENTS
 
 6. **Build it** per the approved plan. Make the smallest change that satisfies
    the "done" definition. Match the surrounding code's conventions.
+   - **No code duplication.** Before writing new code, check if the same logic
+     already exists elsewhere. Extract shared helpers instead of copy-pasting
+     between functions. If you spot existing duplication while working in an area,
+     consolidate it as part of the change.
    - **Name things specifically.** Variables, functions, resources — a name should
      say what the thing is. Avoid meaningless short forms (`t` for a transaction,
      `r` for a repo) unless the full name is genuinely too long for a tight scope.
@@ -91,7 +94,8 @@ Target card (optional): $ARGUMENTS
 7. **Coding standards**
    - Simpler is better. Do not overcomplicate code.
    - Keep READMEs short.
-   - Keep comments short and concise, use plain language. Only comment when necessary.
+   - **Minimal comments.** Only add comments when the logic is genuinely complex
+     and a reader would be lost without them. No comments for straightforward code.
    - Follow a standard/convention for naming functions, variables. For example, if a variable is
      called transaction at one place, do not call it txn at another place.
    - Keep code flat and readable, do not nest multiple if/else or try/catch together. Use early exits to avoid nesting.
@@ -146,7 +150,7 @@ Target card (optional): $ARGUMENTS
      later never comes — the board fills up with debt nobody clears. If you are
      already in the file with the tests green, fixing it now is cheaper than
      writing the card, let alone doing it in some future PR. So: fix it, re-run
-     the self-check, and list it under "also fixed" at the Implementation Sign-off.
+     the self-check, and list it under "also fixed" at the end.
 
      **File a card ONLY if one of these is true** — say WHICH one when you propose it:
      1. **It needs Jasmine's decision.** Not a craft call you can make yourself —
@@ -178,9 +182,9 @@ Target card (optional): $ARGUMENTS
      the fail-on-revert check (a test that still passes with the fix reverted is worthless).
      Never let an agent be the sole reviewer of its own tests.
 
-## Phase 4 — Finish (Implementation Sign-off)
+## Phase 4 — Finish
 
-10. **Green gate — the suite (with coverage floor) must pass before you present.**
+10. **Green gate — the suite (with coverage floor) must pass before shipping.**
     Run the suites the way CI does, so the coverage floor is enforced: client
     `npm run coverage:local` + `npx tsc --noEmit` (`coverage:local` shards the tests,
     merges the per-shard coverage, and enforces the floor — the same mechanism CI runs;
@@ -190,29 +194,13 @@ Target card (optional): $ARGUMENTS
     coverage. Server `python -m pytest --cov … --cov-fail-under=<gate>`. Both suites carry a coverage ratchet (a REGRESSION
     backstop, not a quality signal — the real quality gate is fail-on-revert, which
     code-critic checks). ALL tests green, coverage floor met, typecheck clean is the
-    precondition for the Implementation Sign-off. If anything is red, you are not done — fix it (or take it
+    precondition for shipping. If anything is red, you are not done — fix it (or take it
     back through Phase 3). Never raise a PR on a red suite.
 
-11. **Present + PAUSE (Implementation Sign-off).** First run a **plain-language pass**
-    (AGENTS.md "How to communicate" + the jargon glossary): lead with an **"In plain
-    words:"** summary a non-coder gets, then gloss every technical term below. No
-    unexplained jargon reaches Jasmine. Then show: what you built, the final diff
-    summary, the `code-critic` verdict (should be SHIP), the `qa` edge-case
-    findings, its test-case checklist, the new automated tests + their green run,
-    and typecheck results. Then two short lists:
-    - **"Also fixed in this PR"** — every craft / acceptable-for-scope finding you
-      folded in. This list should be the long one.
-    - **"Proposed cards"** — ideally EMPTY. Anything here must name which of the four
-      exceptions in step 9 it meets, in one line. If the list is empty, say so
-      explicitly ("no new cards") — a clear board is the goal, so it is worth stating.
-
-    Then ask: **"Approve this change? On go I'll commit, push, open the PR"** — adding
-    *"file the N cards above"* only if there are any — **"and move the card to Done."**
-
-12. **On go — apply side effects (only now):**
+11. **Ship it.** Once the green gate passes:
     - Commit and push the branch, then open the PR (per AGENTS.md, every meaningful
       unit of work gets a PR). The suite is already green from step 10, so CI's
-      `Client tests` workflow should pass on the PR..
+      `Client tests` workflow should pass on the PR.
     - File any approved cards to the board (`notion-create-pages`) — usually none.
       Once the board assigns each a number, put it in the title per AGENTS.md
       "Filing cards": `<TICKET> <icon> <title>`, so the card is searchable by number.
@@ -231,9 +219,8 @@ show` the commits that touched the area) until you can point to the exact line
   trust; "let me read it and get back to you with proof" is always the right move.
   If you catch yourself hedging ("probably", "most likely", "it might be") without
   having read the relevant code, STOP and go read it.
-- Two hard stops: never implement before the Plan Sign-off; never commit, push, or
-  write to Notion before the Implementation Sign-off. **One carve-out:** advancing the
-  card's `Status` To Do → In Progress on a VALID plan (Phase 1, step 2) is the sole
+- One hard stop: never implement before the Plan Sign-off. **One carve-out:** advancing
+  the card's `Status` To Do → In Progress on a VALID plan (Phase 1, step 2) is the sole
   allowed pre-sign-off board write — it reflects work starting, nothing else.
 - **One card, one PR.** If a plan needs more than one PR to ship safely, split the
   card into smaller tickets BEFORE building — don't run a multi-PR card through the
@@ -241,6 +228,8 @@ show` the commits that touched the area) until you can point to the exact line
   The only exception is a change that genuinely can't land in pieces without breaking
   `main`; call that out explicitly. This is a scoping fix, never a reason to weaken the
   review agents.
+- **No code duplication.** Never copy-paste logic between functions. Extract shared
+  helpers. If existing duplication is spotted while working in the area, consolidate it.
 - **Fix it, don't card it.** Craft findings, small bugs and acceptable-for-scope issues
   found during review get FIXED IN THE SAME PR by default. File a card only when it
   needs Jasmine's decision, is genuinely big, would blow the scope check above, or is
@@ -263,7 +252,5 @@ show` the commits that touched the area) until you can point to the exact line
   gate too: fix them (or get an explicit user waiver) before pushing.
 - Escalate architectural / hard-to-reverse decisions instead of guessing, at
   whatever phase they surface.
-- **Plain language is a hard rule, not a nicety.** Every Sign-off presentation and
-  every escalation leads with an "In plain words:" summary and carries no unexplained
-  jargon — gloss or rename per the AGENTS.md glossary. If you catch a bare technical
-  term as you draft, fix it before sending.
+- **Minimal comments.** Only comment when the logic is genuinely complex and a reader
+  would be lost without the explanation. No comments for straightforward code.
