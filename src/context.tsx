@@ -4,19 +4,27 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, UncategorizedMerchantGroup } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
 
 export type { LoanFacts, LoanFactsInput } from './api';
-export type { ApplyRulesResult } from './api';
+export type { ApplyRulesResult, ApplyRulesJob } from './api';
 // WHIT-517: the outcome of a "file by shop" preview or write. On failure, `clash` carries the
 // server's 409 ApiError when an existing rule would fight this one (so the sheet can explain it),
 // and is null for any other failure. Kept distinct from applyRulesToHistory's plain null, which
 // erases that difference.
 export type FileByShopOutcome =
   | { ok: true; report: ApplyRulesResult }
+  | { ok: false; clash: ApiError | null };
+// WHIT-560: the outcome of STARTING an async apply-rules job. `ok` means the job was accepted
+// (202) and polling has begun; on failure `clash` carries the 409 ApiError when an existing rule
+// would fight an inline "file this shop / add rule" job (null for a bad-rule 400 or a 502 the sheet
+// shows as a generic "couldn't start"). The job's own running/done/failed state is read separately
+// from `applyRulesJob`.
+export type ApplyRulesJobStart =
+  | { ok: true }
   | { ok: false; clash: ApiError | null };
 // WHIT-190a: the categorise write double-writes the query cache (for the migrated
 // Transactions list) alongside the old store (for the tab badge + budget detail).
@@ -169,6 +177,15 @@ const CATEGORY_BATCH_LIMIT = 100;
 // the preview says so UP FRONT instead of promising a number one tap can't deliver. The server
 // can stop even earlier (a wall-clock budget), hence "up to" in the copy. Keep the two equal.
 export const APPLY_RULES_MAX_WRITES = 300;
+
+// WHIT-560: the async "apply rules over all history" background job (no cap). The app polls the
+// job's status on a SELF-SCHEDULING loop — the next poll is armed only after the current one
+// resolves — so polls can never overlap or land out of order regardless of the per-poll timeout.
+const APPLY_RULES_JOB_POLL_DELAY_MS = 2500;
+// A dropped poll (offline/airplane) is NOT a job failure — the sweep keeps running server-side.
+// Tolerate this many CONSECUTIVE network throws, then give up so the sheet isn't stuck polling a
+// truly unreachable server. A server `status:"failed"` or a 404 (expired) is terminal immediately.
+const APPLY_RULES_JOB_MAX_NET_ERRORS = 5;
 
 // WHIT-292: the batch category write shared by applyCategory('all') and applyCategoryToMany.
 // Chunk the ids under the server's per-request cap (CATEGORY_BATCH_LIMIT), send the chunks
@@ -506,6 +523,15 @@ export interface AppContext {
   // in one call. Both return the same 409-clash-aware outcome as the file-by-shop pair.
   previewNewRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>;
   fileNewRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<FileByShopOutcome>;
+  // WHIT-560: the async "apply my rules over all history" job (no 300/15s cap). `applyRulesJob` is
+  // the live status the sheet renders (null when idle); the three starters begin a job and kick off
+  // polling — the plain sweep, and the inline "file this shop" / "add rule" variants (which mint a
+  // rule and can clash 409). A running job blocks the sync writers above (one heavy run at a time).
+  applyRulesJob: ApplyRulesJob | null;
+  startApplyRulesSweep: () => Promise<ApplyRulesJobStart>;
+  startFileByShopJob: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<ApplyRulesJobStart>;
+  startNewRuleJob: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<ApplyRulesJobStart>;
+  retryApplyRulesJob: () => Promise<ApplyRulesJobStart>;
   applyTransactionEdit: (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }) => Promise<void>;
   saveBudget: (categoryId: string, value: number, rollover?: boolean) => Promise<boolean>;
   deleteBudget: (categoryId: string) => Promise<boolean>;
@@ -675,6 +701,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const sheetDrafts = useRef<Map<string, unknown>>(new Map());
   // WHIT-508: one apply-rules run at a time, held here rather than in the sheet — see the writer.
   const applyRulesInFlight = useRef(false);
+  // WHIT-560: the async background job. `applyRulesJob` is the status the sheet renders; the refs
+  // drive the self-scheduling poll loop and the "one heavy run at a time" lock, which must live in
+  // the provider (it outlives the sheet, which unmounts on dismiss/lock). `applyRulesJobActive`
+  // stays true from the accepted POST until the job is terminal OR the session ends — the sync
+  // writers check it too, so a sync sweep can't start on top of a running job even after the sheet
+  // is dismissed (polling stops on dismiss and resumes on reopen; the lock does not).
+  const [applyRulesJob, setApplyRulesJob] = useState<ApplyRulesJob | null>(null);
+  const applyRulesJobId = useRef<string | null>(null);
+  const applyRulesPollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const applyRulesNetErrors = useRef(0);
+  const applyRulesJobActive = useRef(false);
+  // Bumped by every poll teardown (terminal, dismiss, lock, sign-out). A poll captures it before its
+  // await and bails without re-arming if it changed — so a GET that was in flight when the sheet was
+  // dismissed can't resurrect the timer, and a dismiss-then-reopen can never leave two live chains.
+  const applyRulesPollGen = useRef(0);
+  // The variant + args of the RUNNING job, so "Try again" always restarts the SAME sweep — even when
+  // the job view is rendered from a different sheet than the one that started it (applyRulesJob is
+  // global). Without this, a failed file-this-shop job's retry from the plain sheet would run a
+  // whole-rules sweep instead.
+  const applyRulesJobRetryArgs = useRef<{ rule?: { value: string; categoryId: string; budgetExcluded?: boolean }; prependRule: boolean } | null>(null);
+  const applyRulesJobStartEpoch = useRef(0);
+  // True only for the "add rule" (Rules screen) variant: on success prepend the minted rule with
+  // its NEW badge (like fileNewRule), skipping the rules refetch. False for the plain sweep and
+  // "file this shop", which refresh rules normally.
+  const applyRulesJobPrependRule = useRef(false);
+  // The latest poll callback, read through a ref so a scheduled timer always runs the freshest
+  // closure (over refreshAfterApplyRules etc.) rather than a stale one captured at schedule time.
+  const applyRulesPollRef = useRef<() => void>(() => {});
   const readSheetDraft = useCallback((key: string): unknown => sheetDrafts.current.get(key), []);
   const writeSheetDraft = useCallback((key: string, value: unknown) => { sheetDrafts.current.set(key, value); }, []);
   // WHIT-192: rule edits are mirrored straight into the ['rules'] query cache the Rules
@@ -745,6 +799,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // that also kept the jest worker alive between tests).
   useEffect(() => () => {
     clearTimeout(toastTimer.current);
+    clearTimeout(applyRulesPollTimer.current); // WHIT-560: no zombie poll after the provider unmounts
   }, []);
 
   // WHIT-268: overlays render OUTSIDE the auth gate in app/_layout.tsx, so the gate's
@@ -768,7 +823,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // way — the same shield unmounts the Toast, and its timer clears it before unlock.)
     // Keyed on the same condition the shield unmounts on (`!== 'authed'`), not on 'anon', so a
     // re-broadcast of 'authed' can't close a sheet the user is still reading.
-    if (getStatus() !== 'authed') setSheet((prev) => (prev?.mode === 'applyRules' ? null : prev));
+    if (getStatus() !== 'authed') {
+      setSheet((prev) => (prev?.mode === 'applyRules' ? null : prev));
+      // WHIT-560: a lock (or sign-out) unmounts the sheet, so stop polling and drop the job view —
+      // the job keeps running server-side; on unlock the reopened sheet previews fresh. Releasing
+      // the lock here matches the sheet's own lock→fresh-start model (WHIT-508).
+      clearTimeout(applyRulesPollTimer.current);
+      applyRulesPollTimer.current = undefined;
+      applyRulesPollGen.current += 1;
+      applyRulesJobId.current = null;
+      applyRulesNetErrors.current = 0;
+      applyRulesJobActive.current = false;
+      setApplyRulesJob(null);
+    }
     if (getStatus() !== 'anon') return;
     sessionEpoch.current += 1;
     clearTimeout(toastTimer.current);
@@ -780,6 +847,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAiInsightsError(false);
     setAiInsightsLoading(false);
   }), []);
+
+  // WHIT-560: polling follows an open overlay. While any sheet is open and a job is active but no
+  // timer is armed (e.g. the sheet was just reopened after a dismiss), resume the poll from the
+  // stored id. When the overlay is fully dismissed, STOP polling — the job keeps running server-side
+  // and the lock stays held (block until it finishes) — and drop a terminal frame so the next open
+  // previews fresh.
+  useEffect(() => {
+    if (sheet !== null) {
+      if (applyRulesJobActive.current && applyRulesJobId.current && !applyRulesPollTimer.current) {
+        applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
+      }
+      return;
+    }
+    clearTimeout(applyRulesPollTimer.current);
+    applyRulesPollTimer.current = undefined;
+    applyRulesPollGen.current += 1; // supersede any in-flight poll so it can't re-arm after dismiss
+    if (!applyRulesJobActive.current) setApplyRulesJob(null);
+  }, [sheet]);
 
   const showToast = useCallback((m: string) => {
     setToast(m);
@@ -1285,7 +1370,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // The latch lives HERE, not in the sheet: dismissing the sheet mid-write unmounts it, and
     // reopening would otherwise mint a fresh component latch and let a second 300-write run start
     // on top of the first. The provider outlives the sheet, so one run at a time really means one.
-    if (applyRulesInFlight.current) return null;
+    if (applyRulesInFlight.current || applyRulesJobActive.current) return null;
     applyRulesInFlight.current = true;
     const epoch = sessionEpoch.current;
     try {
@@ -1346,7 +1431,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // nothing). Unlike applyRulesToHistory, this does NOT collapse the 409 to a bare null.
   const fileByShop = useCallback(
     async (group: UncategorizedMerchantGroup, categoryId: string): Promise<FileByShopOutcome> => {
-      if (applyRulesInFlight.current) return { ok: false, clash: null };
+      if (applyRulesInFlight.current || applyRulesJobActive.current) return { ok: false, clash: null };
       applyRulesInFlight.current = true;
       const epoch = sessionEpoch.current;
       try {
@@ -1400,7 +1485,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // refresh so the rule still lands in the list on refetch.
   const fileNewRule = useCallback(
     async (pattern: string, categoryId: string, budgetExcluded = false): Promise<FileByShopOutcome> => {
-      if (applyRulesInFlight.current) return { ok: false, clash: null };
+      if (applyRulesInFlight.current || applyRulesJobActive.current) return { ok: false, clash: null };
       applyRulesInFlight.current = true;
       const epoch = sessionEpoch.current;
       try {
@@ -1433,6 +1518,130 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         applyRulesInFlight.current = false;
       }
     }, [patchTransactions, patchRules, refreshAfterApplyRules]);
+
+  // WHIT-560: async apply-rules background job. Stop the poll timer and release the "one run at a
+  // time" lock. Does NOT clear `applyRulesJob` state — a terminal frame stays on screen; the
+  // dismiss effect drops it when the sheet closes.
+  const endApplyRulesJob = useCallback(() => {
+    clearTimeout(applyRulesPollTimer.current);
+    applyRulesPollTimer.current = undefined;
+    applyRulesPollGen.current += 1;
+    applyRulesJobId.current = null;
+    applyRulesNetErrors.current = 0;
+    applyRulesJobActive.current = false;
+  }, []);
+
+  // A terminal job (server `status` succeeded/failed): end polling, then reconcile the caches. The
+  // async path can only INVALIDATE (the GET returns counts, not id lists — so no per-row patch like
+  // the sync writers). A failed job may still have filed some rows before dying, so it refreshes
+  // too. The "add rule" variant prepends the minted rule with its NEW badge (skipping the rules
+  // refetch), exactly like fileNewRule; every other variant refreshes rules normally.
+  const finishApplyRulesJob = useCallback((job: ApplyRulesJob) => {
+    endApplyRulesJob();
+    setApplyRulesJob(job);
+    if (job.status === 'succeeded' && job.createdRule && applyRulesJobPrependRule.current) {
+      const minted = job.createdRule;
+      patchRules((prev) => [{ ...toRule(minted as EnrichmentRule), isNew: true }, ...prev]);
+      refreshAfterApplyRules({ skipRules: true });
+    } else {
+      refreshAfterApplyRules();
+    }
+  }, [endApplyRulesJob, patchRules, refreshAfterApplyRules]);
+
+  // The job stopped without a server verdict — an expired/unknown id (404) or too many consecutive
+  // network drops. Mark the last-known frame failed (so the sheet shows the failed arm + retry) and
+  // still refresh, since a lost-contact job may have landed rows server-side.
+  const failApplyRulesJob = useCallback((error: string) => {
+    endApplyRulesJob();
+    setApplyRulesJob((prev) => (prev ? { ...prev, status: 'failed', error } : prev));
+    refreshAfterApplyRules();
+  }, [endApplyRulesJob, refreshAfterApplyRules]);
+
+  // One poll of the running job, self-scheduling: it arms the NEXT poll only after this one settles,
+  // so polls never overlap. Bails silently if the job was torn down (id cleared) or the session
+  // changed under it. A thrown fetch (offline) is swallowed and retried up to the net-error cap; only
+  // a server `status` or a 404 ends the job.
+  const pollApplyRulesJob = useCallback(async () => {
+    const jobId = applyRulesJobId.current;
+    if (!jobId) return;
+    const startEpoch = applyRulesJobStartEpoch.current;
+    const gen = applyRulesPollGen.current;
+    // A teardown (dismiss/lock/sign-out/terminal) between this poll firing and its GET resolving
+    // bumps the generation — this poll must then NOT re-arm the timer, or it would revive a stopped
+    // loop (and race the reopen effect into two live chains).
+    const superseded = () => applyRulesJobId.current !== jobId
+      || startEpoch !== sessionEpoch.current || gen !== applyRulesPollGen.current;
+    try {
+      const job = await apiGetApplyRulesJob(jobId);
+      if (superseded()) return;
+      applyRulesNetErrors.current = 0;
+      if (job.status === 'running') {
+        setApplyRulesJob(job);
+        applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
+        return;
+      }
+      finishApplyRulesJob(job); // succeeded or failed — terminal
+    } catch (e) {
+      if (superseded()) return;
+      if (e instanceof ApiError && e.status === 404) { failApplyRulesJob('expired'); return; }
+      applyRulesNetErrors.current += 1;
+      if (applyRulesNetErrors.current >= APPLY_RULES_JOB_MAX_NET_ERRORS) { failApplyRulesJob('network'); return; }
+      applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
+    }
+  }, [finishApplyRulesJob, failApplyRulesJob]);
+  useEffect(() => { applyRulesPollRef.current = pollApplyRulesJob; }, [pollApplyRulesJob]);
+
+  // Start a background job (the plain sweep passes no rule; the inline variants pass one). Blocks if
+  // any apply-rules run — sync OR a still-active async job — is already going. On the accepted 202 it
+  // records the id, shows the first `running` frame, and arms the poll loop. A 409 surfaces as a
+  // clash for the confirm sheets; a 400/502 is a generic "couldn't start". `prependRule` is set only
+  // for the "add rule" variant so its success prepends the minted rule (see finishApplyRulesJob).
+  const beginApplyRulesJob = useCallback(async (
+    rule: { value: string; categoryId: string; budgetExcluded?: boolean } | undefined,
+    prependRule: boolean,
+  ): Promise<ApplyRulesJobStart> => {
+    if (applyRulesInFlight.current || applyRulesJobActive.current) return { ok: false, clash: null };
+    applyRulesJobActive.current = true;
+    applyRulesJobStartEpoch.current = sessionEpoch.current;
+    applyRulesJobPrependRule.current = prependRule;
+    // Remember THIS run's variant, so "Try again" restarts the SAME sweep. `applyRulesJob` is global,
+    // so a failed job can be shown (and retried) from a different sheet than the one that started it.
+    applyRulesJobRetryArgs.current = { rule, prependRule };
+    applyRulesNetErrors.current = 0;
+    try {
+      const job = await apiStartApplyRulesJob(rule);
+      // A teardown during the POST wins. Sign-out bumps sessionEpoch; a Face-ID lock does NOT — it
+      // only flips applyRulesJobActive false (context lock effect). Checking BOTH means a lock (or
+      // sign-out) mid-POST discards this start instead of resurrecting a job the teardown just
+      // cleared and leaving a poll loop live with the lock released.
+      if (!applyRulesJobActive.current || applyRulesJobStartEpoch.current !== sessionEpoch.current) {
+        applyRulesJobActive.current = false;
+        return { ok: false, clash: null };
+      }
+      applyRulesJobId.current = job.jobId;
+      setApplyRulesJob(job);
+      applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
+      return { ok: true };
+    } catch (e) {
+      applyRulesJobActive.current = false;
+      if (applyRulesJobStartEpoch.current !== sessionEpoch.current) return { ok: false, clash: null };
+      return { ok: false, clash: e instanceof ApiError && e.status === 409 ? e : null };
+    }
+  }, []);
+
+  const startApplyRulesSweep = useCallback(() => beginApplyRulesJob(undefined, false), [beginApplyRulesJob]);
+  const startFileByShopJob = useCallback(
+    (group: UncategorizedMerchantGroup, categoryId: string) =>
+      beginApplyRulesJob({ value: group.rulePattern, categoryId }, false), [beginApplyRulesJob]);
+  const startNewRuleJob = useCallback(
+    (pattern: string, categoryId: string, budgetExcluded = false) =>
+      beginApplyRulesJob({ value: pattern.trim(), categoryId, budgetExcluded }, true), [beginApplyRulesJob]);
+  // "Try again" on a failed job re-runs the ORIGINAL variant (sweep / file-this-shop / add-rule),
+  // whichever started it — never a plain sweep by default. The three sheets all call this.
+  const retryApplyRulesJob = useCallback((): Promise<ApplyRulesJobStart> => {
+    const a = applyRulesJobRetryArgs.current;
+    return a ? beginApplyRulesJob(a.rule, a.prependRule) : Promise.resolve({ ok: false, clash: null });
+  }, [beginApplyRulesJob]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
@@ -1952,9 +2161,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestUncategorizedSelect, clearUncategorizedSelect,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
