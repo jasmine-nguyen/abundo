@@ -1007,7 +1007,8 @@ def _condition_vocab_error(field, operator) -> dict | None:
 
 def _validate_condition_value(field, value):
     """Normalise + validate one condition's value for its field. Returns (value, None) or
-    (None, 400). amount -> a positive number (stored as a canonical string); direction -> debit/
+    (None, 400). amount -> a positive number stored as a canonical string (trailing zeros stripped,
+    never exponent form) so 30 / 30.00 / 1e3 share one rule id (WHIT-564); direction -> debit/
     credit; text fields -> a non-empty stripped string."""
     if field == "amount":
         try:
@@ -1016,7 +1017,10 @@ def _validate_condition_value(field, value):
             return None, _json_response(400, {"error": "amount value must be a number"})
         if amount <= 0:
             return None, _json_response(400, {"error": "amount value must be a positive number"})
-        return str(amount), None
+        # format(..., "f") strips trailing zeros WITHOUT switching to exponent notation, which bare
+        # str(Decimal.normalize()) would ("30" -> "3E+1"): the rule id is a hash of this string, so
+        # an exponent form would fold to a different id and reintroduce the duplicate-row bug.
+        return format(amount.normalize(), "f"), None
     if field == "direction":
         if value not in RULE_DIRECTIONS:
             return None, _json_response(
@@ -1088,17 +1092,20 @@ def _validate_rule_body(event: dict):
                 "field": first["field"], "operator": first["operator"],
                 "value": first["value"]}, None
 
-    value = body.get("value")
-    if not isinstance(value, str) or not value.strip():
-        return None, _json_response(400, {"error": "value is required"})
     field = body.get("field", DEFAULT_RULE_FIELD)
     operator = body.get("operator", DEFAULT_RULE_OPERATOR)
     error = _condition_vocab_error(field, operator)
     if error:
         return None, error
+    # Route the value through the SAME validator the multi-condition path uses, so a single-condition
+    # amount rule is normalised identically (30 / 30.00 collapse to one id) and stays deduped against
+    # the equivalent one-condition multi rule (WHIT-564). Text fields are unchanged (stripped string).
+    value, error = _validate_condition_value(field, body.get("value"))
+    if error:
+        return None, error
 
     return {**base, "conditions": None, "logic": None,
-            "field": field, "operator": operator, "value": value.strip()}, None
+            "field": field, "operator": operator, "value": value}, None
 
 
 # --- Rules: our own store (WHIT-529) ------------------------------------------
