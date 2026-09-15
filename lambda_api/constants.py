@@ -43,6 +43,14 @@ UNCATEGORIZED_FEED_PATH = "/transactions/uncategorized/feed"
 # accident. Only lambda_api/handler.py consumes it (no shared repository_* imports it), so the
 # WHIT-136 sync guard doesn't require a shared mirror.
 UNCATEGORIZED_APPLY_RULES_PATH = "/transactions/uncategorized/apply-rules"
+# API Gateway route paths for the ASYNC apply-rules job (WHIT-537). The synchronous route above
+# caps at 300 writes / 15s to stay inside the 30s gateway window; for a large history that means
+# the user re-taps "apply the rest". These run the sweep in a background worker with NO cap: POST
+# .../jobs starts a job and returns its id immediately (202); GET .../jobs/{id} reports progress
+# so the app can poll to completion. Handler-only, like the sibling UNCATEGORIZED_* constants, so
+# the WHIT-136 sync guard needs no shared/constants.py mirror. The GET is matched by prefix (the
+# id is a path parameter), so only the POST path is a constant.
+UNCATEGORIZED_APPLY_RULES_JOBS_PATH = "/transactions/uncategorized/apply-rules/jobs"
 # API Gateway route path for the unfiled charges grouped by merchant (WHIT-515). "Apply my
 # rules" can only file what an existing rule covers; what remains is merchants the user has
 # never written a rule for. This walks ALL history and returns those charges grouped by
