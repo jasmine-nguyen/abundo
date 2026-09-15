@@ -120,7 +120,8 @@ def test_post_with_an_inline_rule_passes_it_in_the_payload(handler, worker_env):
     assert resp["statusCode"] == 202
     payload = json.loads(worker_env.calls[0]["Payload"])
     assert payload["jobId"] == body["jobId"]
-    assert payload["rule"] == {"value": "COLES", "categoryId": "groceries"}
+    # The validated inline rule carries the WHIT-558 budgetExcluded flag (default False).
+    assert payload["rule"] == {"value": "COLES", "categoryId": "groceries", "budgetExcluded": False}
 
 
 def test_post_rejects_a_bad_inline_rule_without_spawning_a_worker(handler, worker_env):

@@ -127,7 +127,8 @@ def test_worker_with_an_inline_rule_mints_it_and_records_created_rule(apply_rule
     rows = [_row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]
     txn_repo, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows}, rules=[])
 
-    result = worker.lambda_handler({"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries"}})
+    result = worker.lambda_handler(
+        {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries", "budgetExcluded": False}})
 
     assert result["status"] == "succeeded"
     job = job_repo.jobs["job1"]

@@ -72,6 +72,28 @@ it('updateRule edits the cached rule in place', async () => {
   expect(cacheRules()?.[0].pattern).toBe('DISNEY');
 });
 
+// WHIT-558: the "keep out of budget" flag threads through both writers into the API call and
+// the ['rules'] cache row.
+it('saveManualRule passes budgetExcluded to createEnrichment and into the cache', async () => {
+  mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
+  const result = mountWithSeededCache();
+
+  await act(async () => { await result.current.saveManualRule('splitwise', 'subs', true); });
+
+  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
+  expect(cacheRules()?.[0].budgetExcluded).toBe(true);
+});
+
+it('updateRule passes budgetExcluded to updateEnrichment and into the cache', async () => {
+  mockApi.updateEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true });
+  const result = mountWithSeededCache();
+
+  await act(async () => { await result.current.updateRule('e1', 'NETFLIX', 'subs', true); });
+
+  expect(mockApi.updateEnrichment).toHaveBeenCalledWith('e1', { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true });
+  expect(cacheRules()?.[0].budgetExcluded).toBe(true);
+});
+
 it('a failed save mirrors the optimistic add into the cache, then rolls it back', async () => {
   mockApi.createEnrichment.mockRejectedValue(new Error('API error: 400'));
   const result = mountWithSeededCache();
@@ -165,7 +187,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
     // The server write still happened…
-    expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs' });
+    expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
     // …but patchRules' `prev ? fn(prev) : prev` guard left the cache untouched (undefined) —
     // no crash from spreading undefined, and no half-built ['rules'] cache to mislead a later reader.
     expect(cacheRules()).toBeUndefined();

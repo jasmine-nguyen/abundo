@@ -47,7 +47,7 @@ class FakeRuleRepo:
             raise DatabaseError("rules read failed")
         return [dict(row) for row in self._rows.values()]
 
-    def create_rule(self, field, operator, value, category_id):
+    def create_rule(self, field, operator, value, category_id, budget_excluded=False):
         if self.create_error:
             from repository import DatabaseError
             raise DatabaseError("rule write failed")
@@ -55,15 +55,17 @@ class FakeRuleRepo:
         rule_id = rule_engine.rule_id_for(field, operator, value)
         existing = self._rows.get(rule_id)
         if existing is not None:
-            # Same text: idempotent on same category (return it, created=False), a clash on a
-            # different one — exactly the store's contract (safe to run twice, WHIT-497).
-            if existing.get("category_id") != category_id:
+            # Same text: idempotent on same category + same budget_excluded (return it,
+            # created=False), a clash when EITHER differs — exactly the store's contract (safe to
+            # run twice, WHIT-497; the budget flag is a clash dimension, WHIT-558).
+            if (existing.get("category_id") != category_id
+                    or bool(existing.get("budget_excluded")) != budget_excluded):
                 from repository import RuleClashError
                 raise RuleClashError(existing)
             return dict(existing), False
         row = {
             "id": rule_id, "field": field, "operator": operator, "value": value,
-            "category_id": category_id, "source": "app",
+            "category_id": category_id, "budget_excluded": budget_excluded, "source": "app",
         }
         self._rows[rule_id] = row
         self.minted.append(dict(row))
@@ -73,7 +75,7 @@ class FakeRuleRepo:
         row = self._rows.get(rule_id)
         return dict(row) if row is not None else None
 
-    def update_rule(self, rule_id, field, operator, value, category_id):
+    def update_rule(self, rule_id, field, operator, value, category_id, budget_excluded=False):
         # Faithful to RuleRepository.update_rule: unknown id -> RuleNotFoundError; the id IS the
         # text, so an id-preserving edit updates in place while a text edit MOVES the row to a new
         # id (deleting the old); a move onto another rule's text -> RuleClashError.
@@ -90,6 +92,7 @@ class FakeRuleRepo:
         if new_id == rule_id:
             existing["value"] = value
             existing["category_id"] = category_id
+            existing["budget_excluded"] = budget_excluded
             self.updated.append(dict(existing))
             return dict(existing)
 
@@ -98,7 +101,7 @@ class FakeRuleRepo:
             raise RuleClashError(clash)
 
         new_row = {**existing, "id": new_id, "field": field, "operator": operator,
-                   "value": value, "category_id": category_id}
+                   "value": value, "category_id": category_id, "budget_excluded": budget_excluded}
         self._rows[new_id] = new_row
         del self._rows[rule_id]
         self.updated.append(dict(new_row))

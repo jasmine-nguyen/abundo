@@ -68,8 +68,11 @@ def lambda_handler(event: dict, context=None) -> dict:
 
         rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
         # Captured BEFORE the inline path narrows `rules`: the reconcile sweep needs the WHOLE
-        # store to tell an orphaned stamp (rule gone) from a drifted one (rule still here).
+        # store to tell an orphaned stamp (rule gone) from a drifted one (rule still here), and the
+        # plain sweep reads each winning rule's "keep out of budget" action from here (WHIT-558).
         rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
+        rule_excluded_by_id = {
+            rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
 
         if inline_rule is not None:
             # File ONLY this shop: mint the rule (idempotent, WHIT-497) then sweep with just it.
@@ -77,6 +80,7 @@ def lambda_handler(event: dict, context=None) -> dict:
             row, _created = rule_repo.create_rule(
                 DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
                 inline_rule["value"], inline_rule["categoryId"],
+                budget_excluded=inline_rule["budgetExcluded"],
             )
             created_rule = _rule_to_client(row)
             rules = [_as_leaf_rule(inline_rule)]
@@ -108,8 +112,9 @@ def lambda_handler(event: dict, context=None) -> dict:
                 })
 
         filed, vanished, failed, already_filed, matched_remaining = _apply_rules_write_phase(
-            transaction_repo, plan, transactions, rule_target_by_id, is_unfiled,
+            transaction_repo, plan, transactions, rule_target_by_id, rule_excluded_by_id, is_unfiled,
             inline_stamp=(created_rule["id"] if inline_rule is not None else None),
+            inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
             run_reconcile=(inline_rule is None),
             max_writes=None, time_budget=None, on_progress=on_progress,
         )

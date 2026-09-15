@@ -35,7 +35,7 @@ def test_time_budget_break_stops_the_file_loop_after_the_first_write(handler, mo
     monkeypatch.setattr(handler.time, "monotonic", lambda: 100.0)
 
     filed, vanished, failed, already, remaining = handler._apply_rules_write_phase(
-        repo, plan, [], {"r1": "groceries"}, _is_unfiled,
+        repo, plan, [], {"r1": "groceries"}, {}, _is_unfiled,
         inline_stamp=None, run_reconcile=False,
         max_writes=None, time_budget=15.0, started=0.0,
     )
@@ -54,7 +54,7 @@ def test_the_first_write_is_never_starved_even_when_already_over_budget(handler,
     monkeypatch.setattr(handler.time, "monotonic", lambda: 10_000.0)
 
     filed, *_ = handler._apply_rules_write_phase(
-        repo, plan, [], {"r1": "groceries"}, _is_unfiled,
+        repo, plan, [], {"r1": "groceries"}, {}, _is_unfiled,
         inline_stamp=None, run_reconcile=False,
         max_writes=None, time_budget=1.0, started=0.0,
     )
@@ -74,7 +74,7 @@ def test_max_writes_caps_the_reconcile_tail_leaving_a_remainder(handler):
     plan = {"matched": []}
 
     handler._apply_rules_write_phase(
-        repo, plan, transactions, {}, _is_unfiled,   # r_dead absent from rule_target_by_id -> clear
+        repo, plan, transactions, {}, {}, _is_unfiled,   # r_dead absent from rule_target_by_id -> clear
         inline_stamp=None, run_reconcile=True,
         max_writes=300, time_budget=None, started=None,
     )
@@ -93,7 +93,7 @@ def test_no_cap_clears_the_whole_reconcile_tail(handler):
     plan = {"matched": []}
 
     handler._apply_rules_write_phase(
-        repo, plan, transactions, {}, _is_unfiled,
+        repo, plan, transactions, {}, {}, _is_unfiled,
         inline_stamp=None, run_reconcile=True,
         max_writes=None, time_budget=None, started=None,
     )

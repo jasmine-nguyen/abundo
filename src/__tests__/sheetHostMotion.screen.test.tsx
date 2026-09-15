@@ -349,7 +349,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
       fireEvent.press(screen.getByText('Groceries'));
 
-      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'SPOTIFY', categoryId: 'groceries' });
+      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'SPOTIFY', categoryId: 'groceries', budgetExcluded: false });
       // the live field still reflects it — the collapse didn't decouple state from the input
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
     });
@@ -361,7 +361,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
       fireEvent.press(screen.getByText('Subscriptions'));
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'NETFLIX');
 
-      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'NETFLIX', categoryId: 'subs' });
+      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
     });
 
     // [B3] The guarded bailout: re-tapping the ALREADY-selected pill returns `prev` unchanged, so
@@ -379,7 +379,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
 
       expect(writeSheetDraft.mock.calls.length).toBe(writesBefore); // no rewrite
       expect(store.get(DRAFT_KEY)).toBe(draftBefore);               // same reference, not a fresh equal object
-      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'SPOTIFY', categoryId: 'groceries' });
+      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'SPOTIFY', categoryId: 'groceries', budgetExcluded: false });
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY'); // sibling field intact
     });
   });
