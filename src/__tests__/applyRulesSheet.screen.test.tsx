@@ -178,13 +178,15 @@ it('lists skipped rules with the server reason verbatim', async () => {
 
 // --- the cap ------------------------------------------------------------------
 
-// The honesty fix: with 639 unfiled charges the FIRST run is guaranteed partial, so the button
-// must not promise 512. Fail-on-revert: render `File {matched} charges` unconditionally and both
-// assertions redden.
-it('warns about the per-run cap before the tap when the plan is bigger than it', async () => {
+// WHIT-560: over the per-run cap, the uncapped background sweep is the PRIMARY action ("Apply to
+// all history") and the one-round instant file is demoted to a secondary "File up to 300 now".
+// Fail-on-revert: render `File {matched} charges` unconditionally and all three assertions redden.
+it('offers the uncapped background sweep before the tap when the plan is bigger than the per-run cap', async () => {
   await mountWithPreview(report({ unfiled: 639, matched: 512, remaining: 512 }));
 
-  expect(screen.getByText(/We file up to 300 at a time, so this will take a few rounds\./)).toBeTruthy();
+  expect(screen.getByText(/Filing them all runs in the background/)).toBeTruthy();
+  expect(screen.getByTestId('apply-rules-apply-all')).toBeTruthy();
+  expect(screen.getByText('Apply to all history')).toBeTruthy();
   expect(screen.getByText('File up to 300 now')).toBeTruthy();
 });
 

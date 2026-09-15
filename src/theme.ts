@@ -75,6 +75,8 @@ export const C = {
   // literals (baseline 14) — a later cleanup can point it at these tokens too.
   heroInkSoft: 'rgba(20,18,50,.62)',
   heroBlobFill: 'rgba(255,255,255,.1)',
+  // WHIT-560: the unfilled track behind the apply-rules progress bar — a faint neutral rail.
+  progressTrack: 'rgba(255,255,255,.1)',
 
   // Hero card gradient (Tokyo Night): accent-blue → indigo → purple, 150°.
   // The gradient starts on the accent by design, so it derives rather than copying the hex.

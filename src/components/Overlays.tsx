@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
 import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, categoryLabel, APPLY_RULES_MAX_WRITES } from '../context';
-import type { RuleConflict, ApplyRulesResult, Category, FileByShopOutcome } from '../context';
+import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FileByShopOutcome } from '../context';
 import type { UncategorizedMerchantGroup } from '../api';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
 import { useTransactionResolver, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed, useUncategorizedMerchants } from '../queries';
@@ -779,7 +779,8 @@ type ApplyRulesPhase = 'loading' | 'preview' | 'applying' | 'done' | 'stuck' | '
 function ApplyRulesSheet() {
   // The provider's writers are useCallback-stable, so the mount effect below fires exactly once
   // even though the context value's identity changes on every toast.
-  const { previewRuleApplication, applyRulesToHistory, setSheet, showToast } = useAppContext();
+  const { previewRuleApplication, applyRulesToHistory, applyRulesJob, startApplyRulesSweep, setSheet, showToast } = useAppContext();
+  const onRetryJob = useApplyRulesJobRetry();
   const { category } = useCategories();
   const runGuarded = useInFlightGuard();
   // The preview gets its OWN latch, shared by the mount call and "Try again". A preview is a
@@ -839,6 +840,19 @@ function ApplyRulesSheet() {
     if (!onScreen.current) { showToast(applyRulesRoundMessage(filedTotal.current, stillToGo)); return; }
     setPhase(stalled ? 'stuck' : 'done');
   });
+
+  // WHIT-560: start the uncapped background sweep. On the accepted job the provider takes over —
+  // `applyRulesJob` becomes non-null and the job view below renders; a failed start (502/network)
+  // just toasts and leaves the preview so she can retry.
+  const onStartSweep = () => runGuarded(async () => {
+    const outcome = await startApplyRulesSweep();
+    if (!outcome.ok) showToast("Couldn't start the background sweep. Please try again.");
+  });
+
+  // Once a job is running (or finished), it owns the sheet — its status drives running/done/failed.
+  if (applyRulesJob) {
+    return <ApplyRulesJobView job={applyRulesJob} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
+  }
 
   if (phase === 'loading' || phase === 'applying') {
     const label = phase === 'loading' ? 'Checking what your rules would file…' : 'Filing your charges…';
@@ -974,14 +988,25 @@ function ApplyRulesSheet() {
       <Text style={styles.confirmTitle}>Apply my rules</Text>
       <Text style={styles.confirmSub}>
         Your rules can file {report.matched} of your {report.unfiled} unfiled {chargeNoun(report.unfiled)}.
-        {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this will take a few rounds.` : ''}
+        {capped ? ' Filing them all runs in the background — you can leave and it keeps going.' : ''}
       </Text>
       <ApplyRulesDetail report={report} category={category} />
-      <Pressable testID="apply-rules-apply" onPress={onApply} style={[styles.btn, styles.btnPrimary]}>
-        <Text style={styles.btnPrimaryText}>
-          {capped ? `File up to ${APPLY_RULES_MAX_WRITES} now` : `File ${report.matched} ${chargeNoun(report.matched)}`}
-        </Text>
-      </Pressable>
+      {/* WHIT-560: over the per-call cap, the uncapped background sweep is the primary action and the
+          one-round instant file is demoted; at or under the cap, one instant file is all it takes. */}
+      {capped ? (
+        <>
+          <Pressable testID="apply-rules-apply-all" onPress={onStartSweep} style={[styles.btn, styles.btnPrimary]}>
+            <Text style={styles.btnPrimaryText}>Apply to all history</Text>
+          </Pressable>
+          <Pressable testID="apply-rules-apply" onPress={onApply} style={[styles.btn, styles.btnGhost]}>
+            <Text style={styles.btnGhostText}>File up to {APPLY_RULES_MAX_WRITES} now</Text>
+          </Pressable>
+        </>
+      ) : (
+        <Pressable testID="apply-rules-apply" onPress={onApply} style={[styles.btn, styles.btnPrimary]}>
+          <Text style={styles.btnPrimaryText}>File {report.matched} {chargeNoun(report.matched)}</Text>
+        </Pressable>
+      )}
       <ApplyRulesCancel label="Cancel" onPress={() => setSheet(null)} />
     </View>
   );
@@ -990,6 +1015,84 @@ function ApplyRulesSheet() {
 /** "charge"/"charges" — the noun every count in this sheet takes. */
 function chargeNoun(count: number): string {
   return count === 1 ? 'charge' : 'charges';
+}
+
+// WHIT-560: "Try again" on a failed job, shared by all three apply-rules sheets. It re-runs the
+// ORIGINAL variant via the provider (retryApplyRulesJob restarts whatever started the job — sweep /
+// file-this-shop / add-rule), and toasts if the restart itself fails (a repeat 502, or the lock).
+// One hook so the failed-retry feedback is identical wherever the (global) job view is rendered.
+function useApplyRulesJobRetry(): () => Promise<void> {
+  const { retryApplyRulesJob, showToast } = useAppContext();
+  const runGuarded = useInFlightGuard();
+  return useCallback(() => runGuarded(async () => {
+    const outcome = await retryApplyRulesJob();
+    if (!outcome.ok) showToast("Couldn't start the background sweep. Please try again.");
+  }), [retryApplyRulesJob, showToast, runGuarded]);
+}
+
+// WHIT-560: the running/done/failed view of an async "apply rules over all history" job, shared by
+// the plain sweep and the two inline "file this shop / add rule" entry points. Retry is centralized
+// in the provider (see useApplyRulesJobRetry), so every host passes the same variant-aware `onRetry`.
+// The status comes from the provider's poll loop; leaving the sheet stops polling but the job keeps
+// running server-side.
+function ApplyRulesJobView({ job, onRetry, onClose }: { job: ApplyRulesJob; onRetry: () => void; onClose: () => void }) {
+  if (job.status === 'running') {
+    // matched is 0 until the worker has planned (the first poll after the POST) — show an
+    // indeterminate "Starting…" until then, and a real bar once the denominator lands.
+    const pct = job.matched > 0 ? Math.min(100, Math.round((job.filed / job.matched) * 100)) : null;
+    return (
+      <View testID="apply-rules-job-running">
+        <Text style={styles.confirmTitle}>Filing your charges…</Text>
+        <Text style={styles.confirmSub}>
+          {job.matched > 0
+            ? `Filed ${job.filed} of ${job.matched} ${chargeNoun(job.matched)}. You can leave — this keeps going in the background.`
+            : 'Starting… you can leave this running in the background.'}
+        </Text>
+        {pct !== null && (
+          <View testID="apply-rules-job-progress" style={styles.jobProgressTrack}>
+            <View style={[styles.jobProgressFill, { width: `${pct}%` }]} />
+          </View>
+        )}
+        <ApplyRulesCancel label="Leave running" onPress={onClose} />
+      </View>
+    );
+  }
+
+  if (job.status === 'succeeded') {
+    const already = job.alreadyFiled > 0
+      ? ` You'd already filed ${job.alreadyFiled} ${chargeNoun(job.alreadyFiled)} yourself.`
+      : '';
+    return (
+      <View testID="apply-rules-job-done">
+        <Text style={styles.confirmTitle}>
+          {job.filed === 0 ? 'Nothing left to file' : `Filed ${job.filed} ${chargeNoun(job.filed)}`}
+        </Text>
+        <Text style={styles.confirmSub}>
+          {job.filed === 0
+            ? `Your rules had nothing new to file across your history.${already}`
+            : `Your rules have been applied across all your history.${already}`}
+        </Text>
+        <ApplyRulesCancel label="Done" onPress={onClose} />
+      </View>
+    );
+  }
+
+  // Failed: a real server failure, an expired job (its id aged out), or too many dropped polls.
+  return (
+    <View testID="apply-rules-job-failed">
+      <Text style={styles.confirmTitle}>Couldn't finish</Text>
+      <Text style={styles.confirmSub}>
+        {job.error === 'expired'
+          ? 'This run timed out before it finished. '
+          : 'Something interrupted the run. '}
+        Some charges may already have been filed, and your lists have been refreshed — try again to file the rest.
+      </Text>
+      <Pressable testID="apply-rules-job-retry" onPress={onRetry} style={[styles.btn, styles.btnPrimary]}>
+        <Text style={styles.btnPrimaryText}>Try again</Text>
+      </Pressable>
+      <ApplyRulesCancel label="Close" onPress={onClose} />
+    </View>
+  );
 }
 
 // WHIT-517: "File by shop" step 1 — the shops (merchant groups) behind unfiled charges, biggest
@@ -1241,8 +1344,9 @@ function FileByShopConfirmSheet() {
   // the value's identity changes on every toast (auto-clears 3.4s later), and a preview built off
   // the whole value would re-fire and snap the sheet back to its spinner. `sheet` only changes when
   // setSheet is called (a toast never touches it), so the memoised `preview` below stays stable.
-  const { sheet, previewFileByShop, fileByShop, setSheet, showToast } = useAppContext();
+  const { sheet, previewFileByShop, fileByShop, applyRulesJob, startFileByShopJob, setSheet, showToast } = useAppContext();
   const { category } = useCategories();
+  const onRetryJob = useApplyRulesJobRetry();
   const group = sheet?.mode === 'fileByShopConfirm' ? sheet.group : null;
   const categoryId = sheet?.mode === 'fileByShopConfirm' ? sheet.categoryId : null;
   // Non-null-asserted: the guard below returns null before the shell mounts, so `preview` is never
@@ -1256,6 +1360,11 @@ function FileByShopConfirmSheet() {
   const chosen = category(categoryId);
   if (!chosen) return null;
 
+  // WHIT-560: once a background sweep for this shop is running (or finished), it owns the sheet.
+  if (applyRulesJob) {
+    return <ApplyRulesJobView job={applyRulesJob} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
+  }
+
   return (
     <ConfirmPreviewSheet
       preview={preview}
@@ -1265,7 +1374,16 @@ function FileByShopConfirmSheet() {
       onNavigate={() => setSheet({ mode: 'fileByShopList' })}
       clashToast={() => showToast(`You already have a rule filing ${group.merchant || 'this shop'} somewhere else.`)}
       writeFailedToast={() => showToast(`Couldn't file ${group.merchant || 'this shop'}. Some charges may already have been filed.`)}
-      renderArm={({ phase, report, onCommit, retry }) => {
+      renderArm={({ phase, report, onCommit, runCommit, retry }) => {
+        // WHIT-560: a shop bigger than the per-call cap starts the uncapped background sweep instead
+        // of the one-round file. A 409 clash or a failed start toasts (the same copy as the sync path).
+        const onApplyAll = () => runCommit(async () => {
+          const outcome = await startFileByShopJob(group, categoryId);
+          if (outcome.ok) return;
+          showToast(outcome.clash
+            ? `You already have a rule filing ${group.merchant || 'this shop'} somewhere else.`
+            : `Couldn't start filing ${group.merchant || 'this shop'}. Please try again.`);
+        });
         if (phase === 'loading' || phase === 'confirming') {
           const label = phase === 'loading' ? 'Checking what this would file…' : 'Filing these charges…';
           return (
@@ -1347,7 +1465,7 @@ function FileByShopConfirmSheet() {
             <Text style={styles.confirmSub}>
               Files {report.matched} {chargeNoun(report.matched)} from {group.merchant || 'this shop'}
               {dateRange ? ` (${dateRange})` : ''} — and makes a rule so future ones file themselves.
-              {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
+              {capped ? ' Filing them all runs in the background — you can leave and it keeps going.' : ''}
             </Text>
             {group.alsoCatches.length > 0 && (
               <View testID="file-by-shop-also-catches" style={styles.ruleConflict}>
@@ -1361,11 +1479,20 @@ function FileByShopConfirmSheet() {
                 ))}
               </View>
             )}
-            <Pressable testID="file-by-shop-confirm-apply" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
-              <Text style={styles.btnPrimaryText}>
-                {capped ? `File up to ${APPLY_RULES_MAX_WRITES} now` : `File ${report.matched} ${chargeNoun(report.matched)}`}
-              </Text>
-            </Pressable>
+            {capped ? (
+              <>
+                <Pressable testID="file-by-shop-confirm-apply-all" onPress={onApplyAll} style={[styles.btn, styles.btnPrimary]}>
+                  <Text style={styles.btnPrimaryText}>Apply to all history</Text>
+                </Pressable>
+                <Pressable testID="file-by-shop-confirm-apply" onPress={onCommit} style={[styles.btn, styles.btnGhost]}>
+                  <Text style={styles.btnGhostText}>File up to {APPLY_RULES_MAX_WRITES} now</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable testID="file-by-shop-confirm-apply" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>File {report.matched} {chargeNoun(report.matched)}</Text>
+              </Pressable>
+            )}
             <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
               <Text style={styles.btnGhostText}>Back to shops</Text>
             </Pressable>
@@ -1404,8 +1531,9 @@ function AddRuleConfirmSheet() {
   // Destructure the STABLE context callbacks, NOT the whole value: its identity changes on every
   // toast, and a preview built off it would re-fire and snap the sheet back to its spinner. `sheet`
   // only changes when setSheet is called, so the memoised `preview` below stays stable.
-  const { sheet, previewNewRule, fileNewRule, saveManualRule, setSheet, showToast } = useAppContext();
+  const { sheet, previewNewRule, fileNewRule, saveManualRule, applyRulesJob, startNewRuleJob, setSheet, showToast } = useAppContext();
   const { category } = useCategories();
+  const onRetryJob = useApplyRulesJobRetry();
   const pattern = sheet?.mode === 'addRuleConfirm' ? sheet.pattern : null;
   const categoryId = sheet?.mode === 'addRuleConfirm' ? sheet.categoryId : null;
   const budgetExcluded = sheet?.mode === 'addRuleConfirm' ? !!sheet.budgetExcluded : false;
@@ -1419,6 +1547,11 @@ function AddRuleConfirmSheet() {
   if (!pattern || !categoryId) return null;
   const chosen = category(categoryId);
   if (!chosen) return null;
+
+  // WHIT-560: once the background sweep for this rule is running (or finished), it owns the sheet.
+  if (applyRulesJob) {
+    return <ApplyRulesJobView job={applyRulesJob} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
+  }
 
   return (
     <ConfirmPreviewSheet
@@ -1435,6 +1568,15 @@ function AddRuleConfirmSheet() {
         // (WHIT-241): saveManualRule has no latch of its own.
         const onRuleOnly = () => runCommit(() => saveManualRule(pattern, categoryId, budgetExcluded));
         const goBack = () => setSheet({ mode: 'addrule' });
+        // WHIT-560: a pattern matching more than the per-call cap files its past charges via the
+        // uncapped background sweep. A 409 clash or failed start toasts (same copy as the sync path).
+        const onApplyAll = () => runCommit(async () => {
+          const outcome = await startNewRuleJob(pattern, categoryId, budgetExcluded);
+          if (outcome.ok) return;
+          showToast(outcome.clash
+            ? `You already have a rule for “${pattern}”.`
+            : `Couldn't start filing “${pattern}”. Please try again.`);
+        });
 
         if (phase === 'loading' || phase === 'confirming') {
           const label = phase === 'loading' ? 'Checking what this would file…' : 'Adding your rule…';
@@ -1523,7 +1665,7 @@ function AddRuleConfirmSheet() {
             <Text style={styles.confirmSub}>
               “{pattern}” matches {report.matched} past {chargeNoun(report.matched)} you haven't filed. File them as {chosen.name} now,
               or just save the rule for future charges.
-              {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
+              {capped ? ' Filing them all runs in the background — you can leave and it keeps going.' : ''}
             </Text>
             {samples.length > 0 && (
               <View testID="add-rule-confirm-samples" style={styles.ruleConflict}>
@@ -1532,11 +1674,20 @@ function AddRuleConfirmSheet() {
                 ))}
               </View>
             )}
-            <Pressable testID="add-rule-confirm-file" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
-              <Text style={styles.btnPrimaryText}>
-                {capped ? `Add rule + file up to ${APPLY_RULES_MAX_WRITES}` : `Add rule + file ${report.matched} ${chargeNoun(report.matched)}`}
-              </Text>
-            </Pressable>
+            {capped ? (
+              <>
+                <Pressable testID="add-rule-confirm-file-all" onPress={onApplyAll} style={[styles.btn, styles.btnPrimary]}>
+                  <Text style={styles.btnPrimaryText}>Add rule + file all history</Text>
+                </Pressable>
+                <Pressable testID="add-rule-confirm-file" onPress={onCommit} style={[styles.btn, styles.btnGhost]}>
+                  <Text style={styles.btnGhostText}>Add rule + file up to {APPLY_RULES_MAX_WRITES}</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable testID="add-rule-confirm-file" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>Add rule + file {report.matched} {chargeNoun(report.matched)}</Text>
+              </Pressable>
+            )}
             <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
               <Text style={styles.btnGhostText}>Add rule only</Text>
             </Pressable>
@@ -1694,6 +1845,9 @@ const styles = StyleSheet.create({
   btnPrimaryText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentInk },
   btnGhost: { backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)' },
   btnGhostText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600', color: '#e2e2e8' },
+  // WHIT-560: the async apply-rules progress bar.
+  jobProgressTrack: { height: 8, borderRadius: 4, backgroundColor: C.progressTrack, marginTop: 16, overflow: 'hidden' },
+  jobProgressFill: { height: 8, borderRadius: 4, backgroundColor: C.accent },
   fieldLabel: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.textMid, letterSpacing: 0.3, marginTop: 16, marginBottom: 7 },
   input: { backgroundColor: C.card, borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16, color: '#fff', fontFamily: FONT.body, fontSize: 15 },
   ruleCatWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

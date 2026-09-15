@@ -70,6 +70,14 @@ const BALANCE_REFRESH_TIMEOUT_MS = 30_000;
 const APPLY_RULES_TIMEOUT_MS = 30_000;
 
 /**
+ * A single poll of an apply-rules background job's status (WHIT-560) is a cheap key read, not the
+ * long sweep — so it gets a SHORT budget, not APPLY_RULES_TIMEOUT_MS. A dead socket then fails the
+ * poll fast and the self-scheduling loop retries on its next tick, instead of one hung read
+ * blocking several ticks. Its own constant (same reasons-differ rule as the others above).
+ */
+const APPLY_RULES_JOB_POLL_TIMEOUT_MS = 6_000;
+
+/**
  * Read a SUCCESS response's JSON body under the same stall timeout `failed()` gives the error body.
  * apiFetch's abort timer only bounds the HEADERS (cleared the instant they resolve), so a 2xx whose
  * body never finishes streaming would hang the read — and the query/writer behind it — leaving the
@@ -336,6 +344,73 @@ export async function applyRulesToUncategorized(
   if (response.ok == false) throw new ApiError(response.status, null);
 
   return readJson(response, APPLY_RULES_TIMEOUT_MS);
+}
+
+export type ApplyRulesJobStatus = "running" | "succeeded" | "failed";
+
+/**
+ * The status of an async "apply my rules over all history" background job (WHIT-560/537).
+ *
+ * Unlike ApplyRulesResult, the counts here are NUMBERS, not id lists — the job GET reports totals
+ * only, so a completed job reconciles the app's caches by INVALIDATION, never per-row patching.
+ * `createdRule` is populated only for the inline "file this shop / add rule" variant.
+ */
+export interface ApplyRulesJob {
+  jobId: string;
+  status: ApplyRulesJobStatus;
+  matched: number;
+  attempted: number;
+  filed: number;
+  vanished: number;
+  failed: number;
+  alreadyFiled: number;
+  remaining: number;
+  createdRule?: CreatedRule | null;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+/**
+ * Start an async apply-rules sweep over all history (WHIT-560). Returns immediately with the job's
+ * id and `status: "running"`; the caller then polls getApplyRulesJob until it is terminal. The
+ * uncapped sweep runs server-side, so this POST only enqueues — it keeps the default read budget.
+ *
+ * @param rule - The inline "file this shop / add rule" rule to mint and sweep with, or omitted for
+ *   the plain "apply all my rules" sweep.
+ * @throws ApiError carrying the status (not the body) so the sheet can branch on 400 (bad rule),
+ *   409 (a rule that would clash), and 502 (the worker could not be dispatched).
+ */
+export async function startApplyRulesJob(
+  rule?: { value: string; categoryId: string; budgetExcluded?: boolean },
+): Promise<ApplyRulesJob> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules/jobs`, {
+    method: "POST",
+    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
+    // Plain sweep sends a byte-identical {}; "file this shop" sends {rule}, mirroring the sync call.
+    body: JSON.stringify(rule ? { rule } : {}),
+  });
+  if (response.ok == false) throw new ApiError(response.status, null);
+  return readJson(response);
+}
+
+/**
+ * Poll one apply-rules background job's status (WHIT-560). A short timeout (a status read is tiny),
+ * so a dropped poll fails fast and the self-scheduling loop retries.
+ *
+ * @throws ApiError carrying the status. A 404 means the job is unknown or has expired (its ~24h
+ *   TTL) — the caller treats that as a real terminal failure, distinct from a thrown network error
+ *   (offline/airplane), which it tolerates and retries.
+ */
+export async function getApplyRulesJob(jobId: string): Promise<ApplyRulesJob> {
+  const response = await apiFetch(
+    `${API_BASE}/transactions/uncategorized/apply-rules/jobs/${encodeURIComponent(jobId)}`,
+    { headers: await buildHeaders() },
+    APPLY_RULES_JOB_POLL_TIMEOUT_MS,
+  );
+  if (response.ok == false) throw new ApiError(response.status, null);
+  return readJson(response, APPLY_RULES_JOB_POLL_TIMEOUT_MS);
 }
 
 /** One rule-group of unfiled charges the server proposes for "file by shop" (WHIT-517). The
