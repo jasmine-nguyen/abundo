@@ -202,7 +202,7 @@ class TransactionRepository:
 
         `expected_category=None` means "the row had no category at all", so the condition is
         attribute_not_exists rather than a comparison against NULL: rows are sparse — insert
-        strips None (sanitise_transaction) and update_transaction_fields REMOVEs a cleared field —
+        strips None (sanitise_transaction) and clear_rule_fill REMOVEs a rule's category —
         so an unfiled row carries no category attribute.
 
         DynamoDB reports "deleted" and "changed underneath" with the SAME error, so on a refusal we
@@ -329,7 +329,10 @@ class TransactionRepository:
 
         Only fields explicitly passed (not _UNSET) are touched. A truthy value is
         SET; a cleared note ("") or empty tag list ([]) or budget_excluded=False is
-        REMOVEd, so a cleared field reads back ABSENT — rows are sparse and
+        REMOVEd, so a cleared field reads back ABSENT. 'category' is the exception:
+        it is set-only (matching the PATCH API contract), so a falsy category raises
+        rather than clearing — a future contributor relaxing the handler's validation
+        can't silently un-file a charge through this REMOVE branch. Rows are sparse and
         sanitise_transaction keeps falsy-non-None, so storing ""/[]/False would read
         back as an empty value. One UpdateItem can legally mix SET and REMOVE
         clauses. Fields are aliased (a single #f/#v scheme) because 'category' is a
@@ -352,6 +355,8 @@ class TransactionRepository:
         ):
             if provided is _UNSET:
                 continue
+            if field == "category" and not provided:
+                raise ValueError("category is set-only; a falsy value cannot clear it")
             name_alias = f"#f{index}"
             names[name_alias] = field
             if provided:
@@ -361,9 +366,10 @@ class TransactionRepository:
             else:
                 remove_clauses.append(name_alias)
 
-        # Filing by hand clears the rule stamp (WHIT-536): whenever the CATEGORY is touched
-        # (any value, even a clear), REMOVE filed_by_rule. A notes/tags/budget-only edit leaves
-        # category _UNSET, so the stamp survives. REMOVE of an absent stamp is a no-op.
+        # Filing by hand clears the rule stamp (WHIT-536): whenever the category is SET
+        # (it is set-only — a clear is refused above), REMOVE filed_by_rule. A notes/tags/
+        # budget-only edit leaves category _UNSET, so the stamp survives. REMOVE of an absent
+        # stamp is a no-op.
         if category is not _UNSET:
             names["#p"] = "filed_by_rule"
             remove_clauses.append("#p")

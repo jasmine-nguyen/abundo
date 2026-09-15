@@ -747,23 +747,27 @@ def test_save_failed_transactions_stamps_failed_at_and_ttl(repo, shared, monkeyp
 # --- folded from test_repository_transaction_whit275_gaps.py (WHIT-463) ---
 
 
-def test_update_fields_clears_category_when_passed_falsy(repo):  # [A12]
-    # The repo REMOVEs category on "" (the #f0 alias REMOVE branch). The handler
-    # blocks this at the edge; the repo itself does not — this pins that split.
+def test_update_fields_refuses_to_clear_category_on_falsy(repo):  # [A12]
+    # category is set-only at the repo layer (WHIT-512), matching the PATCH API contract.
+    # A falsy category must RAISE, not fall through the REMOVE branch and un-file the charge.
+    # FAIL-ON-REVERT: drop the `field == "category" and not provided` guard and "" REMOVEs
+    # the attribute -> the stored category disappears and this test goes red.
     key = ("ACCOUNT#acct", "TXN#t1")
     repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES", "notes": "n"}}
-    assert repo.update_transaction_fields(key[0], key[1], category="") is True
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(key[0], key[1], category="")
     row = repo._table.store[key]
-    assert "category" not in row   # category REMOVEd via the #f0 branch
-    assert row["notes"] == "n"     # an unpassed field is untouched
+    assert row["category"] == "GROCERIES"   # unchanged — the guard raised before any write
+    assert row["notes"] == "n"
 
 
 def test_update_fields_remove_only_omits_expression_attribute_values(repo, monkeypatch):  # [A13]
-    # A REMOVE-only update (clear category) must NOT send ExpressionAttributeValues —
+    # A REMOVE-only update (clear notes) must NOT send ExpressionAttributeValues —
     # DynamoDB rejects an UpdateItem carrying an empty values map. Capture the kwargs
-    # the repo hands the table and assert the key is absent entirely.
+    # the repo hands the table and assert the key is absent entirely. (category is
+    # set-only per WHIT-512, so notes="" is the REMOVE-only vehicle here.)
     key = ("ACCOUNT#acct", "TXN#t1")
-    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "X"}}
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "notes": "X"}}
     captured = {}
     original = repo._table.update_item
     def spy(**kwargs):
@@ -771,7 +775,7 @@ def test_update_fields_remove_only_omits_expression_attribute_values(repo, monke
         return original(**kwargs)
     monkeypatch.setattr(repo._table, "update_item", spy)
 
-    assert repo.update_transaction_fields(key[0], key[1], category="") is True
+    assert repo.update_transaction_fields(key[0], key[1], notes="") is True
     assert "ExpressionAttributeValues" not in captured
     assert captured["UpdateExpression"].strip().startswith("REMOVE")
 
@@ -922,16 +926,17 @@ def _seed_row(repo, **item):
     return key
 
 
-# [G4] [A2] Clearing the category by HAND (category="") also removes the stamp. The impl
-# hand-file test uses a truthy category (SET+REMOVE branch); the "" clear goes down the
-# REMOVE-only branch. FAIL-ON-REVERT: drop the `if category is not _UNSET` REMOVE #p and the
-# stamp survives a category clear.
-def test_whit536_clearing_category_by_hand_removes_the_stamp(repo):
+# [G4] [A2] A refused category clear (WHIT-512) is atomic: the set-only guard raises BEFORE the
+# stamp-clear block, so neither the category nor the filed_by_rule stamp is touched. This pins the
+# ordering — the guard runs first. FAIL-ON-REVERT: drop the `field == "category" and not provided`
+# guard and "" REMOVEs both category and the stamp, so the "unchanged" assertions go red.
+def test_whit512_refused_category_clear_leaves_stamp_and_category_intact(repo):
     key = _seed_row(repo, category="GROCERIES", filed_by_rule="rule-1", notes="n")
-    assert repo.update_transaction_fields(*key, category="") is True
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(*key, category="")
     row = repo._table.store[key]
-    assert "category" not in row
-    assert "filed_by_rule" not in row
+    assert row["category"] == "GROCERIES"
+    assert row["filed_by_rule"] == "rule-1"
     assert row["notes"] == "n"
 
 
@@ -1049,3 +1054,83 @@ def test_refile_rule_fill_leaves_a_charge_the_user_refiled_in_the_gap(repo):
 def test_refile_rule_fill_on_a_vanished_row_is_a_false_noop(repo):
     repo._table.store = {}
     assert repo.refile_rule_fill("ACCOUNT#x", "TXN#gone", "groceries", "old", "new") is False
+
+
+# --------------------------------------------------------------------------- #
+# WHIT-512 adversarial gaps (QA) — set-only category guard                     #
+# --------------------------------------------------------------------------- #
+
+def test_update_fields_refuses_category_none_specifically(repo):  # [B1]
+    # The implementer's guard tests use category="". None is a DISTINCT falsy value
+    # (the PATCH API never sends it, but the storage guard is defense-in-depth). It must
+    # also raise and leave the row byte-identical.
+    # FAIL-ON-REVERT: drop the `field == "category" and not provided` guard and None falls
+    # through the REMOVE branch, deleting category -> this goes red.
+    key = ("ACCOUNT#acct", "TXN#n1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES",
+                               "filed_by_rule": "rule-1"}}
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(key[0], key[1], category=None)
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"
+    assert row["filed_by_rule"] == "rule-1"
+
+
+def test_update_fields_falsy_category_raises_before_any_write(repo, monkeypatch):  # [B2]
+    # ATOMICITY: a falsy category alongside a VALID notes must raise BEFORE the repo issues
+    # any UpdateItem, so the notes are NOT partially written. Spy on the table: update_item
+    # must never be called.
+    # FAIL-ON-REVERT: drop the guard and the mixed call writes notes (and REMOVEs category),
+    # so update_item fires and notes lands -> the "never called" + "notes absent" asserts go red.
+    key = ("ACCOUNT#acct", "TXN#mix1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES"}}
+    calls = []
+    original = repo._table.update_item
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+    monkeypatch.setattr(repo._table, "update_item", spy)
+
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(key[0], key[1], category="", notes="new note")
+
+    assert calls == []                       # no UpdateItem issued at all
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"    # untouched
+    assert "notes" not in row                # the valid field was NOT partially written
+
+
+def test_update_fields_valid_category_set_with_notes_clear_in_one_write(repo):  # [B3]
+    # The guard must NOT over-block: a VALID (truthy) category SET can still share one write
+    # with a REMOVE (notes=""). Category is set, notes cleared, and the hand-file stamp removed
+    # (category was touched). Guards the guard's scope — it only fires on a falsy category.
+    # FAIL-ON-REVERT: broaden the guard to `field == "category"` (drop `and not provided`) and a
+    # valid category SET starts raising -> this goes red.
+    key = ("ACCOUNT#acct", "TXN#s1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "OLD",
+                               "notes": "old note", "filed_by_rule": "rule-1"}}
+    assert repo.update_transaction_fields(
+        key[0], key[1], category="GROCERIES", notes="") is True
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"    # SET applied
+    assert "notes" not in row                # REMOVE applied in the same write
+    assert "filed_by_rule" not in row        # hand-file cleared the stamp
+
+
+def test_update_fields_falsy_category_with_valid_tags_clear_still_refused(repo, monkeypatch):  # [B4]
+    # Sibling of [B2] with a REMOVE-shaped valid field (tags=[]): a falsy category must still
+    # raise before any write, so the tags clear does NOT happen either.
+    # FAIL-ON-REVERT: drop the guard and update_item fires (REMOVE category + tags) -> red.
+    key = ("ACCOUNT#acct", "TXN#mix2")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES",
+                               "tags": ["keep"]}}
+    calls = []
+    original = repo._table.update_item
+    monkeypatch.setattr(repo._table, "update_item",
+                        lambda **kw: calls.append(kw) or original(**kw))
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(key[0], key[1], category="", tags=[])
+    assert calls == []
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"
+    assert row["tags"] == ["keep"]
