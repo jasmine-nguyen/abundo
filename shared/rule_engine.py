@@ -90,8 +90,8 @@ def _condition_id_part(condition: dict) -> str:
     return f"{field}|{condition.get('operator')}|{_canonical_value(field, condition.get('value'))}"
 
 
-def rule_id_for(field: str = None, operator: str = None, value=None, *,
-                conditions: list[dict] = None, logic: str = "all") -> str:
+def rule_id_for(field: str | None = None, operator: str | None = None, value=None, *,
+                conditions: list[dict] | None = None, logic: str = "all") -> str:
     """Stable dedup id for a rule: the first 16 hex chars of a sha256 digest. The id IS the
     duplicate guard — our rule store keys a row on it, so "the same rule twice" lands on the same
     row by construction (WHIT-528).
