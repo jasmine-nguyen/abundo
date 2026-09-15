@@ -79,7 +79,7 @@ it('previews with dryRun true and the trimmed inline rule, writing nothing', asy
   let outcome: Awaited<ReturnType<typeof result.current.previewNewRule>> | null = null;
   await act(async () => { outcome = await result.current.previewNewRule('  COLES  ', 'groceries'); });
 
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true, { value: 'COLES', categoryId: 'groceries' });
+  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(true, { value: 'COLES', categoryId: 'groceries', budgetExcluded: false });
   expect(outcome!.ok).toBe(true);
   expect(spy).not.toHaveBeenCalled();                     // a preview reconciles nothing
   expect(rowsIn('transactions')[0].category).toBeNull();  // ...and touches no row
@@ -107,7 +107,7 @@ it('sends the trimmed inline rule with dryRun false and patches the filed row', 
   let outcome: Awaited<ReturnType<typeof result.current.fileNewRule>> | null = null;
   await act(async () => { outcome = await result.current.fileNewRule('  COLES  ', 'groceries'); });
 
-  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false, { value: 'COLES', categoryId: 'groceries' });
+  expect(mockApi.applyRulesToUncategorized).toHaveBeenCalledWith(false, { value: 'COLES', categoryId: 'groceries', budgetExcluded: false });
   expect(outcome).toEqual({ ok: true, report: expect.objectContaining({ filed: [{ id: 't1', category: 'groceries' }] }) });
   const byId = new Map(rowsIn('transactions').map((r) => [r.transaction_id, r.category]));
   expect(byId.get('t1')).toBe('groceries');

@@ -86,11 +86,12 @@ def test_rule_to_client_maps_a_full_store_row_to_exactly_the_client_shape(handle
     # is a silent shape drift.
     mapped = handler._rule_to_client({
         "pk": "RULE", "sk": "RULE#abc", "id": "abc", "field": "description",
-        "operator": "contains", "value": "ALDI", "category_id": "groceries", "source": "app",
+        "operator": "contains", "value": "ALDI", "category_id": "groceries",
+        "budget_excluded": True, "source": "app",
         "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-02T00:00:00+00:00"})
 
     assert mapped == {"id": "abc", "field": "description", "operator": "contains",
-                      "value": "ALDI", "categoryId": "groceries"}
+                      "value": "ALDI", "categoryId": "groceries", "budgetExcluded": True}
 
 
 def test_rule_to_client_never_raises_on_a_sparse_row(handler):
@@ -99,7 +100,7 @@ def test_rule_to_client_never_raises_on_a_sparse_row(handler):
     mapped = handler._rule_to_client({})
 
     assert mapped == {"id": None, "field": None, "operator": None, "value": None,
-                      "categoryId": None}
+                      "categoryId": None, "budgetExcluded": False}
 
 
 # --- [G4] the clash guard reads the WHOLE store, not a capped first page ----------------------

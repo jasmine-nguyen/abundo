@@ -974,9 +974,9 @@ def _validate_rule_body(event: dict):
     """Parse + validate a create/update rule body, returning the NORMALISED
     values so create and update trim/default identically.
 
-    Returns ((value, category_id, field, operator), None) on success — value and
-    category_id already stripped, field/operator defaulted to the Tier-1
-    "description contains" and restricted to the verified vocabulary — or
+    Returns ((value, category_id, field, operator, budget_excluded), None) on success — value and
+    category_id already stripped, field/operator defaulted to the Tier-1 "description contains" and
+    restricted to the verified vocabulary, budget_excluded defaulted to False — or
     (None, error_response) with a 400.
     """
     body, error = _parse_json_body(event)
@@ -1000,7 +1000,11 @@ def _validate_rule_body(event: dict):
         return None, _json_response(
             400, {"error": f"operator must be one of {sorted(RULE_OPERATORS)}"})
 
-    return (value.strip(), category_id.strip(), field, operator), None
+    budget_excluded = body.get("budgetExcluded", False)
+    if not isinstance(budget_excluded, bool):
+        return None, _json_response(400, {"error": "budgetExcluded must be a boolean"})
+
+    return (value.strip(), category_id.strip(), field, operator, budget_excluded), None
 
 
 # --- Rules: our own store (WHIT-529) ------------------------------------------
@@ -1049,7 +1053,7 @@ def _validate_rule_write(event: dict, category_repo: CategoryRepository):
     parsed, error = _validate_rule_body(event)
     if error:
         return None, error
-    value, category_id, field, operator = parsed
+    value, category_id, field, operator, _budget_excluded = parsed
     return parsed, (_validate_rule_value_floor(value, field, operator)
                     or _validate_rule_category(category_id, category_repo))
 
@@ -1074,10 +1078,11 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
     parsed, error = _validate_rule_write(event, category_repo)
     if error:
         return error
-    value, category_id, field, operator = parsed
+    value, category_id, field, operator, budget_excluded = parsed
 
     try:
-        rule, _created = rule_repo.create_rule(field, operator, value, category_id)
+        rule, _created = rule_repo.create_rule(
+            field, operator, value, category_id, budget_excluded=budget_excluded)
     except RuleClashError as e:
         return _rule_clash_response(_rule_to_client(e.existing))
     except DatabaseError:
@@ -1177,10 +1182,11 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     parsed, error = _validate_rule_write(event, category_repo)
     if error:
         return error
-    value, category_id, field, operator = parsed
+    value, category_id, field, operator, budget_excluded = parsed
 
     try:
-        rule = rule_repo.update_rule(rule_id, field, operator, value, category_id)
+        rule = rule_repo.update_rule(
+            rule_id, field, operator, value, category_id, budget_excluded=budget_excluded)
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
@@ -1396,6 +1402,7 @@ def _rule_to_client(row: dict) -> dict:
         "operator": row.get("operator"),
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
+        "budgetExcluded": bool(row.get("budget_excluded")),
     }
 
 
@@ -1476,7 +1483,12 @@ def _validate_inline_rule(body: dict, taxonomy_ids: set[str]) -> tuple[dict | No
     if not isinstance(category_id, str) or category_id not in taxonomy_ids:
         return None, _json_response(400, {"error": "rule categoryId is not one of your categories"})
 
-    return {"value": value.strip(), "categoryId": category_id}, None
+    budget_excluded = rule.get("budgetExcluded", False)
+    if not isinstance(budget_excluded, bool):
+        return None, _json_response(400, {"error": "rule budgetExcluded must be a boolean"})
+
+    return {"value": value.strip(), "categoryId": category_id,
+            "budgetExcluded": budget_excluded}, None
 
 
 def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanished: list = (),
@@ -1584,6 +1596,11 @@ def apply_rules_to_uncategorized(
     # orphaned stamp (rule gone) from a drifted one (rule still here, but the charge is off its
     # target).
     rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
+    # Each rule's "keep out of budget" action (WHIT-558), captured against the WHOLE store before the
+    # inline path narrows `rules` — so the sweep can set budget_excluded from the winning rule. The
+    # inline "file this shop" mint carries no flag, and its plan rule_id is None, so it never excludes.
+    rule_excluded_by_id = {
+        rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
 
     if inline_rule is not None:
         clash = _rule_that_would_fight(rules, inline_rule)
@@ -1619,6 +1636,7 @@ def apply_rules_to_uncategorized(
             row, _created = rule_repo.create_rule(
                 DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR,
                 inline_rule["value"], inline_rule["categoryId"],
+                budget_excluded=inline_rule["budgetExcluded"],
             )
         except RuleClashError as e:
             # A rule with this exact text but a different category appeared between the pre-scan
@@ -1648,12 +1666,20 @@ def apply_rules_to_uncategorized(
         # Stamp which rule filed it (WHIT-536). For an inline "file this shop" rule the plan's
         # rule_id is None (it's minted after planning), so use the freshly-created rule's id.
         stamp = created_rule["id"] if inline_rule is not None else rule_id
+        # Keep out of budget too, if the winning rule says so (WHIT-558). The inline "file this
+        # shop" mint's plan rule_id is None, so read the flag off the inline rule directly; the
+        # plain sweep reads it by the winning rule's id. Set only in the SAME conditional write, so
+        # it can never land on a row the tap-wins guard rejected.
+        if inline_rule is not None:
+            budget_excluded = inline_rule["budgetExcluded"]
+        else:
+            budget_excluded = rule_excluded_by_id.get(rule_id, False)
         try:
             # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
             # since keeps their choice (WHIT-508). Their tap always beats a rule.
             status, current_category = transaction_repo.update_transaction_category_if_unchanged(
                 transaction["pk"], transaction["sk"], category_id, transaction.get("category"),
-                filed_by_rule=stamp,
+                filed_by_rule=stamp, budget_excluded=budget_excluded,
             )
         except DatabaseError:
             failed.append(transaction_id)

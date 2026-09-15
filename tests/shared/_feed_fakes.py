@@ -139,7 +139,7 @@ class WritableFeedRepo(FakeFeedRepo):
         row["category"] = category
 
     def update_transaction_category_if_unchanged(self, pk, sk, category, expected_category,
-                                                  filed_by_rule=None):
+                                                  filed_by_rule=None, budget_excluded=False):
         transaction_id = sk.split("#", 1)[1]
         if self.refile_hook is not None:
             self.refile_hook(transaction_id, self)
@@ -159,6 +159,11 @@ class WritableFeedRepo(FakeFeedRepo):
         row["category"] = category
         if filed_by_rule is not None:
             row["filed_by_rule"] = filed_by_rule
+        # WHIT-558: a rule keeps the charge out of budget. Only ever SET True (never False), in the
+        # SAME conditional write — matching production, so a test asserting the flag lands only on a
+        # non-refused write reads true behaviour.
+        if budget_excluded:
+            row["budget_excluded"] = True
         return "written", category
 
     def clear_rule_fill(self, pk, sk, rule_id):

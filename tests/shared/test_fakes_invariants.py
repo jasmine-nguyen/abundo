@@ -100,6 +100,7 @@ _REGISTRY = [
          _API_TESTS / "test_uncategorized_feed_gaps.py",
          _API_TESTS / "test_apply_rules.py",
          _API_TESTS / "test_apply_rules_gaps.py",
+         _API_TESTS / "test_apply_rules_budget_excluded.py",
          _API_TESTS / "test_apply_rules_inline_rule.py",
          _API_TESTS / "test_apply_rules_inline_rule_gaps.py",
          _API_TESTS / "test_apply_rules_orphan_sweep.py",
@@ -121,6 +122,7 @@ _REGISTRY = [
         # checks each domain's owned names independently and the suites only import each fake.
         (_API_TESTS / "test_apply_rules.py",
          _API_TESTS / "test_apply_rules_gaps.py",
+         _API_TESTS / "test_apply_rules_budget_excluded.py",
          _API_TESTS / "test_apply_rules_inline_rule.py",
          _API_TESTS / "test_apply_rules_inline_rule_gaps.py",
          _API_TESTS / "test_apply_rules_repoint_gaps.py",

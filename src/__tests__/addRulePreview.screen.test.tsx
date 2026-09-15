@@ -62,7 +62,7 @@ it('previews on mount and shows the matched count with sample descriptions', asy
   fns.previewNewRule.mockResolvedValue({ ok: true, report: report({ matched: 12 }) });
   await mountConfirm('COLES', 'groceries');
 
-  expect(fns.previewNewRule).toHaveBeenCalledWith('COLES', 'groceries');
+  expect(fns.previewNewRule).toHaveBeenCalledWith('COLES', 'groceries', false);
   expect(screen.getByTestId('add-rule-confirm-file')).toBeTruthy();
   expect(screen.getByText('Add rule + file 12 charges')).toBeTruthy();
   expect(screen.getByText('COLES 1234 RICHMOND')).toBeTruthy();
@@ -77,7 +77,7 @@ it('"Add rule + file N" calls fileNewRule with the captured pair, then toasts an
 
   await act(async () => { fireEvent.press(screen.getByTestId('add-rule-confirm-file')); });
 
-  expect(fns.fileNewRule).toHaveBeenCalledWith('COLES', 'groceries');
+  expect(fns.fileNewRule).toHaveBeenCalledWith('COLES', 'groceries', false);
   expect(fns.showToast).toHaveBeenCalledWith('Rule added — filed 12 past charges as Groceries.');
   expect(fns.setSheet).toHaveBeenCalledWith(null);
 });
@@ -90,7 +90,7 @@ it('"Add rule only" calls saveManualRule and never files', async () => {
 
   fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
 
-  expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'groceries');
+  expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'groceries', false);
   expect(fns.fileNewRule).not.toHaveBeenCalled();
 });
 
@@ -103,7 +103,7 @@ it('says nothing matches and offers no "+ file" button when matched is 0', async
   expect(screen.getByText('No past charges match')).toBeTruthy();
   expect(screen.queryByTestId('add-rule-confirm-file')).toBeNull();
   fireEvent.press(screen.getByTestId('add-rule-confirm-rule-only'));
-  expect(fns.saveManualRule).toHaveBeenCalledWith('ZZZNOPE', 'groceries');
+  expect(fns.saveManualRule).toHaveBeenCalledWith('ZZZNOPE', 'groceries', false);
 });
 
 // A match bigger than the write cap can't file in one tap, so the button must not promise the full
