@@ -109,3 +109,17 @@ def test_value_floor_applies_per_description_contains_condition(handler, monkeyp
     resp = handler.lambda_handler(_event("POST", "/rules", body), None)
     assert resp["statusCode"] == 400
     assert "letters or digits" in json.loads(resp["body"])["error"]
+
+
+def test_value_floor_applies_per_merchant_contains_condition(handler, monkeypatch):
+    # `merchant contains` is a substring match too, so a near-empty value over-matches identically
+    # to `description contains` — the floor must cover it. FAIL-ON-REVERT: narrow the floor back to
+    # description only and this near-empty merchant substring is accepted (200/201, not 400).
+    repo = FakeRuleRepo()
+    _inject(handler, monkeypatch, repo)
+    body = _body(conditions=[{"field": "merchant", "operator": "contains", "value": "."},
+                             {"field": "amount", "operator": "less_than", "value": "30"}])
+    resp = handler.lambda_handler(_event("POST", "/rules", body), None)
+    assert resp["statusCode"] == 400
+    assert "letters or digits" in json.loads(resp["body"])["error"]
+    assert repo.minted == []

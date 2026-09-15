@@ -1121,10 +1121,12 @@ def _rule_value_floor_error() -> dict:
 
 
 def _validate_rule_value_floor(value: str, field: str, operator: str) -> dict | None:
-    """A "description contains" value must carry enough letters/digits to rule on, the same floor
-    the merchant sweep's inline mint enforces (rule_value_is_safe). Other rule shapes (category
-    equals) match exactly, not by substring, so the floor doesn't apply. Returns a 400 or None."""
-    if field == "description" and operator == "contains" and not rule_value_is_safe(value):
+    """A substring ("contains") value must carry enough letters/digits to rule on, the same floor
+    the merchant sweep's inline mint enforces (rule_value_is_safe). Both substring fields —
+    ``description`` and ``merchant`` — over-match the same way on a near-empty value, so both are
+    floored. Other rule shapes (category/account equals, amount, direction) match exactly, not by
+    substring, so the floor doesn't apply. Returns a 400 or None."""
+    if operator == "contains" and field in ("description", "merchant") and not rule_value_is_safe(value):
         return _rule_value_floor_error()
     return None
 

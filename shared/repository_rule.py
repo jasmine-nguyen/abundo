@@ -210,20 +210,26 @@ class RuleRepository:
                          budget_excluded: bool, now: str,
                          conditions: Optional[list] = None, logic: Optional[str] = None) -> None:
         # `value` is a DynamoDB reserved word, so every name goes through an alias.
-        names = {"#v": "value", "#c": "category_id", "#b": "budget_excluded", "#u": "updated_at"}
+        names = {"#v": "value", "#c": "category_id", "#b": "budget_excluded", "#u": "updated_at",
+                 "#cd": "conditions", "#lg": "logic"}
         values = {":v": value, ":c": category_id, ":b": budget_excluded, ":u": now}
         assignments = ["#v = :v", "#c = :c", "#b = :b", "#u = :u"]
-        # A same-id (case-/spacing-only) edit of a multi-condition rule keeps its conditions, but the
-        # RAW values may have changed — re-write them so the stored conditions can't go stale.
+        # A same-id edit keeps the rule's identity, but the shape can change: a multi-condition rule
+        # re-writes its conditions (a case-/spacing-only value edit may have changed the RAW values),
+        # while a rule edited down to a single flat condition must have any stale conditions/logic
+        # REMOVEd — otherwise the stored shape lies to decide's multi-rule guard. (REMOVE of an
+        # absent attribute is a no-op, so a plain single-rule edit is unaffected.)
         if conditions:
-            names["#cd"], names["#lg"] = "conditions", "logic"
             values[":cd"], values[":lg"] = conditions, (logic or "all")
             assignments.append("#cd = :cd")
             assignments.append("#lg = :lg")
+            update_expression = "SET " + ", ".join(assignments)
+        else:
+            update_expression = "SET " + ", ".join(assignments) + " REMOVE #cd, #lg"
         try:
             self._get_table().update_item(
                 Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
-                UpdateExpression="SET " + ", ".join(assignments),
+                UpdateExpression=update_expression,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
                 ConditionExpression="attribute_exists(pk)",
