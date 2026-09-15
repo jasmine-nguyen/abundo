@@ -29,15 +29,16 @@ from decimal import Decimal, InvalidOperation
 #   category: `equals` — a raw-enum mapping (FOOD_AND_DRINK -> groceries) for rules made outside
 #             the app; unfiled rows carry raw enums, so it is worth honouring when present.
 #   account: `equals` against the internal account_id.
-#   amount: `less_than`/`greater_than` a plain positive dollar value, compared to the charge's
-#           MAGNITUDE (abs) — spend is stored negative, so "under $30" means abs(amount) < 30.
+#   amount: `less_than`/`less_than_or_equal`/`greater_than`/`greater_than_or_equal` a plain positive
+#           dollar value, compared to the charge's MAGNITUDE (abs) — spend is stored negative, so
+#           "under $30" means abs(amount) < 30.
 #   direction: `is` "debit" (spend, amount < 0) / "credit" (income, amount > 0).
 _FIELD_OPERATORS = {
     "description": {"contains", "equals"},
     "merchant": {"contains", "equals"},
     "category": {"equals"},
     "account": {"equals"},
-    "amount": {"less_than", "greater_than"},
+    "amount": {"less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal"},
     "direction": {"is"},
 }
 
@@ -153,8 +154,12 @@ def _amount_matches(operator: str, value, amount) -> bool:
         return False
     if operator == "less_than":
         return magnitude < threshold
+    if operator == "less_than_or_equal":
+        return magnitude <= threshold
     if operator == "greater_than":
         return magnitude > threshold
+    if operator == "greater_than_or_equal":
+        return magnitude >= threshold
     return False
 
 
@@ -189,10 +194,12 @@ def _condition_matches(condition: dict, transaction: dict) -> bool:
     text = _normalise(value)
     if not text:
         return False
-    if field == "description":
+    if field in ("description", "merchant"):
+        # 'merchant' matches the RAW description, not the cleaned merchant_name: description is the
+        # field every other rule matches and it's stable across a charge's life, whereas
+        # merchant_name is a lossy display name whose source differs pending vs posted (banksync.py
+        # / clean_merchant), so matching it silently misses charges for the same merchant.
         return _text_matches(operator, text, _normalise(transaction.get("description")))
-    if field == "merchant":
-        return _text_matches(operator, text, _normalise(transaction.get("merchant_name")))
     if field == "category":
         return operator == "equals" and text == _normalise(transaction.get("category"))
     return False
