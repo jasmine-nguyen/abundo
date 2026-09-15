@@ -1156,168 +1156,211 @@ function alsoCatchesTotal(group: UncategorizedMerchantGroup): string {
 // write. A clash (an existing rule already files this shop elsewhere) surfaces here, from the
 // server's own check, so there is nothing to write; the write path re-checks in case a rule was
 // made between preview and confirm.
-function FileByShopConfirmSheet() {
-  // Destructure the STABLE context callbacks (each a useCallback), NOT the whole context value:
-  // the value's identity changes on every toast (a filed shop toasts, then it auto-clears 3.4s
-  // later), and depending on the whole value would re-fire runPreview — snapping the sheet back to
-  // its spinner and re-running a whole-history dry run, possibly during the write. This mirrors
-  // ApplyRulesSheet, built to dodge exactly this. `sheet` is read for the group/category; it only
-  // changes when setSheet is called (a toast never touches it), so runPreview's deps stay stable.
-  const { sheet, previewFileByShop, fileByShop, setSheet, showToast } = useAppContext();
-  const { category } = useCategories();
+type ConfirmPhase = 'loading' | 'preview' | 'clash' | 'previewFailed' | 'confirming' | 'writeFailed';
+
+// What a wrapper's renderArm receives. The shell owns the phase machine and the two latches; the
+// wrapper renders every visible arm from these. `onCommit` runs the primary write; `runCommit` runs
+// any action (e.g. AddRule's "rule only" save) through the SAME commit latch, so the two can never
+// both fire in one frame; `retry` re-runs the preview.
+type ConfirmArm = {
+  phase: ConfirmPhase;
+  report: ApplyRulesResult | null;
+  onCommit: () => void;
+  runCommit: (action: () => Promise<unknown> | unknown) => void;
+  retry: () => void;
+};
+
+type ConfirmPreviewSheetProps = {
+  // `preview` feeds the mount effect, so it MUST be a useCallback in the wrapper — an unstable
+  // identity would re-fire the preview and snap the sheet back to its spinner (WHIT-538). The rest
+  // are read at press time and need no memoisation.
+  preview: () => Promise<FileByShopOutcome>;
+  commit: () => Promise<FileByShopOutcome>;
+  filedToast: (report: ApplyRulesResult) => void; // always fired on success — on screen or not
+  onNavigate: () => void;                          // only when the sheet is still on screen
+  clashToast: () => void;                          // only when dismissed mid-write
+  writeFailedToast: () => void;                    // only when dismissed mid-write
+  renderArm: (arm: ConfirmArm) => React.ReactNode;
+};
+
+// WHIT-557: the shared shell behind FileByShopConfirmSheet and AddRuleConfirmSheet (both WHIT-538).
+// Owns the phase machine, the two independent in-flight latches (preview + commit), the on-screen
+// ref, the preview-on-mount effect, and the commit writer. Each wrapper supplies its preview/commit
+// callbacks, its copy (toasts + navigation), and a renderArm for the visible arms — keeping every
+// arm's testID and string verbatim in the wrapper, so the two sheets behave exactly as before.
+function ConfirmPreviewSheet({ preview, commit, filedToast, onNavigate, clashToast, writeFailedToast, renderArm }: ConfirmPreviewSheetProps) {
   const runGuarded = useInFlightGuard();
   const previewGuarded = useInFlightGuard();
   const [report, setReport] = useState<ApplyRulesResult | null>(null);
-  const [phase, setPhase] = useState<FileByShopPhase>('loading');
+  const [phase, setPhase] = useState<ConfirmPhase>('loading');
   // The sheet is dismissable mid-write (backdrop + drag are SheetHost's), so a run can finish with
   // nothing on screen — report it as a toast instead of dropping it.
   const onScreen = useRef(true);
   useEffect(() => () => { onScreen.current = false; }, []);
 
-  const group = sheet?.mode === 'fileByShopConfirm' ? sheet.group : null;
-  const categoryId = sheet?.mode === 'fileByShopConfirm' ? sheet.categoryId : null;
-
   const runPreview = useCallback(async () => {
-    if (!group || !categoryId) return;
     setPhase('loading');
-    const outcome = await previewFileByShop(group, categoryId);
+    const outcome = await preview();
     if (outcome.ok) { setReport(outcome.report); setPhase('preview'); return; }
     setPhase(outcome.clash ? 'clash' : 'previewFailed');
-  }, [previewFileByShop, group, categoryId]);
+  }, [preview]);
 
   useEffect(() => { previewGuarded(runPreview); }, [previewGuarded, runPreview]);
+
+  const onCommit = () => runGuarded(async () => {
+    setPhase('confirming');
+    const outcome = await commit();
+    if (outcome.ok) {
+      filedToast(outcome.report);            // always — never drop a result the user can't see
+      if (onScreen.current) onNavigate();    // only navigate a sheet that's still on screen
+      return;
+    }
+    if (outcome.clash) { if (onScreen.current) setPhase('clash'); else clashToast(); return; }
+    if (onScreen.current) setPhase('writeFailed'); else writeFailedToast();
+  });
+
+  return <>{renderArm({ phase, report, onCommit, runCommit: runGuarded, retry: () => previewGuarded(runPreview) })}</>;
+}
+
+function FileByShopConfirmSheet() {
+  // Destructure the STABLE context callbacks (each a useCallback), NOT the whole context value:
+  // the value's identity changes on every toast (auto-clears 3.4s later), and a preview built off
+  // the whole value would re-fire and snap the sheet back to its spinner. `sheet` only changes when
+  // setSheet is called (a toast never touches it), so the memoised `preview` below stays stable.
+  const { sheet, previewFileByShop, fileByShop, setSheet, showToast } = useAppContext();
+  const { category } = useCategories();
+  const group = sheet?.mode === 'fileByShopConfirm' ? sheet.group : null;
+  const categoryId = sheet?.mode === 'fileByShopConfirm' ? sheet.categoryId : null;
+  // Non-null-asserted: the guard below returns null before the shell mounts, so `preview` is never
+  // invoked while group/categoryId are null. useCallback must precede the early return (hooks rule).
+  const preview = useCallback(
+    () => previewFileByShop(group!, categoryId!),
+    [previewFileByShop, group, categoryId],
+  );
 
   if (!group || !categoryId) return null;
   const chosen = category(categoryId);
   if (!chosen) return null;
 
-  const onConfirm = () => runGuarded(async () => {
-    setPhase('confirming');
-    const outcome = await fileByShop(group, categoryId);
-    if (outcome.ok) {
-      showToast(fileByShopFiledMessage(outcome.report, chosen.name, group.merchant));
-      // Back to the shop list, which the write invalidated — the filed shop is gone from it.
-      if (onScreen.current) setSheet({ mode: 'fileByShopList' });
-      return;
-    }
-    if (outcome.clash) { if (onScreen.current) setPhase('clash'); else showToast(`You already have a rule filing ${group.merchant || 'this shop'} somewhere else.`); return; }
-    if (onScreen.current) setPhase('writeFailed');
-    else showToast(`Couldn't file ${group.merchant || 'this shop'}. Some charges may already have been filed.`);
-  });
-
-  if (phase === 'loading' || phase === 'confirming') {
-    const label = phase === 'loading' ? 'Checking what this would file…' : 'Filing these charges…';
-    return (
-      <View testID="file-by-shop-confirm-busy" style={styles.applyRulesBusy}>
-        <ActivityIndicator color={C.accent} />
-        <Text style={[styles.confirmSub, { marginTop: 14 }]}>{label}</Text>
-      </View>
-    );
-  }
-
-  if (phase === 'clash') {
-    return (
-      <View>
-        <Text style={styles.confirmTitle}>You already have a rule for this</Text>
-        <Text style={styles.confirmSub}>
-          You already have a rule filing {group.merchant || 'this shop'} somewhere else — edit it in Rules to change where these go. Nothing has been changed.
-        </Text>
-        <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-          <Text style={styles.btnGhostText}>Back to shops</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (phase === 'previewFailed') {
-    return (
-      <View>
-        <Text style={styles.confirmTitle}>Couldn't check this shop</Text>
-        <Text style={styles.confirmSub}>Nothing has been changed. Please try again.</Text>
-        <Pressable testID="file-by-shop-confirm-retry" onPress={() => previewGuarded(runPreview)} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Try again</Text>
-        </Pressable>
-        <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-          <Text style={styles.btnGhostText}>Back to shops</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (phase === 'writeFailed') {
-    return (
-      <View>
-        <Text style={styles.confirmTitle}>Couldn't finish</Text>
-        <Text style={styles.confirmSub}>
-          Some charges may already have been filed. Your unfiled list has been refreshed — open this again to see what's left.
-        </Text>
-        <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-          <Text style={styles.btnGhostText}>Back to shops</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (!report) return null;
-
-  // `matched` is the truthful count: what the rule ACTUALLY sweeps right now, across every unfiled
-  // charge (this shop plus anything in `alsoCatches`). A shop whose charges someone filed between
-  // opening the list and here can read 0 — say so rather than offer a no-op "File 0".
-  if (report.matched === 0) {
-    return (
-      <View>
-        <Text style={styles.confirmTitle}>Nothing left to file here</Text>
-        <Text style={styles.confirmSub}>
-          These charges from {group.merchant || 'this shop'} were filed already. Pick another shop.
-        </Text>
-        <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Back to shops</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  const dateRange = fileByShopDateRange(group);
-  // The server files at most APPLY_RULES_MAX_WRITES per call, so a shop bigger than that takes more
-  // than one tap. Say "up to N now" rather than promise the full matched count — the toast + the
-  // shop staying on the refreshed list then invites the next tap (mirrors ApplyRulesSheet's cap copy).
-  const capped = report.matched > APPLY_RULES_MAX_WRITES;
   return (
-    <View>
-      <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
-        <Icon name={chosen.icon} size={26} color={chosen.color} />
-      </View>
-      <Text style={styles.confirmTitle}>File as {chosen.name}</Text>
-      <Text style={styles.confirmSub}>
-        Files {report.matched} {chargeNoun(report.matched)} from {group.merchant || 'this shop'}
-        {dateRange ? ` (${dateRange})` : ''} — and makes a rule so future ones file themselves.
-        {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
-      </Text>
-      {group.alsoCatches.length > 0 && (
-        <View testID="file-by-shop-also-catches" style={styles.ruleConflict}>
-          <Text style={styles.ruleConflictText}>
-            Heads up: this also files charges from {group.alsoCatches.length} other {group.alsoCatches.length === 1 ? 'shop' : 'shops'}.
-          </Text>
-          {group.alsoCatches.map((other, index) => (
-            <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>
-              {other.merchant || 'Unnamed shop'} — {other.count} {chargeNoun(other.count)}
+    <ConfirmPreviewSheet
+      preview={preview}
+      commit={() => fileByShop(group, categoryId)}
+      filedToast={(report) => showToast(fileByShopFiledMessage(report, chosen.name, group.merchant))}
+      // Back to the shop list, which the write invalidated — the filed shop is gone from it.
+      onNavigate={() => setSheet({ mode: 'fileByShopList' })}
+      clashToast={() => showToast(`You already have a rule filing ${group.merchant || 'this shop'} somewhere else.`)}
+      writeFailedToast={() => showToast(`Couldn't file ${group.merchant || 'this shop'}. Some charges may already have been filed.`)}
+      renderArm={({ phase, report, onCommit, retry }) => {
+        if (phase === 'loading' || phase === 'confirming') {
+          const label = phase === 'loading' ? 'Checking what this would file…' : 'Filing these charges…';
+          return (
+            <View testID="file-by-shop-confirm-busy" style={styles.applyRulesBusy}>
+              <ActivityIndicator color={C.accent} />
+              <Text style={[styles.confirmSub, { marginTop: 14 }]}>{label}</Text>
+            </View>
+          );
+        }
+        if (phase === 'clash') {
+          return (
+            <View>
+              <Text style={styles.confirmTitle}>You already have a rule for this</Text>
+              <Text style={styles.confirmSub}>
+                You already have a rule filing {group.merchant || 'this shop'} somewhere else — edit it in Rules to change where these go. Nothing has been changed.
+              </Text>
+              <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+                <Text style={styles.btnGhostText}>Back to shops</Text>
+              </Pressable>
+            </View>
+          );
+        }
+        if (phase === 'previewFailed') {
+          return (
+            <View>
+              <Text style={styles.confirmTitle}>Couldn't check this shop</Text>
+              <Text style={styles.confirmSub}>Nothing has been changed. Please try again.</Text>
+              <Pressable testID="file-by-shop-confirm-retry" onPress={retry} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>Try again</Text>
+              </Pressable>
+              <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+                <Text style={styles.btnGhostText}>Back to shops</Text>
+              </Pressable>
+            </View>
+          );
+        }
+        if (phase === 'writeFailed') {
+          return (
+            <View>
+              <Text style={styles.confirmTitle}>Couldn't finish</Text>
+              <Text style={styles.confirmSub}>
+                Some charges may already have been filed. Your unfiled list has been refreshed — open this again to see what's left.
+              </Text>
+              <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+                <Text style={styles.btnGhostText}>Back to shops</Text>
+              </Pressable>
+            </View>
+          );
+        }
+        if (!report) return null;
+
+        // `matched` is the truthful count: what the rule ACTUALLY sweeps right now, across every
+        // unfiled charge (this shop plus anything in `alsoCatches`). A shop whose charges someone
+        // filed between opening the list and here can read 0 — say so rather than offer "File 0".
+        if (report.matched === 0) {
+          return (
+            <View>
+              <Text style={styles.confirmTitle}>Nothing left to file here</Text>
+              <Text style={styles.confirmSub}>
+                These charges from {group.merchant || 'this shop'} were filed already. Pick another shop.
+              </Text>
+              <Pressable testID="file-by-shop-confirm-close" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>Back to shops</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        const dateRange = fileByShopDateRange(group);
+        // The server files at most APPLY_RULES_MAX_WRITES per call, so a shop bigger than that takes
+        // more than one tap. Say "up to N now" rather than promise the full matched count.
+        const capped = report.matched > APPLY_RULES_MAX_WRITES;
+        return (
+          <View>
+            <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
+              <Icon name={chosen.icon} size={26} color={chosen.color} />
+            </View>
+            <Text style={styles.confirmTitle}>File as {chosen.name}</Text>
+            <Text style={styles.confirmSub}>
+              Files {report.matched} {chargeNoun(report.matched)} from {group.merchant || 'this shop'}
+              {dateRange ? ` (${dateRange})` : ''} — and makes a rule so future ones file themselves.
+              {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
             </Text>
-          ))}
-        </View>
-      )}
-      <Pressable testID="file-by-shop-confirm-apply" onPress={onConfirm} style={[styles.btn, styles.btnPrimary]}>
-        <Text style={styles.btnPrimaryText}>
-          {capped ? `File up to ${APPLY_RULES_MAX_WRITES} now` : `File ${report.matched} ${chargeNoun(report.matched)}`}
-        </Text>
-      </Pressable>
-      <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
-        <Text style={styles.btnGhostText}>Back to shops</Text>
-      </Pressable>
-    </View>
+            {group.alsoCatches.length > 0 && (
+              <View testID="file-by-shop-also-catches" style={styles.ruleConflict}>
+                <Text style={styles.ruleConflictText}>
+                  Heads up: this also files charges from {group.alsoCatches.length} other {group.alsoCatches.length === 1 ? 'shop' : 'shops'}.
+                </Text>
+                {group.alsoCatches.map((other, index) => (
+                  <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>
+                    {other.merchant || 'Unnamed shop'} — {other.count} {chargeNoun(other.count)}
+                  </Text>
+                ))}
+              </View>
+            )}
+            <Pressable testID="file-by-shop-confirm-apply" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
+              <Text style={styles.btnPrimaryText}>
+                {capped ? `File up to ${APPLY_RULES_MAX_WRITES} now` : `File ${report.matched} ${chargeNoun(report.matched)}`}
+              </Text>
+            </Pressable>
+            <Pressable testID="file-by-shop-confirm-cancel" onPress={() => setSheet({ mode: 'fileByShopList' })} style={[styles.btn, styles.btnGhost]}>
+              <Text style={styles.btnGhostText}>Back to shops</Text>
+            </Pressable>
+          </View>
+        );
+      }}
+    />
   );
 }
-
-type FileByShopPhase = 'loading' | 'preview' | 'clash' | 'previewFailed' | 'confirming' | 'writeFailed';
 
 /** The toast after a "file by shop" write. Nothing filed → someone beat us to it. A shop bigger than
  *  the per-call cap files in batches, so `matched > cap` means the shop isn't done — say so, since the
@@ -1341,177 +1384,154 @@ function fileByShopDateRange(group: UncategorizedMerchantGroup): string {
 
 // WHIT-538: the confirm step after typing a NEW rule. Previews how many stored charges the typed
 // pattern would file (dry run), then either mints the rule + files them (fileNewRule) or saves the
-// rule for future charges only (saveManualRule). Mirrors FileByShopConfirmSheet's state machine —
-// same phases, same in-flight/onScreen guards, same "dismissable mid-write" handling.
+// rule for future charges only (saveManualRule). WHIT-557: routes through the shared
+// ConfirmPreviewSheet shell; only its copy, its "rule only" action, and its back/close targets differ.
 function AddRuleConfirmSheet() {
   // Destructure the STABLE context callbacks, NOT the whole value: its identity changes on every
-  // toast, and depending on it would re-fire runPreview and snap the sheet back to its spinner —
-  // possibly during the write. `sheet` only changes when setSheet is called, so the deps stay stable.
+  // toast, and a preview built off it would re-fire and snap the sheet back to its spinner. `sheet`
+  // only changes when setSheet is called, so the memoised `preview` below stays stable.
   const { sheet, previewNewRule, fileNewRule, saveManualRule, setSheet, showToast } = useAppContext();
   const { category } = useCategories();
-  const runGuarded = useInFlightGuard();
-  const previewGuarded = useInFlightGuard();
-  const [report, setReport] = useState<ApplyRulesResult | null>(null);
-  const [phase, setPhase] = useState<FileByShopPhase>('loading');
-  // The sheet is dismissable mid-write (backdrop + drag are SheetHost's), so a run can finish with
-  // nothing on screen — report it as a toast instead of dropping it.
-  const onScreen = useRef(true);
-  useEffect(() => () => { onScreen.current = false; }, []);
-
   const pattern = sheet?.mode === 'addRuleConfirm' ? sheet.pattern : null;
   const categoryId = sheet?.mode === 'addRuleConfirm' ? sheet.categoryId : null;
-
-  const runPreview = useCallback(async () => {
-    if (!pattern || !categoryId) return;
-    setPhase('loading');
-    const outcome = await previewNewRule(pattern, categoryId);
-    if (outcome.ok) { setReport(outcome.report); setPhase('preview'); return; }
-    setPhase(outcome.clash ? 'clash' : 'previewFailed');
-  }, [previewNewRule, pattern, categoryId]);
-
-  useEffect(() => { previewGuarded(runPreview); }, [previewGuarded, runPreview]);
+  // Non-null-asserted: the guard below returns null before the shell mounts, so `preview` is never
+  // invoked while pattern/categoryId are null. useCallback must precede the early return (hooks rule).
+  const preview = useCallback(
+    () => previewNewRule(pattern!, categoryId!),
+    [previewNewRule, pattern, categoryId],
+  );
 
   if (!pattern || !categoryId) return null;
   const chosen = category(categoryId);
   if (!chosen) return null;
 
-  // Save the rule for future charges only — the old direct-save path. saveManualRule closes the
-  // sheet and shows its own toast, so nothing else is needed here. Guarded against a same-frame
-  // double-tap (WHIT-241): saveManualRule mints a temp id + POSTs with no latch of its own, so two
-  // taps would mint two rules. Shares the commit guard with onFile — the two are mutually exclusive
-  // and neither should fire twice.
-  const onRuleOnly = () => runGuarded(() => saveManualRule(pattern, categoryId));
-  const goBack = () => setSheet({ mode: 'addrule' });
-
-  const onFile = () => runGuarded(async () => {
-    setPhase('confirming');
-    const outcome = await fileNewRule(pattern, categoryId);
-    if (outcome.ok) {
-      showToast(addRuleFiledMessage(outcome.report, chosen.name));
-      if (onScreen.current) setSheet(null);
-      return;
-    }
-    if (outcome.clash) {
-      if (onScreen.current) setPhase('clash');
-      else showToast(`You already have a rule for “${pattern}”.`);
-      return;
-    }
-    if (onScreen.current) setPhase('writeFailed');
-    else showToast(`Couldn't add the rule for “${pattern}”. Some charges may already have been filed.`);
-  });
-
-  if (phase === 'loading' || phase === 'confirming') {
-    const label = phase === 'loading' ? 'Checking what this would file…' : 'Adding your rule…';
-    return (
-      <View testID="add-rule-confirm-busy" style={styles.applyRulesBusy}>
-        <ActivityIndicator color={C.accent} />
-        <Text style={[styles.confirmSub, { marginTop: 14 }]}>{label}</Text>
-      </View>
-    );
-  }
-
-  if (phase === 'clash') {
-    return (
-      <View>
-        <Text style={styles.confirmTitle}>You already have a rule for this</Text>
-        <Text style={styles.confirmSub}>
-          A rule already files “{pattern}” somewhere else — edit it in Rules to change where these go. Nothing has been changed.
-        </Text>
-        <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Done</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (phase === 'previewFailed') {
-    return (
-      <View>
-        <Text style={styles.confirmTitle}>Couldn't check this rule</Text>
-        <Text style={styles.confirmSub}>Nothing has been changed. Try again, or just save the rule for future charges.</Text>
-        <Pressable testID="add-rule-confirm-retry" onPress={() => previewGuarded(runPreview)} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Try again</Text>
-        </Pressable>
-        <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
-          <Text style={styles.btnGhostText}>Add rule only</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (phase === 'writeFailed') {
-    return (
-      <View>
-        <Text style={styles.confirmTitle}>Couldn't finish</Text>
-        <Text style={styles.confirmSub}>
-          Some charges may already have been filed. Your lists have been refreshed — open Rules to see whether the rule was added.
-        </Text>
-        <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Done</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (!report) return null;
-
-  // No stored charge matches yet — there is nothing to file, so offer only "save the rule" (future
-  // charges) plus a way back to fix a mistyped pattern.
-  if (report.matched === 0) {
-    return (
-      <View>
-        <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
-          <Icon name={chosen.icon} size={26} color={chosen.color} />
-        </View>
-        <Text style={styles.confirmTitle}>No past charges match</Text>
-        <Text style={styles.confirmSub}>
-          “{pattern}” doesn't match any of your unfiled charges. The rule will still file matching future charges as {chosen.name}.
-        </Text>
-        <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Add rule</Text>
-        </Pressable>
-        <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
-          <Text style={styles.btnGhostText}>Back</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  // The server files at most APPLY_RULES_MAX_WRITES per call, so a big match takes more than one go.
-  const capped = report.matched > APPLY_RULES_MAX_WRITES;
-  // The inline rule is the only rule in the plan, so its samples live at byRule[0]. Guard the index
-  // (an empty byRule is possible) and drop null descriptions.
-  const samples = (report.byRule[0]?.samples ?? []).filter((sample): sample is string => !!sample);
   return (
-    <View>
-      <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
-        <Icon name={chosen.icon} size={26} color={chosen.color} />
-      </View>
-      <Text style={styles.confirmTitle}>File past charges too?</Text>
-      <Text style={styles.confirmSub}>
-        “{pattern}” matches {report.matched} past {chargeNoun(report.matched)} you haven't filed. File them as {chosen.name} now,
-        or just save the rule for future charges.
-        {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
-      </Text>
-      {samples.length > 0 && (
-        <View testID="add-rule-confirm-samples" style={styles.ruleConflict}>
-          {samples.map((sample, index) => (
-            <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>{sample}</Text>
-          ))}
-        </View>
-      )}
-      <Pressable testID="add-rule-confirm-file" onPress={onFile} style={[styles.btn, styles.btnPrimary]}>
-        <Text style={styles.btnPrimaryText}>
-          {capped ? `Add rule + file up to ${APPLY_RULES_MAX_WRITES}` : `Add rule + file ${report.matched} ${chargeNoun(report.matched)}`}
-        </Text>
-      </Pressable>
-      <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
-        <Text style={styles.btnGhostText}>Add rule only</Text>
-      </Pressable>
-      <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
-        <Text style={styles.btnGhostText}>Back</Text>
-      </Pressable>
-    </View>
+    <ConfirmPreviewSheet
+      preview={preview}
+      commit={() => fileNewRule(pattern, categoryId)}
+      filedToast={(report) => showToast(addRuleFiledMessage(report, chosen.name))}
+      onNavigate={() => setSheet(null)}
+      clashToast={() => showToast(`You already have a rule for “${pattern}”.`)}
+      writeFailedToast={() => showToast(`Couldn't add the rule for “${pattern}”. Some charges may already have been filed.`)}
+      renderArm={({ phase, report, onCommit, runCommit, retry }) => {
+        // Save the rule for future charges only — the old direct-save path. saveManualRule closes the
+        // sheet and shows its own toast. Routed through runCommit (the shell's commit latch, shared
+        // with the primary File action) so a same-frame double-tap can't fire both and mint two rules
+        // (WHIT-241): saveManualRule has no latch of its own.
+        const onRuleOnly = () => runCommit(() => saveManualRule(pattern, categoryId));
+        const goBack = () => setSheet({ mode: 'addrule' });
+
+        if (phase === 'loading' || phase === 'confirming') {
+          const label = phase === 'loading' ? 'Checking what this would file…' : 'Adding your rule…';
+          return (
+            <View testID="add-rule-confirm-busy" style={styles.applyRulesBusy}>
+              <ActivityIndicator color={C.accent} />
+              <Text style={[styles.confirmSub, { marginTop: 14 }]}>{label}</Text>
+            </View>
+          );
+        }
+        if (phase === 'clash') {
+          return (
+            <View>
+              <Text style={styles.confirmTitle}>You already have a rule for this</Text>
+              <Text style={styles.confirmSub}>
+                A rule already files “{pattern}” somewhere else — edit it in Rules to change where these go. Nothing has been changed.
+              </Text>
+              <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>Done</Text>
+              </Pressable>
+            </View>
+          );
+        }
+        if (phase === 'previewFailed') {
+          return (
+            <View>
+              <Text style={styles.confirmTitle}>Couldn't check this rule</Text>
+              <Text style={styles.confirmSub}>Nothing has been changed. Try again, or just save the rule for future charges.</Text>
+              <Pressable testID="add-rule-confirm-retry" onPress={retry} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>Try again</Text>
+              </Pressable>
+              <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
+                <Text style={styles.btnGhostText}>Add rule only</Text>
+              </Pressable>
+            </View>
+          );
+        }
+        if (phase === 'writeFailed') {
+          return (
+            <View>
+              <Text style={styles.confirmTitle}>Couldn't finish</Text>
+              <Text style={styles.confirmSub}>
+                Some charges may already have been filed. Your lists have been refreshed — open Rules to see whether the rule was added.
+              </Text>
+              <Pressable testID="add-rule-confirm-close" onPress={() => setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>Done</Text>
+              </Pressable>
+            </View>
+          );
+        }
+        if (!report) return null;
+
+        // No stored charge matches yet — nothing to file, so offer only "save the rule" (future
+        // charges) plus a way back to fix a mistyped pattern.
+        if (report.matched === 0) {
+          return (
+            <View>
+              <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
+                <Icon name={chosen.icon} size={26} color={chosen.color} />
+              </View>
+              <Text style={styles.confirmTitle}>No past charges match</Text>
+              <Text style={styles.confirmSub}>
+                “{pattern}” doesn't match any of your unfiled charges. The rule will still file matching future charges as {chosen.name}.
+              </Text>
+              <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnPrimary]}>
+                <Text style={styles.btnPrimaryText}>Add rule</Text>
+              </Pressable>
+              <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
+                <Text style={styles.btnGhostText}>Back</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        // The server files at most APPLY_RULES_MAX_WRITES per call, so a big match takes more than one go.
+        const capped = report.matched > APPLY_RULES_MAX_WRITES;
+        // The inline rule is the only rule in the plan, so its samples live at byRule[0]. Guard the
+        // index (an empty byRule is possible) and drop null descriptions.
+        const samples = (report.byRule[0]?.samples ?? []).filter((sample): sample is string => !!sample);
+        return (
+          <View>
+            <View style={[styles.confirmChip, { backgroundColor: tint(chosen.color, 0.16) }]}>
+              <Icon name={chosen.icon} size={26} color={chosen.color} />
+            </View>
+            <Text style={styles.confirmTitle}>File past charges too?</Text>
+            <Text style={styles.confirmSub}>
+              “{pattern}” matches {report.matched} past {chargeNoun(report.matched)} you haven't filed. File them as {chosen.name} now,
+              or just save the rule for future charges.
+              {capped ? ` We file up to ${APPLY_RULES_MAX_WRITES} at a time, so this'll take a few taps.` : ''}
+            </Text>
+            {samples.length > 0 && (
+              <View testID="add-rule-confirm-samples" style={styles.ruleConflict}>
+                {samples.map((sample, index) => (
+                  <Text key={index} style={styles.applyRulesSample} numberOfLines={1}>{sample}</Text>
+                ))}
+              </View>
+            )}
+            <Pressable testID="add-rule-confirm-file" onPress={onCommit} style={[styles.btn, styles.btnPrimary]}>
+              <Text style={styles.btnPrimaryText}>
+                {capped ? `Add rule + file up to ${APPLY_RULES_MAX_WRITES}` : `Add rule + file ${report.matched} ${chargeNoun(report.matched)}`}
+              </Text>
+            </Pressable>
+            <Pressable testID="add-rule-confirm-rule-only" onPress={onRuleOnly} style={[styles.btn, styles.btnGhost]}>
+              <Text style={styles.btnGhostText}>Add rule only</Text>
+            </Pressable>
+            <Pressable testID="add-rule-confirm-back" onPress={goBack} style={[styles.btn, styles.btnGhost]}>
+              <Text style={styles.btnGhostText}>Back</Text>
+            </Pressable>
+          </View>
+        );
+      }}
+    />
   );
 }
 
