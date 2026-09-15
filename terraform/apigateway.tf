@@ -36,6 +36,11 @@ locals {
     "GET /transactions/uncategorized/feed",
     "GET /transactions/uncategorized/merchants",
     "POST /transactions/uncategorized/apply-rules",
+    # WHIT-537: async apply-rules job — start (POST) + poll status (GET {id}). Both ride the
+    # shared app_api integration + app_api_apigw_invoke permission (execution_arn/*/*), so no new
+    # integration or permission is needed.
+    "POST /transactions/uncategorized/apply-rules/jobs",
+    "GET /transactions/uncategorized/apply-rules/jobs/{id}",
     "PATCH /transactions/{id}",
     "PATCH /transactions",
     "GET /categories",

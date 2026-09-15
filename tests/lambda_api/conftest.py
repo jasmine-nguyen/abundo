@@ -38,7 +38,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
     "insights_ai", "anthropic_client", "rule_engine",
-    "merchant_groups",
+    "merchant_groups", "apply_rules_worker", "repository_job",
     "spend", "repayment_rules", "api_key",
 )
 
@@ -59,6 +59,29 @@ def handler():
 
     try:
         yield h
+    finally:
+        for name in _COLLIDING:
+            sys.modules.pop(name, None)
+        for name, mod in saved.items():
+            if mod is not None:
+                sys.modules[name] = mod
+
+
+@pytest.fixture
+def apply_rules_worker():
+    """Import lambda_api/apply_rules_worker.py in isolation (WHIT-537). It imports the handler for
+    the shared write phase, so this sheds the same colliding names before importing."""
+    for d in (_SHARED_DIR, _LAMBDA_API_DIR):
+        while d in sys.path:
+            sys.path.remove(d)
+    sys.path.insert(0, _SHARED_DIR)
+    sys.path.insert(0, _LAMBDA_API_DIR)
+
+    saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
+    import apply_rules_worker as w
+
+    try:
+        yield w
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)

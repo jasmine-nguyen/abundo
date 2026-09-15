@@ -207,6 +207,22 @@ resource "aws_iam_role_policy" "app_api_ssm" {
     }]
   })
 }
+
+# WHIT-537: app_api async-invokes the apply-rules worker for the background sweep. Scoped to that
+# one function ARN — this is the only lambda the API is allowed to invoke.
+resource "aws_iam_role_policy" "app_api_invoke_worker" {
+  name = "${var.project_name}-app-api-invoke-worker"
+  role = aws_iam_role.app_api_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["lambda:InvokeFunction"]
+      Resource = [aws_lambda_function.apply_rules_worker.arn]
+    }]
+  })
+}
 # Webhook (transaction-ingest) lambda SSM reads: its own BankSync webhook secret,
 # plus the Expo access token that the shared push sender (shared/push.py) uses. The
 # webhook is the push sender's runtime — it fires budget/milestone alerts (the
@@ -514,6 +530,69 @@ resource "aws_iam_role_policy" "goal_nudge_logs" {
       ]
       Resource = [
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-goal-nudge:*"
+      ]
+    }]
+  })
+}
+
+# Apply-rules worker execution role (WHIT-537). Its own tightly-scoped role — mirrors the
+# one-role-per-lambda convention (balance_poller / goal_nudge) so its grants are auditable.
+resource "aws_iam_role" "apply_rules_worker_exec" {
+  name = "${var.project_name}-apply-rules-worker-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Apply-rules worker: it runs the SAME sweep the app_api handler runs, minus the cap — reads all
+# history (Query on the date-index GSI), files each matched charge (UpdateItem), mints the inline
+# "file this shop" rule (PutItem) and reads the rule store (GetItem/Query), and reads + updates its
+# own job row (GetItem/PutItem/UpdateItem). No DeleteItem (it never deletes a rule; finished jobs
+# self-expire via TTL). GetItem/PutItem/UpdateItem/Query on the base table + index/*, matching the
+# read half of app_api_dynamodb.
+resource "aws_iam_role_policy" "apply_rules_worker_dynamodb" {
+  name = "${var.project_name}-apply-rules-worker-dynamodb"
+  role = aws_iam_role.apply_rules_worker_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Query"
+      ]
+      Resource = [
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"
+      ]
+    }]
+  })
+}
+
+# Apply-rules worker: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "apply_rules_worker_logs" {
+  name = "${var.project_name}-apply-rules-worker-logs"
+  role = aws_iam_role.apply_rules_worker_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = [
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-apply-rules-worker:*"
       ]
     }]
   })

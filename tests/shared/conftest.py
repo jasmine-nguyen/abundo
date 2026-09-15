@@ -47,7 +47,7 @@ _REIMPORT = (
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
     "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
-    "balance_fetch", "rule_engine", "repository_rule",
+    "balance_fetch", "rule_engine", "repository_rule", "repository_job",
 )
 
 
@@ -128,10 +128,11 @@ def shared():
         import repayment_alerts
         import repayment_rules
         import repository_rule
+        import repository_job
 
         ns = types.SimpleNamespace(
             encoders=encoders, repository=repository_transaction,
-            rule=repository_rule,
+            rule=repository_rule, job=repository_job,
             balance_fetch=balance_fetch,
             balance=repository_balance, loanfacts=repository_loanfacts,
             milestone=repository_milestone,
@@ -237,6 +238,14 @@ def repo(shared):
 def rule_repo(shared):
     """A shared RuleRepository backed by an in-memory FakeTable (WHIT-528)."""
     r = shared.rule.RuleRepository()
+    r._table = FakeTable()
+    return r
+
+
+@pytest.fixture
+def job_repo(shared):
+    """A shared JobRepository backed by an in-memory FakeTable (WHIT-537)."""
+    r = shared.job.JobRepository()
     r._table = FakeTable()
     return r
 
