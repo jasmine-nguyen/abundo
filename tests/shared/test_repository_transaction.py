@@ -1054,3 +1054,83 @@ def test_refile_rule_fill_leaves_a_charge_the_user_refiled_in_the_gap(repo):
 def test_refile_rule_fill_on_a_vanished_row_is_a_false_noop(repo):
     repo._table.store = {}
     assert repo.refile_rule_fill("ACCOUNT#x", "TXN#gone", "groceries", "old", "new") is False
+
+
+# --------------------------------------------------------------------------- #
+# WHIT-512 adversarial gaps (QA) — set-only category guard                     #
+# --------------------------------------------------------------------------- #
+
+def test_update_fields_refuses_category_none_specifically(repo):  # [B1]
+    # The implementer's guard tests use category="". None is a DISTINCT falsy value
+    # (the PATCH API never sends it, but the storage guard is defense-in-depth). It must
+    # also raise and leave the row byte-identical.
+    # FAIL-ON-REVERT: drop the `field == "category" and not provided` guard and None falls
+    # through the REMOVE branch, deleting category -> this goes red.
+    key = ("ACCOUNT#acct", "TXN#n1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES",
+                               "filed_by_rule": "rule-1"}}
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(key[0], key[1], category=None)
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"
+    assert row["filed_by_rule"] == "rule-1"
+
+
+def test_update_fields_falsy_category_raises_before_any_write(repo, monkeypatch):  # [B2]
+    # ATOMICITY: a falsy category alongside a VALID notes must raise BEFORE the repo issues
+    # any UpdateItem, so the notes are NOT partially written. Spy on the table: update_item
+    # must never be called.
+    # FAIL-ON-REVERT: drop the guard and the mixed call writes notes (and REMOVEs category),
+    # so update_item fires and notes lands -> the "never called" + "notes absent" asserts go red.
+    key = ("ACCOUNT#acct", "TXN#mix1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES"}}
+    calls = []
+    original = repo._table.update_item
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+    monkeypatch.setattr(repo._table, "update_item", spy)
+
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(key[0], key[1], category="", notes="new note")
+
+    assert calls == []                       # no UpdateItem issued at all
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"    # untouched
+    assert "notes" not in row                # the valid field was NOT partially written
+
+
+def test_update_fields_valid_category_set_with_notes_clear_in_one_write(repo):  # [B3]
+    # The guard must NOT over-block: a VALID (truthy) category SET can still share one write
+    # with a REMOVE (notes=""). Category is set, notes cleared, and the hand-file stamp removed
+    # (category was touched). Guards the guard's scope — it only fires on a falsy category.
+    # FAIL-ON-REVERT: broaden the guard to `field == "category"` (drop `and not provided`) and a
+    # valid category SET starts raising -> this goes red.
+    key = ("ACCOUNT#acct", "TXN#s1")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "OLD",
+                               "notes": "old note", "filed_by_rule": "rule-1"}}
+    assert repo.update_transaction_fields(
+        key[0], key[1], category="GROCERIES", notes="") is True
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"    # SET applied
+    assert "notes" not in row                # REMOVE applied in the same write
+    assert "filed_by_rule" not in row        # hand-file cleared the stamp
+
+
+def test_update_fields_falsy_category_with_valid_tags_clear_still_refused(repo, monkeypatch):  # [B4]
+    # Sibling of [B2] with a REMOVE-shaped valid field (tags=[]): a falsy category must still
+    # raise before any write, so the tags clear does NOT happen either.
+    # FAIL-ON-REVERT: drop the guard and update_item fires (REMOVE category + tags) -> red.
+    key = ("ACCOUNT#acct", "TXN#mix2")
+    repo._table.store = {key: {"pk": key[0], "sk": key[1], "category": "GROCERIES",
+                               "tags": ["keep"]}}
+    calls = []
+    original = repo._table.update_item
+    monkeypatch.setattr(repo._table, "update_item",
+                        lambda **kw: calls.append(kw) or original(**kw))
+    with pytest.raises(ValueError):
+        repo.update_transaction_fields(key[0], key[1], category="", tags=[])
+    assert calls == []
+    row = repo._table.store[key]
+    assert row["category"] == "GROCERIES"
+    assert row["tags"] == ["keep"]
