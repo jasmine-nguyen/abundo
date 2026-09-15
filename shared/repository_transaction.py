@@ -202,7 +202,7 @@ class TransactionRepository:
 
         `expected_category=None` means "the row had no category at all", so the condition is
         attribute_not_exists rather than a comparison against NULL: rows are sparse — insert
-        strips None (sanitise_transaction) and update_transaction_fields REMOVEs a cleared field —
+        strips None (sanitise_transaction) and clear_rule_fill REMOVEs a rule's category —
         so an unfiled row carries no category attribute.
 
         DynamoDB reports "deleted" and "changed underneath" with the SAME error, so on a refusal we
