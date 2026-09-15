@@ -401,3 +401,158 @@ def test_filing_removes_a_charge_from_the_unfiled_set(rule_engine):
     second = rule_engine.plan_rule_application([_rule("coles")], rows, _is_unfiled(taxonomy))
     assert second["matched"] == []
     assert second["unfiled"] == 0
+
+
+# --- WHIT-561: multi-condition rules + new match primitives --------------------
+
+from decimal import Decimal
+
+
+def _cond(field, operator, value=None):
+    return {"field": field, "operator": operator, "value": value}
+
+
+def _multi(conditions, logic="all", category_id="groceries", rule_id="m1"):
+    return {"id": rule_id, "conditions": conditions, "logic": logic, "categoryId": category_id}
+
+
+def _charge(transaction_id="t1", description="COLES 1234 RICHMOND", category=None,
+            amount=Decimal("-30.00"), account_id="acct-1"):
+    return {"transaction_id": transaction_id, "description": description, "category": category,
+            "amount": amount, "account_id": account_id, "pk": "ACCOUNT#a1", "sk": f"TXN#{transaction_id}"}
+
+
+# amount matches on the charge's MAGNITUDE (spend is stored negative; users type plain dollars).
+def test_amount_less_than_matches_on_magnitude(rule_engine):
+    rule = _multi([_cond("amount", "<", "40")])
+    assert rule_engine.rule_matches(rule, _charge(amount=Decimal("-30.00")))
+    assert not rule_engine.rule_matches(rule, _charge(amount=Decimal("-50.00")))
+
+
+def test_amount_all_four_comparators(rule_engine):
+    charge = _charge(amount=Decimal("-30.00"))
+    assert rule_engine.rule_matches(_multi([_cond("amount", "<=", "30")]), charge)
+    assert rule_engine.rule_matches(_multi([_cond("amount", ">=", "30")]), charge)
+    assert rule_engine.rule_matches(_multi([_cond("amount", ">", "29.99")]), charge)
+    assert not rule_engine.rule_matches(_multi([_cond("amount", ">", "30")]), charge)
+
+
+def test_amount_non_numeric_value_never_matches(rule_engine):
+    assert not rule_engine.rule_matches(_multi([_cond("amount", "<", "abc")]), _charge())
+
+
+def test_merchant_matches_the_charge_description(rule_engine):
+    # 'merchant' is a friendlier label for the raw description (the proven matching path).
+    assert rule_engine.rule_matches(_multi([_cond("merchant", "contains", "coles")]), _charge())
+    assert rule_engine.rule_matches(
+        _multi([_cond("merchant", "equals", "coles 1234 richmond")]), _charge())
+    assert not rule_engine.rule_matches(_multi([_cond("merchant", "equals", "coles")]), _charge())
+
+
+def test_account_equals_is_exact_and_case_sensitive(rule_engine):
+    assert rule_engine.rule_matches(_multi([_cond("account", "equals", "acct-1")]), _charge())
+    assert not rule_engine.rule_matches(_multi([_cond("account", "equals", "ACCT-1")]), _charge())
+    assert not rule_engine.rule_matches(_multi([_cond("account", "equals", "acct-2")]), _charge())
+
+
+def test_direction_is_debit_and_is_credit_read_the_sign(rule_engine):
+    spend = _charge(amount=Decimal("-30.00"))
+    income = _charge(amount=Decimal("42.00"))
+    assert rule_engine.rule_matches(_multi([_cond("direction", "is_debit")]), spend)
+    assert not rule_engine.rule_matches(_multi([_cond("direction", "is_debit")]), income)
+    assert rule_engine.rule_matches(_multi([_cond("direction", "is_credit")]), income)
+    assert not rule_engine.rule_matches(_multi([_cond("direction", "is_credit")]), spend)
+
+
+def test_logic_all_requires_every_condition(rule_engine):
+    rule = _multi([_cond("merchant", "contains", "coles"), _cond("amount", "<", "40")], logic="all")
+    assert rule_engine.rule_matches(rule, _charge(description="COLES", amount=Decimal("-30.00")))
+    assert not rule_engine.rule_matches(rule, _charge(description="COLES", amount=Decimal("-50.00")))
+    assert not rule_engine.rule_matches(rule, _charge(description="WOOLIES", amount=Decimal("-30.00")))
+
+
+def test_logic_any_requires_at_least_one(rule_engine):
+    rule = _multi([_cond("merchant", "contains", "coles"), _cond("amount", "<", "40")], logic="any")
+    assert rule_engine.rule_matches(rule, _charge(description="WOOLIES", amount=Decimal("-30.00")))
+    assert rule_engine.rule_matches(rule, _charge(description="COLES", amount=Decimal("-50.00")))
+    assert not rule_engine.rule_matches(rule, _charge(description="WOOLIES", amount=Decimal("-50.00")))
+
+
+# decide: a disagreement involving a multi-condition rule can't be resolved by specificity, so it
+# stays conflicted (never mis-filed) — the runtime-only clash guard.
+def test_disagreeing_multi_condition_rules_stay_conflicted(rule_engine):
+    # FAIL-ON-REVERT: the first conditions nest ("coles" ⊂ "coles express"), so without the
+    # multi-condition guard the specificity logic would wrongly crown rule_a and resolve to
+    # "shopping". The guard must return None (conflicted) — never mis-file a multi-condition clash.
+    rule_a = _multi([_cond("description", "contains", "coles express"), _cond("amount", "<", "100")],
+                    category_id="shopping", rule_id="a")
+    rule_b = _multi([_cond("description", "contains", "coles"), _cond("direction", "is_debit")],
+                    category_id="groceries", rule_id="b")
+    charge = _charge(description="COLES EXPRESS RICHMOND", amount=Decimal("-30.00"))
+    resolved, matched, categories = rule_engine.decide([rule_a, rule_b], charge)
+    assert resolved is None
+    assert set(matched) == {0, 1}
+    assert categories == {"groceries", "shopping"}
+
+
+def test_multi_vs_single_disagreement_stays_conflicted(rule_engine):
+    # FAIL-ON-REVERT: the multi rule's first condition ("coles express") nests the single rule's
+    # ("coles"); without the guard the multi rule would win by specificity and file to "shopping".
+    single = _rule("coles", category_id="groceries", rule_id="s")
+    multi = _multi([_cond("description", "contains", "coles express"), _cond("amount", "<", "100")],
+                   category_id="shopping", rule_id="m")
+    charge = _charge(description="COLES EXPRESS RICHMOND", amount=Decimal("-30.00"))
+    resolved, _matched, categories = rule_engine.decide([single, multi], charge)
+    assert resolved is None
+    assert categories == {"groceries", "shopping"}
+
+
+def test_agreeing_multi_condition_rule_files_the_charge(rule_engine):
+    rule = _multi([_cond("merchant", "contains", "coles"), _cond("amount", "<", "100")])
+    resolved, matched, _categories = rule_engine.decide([rule], _charge())
+    assert resolved == "groceries"
+    assert matched == [0]
+
+
+# _skip_reason (via plan_rule_application): a valid multi rule runs; an unsupported pair is skipped;
+# a direction condition carries no value and must NOT read as "empty".
+def test_valid_multi_condition_rule_is_applied_not_skipped(rule_engine):
+    rule = _multi([_cond("merchant", "contains", "coles"), _cond("direction", "is_debit")])
+    plan = rule_engine.plan_rule_application([rule], [_charge()], _is_unfiled({"groceries"}))
+    assert plan["skipped_rules"] == []
+    assert len(plan["matched"]) == 1
+
+
+def test_multi_rule_with_an_unsupported_pair_is_skipped(rule_engine):
+    rule = _multi([_cond("merchant", "contains", "coles"), _cond("amount", "contains", "40")],
+                  rule_id="bad")
+    plan = rule_engine.plan_rule_application([rule], [_charge()], _is_unfiled({"groceries"}))
+    assert plan["skipped_rules"] == [{"id": "bad", "value": None, "reason": "unsupported rule type"}]
+
+
+# rule_id_for: id stability + canonicalisation.
+def test_single_condition_id_equals_the_legacy_flat_id(rule_engine):
+    # No-migration proof: a one-element conditions list hashes identically to the flat call, which
+    # is byte-identical to the pre-WHIT-561 recipe (pinned by test_rule_id_for_pins_the_recipe).
+    flat = rule_engine.rule_id_for("description", "contains", "COLES")
+    listed = rule_engine.rule_id_for(conditions=[_cond("description", "contains", "COLES")])
+    assert listed == flat == "e199355ab3c7aab5"
+
+
+def test_multi_condition_id_is_order_independent(rule_engine):
+    a = _cond("merchant", "contains", "coles")
+    b = _cond("amount", "<", "40")
+    assert rule_engine.rule_id_for(conditions=[a, b]) == rule_engine.rule_id_for(conditions=[b, a])
+
+
+def test_multi_condition_id_depends_on_logic(rule_engine):
+    conditions = [_cond("merchant", "contains", "coles"), _cond("amount", "<", "40")]
+    assert (rule_engine.rule_id_for(conditions=conditions, logic="all")
+            != rule_engine.rule_id_for(conditions=conditions, logic="any"))
+
+
+def test_amount_id_collapses_equal_values_but_account_id_is_case_sensitive(rule_engine):
+    assert (rule_engine.rule_id_for(conditions=[_cond("amount", "<", "50")])
+            == rule_engine.rule_id_for(conditions=[_cond("amount", "<", "50.0")]))
+    assert (rule_engine.rule_id_for(conditions=[_cond("account", "equals", "ABC")])
+            != rule_engine.rule_id_for(conditions=[_cond("account", "equals", "abc")]))

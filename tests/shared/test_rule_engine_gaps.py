@@ -186,6 +186,7 @@ def test_rule_engine_is_the_shared_layer_module_with_no_constants_import(rule_en
             imported.add(node.module)
     # No `constants` import (the docstring MENTIONS the phrase; only real imports count).
     assert "constants" not in imported
-    # Stdlib only — re (matching) + hashlib (rule_id_for, added in WHIT-528). Nothing from the
-    # shared layer or constants, so the module stays a pure, deploy-safe leaf.
-    assert imported <= {"re", "hashlib"}
+    # Stdlib only — re (matching) + hashlib (rule_id_for, WHIT-528) + decimal (amount matching,
+    # WHIT-561). Nothing from the shared layer or constants, so the module stays a pure,
+    # deploy-safe leaf.
+    assert imported <= {"re", "hashlib", "decimal"}
