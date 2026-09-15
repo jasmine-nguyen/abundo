@@ -18,12 +18,33 @@ shared constants at runtime — AGENTS.md), so it stays pure and constants-free.
 
 import hashlib
 import re
+from decimal import Decimal, InvalidOperation
 
-# Rule fields we can evaluate. `description` is the one the app authors (the client only
-# ever mints description/contains — see saveManualRule); `category` equals is a raw-enum
-# mapping (e.g. FOOD_AND_DRINK -> groceries) that only exists for rules made outside the
-# app, but unfiled rows are exactly the ones carrying raw enums, so it is worth honouring
-# when present.
+# The (field, operator) pairs the engine can evaluate — the SOURCE OF TRUTH for the match
+# vocabulary. `lambda_api/constants.py` (RULE_FIELDS/RULE_OPERATORS) mirrors this for request
+# validation and MUST be widened in lockstep: the engine is constants-free (the shared-layer
+# staging + shadow landmine, see the module docstring), so the two lists are unlinked and a field
+# the validator accepts but the engine can't evaluate silently matches nothing.
+#   description/merchant: `contains` (substring) + `equals` (exact, folded).
+#   category: `equals` — a raw-enum mapping (FOOD_AND_DRINK -> groceries) for rules made outside
+#             the app; unfiled rows carry raw enums, so it is worth honouring when present.
+#   account: `equals` against the internal account_id.
+#   amount: `less_than`/`greater_than` a plain positive dollar value, compared to the charge's
+#           MAGNITUDE (abs) — spend is stored negative, so "under $30" means abs(amount) < 30.
+#   direction: `is` "debit" (spend, amount < 0) / "credit" (income, amount > 0).
+_FIELD_OPERATORS = {
+    "description": {"contains", "equals"},
+    "merchant": {"contains", "equals"},
+    "category": {"equals"},
+    "account": {"equals"},
+    "amount": {"less_than", "greater_than"},
+    "direction": {"is"},
+}
+
+# The two ways a multi-condition rule combines its conditions: "all" = AND, "any" = OR.
+_LOGIC = {"all", "any"}
+
+# Back-compat shorthands for the two shapes that predate multi-condition rules (WHIT-541).
 _DESCRIPTION_CONTAINS = ("description", "contains")
 _CATEGORY_EQUALS = ("category", "equals")
 
@@ -59,6 +80,28 @@ def rule_id_for(field: str, operator: str, value: str) -> str:
     return digest[:16]
 
 
+def _condition_key(condition: dict) -> str:
+    """The canonical string for one condition — `field|operator|folded value`, the SAME string
+    rule_id_for hashes for a single rule. So a 1-condition rule collapses to the legacy id."""
+    return f"{condition.get('field')}|{condition.get('operator')}|{fold(condition.get('value'))}"
+
+
+def rule_id_for_conditions(conditions: list[dict], logic: str) -> str:
+    """Stable id for a (possibly multi-) condition rule (WHIT-541).
+
+    A SINGLE condition collapses to the EXACT legacy `rule_id_for` id — so an existing rule keeps
+    its id (and every charge stamped `filed_by_rule=<id>` stays attached) and a rule built one
+    condition at a time in the new UI dedups against the old flat rule. Two or more conditions hash
+    `logic` + the SORTED condition keys: sorted so `[A AND B]` and `[B AND A]` are one rule, and
+    prefixed with `logic::` so a multi id can never collide with a legacy `field|operator|value` one.
+    """
+    if len(conditions) == 1:
+        condition = conditions[0]
+        return rule_id_for(condition.get("field"), condition.get("operator"), condition.get("value"))
+    canonical = f"{logic}::" + "&&".join(sorted(_condition_key(condition) for condition in conditions))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def _normalise(value) -> str:
     """Trim + lowercase, both sides of a comparison.
 
@@ -86,18 +129,115 @@ def contains(value, normalised_text) -> bool:
     return value.strip().lower() in normalised_text
 
 
-def rule_matches(rule: dict, transaction: dict) -> bool:
-    """Does this leaf rule match this stored charge? Unknown field/operator -> False
-    (the caller reports those rules as skipped rather than silently ignoring them)."""
-    target = (rule.get("field"), rule.get("operator"))
-    value = _normalise(rule.get("value"))
-    if not value:
-        return False
-    if target == _DESCRIPTION_CONTAINS:
-        return contains(value, _normalise(transaction.get("description")))
-    if target == _CATEGORY_EQUALS:
-        return value == _normalise(transaction.get("category"))
+def _text_matches(operator: str, value_text: str, target_text: str) -> bool:
+    """The `contains` / `equals` primitive over already-normalised text. One place, so description
+    and merchant can't drift into different match semantics."""
+    if operator == "contains":
+        return contains(value_text, target_text)
+    if operator == "equals":
+        return value_text == target_text
     return False
+
+
+def _amount_matches(operator: str, value, amount) -> bool:
+    """Compare a charge's amount MAGNITUDE (abs) against a plain positive dollar `value`. Spend is
+    stored negative, so "under $30" means abs(amount) < 30 (WHIT-541 decision: amount is plain
+    dollars, direction is a separate condition). A missing amount or a non-numeric value fails
+    closed — matching the fold-open convention rules use everywhere else."""
+    if amount is None:
+        return False
+    try:
+        threshold = Decimal(str(value))
+        magnitude = abs(Decimal(str(amount)))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    if operator == "less_than":
+        return magnitude < threshold
+    if operator == "greater_than":
+        return magnitude > threshold
+    return False
+
+
+def _direction_matches(value, amount) -> bool:
+    """"debit" = spend (amount < 0), "credit" = income (amount > 0). Zero and a missing/non-numeric
+    amount match neither."""
+    if amount is None:
+        return False
+    try:
+        signed = Decimal(str(amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    if value == "debit":
+        return signed < 0
+    if value == "credit":
+        return signed > 0
+    return False
+
+
+def _condition_matches(condition: dict, transaction: dict) -> bool:
+    """Does ONE `{field, operator, value}` condition hold for this charge? Unknown field/operator
+    -> False (the caller skips unsupported rules rather than silently ignoring them)."""
+    field = condition.get("field")
+    operator = condition.get("operator")
+    value = condition.get("value")
+    if field == "amount":
+        return _amount_matches(operator, value, transaction.get("amount"))
+    if field == "direction":
+        return operator == "is" and _direction_matches(value, transaction.get("amount"))
+    if field == "account":
+        return operator == "equals" and bool(value) and value == transaction.get("account_id")
+    text = _normalise(value)
+    if not text:
+        return False
+    if field == "description":
+        return _text_matches(operator, text, _normalise(transaction.get("description")))
+    if field == "merchant":
+        return _text_matches(operator, text, _normalise(transaction.get("merchant_name")))
+    if field == "category":
+        return operator == "equals" and text == _normalise(transaction.get("category"))
+    return False
+
+
+def _conditions_of(rule: dict) -> tuple[list[dict], str]:
+    """The rule's `(conditions, logic)`. A multi-condition rule (WHIT-541) carries `conditions` +
+    `logic`; a legacy/single rule is read as ONE condition from its flat field/operator/value, so
+    both shapes evaluate through the one path. An unknown logic defaults to "all" (AND)."""
+    conditions = rule.get("conditions")
+    if conditions:
+        logic = rule.get("logic")
+        return conditions, (logic if logic in _LOGIC else "all")
+    return [{"field": rule.get("field"), "operator": rule.get("operator"),
+             "value": rule.get("value")}], "all"
+
+
+def rule_matches(rule: dict, transaction: dict) -> bool:
+    """Does this rule match this stored charge? Evaluates each condition and combines them by the
+    rule's logic — "all" (AND) or "any" (OR); a single-condition rule reads as one condition.
+    Unknown field/operator -> that condition is False.
+
+    `_conditions_of` always yields a non-empty list (a rule with no `conditions` reads as its one
+    flat condition), so the empty-list guard below is only defensive — no stored rule reaches it."""
+    conditions, logic = _conditions_of(rule)
+    if not conditions:
+        return False
+    combine = all if logic == "all" else any
+    return combine(_condition_matches(condition, transaction) for condition in conditions)
+
+
+def reevaluatable_after_fill(rule: dict) -> bool:
+    """After this rule FILED a charge, can re-running ``rule_matches`` on that charge be trusted?
+
+    Yes, UNLESS the rule matches on the ``category`` field: filing overwrites the charge's category
+    with the rule's target, so a ``category equals X`` condition would no longer match its own
+    already-filed charge and re-evaluation would wrongly un-file it. Every other field the engine
+    reads (description, merchant, amount, direction, account) is untouched by filing, so a match on
+    those stays authoritative. Reads the same ``conditions``/flat shape as ``rule_matches``, so a
+    single-condition rule and each condition of a multi rule (WHIT-541) are both checked — the whole
+    reason a multi ``merchant AND amount`` rule is safe to re-evaluate even though only its FIRST
+    flat field is ``merchant``. Used by the WHIT-540 edit re-file to decide between re-evaluating and
+    a blind re-file."""
+    conditions, _logic = _conditions_of(rule)
+    return all(condition.get("field") != "category" for condition in conditions)
 
 
 def existing_at_least_as_specific(rule: dict, field: str, operator: str, value: str) -> bool:
@@ -144,10 +284,17 @@ def _skip_reason(rule: dict, is_unfiled) -> str | None:
     charges makes "filing a charge removes it from the unfiled set" true by
     construction (and correctly accepts `income`, which is filed but not a taxonomy id).
     """
-    if (rule.get("field"), rule.get("operator")) not in (_DESCRIPTION_CONTAINS, _CATEGORY_EQUALS):
-        return "unsupported rule type"
-    if not _normalise(rule.get("value")):
+    conditions, _logic = _conditions_of(rule)
+    if not conditions:
         return "empty rule value"
+    for condition in conditions:
+        field, operator = condition.get("field"), condition.get("operator")
+        if field not in _FIELD_OPERATORS or operator not in _FIELD_OPERATORS[field]:
+            return "unsupported rule type"
+        # A text condition with an empty value would match nothing (or, on `contains`, everything);
+        # amount/direction carry no text value, so they are exempt.
+        if field not in ("amount", "direction") and not _normalise(condition.get("value")):
+            return "empty rule value"
     # Distinguished from the next check so the reason doesn't lie: a foreign rule that never had
     # a category at all is a different problem from one whose category was deleted.
     if not rule.get("categoryId"):
@@ -195,6 +342,11 @@ def decide(rules: list[dict], charge: dict) -> tuple[str | None, list[int], set[
     # category, file to it and float that rule to matched_indices[0] (both stamp sites read index
     # 0). Otherwise (a genuine ambiguity like "coles" vs "richmond") the charge stays conflicted.
     matched_rules = [rules[index] for index in matched_indices]
+    # Multi-condition rules (WHIT-541) don't reduce to a single value, so the "more specific wins"
+    # containment test below can't rank them. A disagreement involving one has no specificity
+    # winner -> the charge stays conflicted (unfiled), the safe outcome (the WHIT-355 runtime net).
+    if any(rule.get("conditions") for rule in matched_rules):
+        return None, matched_indices, categories
     folded_values = [fold(rule.get("value")) for rule in matched_rules]
     targets = [(rule.get("field"), rule.get("operator")) for rule in matched_rules]
     dominant_positions = [

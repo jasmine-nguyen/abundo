@@ -42,6 +42,9 @@ from constants import (
     REPAYMENT_PATH,
     RULE_FIELDS,
     RULE_OPERATORS,
+    RULE_FIELD_OPERATORS,
+    RULE_LOGIC,
+    RULE_DIRECTIONS,
     SAVINGS_BUCKET,
     SPEND_BUCKETS,
     SPREAD_MAX_CYCLES,
@@ -58,7 +61,7 @@ from constants import (
 )
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from repository import (
     AccountBalanceRepository,
     BudgetRepository,
@@ -121,7 +124,7 @@ from merchant_groups import (
 from milestones import mint_migration_markers
 from rule_engine import (
     plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
-    rule_id_for)
+    rule_id_for, reevaluatable_after_fill)
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -990,41 +993,112 @@ def delete_category(
     return _json_response(200, {"id": cat_id})
 
 
-def _validate_rule_body(event: dict):
-    """Parse + validate a create/update rule body, returning the NORMALISED
-    values so create and update trim/default identically.
+def _condition_vocab_error(field, operator) -> dict | None:
+    """A 400 when `(field, operator)` is not a pair the engine can evaluate, else None. Checks the
+    PAIR (not field/operator independently) against RULE_FIELD_OPERATORS."""
+    if field not in RULE_FIELD_OPERATORS:
+        return _json_response(400, {"error": f"field must be one of {sorted(RULE_FIELDS)}"})
+    if operator not in RULE_FIELD_OPERATORS[field]:
+        return _json_response(
+            400, {"error": f"operator for {field} must be one of "
+                           f"{sorted(RULE_FIELD_OPERATORS[field])}"})
+    return None
 
-    Returns ((value, category_id, field, operator, budget_excluded), None) on success — value and
-    category_id already stripped, field/operator defaulted to the Tier-1 "description contains" and
-    restricted to the verified vocabulary, budget_excluded defaulted to False — or
-    (None, error_response) with a 400.
+
+def _validate_condition_value(field, value):
+    """Normalise + validate one condition's value for its field. Returns (value, None) or
+    (None, 400). amount -> a positive number (stored as a canonical string); direction -> debit/
+    credit; text fields -> a non-empty stripped string."""
+    if field == "amount":
+        try:
+            amount = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return None, _json_response(400, {"error": "amount value must be a number"})
+        if amount <= 0:
+            return None, _json_response(400, {"error": "amount value must be a positive number"})
+        return str(amount), None
+    if field == "direction":
+        if value not in RULE_DIRECTIONS:
+            return None, _json_response(
+                400, {"error": f"direction value must be one of {sorted(RULE_DIRECTIONS)}"})
+        return value, None
+    if not isinstance(value, str) or not value.strip():
+        return None, _json_response(400, {"error": f"{field} value is required"})
+    return value.strip(), None
+
+
+def _validate_conditions(body):
+    """Validate a multi-condition body's `conditions` + `logic` (WHIT-541). Returns
+    (conditions, logic, None) with each condition normalised, or (None, None, 400)."""
+    conditions = body.get("conditions")
+    if not isinstance(conditions, list) or not conditions:
+        return None, None, _json_response(400, {"error": "conditions must be a non-empty list"})
+    logic = body.get("logic", "all")
+    if logic not in RULE_LOGIC:
+        return None, None, _json_response(
+            400, {"error": f"logic must be one of {sorted(RULE_LOGIC)}"})
+    normalised = []
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            return None, None, _json_response(400, {"error": "each condition must be an object"})
+        field, operator = condition.get("field"), condition.get("operator")
+        error = _condition_vocab_error(field, operator)
+        if error:
+            return None, None, error
+        value, error = _validate_condition_value(field, condition.get("value"))
+        if error:
+            return None, None, error
+        normalised.append({"field": field, "operator": operator, "value": value})
+    return normalised, logic, None
+
+
+def _validate_rule_body(event: dict):
+    """Parse + validate a create/update rule body, returning a normalised dict (or a 400).
+
+    Two shapes:
+      * single-condition (legacy): ``{value, categoryId, field?, operator?, budgetExcluded?}`` —
+        field/operator default to "description"/"contains".
+      * multi-condition (WHIT-541): ``{conditions: [{field, operator, value}, ...], logic?,
+        categoryId, budgetExcluded?}`` — logic defaults to "all" (AND).
+
+    The returned dict always carries flat ``field``/``operator``/``value`` (the FIRST condition for a
+    multi rule) so the store keeps a legacy-readable shape and the value floor can run per text
+    condition; ``conditions``/``logic`` are None for a single-condition rule.
     """
     body, error = _parse_json_body(event)
     if error:
         return None, error
 
-    value = body.get("value")
-    if not isinstance(value, str) or not value.strip():
-        return None, _json_response(400, {"error": "value is required"})
-
     category_id = body.get("categoryId")
     if not isinstance(category_id, str) or not category_id.strip():
         return None, _json_response(400, {"error": "categoryId is required"})
-
-    field = body.get("field", DEFAULT_RULE_FIELD)
-    if field not in RULE_FIELDS:
-        return None, _json_response(400, {"error": f"field must be one of {sorted(RULE_FIELDS)}"})
-
-    operator = body.get("operator", DEFAULT_RULE_OPERATOR)
-    if operator not in RULE_OPERATORS:
-        return None, _json_response(
-            400, {"error": f"operator must be one of {sorted(RULE_OPERATORS)}"})
 
     budget_excluded = body.get("budgetExcluded", False)
     if not isinstance(budget_excluded, bool):
         return None, _json_response(400, {"error": "budgetExcluded must be a boolean"})
 
-    return (value.strip(), category_id.strip(), field, operator, budget_excluded), None
+    base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded}
+
+    if "conditions" in body:
+        conditions, logic, error = _validate_conditions(body)
+        if error:
+            return None, error
+        first = conditions[0]
+        return {**base, "conditions": conditions, "logic": logic,
+                "field": first["field"], "operator": first["operator"],
+                "value": first["value"]}, None
+
+    value = body.get("value")
+    if not isinstance(value, str) or not value.strip():
+        return None, _json_response(400, {"error": "value is required"})
+    field = body.get("field", DEFAULT_RULE_FIELD)
+    operator = body.get("operator", DEFAULT_RULE_OPERATOR)
+    error = _condition_vocab_error(field, operator)
+    if error:
+        return None, error
+
+    return {**base, "conditions": None, "logic": None,
+            "field": field, "operator": operator, "value": value.strip()}, None
 
 
 # --- Rules: our own store (WHIT-529) ------------------------------------------
@@ -1047,10 +1121,12 @@ def _rule_value_floor_error() -> dict:
 
 
 def _validate_rule_value_floor(value: str, field: str, operator: str) -> dict | None:
-    """A "description contains" value must carry enough letters/digits to rule on, the same floor
-    the merchant sweep's inline mint enforces (rule_value_is_safe). Other rule shapes (category
-    equals) match exactly, not by substring, so the floor doesn't apply. Returns a 400 or None."""
-    if field == "description" and operator == "contains" and not rule_value_is_safe(value):
+    """A substring ("contains") value must carry enough letters/digits to rule on, the same floor
+    the merchant sweep's inline mint enforces (rule_value_is_safe). Both substring fields —
+    ``description`` and ``merchant`` — over-match the same way on a near-empty value, so both are
+    floored. Other rule shapes (category/account equals, amount, direction) match exactly, not by
+    substring, so the floor doesn't apply. Returns a 400 or None."""
+    if operator == "contains" and field in ("description", "merchant") and not rule_value_is_safe(value):
         return _rule_value_floor_error()
     return None
 
@@ -1065,17 +1141,29 @@ def _validate_rule_category(category_id: str, category_repo: CategoryRepository)
     return None
 
 
+def _rule_floor_error(parsed: dict) -> dict | None:
+    """The value floor (rule_value_is_safe) applied to every "description contains" condition — the
+    single-condition rule and each condition of a multi-condition rule alike — so a near-empty
+    substring can't match nearly everything. Returns a 400 or None."""
+    conditions = parsed["conditions"] or [
+        {"field": parsed["field"], "operator": parsed["operator"], "value": parsed["value"]}]
+    for condition in conditions:
+        error = _validate_rule_value_floor(condition["value"], condition["field"], condition["operator"])
+        if error:
+            return error
+    return None
+
+
 def _validate_rule_write(event: dict, category_repo: CategoryRepository):
     """Parse + validate a create/update rule body for our store. Returns (parsed, None) on success
-    — parsed is (value, category_id, field, operator) — or (None, error_response) with a 400. One
-    place owns the write-validation contract for both POST and PUT: body shape (_validate_rule_body),
-    then the value floor, then the category check."""
+    — parsed is the normalised dict from _validate_rule_body — or (None, error_response) with a 400.
+    One place owns the write-validation contract for both POST and PUT: body shape, then the value
+    floor per text condition, then the category check."""
     parsed, error = _validate_rule_body(event)
     if error:
         return None, error
-    value, category_id, field, operator, _budget_excluded = parsed
-    return parsed, (_validate_rule_value_floor(value, field, operator)
-                    or _validate_rule_category(category_id, category_repo))
+    return parsed, (_rule_floor_error(parsed)
+                    or _validate_rule_category(parsed["category_id"], category_repo))
 
 
 def list_rules_route(rule_repo: RuleRepository) -> dict:
@@ -1098,11 +1186,12 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
     parsed, error = _validate_rule_write(event, category_repo)
     if error:
         return error
-    value, category_id, field, operator, budget_excluded = parsed
 
     try:
         rule, _created = rule_repo.create_rule(
-            field, operator, value, category_id, budget_excluded=budget_excluded)
+            parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
+            budget_excluded=parsed["budget_excluded"],
+            conditions=parsed["conditions"], logic=parsed["logic"])
     except RuleClashError as e:
         return _rule_clash_response(_rule_to_client(e.existing))
     except DatabaseError:
@@ -1125,16 +1214,18 @@ def _refile_rule_touched(
     WHIT-536), so these are exactly the rule-owned, user-untouched charges — and:
 
       * delete (edited_rule is None) — clears each back to unfiled (undo).
-      * edit whose id changed (a material value edit) on a DESCRIPTION rule — re-evaluates: a charge
-        that still matches the new value is re-filed to the new target and re-keyed to the new id;
-        one that no longer matches is cleared.
+      * edit whose id changed (a material edit) AND the rule does NOT match on `category`
+        (reevaluatable_after_fill) — re-evaluates: a charge that still matches the new rule is
+        re-filed to the new target and re-keyed to the new id; one that no longer matches is cleared.
+        Filing leaves every other condition field (description/merchant/amount/direction/account)
+        untouched, so `rule_matches` stays authoritative — a multi `merchant AND amount` rule
+        re-evaluates correctly even though its first flat field isn't `description` (WHIT-561).
       * every other edit — re-files every owned charge to the new target WITHOUT re-evaluating. Two
-        cases fall here. (1) A CATEGORY rule: filing overwrote the very category a `category equals`
-        rule matched on, so re-running it would never match and would wrongly un-file a correctly
-        filed charge — the app only ever authors description rules, so this is rare. (2) An IN-PLACE
-        edit (same id: a target-only or cosmetic value change): the match set is unchanged, so
-        re-evaluating could only spuriously drop a charge (e.g. `_normalise` doesn't collapse the
-        whitespace `fold` does), never legitimately.
+        cases fall here. (1) A CATEGORY rule (a condition matches on `category`): filing overwrote the
+        very category that condition matched on, so re-running it would never match and would wrongly
+        un-file a correctly filed charge. (2) An IN-PLACE edit (same id: a target-only or cosmetic
+        value change): the match set is unchanged, so re-evaluating could only spuriously drop a
+        charge (e.g. `_normalise` doesn't collapse the whitespace `fold` does), never legitimately.
 
     Bounded by the SAME write cap / time budget as apply_rules_to_uncategorized, sharing `started`.
     A tail beyond the budget is finished by that route's reconcile sweep on the next "Apply my
@@ -1144,15 +1235,17 @@ def _refile_rule_touched(
     transactions = _fetch_windowed_transactions(transaction_repo, None, None)
     touched = [t for t in transactions if t.get("filed_by_rule") == old_rule_id]
 
-    # Re-evaluate (drop charges the edit no longer covers) ONLY for a description rule whose value
-    # materially changed. A category rule can't be re-evaluated (filing overwrote the category it
-    # matched on), and an in-place edit (same id) keeps the match set — both just re-file every
-    # owned charge to the new target. Testing `== "description"` (not `!= "category"`) means any
-    # other/legacy field also takes the safe re-file path rather than a match that would clear it.
+    # Re-evaluate (drop charges the edit no longer covers) when the edit MATERIALLY changed the rule
+    # (its id moved) AND re-running rule_matches on an already-filed charge can be trusted. That trust
+    # holds for any rule that does NOT match on the `category` field (filing overwrote that field, so
+    # a `category equals` condition would no longer match its own charge) — reevaluatable_after_fill
+    # reads the full conditions, so a multi `merchant AND amount` rule re-evaluates correctly even
+    # though its first flat field is `merchant`, not `description` (WHIT-561). An in-place edit (same
+    # id) keeps the match set, so it takes the blind re-file path regardless.
     reevaluate = (
         edited_rule is not None
-        and edited_rule.get("field") == "description"
         and edited_rule.get("id") != old_rule_id
+        and reevaluatable_after_fill(edited_rule)
     )
 
     attempted = 0
@@ -1202,11 +1295,12 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     parsed, error = _validate_rule_write(event, category_repo)
     if error:
         return error
-    value, category_id, field, operator, budget_excluded = parsed
 
     try:
         rule = rule_repo.update_rule(
-            rule_id, field, operator, value, category_id, budget_excluded=budget_excluded)
+            rule_id, parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
+            budget_excluded=parsed["budget_excluded"],
+            conditions=parsed["conditions"], logic=parsed["logic"])
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
@@ -1423,6 +1517,11 @@ def _rule_to_client(row: dict) -> dict:
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
         "budgetExcluded": bool(row.get("budget_excluded")),
+        # Multi-condition rules (WHIT-541) carry these; a single-condition rule has None, and the
+        # engine's _conditions_of falls back to the flat field/operator/value. This output is ALSO
+        # the engine input on the sweep, so it must carry conditions for a multi rule to match.
+        "conditions": row.get("conditions"),
+        "logic": row.get("logic"),
     }
 
 

@@ -43,6 +43,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _rule_identity(field: str, operator: str, value: str,
+                   conditions: Optional[list], logic: Optional[str]) -> str:
+    """The rule's id — its canonical multi-condition hash when it carries `conditions` (WHIT-541),
+    else the legacy single-condition hash. A 1-condition rule collapses to the legacy id inside
+    rule_id_for_conditions, so an existing rule keeps its id."""
+    if conditions:
+        return rule_engine.rule_id_for_conditions(conditions, logic)
+    return rule_engine.rule_id_for(field, operator, value)
+
+
 class RuleRepository:
     """Reads and writes the user's categorisation rules in our own DynamoDB table."""
 
@@ -89,6 +99,8 @@ class RuleRepository:
         value: str,
         category_id: str,
         budget_excluded: bool = False,
+        conditions: Optional[list] = None,
+        logic: Optional[str] = None,
     ) -> tuple[dict, bool]:
         """Create a rule, returning ``(rule, created)``.
 
@@ -102,9 +114,10 @@ class RuleRepository:
         the id (the id stays the rule TEXT, rule_engine.rule_id_for), so it can only ever collide,
         never mint a second row for the same text.
         """
-        rule_id = rule_engine.rule_id_for(field, operator, value)
+        rule_id = _rule_identity(field, operator, value, conditions, logic)
         item = _rule_row(rule_id, field, operator, value, category_id,
-                         budget_excluded=budget_excluded, created_at=_now())
+                         budget_excluded=budget_excluded, conditions=conditions, logic=logic,
+                         created_at=_now())
         try:
             self._get_table().put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
             return item, True
@@ -129,6 +142,8 @@ class RuleRepository:
         value: str,
         category_id: str,
         budget_excluded: bool = False,
+        conditions: Optional[list] = None,
+        logic: Optional[str] = None,
     ) -> dict:
         """Edit a rule, returning the updated rule.
 
@@ -146,13 +161,18 @@ class RuleRepository:
         if existing is None:
             raise RuleNotFoundError(rule_id)
 
-        new_id = rule_engine.rule_id_for(field, operator, value)
+        new_id = _rule_identity(field, operator, value, conditions, logic)
         now = _now()
 
         if new_id == rule_id:
-            self._update_in_place(rule_id, value, category_id, budget_excluded, now)
-            return {**existing, "value": value, "category_id": category_id,
-                    "budget_excluded": budget_excluded, "updated_at": now}
+            self._update_in_place(rule_id, value, category_id, budget_excluded, now,
+                                  conditions=conditions, logic=logic)
+            updated = {**existing, "value": value, "category_id": category_id,
+                       "budget_excluded": budget_excluded, "updated_at": now}
+            if conditions:
+                updated["conditions"] = conditions
+                updated["logic"] = logic or "all"
+            return updated
 
         clash = self.get_rule(new_id)
         if clash is not None:
@@ -160,6 +180,7 @@ class RuleRepository:
 
         new_row = _rule_row(
             new_id, field, operator, value, category_id, budget_excluded=budget_excluded,
+            conditions=conditions, logic=logic,
             created_at=existing.get("created_at", now), updated_at=now,
         )
         try:
@@ -186,15 +207,29 @@ class RuleRepository:
         return new_row
 
     def _update_in_place(self, rule_id: str, value: str, category_id: str,
-                         budget_excluded: bool, now: str) -> None:
+                         budget_excluded: bool, now: str,
+                         conditions: Optional[list] = None, logic: Optional[str] = None) -> None:
         # `value` is a DynamoDB reserved word, so every name goes through an alias.
-        names = {"#v": "value", "#c": "category_id", "#b": "budget_excluded", "#u": "updated_at"}
+        names = {"#v": "value", "#c": "category_id", "#b": "budget_excluded", "#u": "updated_at",
+                 "#cd": "conditions", "#lg": "logic"}
         values = {":v": value, ":c": category_id, ":b": budget_excluded, ":u": now}
         assignments = ["#v = :v", "#c = :c", "#b = :b", "#u = :u"]
+        # A same-id edit keeps the rule's identity, but the shape can change: a multi-condition rule
+        # re-writes its conditions (a case-/spacing-only value edit may have changed the RAW values),
+        # while a rule edited down to a single flat condition must have any stale conditions/logic
+        # REMOVEd — otherwise the stored shape lies to decide's multi-rule guard. (REMOVE of an
+        # absent attribute is a no-op, so a plain single-rule edit is unaffected.)
+        if conditions:
+            values[":cd"], values[":lg"] = conditions, (logic or "all")
+            assignments.append("#cd = :cd")
+            assignments.append("#lg = :lg")
+            update_expression = "SET " + ", ".join(assignments)
+        else:
+            update_expression = "SET " + ", ".join(assignments) + " REMOVE #cd, #lg"
         try:
             self._get_table().update_item(
                 Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
-                UpdateExpression="SET " + ", ".join(assignments),
+                UpdateExpression=update_expression,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
                 ConditionExpression="attribute_exists(pk)",
@@ -219,7 +254,8 @@ class RuleRepository:
 
 
 def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: str,
-              *, budget_excluded: bool = False, created_at: str,
+              *, budget_excluded: bool = False, conditions: Optional[list] = None,
+              logic: Optional[str] = None, created_at: str,
               updated_at: Optional[str] = None) -> dict:
     """Build a rule item. Every rule is app-authored, so ``source`` is always "app".
 
@@ -227,10 +263,19 @@ def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: 
     so the transaction sparse-false convention doesn't apply, and an always-present flag keeps the
     in-place update and the clash compare uniform. An old row written before this field reads back
     ``.get("budget_excluded", False)``.
+
+    A multi-condition rule (WHIT-541) adds ``conditions`` + ``logic``; the flat field/operator/value
+    are still written (set by the caller to the first condition) so a legacy reader has a shape, but
+    the engine reads ``conditions`` when present. A single-condition rule stores neither, so old rows
+    and simple rules are byte-identical to before.
     """
-    return {
+    row = {
         "pk": _PK, "sk": f"RULE#{rule_id}", "id": rule_id,
         "field": field, "operator": operator, "value": value,
         "category_id": category_id, "budget_excluded": budget_excluded, "source": "app",
         "created_at": created_at, "updated_at": updated_at or created_at,
     }
+    if conditions:
+        row["conditions"] = conditions
+        row["logic"] = logic or "all"
+    return row
