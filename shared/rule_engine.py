@@ -213,8 +213,6 @@ def rule_matches(rule: dict, transaction: dict) -> bool:
     field/operator in a condition -> that condition is False (the caller reports wholly
     unsupported rules as skipped rather than silently ignoring them)."""
     conditions = _conditions_of(rule)
-    if not conditions:
-        return False
     if rule.get("logic") == "any":
         return any(_condition_matches(condition, transaction) for condition in conditions)
     return all(_condition_matches(condition, transaction) for condition in conditions)
@@ -265,8 +263,6 @@ def _skip_reason(rule: dict, is_unfiled) -> str | None:
     construction (and correctly accepts `income`, which is filed but not a taxonomy id).
     """
     conditions = _conditions_of(rule)
-    if not conditions:
-        return "empty rule value"
     for condition in conditions:
         field = condition.get("field")
         if (field, condition.get("operator")) not in SUPPORTED_CONDITIONS:
