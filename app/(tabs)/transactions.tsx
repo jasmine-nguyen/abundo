@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { RefreshControl, View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
@@ -18,7 +18,7 @@ export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
   const insets = useSafeAreaInsets();
-  const { openMultiPicker, showToast, setSheet } = useAppContext();
+  const { openMultiPicker, showToast, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
   const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData(tab);
@@ -39,6 +39,17 @@ export default function Transactions() {
   // Switching between All and Uncategorized leaves selection mode, so a selection never
   // straddles a filter the user can no longer see.
   const changeTab = useCallback((t: Tab) => { setTab(t); exitSelection(); }, [exitSelection]);
+  // WHIT-544: the "File by shop" leftover sheet asks (via the shared flag) to jump the user
+  // straight into the Uncategorized list's multi-select. Set tab + selection mode DIRECTLY, not
+  // via changeTab — changeTab calls exitSelection(), which would wipe the mode we're turning on.
+  // Clear the flag in the same commit so a later normal visit doesn't re-arm selection.
+  useEffect(() => {
+    if (!pendingUncategorizedSelect) return;
+    setTab('uncategorized');
+    setSelectionMode(true);
+    setSearch('');
+    clearUncategorizedSelect();
+  }, [pendingUncategorizedSelect, clearUncategorizedSelect]);
   // Only carry ids still in the live list — a background refetch (pull-to-refresh) can evict a
   // selected charge mid-selection, and this keeps the picker's "File N" count honest.
   const onRecategorize = () => {

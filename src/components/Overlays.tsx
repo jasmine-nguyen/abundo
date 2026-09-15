@@ -1021,16 +1021,33 @@ function FileByShopListSheet() {
   // Every shop filed (e.g. after filing the last one and returning here). The button that opens
   // this is gated on groups > 0, so this is only reached mid-session, not on a cold open.
   if (merchants.groups.length === 0) {
+    // WHIT-544: the leftover one-offs can't be grouped into a rule (their reference sits in the
+    // middle), but they're still selectable in the Uncategorized list. Offer a jump into that
+    // list's multi-select instead of leaving the user to tap each one.
+    const oneOffCount = merchants.ungrouped.count;
     return (
       <View>
         <Text style={styles.confirmTitle}>Every shop is filed</Text>
         <Text style={styles.confirmSub}>
-          {merchants.ungrouped.count > 0
-            ? `Nice work. The last ${merchants.ungrouped.count} unfiled ${chargeNoun(merchants.ungrouped.count)} are one-offs — tap each on the list to file it.`
+          {oneOffCount > 0
+            ? `Nice work. The last ${oneOffCount} unfiled ${chargeNoun(oneOffCount)} are one-offs — select them on the list to file them together.`
             : 'Nice work — nothing left to file by shop.'}
         </Text>
-        <Pressable testID="file-by-shop-close" onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnPrimary]}>
-          <Text style={styles.btnPrimaryText}>Done</Text>
+        {oneOffCount > 0 && (
+          <Pressable
+            testID="file-by-shop-one-offs"
+            onPress={() => { s.requestUncategorizedSelect(); s.setSheet(null); }}
+            style={[styles.btn, styles.btnPrimary]}
+          >
+            <Text style={styles.btnPrimaryText}>Select to file</Text>
+          </Pressable>
+        )}
+        <Pressable
+          testID="file-by-shop-close"
+          onPress={() => s.setSheet(null)}
+          style={[styles.btn, oneOffCount > 0 ? styles.btnGhost : styles.btnPrimary]}
+        >
+          <Text style={oneOffCount > 0 ? styles.btnGhostText : styles.btnPrimaryText}>Done</Text>
         </Pressable>
       </View>
     );
