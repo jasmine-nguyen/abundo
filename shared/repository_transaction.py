@@ -250,6 +250,63 @@ class TransactionRepository:
             return "gone", None
         return "changed", item.get("category")
 
+    def clear_rule_fill(self, pk: str, sk: str, rule_id: str) -> bool:
+        """Undo a rule's fill on ONE charge: REMOVE its category AND stamp, but ONLY while the
+        stamp still equals `rule_id` (WHIT-540).
+
+        Used when a rule is deleted (undo its fills) and when an edited rule no longer matches a
+        charge it used to file. Conditioning on the STAMP — not the category — is the tap-wins
+        guard: a manual file REMOVEs the stamp (update_transaction_category / _fields, WHIT-536),
+        so a charge the user has since hand-filed no longer carries `rule_id`, the condition fails,
+        and their choice stands untouched. Returns False on that mismatch and on a vanished row (a
+        best-effort no-op the caller can skip), True when the fill was cleared.
+        """
+        try:
+            self._get_table().update_item(
+                Key={"pk": pk, "sk": sk},
+                UpdateExpression="REMOVE #c, #p",
+                ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
+                ExpressionAttributeValues={":rule_id": rule_id},
+                ConditionExpression="attribute_exists(pk) AND #p = :rule_id",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "write")
+
+    def refile_rule_fill(
+        self, pk: str, sk: str, category: str, old_rule_id: str, new_rule_id: str
+    ) -> bool:
+        """Re-file ONE charge an edited rule already filed: SET its category to the rule's new
+        target and re-key the stamp to the rule's (possibly new) id, but ONLY while the stamp
+        still equals `old_rule_id` (WHIT-540).
+
+        Same stamp condition, same reason as clear_rule_fill: it targets a charge BECAUSE the rule
+        owns it (stamp == old id), so the guard must be the stamp, not the category — a user who
+        hand-filed to the SAME category in the gap has had the stamp REMOVEd, so the condition
+        fails and the re-file skips them. (The category guard that
+        update_transaction_category_if_unchanged uses is right for the sweep — which files UNFILED
+        charges — but it can't see a same-category tap on an already-filed charge.)
+        `old_rule_id == new_rule_id` for an in-place edit (a target-only
+        or cosmetic value change) — the stamp is rewritten to the same id, only the category moves.
+        Returns False on a stamp mismatch or a vanished row, True when the charge was re-filed.
+        """
+        try:
+            self._get_table().update_item(
+                Key={"pk": pk, "sk": sk},
+                UpdateExpression="SET #c = :category, #p = :new",
+                ExpressionAttributeNames={"#c": "category", "#p": "filed_by_rule"},
+                ExpressionAttributeValues={":category": category, ":new": new_rule_id,
+                                           ":old": old_rule_id},
+                ConditionExpression="attribute_exists(pk) AND #p = :old",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "write")
+
     def update_transaction_fields(
         self,
         pk: str,

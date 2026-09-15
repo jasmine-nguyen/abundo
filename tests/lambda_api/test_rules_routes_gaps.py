@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from _feed_fakes import FakeCategoryRepo
+from _feed_fakes import FakeCategoryRepo, WritableFeedRepo
 from _rule_fakes import FakeRuleRepo
 
 
@@ -34,9 +34,14 @@ def _event(method, path, body=None, path_params=None):
     return event
 
 
-def _inject(handler, monkeypatch, rule_repo, categories=_CATEGORIES):
+def _inject(handler, monkeypatch, rule_repo, categories=_CATEGORIES, transaction_repo=None):
     monkeypatch.setattr(handler, "RuleRepository", lambda: rule_repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo(categories))
+    # WHIT-540: PUT/DELETE re-file the stored charges a rule touched, so the routes build a
+    # TransactionRepository. Default to an empty store here (this suite tests routing/validation,
+    # not the re-file — that's test_rule_refile.py).
+    monkeypatch.setattr(
+        handler, "TransactionRepository", lambda: transaction_repo or WritableFeedRepo({}))
 
 
 # --- mapper + fold round-trip -------------------------------------------------

@@ -161,6 +161,42 @@ class WritableFeedRepo(FakeFeedRepo):
             row["filed_by_rule"] = filed_by_rule
         return "written", category
 
+    def clear_rule_fill(self, pk, sk, rule_id):
+        """WHIT-540 undo: REMOVE category + stamp, but ONLY while the stamp still equals rule_id.
+        Implemented against the fake's OWN rows (not an id set), so a handler that conditioned on
+        the wrong thing fails here. error_ids raise; a stamp mismatch / vanished row returns False."""
+        transaction_id = sk.split("#", 1)[1]
+        if self.refile_hook is not None:
+            self.refile_hook(transaction_id, self)
+        self.writes.append((pk, sk, "clear", rule_id))
+        if transaction_id in self.error_ids:
+            from repository import DatabaseError
+            raise DatabaseError("write failed")
+        row = self._find_row(pk, sk)
+        if row is None or row.get("filed_by_rule") != rule_id:
+            return False
+        row.pop("category", None)
+        row.pop("filed_by_rule", None)
+        return True
+
+    def refile_rule_fill(self, pk, sk, category, old_rule_id, new_rule_id):
+        """WHIT-540 re-file: SET category + re-key the stamp to new_rule_id, but ONLY while the
+        stamp still equals old_rule_id (the tap-wins guard). Returns False on a mismatch/vanished
+        row. error_ids raise."""
+        transaction_id = sk.split("#", 1)[1]
+        if self.refile_hook is not None:
+            self.refile_hook(transaction_id, self)
+        self.writes.append((pk, sk, category, new_rule_id))
+        if transaction_id in self.error_ids:
+            from repository import DatabaseError
+            raise DatabaseError("write failed")
+        row = self._find_row(pk, sk)
+        if row is None or row.get("filed_by_rule") != old_rule_id:
+            return False
+        row["category"] = category
+        row["filed_by_rule"] = new_rule_id
+        return True
+
 
 class FakeCategoryRepo:
     """Read-only taxonomy stub: list_categories() over an iterable of category ids.

@@ -1,15 +1,16 @@
-// WHIT-502 — GUARD: the three rule writers (saveManualRule / updateRule / deleteRule) must NOT
-// invalidate ['uncategorizedCount']. A categorisation rule only labels FUTURE charges (BankSync
-// applies rules at sync time; our /enrichments endpoints pure-proxy to BankSync and write zero
-// transaction rows), so saving/editing/deleting a rule changes no stored charge's category — the
-// whole-history tally can't move. Invalidating here would fire a pointless refetch of an unchanged
-// number on every rule save. Any later bank-side re-tag arrives via the webhook, already covered by
-// the count's staleTime + pull-to-refresh.
+// WHIT-502 / WHIT-540 — which rule writers move the whole-history uncategorized tally.
 //
-// Fail-on-revert (regression guard, the mirror of the applyTransactionEdit negative in
-// uncategorizedCountInvalidation): ADD an invalidateQueries({ queryKey: ['uncategorizedCount'] }) to
-// any of these three writers and its test flips RED. Spike WHIT-502 verified the server does no
-// retroactive re-tag; these lock that verdict so a future change can't quietly cargo-cult it back in.
+// CREATE (saveManualRule) still must NOT invalidate ['uncategorizedCount']: a NEW rule only labels
+// FUTURE charges (BankSync applies rules at sync time), so it changes no stored charge's category —
+// invalidating would fire a pointless refetch of an unchanged number on every rule save.
+//
+// EDIT and DELETE now DO (WHIT-540): editing a rule re-files the stored charges it already filed,
+// and deleting one undoes them, so the server-derived tally genuinely moves and must be refreshed.
+// The two writers reuse refreshAfterApplyRules({ skipRules: true }), which invalidates
+// ['uncategorizedCount'] (among the other server-derived reads) but leaves ['rules'] alone.
+//
+// Fail-on-revert: saveManualRule flips RED if an invalidate is cargo-culted back in; updateRule /
+// deleteRule flip RED if their refresh is dropped.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
@@ -35,7 +36,7 @@ beforeEach(() => {
   queryClient.clear();
   mockApi.createEnrichment.mockResolvedValue({ ...ENRICHMENT } as never);
   mockApi.updateEnrichment.mockResolvedValue({ ...ENRICHMENT } as never);
-  mockApi.deleteEnrichment.mockResolvedValue(undefined as never);
+  mockApi.deleteEnrichment.mockResolvedValue({ id: 'r1' } as never);
 });
 afterEach(() => { queryClient.clear(); });
 
@@ -46,7 +47,7 @@ function mount() {
   return result;
 }
 
-it('saveManualRule does NOT invalidate uncategorizedCount', async () => {
+it('saveManualRule does NOT invalidate uncategorizedCount (a new rule labels only future charges)', async () => {
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
@@ -56,22 +57,26 @@ it('saveManualRule does NOT invalidate uncategorizedCount', async () => {
   spy.mockRestore();
 });
 
-it('updateRule does NOT invalidate uncategorizedCount', async () => {
+it('updateRule invalidates uncategorizedCount but not rules (WHIT-540 re-files stored charges)', async () => {
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.updateRule('r1', 'COLES SYDNEY', 'groceries'); });
 
-  expect(invalidatedKeys(spy)).not.toContain('uncategorizedCount');
+  const keys = invalidatedKeys(spy);
+  expect(keys).toContain('uncategorizedCount');   // the re-file moved the tally
+  expect(keys).not.toContain('rules');             // skipRules: the optimistic edit already patched it
   spy.mockRestore();
 });
 
-it('deleteRule does NOT invalidate uncategorizedCount', async () => {
+it('deleteRule invalidates uncategorizedCount but not rules (WHIT-540 undoes stored charges)', async () => {
   const result = mount();
   const spy = jest.spyOn(queryClient, 'invalidateQueries');
 
   await act(async () => { await result.current.deleteRule('r1'); });
 
-  expect(invalidatedKeys(spy)).not.toContain('uncategorizedCount');
+  const keys = invalidatedKeys(spy);
+  expect(keys).toContain('uncategorizedCount');
+  expect(keys).not.toContain('rules');
   spy.mockRestore();
 });

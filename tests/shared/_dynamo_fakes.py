@@ -80,6 +80,12 @@ class FakeTable:
             return item is not None and "category" not in item
         if ConditionExpression == "attribute_exists(pk) AND #c = :expected":
             return item is not None and item.get("category") == values[":expected"]
+        # WHIT-540 stamp-conditioned writes: clear_rule_fill (":rule_id") and refile_rule_fill
+        # (":old") both fire only while the row's stamp still matches — the tap-wins guard.
+        if ConditionExpression == "attribute_exists(pk) AND #p = :rule_id":
+            return item is not None and item.get("filed_by_rule") == values[":rule_id"]
+        if ConditionExpression == "attribute_exists(pk) AND #p = :old":
+            return item is not None and item.get("filed_by_rule") == values[":old"]
         raise AssertionError(f"FakeTable does not know ConditionExpression {ConditionExpression!r}")
 
     def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
