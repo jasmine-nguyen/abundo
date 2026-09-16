@@ -80,7 +80,7 @@ it('saveManualRule passes budgetExcluded to createRule and into the cache', asyn
 
   await act(async () => { await result.current.saveManualRule('splitwise', 'subs', true); });
 
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'splitwise', categoryId: 'subs', budgetExcluded: true, spread: false });
   expect(cacheRules()?.[0].budgetExcluded).toBe(true);
 });
 
@@ -90,8 +90,20 @@ it('updateRule passes budgetExcluded to the rules API and into the cache', async
 
   await act(async () => { await result.current.updateRule('e1', 'NETFLIX', 'subs', true); });
 
-  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true });
+  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true, spread: false });
   expect(cacheRules()?.[0].budgetExcluded).toBe(true);
+});
+
+// WHIT-559: the spread flag threads through createRule and the server's captured amount/gap land in
+// the ['rules'] cache row (via toRule), so the edit sheet can prefill them.
+it('saveManualRule passes spread to createRule and the captured bill lands in the cache', async () => {
+  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'origin', categoryId: 'subs', spread: true, spreadAmount: 4250, spreadGapDays: 30 });
+  const result = mountWithSeededCache();
+
+  await act(async () => { await result.current.saveManualRule('origin', 'subs', false, undefined, true); });
+
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'origin', categoryId: 'subs', budgetExcluded: false, spread: true });
+  expect(cacheRules()?.[0]).toMatchObject({ spread: true, spreadAmount: 4250, spreadGapDays: 30 });
 });
 
 it('a failed save mirrors the optimistic add into the cache, then rolls it back', async () => {
@@ -187,7 +199,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
     // The server write still happened…
-    expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
+    expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false });
     // …but patchRules' `prev ? fn(prev) : prev` guard left the cache untouched (undefined) —
     // no crash from spreading undefined, and no half-built ['rules'] cache to mislead a later reader.
     expect(cacheRules()).toBeUndefined();

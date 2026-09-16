@@ -59,7 +59,7 @@ it('switching a row field clears the stale value and resets the operator to the 
   expect(fns.saveManualRule).toHaveBeenCalledWith('30', 'groceries', false, {
     conditions: [{ field: 'amount', operator: 'less_than', value: '30' }],
     logic: 'all',
-  });
+  }, false);
 });
 
 // [G2] The AND/OR toggle is meaningless with one condition, so it only appears at >=2 rows.
@@ -92,7 +92,7 @@ it('an editing rule account not in the recent set is surfaced and round-trips', 
   expect(fns.updateRule).toHaveBeenCalledWith('a1', 'acc-gone', 'groceries', false, {
     conditions: [{ field: 'account', operator: 'equals', value: 'acc-gone' }],
     logic: 'all',
-  });
+  }, false);
 });
 
 // [G4] Add a second row then remove it: the draft is back to a single description/contains row, so a
@@ -128,7 +128,7 @@ it('editing a merchant flat rule preserves the merchant field on save', () => {
   expect(fns.updateRule).toHaveBeenCalledWith('x1', 'GROCERYLAND', 'groceries', false, {
     conditions: [{ field: 'merchant', operator: 'contains', value: 'GROCERYLAND' }],
     logic: 'all',
-  });
+  }, false);
 });
 
 it('editing a category equals flat rule preserves the category field on save', () => {
@@ -141,7 +141,7 @@ it('editing a category equals flat rule preserves the category field on save', (
   expect(fns.updateRule).toHaveBeenCalledWith('c1', 'GROCERIES', 'groceries', false, {
     conditions: [{ field: 'category', operator: 'equals', value: 'GROCERIES' }],
     logic: 'all',
-  });
+  }, false);
 });
 
 // [G7] Reducing a MULTI rule down to one classic description/contains row on EDIT must save via the
@@ -163,5 +163,5 @@ it('editing a multi rule down to one classic row saves via the flat path (no con
   render(<Overlays />);
   fireEvent.press(screen.getByTestId('rule-remove-1')); // drop the amount row → one description/contains row
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('m2', 'NETFLIX', 'subs', false);
+  expect(fns.updateRule).toHaveBeenCalledWith('m2', 'NETFLIX', 'subs', false, undefined, false);
 });

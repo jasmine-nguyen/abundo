@@ -413,7 +413,7 @@ const OPERATOR_LABELS: Record<string, string> = {
 const DIRECTION_LABELS: Record<string, string> = { debit: 'Spending', credit: 'Income' };
 
 type DraftCondition = { field: string; operator: string; value: string };
-type RuleDraft = { conditions: DraftCondition[]; logic: RuleLogic; categoryId: string | null; budgetExcluded: boolean };
+type RuleDraft = { conditions: DraftCondition[]; logic: RuleLogic; categoryId: string | null; budgetExcluded: boolean; spread: boolean };
 
 // Only the classic single "description contains" rule keeps today's behaviour — the WHIT-538
 // preview/confirm flow for new rules and the pattern-based conflict warning. Anything else saves
@@ -490,17 +490,24 @@ function AddRuleSheet() {
         : editing?.conditions?.length ? editing.conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value }))
         : editing ? [{ field: editing.field ?? 'description', operator: editing.operator ?? 'contains', value: editing.pattern ?? '' }]
         : [{ field: 'description', operator: 'contains', value: '' }];
+      // WHIT-559: budgetExcluded and spread are mutually exclusive (the server rejects both). A
+      // stored row can never hold both, but if a restored draft somehow does, budgetExcluded wins.
+      const budgetExcludedPrefill = stored?.budgetExcluded ?? editing?.budgetExcluded ?? false;
+      const spreadPrefill = stored?.spread ?? editing?.spread ?? false;
       return {
         conditions,
         logic: stored?.logic ?? editing?.logic ?? 'all',
         categoryId: stored?.categoryId ?? editing?.categoryId ?? null,
-        budgetExcluded: stored?.budgetExcluded ?? editing?.budgetExcluded ?? false,
+        budgetExcluded: budgetExcludedPrefill,
+        spread: spreadPrefill && !budgetExcludedPrefill,
       };
     },
   );
-  const { conditions, logic, categoryId, budgetExcluded } = draft;
+  const { conditions, logic, categoryId, budgetExcluded, spread } = draft;
   const setCategoryId = (value: string | null) => setDraft((prev) => (prev.categoryId === value ? prev : { ...prev, categoryId: value }));
-  const setBudgetExcluded = (value: boolean) => setDraft((prev) => (prev.budgetExcluded === value ? prev : { ...prev, budgetExcluded: value }));
+  // WHIT-559: turning one action on clears the other — they can't coexist (server 400s on both).
+  const setBudgetExcluded = (value: boolean) => setDraft((prev) => (prev.budgetExcluded === value ? prev : { ...prev, budgetExcluded: value, spread: value ? false : prev.spread }));
+  const setSpread = (value: boolean) => setDraft((prev) => (prev.spread === value ? prev : { ...prev, spread: value, budgetExcluded: value ? false : prev.budgetExcluded }));
   const setLogic = (value: RuleLogic) => setDraft((prev) => (prev.logic === value ? prev : { ...prev, logic: value }));
   const updateCondition = (index: number, patch: Partial<DraftCondition>) =>
     setDraft((prev) => ({ ...prev, conditions: prev.conditions.map((c, i) => (i === index ? { ...c, ...patch } : c)) }));
@@ -538,7 +545,11 @@ function AddRuleSheet() {
   useEffect(() => { if (conflict) setConflict(null); }, [conditionsKey, categoryId]);
 
   const writeClassic = () => {
-    if (editing) { s.updateRule(editing.id, primaryValue, categoryId!, budgetExcluded); return; }
+    if (editing) { s.updateRule(editing.id, primaryValue, categoryId!, budgetExcluded, undefined, spread); return; }
+    // WHIT-559: a NEW spread rule saves directly — the preview/confirm sheet's "file past charges"
+    // arms mint via the inline apply-rules path, which can't carry the spread action, so a spread
+    // rule must skip it (spreading is about future cycles, not back-filing).
+    if (spread) { s.saveManualRule(primaryValue, categoryId!, budgetExcluded, undefined, true); return; }
     // WHIT-538: a NEW classic rule goes through the preview/confirm step, which owns the save.
     s.setSheet({ mode: 'addRuleConfirm', pattern: primaryValue, categoryId: categoryId!, budgetExcluded });
   };
@@ -550,8 +561,8 @@ function AddRuleSheet() {
     const cleaned = cleanedConditions();
     const write: RuleWrite = { conditions: cleaned, logic };
     // WHIT-563: a multi-condition new rule saves directly (the preview/confirm chain is pattern-only).
-    if (editing) s.updateRule(editing.id, cleaned[0].value, categoryId!, budgetExcluded, write);
-    else s.saveManualRule(cleaned[0].value, categoryId!, budgetExcluded, write);
+    if (editing) s.updateRule(editing.id, cleaned[0].value, categoryId!, budgetExcluded, write, spread);
+    else s.saveManualRule(cleaned[0].value, categoryId!, budgetExcluded, write, spread);
   };
   // WHIT-562: the user chose to save despite the overlap warning — clear it and save.
   const saveMultiAnyway = () => { setConflict(null); writeMulti(); };
@@ -574,7 +585,7 @@ function AddRuleSheet() {
   // Replace is only offered when CREATING a classic rule: retarget the existing rule so exactly one
   // row survives. On the edit path a "replace" would strand the rule being edited, so edit clashes
   // are warn + cancel only.
-  const replace = () => { if (conflict) s.updateRule(conflict.existing.id, primaryValue, categoryId!, budgetExcluded); };
+  const replace = () => { if (conflict) s.updateRule(conflict.existing.id, primaryValue, categoryId!, budgetExcluded, undefined, spread); };
   const existingName = conflict ? (category(conflict.existing.categoryId)?.name ?? 'another category') : '';
   const conflictBlock = () => {
     if (!conflict) return null;
@@ -761,6 +772,15 @@ function AddRuleSheet() {
         {budgetExcluded && <Glyph name="check" size={18} color={C.accent} />}
       </Pressable>
       <Text style={styles.cycleSectionHint}>Charges this rule files won’t count toward your budget — for reimbursed spend or transfers.</Text>
+      <Pressable
+        onPress={() => setSpread(!spread)}
+        testID="rule-spread"
+        style={[styles.cycleRow, { marginTop: 14, backgroundColor: spread ? tint(C.accentAlt, 0.14) : C.cardAlt, borderColor: spread ? C.accent : C.hairline }]}
+      >
+        <Text style={[styles.cycleText, { color: spread ? C.accentSofter : C.textMid }]}>Spread this bill across pay cycles</Text>
+        {spread && <Glyph name="check" size={18} color={C.accent} />}
+      </Pressable>
+      <Text style={styles.cycleSectionHint}>We’ll split this bill’s amount evenly across your pay cycles, so one big charge doesn’t blow a single cycle’s budget.</Text>
       {conflict ? conflictBlock() : (
         <Pressable
           onPress={submit}

@@ -115,7 +115,7 @@ export interface Transaction {
 // server facts (default description/contains for app-authored rules) so a rule
 // surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
 // is client-only (server rules load as isNew:false).
-export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
+export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; spread?: boolean; spreadAmount?: number | null; spreadGapDays?: number | null; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
 // WHIT-563: the multi-condition payload a rule writer sends when the builder produced more than a
 // plain "description contains" rule. Absent on the classic single-condition path (which stays a
 // flat value write, preserving the WHIT-538 preview flow and pattern-based conflict detection).
@@ -684,8 +684,8 @@ export interface AppContext {
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
-  saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite) => Promise<void>;
-  updateRule: (id: string, pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite) => Promise<void>;
+  saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite, spread?: boolean) => Promise<void>;
+  updateRule: (id: string, pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite, spread?: boolean) => Promise<void>;
   saveGoal: (editId: string | null, body: GoalWriteBody) => Promise<boolean>;
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
@@ -769,7 +769,17 @@ export function spreadPreview(amount: number, cycles: number): { cushion: number
 // (what the list renders); loaded rules are never "new". Module-level + exported
 // (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
 export function toRule(raw: RuleRecord): Rule {
-  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, conditions: raw.conditions, logic: raw.logic };
+  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, spread: raw.spread, spreadAmount: raw.spreadAmount, spreadGapDays: raw.spreadGapDays, conditions: raw.conditions, logic: raw.logic };
+}
+
+// WHIT-559: a spread rule save can be refused for a spread-specific reason the user can act on —
+// 422 (no recurring bill matches the rule yet) or 409 (the category already has a spread rule).
+// Only a write that ACTUALLY requested spread gets this copy: 409/422 mean spread on the rules
+// endpoint today, but gating on `spread` keeps a future non-spread 409/422 from showing spread words.
+function ruleWriteErrorMessage(error: unknown, fallback: string, spread: boolean): string {
+  if (spread && error instanceof ApiError && error.status === 422) return "We couldn't find a recurring bill matching this rule";
+  if (spread && error instanceof ApiError && error.status === 409) return 'This category already has a spread rule';
+  return fallback;
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -2203,7 +2213,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
   // not upper-cased) so both rule-creation paths POST a consistent `value`.
-  const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite) => {
+  const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite, spread = false) => {
     // WHIT-563: a multi-condition rule has no single pattern — its stored value is the first
     // condition's value (what the server derives too), so both paths key the optimistic row + toast
     // off `value`.
@@ -2214,8 +2224,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
     const tempRuleId = 'tmp-' + Date.now();
     const optimistic: Rule = write
-      ? { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
-      : { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded };
+      ? { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
+      : { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, spread };
     patchRules((prev) => [optimistic, ...prev]);
     setSheet(null);
     // WHIT-563: a multi-condition rule's `value` is just the first condition's raw value (an
@@ -2228,7 +2238,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // charge changes category here, so ['uncategorizedCount'] is intentionally NOT invalidated. Any later
     // bank-side re-tag arrives via the webhook, already covered by the count's staleTime + pull-to-refresh.
     try {
-      const created = await createRule(write ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded } : { value, categoryId, budgetExcluded });
+      const created = await createRule(write ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded, spread } : { value, categoryId, budgetExcluded, spread });
       // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
       // false for the load path, where rules genuinely aren't new).
       patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
@@ -2236,16 +2246,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // arm reaches this via refreshAfterApplyRules; the "save rule only" arm (here) mints without a
       // sweep, so invalidate the suggestions itself or an accepted "make a rule?" card lingers.
       queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
-    } catch {
+    } catch (e) {
       patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
-      if (epoch === sessionEpoch.current) showToast('Could not save rule. Please try again.');
+      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not save rule. Please try again.', spread));
     }
   }, [showToast, patchRules]);
 
   // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
   // failure. The rule's field/operator are preserved (passed through) so a
   // non-default rule isn't silently reset to description/contains.
-  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite) => {
+  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite, spread = false) => {
     const value = write ? write.conditions[0].value : pattern.trim();
     if (!value || !categoryId) return;
     // WHIT-192: source the `before` snapshot (for rollback) + the category name from the
@@ -2256,8 +2266,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // edit that reduces a multi rule to one condition doesn't leave stale rows on the optimistic copy
     // (the server settle replaces the row wholesale, but the interim must be consistent too).
     const patch = write
-      ? { pattern: value, categoryId, budgetExcluded, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
-      : { pattern: value, categoryId, budgetExcluded, conditions: null, logic: null };
+      ? { pattern: value, categoryId, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
+      : { pattern: value, categoryId, budgetExcluded, spread, conditions: null, logic: null };
     patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
     setSheet(null);
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
@@ -2270,13 +2280,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // ['rules'] cache alone: the optimistic edit above already patched this rule's row.
     try {
       const saved = await apiUpdateRule(id, write
-        ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded }
-        : { value, categoryId, field: before.field, operator: before.operator, budgetExcluded });
+        ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded, spread }
+        : { value, categoryId, field: before.field, operator: before.operator, budgetExcluded, spread });
       patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
       if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
-    } catch {
+    } catch (e) {
       patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
-      if (epoch === sessionEpoch.current) showToast('Could not update rule. Please try again.');
+      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not update rule. Please try again.', spread));
     }
   }, [showToast, patchRules, refreshAfterApplyRules]);
 

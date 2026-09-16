@@ -54,7 +54,7 @@ it('builds a two-condition rule and saves it directly (no preview step)', () => 
       { field: 'amount', operator: 'less_than', value: '30' },
     ],
     logic: 'all',
-  });
+  }, false);
   // A multi rule never routes through the single-rule preview/confirm sheet.
   expect(fns.setSheet).not.toHaveBeenCalledWith(expect.objectContaining({ mode: 'addRuleConfirm' }));
 });
@@ -69,7 +69,7 @@ it('the logic toggle sets "any" in the saved payload', () => {
   fireEvent.press(screen.getByTestId('rule-logic-any'));
   fireEvent.press(screen.getByText('Subscriptions'));
   fireEvent.press(screen.getByText('Add rule'));
-  expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs', false, expect.objectContaining({ logic: 'any' }));
+  expect(fns.saveManualRule).toHaveBeenCalledWith('NETFLIX', 'subs', false, expect.objectContaining({ logic: 'any' }), false);
 });
 
 it('a single direction condition saves via the conditions payload, not the classic preview', () => {
@@ -81,7 +81,7 @@ it('a single direction condition saves via the conditions payload, not the class
   expect(fns.saveManualRule).toHaveBeenCalledWith('debit', 'subs', false, {
     conditions: [{ field: 'direction', operator: 'is', value: 'debit' }],
     logic: 'all',
-  });
+  }, false);
   expect(fns.setSheet).not.toHaveBeenCalled();
 });
 
@@ -105,7 +105,7 @@ it('a positive amount condition saves', () => {
   expect(fns.saveManualRule).toHaveBeenCalledWith('30', 'groceries', false, {
     conditions: [{ field: 'amount', operator: 'less_than', value: '30' }],
     logic: 'all',
-  });
+  }, false);
 });
 
 it('a too-short description-contains value keeps save disabled (mirrors the server floor)', () => {
@@ -130,7 +130,7 @@ it('an account condition stores the picked account id', () => {
   expect(fns.saveManualRule).toHaveBeenCalledWith('acc-1', 'groceries', false, {
     conditions: [{ field: 'account', operator: 'equals', value: 'acc-1' }],
     logic: 'all',
-  });
+  }, false);
 });
 
 it('editing a multi-condition rule round-trips its conditions and logic', () => {
@@ -158,7 +158,7 @@ it('editing a multi-condition rule round-trips its conditions and logic', () => 
       { field: 'amount', operator: 'greater_than', value: '100' },
     ],
     logic: 'any',
-  });
+  }, false);
 });
 
 it('a legacy flat rule edits via the classic single-condition path (no conditions payload)', () => {
@@ -168,7 +168,7 @@ it('a legacy flat rule edits via the classic single-condition path (no condition
   });
   render(<Overlays />);
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('f1', 'NETFLIX', 'subs', false);
+  expect(fns.updateRule).toHaveBeenCalledWith('f1', 'NETFLIX', 'subs', false, undefined, false);
 });
 
 it('adds and removes condition rows', () => {
