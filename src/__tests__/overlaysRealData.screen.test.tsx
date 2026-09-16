@@ -318,8 +318,8 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
   // query cache: the rule create's reconcile (patchRules) no-ops on an empty cache.
   it("a rule save that settles AFTER sign-out does not re-seed the cleared ['rules'] cache", async () => {
     queryClient.setQueryData(['rules'], []); // a warm rules cache, as if the screen was open
-    let resolveCreate!: (v: api.EnrichmentRule) => void;
-    mockApi.createEnrichment.mockImplementation(() => new Promise<api.EnrichmentRule>((res) => { resolveCreate = res; }));
+    let resolveCreate!: (v: api.RuleRecord) => void;
+    mockApi.createRule.mockImplementation(() => new Promise<api.RuleRecord>((res) => { resolveCreate = res; }));
     const { result } = renderHook(() => useAppContext(), { wrapper });
 
     let pending!: Promise<void>;
@@ -330,7 +330,7 @@ describe('WHIT-268 gaps — refresh/epoch/loading/reconcile', () => {
     // Sign-out, in production order: clearSession() clears the cache BEFORE broadcasting anon.
     act(() => { queryClient.clear(); mockSetStatus('anon'); });
     await act(async () => {
-      resolveCreate({ id: 'srv-1', value: 'NETFLIX', categoryId: 'c1', field: 'description', operator: 'contains' } as api.EnrichmentRule);
+      resolveCreate({ id: 'srv-1', value: 'NETFLIX', categoryId: 'c1', field: 'description', operator: 'contains' } as api.RuleRecord);
       await pending;
     });
 

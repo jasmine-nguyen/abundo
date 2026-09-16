@@ -4,7 +4,7 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createEnrichment, updateEnrichment, deleteEnrichment, EnrichmentRule, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -622,10 +622,10 @@ export function spreadPreview(amount: number, cycles: number): { cushion: number
   return { cushion: amount, firstSlice, lastSlice };
 }
 
-// Map a server enrichment rule into the client `Rule` shape. `value` -> `pattern`
+// Map a server rule into the client `Rule` shape. `value` -> `pattern`
 // (what the list renders); loaded rules are never "new". Module-level + exported
 // (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
-export function toRule(raw: EnrichmentRule): Rule {
+export function toRule(raw: RuleRecord): Rule {
   return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded };
 }
 
@@ -1159,7 +1159,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // while the batch is in flight; issuing it first preserves the prior rule-before-charges
       // call order.
       const ruleSettled = mints.length > 0
-        ? Promise.allSettled(mints.map((mint) => createEnrichment({ value: mint.value, categoryId })))
+        ? Promise.allSettled(mints.map((mint) => createRule({ value: mint.value, categoryId })))
         : null;
       const { failedIds } = await persistCategoryBatch(sameMerchantIds, categoryId);
       const ruleOutcomes = ruleSettled ? await ruleSettled : [];
@@ -1503,7 +1503,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         if (report.createdRule) {
           const minted = report.createdRule;
-          patchRules((prev) => [{ ...toRule(minted as EnrichmentRule), isNew: true }, ...prev]);
+          patchRules((prev) => [{ ...toRule(minted as RuleRecord), isNew: true }, ...prev]);
           refreshAfterApplyRules({ skipRules: true });
         } else {
           refreshAfterApplyRules();
@@ -1541,7 +1541,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setApplyRulesJob(job);
     if (job.status === 'succeeded' && job.createdRule && applyRulesJobPrependRule.current) {
       const minted = job.createdRule;
-      patchRules((prev) => [{ ...toRule(minted as EnrichmentRule), isNew: true }, ...prev]);
+      patchRules((prev) => [{ ...toRule(minted as RuleRecord), isNew: true }, ...prev]);
       refreshAfterApplyRules({ skipRules: true });
     } else {
       refreshAfterApplyRules();
@@ -2008,7 +2008,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // and merchant groups. `skipRules` leaves the ['rules'] cache alone: the optimistic removal
     // above already dropped this rule, and a refetch would just race that.
     try {
-      await deleteEnrichment(id);
+      await apiDeleteRule(id);
       if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
     } catch {
       // WHIT-271: guard the CACHE write too, not just the toast — reinsertBefore appends the rule
@@ -2035,11 +2035,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (c) showToast(`Rule added — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
     const epoch = sessionEpoch.current;
-    // WHIT-502: a new rule only files FUTURE charges (BankSync applies rules at sync time); no stored
+    // WHIT-502: a new rule only files FUTURE charges (the webhook applies rules as charges land); no stored
     // charge changes category here, so ['uncategorizedCount'] is intentionally NOT invalidated. Any later
     // bank-side re-tag arrives via the webhook, already covered by the count's staleTime + pull-to-refresh.
     try {
-      const created = await createEnrichment({ value, categoryId, budgetExcluded });
+      const created = await createRule({ value, categoryId, budgetExcluded });
       // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
       // false for the load path, where rules genuinely aren't new).
       patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
@@ -2070,7 +2070,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // reads DO move — refresh the count, feed, budgets and merchant groups. `skipRules` leaves the
     // ['rules'] cache alone: the optimistic edit above already patched this rule's row.
     try {
-      const saved = await updateEnrichment(id, { value, categoryId, field: before.field, operator: before.operator, budgetExcluded });
+      const saved = await apiUpdateRule(id, { value, categoryId, field: before.field, operator: before.operator, budgetExcluded });
       patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
       if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
     } catch {

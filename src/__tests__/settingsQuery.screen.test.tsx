@@ -11,8 +11,8 @@
 //                  the WHIT-198 log-out-mid-outage test can assert; the two static-'authed' sources
 //                  never flip, and each describe's beforeEach re-seeds 'authed' so the shared mutable
 //                  store can't leak a status across describes.
-//   ../api       — jest.fn-backed fetchCategories/fetchLoanFacts/listEnrichments + a resolving
-//                  fetchPayCycle; each describe seeds listEnrichments to its own fixture.
+//   ../api       — jest.fn-backed fetchCategories/fetchLoanFacts/listRules + a resolving
+//                  fetchPayCycle; each describe seeds listRules to its own fixture.
 //   ../context   — one stub; the screen reads only alerts/setSheet off context (rules AND cycleName
 //                  are read from the query hooks, so both stubbed fields are vestigial).
 //   expo-router  — shared mockReplace/mockSignOut so the WHIT-198 log-out-mid-outage test can assert.
@@ -42,11 +42,11 @@ function setAuth(next: string) {
 
 const mockFetchCategories = jest.fn<() => Promise<unknown>>();
 const mockFetchLoanFacts = jest.fn<() => Promise<unknown>>();
-const mockListEnrichments = jest.fn<() => Promise<unknown>>();
+const mockListRules = jest.fn<() => Promise<unknown>>();
 jest.mock('../api', () => ({
   fetchCategories: () => mockFetchCategories(),
   fetchLoanFacts: () => mockFetchLoanFacts(),
-  listEnrichments: () => mockListEnrichments(),
+  listRules: () => mockListRules(),
   fetchPayCycle: () => Promise.resolve({ length: 14, last_pay_date: '2024-01-03' }),
 }));
 
@@ -93,7 +93,7 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
     mockAuthListeners.clear();
     mockFetchCategories.mockReset().mockResolvedValue(CATS);
     mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
-    mockListEnrichments.mockReset().mockResolvedValue([]); // rules read — kept deterministic for the "…" count
+    mockListRules.mockReset().mockResolvedValue([]); // rules read — kept deterministic for the "…" count
   });
 
   it('shows the category count and "Edit" loan status from the query', async () => {
@@ -123,7 +123,7 @@ describe('WHIT-191a — Settings server rows on the real query layer', () => {
 
   // WHIT-198 GAP (authored by qa) — the "…" gate must NOT swallow a LEGITIMATE empty state. The
   // flash guard above proves "0" is hidden WHILE loading; this proves that once the rules read has
-  // SETTLED with genuinely zero rules, the row shows a real "0" (not a stuck "…"). listEnrichments
+  // SETTLED with genuinely zero rules, the row shows a real "0" (not a stuck "…"). listRules
   // resolves to [] here, so after load the Automation-rules row is the only "0" on screen.
   // Fail-on-revert: change settings.tsx to always-"…" or `rulesLoading || rules.length === 0 ? '…'`
   // (a wrong "fix" that also hides the real empty state) → "0" never appears → this fails.
@@ -181,7 +181,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     mockAuthListeners.clear();
     mockFetchCategories.mockReset().mockResolvedValue(CATS);
     mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
-    mockListEnrichments.mockReset().mockResolvedValue(ONE_RULE);
+    mockListRules.mockReset().mockResolvedValue(ONE_RULE);
   });
 
   describe('sustained hard failure (no self-heal)', () => {
@@ -309,7 +309,7 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
   // showed a misleading "0").
   describe('rules-row hard failure', () => {
     it('rules read fails → Automation rules shows "—" + the setup retry, others keep their values', async () => {
-      mockListEnrichments.mockReset().mockRejectedValue(new Error('API error: 500'));
+      mockListRules.mockReset().mockRejectedValue(new Error('API error: 500'));
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       expect(await screen.findByText('2')).toBeTruthy(); // categories loaded (2), unaffected
@@ -320,13 +320,13 @@ describe('WHIT-191a gaps — hard-fail / cache-first / focus gate', () => {
     });
 
     it('the setup Retry re-reads the failed rules query too (fan-out includes rules)', async () => {
-      mockListEnrichments.mockReset().mockRejectedValue(new Error('API error: 500'));
+      mockListRules.mockReset().mockRejectedValue(new Error('API error: 500'));
       render(<QueryClientProvider client={makeClient(false)}><Settings /></QueryClientProvider>);
 
       const retry = await screen.findByTestId('settings-setup-retry');
       await screen.findByText('—'); // rules failed → "—"
 
-      mockListEnrichments.mockReset().mockResolvedValue(ONE_RULE); // re-arm the rules read
+      mockListRules.mockReset().mockResolvedValue(ONE_RULE); // re-arm the rules read
       fireEvent.press(retry);
 
       expect(await screen.findByText('1')).toBeTruthy(); // rules recovered to its real count
@@ -395,7 +395,7 @@ describe('WHIT-198 gaps — loan-only / ordering / fan-out', () => {
     mockFetchCategories.mockReset().mockResolvedValue(CATS);
     mockFetchLoanFacts.mockReset().mockResolvedValue(READY_FACTS);
     // rules length 1 so the Automation-rules row shows a stable "1" during an outage.
-    mockListEnrichments.mockReset().mockResolvedValue([{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }]);
+    mockListRules.mockReset().mockResolvedValue([{ id: 'r1', field: 'description', operator: 'contains', value: 'X', categoryId: 'c' }]);
   });
 
   // [A5] mirror of the implementer's categories-only case, for the LOAN row. Before the fix the

@@ -39,7 +39,7 @@ beforeEach(() => {
   mockApi.fetchHomeLoan.mockResolvedValue({ balance: null, as_of: null, currency: null });
   mockApi.fetchRepayment.mockResolvedValue({ amount: null, date: null, principal: null, interest: null });
   mockApi.fetchLoanFacts.mockResolvedValue(EMPTY); // starts unset
-  mockApi.listEnrichments.mockResolvedValue([]);
+  mockApi.listRules.mockResolvedValue([]);
 });
 afterEach(() => { queryClient.clear(); });
 

@@ -4,9 +4,9 @@
 // refactor could silently regress:
 //   [A-M100] applyCategoryToMany actually chunks a >100 multi-select through the shared helper
 //            (the logic test proves the helper chunks; nothing proved the MULTI-SELECT writer does).
-//   [A-EMPTY] applyCategory('all') still fires createEnrichment AND files the rule on an EMPTY
+//   [A-EMPTY] applyCategory('all') still fires createRule AND files the rule on an EMPTY
 //             sweep — the rule must not be gated on there being charges to file (the old single
-//             Promise.allSettled([createEnrichment, ...chunks]) always issued the rule).
+//             Promise.allSettled([createRule, ...chunks]) always issued the rule).
 //   [A-DEDUPE] applyCategoryToMany's Set-dedupe still collapses duplicate ids to ONE update.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
@@ -104,10 +104,10 @@ it('applyCategoryToMany reverts only the rejected chunk to its previous category
 // [A-EMPTY] applyCategory('all') with an EMPTY merchant sweep still ISSUES the rule AND files the
 // tapped charge — the rule is independent of the sweep, and the tapped charge is the user's
 // explicit pick (WHIT-324), so it's filed even when no OTHER charge qualifies. Fail-on-revert:
-// gate createEnrichment on sameMerchantIds.length > 0, or drop the tapped charge from the set, and
+// gate createRule on sameMerchantIds.length > 0, or drop the tapped charge from the set, and
 // the assertions below go red.
 it("applyCategory('all') files the tapped charge and mints the rule when the sweep is empty", async () => {
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   // Origin doesn't count to a budget -> no OTHER charge is swept; only the tapped charge is filed.
   seed([{ ...TXN, transaction_id: 't1', category: null, counts_to_budget: false }]);
   const result = mount();
@@ -117,7 +117,7 @@ it("applyCategory('all') files the tapped charge and mints the rule when the swe
 
   expect(mockApi.setTransactionCategories).toHaveBeenCalledTimes(1);                    // the tapped charge is filed
   expect(mockApi.setTransactionCategories.mock.calls[0][0]).toEqual([{ id: 't1', category: 'groceries' }]);
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' }); // rule STILL fires
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' }); // rule STILL fires
   // The optimistic rule was reconciled to the real BankSync id (not rolled back) and survives.
   expect(rules()).toHaveLength(1);
   expect(rules()[0].id).toBe('e1');

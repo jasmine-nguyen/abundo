@@ -134,7 +134,7 @@ async function apiFetch(input: string, init?: RequestInit, timeoutMs: number = R
 }
 
 /** A categorisation rule, as returned by the /rules API (our own store). */
-export interface EnrichmentRule {
+export interface RuleRecord {
   id: string;
   field: "description" | "category";
   operator: "contains" | "equals";
@@ -1197,7 +1197,7 @@ export async function deleteSpread(categoryId: string): Promise<{ id: string }> 
  * @returns The rules currently held in our own rule store.
  * @throws If the response status is not OK (401 when the token is wrong/missing).
  */
-export async function listEnrichments(): Promise<EnrichmentRule[]> {
+export async function listRules(): Promise<RuleRecord[]> {
   const response = await apiFetch(`${API_BASE}/rules`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
@@ -1213,9 +1213,9 @@ export async function listEnrichments(): Promise<EnrichmentRule[]> {
  * @returns The created rule, including its store-assigned id.
  * @throws If the response status is not OK (400 on an invalid rule, 401 on auth).
  */
-export async function createEnrichment(
+export async function createRule(
   input: { value: string; categoryId: string; field?: string; operator?: string; budgetExcluded?: boolean }
-): Promise<EnrichmentRule> {
+): Promise<RuleRecord> {
   const response = await apiFetch(`${API_BASE}/rules`, {
     method: "POST",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
@@ -1235,10 +1235,10 @@ export async function createEnrichment(
  * @returns The updated rule.
  * @throws If the response status is not OK (404 unknown id, 400 invalid, 401 auth).
  */
-export async function updateEnrichment(
+export async function updateRule(
   id: string,
   input: { value: string; categoryId: string; field?: string; operator?: string; budgetExcluded?: boolean }
-): Promise<EnrichmentRule> {
+): Promise<RuleRecord> {
   const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
@@ -1257,7 +1257,7 @@ export async function updateEnrichment(
  * @returns The id of the deleted rule.
  * @throws If the response status is not OK (401 on auth).
  */
-export async function deleteEnrichment(id: string): Promise<{ id: string }> {
+export async function deleteRule(id: string): Promise<{ id: string }> {
   const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: await buildHeaders(),

@@ -30,7 +30,7 @@ const cachedCategory = (id: string) => readTransactionsCache(queryClient).find((
 
 beforeEach(() => {
   queryClient.clear();
-  mockApi.createEnrichment.mockResolvedValue({ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
+  mockApi.createRule.mockResolvedValue({ id: 'r1', field: 'description', operator: 'contains', value: 'COLES', categoryId: 'groceries' });
   mockApi.setTransactionCategories.mockImplementation(async (updates: { id: string; category: string }[]) => ({ results: updates.map((u) => ({ id: u.id, status: 'updated' as const })) }));
 });
 
@@ -142,7 +142,7 @@ it('[WHIT-355] applyCategory(all) does NOT create a second rule when an identica
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createEnrichment).not.toHaveBeenCalled(); // no duplicate rule minted
+  expect(mockApi.createRule).not.toHaveBeenCalled(); // no duplicate rule minted
   expect(cachedCategory('t1')).toBe('groceries'); // charges still filed
   expect(cachedCategory('t2')).toBe('groceries');
 });
@@ -155,8 +155,8 @@ it('[WHIT-355] applyCategory(all) neither creates nor changes a rule on a clash,
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createEnrichment).not.toHaveBeenCalled();  // no second, fighting rule
-  expect(mockApi.updateEnrichment).not.toHaveBeenCalled();  // existing rule never silently changed
+  expect(mockApi.createRule).not.toHaveBeenCalled();  // no second, fighting rule
+  expect(mockApi.updateRule).not.toHaveBeenCalled();  // existing rule never silently changed
   expect((queryClient.getQueryData(['rules']) as { categoryId: string }[])[0].categoryId).toBe('dining'); // untouched
   expect(cachedCategory('t1')).toBe('groceries'); // the tapped charges still file where the user chose
   expect(cachedCategory('t2')).toBe('groceries');
@@ -169,7 +169,7 @@ it('[WHIT-355] applyCategory(all) STILL creates a rule when no same-pattern rule
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
 });
 
 // --- WHIT-491: one merchant, two spellings → one rule per distinct spelling ------------------
@@ -196,9 +196,9 @@ it('[WHIT-491] applyCategory(all) mints one rule per distinct spelling of the sa
   expect(cachedCategory('t2')).toBe('groceries'); // both spellings swept + filed
   // FAIL-ON-REVERT: the pre-491 single-rule code minted only the tapped spelling → 1 call. The fix
   // mints one per distinct spelling → exactly 2, one for each descriptor.
-  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(2);
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledTimes(2);
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
 });
 
 it('[WHIT-491] applyCategory(all) does NOT mint a rule from a swept no-merchant pending auth', async () => {
@@ -215,8 +215,8 @@ it('[WHIT-491] applyCategory(all) does NOT mint a rule from a swept no-merchant 
 
   expect(cachedCategory('t2')).toBe('groceries'); // the pending auth IS swept + filed
   // ...but no rule is minted from its noisy full description.
-  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
 });
 
 it('[WHIT-491] applyCategory(all) dedups spellings that differ only by internal whitespace', async () => {
@@ -231,9 +231,9 @@ it('[WHIT-491] applyCategory(all) dedups spellings that differ only by internal 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(2); // ws-variant folded away
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX MASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEXMASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledTimes(2); // ws-variant folded away
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEXMASSAGE', categoryId: 'groceries' });
 });
 
 it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save failed', async () => {
@@ -241,7 +241,7 @@ it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save f
   // — the ANZ rule keeps its real server id — and the "could not save the rule" toast fires.
   const anz = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
-  mockApi.createEnrichment.mockImplementation(async ({ value, categoryId }) => {
+  mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
     if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
     return { id: 'r-anz', field: 'description', operator: 'contains', value, categoryId };
   });
@@ -272,10 +272,10 @@ it('[WHIT-491] applyCategory(all) skips only the spelling that clashes with an e
   await act(async () => { await result.current.applyCategory('all'); });
 
   // The new spelling mints; the clashing one does not.
-  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createEnrichment).not.toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
-  expect(mockApi.updateEnrichment).not.toHaveBeenCalled(); // existing rule never silently changed
+  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).not.toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(mockApi.updateRule).not.toHaveBeenCalled(); // existing rule never silently changed
   expect(cachedCategory('t1')).toBe('groceries'); // charges still file where the user chose
   expect(cachedCategory('t2')).toBe('groceries');
 });
@@ -412,7 +412,7 @@ it('[WHIT-491][QA1] with 3 minted rules, a MIDDLE rejection removes exactly its 
   const a = merchantTxn('t1', 'UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIAL MASSAGE');
   const b = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
   const c = merchantTxn('t3', 'UNIFLEX REMEDIALMASSAGE', 'UNIFLEX REMEDIALMASSAGE');
-  mockApi.createEnrichment.mockImplementation(async ({ value, categoryId }) => {
+  mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
     if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom'); // the MIDDLE mint
     return { id: `r-${value}`, field: 'description', operator: 'contains', value, categoryId };
   });
@@ -430,7 +430,7 @@ it('[WHIT-491][QA1] with 3 minted rules, a MIDDLE rejection removes exactly its 
   expect(rules.map((r) => r.pattern)).toEqual(['UNIFLEX REMEDIAL MASSAGE', 'UNIFLEX REMEDIALMASSAGE']);
   expect(rules.map((r) => r.id)).toEqual(['r-UNIFLEX REMEDIAL MASSAGE', 'r-UNIFLEX REMEDIALMASSAGE']);
   expect(rules.some((r) => r.pattern === 'UNIFLEXREMEDIALMASSAGE')).toBe(false); // rejected spelling dropped
-  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(3);
+  expect(mockApi.createRule).toHaveBeenCalledTimes(3);
 });
 
 // [QA2] — the per-spelling conflict check is independent: when the TAPPED spelling already has a
@@ -447,9 +447,9 @@ it('[WHIT-491][QA2] tapped spelling is an existing duplicate, swept spelling is 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
-  expect(mockApi.createEnrichment).not.toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'UNIFLEXREMEDIALMASSAGE', categoryId: 'groceries' });
+  expect(mockApi.createRule).not.toHaveBeenCalledWith({ value: 'UNIFLEX REMEDIAL MASSAGE', categoryId: 'groceries' });
   // Not a conflict → the "clash" wording must NOT appear; charges still file.
   expect(result.current.toast).not.toContain('already have a rule');
   expect(cachedCategory('t1')).toBe('groceries');
@@ -465,7 +465,7 @@ it('[WHIT-491][QA3] charge-batch partial failure + a rule rejection → only the
   // t2's categorisation fails to save (batch returns only t1 updated).
   mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' as const }] });
   // ...and the westpac spelling's rule save also rejects.
-  mockApi.createEnrichment.mockImplementation(async ({ value, categoryId }) => {
+  mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
     if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
     return { id: `r-${value}`, field: 'description', operator: 'contains', value, categoryId };
   });
@@ -498,22 +498,22 @@ it('[WHIT-491][QA4] tapping a no-merchant charge for apply-all mints a full-desc
   await act(async () => { await result.current.applyCategory('all'); });
 
   // The tapped charge's own pattern falls back to the full noisy description and IS minted.
-  expect(mockApi.createEnrichment).toHaveBeenCalledTimes(1);
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({
+  expect(mockApi.createRule).toHaveBeenCalledTimes(1);
+  expect(mockApi.createRule).toHaveBeenCalledWith({
     value: 'POS AUTHORISATION   UNIFLEX REMEDIAL MASSAGE   +611800958316AU', categoryId: 'groceries',
   });
 });
 
-// [QA5] — Rules screen never opened → ['rules'] cache is ABSENT. createEnrichment must STILL fire (the
+// [QA5] — Rules screen never opened → ['rules'] cache is ABSENT. createRule must STILL fire (the
 // rule has to reach the server), patchRules no-ops (guarded), and the absent cache is NOT resurrected.
-it('[WHIT-491][QA5] with no ["rules"] cache seeded, createEnrichment still fires and the cache is not resurrected', async () => {
+it('[WHIT-491][QA5] with no ["rules"] cache seeded, createRule still fires and the cache is not resurrected', async () => {
   const result = mount(); // COLES/Coles factory; NO queryClient.setQueryData(['rules'], ...)
   expect(queryClient.getQueryData(['rules'])).toBeUndefined(); // precondition: never opened
 
   act(() => result.current.setSheet({ mode: 'confirm', txId: 't1', categoryId: 'groceries' }));
   await act(async () => { await result.current.applyCategory('all'); });
 
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'COLES', categoryId: 'groceries' });
   // patchRules is guarded (prev ? fn(prev) : prev) → the absent cache stays absent, no crash.
   expect(queryClient.getQueryData(['rules'])).toBeUndefined();
   // Charges still filed.

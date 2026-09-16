@@ -37,20 +37,20 @@ afterEach(() => {
 });
 
 it('saveManualRule creates the rule and swaps the temp id for the server id', async () => {
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
   seed();
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
   // Sent as typed (trimmed, not upper-cased); no field/operator (server defaults).
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
   // Reconciled to the server id, but keeps isNew:true so the "NEW" badge survives.
   expect(rules()[0]).toEqual({ id: 'e9', pattern: 'spotify', categoryId: 'subs', isNew: true, field: 'description', operator: 'contains' });
 });
 
 it('saveManualRule rolls back the optimistic rule when the create fails', async () => {
-  mockApi.createEnrichment.mockRejectedValue(new Error('API error: 400'));
+  mockApi.createRule.mockRejectedValue(new Error('API error: 400'));
   seed();
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
@@ -61,31 +61,31 @@ it('saveManualRule rolls back the optimistic rule when the create fails', async 
 });
 
 it('deleteRule removes the rule on success', async () => {
-  mockApi.deleteEnrichment.mockResolvedValue({ id: 'e1' });
+  mockApi.deleteRule.mockResolvedValue({ id: 'e1' });
   seed([{ ...NETFLIX }]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.deleteRule('e1'); });
 
-  expect(mockApi.deleteEnrichment).toHaveBeenCalledWith('e1');
+  expect(mockApi.deleteRule).toHaveBeenCalledWith('e1');
   expect(rules()).toEqual([]);
 });
 
 it('updateRule edits in place and preserves the rule field/operator', async () => {
   // A non-default (category equals) rule must not be reset to description/contains.
   const catRule: Rule = { id: 'e1', pattern: 'FOOD_AND_DRINK', categoryId: 'eatingout', isNew: false, field: 'category', operator: 'equals' };
-  mockApi.updateEnrichment.mockResolvedValue({ id: 'e1', field: 'category', operator: 'equals', value: 'GROCERIES', categoryId: 'groceries' });
+  mockApi.updateRule.mockResolvedValue({ id: 'e1', field: 'category', operator: 'equals', value: 'GROCERIES', categoryId: 'groceries' });
   seed([catRule]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
   await act(async () => { await result.current.updateRule('e1', 'GROCERIES', 'groceries'); });
 
-  expect(mockApi.updateEnrichment).toHaveBeenCalledWith('e1', { value: 'GROCERIES', categoryId: 'groceries', field: 'category', operator: 'equals', budgetExcluded: false });
+  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'GROCERIES', categoryId: 'groceries', field: 'category', operator: 'equals', budgetExcluded: false });
   expect(rules()[0]).toEqual({ id: 'e1', pattern: 'GROCERIES', categoryId: 'groceries', isNew: false, field: 'category', operator: 'equals' });
 });
 
 it('updateRule rolls back to the original rule when the update fails', async () => {
-  mockApi.updateEnrichment.mockRejectedValue(new Error('boom'));
+  mockApi.updateRule.mockRejectedValue(new Error('boom'));
   seed([{ ...NETFLIX }]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 
@@ -96,7 +96,7 @@ it('updateRule rolls back to the original rule when the update fails', async () 
 });
 
 it('deleteRule restores the rule at its position when the delete fails', async () => {
-  mockApi.deleteEnrichment.mockRejectedValue(new Error('boom'));
+  mockApi.deleteRule.mockRejectedValue(new Error('boom'));
   seed([{ ...NETFLIX }]);
   const { result } = renderHook(() => useAppContext(), { wrapper });
 

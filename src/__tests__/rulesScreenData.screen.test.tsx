@@ -18,8 +18,8 @@ function setAuth(next: string) {
   mockAuthListeners.forEach((l) => l());
 }
 
-const mockListEnrichments = jest.fn<() => Promise<unknown>>();
-jest.mock('../api', () => ({ listEnrichments: () => mockListEnrichments() }));
+const mockListRules = jest.fn<() => Promise<unknown>>();
+jest.mock('../api', () => ({ listRules: () => mockListRules() }));
 
 import { useRulesScreenData } from '../queries';
 
@@ -34,7 +34,7 @@ const wrapper = (client: QueryClient) =>
 beforeEach(() => {
   mockAuthStatus = 'authed';
   mockAuthListeners.clear();
-  mockListEnrichments.mockReset().mockResolvedValue(SERVER);
+  mockListRules.mockReset().mockResolvedValue(SERVER);
 });
 
 it('loads + maps the rules from the query (value→pattern, isNew:false)', async () => {
@@ -49,23 +49,23 @@ it('loads + maps the rules from the query (value→pattern, isNew:false)', async
 it('does not fetch before login, then fires on the auth flip to authed', async () => {
   mockAuthStatus = 'anon';
   const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient()) });
-  expect(mockListEnrichments).not.toHaveBeenCalled();
+  expect(mockListRules).not.toHaveBeenCalled();
 
   await act(async () => { setAuth('authed'); });
   await waitFor(() => expect(result.current.rules).toHaveLength(1));
-  expect(mockListEnrichments).toHaveBeenCalled();
+  expect(mockListRules).toHaveBeenCalled();
 });
 
 it('a transient 5xx retries and self-heals', async () => {
-  mockListEnrichments.mockReset().mockRejectedValueOnce(new Error('API error: 503')).mockResolvedValue(SERVER);
+  mockListRules.mockReset().mockRejectedValueOnce(new Error('API error: 503')).mockResolvedValue(SERVER);
   const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient(2)) });
   await waitFor(() => expect(result.current.rules).toHaveLength(1));
   expect(result.current.isError).toBe(false);
-  expect(mockListEnrichments).toHaveBeenCalledTimes(2);
+  expect(mockListRules).toHaveBeenCalledTimes(2);
 });
 
 it('surfaces a sustained failure as isError with a graceful empty list', async () => {
-  mockListEnrichments.mockReset().mockRejectedValue(new Error('API error: 500'));
+  mockListRules.mockReset().mockRejectedValue(new Error('API error: 500'));
   const { result } = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient(false)) });
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(result.current.isLoading).toBe(false);
@@ -76,15 +76,15 @@ it('refetchStale is a no-op while fresh, but refetches when stale', async () => 
   // fresh (staleTime 60s): focus does not refire.
   const fresh = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient(false, 60_000)) });
   await waitFor(() => expect(fresh.result.current.isLoading).toBe(false));
-  expect(mockListEnrichments).toHaveBeenCalledTimes(1);
+  expect(mockListRules).toHaveBeenCalledTimes(1);
   await act(async () => { fresh.result.current.refetchStale(); });
-  expect(mockListEnrichments).toHaveBeenCalledTimes(1);
+  expect(mockListRules).toHaveBeenCalledTimes(1);
 
   // stale (staleTime 0): focus refetches once.
-  mockListEnrichments.mockClear();
+  mockListRules.mockClear();
   const stale = renderHook(() => useRulesScreenData(), { wrapper: wrapper(makeClient(false, 0)) });
   await waitFor(() => expect(stale.result.current.isLoading).toBe(false));
-  const before = mockListEnrichments.mock.calls.length;
+  const before = mockListRules.mock.calls.length;
   await act(async () => { stale.result.current.refetchStale(); });
-  await waitFor(() => expect(mockListEnrichments.mock.calls.length).toBe(before + 1));
+  await waitFor(() => expect(mockListRules.mock.calls.length).toBe(before + 1));
 });

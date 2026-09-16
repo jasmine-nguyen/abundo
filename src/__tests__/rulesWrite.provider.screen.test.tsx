@@ -43,7 +43,7 @@ function mountWithSeededCache() {
 }
 
 it('saveManualRule writes the cache and keeps isNew:true through the reconcile', async () => {
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
@@ -55,7 +55,7 @@ it('saveManualRule writes the cache and keeps isNew:true through the reconcile',
 });
 
 it('deleteRule removes the rule from the cache', async () => {
-  mockApi.deleteEnrichment.mockResolvedValue({ id: 'e1' });
+  mockApi.deleteRule.mockResolvedValue({ id: 'e1' });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.deleteRule('e1'); });
@@ -64,7 +64,7 @@ it('deleteRule removes the rule from the cache', async () => {
 });
 
 it('updateRule edits the cached rule in place', async () => {
-  mockApi.updateEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'DISNEY', categoryId: 'subs' });
+  mockApi.updateRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'DISNEY', categoryId: 'subs' });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.updateRule('e1', 'DISNEY', 'subs'); });
@@ -74,28 +74,28 @@ it('updateRule edits the cached rule in place', async () => {
 
 // WHIT-558: the "keep out of budget" flag threads through both writers into the API call and
 // the ['rules'] cache row.
-it('saveManualRule passes budgetExcluded to createEnrichment and into the cache', async () => {
-  mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
+it('saveManualRule passes budgetExcluded to createRule and into the cache', async () => {
+  mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.saveManualRule('splitwise', 'subs', true); });
 
-  expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'splitwise', categoryId: 'subs', budgetExcluded: true });
   expect(cacheRules()?.[0].budgetExcluded).toBe(true);
 });
 
-it('updateRule passes budgetExcluded to updateEnrichment and into the cache', async () => {
-  mockApi.updateEnrichment.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true });
+it('updateRule passes budgetExcluded to the rules API and into the cache', async () => {
+  mockApi.updateRule.mockResolvedValue({ id: 'e1', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs', budgetExcluded: true });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.updateRule('e1', 'NETFLIX', 'subs', true); });
 
-  expect(mockApi.updateEnrichment).toHaveBeenCalledWith('e1', { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true });
+  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'NETFLIX', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: true });
   expect(cacheRules()?.[0].budgetExcluded).toBe(true);
 });
 
 it('a failed save mirrors the optimistic add into the cache, then rolls it back', async () => {
-  mockApi.createEnrichment.mockRejectedValue(new Error('API error: 400'));
+  mockApi.createRule.mockRejectedValue(new Error('API error: 400'));
   const result = mountWithSeededCache();
 
   // Observe the optimistic add reaching the cache MID-FLIGHT (before the reject), so this
@@ -144,7 +144,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   beforeEach(() => {
     // Only the mounted-observer test fetches (via the real useRulesQuery); the rest read
     // the seeded cache directly. The provider no longer eager-loads.
-    mockApi.listEnrichments.mockResolvedValue([{ ...SERVER_RULE }]);
+    mockApi.listRules.mockResolvedValue([{ ...SERVER_RULE }]);
   });
 
   // WHIT-192: seed the caches the writers read (the provider no longer eager-loads).
@@ -162,7 +162,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     // A single uncategorised charge in the cache; the confirm sheet targets it. Make it NOT
     // count to budget so no batch call fires — the test is only about the minted RULE write.
     const tx = { transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01', description: 'NETFLIX', merchant_name: 'Netflix', amount: -15, account_id: 'a1', account_name: 'Everyday', category: null, status: 'posted', type: 'purchase', counts_to_budget: false } as unknown as Transaction;
-    mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' });
+    mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'NETFLIX', categoryId: 'subs' });
     // WHIT-355: seed a NON-matching existing rule. A same-pattern rule would now (correctly)
     // suppress the mint as a duplicate; here the flow still mints, which is what this test locks.
     seedCache({ transactions: [tx], rules: [{ id: 'other', pattern: 'SPOTIFY', categoryId: 'subs', isNew: false }] });
@@ -181,20 +181,20 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     // No ['rules'] seed: the query was never mounted, so getQueryData is undefined. Seed only
     // categories (the toast lookup) to prove the absent-cache guard, not a missing-category one.
     queryClient.setQueryData(['categories'], [SUBS_CAT]);
-    mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+    mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
     const result = mount();
 
     await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
     // The server write still happened…
-    expect(mockApi.createEnrichment).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
+    expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
     // …but patchRules' `prev ? fn(prev) : prev` guard left the cache untouched (undefined) —
     // no crash from spreading undefined, and no half-built ['rules'] cache to mislead a later reader.
     expect(cacheRules()).toBeUndefined();
   });
 
   it('updateRule FAILURE writes the optimistic edit into the cache, then rolls it back', async () => {
-    mockApi.updateEnrichment.mockRejectedValue(new Error('boom'));
+    mockApi.updateRule.mockRejectedValue(new Error('boom'));
     seedCache();
     const result = mount();
 
@@ -212,7 +212,7 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   });
 
   it('deleteRule FAILURE removes then re-inserts the rule in the cache (catch-branch, not a no-op)', async () => {
-    mockApi.deleteEnrichment.mockRejectedValue(new Error('boom'));
+    mockApi.deleteRule.mockRejectedValue(new Error('boom'));
     seedCache();
     const result = mount();
 
@@ -228,14 +228,14 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
   });
 
   it('a MOUNTED useRulesQuery observer reflects saveManualRule instantly, with no refetch', async () => {
-    mockApi.createEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
+    mockApi.createRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'spotify', categoryId: 'subs' });
     // Seed the ['rules'] cache FRESH (setQueryData stamps dataUpdatedAt=now), so the mounted
     // observer reads it synchronously without an initial fetch — deterministic, and it makes the
-    // "no refetch after the write" assertion exact (listEnrichments must stay at zero calls).
+    // "no refetch after the write" assertion exact (listRules must stay at zero calls).
     queryClient.setQueryData<Rule[]>(['rules'], [RULE_E1]);
     const { result } = renderHook(() => ({ ctx: useAppContext(), screen: useRulesScreenData() }), { wrapper: observerWrapper });
     await waitFor(() => expect(result.current.screen.rules).toHaveLength(1));
-    expect(mockApi.listEnrichments).not.toHaveBeenCalled(); // fresh cache → no initial fetch
+    expect(mockApi.listRules).not.toHaveBeenCalled(); // fresh cache → no initial fetch
 
     await act(async () => { await result.current.ctx.saveManualRule('spotify', 'subs'); });
 
@@ -245,6 +245,6 @@ describe('WHIT-195/192 rule-write gaps (folded)', () => {
     // once other suites have exercised the singleton notifyManager).
     await waitFor(() => expect(result.current.screen.rules).toHaveLength(2));
     expect(result.current.screen.rules[0]).toMatchObject({ id: 'e9', categoryId: 'subs', isNew: true });
-    expect(mockApi.listEnrichments).not.toHaveBeenCalled();
+    expect(mockApi.listRules).not.toHaveBeenCalled();
   });
 });

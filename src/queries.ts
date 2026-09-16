@@ -6,8 +6,8 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listEnrichments } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, EnrichmentRule, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, UncategorizedMerchants } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, UncategorizedMerchants } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
@@ -105,10 +105,10 @@ export function selectCategories(raw: unknown[]): Category[] {
   if (!Array.isArray(raw)) throw new Error(`selectCategories: expected an array from /categories, got ${typeof raw}`);
   return raw.map(toCategory);
 }
-// WHIT-195: map the server enrichment rules into the client Rule shape (value→pattern,
+// WHIT-195: map the server rules into the client Rule shape (value→pattern,
 // isNew:false for loaded rules). Reuses the same toRule the store uses, so the cache and
 // the store's optimistic double-write agree field-for-field.
-export function selectRules(raw: EnrichmentRule[]): Rule[] {
+export function selectRules(raw: RuleRecord[]): Rule[] {
   // Fail LOUDLY on a malformed /rules payload (a wrapped or changed shape) — the
   // query rejects → the Rules screen shows its error card + Retry — rather than a cryptic
   // "raw.map is not a function" or silently rendering "0 rules" over data the user has.
@@ -406,9 +406,9 @@ export function useMilestonesQuery(enabled: boolean) {
 // WHIT-195: the categorisation rules. Mapped in the queryFn (not `select`) so the cache
 // holds Rule[] — the same shape the store's optimistic double-write mirrors, which lets a
 // freshly-created rule carry its client-only isNew "NEW" badge through the coexistence
-// window (a raw-EnrichmentRule cache couldn't).
+// window (a raw-RuleRecord cache couldn't).
 export function useRulesQuery(enabled: boolean) {
-  return useQuery({ queryKey: rulesKey, queryFn: async () => selectRules(await listEnrichments()), enabled });
+  return useQuery({ queryKey: rulesKey, queryFn: async () => selectRules(await listRules()), enabled });
 }
 
 // WHIT-517: the "file by shop" payload. Fail loudly on a malformed shape (missing / non-array

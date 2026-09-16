@@ -1,5 +1,5 @@
 // WHIT-533 — the new /rules store may mint a NEW id when a rule's value changes (BankSync
-// /enrichments kept the id). updateRule swaps by the OLD id (context.tsx ~1705) and must land
+// /rules kept the id). updateRule swaps by the OLD id (context.tsx ~1705) and must land
 // the server's row — carrying its NEW id — in place, so a follow-up edit/delete can find it.
 // Existing rulesWrite "updateRule edits the cached rule in place" returns the SAME id, so this
 // id-changing path is uncovered. Same mock-by-function-name pattern as rulesWrite (URL-agnostic).
@@ -31,7 +31,7 @@ function mountWithSeededCache() {
 
 it('updateRule adopts the server-assigned NEW id when the /rules store re-mints on a value change', async () => {
   // The server changed the id ('e1' -> 'e9') because the value changed — the /rules store's behaviour.
-  mockApi.updateEnrichment.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'DISNEY', categoryId: 'subs' });
+  mockApi.updateRule.mockResolvedValue({ id: 'e9', field: 'description', operator: 'contains', value: 'DISNEY', categoryId: 'subs' });
   const result = mountWithSeededCache();
 
   await act(async () => { await result.current.updateRule('e1', 'DISNEY', 'subs'); });

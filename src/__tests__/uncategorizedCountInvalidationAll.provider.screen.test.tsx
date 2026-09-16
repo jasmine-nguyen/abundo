@@ -37,7 +37,7 @@ beforeEach(() => {
   queryClient.clear();
   // the batch endpoint reports every id updated; the rule mint resolves to a well-formed rule.
   mockApi.setTransactionCategories.mockResolvedValue({ results: [{ id: 't1', status: 'updated' }, { id: 't2', status: 'updated' }] } as never);
-  mockApi.createEnrichment.mockResolvedValue({ id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as never);
+  mockApi.createRule.mockResolvedValue({ id: 'r1', value: 'COLES', categoryId: 'groceries', field: 'description', operator: 'contains' } as never);
 });
 afterEach(() => { queryClient.clear(); });
 
