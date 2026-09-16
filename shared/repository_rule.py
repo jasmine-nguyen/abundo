@@ -101,28 +101,28 @@ class RuleRepository:
         budget_excluded: bool = False,
         conditions: Optional[list] = None,
         logic: Optional[str] = None,
-        smooth: bool = False,
-        smooth_amount: Optional[Any] = None,
-        smooth_gap_days: Optional[int] = None,
+        spread: bool = False,
+        spread_amount: Optional[Any] = None,
+        spread_gap_days: Optional[int] = None,
     ) -> tuple[dict, bool]:
         """Create a rule, returning ``(rule, created)``.
 
         The id is derived from the text, so re-creating the SAME text is idempotent:
-          - same text + same category + same budget_excluded + same smooth flag -> the existing row,
+          - same text + same category + same budget_excluded + same spread flag -> the existing row,
             ``created=False``.
-          - same text but a DIFFERENT category, a different budget_excluded, OR a different smooth flag
+          - same text but a DIFFERENT category, a different budget_excluded, OR a different spread flag
             -> ``RuleClashError`` (the two would fight over the same charges — over the category, over
-            whether the charge is kept out of the budget, or over whether it is auto-smoothed — and a
+            whether the charge is kept out of the budget, or over whether it is auto-spread — and a
             conflicted charge is never filed).
         The ``attribute_not_exists(pk)`` condition is the dedup guard — dropping it would let the
-        second create silently overwrite the first. ``budget_excluded`` and ``smooth`` are deliberately
+        second create silently overwrite the first. ``budget_excluded`` and ``spread`` are deliberately
         NOT part of the id (the id stays the rule TEXT, rule_engine.rule_id_for), so they can only ever
         collide, never mint a second row for the same text.
         """
         rule_id = rule_identity(field, operator, value, conditions, logic)
         item = _rule_row(rule_id, field, operator, value, category_id,
                          budget_excluded=budget_excluded, conditions=conditions, logic=logic,
-                         smooth=smooth, smooth_amount=smooth_amount, smooth_gap_days=smooth_gap_days,
+                         spread=spread, spread_amount=spread_amount, spread_gap_days=spread_gap_days,
                          created_at=_now())
         try:
             self._get_table().put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
@@ -137,7 +137,7 @@ class RuleRepository:
                 handle_database_error(e, "create rule")
             if (existing.get("category_id") != category_id
                     or bool(existing.get("budget_excluded")) != budget_excluded
-                    or bool(existing.get("smooth")) != smooth):
+                    or bool(existing.get("spread")) != spread):
                 raise RuleClashError(existing)
             return existing, False
 
@@ -151,15 +151,15 @@ class RuleRepository:
         budget_excluded: bool = False,
         conditions: Optional[list] = None,
         logic: Optional[str] = None,
-        smooth: bool = False,
-        smooth_amount: Optional[Any] = None,
-        smooth_gap_days: Optional[int] = None,
+        spread: bool = False,
+        spread_amount: Optional[Any] = None,
+        spread_gap_days: Optional[int] = None,
     ) -> dict:
         """Edit a rule, returning the updated rule.
 
         Editing the text changes the id (the id IS the text), so this is not always an in-place
         update:
-          - id unchanged (a category change, a budget_excluded/smooth toggle, or a case-/spacing-only
+          - id unchanged (a category change, a budget_excluded/spread toggle, or a case-/spacing-only
             value edit) -> update in place.
           - id changed onto ANOTHER existing rule's text -> ``RuleClashError`` (merging two rules
             into one on an edit is ambiguous; refuse it).
@@ -176,23 +176,23 @@ class RuleRepository:
 
         if new_id == rule_id:
             self._update_in_place(rule_id, value, category_id, budget_excluded, now,
-                                  conditions=conditions, logic=logic, smooth=smooth,
-                                  smooth_amount=smooth_amount, smooth_gap_days=smooth_gap_days,
-                                  was_smooth=bool(existing.get("smooth")))
+                                  conditions=conditions, logic=logic, spread=spread,
+                                  spread_amount=spread_amount, spread_gap_days=spread_gap_days,
+                                  was_spread=bool(existing.get("spread")))
             updated = {**existing, "value": value, "category_id": category_id,
-                       "budget_excluded": budget_excluded, "smooth": smooth, "updated_at": now}
+                       "budget_excluded": budget_excluded, "spread": spread, "updated_at": now}
             if conditions:
                 updated["conditions"] = conditions
                 updated["logic"] = logic or "all"
             # Reflect the captured-bill fields the in-place write applied (see _update_in_place):
-            # a smooth rule carries them; a rule edited out of smoothing sheds them.
-            if smooth:
-                updated["smooth_amount"] = smooth_amount
-                updated["smooth_gap_days"] = smooth_gap_days
-                if not existing.get("smooth"):
-                    updated["smooth_seeded"] = False
+            # a spread rule carries them; a rule edited out of spreading sheds them.
+            if spread:
+                updated["spread_amount"] = spread_amount
+                updated["spread_gap_days"] = spread_gap_days
+                if not existing.get("spread"):
+                    updated["spread_seeded"] = False
             else:
-                for stale in ("smooth_amount", "smooth_gap_days", "smooth_seeded"):
+                for stale in ("spread_amount", "spread_gap_days", "spread_seeded"):
                     updated.pop(stale, None)
             return updated
 
@@ -202,8 +202,8 @@ class RuleRepository:
 
         new_row = _rule_row(
             new_id, field, operator, value, category_id, budget_excluded=budget_excluded,
-            conditions=conditions, logic=logic, smooth=smooth, smooth_amount=smooth_amount,
-            smooth_gap_days=smooth_gap_days,
+            conditions=conditions, logic=logic, spread=spread, spread_amount=spread_amount,
+            spread_gap_days=spread_gap_days,
             created_at=existing.get("created_at", now), updated_at=now,
         )
         try:
@@ -232,13 +232,13 @@ class RuleRepository:
     def _update_in_place(self, rule_id: str, value: str, category_id: str,
                          budget_excluded: bool, now: str,
                          conditions: Optional[list] = None, logic: Optional[str] = None,
-                         smooth: bool = False, smooth_amount: Optional[Any] = None,
-                         smooth_gap_days: Optional[int] = None, was_smooth: bool = False) -> None:
+                         spread: bool = False, spread_amount: Optional[Any] = None,
+                         spread_gap_days: Optional[int] = None, was_spread: bool = False) -> None:
         # `value` is a DynamoDB reserved word, so every name goes through an alias. Only aliases the
         # expression actually references are declared (DynamoDB rejects an unused ExpressionAttributeName).
         names = {"#v": "value", "#c": "category_id", "#b": "budget_excluded", "#u": "updated_at",
-                 "#sm": "smooth"}
-        values = {":v": value, ":c": category_id, ":b": budget_excluded, ":u": now, ":sm": smooth}
+                 "#sm": "spread"}
+        values = {":v": value, ":c": category_id, ":b": budget_excluded, ":u": now, ":sm": spread}
         assignments = ["#v = :v", "#c = :c", "#b = :b", "#u = :u", "#sm = :sm"]
         removals: list[str] = []
         # A same-id edit keeps the rule's identity, but the shape can change: a multi-condition rule
@@ -252,21 +252,21 @@ class RuleRepository:
             assignments += ["#cd = :cd", "#lg = :lg"]
         else:
             removals += ["#cd", "#lg"]
-        # The captured-bill fields track the smooth flag (WHIT-559): a smooth rule carries the amount
-        # + gap; a rule edited OUT of smoothing sheds them. smooth_seeded ("has this rule created its
-        # plan yet") is (re)armed to False only when smoothing is turned ON fresh — when the rule was
-        # already smooth, it is left untouched so a user who dismissed an auto-smoothed plan is not
+        # The captured-bill fields track the spread flag (WHIT-559): a spread rule carries the amount
+        # + gap; a rule edited OUT of spreading sheds them. spread_seeded ("has this rule created its
+        # plan yet") is (re)armed to False only when spreading is turned ON fresh — when the rule was
+        # already spread, it is left untouched so a user who dismissed an auto-spread plan is not
         # re-seeded by an unrelated edit ("stay dismissed", WHIT-559).
-        if smooth:
-            names["#sa"], names["#sg"] = "smooth_amount", "smooth_gap_days"
-            values[":sa"], values[":sg"] = smooth_amount, smooth_gap_days
+        if spread:
+            names["#sa"], names["#sg"] = "spread_amount", "spread_gap_days"
+            values[":sa"], values[":sg"] = spread_amount, spread_gap_days
             assignments += ["#sa = :sa", "#sg = :sg"]
-            if not was_smooth:
-                names["#ss"] = "smooth_seeded"
+            if not was_spread:
+                names["#ss"] = "spread_seeded"
                 values[":ss"] = False
                 assignments.append("#ss = :ss")
         else:
-            names["#sa"], names["#sg"], names["#ss"] = "smooth_amount", "smooth_gap_days", "smooth_seeded"
+            names["#sa"], names["#sg"], names["#ss"] = "spread_amount", "spread_gap_days", "spread_seeded"
             removals += ["#sa", "#sg", "#ss"]
         update_expression = "SET " + ", ".join(assignments)
         if removals:
@@ -297,8 +297,8 @@ class RuleRepository:
         except ClientError as e:
             handle_database_error(e, "delete rule")
 
-    def mark_smoothed(self, rule_id: str) -> None:
-        """Flip a smooth rule's ``smooth_seeded`` marker to True — called once, after the rule has
+    def mark_spread_seeded(self, rule_id: str) -> None:
+        """Flip a spread rule's ``spread_seeded`` marker to True — called once, after the rule has
         auto-created its category's spread plan (WHIT-559), so it never seeds again even if the user
         deletes the plan ("stay dismissed"). Idempotent: re-setting True is a no-op. A rule deleted
         mid-flight is a no-op success — the ``attribute_exists(pk)`` guard fails, and a plan that no
@@ -309,19 +309,19 @@ class RuleRepository:
                 Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
                 UpdateExpression="SET #ss = :true",
                 ConditionExpression="attribute_exists(pk)",
-                ExpressionAttributeNames={"#ss": "smooth_seeded"},
+                ExpressionAttributeNames={"#ss": "spread_seeded"},
                 ExpressionAttributeValues={":true": True},
             )
         except ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return  # the rule was deleted between filing and this write — nothing to mark
-            handle_database_error(e, "mark rule smoothed")
+            handle_database_error(e, "mark rule spread")
 
 
 def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: str,
               *, budget_excluded: bool = False, conditions: Optional[list] = None,
-              logic: Optional[str] = None, smooth: bool = False,
-              smooth_amount: Optional[Any] = None, smooth_gap_days: Optional[int] = None,
+              logic: Optional[str] = None, spread: bool = False,
+              spread_amount: Optional[Any] = None, spread_gap_days: Optional[int] = None,
               created_at: str, updated_at: Optional[str] = None) -> dict:
     """Build a rule item. Every rule is app-authored, so ``source`` is always "app".
 
@@ -330,12 +330,12 @@ def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: 
     in-place update and the clash compare uniform. An old row written before this field reads back
     ``.get("budget_excluded", False)``.
 
-    ``smooth`` (WHIT-559) is the second action flag, stored ALWAYS as a bool like ``budget_excluded``.
-    A smooth rule also carries the recurring bill it captured at create time — ``smooth_amount``
-    (Decimal cents) and ``smooth_gap_days`` (the median day-gap the cadence→cycles conversion uses at
-    apply) — plus ``smooth_seeded`` (has this rule created its category's spread plan yet), seeded
-    False. Those three are SPARSE: present only on a smooth rule, so a non-smooth row gains just the
-    one ``smooth: False`` flag. An old row reads back ``.get("smooth", False)``.
+    ``spread`` (WHIT-559) is the second action flag, stored ALWAYS as a bool like ``budget_excluded``.
+    A spread rule also carries the recurring bill it captured at create time — ``spread_amount``
+    (Decimal cents) and ``spread_gap_days`` (the median day-gap the cadence→cycles conversion uses at
+    apply) — plus ``spread_seeded`` (has this rule created its category's spread plan yet), seeded
+    False. Those three are SPARSE: present only on a spread rule, so a non-spread row gains just the
+    one ``spread: False`` flag. An old row reads back ``.get("spread", False)``.
 
     A multi-condition rule (WHIT-541) adds ``conditions`` + ``logic``; the flat field/operator/value
     are still written (set by the caller to the first condition) so a legacy reader has a shape, but
@@ -345,14 +345,14 @@ def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: 
     row = {
         "pk": _PK, "sk": f"RULE#{rule_id}", "id": rule_id,
         "field": field, "operator": operator, "value": value,
-        "category_id": category_id, "budget_excluded": budget_excluded, "smooth": smooth,
+        "category_id": category_id, "budget_excluded": budget_excluded, "spread": spread,
         "source": "app", "created_at": created_at, "updated_at": updated_at or created_at,
     }
     if conditions:
         row["conditions"] = conditions
         row["logic"] = logic or "all"
-    if smooth:
-        row["smooth_amount"] = smooth_amount
-        row["smooth_gap_days"] = smooth_gap_days
-        row["smooth_seeded"] = False
+    if spread:
+        row["spread_amount"] = spread_amount
+        row["spread_gap_days"] = spread_gap_days
+        row["spread_seeded"] = False
     return row

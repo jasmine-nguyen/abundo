@@ -89,7 +89,7 @@ def test_amounts_exactly_at_plus_minus_thirty_percent_still_count(recurring_bill
 
 def test_amounts_one_cent_past_the_tolerance_are_rejected(recurring_bills):
     # [A8] median 100; 69.99 and 130.01 each sit ONE CENT past the ±30% edge (dev 30.01 > 30.00) →
-    # too variable to smooth → no bill. Pins the boundary to the cent, the other side of [A7]'s <=.
+    # too variable to spread → no bill. Pins the boundary to the cent, the other side of [A7]'s <=.
     charges = [_bill("2026-01-05", -69.99), _bill("2026-02-05", -100.00), _bill("2026-03-05", -130.01)]
     assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
 
@@ -116,7 +116,7 @@ def test_casing_variants_fold_into_one_bill_displayed_as_first_seen(recurring_bi
 def test_a_single_offcycle_charge_at_the_merchant_breaks_the_bill(recurring_bills):
     # [A10] four clean monthly charges PLUS one off-cycle charge (Jan 20) at the SAME merchant. The
     # detector treats every money-out charge at a merchant as one series, so the extra day makes the
-    # gaps irregular and the whole bill is rejected. Intended conservative behaviour: a smoothing
+    # gaps irregular and the whole bill is rejected. Intended conservative behaviour: a spreading
     # seed needs a clean recurring series, not just a recurring one.
     charges = [
         _bill("2026-01-05", -42.50, txn_id="m1"),
@@ -132,7 +132,7 @@ def test_a_same_day_outlier_amount_pollutes_the_magnitude_series(recurring_bills
     # [A11] a big same-day charge collapses to one occurrence (distinct days), BUT its magnitude is
     # still counted in _amount_steady (which uses every charge, not distinct days). The -200 breaches
     # ±30% of the 42.50 median → the whole bill is rejected though occurrences would read 4. Intended:
-    # an erratic merchant is skipped rather than smoothed on a wrong amount (see recurring_bills.py).
+    # an erratic merchant is skipped rather than spread on a wrong amount (see recurring_bills.py).
     charges = [
         _bill("2026-01-05", -42.50, txn_id="m1"),
         _bill("2026-01-05", -200.00, txn_id="outlier"),
@@ -170,7 +170,7 @@ def test_three_charges_on_two_distinct_days_is_below_the_floor(recurring_bills):
 
 def test_typical_amount_is_a_positive_decimal(recurring_bills):
     # [A15] typicalAmount must be a positive Decimal in cents (amounts are stored negative). A
-    # consumer seeding a smoothing plan cannot spread a float or a negative.
+    # consumer seeding a spreading plan cannot spread a float or a negative.
     charges = [_bill("2026-01-05", -42.50), _bill("2026-02-05", -42.50), _bill("2026-03-05", -42.50)]
     amount = _only(recurring_bills.detect_recurring_bills(charges))["typicalAmount"]
     assert isinstance(amount, Decimal)

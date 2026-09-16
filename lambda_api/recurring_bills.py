@@ -1,11 +1,11 @@
 """Detect recurring bills from transaction history — amount + cadence (prereq for WHIT-559).
 
-WHIT-559 ("a rule auto-smooths a recurring bill") needs two things a rule cannot supply on its
+WHIT-559 ("a rule auto-spreads a recurring bill") needs two things a rule cannot supply on its
 own: how much the bill is, and how often it lands. Neither exists anywhere today — a rule holds
-matching text + a category, and a smoothing plan is seeded by user-typed numbers. This module is
+matching text + a category, and a spread plan is seeded by user-typed numbers. This module is
 that missing signal: given a user's charges, it returns each recurring bill it can find as
 `{merchant, typicalAmount, cadence, ...}`, ready for the WHIT-559 consumer to turn into a category
-smoothing plan.
+spread plan.
 
 Sibling of filing_habits (WHIT-542): pure logic, no I/O, on-demand scan, no new stored state — the
 handler owns the scan. It reuses `bucket_by_merchant` (WHIT-515) so a merchant is folded here
@@ -38,11 +38,11 @@ MIN_OCCURRENCES = 3
 # How far each gap between charges may sit from the median gap before the beat reads as irregular.
 # 0.25 = ±25%: month-length wobble (28 vs 31 days ≈ 10%) passes; a skipped cycle (a ~doubled gap)
 # fails, so a bill with a missed month is rejected rather than mis-timed — conservative on purpose
-# for a smoothing seed.
+# for a spread seed.
 INTERVAL_TOLERANCE = 0.25
 
 # How far each charge amount may sit from the median amount before the bill reads as too variable
-# to smooth. Decimal (not float) so it multiplies the Decimal amounts without a type clash. 0.30 =
+# to spread. Decimal (not float) so it multiplies the Decimal amounts without a type clash. 0.30 =
 # ±30%: a utility that drifts month to month still counts; genuinely variable spend does not.
 AMOUNT_TOLERANCE = Decimal("0.30")
 
@@ -144,7 +144,7 @@ def _bill_from_bucket(bucket: list[dict]):
 
     # Every charge counts toward steadiness — NOT collapsed per day the way the cadence gaps are.
     # So a merchant with an erratic same-day one-off (a fee, a top-up) fails the steadiness check
-    # and is skipped, even when its cadence is clean. That is deliberate: a smoothing seed needs a
+    # and is skipped, even when its cadence is clean. That is deliberate: a spread seed needs a
     # clean, predictable series, and skipping an erratic merchant is the safe failure. Teasing "the
     # bill" apart from one-offs at one merchant is a bigger job, left to a later refinement.
     # Decimal(str(...)) coerces int/float/Decimal amounts to a precise Decimal (amounts are Decimal

@@ -200,105 +200,105 @@ def test_repository_rule_imports_no_constants():
     assert "import constants" not in source
 
 
-# --- smooth action (WHIT-559): the second action flag + its captured bill ----------------------
+# --- spread action (WHIT-559): the second action flag + its captured bill ----------------------
 
 from decimal import Decimal  # noqa: E402
 
 
-def test_create_smooth_stores_the_flag_and_the_captured_bill(rule_repo):
-    rule, created = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+def test_create_spread_stores_the_flag_and_the_captured_bill(rule_repo):
+    rule, created = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
     assert created is True
-    assert rule["smooth"] is True
-    assert rule["smooth_amount"] == Decimal("42.50")
-    assert rule["smooth_gap_days"] == 30
-    assert rule["smooth_seeded"] is False   # armed, not yet seeded
+    assert rule["spread"] is True
+    assert rule["spread_amount"] == Decimal("42.50")
+    assert rule["spread_gap_days"] == 30
+    assert rule["spread_seeded"] is False   # armed, not yet seeded
 
 
-def test_create_non_smooth_carries_only_the_flag(rule_repo):
+def test_create_non_spread_carries_only_the_flag(rule_repo):
     rule, _ = _make(rule_repo)
-    assert rule["smooth"] is False
-    assert "smooth_amount" not in rule and "smooth_gap_days" not in rule and "smooth_seeded" not in rule
+    assert rule["spread"] is False
+    assert "spread_amount" not in rule and "spread_gap_days" not in rule and "spread_seeded" not in rule
 
 
-def test_same_text_different_smooth_flag_clashes_never_a_second_row(rule_repo):
-    # FAIL-ON-REVERT: smooth is a clash dimension like budget_excluded, NOT part of the id — the same
-    # text with a different smooth flag must 409, not mint a second row. Drop the smooth check from
+def test_same_text_different_spread_flag_clashes_never_a_second_row(rule_repo):
+    # FAIL-ON-REVERT: spread is a clash dimension like budget_excluded, NOT part of the id — the same
+    # text with a different spread flag must 409, not mint a second row. Drop the spread check from
     # create_rule's clash compare and this reddens (it would return the existing row as created=False).
-    _make(rule_repo, smooth=False)
+    _make(rule_repo, spread=False)
     from repository_errors import RuleClashError
     with pytest.raises(RuleClashError):
-        _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+        _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
     assert len(rule_repo.list_rules()) == 1
 
 
-def test_update_in_place_turning_smooth_on_arms_seeded_false(rule_repo):
+def test_update_in_place_turning_spread_on_arms_seeded_false(rule_repo):
     rule, _ = _make(rule_repo, category="groceries")
     updated = rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "groceries",
-                                    smooth=True, smooth_amount=Decimal("80.00"), smooth_gap_days=14)
-    assert updated["smooth"] is True
-    assert updated["smooth_amount"] == Decimal("80.00") and updated["smooth_gap_days"] == 14
-    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is False
+                                    spread=True, spread_amount=Decimal("80.00"), spread_gap_days=14)
+    assert updated["spread"] is True
+    assert updated["spread_amount"] == Decimal("80.00") and updated["spread_gap_days"] == 14
+    assert rule_repo.get_rule(rule["id"])["spread_seeded"] is False
 
 
-def test_update_in_place_editing_a_seeded_smooth_rule_keeps_it_dismissed(rule_repo):
+def test_update_in_place_editing_a_seeded_spread_rule_keeps_it_dismissed(rule_repo):
     # FAIL-ON-REVERT for "stay dismissed": a rule already seeded (its plan created, then perhaps
-    # deleted by the user) must NOT re-arm on an unrelated edit. Reset smooth_seeded to False on every
+    # deleted by the user) must NOT re-arm on an unrelated edit. Reset spread_seeded to False on every
     # in-place edit and this reddens.
-    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
-    seeded = {**rule_repo.get_rule(rule["id"]), "smooth_seeded": True}
+    rule, _ = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
+    seeded = {**rule_repo.get_rule(rule["id"]), "spread_seeded": True}
     rule_repo._table.put_item(Item=seeded)   # simulate the apply path having seeded the plan
 
     rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "coffee",
-                          smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+                          spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
 
-    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is True   # still dismissed
+    assert rule_repo.get_rule(rule["id"])["spread_seeded"] is True   # still dismissed
 
 
-def test_update_in_place_turning_smooth_off_sheds_the_captured_bill(rule_repo):
-    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
-    rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "groceries", smooth=False)
+def test_update_in_place_turning_spread_off_sheds_the_captured_bill(rule_repo):
+    rule, _ = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
+    rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "groceries", spread=False)
     stored = rule_repo.get_rule(rule["id"])
-    assert stored["smooth"] is False
-    assert "smooth_amount" not in stored and "smooth_gap_days" not in stored
-    assert "smooth_seeded" not in stored
+    assert stored["spread"] is False
+    assert "spread_amount" not in stored and "spread_gap_days" not in stored
+    assert "spread_seeded" not in stored
 
 
-def test_text_edit_moves_a_smooth_rule_and_rearms_seeded_false(rule_repo):
-    rule, _ = _make(rule_repo, value="COLES", smooth=True,
-                    smooth_amount=Decimal("42.50"), smooth_gap_days=30)
-    seeded = {**rule_repo.get_rule(rule["id"]), "smooth_seeded": True}
+def test_text_edit_moves_a_spread_rule_and_rearms_seeded_false(rule_repo):
+    rule, _ = _make(rule_repo, value="COLES", spread=True,
+                    spread_amount=Decimal("42.50"), spread_gap_days=30)
+    seeded = {**rule_repo.get_rule(rule["id"]), "spread_seeded": True}
     rule_repo._table.put_item(Item=seeded)
 
     moved = rule_repo.update_rule(rule["id"], "description", "contains", "WOOLWORTHS", "groceries",
-                                  smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+                                  spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
 
     # A text edit is a fresh row under a new id — the old one retired — so the marker re-arms.
     assert moved["id"] != rule["id"]
-    assert moved["smooth_seeded"] is False
+    assert moved["spread_seeded"] is False
     assert rule_repo.get_rule(rule["id"]) is None
 
 
-# --- mark_smoothed: flip the seeded marker after auto-smoothing (WHIT-559) ----------------------
+# --- mark_spread_seeded: flip the seeded marker after auto-spreading (WHIT-559) ----------------------
 
-def test_mark_smoothed_flips_the_marker_true(rule_repo):
-    # FAIL-ON-REVERT: a smooth rule seeds False; mark_smoothed sets it True so it never re-seeds.
-    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
-    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is False
+def test_mark_spread_seeded_flips_the_marker_true(rule_repo):
+    # FAIL-ON-REVERT: a spread rule seeds False; mark_spread_seeded sets it True so it never re-seeds.
+    rule, _ = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
+    assert rule_repo.get_rule(rule["id"])["spread_seeded"] is False
 
-    rule_repo.mark_smoothed(rule["id"])
+    rule_repo.mark_spread_seeded(rule["id"])
 
-    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is True
-
-
-def test_mark_smoothed_is_idempotent(rule_repo):
-    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
-    rule_repo.mark_smoothed(rule["id"])
-    rule_repo.mark_smoothed(rule["id"])   # re-setting True is a no-op
-    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is True
+    assert rule_repo.get_rule(rule["id"])["spread_seeded"] is True
 
 
-def test_mark_smoothed_on_a_missing_rule_is_a_silent_noop(rule_repo):
+def test_mark_spread_seeded_is_idempotent(rule_repo):
+    rule, _ = _make(rule_repo, spread=True, spread_amount=Decimal("42.50"), spread_gap_days=30)
+    rule_repo.mark_spread_seeded(rule["id"])
+    rule_repo.mark_spread_seeded(rule["id"])   # re-setting True is a no-op
+    assert rule_repo.get_rule(rule["id"])["spread_seeded"] is True
+
+
+def test_mark_spread_seeded_on_a_missing_rule_is_a_silent_noop(rule_repo):
     # A rule deleted between filing and this write must not crash — the attribute_exists guard fails
     # and it returns cleanly (a plan no rule points at simply won't be re-seeded).
-    rule_repo.mark_smoothed("deadbeefdeadbeef")   # no raise
+    rule_repo.mark_spread_seeded("deadbeefdeadbeef")   # no raise
     assert rule_repo.get_rule("deadbeefdeadbeef") is None

@@ -37,12 +37,12 @@ def _to_engine_rule(row: dict) -> dict:
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
         "budgetExcluded": bool(row.get("budget_excluded")),
-        # WHIT-559: the smooth action + the bill it captured, carried so file_charge can auto-create
-        # the category's spread plan on a match. A non-smooth rule has smooth False and no amount/gap.
-        "smooth": bool(row.get("smooth")),
-        "smoothSeeded": bool(row.get("smooth_seeded")),
-        "smoothAmount": row.get("smooth_amount"),
-        "smoothGapDays": row.get("smooth_gap_days"),
+        # WHIT-559: the spread action + the bill it captured, carried so file_charge can auto-create
+        # the category's spread plan on a match. A non-spread rule has spread False and no amount/gap.
+        "spread": bool(row.get("spread")),
+        "spreadSeeded": bool(row.get("spread_seeded")),
+        "spreadAmount": row.get("spread_amount"),
+        "spreadGapDays": row.get("spread_gap_days"),
         # WHIT-541: a multi-condition rule carries these; the engine reads them, else falls back to
         # the flat field/operator/value. None for a single-condition rule.
         "conditions": row.get("conditions"),
@@ -77,9 +77,9 @@ def file_charge(charge: dict, applicable_rules: list, is_unfiled, *, seeder=None
 
     Disagreeing rules leave it unfiled (both ids logged); no match leaves it unchanged. When a
     rule files it, the SPENDING flag is recomputed from the new category (counts_to_budget), so a
-    charge filed into a non-budget category stops counting. `seeder` (a shared SmoothSeeder, when the
+    charge filed into a non-budget category stops counting. `seeder` (a shared SpreadSeeder, when the
     caller supplies the budget/paycycle/rule repos) auto-creates the category's spread plan if the
-    winning rule is a smooth one (WHIT-559)."""
+    winning rule is a spread one (WHIT-559)."""
     if not applicable_rules:
         return
     if not is_unfiled(charge.get("category")):
@@ -103,7 +103,7 @@ def file_charge(charge: dict, applicable_rules: list, is_unfiled, *, seeder=None
     # never write False — so the charge stays sparse and a later hand-set exclusion is untouched.
     if winning_rule.get("budgetExcluded"):
         charge["budget_excluded"] = True
-    # Auto-smooth the bill, if the winning rule says so (WHIT-559). Best-effort + create-only, so it
+    # Auto-spread the bill, if the winning rule says so (WHIT-559). Best-effort + create-only, so it
     # never breaks filing and seeds the plan at most once.
     if seeder is not None:
         seeder.seed(winning_rule)
@@ -124,8 +124,8 @@ def apply(rows: list, *, rule_repo, category_repo,
     unchanged.
 
     When `budget_repo` + `paycycle_repo` are supplied (the live webhook does; reprocess does not),
-    a smooth rule filing a matching charge auto-creates the category's spread plan (WHIT-559),
-    seeded once per delivery via a shared SmoothSeeder. Omit them to skip smoothing.
+    a spread rule filing a matching charge auto-creates the category's spread plan (WHIT-559),
+    seeded once per delivery via a shared SpreadSeeder. Omit them to skip spreading.
 
     Reads the rules + taxonomy once for the whole batch. A read failure leaves every charge
     unfiled (still lands, logged). An empty rule store is a no-op — the rows are returned
@@ -138,10 +138,10 @@ def apply(rows: list, *, rule_repo, category_repo,
     applicable_rules, is_unfiled = loaded
     seeder = None
     if budget_repo is not None and paycycle_repo is not None:
-        # Lazy import keeps THIS module's load constants-free (its docstring invariant): rule_smoothing
+        # Lazy import keeps THIS module's load constants-free (its docstring invariant): rule_spreading
         # -> spend -> constants, which must not be pulled at rule_ingest import time.
-        from rule_smoothing import SmoothSeeder
-        seeder = SmoothSeeder(budget_repo, paycycle_repo, rule_repo)
+        from rule_spreading import SpreadSeeder
+        seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
     for charge in rows:
         file_charge(charge, applicable_rules, is_unfiled, seeder=seeder)
     return rows, is_unfiled

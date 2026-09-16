@@ -90,14 +90,14 @@ def test_rule_to_client_maps_a_full_store_row_to_exactly_the_client_shape(handle
     mapped = handler._rule_to_client({
         "pk": "RULE", "sk": "RULE#abc", "id": "abc", "field": "merchant",
         "operator": "contains", "value": "ALDI", "category_id": "groceries",
-        "budget_excluded": True, "smooth": True, "smooth_amount": Decimal("42.50"),
-        "smooth_gap_days": 30, "smooth_seeded": False,
+        "budget_excluded": True, "spread": True, "spread_amount": Decimal("42.50"),
+        "spread_gap_days": 30, "spread_seeded": False,
         "conditions": conditions, "logic": "all", "source": "app",
         "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-02T00:00:00+00:00"})
 
     assert mapped == {"id": "abc", "field": "merchant", "operator": "contains",
                       "value": "ALDI", "categoryId": "groceries", "budgetExcluded": True,
-                      "smooth": True, "smoothAmount": Decimal("42.50"), "smoothGapDays": 30,
+                      "spread": True, "spreadAmount": Decimal("42.50"), "spreadGapDays": 30,
                       "conditions": conditions, "logic": "all"}
 
 
@@ -108,7 +108,7 @@ def test_rule_to_client_never_raises_on_a_sparse_row(handler):
 
     assert mapped == {"id": None, "field": None, "operator": None, "value": None,
                       "categoryId": None, "budgetExcluded": False,
-                      "smooth": False, "smoothAmount": None, "smoothGapDays": None,
+                      "spread": False, "spreadAmount": None, "spreadGapDays": None,
                       "conditions": None, "logic": None}
 
 

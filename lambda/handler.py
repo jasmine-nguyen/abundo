@@ -110,7 +110,7 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
         normalised_transactions,
         rule_repo=RuleRepository(),
         category_repo=CategoryRepository(),
-        # WHIT-559: a smooth rule filing a matching charge auto-creates the category's spread plan.
+        # WHIT-559: a spread rule filing a matching charge auto-creates the category's spread plan.
         budget_repo=BudgetRepository(),
         paycycle_repo=PayCycleRepository(),
     )

@@ -87,7 +87,7 @@ from repository import (
 )
 from repository_job import STATUS_RUNNING, STATUS_FAILED
 from repository_rule import rule_identity
-from rule_smoothing import SmoothSeeder
+from rule_spreading import SpreadSeeder
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -1095,18 +1095,18 @@ def _validate_rule_body(event: dict):
     if not isinstance(budget_excluded, bool):
         return None, _json_response(400, {"error": "budgetExcluded must be a boolean"})
 
-    smooth = body.get("smooth", False)
-    if not isinstance(smooth, bool):
-        return None, _json_response(400, {"error": "smooth must be a boolean"})
+    spread = body.get("spread", False)
+    if not isinstance(spread, bool):
+        return None, _json_response(400, {"error": "spread must be a boolean"})
 
-    # A rule can't both keep a charge OUT of the budget and smooth it INTO it (WHIT-559) — the two
+    # A rule can't both keep a charge OUT of the budget and spread it INTO it (WHIT-559) — the two
     # actions contradict, so the combo is refused rather than stored for a later path to reconcile.
-    if smooth and budget_excluded:
+    if spread and budget_excluded:
         return None, _json_response(
-            400, {"error": "a rule can't both smooth a bill and keep it out of the budget"})
+            400, {"error": "a rule can't both spread a bill and keep it out of the budget"})
 
     base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded,
-            "smooth": smooth}
+            "spread": spread}
 
     if "conditions" in body:
         conditions, logic, error = _validate_conditions(body)
@@ -1207,22 +1207,22 @@ def list_rules_route(rule_repo: RuleRepository) -> dict:
     return _json_response(200, [_rule_to_client(row) for row in rules])
 
 
-def _smoothing_rule_on_category(rules: list[dict], category_id: str, exclude_id: str | None) -> bool:
-    """Does another rule already auto-smooth this category? At most one smoothing rule per category
-    (WHIT-559 — smoothing is one plan per category, so two would fight). `exclude_id` skips the rule
+def _spread_rule_on_category(rules: list[dict], category_id: str, exclude_id: str | None) -> bool:
+    """Does another rule already auto-spread this category? At most one spread rule per category
+    (WHIT-559 — spreading is one plan per category, so two would fight). `exclude_id` skips the rule
     being edited so re-saving it is not a self-clash.
 
-    Read-then-write, not a locked invariant: two near-simultaneous smooth-rule creates on one category
+    Read-then-write, not a locked invariant: two near-simultaneous spread-rule creates on one category
     could both pass this read and both persist. Accepted for a single-user app — rule writes are a
     deliberate, rare user action, not a concurrent workload — and the create-only spread write means
-    even two smoothing rules can only ever seed ONE plan between them, never clobber."""
-    return any(rule.get("smooth") and rule.get("category_id") == category_id
+    even two spread rules can only ever seed ONE plan between them, never clobber."""
+    return any(rule.get("spread") and rule.get("category_id") == category_id
                and rule.get("id") != exclude_id
                for rule in rules)
 
 
-def _capture_smooth_bill(parsed: dict, transaction_repo: TransactionRepository):
-    """Find the recurring bill a smooth rule will smooth, returning (amount, gap_days, None), or
+def _capture_spread_bill(parsed: dict, transaction_repo: TransactionRepository):
+    """Find the recurring bill a spread rule will spread, returning (amount, gap_days, None), or
     (None, None, error) with a 400/409 when it can't.
 
     The amount + cadence are grounded in the charges THIS rule matches — not the merchant name — so
@@ -1253,30 +1253,30 @@ def _parsed_rule_id(parsed: dict) -> str:
                          parsed["conditions"], parsed["logic"])
 
 
-def _resolve_smooth(parsed: dict, rule_repo: RuleRepository,
+def _resolve_spread(parsed: dict, rule_repo: RuleRepository,
                     transaction_repo: TransactionRepository, exclude_id: str | None,
                     preserved: tuple | None = None):
-    """The (smooth_amount, smooth_gap_days, None) a smooth rule stores, or (None, None, error).
+    """The (spread_amount, spread_gap_days, None) a spread rule stores, or (None, None, error).
 
-    (None, None, None) for a non-smooth rule — nothing to capture. For a smooth rule: reject a second
-    smoothing rule on the same category, then either REUSE a `preserved` (amount, gap) — the caller
+    (None, None, None) for a non-spread rule — nothing to capture. For a spread rule: reject a second
+    spread rule on the same category, then either REUSE a `preserved` (amount, gap) — the caller
     passes the stored capture when an edit leaves the rule's match text unchanged, so the amount is
     frozen at create and an unrelated edit (e.g. a category change) neither re-detects nor 422s when
     the bill history has aged out — or capture the bill afresh. One place so POST and PUT resolve a
-    smooth rule identically.
+    spread rule identically.
     """
-    if not parsed["smooth"]:
+    if not parsed["spread"]:
         return None, None, None
     try:
         existing_rules = rule_repo.list_rules()
     except DatabaseError:
         return None, None, _json_response(500, {"error": "could not read your rules"})
-    if _smoothing_rule_on_category(existing_rules, parsed["category_id"], exclude_id):
+    if _spread_rule_on_category(existing_rules, parsed["category_id"], exclude_id):
         return None, None, _json_response(
-            409, {"error": "a smoothing rule already covers this category"})
+            409, {"error": "a spread rule already covers this category"})
     if preserved is not None:
         return preserved[0], preserved[1], None
-    return _capture_smooth_bill(parsed, transaction_repo)
+    return _capture_spread_bill(parsed, transaction_repo)
 
 
 def create_rule_route(event: dict, rule_repo: RuleRepository,
@@ -1286,18 +1286,18 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
 
     Returns 201 with the rule, whether it was newly created or the SAME text already existed
     (parity with the old proxy; the app checks only response.ok). A same-text/different-category
-    write is a 409 carrying the existing rule. A `smooth` rule (WHIT-559) captures the recurring
-    bill it will smooth at create time; a rule that matches no single recurring bill is a 422.
+    write is a 409 carrying the existing rule. A `spread` rule (WHIT-559) captures the recurring
+    bill it will spread at create time; a rule that matches no single recurring bill is a 422.
     """
     parsed, error = _validate_rule_write(event, category_repo)
     if error:
         return error
 
-    # Exclude the rule being created from the one-smoothing-rule-per-category check: its id is the
-    # rule TEXT, so re-POSTing the SAME smooth rule matches itself and would wrongly 409 an idempotent
-    # create. A DIFFERENT-text second smoothing rule still 409s; a same-text-but-flag-differs write
+    # Exclude the rule being created from the one-spread-rule-per-category check: its id is the
+    # rule TEXT, so re-POSTing the SAME spread rule matches itself and would wrongly 409 an idempotent
+    # create. A DIFFERENT-text second spread rule still 409s; a same-text-but-flag-differs write
     # still clashes inside create_rule.
-    smooth_amount, smooth_gap_days, error = _resolve_smooth(
+    spread_amount, spread_gap_days, error = _resolve_spread(
         parsed, rule_repo, transaction_repo, exclude_id=_parsed_rule_id(parsed))
     if error:
         return error
@@ -1307,7 +1307,7 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
             parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
             conditions=parsed["conditions"], logic=parsed["logic"],
-            smooth=parsed["smooth"], smooth_amount=smooth_amount, smooth_gap_days=smooth_gap_days)
+            spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
     except RuleClashError as e:
         return _rule_clash_response(_rule_to_client(e.existing))
     except DatabaseError:
@@ -1413,14 +1413,14 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
         return error
 
     # Preserve the amount/cadence captured at create when this edit leaves the rule's MATCH TEXT
-    # unchanged (its id is unchanged) and it was already smoothing — so a category or unrelated edit
+    # unchanged (its id is unchanged) and it was already spreading — so a category or unrelated edit
     # keeps the frozen bill rather than re-detecting (and 422-ing when the history has aged out). A
-    # text change (id moves) or turning smoothing on afresh re-captures against the new match.
+    # text change (id moves) or turning spreading on afresh re-captures against the new match.
     prior = rule_repo.get_rule(rule_id)
     preserved = None
-    if prior is not None and prior.get("smooth") and _parsed_rule_id(parsed) == rule_id:
-        preserved = (prior.get("smooth_amount"), prior.get("smooth_gap_days"))
-    smooth_amount, smooth_gap_days, error = _resolve_smooth(
+    if prior is not None and prior.get("spread") and _parsed_rule_id(parsed) == rule_id:
+        preserved = (prior.get("spread_amount"), prior.get("spread_gap_days"))
+    spread_amount, spread_gap_days, error = _resolve_spread(
         parsed, rule_repo, transaction_repo, exclude_id=rule_id, preserved=preserved)
     if error:
         return error
@@ -1430,7 +1430,7 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
             rule_id, parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
             conditions=parsed["conditions"], logic=parsed["logic"],
-            smooth=parsed["smooth"], smooth_amount=smooth_amount, smooth_gap_days=smooth_gap_days)
+            spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
@@ -1666,12 +1666,12 @@ def _rule_to_client(row: dict) -> dict:
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
         "budgetExcluded": bool(row.get("budget_excluded")),
-        # The smooth action (WHIT-559) + the recurring bill it captured at create time. A non-smooth
-        # rule has smooth False and no amount/gap. The apply path reads these to auto-create a
+        # The spread action (WHIT-559) + the recurring bill it captured at create time. A non-spread
+        # rule has spread False and no amount/gap. The apply path reads these to auto-create a
         # category spread plan on a matching charge.
-        "smooth": bool(row.get("smooth")),
-        "smoothAmount": row.get("smooth_amount"),
-        "smoothGapDays": row.get("smooth_gap_days"),
+        "spread": bool(row.get("spread")),
+        "spreadAmount": row.get("spread_amount"),
+        "spreadGapDays": row.get("spread_gap_days"),
         # Multi-condition rules (WHIT-541) carry these; a single-condition rule has None, and the
         # engine's _conditions_of falls back to the flat field/operator/value. This output is ALSO
         # the engine input on the sweep, so it must carry conditions for a multi rule to match.
@@ -1835,19 +1835,19 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
     })
 
 
-def _build_rule_smooth_map(rows: list[dict]) -> dict:
-    """id -> engine-shaped smooth context {id, categoryId, smooth, smoothSeeded, smoothAmount,
-    smoothGapDays} for every SMOOTH rule (WHIT-559). Built from the RAW store rows, not
-    `_rule_to_client`, because the apply seed needs `smooth_seeded` — which the client shape omits.
-    Only smooth rows are kept, so a store with no smooth rules yields an empty map (zero apply cost).
+def _build_rule_spread_map(rows: list[dict]) -> dict:
+    """id -> engine-shaped spread context {id, categoryId, spread, spreadSeeded, spreadAmount,
+    spreadGapDays} for every SPREAD rule (WHIT-559). Built from the RAW store rows, not
+    `_rule_to_client`, because the apply seed needs `spread_seeded` — which the client shape omits.
+    Only spread rows are kept, so a store with no spread rules yields an empty map (zero apply cost).
     """
     return {
         row["id"]: {
             "id": row["id"], "categoryId": row.get("category_id"),
-            "smooth": True, "smoothSeeded": bool(row.get("smooth_seeded")),
-            "smoothAmount": row.get("smooth_amount"), "smoothGapDays": row.get("smooth_gap_days"),
+            "spread": True, "spreadSeeded": bool(row.get("spread_seeded")),
+            "spreadAmount": row.get("spread_amount"), "spreadGapDays": row.get("spread_gap_days"),
         }
-        for row in rows if row.get("smooth") and row.get("id")
+        for row in rows if row.get("spread") and row.get("id")
     }
 
 
@@ -1856,7 +1856,7 @@ def _apply_rules_write_phase(
     rule_target_by_id: dict, rule_excluded_by_id: dict,
     is_unfiled: Callable[[str | None], bool], *,
     inline_stamp: str | None, inline_excluded: bool = False, run_reconcile: bool,
-    rule_smooth_by_id: dict | None = None, smooth_seeder: SmoothSeeder | None = None,
+    rule_spread_by_id: dict | None = None, spread_seeder: SpreadSeeder | None = None,
     max_writes: int | None = None, time_budget: float | None = None,
     started: float | None = None, on_progress: Callable[[dict], None] | None = None,
 ) -> tuple[list[dict], list[str], list[str], list[str], int]:
@@ -1912,11 +1912,11 @@ def _apply_rules_write_phase(
             stamp, budget_excluded = inline_stamp, inline_excluded
         else:
             stamp, budget_excluded = rule_id, rule_excluded_by_id.get(rule_id, False)
-        # Auto-smooth the bill if the winning rule is a smooth one (WHIT-559) — once per run,
+        # Auto-spread the bill if the winning rule is a spread one (WHIT-559) — once per run,
         # create-only, independent of whether the write below files or no-ops (the plan is about the
-        # bill, not this charge). Inline "file this shop" rules are never smooth (rule_id is None).
-        if smooth_seeder is not None and rule_smooth_by_id:
-            smooth_seeder.seed(rule_smooth_by_id.get(rule_id))
+        # bill, not this charge). Inline "file this shop" rules are never spread (rule_id is None).
+        if spread_seeder is not None and rule_spread_by_id:
+            spread_seeder.seed(rule_spread_by_id.get(rule_id))
         try:
             # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
             # since keeps their choice (WHIT-508). Their tap always beats a rule.
@@ -2036,9 +2036,9 @@ def apply_rules_to_uncategorized(
         # whole-history scan and the write loop) guarantees nothing is written.
         return _json_response(500, {"error": "could not read your rules"})
     rules = [_rule_to_client(row) for row in raw_rules]
-    # The smooth context (WHIT-559) needs `smooth_seeded`, absent from the client shape — build it
+    # The spread context (WHIT-559) needs `spread_seeded`, absent from the client shape — build it
     # from the raw rows, against the WHOLE store before the inline path narrows `rules`.
-    rule_smooth_by_id = _build_rule_smooth_map(raw_rules)
+    rule_spread_by_id = _build_rule_spread_map(raw_rules)
 
     # WHIT-540: each live rule's id -> its current target, captured BEFORE the inline path narrows
     # `rules` to the single minted rule below — the reconcile sweep needs the WHOLE store to tell an
@@ -2104,8 +2104,8 @@ def apply_rules_to_uncategorized(
         inline_stamp=(created_rule["id"] if inline_rule is not None else None),
         inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
         run_reconcile=(inline_rule is None),
-        rule_smooth_by_id=rule_smooth_by_id,
-        smooth_seeder=(SmoothSeeder(budget_repo, paycycle_repo, rule_repo)
+        rule_spread_by_id=rule_spread_by_id,
+        spread_seeder=(SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
                        if budget_repo is not None and paycycle_repo is not None else None),
         max_writes=APPLY_RULES_MAX_WRITES, time_budget=APPLY_RULES_TIME_BUDGET_SECONDS,
         started=started,

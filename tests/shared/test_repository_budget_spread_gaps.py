@@ -1,4 +1,4 @@
-"""WHIT-559 GAPS — set_spread_if_absent, the create-only spread write for rule auto-smooth.
+"""WHIT-559 GAPS — set_spread_if_absent, the create-only spread write for rule auto-spread.
 
 The implementer's tests/shared/test_repository_budget.py pins create/never-clobber/no-target/absent/
 rollover/strip-rollover/race. This suite adds the seams they did NOT cover:
@@ -6,7 +6,7 @@ rollover/strip-rollover/race. This suite adds the seams they did NOT cover:
   * an EMPTY entry ({}) — present but no target — skips (the create needs a target);
   * the written entry gains EXACTLY the spread fields and NO stray marker (e.g. no spread_origin) —
     the stored shape is unchanged from set_spread, and the version bumps by exactly one;
-  * a rollover-ON entry that ALSO has a target still skips (rollover XOR spread; don't smooth it).
+  * a rollover-ON entry that ALSO has a target still skips (rollover XOR spread; don't spread it).
 
 Uses the shared conftest fixtures (`shared`, `config_item_table`) as the sibling suite does.
 """
