@@ -39,7 +39,12 @@ const REASON_CARRYING = ['createCategory', 'updateCategory', 'deleteCategory'] a
 // server's 4xx wording is never shown, so it is never carried. Adding one here is the same
 // deliberate decision as REASON_CARRYING, pointing the other way: an ApiError whose body stays
 // hidden. It must NOT overlap REASON_CARRYING.
-const STATUS_ONLY = ['applyRulesToUncategorized', 'startApplyRulesJob', 'getApplyRulesJob'] as const;
+// WHIT-559: createRule/updateRule throw an ApiError to expose the STATUS so a spread rule's 409
+// (category already spread) / 422 (no recurring bill) get specific copy — but carry NO server
+// reason (serverMessage null); the client picks the wording.
+const STATUS_ONLY = [
+  'applyRulesToUncategorized', 'startApplyRulesJob', 'getApplyRulesJob', 'createRule', 'updateRule',
+] as const;
 
 // Every exported endpoint with plausible arguments. Keyed by name so the tripwire below can
 // prove none was skipped (and that a NEW endpoint can't be added without a decision here).

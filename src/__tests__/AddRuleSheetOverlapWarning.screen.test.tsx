@@ -73,7 +73,7 @@ it('"Save anyway" saves the rule despite the overlap', () => {
       { field: 'amount', operator: 'less_than', value: '40' },
     ],
     logic: 'all',
-  });
+  }, false);
 });
 
 it('"Cancel" dismisses the warning and does not save', () => {
@@ -93,7 +93,7 @@ it('a non-overlapping multi rule saves directly (no warning)', () => {
   buildColesUnder40();
   fireEvent.press(screen.getByText('Add rule'));
   expect(screen.queryByTestId('rule-overlap')).toBeNull();
-  expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'subs', false, expect.objectContaining({ logic: 'all' }));
+  expect(fns.saveManualRule).toHaveBeenCalledWith('COLES', 'subs', false, expect.objectContaining({ logic: 'all' }), false);
 });
 
 it('does not warn when the overlapping rule files to the SAME category', () => {

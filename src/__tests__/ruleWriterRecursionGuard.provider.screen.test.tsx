@@ -51,7 +51,7 @@ it('updateRule writer calls the api updateRule exactly once and no other rule ap
   await act(async () => { await result.current.updateRule('e1', 'SPOTIFY', 'subs'); });
 
   expect(mockApi.updateRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'SPOTIFY', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: false });
+  expect(mockApi.updateRule).toHaveBeenCalledWith('e1', { value: 'SPOTIFY', categoryId: 'subs', field: 'description', operator: 'contains', budgetExcluded: false, spread: false });
   expect(mockApi.deleteRule).not.toHaveBeenCalled();
   expect(mockApi.createRule).not.toHaveBeenCalled();
 });
@@ -64,7 +64,7 @@ it('saveManualRule writer calls the api createRule exactly once and no other rul
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
   expect(mockApi.createRule).toHaveBeenCalledTimes(1);
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false });
   expect(mockApi.updateRule).not.toHaveBeenCalled();
   expect(mockApi.deleteRule).not.toHaveBeenCalled();
 });

@@ -140,7 +140,7 @@ it('saveManualRule writes the rule but shows no toast when [categories] is cold'
 
   await act(async () => { await result.current.saveManualRule('spotify', 'subs'); });
 
-  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false });
+  expect(mockApi.createRule).toHaveBeenCalledWith({ value: 'spotify', categoryId: 'subs', budgetExcluded: false, spread: false });
   expect(queryClient.getQueryData<Rule[]>(['rules'])?.[0]).toMatchObject({ id: 'e9', isNew: true });
   expect(result.current.toast).toBeNull(); // cold taxonomy → no "Rule added — …" toast, no crash
 });

@@ -350,7 +350,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
       fireEvent.press(screen.getByText('Groceries'));
 
-      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false });
+      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false, spread: false });
       // the live field still reflects it — the collapse didn't decouple state from the input
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
     });
@@ -362,7 +362,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
       fireEvent.press(screen.getByText('Subscriptions'));
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'NETFLIX');
 
-      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'NETFLIX' }], logic: 'all', categoryId: 'subs', budgetExcluded: false });
+      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'NETFLIX' }], logic: 'all', categoryId: 'subs', budgetExcluded: false, spread: false });
     });
 
     // [B3] The guarded bailout: re-tapping the ALREADY-selected pill returns `prev` unchanged, so
@@ -380,7 +380,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
 
       expect(writeSheetDraft.mock.calls.length).toBe(writesBefore); // no rewrite
       expect(store.get(DRAFT_KEY)).toBe(draftBefore);               // same reference, not a fresh equal object
-      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false });
+      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false, spread: false });
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY'); // sibling field intact
     });
   });

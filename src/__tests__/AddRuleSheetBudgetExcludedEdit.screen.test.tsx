@@ -45,7 +45,7 @@ it('editing only the pattern preserves the prefilled budgetExcluded:true', () =>
   render(<Overlays />);
   fireEvent.changeText(screen.getByDisplayValue('NETFLIX'), 'NETFLIX PREMIUM');
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX PREMIUM', 'subs', true);
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX PREMIUM', 'subs', true, undefined, false);
 });
 
 it('turning an inherited exclusion OFF submits budgetExcluded:false', () => {
@@ -53,5 +53,5 @@ it('turning an inherited exclusion OFF submits budgetExcluded:false', () => {
   render(<Overlays />);
   fireEvent.press(screen.getByTestId('rule-budget-excluded')); // true -> false
   fireEvent.press(screen.getByText('Update rule'));
-  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false);
+  expect(fns.updateRule).toHaveBeenCalledWith('e1', 'NETFLIX', 'subs', false, undefined, false);
 });

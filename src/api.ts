@@ -154,6 +154,11 @@ export interface RuleRecord {
   categoryId: string;
   /** When true, a charge this rule files is also kept out of the budget (WHIT-558). */
   budgetExcluded?: boolean;
+  // WHIT-559: when true, matching this rule auto-creates the category's bill-spread plan. The
+  // amount + gap are captured server-side from the matched recurring bill (read-only here).
+  spread?: boolean;
+  spreadAmount?: number | null;
+  spreadGapDays?: number | null;
   // WHIT-541: multi-condition rules carry these; a single-condition rule has null and the engine
   // falls back to the flat field/operator/value.
   conditions?: RuleCondition[] | null;
@@ -172,6 +177,8 @@ export interface RuleWriteInput {
   field?: string;
   operator?: string;
   budgetExcluded?: boolean;
+  /** WHIT-559: when true, the server auto-creates the category's bill-spread plan on a match. */
+  spread?: boolean;
   conditions?: RuleCondition[];
   logic?: RuleLogic;
 }
@@ -1278,7 +1285,9 @@ export async function listRules(): Promise<RuleRecord[]> {
  *
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
  * @returns The created rule, including its store-assigned id.
- * @throws If the response status is not OK (400 on an invalid rule, 401 on auth).
+ * @throws {ApiError} If the response status is not OK — carrying `.status` so the caller can
+ *   tell a spread rule's 409 (category already spread) / 422 (no recurring bill) apart (WHIT-559),
+ *   from a 400 (invalid) or 401 (auth).
  */
 export async function createRule(input: RuleWriteInput): Promise<RuleRecord> {
   const response = await apiFetch(`${API_BASE}/rules`, {
@@ -1286,7 +1295,7 @@ export async function createRule(input: RuleWriteInput): Promise<RuleRecord> {
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
   });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+  if (response.ok == false) throw new ApiError(response.status, null);
 
   return readJson(response);
 }
@@ -1298,7 +1307,8 @@ export async function createRule(input: RuleWriteInput): Promise<RuleRecord> {
  * @param id - The id of the rule to update.
  * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
  * @returns The updated rule.
- * @throws If the response status is not OK (404 unknown id, 400 invalid, 401 auth).
+ * @throws {ApiError} If the response status is not OK — carrying `.status` so an edit that turns
+ *   spread on can surface its 409/422 (WHIT-559), apart from 404 (unknown id) / 400 / 401.
  */
 export async function updateRule(id: string, input: RuleWriteInput): Promise<RuleRecord> {
   const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
@@ -1306,7 +1316,7 @@ export async function updateRule(id: string, input: RuleWriteInput): Promise<Rul
     headers: await buildHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(input),
   });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+  if (response.ok == false) throw new ApiError(response.status, null);
 
   return readJson(response);
 }
