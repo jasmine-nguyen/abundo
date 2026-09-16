@@ -198,3 +198,81 @@ def test_repository_rule_imports_no_constants():
     source = (pathlib.Path(__file__).resolve().parents[2] / "shared" / "repository_rule.py").read_text()
     assert "from constants import" not in source
     assert "import constants" not in source
+
+
+# --- smooth action (WHIT-559): the second action flag + its captured bill ----------------------
+
+from decimal import Decimal  # noqa: E402
+
+
+def test_create_smooth_stores_the_flag_and_the_captured_bill(rule_repo):
+    rule, created = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+    assert created is True
+    assert rule["smooth"] is True
+    assert rule["smooth_amount"] == Decimal("42.50")
+    assert rule["smooth_gap_days"] == 30
+    assert rule["smooth_seeded"] is False   # armed, not yet seeded
+
+
+def test_create_non_smooth_carries_only_the_flag(rule_repo):
+    rule, _ = _make(rule_repo)
+    assert rule["smooth"] is False
+    assert "smooth_amount" not in rule and "smooth_gap_days" not in rule and "smooth_seeded" not in rule
+
+
+def test_same_text_different_smooth_flag_clashes_never_a_second_row(rule_repo):
+    # FAIL-ON-REVERT: smooth is a clash dimension like budget_excluded, NOT part of the id — the same
+    # text with a different smooth flag must 409, not mint a second row. Drop the smooth check from
+    # create_rule's clash compare and this reddens (it would return the existing row as created=False).
+    _make(rule_repo, smooth=False)
+    from repository_errors import RuleClashError
+    with pytest.raises(RuleClashError):
+        _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+    assert len(rule_repo.list_rules()) == 1
+
+
+def test_update_in_place_turning_smooth_on_arms_seeded_false(rule_repo):
+    rule, _ = _make(rule_repo, category="groceries")
+    updated = rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "groceries",
+                                    smooth=True, smooth_amount=Decimal("80.00"), smooth_gap_days=14)
+    assert updated["smooth"] is True
+    assert updated["smooth_amount"] == Decimal("80.00") and updated["smooth_gap_days"] == 14
+    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is False
+
+
+def test_update_in_place_editing_a_seeded_smooth_rule_keeps_it_dismissed(rule_repo):
+    # FAIL-ON-REVERT for "stay dismissed": a rule already seeded (its plan created, then perhaps
+    # deleted by the user) must NOT re-arm on an unrelated edit. Reset smooth_seeded to False on every
+    # in-place edit and this reddens.
+    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+    seeded = {**rule_repo.get_rule(rule["id"]), "smooth_seeded": True}
+    rule_repo._table.put_item(Item=seeded)   # simulate the apply path having seeded the plan
+
+    rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "coffee",
+                          smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+
+    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is True   # still dismissed
+
+
+def test_update_in_place_turning_smooth_off_sheds_the_captured_bill(rule_repo):
+    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+    rule_repo.update_rule(rule["id"], "description", "contains", "COLES", "groceries", smooth=False)
+    stored = rule_repo.get_rule(rule["id"])
+    assert stored["smooth"] is False
+    assert "smooth_amount" not in stored and "smooth_gap_days" not in stored
+    assert "smooth_seeded" not in stored
+
+
+def test_text_edit_moves_a_smooth_rule_and_rearms_seeded_false(rule_repo):
+    rule, _ = _make(rule_repo, value="COLES", smooth=True,
+                    smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+    seeded = {**rule_repo.get_rule(rule["id"]), "smooth_seeded": True}
+    rule_repo._table.put_item(Item=seeded)
+
+    moved = rule_repo.update_rule(rule["id"], "description", "contains", "WOOLWORTHS", "groceries",
+                                  smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+
+    # A text edit is a fresh row under a new id — the old one retired — so the marker re-arms.
+    assert moved["id"] != rule["id"]
+    assert moved["smooth_seeded"] is False
+    assert rule_repo.get_rule(rule["id"]) is None

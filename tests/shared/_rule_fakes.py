@@ -18,11 +18,27 @@ Registered in the `rule` domain of test_fakes_invariants.py.
 
 
 def _identity(rule_engine, field, operator, value, conditions, logic):
-    """The rule id — mirrors repository_rule._rule_identity: the canonical multi-condition hash when
+    """The rule id — mirrors repository_rule.rule_identity: the canonical multi-condition hash when
     `conditions` is present (a 1-condition list collapses to the legacy id), else the legacy hash."""
     if conditions:
         return rule_engine.rule_id_for_conditions(conditions, logic)
     return rule_engine.rule_id_for(field, operator, value)
+
+
+def _apply_smooth(row, smooth, smooth_amount, smooth_gap_days, *, was_smooth):
+    """Mirror repository_rule's smooth fields on a fake row (WHIT-559): `smooth` always present; the
+    captured amount/gap sparse on a smooth rule; smooth_seeded (re)armed False only when smoothing is
+    turned on fresh, else left as-is so a dismissed plan is not re-seeded by an unrelated edit."""
+    row["smooth"] = smooth
+    if smooth:
+        row["smooth_amount"] = smooth_amount
+        row["smooth_gap_days"] = smooth_gap_days
+        if not was_smooth:
+            row["smooth_seeded"] = False
+    else:
+        for stale in ("smooth_amount", "smooth_gap_days", "smooth_seeded"):
+            row.pop(stale, None)
+    return row
 
 
 class FakeRuleRepo:
@@ -56,7 +72,8 @@ class FakeRuleRepo:
         return [dict(row) for row in self._rows.values()]
 
     def create_rule(self, field, operator, value, category_id, budget_excluded=False,
-                    conditions=None, logic=None):
+                    conditions=None, logic=None, smooth=False, smooth_amount=None,
+                    smooth_gap_days=None):
         if self.create_error:
             from repository import DatabaseError
             raise DatabaseError("rule write failed")
@@ -64,11 +81,12 @@ class FakeRuleRepo:
         rule_id = _identity(rule_engine, field, operator, value, conditions, logic)
         existing = self._rows.get(rule_id)
         if existing is not None:
-            # Same identity: idempotent on same category + same budget_excluded (return it,
-            # created=False), a clash when EITHER differs — exactly the store's contract (safe to
-            # run twice, WHIT-497; the budget flag is a clash dimension, WHIT-558).
+            # Same identity: idempotent on same category + same budget_excluded + same smooth flag
+            # (return it, created=False), a clash when ANY differs — exactly the store's contract
+            # (safe to run twice, WHIT-497; the budget flag WHIT-558; the smooth flag WHIT-559).
             if (existing.get("category_id") != category_id
-                    or bool(existing.get("budget_excluded")) != budget_excluded):
+                    or bool(existing.get("budget_excluded")) != budget_excluded
+                    or bool(existing.get("smooth")) != smooth):
                 from repository import RuleClashError
                 raise RuleClashError(existing)
             return dict(existing), False
@@ -79,6 +97,7 @@ class FakeRuleRepo:
         if conditions:
             row["conditions"] = conditions
             row["logic"] = logic or "all"
+        _apply_smooth(row, smooth, smooth_amount, smooth_gap_days, was_smooth=False)
         self._rows[rule_id] = row
         self.minted.append(dict(row))
         return dict(row), True
@@ -88,7 +107,8 @@ class FakeRuleRepo:
         return dict(row) if row is not None else None
 
     def update_rule(self, rule_id, field, operator, value, category_id, budget_excluded=False,
-                    conditions=None, logic=None):
+                    conditions=None, logic=None, smooth=False, smooth_amount=None,
+                    smooth_gap_days=None):
         # Faithful to RuleRepository.update_rule: unknown id -> RuleNotFoundError; the id IS the
         # rule's identity, so an id-preserving edit updates in place while an identity edit MOVES the
         # row to a new id (deleting the old); a move onto another rule's identity -> RuleClashError.
@@ -101,6 +121,7 @@ class FakeRuleRepo:
         if existing is None:
             raise RuleNotFoundError(rule_id)
 
+        was_smooth = bool(existing.get("smooth"))
         new_id = _identity(rule_engine, field, operator, value, conditions, logic)
         if new_id == rule_id:
             existing["value"] = value
@@ -109,6 +130,7 @@ class FakeRuleRepo:
             if conditions:
                 existing["conditions"] = conditions
                 existing["logic"] = logic or "all"
+            _apply_smooth(existing, smooth, smooth_amount, smooth_gap_days, was_smooth=was_smooth)
             self.updated.append(dict(existing))
             return dict(existing)
 
@@ -121,6 +143,9 @@ class FakeRuleRepo:
         if conditions:
             new_row["conditions"] = conditions
             new_row["logic"] = logic or "all"
+        # A text edit MOVES the row to a fresh id — the smooth marker re-arms like a create (the old
+        # row is retired), so was_smooth is False here.
+        _apply_smooth(new_row, smooth, smooth_amount, smooth_gap_days, was_smooth=False)
         self._rows[new_id] = new_row
         del self._rows[rule_id]
         self.updated.append(dict(new_row))
