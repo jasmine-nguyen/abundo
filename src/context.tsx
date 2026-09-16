@@ -850,6 +850,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       applyRulesPollGen.current += 1;
       applyRulesJobId.current = null;
       applyRulesNetErrors.current = 0;
+      applyRulesStallPolls.current = 0;
+      applyRulesLastProgress.current = '';
+      setApplyRulesStalled(false);
       applyRulesJobActive.current = false;
       setApplyRulesJob(null);
     }
@@ -1671,12 +1674,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const startNewRuleJob = useCallback(
     (pattern: string, categoryId: string, budgetExcluded = false) =>
       beginApplyRulesJob({ value: pattern.trim(), categoryId, budgetExcluded }, true), [beginApplyRulesJob]);
-  // "Try again" on a failed job re-runs the ORIGINAL variant (sweep / file-this-shop / add-rule),
-  // whichever started it — never a plain sweep by default. The three sheets all call this.
+  // "Try again" re-runs the ORIGINAL variant (sweep / file-this-shop / add-rule), whichever started
+  // it — never a plain sweep by default. The three sheets all call this. It tears the current run
+  // down FIRST (endApplyRulesJob) so it works from BOTH the failed arm and the WHIT-565 stall hint:
+  // a stalled job is still `running` and holds the one-heavy-run lock, which would otherwise refuse
+  // the restart. On an already-terminal (failed) job the teardown is a harmless no-op.
   const retryApplyRulesJob = useCallback((): Promise<ApplyRulesJobStart> => {
     const a = applyRulesJobRetryArgs.current;
-    return a ? beginApplyRulesJob(a.rule, a.prependRule) : Promise.resolve({ ok: false, clash: null });
-  }, [beginApplyRulesJob]);
+    if (!a) return Promise.resolve({ ok: false, clash: null });
+    endApplyRulesJob();
+    return beginApplyRulesJob(a.rule, a.prependRule);
+  }, [endApplyRulesJob, beginApplyRulesJob]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
