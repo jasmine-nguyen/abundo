@@ -39,7 +39,7 @@ _COLLIDING = (
     "handler", "constants", "models", "encoders", "repository",
     "insights_ai", "anthropic_client", "rule_engine",
     "merchant_groups", "filing_habits", "apply_rules_worker", "repository_job",
-    "spend", "repayment_rules", "api_key",
+    "spend", "repayment_rules", "api_key", "recurring_bills",
 )
 
 
@@ -106,6 +106,30 @@ def rule_engine():
 
     try:
         yield engine
+    finally:
+        for name in _COLLIDING:
+            sys.modules.pop(name, None)
+        for name, mod in saved.items():
+            if mod is not None:
+                sys.modules[name] = mod
+
+
+@pytest.fixture
+def recurring_bills():
+    """Import lambda_api/recurring_bills.py in isolation — the pure recurring-bill detector
+    (WHIT-559 prereq), tested without the handler's scan or writes. Same isolation dance as the
+    other pure lambda_api modules: shed the colliding names, pin this package's dirs, restore."""
+    for d in (_SHARED_DIR, _LAMBDA_API_DIR):
+        while d in sys.path:
+            sys.path.remove(d)
+    sys.path.insert(0, _SHARED_DIR)
+    sys.path.insert(0, _LAMBDA_API_DIR)
+
+    saved = {name: sys.modules.pop(name, None) for name in _COLLIDING}
+    import recurring_bills as detector
+
+    try:
+        yield detector
     finally:
         for name in _COLLIDING:
             sys.modules.pop(name, None)

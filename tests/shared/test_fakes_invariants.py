@@ -128,7 +128,10 @@ _REGISTRY = [
          _API_TESTS / "test_rules_routes_amount_normalisation.py",
          _API_TESTS / "test_rules_routes_amount_normalisation_gaps.py",
          _API_TESTS / "test_rules_routes_or_equal_operators_gaps.py",
-         _API_TESTS / "test_enrichments_routes_removed.py"),
+         _API_TESTS / "test_enrichments_routes_removed.py",
+         # WHIT-559: the recurring-bill detector suites reuse _row/ANZ to build charge history.
+         _API_TESTS / "test_recurring_bills.py",
+         _API_TESTS / "test_recurring_bills_gaps.py"),
     ),
     _Domain(
         "rule",
