@@ -67,6 +67,10 @@ describe('ruleOverlap — amount numeric edges (mirror _amount_matches fail-clos
   it('flags greater_than a negative value — magnitude>=0 always clears it, so bands still overlap [A28]', () => {
     expect(kind(ruleOverlap([coles], withAmt('greater_than', '-5'), 'all', 'dining'))).toBe('overlap');
   });
+  it('does NOT flag a BLANK threshold — Number("") is 0 but the engine Decimal("") matches nothing [A26b]', () => {
+    // Fail-on-revert for the blank-amount guard: without it, greater_than "" folds to > 0 and falsely overlaps.
+    expect(ruleOverlap([coles], withAmt('greater_than', ''), 'all', 'dining')).toBeNull();
+  });
 });
 
 describe('ruleOverlap — direction + amount interaction', () => {
@@ -108,9 +112,16 @@ describe('ruleOverlap — editing toggles the warning [A32]', () => {
   });
 });
 
-describe('ruleOverlap — unknown field never co-matches [A33]', () => {
-  it('does NOT flag against an existing rule carrying an unsupported field', () => {
+describe('ruleOverlap — an (field, operator) the engine cannot evaluate never co-matches', () => {
+  it('does NOT flag against an existing rule carrying an unsupported FIELD [A33]', () => {
     const existing = multi('g', 'groceries', [c('note', 'contains', 'COLES')]);
+    expect(ruleOverlap([existing], [c('description', 'contains', 'COLES')], 'all', 'dining')).toBeNull();
+  });
+  it('does NOT flag a known field with an unsupported OPERATOR [A33b]', () => {
+    // Fail-on-revert for the central (field, operator) guard: `description less_than 5` is not a real
+    // rule, but the engine's _condition_matches returns False for it, so the clause can never match.
+    // Without the guard the bad-operator condition is silently dropped and the rule falsely overlaps.
+    const existing = multi('g', 'groceries', [c('description', 'contains', 'COLES'), c('description', 'less_than', '5')]);
     expect(ruleOverlap([existing], [c('description', 'contains', 'COLES')], 'all', 'dining')).toBeNull();
   });
 });
