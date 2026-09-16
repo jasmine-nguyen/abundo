@@ -74,6 +74,7 @@ lambda_api/*
 !lambda_api/merchant_groups.py
 !lambda_api/filing_habits.py
 !lambda_api/apply_rules_worker.py
+!lambda_api/recurring_bills.py
 
 # terraform
 terraform/artifacts/*
