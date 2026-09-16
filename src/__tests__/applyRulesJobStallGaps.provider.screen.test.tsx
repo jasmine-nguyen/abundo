@@ -80,10 +80,12 @@ it('[G1] Try again while stalled tears the run down and restarts the same varian
   expect(r.current.applyRulesJob?.status).toBe('running');
 });
 
-// [G2] After a LOCK, the lock effect frees the active lock + drops the job but does NOT reset the
-// stall refs (only endApplyRulesJob/beginApplyRulesJob do). A fresh sweep must therefore reset them
-// in beginApplyRulesJob, or the leaked counter (24) + leaked signature ('0:0') re-trip on the very
-// first poll of the NEW job. This is why begin's reset is load-bearing (retry never calls end).
+// [G2] End-to-end guard: a stalled job that is locked then unlocked must not leak its stall state
+// into the NEXT sweep — the fresh job must not show the hint on its first poll. TWO reset paths
+// cover this (either alone suffices, so this does not isolate one): the auth lock effect resets the
+// stall refs when status leaves 'authed', and beginApplyRulesJob resets them again on the new start
+// (defensive symmetry with the netErrors reset). This asserts the leak can't survive
+// lock → unlock → restart.
 it('[G2] a fresh sweep after a lock leak does not re-trip the hint on the first poll', async () => {
   mockApi.startApplyRulesJob.mockResolvedValue(job());
   mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 0, attempted: 0 }));
@@ -99,7 +101,8 @@ it('[G2] a fresh sweep after a lock leak does not re-trip the hint on the first 
   expect(r.current.applyRulesJob).toBeNull();
   await act(async () => { mockSetStatus('authed'); });
 
-  // Fresh sweep: begin must reset the stall refs. First poll (0:0) must NOT re-trip.
+  // Fresh sweep starts clean (lock effect + begin both reset the stall refs). First poll (0:0)
+  // must NOT re-trip.
   await act(async () => { r.current.setSheet({ mode: 'applyRules' } as never); });
   await act(async () => { await r.current.startApplyRulesSweep(); });
   await tick(1);
