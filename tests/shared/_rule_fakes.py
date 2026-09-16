@@ -160,3 +160,12 @@ class FakeRuleRepo:
             raise DatabaseError("rule delete failed")
         self._rows.pop(rule_id, None)
         self.deleted.append(rule_id)
+
+    def mark_smoothed(self, rule_id):
+        # Faithful to RuleRepository.mark_smoothed (WHIT-559): flip smooth_seeded True; a missing id
+        # is a silent no-op (the real store's attribute_exists guard).
+        row = self._rows.get(rule_id)
+        if row is not None:
+            row["smooth_seeded"] = True
+        self.smoothed = getattr(self, "smoothed", [])
+        self.smoothed.append(rule_id)

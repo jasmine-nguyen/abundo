@@ -18,17 +18,21 @@ from constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
 from handler import (
     _apply_rules_write_phase,
     _as_leaf_rule,
+    _build_rule_smooth_map,
     _fetch_windowed_transactions,
     _rule_to_client,
 )
 from repository import (
+    BudgetRepository,
     CategoryRepository,
     DatabaseError,
     JobRepository,
+    PayCycleRepository,
     RuleClashError,
     RuleRepository,
     TransactionRepository,
 )
+from rule_smoothing import SmoothSeeder
 from repository_job import STATUS_FAILED, STATUS_SUCCEEDED
 from rule_engine import is_unfiled_category, plan_rule_application
 
@@ -58,6 +62,8 @@ def lambda_handler(event: dict, context=None) -> dict:
     category_repo = CategoryRepository()
     rule_repo = RuleRepository()
     job_repo = JobRepository()
+    budget_repo = BudgetRepository()
+    paycycle_repo = PayCycleRepository()
 
     created_rule = None
     try:
@@ -66,13 +72,16 @@ def lambda_handler(event: dict, context=None) -> dict:
         def is_unfiled(category):
             return is_unfiled_category(category, taxonomy_ids)
 
-        rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+        raw_rules = rule_repo.list_rules()
+        rules = [_rule_to_client(row) for row in raw_rules]
         # Captured BEFORE the inline path narrows `rules`: the reconcile sweep needs the WHOLE
         # store to tell an orphaned stamp (rule gone) from a drifted one (rule still here), and the
         # plain sweep reads each winning rule's "keep out of budget" action from here (WHIT-558).
         rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
         rule_excluded_by_id = {
             rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
+        # The smooth context (WHIT-559) — from the raw rows, since it needs smooth_seeded.
+        rule_smooth_by_id = _build_rule_smooth_map(raw_rules)
 
         if inline_rule is not None:
             # File ONLY this shop: mint the rule (idempotent, WHIT-497) then sweep with just it.
@@ -116,6 +125,8 @@ def lambda_handler(event: dict, context=None) -> dict:
             inline_stamp=(created_rule["id"] if inline_rule is not None else None),
             inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
             run_reconcile=(inline_rule is None),
+            rule_smooth_by_id=rule_smooth_by_id,
+            smooth_seeder=SmoothSeeder(budget_repo, paycycle_repo, rule_repo),
             max_writes=None, time_budget=None, on_progress=on_progress,
         )
 

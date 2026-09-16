@@ -297,6 +297,26 @@ class RuleRepository:
         except ClientError as e:
             handle_database_error(e, "delete rule")
 
+    def mark_smoothed(self, rule_id: str) -> None:
+        """Flip a smooth rule's ``smooth_seeded`` marker to True — called once, after the rule has
+        auto-created its category's spread plan (WHIT-559), so it never seeds again even if the user
+        deletes the plan ("stay dismissed"). Idempotent: re-setting True is a no-op. A rule deleted
+        mid-flight is a no-op success — the ``attribute_exists(pk)`` guard fails, and a plan that no
+        rule points at simply won't be re-seeded, which is the intended end state.
+        """
+        try:
+            self._get_table().update_item(
+                Key={"pk": _PK, "sk": f"RULE#{rule_id}"},
+                UpdateExpression="SET #ss = :true",
+                ConditionExpression="attribute_exists(pk)",
+                ExpressionAttributeNames={"#ss": "smooth_seeded"},
+                ExpressionAttributeValues={":true": True},
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return  # the rule was deleted between filing and this write — nothing to mark
+            handle_database_error(e, "mark rule smoothed")
+
 
 def _rule_row(rule_id: str, field: str, operator: str, value: str, category_id: str,
               *, budget_excluded: bool = False, conditions: Optional[list] = None,

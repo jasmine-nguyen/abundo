@@ -276,3 +276,29 @@ def test_text_edit_moves_a_smooth_rule_and_rearms_seeded_false(rule_repo):
     assert moved["id"] != rule["id"]
     assert moved["smooth_seeded"] is False
     assert rule_repo.get_rule(rule["id"]) is None
+
+
+# --- mark_smoothed: flip the seeded marker after auto-smoothing (WHIT-559) ----------------------
+
+def test_mark_smoothed_flips_the_marker_true(rule_repo):
+    # FAIL-ON-REVERT: a smooth rule seeds False; mark_smoothed sets it True so it never re-seeds.
+    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is False
+
+    rule_repo.mark_smoothed(rule["id"])
+
+    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is True
+
+
+def test_mark_smoothed_is_idempotent(rule_repo):
+    rule, _ = _make(rule_repo, smooth=True, smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+    rule_repo.mark_smoothed(rule["id"])
+    rule_repo.mark_smoothed(rule["id"])   # re-setting True is a no-op
+    assert rule_repo.get_rule(rule["id"])["smooth_seeded"] is True
+
+
+def test_mark_smoothed_on_a_missing_rule_is_a_silent_noop(rule_repo):
+    # A rule deleted between filing and this write must not crash — the attribute_exists guard fails
+    # and it returns cleanly (a plan no rule points at simply won't be re-seeded).
+    rule_repo.mark_smoothed("deadbeefdeadbeef")   # no raise
+    assert rule_repo.get_rule("deadbeefdeadbeef") is None

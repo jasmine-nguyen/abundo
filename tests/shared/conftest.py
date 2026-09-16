@@ -47,7 +47,7 @@ _REIMPORT = (
     "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
     "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
-    "balance_fetch", "rule_engine", "repository_rule", "repository_job",
+    "balance_fetch", "rule_engine", "repository_rule", "repository_job", "rule_smoothing",
 )
 
 
@@ -129,10 +129,11 @@ def shared():
         import repayment_rules
         import repository_rule
         import repository_job
+        import rule_smoothing
 
         ns = types.SimpleNamespace(
             encoders=encoders, repository=repository_transaction,
-            rule=repository_rule, job=repository_job,
+            rule=repository_rule, job=repository_job, rule_smoothing=rule_smoothing,
             balance_fetch=balance_fetch,
             balance=repository_balance, loanfacts=repository_loanfacts,
             milestone=repository_milestone,
