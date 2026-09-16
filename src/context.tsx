@@ -733,6 +733,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // The latest poll callback, read through a ref so a scheduled timer always runs the freshest
   // closure (over refreshAfterApplyRules etc.) rather than a stale one captured at schedule time.
   const applyRulesPollRef = useRef<() => void>(() => {});
+  // WHIT-566: the shared core of every apply-rules poll teardown — clear the timer, forget its
+  // handle, and bump the generation so an in-flight poll bails without re-arming. All three teardown
+  // sites (sign-out/lock, sheet-dismiss, endApplyRulesJob) route through this so the delicate order
+  // lives once. Ref-only → stable identity (empty deps), so it perturbs no effect's dependencies.
+  const stopApplyRulesPolling = useCallback(() => {
+    clearTimeout(applyRulesPollTimer.current);
+    applyRulesPollTimer.current = undefined;
+    applyRulesPollGen.current += 1;
+  }, []);
   const readSheetDraft = useCallback((key: string): unknown => sheetDrafts.current.get(key), []);
   const writeSheetDraft = useCallback((key: string, value: unknown) => { sheetDrafts.current.set(key, value); }, []);
   // WHIT-192: rule edits are mirrored straight into the ['rules'] query cache the Rules
@@ -831,13 +840,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSheet((prev) => (prev?.mode === 'applyRules' ? null : prev));
       // WHIT-560: a lock (or sign-out) unmounts the sheet, so stop polling and drop the job view —
       // the job keeps running server-side; on unlock the reopened sheet previews fresh. Releasing
-      // the lock here matches the sheet's own lock→fresh-start model (WHIT-508).
-      clearTimeout(applyRulesPollTimer.current);
-      applyRulesPollTimer.current = undefined;
-      applyRulesPollGen.current += 1;
-      applyRulesJobId.current = null;
-      applyRulesNetErrors.current = 0;
-      applyRulesJobActive.current = false;
+      // the lock here matches the sheet's own lock→fresh-start model (WHIT-508). WHIT-566: the full
+      // teardown (poll stop + id/net-errors/lock reset) is endApplyRulesJob; drop the view too.
+      endApplyRulesJob();
       setApplyRulesJob(null);
     }
     if (getStatus() !== 'anon') return;
@@ -864,9 +869,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       return;
     }
-    clearTimeout(applyRulesPollTimer.current);
-    applyRulesPollTimer.current = undefined;
-    applyRulesPollGen.current += 1; // supersede any in-flight poll so it can't re-arm after dismiss
+    // WHIT-566: stop polling only (supersede any in-flight poll so it can't re-arm after dismiss);
+    // deliberately partial — the job keeps running server-side and the lock stays held so a reopen
+    // resumes the same job. Never route this through endApplyRulesJob (that releases the lock).
+    stopApplyRulesPolling();
     if (!applyRulesJobActive.current) setApplyRulesJob(null);
   }, [sheet]);
 
@@ -1527,13 +1533,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // time" lock. Does NOT clear `applyRulesJob` state — a terminal frame stays on screen; the
   // dismiss effect drops it when the sheet closes.
   const endApplyRulesJob = useCallback(() => {
-    clearTimeout(applyRulesPollTimer.current);
-    applyRulesPollTimer.current = undefined;
-    applyRulesPollGen.current += 1;
+    stopApplyRulesPolling();
     applyRulesJobId.current = null;
     applyRulesNetErrors.current = 0;
     applyRulesJobActive.current = false;
-  }, []);
+  }, [stopApplyRulesPolling]);
 
   // A terminal job (server `status` succeeded/failed): end polling, then reconcile the caches. The
   // async path can only INVALIDATE (the GET returns counts, not id lists — so no per-row patch like
