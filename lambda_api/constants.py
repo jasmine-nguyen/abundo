@@ -58,6 +58,14 @@ UNCATEGORIZED_APPLY_RULES_JOBS_PATH = "/transactions/uncategorized/apply-rules/j
 # tap per charge. Only lambda_api/handler.py consumes it (no shared repository_* imports it),
 # so the WHIT-136 sync guard doesn't require a shared mirror.
 UNCATEGORIZED_MERCHANTS_PATH = "/transactions/uncategorized/merchants"
+# API Gateway route path for rules suggested from the user's hand-filing habits (WHIT-542). The
+# mirror of UNCATEGORIZED_MERCHANTS_PATH pointed at the FILED-by-hand charges: it walks ALL history
+# and returns the merchants the user has hand-filed to one category on enough separate days to be
+# worth a rule, so "you've filed SEDDONS as Dining 5 times — make a rule?" appears in the file-by-shop
+# flow. Read-only; accepting a suggestion is a separate mint request. Only lambda_api/handler.py
+# consumes it (no shared repository_* imports it), so the WHIT-136 sync guard doesn't require a
+# shared mirror.
+FILING_SUGGESTIONS_PATH = "/transactions/filing-suggestions"
 # Ceiling on rows one apply-rules request will write. A secondary guard behind the wall-clock
 # budget below: the response reports `remaining` and the app says "tap again", which is safe
 # because re-running only ever files what is STILL unfiled.

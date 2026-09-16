@@ -1500,6 +1500,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // shrinks the groups.
     if (!opts?.skipRules) queryClient.invalidateQueries({ queryKey: ['rules'] });
     queryClient.invalidateQueries({ queryKey: ['uncategorizedMerchants'] });
+    // WHIT-542: accepting a suggestion mints a rule for that shop (and files its charges), so the
+    // shop no longer reads as a hand-filing habit — refresh the suggestions so it drops off.
+    queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
   }, []);
 
   // WHIT-508: preview what the user's existing rules would file, writing nothing. Lives here
@@ -2229,6 +2232,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
       // false for the load path, where rules genuinely aren't new).
       patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
+      // WHIT-542: this shop now has a rule, so it is no longer a hand-filing habit. The "file now"
+      // arm reaches this via refreshAfterApplyRules; the "save rule only" arm (here) mints without a
+      // sweep, so invalidate the suggestions itself or an accepted "make a rule?" card lingers.
+      queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
     } catch {
       patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
       if (epoch === sessionEpoch.current) showToast('Could not save rule. Please try again.');

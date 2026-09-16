@@ -101,8 +101,11 @@ def rule_value_is_safe(value: str) -> bool:
     return sum(1 for character in value if character.isalnum()) >= MIN_RULE_VALUE_ALPHANUMERICS
 
 
-def _bucket_by_merchant(transactions: list[dict]) -> dict[str, list[dict]]:
+def bucket_by_merchant(transactions: list[dict]) -> dict[str, list[dict]]:
     """Charges keyed by their folded merchant name, preserving input order within each bucket.
+
+    Public because the filing-habits miner (WHIT-542) buckets HAND-FILED charges the same way —
+    one definition so the two screens fold a merchant identically.
 
     Folded (trim + lowercase) so one merchant's casing variants land in one bucket. A charge
     with no merchant name is not bucketed here — its merchant identity is unknown. WHIT-519
@@ -175,9 +178,12 @@ def _rule_value_for_stem_bucket(bucket: list[dict]) -> str | None:
     return _commonest(counts)
 
 
-def _rule_value_for_bucket(bucket: list[dict]) -> str | None:
+def rule_value_for_bucket(bucket: list[dict]) -> str | None:
     """The `description contains` value a rule for this bucket would use, or None if the
     bucket can't yield a safe one.
+
+    Public because the filing-habits miner (WHIT-542) mints the SAME pattern from a hand-filed
+    bucket — one definition so a suggested rule and a merchant-screen rule derive identically.
 
     Derived from the WHOLE bucket, not from one representative row. A single row can fail to
     produce a slice (its description doesn't contain the merchant name), and picking that row
@@ -212,8 +218,12 @@ def _dates(members: list[dict]) -> tuple[str | None, str | None]:
     return dates[0], dates[-1]
 
 
-def _also_catches(members: list[dict], own_key: str, *, by_stem: bool = False) -> list[dict]:
+def also_catches(members: list[dict], own_key: str, *, by_stem: bool = False) -> list[dict]:
     """The OTHER merchants this group's rule would sweep in, biggest first.
+
+    Public because the filing-habits miner (WHIT-542) discloses the same forward sweep — what a
+    suggested rule would also catch out of the still-unfiled charges — one definition so the two
+    disclosures can't drift.
 
     A rule on "COLES" also matches "COLES EXPRESS", and filing the group would file her petrol
     as groceries — permanently. Merging the two into one group would hide that; dropping the
@@ -275,8 +285,8 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
 
     groups = []
     grouped_positions: set[int] = set()
-    for key, bucket in _bucket_by_merchant(eligible).items():
-        value = _rule_value_for_bucket(bucket)
+    for key, bucket in bucket_by_merchant(eligible).items():
+        value = rule_value_for_bucket(bucket)
         if value is None:
             continue
         positions = [index for index, folded in enumerate(folded_descriptions)
@@ -298,7 +308,7 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
             "samples": [_text(member.get("description")) for member in members[:_SAMPLES_PER_GROUP]],
             "firstDate": first_date,
             "lastDate": last_date,
-            "alsoCatches": _also_catches(members, key),
+            "alsoCatches": also_catches(members, key),
         })
 
     # WHIT-519: a second pass over the NAMELESS leftovers (no merchant name, not already swept
@@ -327,7 +337,7 @@ def group_unfiled_by_merchant(transactions: list[dict], is_unfiled) -> dict:
             "samples": [_text(member.get("description")) for member in members[:_SAMPLES_PER_GROUP]],
             "firstDate": first_date,
             "lastDate": last_date,
-            "alsoCatches": _also_catches(members, stem_key, by_stem=True),
+            "alsoCatches": also_catches(members, stem_key, by_stem=True),
         })
 
     # Biggest first — that is the whole point of the screen. Ties broken on the pattern so the

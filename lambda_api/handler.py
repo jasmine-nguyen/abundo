@@ -58,6 +58,7 @@ from constants import (
     UNCATEGORIZED_FEED_PATH,
     UNCATEGORIZED_KEY,
     UNCATEGORIZED_MERCHANTS_PATH,
+    FILING_SUGGESTIONS_PATH,
 )
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
@@ -121,6 +122,7 @@ from merchant_groups import (
     group_unfiled_by_merchant,
     rule_value_is_safe,
 )
+from filing_habits import suggest_rules_from_filing_habits
 from milestones import mint_migration_markers
 from rule_engine import (
     plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
@@ -186,6 +188,13 @@ def lambda_handler(event, context):
         # method-gated and never sees it.
         if path == UNCATEGORIZED_MERCHANTS_PATH and method == "GET":
             return get_uncategorized_merchants(TransactionRepository(), CategoryRepository())
+
+        # Rules suggested from the user's hand-filing habits (WHIT-542) — the FILED-by-hand mirror
+        # of the merchants route. An EXACT path, disjoint from the uncategorized GET routes; the
+        # PATCH "/transactions/{id}" branch is method-gated and never sees it.
+        if path == FILING_SUGGESTIONS_PATH and method == "GET":
+            return get_filing_suggestions(
+                TransactionRepository(), CategoryRepository(), RuleRepository())
 
         # Apply the user's BankSync rules to charges ALREADY stored (BankSync only applies them
         # to incoming charges — WHIT-502). POST-only, and it PREVIEWS unless the body says
@@ -1497,6 +1506,25 @@ def get_uncategorized_merchants(
     body = group_unfiled_by_merchant(
         transactions, lambda category: _is_unmapped_category(category, taxonomy_ids)
     )
+    return _json_response(200, body)
+
+
+def get_filing_suggestions(
+    transaction_repo: TransactionRepository, category_repo: CategoryRepository,
+    rule_repo: RuleRepository,
+) -> dict:
+    """GET /transactions/filing-suggestions — rules to suggest from the user's hand-filing habits
+    (WHIT-542).
+
+    Walks ALL history like get_uncategorized_merchants, but over the charges the user has FILED BY
+    HAND rather than the unfiled ones, and returns the merchants filed to one category on enough
+    separate days to be worth a rule — minus any an existing rule already covers. Read-only: it
+    decides nothing and writes nothing; accepting a suggestion is a separate, explicit mint request.
+    """
+    taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
+    rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    body = suggest_rules_from_filing_habits(transactions, rules, taxonomy_ids)
     return _json_response(200, body)
 
 

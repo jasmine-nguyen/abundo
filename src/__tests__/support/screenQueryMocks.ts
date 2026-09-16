@@ -36,6 +36,9 @@ export type ScreenState = Record<string, unknown> & {
   // by default so the button hides (the real hook is undefined while loading/pre-auth); a test that
   // wants the button visible sets it to { unfiled, groups, ungrouped }.
   uncategorizedMerchants?: unknown;
+  // WHIT-542: the "make a rule?" suggestions in the File-by-shop sheet. Undefined by default (the
+  // real hook is undefined while loading/pre-auth, and the section just hides); a test sets an array.
+  filingSuggestions?: unknown[];
 };
 
 const noop = () => {};
@@ -70,5 +73,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
     useUncategorizedCount: () => st().uncategorizedCount,
     // WHIT-517: shops behind unfiled charges. Undefined by default (see ScreenState.uncategorizedMerchants).
     useUncategorizedMerchants: () => ({ merchants: st().uncategorizedMerchants, isLoading: false, isError: false }),
+    // WHIT-542: hand-filing suggestions. Undefined by default (see ScreenState.filingSuggestions).
+    useFilingSuggestions: () => ({ suggestions: st().filingSuggestions, isLoading: false, isError: false }),
   };
 }

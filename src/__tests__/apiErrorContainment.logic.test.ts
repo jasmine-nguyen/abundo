@@ -49,6 +49,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   fetchUncategorizedFeed: () => api.fetchUncategorizedFeed('cur', 25), // a read → generic error, NOT a reason-carrying write
   fetchUncategorizedCount: () => api.fetchUncategorizedCount(), // WHIT-501: a read → generic error, NOT a reason-carrying write
   fetchUncategorizedMerchants: () => api.fetchUncategorizedMerchants(), // WHIT-517: a read → generic error, NOT a reason-carrying write
+  fetchFilingSuggestions: () => api.fetchFilingSuggestions(), // WHIT-542: a read → generic error, NOT a reason-carrying write
   // WHIT-508/WHIT-517: a write. It throws an ApiError so "file by shop" can read the 409 clash
   // STATUS — but with serverMessage NULL, deliberately: its 4xx wording ("dryRun must be a
   // boolean") and 502 BankSync internals are never shown, so the body is never carried. The sheet's
