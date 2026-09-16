@@ -86,6 +86,7 @@ from repository import (
     VersionConflictError,
 )
 from repository_job import STATUS_RUNNING, STATUS_FAILED
+from repository_rule import rule_identity
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -127,6 +128,7 @@ from milestones import mint_migration_markers
 from rule_engine import (
     plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
     rule_id_for, reevaluatable_after_fill)
+from recurring_bills import detect_recurring_bills
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
 from encoders import DecimalEncoder
@@ -355,7 +357,8 @@ def lambda_handler(event, context):
             return list_rules_route(RuleRepository())
 
         if path == RULES_PATH and method == "POST":
-            return create_rule_route(event, RuleRepository(), CategoryRepository())
+            return create_rule_route(
+                event, RuleRepository(), CategoryRepository(), TransactionRepository())
 
         if path.startswith(f"{RULES_PATH}/") and method == "PUT":
             return update_rule_route(
@@ -1090,7 +1093,18 @@ def _validate_rule_body(event: dict):
     if not isinstance(budget_excluded, bool):
         return None, _json_response(400, {"error": "budgetExcluded must be a boolean"})
 
-    base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded}
+    smooth = body.get("smooth", False)
+    if not isinstance(smooth, bool):
+        return None, _json_response(400, {"error": "smooth must be a boolean"})
+
+    # A rule can't both keep a charge OUT of the budget and smooth it INTO it (WHIT-559) — the two
+    # actions contradict, so the combo is refused rather than stored for a later path to reconcile.
+    if smooth and budget_excluded:
+        return None, _json_response(
+            400, {"error": "a rule can't both smooth a bill and keep it out of the budget"})
+
+    base = {"category_id": category_id.strip(), "budget_excluded": budget_excluded,
+            "smooth": smooth}
 
     if "conditions" in body:
         conditions, logic, error = _validate_conditions(body)
@@ -1191,15 +1205,98 @@ def list_rules_route(rule_repo: RuleRepository) -> dict:
     return _json_response(200, [_rule_to_client(row) for row in rules])
 
 
+def _smoothing_rule_on_category(rules: list[dict], category_id: str, exclude_id: str | None) -> bool:
+    """Does another rule already auto-smooth this category? At most one smoothing rule per category
+    (WHIT-559 — smoothing is one plan per category, so two would fight). `exclude_id` skips the rule
+    being edited so re-saving it is not a self-clash.
+
+    Read-then-write, not a locked invariant: two near-simultaneous smooth-rule creates on one category
+    could both pass this read and both persist. Accepted for a single-user app — rule writes are a
+    deliberate, rare user action, not a concurrent workload — and the create-only spread write means
+    even two smoothing rules can only ever seed ONE plan between them, never clobber."""
+    return any(rule.get("smooth") and rule.get("category_id") == category_id
+               and rule.get("id") != exclude_id
+               for rule in rules)
+
+
+def _capture_smooth_bill(parsed: dict, transaction_repo: TransactionRepository):
+    """Find the recurring bill a smooth rule will smooth, returning (amount, gap_days, None), or
+    (None, None, error) with a 400/409 when it can't.
+
+    The amount + cadence are grounded in the charges THIS rule matches — not the merchant name — so
+    any rule shape (description, amount, multi-condition) maps cleanly: run the same predicate the
+    apply paths use over full history, then the WHIT-568 detector over that matched set. A rule that
+    matches no recurring bill, or more than one, is rejected — there is no single amount to capture.
+    """
+    engine_rule = {"field": parsed["field"], "operator": parsed["operator"],
+                   "value": parsed["value"], "conditions": parsed["conditions"],
+                   "logic": parsed["logic"]}
+    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    matched = [transaction for transaction in transactions if rule_matches(engine_rule, transaction)]
+    bills = detect_recurring_bills(matched)["bills"]
+    if not bills:
+        return None, None, _json_response(
+            422, {"error": "we can't find a recurring bill for this rule yet"})
+    if len(bills) > 1:
+        return None, None, _json_response(
+            422, {"error": "this rule matches more than one recurring bill; make it more specific"})
+    bill = bills[0]
+    return bill["typicalAmount"], bill["medianGapDays"], None
+
+
+def _parsed_rule_id(parsed: dict) -> str:
+    """The id a parsed rule body would store — the store's own identity function, so the handler's
+    self-exclude / preserve id compare can never drift from the id the row is written under."""
+    return rule_identity(parsed["field"], parsed["operator"], parsed["value"],
+                         parsed["conditions"], parsed["logic"])
+
+
+def _resolve_smooth(parsed: dict, rule_repo: RuleRepository,
+                    transaction_repo: TransactionRepository, exclude_id: str | None,
+                    preserved: tuple | None = None):
+    """The (smooth_amount, smooth_gap_days, None) a smooth rule stores, or (None, None, error).
+
+    (None, None, None) for a non-smooth rule — nothing to capture. For a smooth rule: reject a second
+    smoothing rule on the same category, then either REUSE a `preserved` (amount, gap) — the caller
+    passes the stored capture when an edit leaves the rule's match text unchanged, so the amount is
+    frozen at create and an unrelated edit (e.g. a category change) neither re-detects nor 422s when
+    the bill history has aged out — or capture the bill afresh. One place so POST and PUT resolve a
+    smooth rule identically.
+    """
+    if not parsed["smooth"]:
+        return None, None, None
+    try:
+        existing_rules = rule_repo.list_rules()
+    except DatabaseError:
+        return None, None, _json_response(500, {"error": "could not read your rules"})
+    if _smoothing_rule_on_category(existing_rules, parsed["category_id"], exclude_id):
+        return None, None, _json_response(
+            409, {"error": "a smoothing rule already covers this category"})
+    if preserved is not None:
+        return preserved[0], preserved[1], None
+    return _capture_smooth_bill(parsed, transaction_repo)
+
+
 def create_rule_route(event: dict, rule_repo: RuleRepository,
-                      category_repo: CategoryRepository) -> dict:
+                      category_repo: CategoryRepository,
+                      transaction_repo: TransactionRepository) -> dict:
     """POST /rules — create a rule in our store.
 
     Returns 201 with the rule, whether it was newly created or the SAME text already existed
     (parity with the old proxy; the app checks only response.ok). A same-text/different-category
-    write is a 409 carrying the existing rule.
+    write is a 409 carrying the existing rule. A `smooth` rule (WHIT-559) captures the recurring
+    bill it will smooth at create time; a rule that matches no single recurring bill is a 422.
     """
     parsed, error = _validate_rule_write(event, category_repo)
+    if error:
+        return error
+
+    # Exclude the rule being created from the one-smoothing-rule-per-category check: its id is the
+    # rule TEXT, so re-POSTing the SAME smooth rule matches itself and would wrongly 409 an idempotent
+    # create. A DIFFERENT-text second smoothing rule still 409s; a same-text-but-flag-differs write
+    # still clashes inside create_rule.
+    smooth_amount, smooth_gap_days, error = _resolve_smooth(
+        parsed, rule_repo, transaction_repo, exclude_id=_parsed_rule_id(parsed))
     if error:
         return error
 
@@ -1207,7 +1304,8 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
         rule, _created = rule_repo.create_rule(
             parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
-            conditions=parsed["conditions"], logic=parsed["logic"])
+            conditions=parsed["conditions"], logic=parsed["logic"],
+            smooth=parsed["smooth"], smooth_amount=smooth_amount, smooth_gap_days=smooth_gap_days)
     except RuleClashError as e:
         return _rule_clash_response(_rule_to_client(e.existing))
     except DatabaseError:
@@ -1312,11 +1410,25 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     if error:
         return error
 
+    # Preserve the amount/cadence captured at create when this edit leaves the rule's MATCH TEXT
+    # unchanged (its id is unchanged) and it was already smoothing — so a category or unrelated edit
+    # keeps the frozen bill rather than re-detecting (and 422-ing when the history has aged out). A
+    # text change (id moves) or turning smoothing on afresh re-captures against the new match.
+    prior = rule_repo.get_rule(rule_id)
+    preserved = None
+    if prior is not None and prior.get("smooth") and _parsed_rule_id(parsed) == rule_id:
+        preserved = (prior.get("smooth_amount"), prior.get("smooth_gap_days"))
+    smooth_amount, smooth_gap_days, error = _resolve_smooth(
+        parsed, rule_repo, transaction_repo, exclude_id=rule_id, preserved=preserved)
+    if error:
+        return error
+
     try:
         rule = rule_repo.update_rule(
             rule_id, parsed["field"], parsed["operator"], parsed["value"], parsed["category_id"],
             budget_excluded=parsed["budget_excluded"],
-            conditions=parsed["conditions"], logic=parsed["logic"])
+            conditions=parsed["conditions"], logic=parsed["logic"],
+            smooth=parsed["smooth"], smooth_amount=smooth_amount, smooth_gap_days=smooth_gap_days)
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
@@ -1552,6 +1664,12 @@ def _rule_to_client(row: dict) -> dict:
         "value": row.get("value"),
         "categoryId": row.get("category_id"),
         "budgetExcluded": bool(row.get("budget_excluded")),
+        # The smooth action (WHIT-559) + the recurring bill it captured at create time. A non-smooth
+        # rule has smooth False and no amount/gap. The apply path reads these to auto-create a
+        # category spread plan on a matching charge.
+        "smooth": bool(row.get("smooth")),
+        "smoothAmount": row.get("smooth_amount"),
+        "smoothGapDays": row.get("smooth_gap_days"),
         # Multi-condition rules (WHIT-541) carry these; a single-condition rule has None, and the
         # engine's _conditions_of falls back to the flat field/operator/value. This output is ALSO
         # the engine input on the sweep, so it must carry conditions for a multi rule to match.

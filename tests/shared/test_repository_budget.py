@@ -495,3 +495,102 @@ def test_clear_spread_strips_a_partial_spread_entry(shared, budget_repo, config_
     assert table.item["items"]["insurance"] == {"target": Decimal(250)}
     assert table.update_calls == 1
 
+
+
+# --- set_spread_if_absent: the create-only spread write for rule auto-smooth (WHIT-559) ---------
+
+def test_set_spread_if_absent_creates_a_plan_when_the_category_has_a_target_and_none(
+        shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
+    _with_table(budget_repo, table)
+
+    saved = budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
+                                             "2026-09-05", 30, "2026-01-01")
+
+    assert saved == {"id": "insurance", "amount": Decimal("600.00"), "cycles": 3}
+    entry = table.item["items"]["insurance"]
+    assert entry["target"] == Decimal(250)
+    assert entry["spread_amount"] == Decimal("600.00")
+    assert entry["spread_cycles"] == Decimal(3)
+    assert entry["spread_from"] == "2026-09-05"
+
+
+def test_set_spread_if_absent_never_clobbers_an_existing_plan(
+        shared, budget_repo, config_item_table):
+    # FAIL-ON-REVERT for the create-only guard: a category that already carries a spread (a user's,
+    # or an earlier rule seed) is left byte-identical and no version is bumped — the whole point of
+    # "create once, never re-anchor".
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
+    before = dict(table.item["items"]["insurance"])
+    before_version = table.item["version"]
+    _with_table(budget_repo, table)
+
+    result = budget_repo.set_spread_if_absent("insurance", Decimal("999.00"), 2,
+                                              "2026-12-01", 30, "2026-01-01")
+
+    assert result is None
+    assert table.item["items"]["insurance"] == before  # untouched
+    assert table.item["version"] == before_version
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_skips_a_category_with_no_target(
+        shared, budget_repo, config_item_table):
+    # A spread needs a budget target (mirrors the user path's 400). No target -> no-op, no orphan.
+    table = config_item_table("BUDGETS", items={"insurance": {"rollover": False}})
+    _with_table(budget_repo, table)
+
+    assert budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
+                                            "2026-09-05", 30, "2026-01-01") is None
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_skips_an_absent_category(
+        shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"food": {"target": Decimal(80)}})
+    _with_table(budget_repo, table)
+
+    assert budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
+                                            "2026-09-05", 30, "2026-01-01") is None
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_skips_a_rollover_category(
+        shared, budget_repo, config_item_table):
+    # A category has rollover OR a spread, never both — don't smooth a rollover category.
+    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
+    _with_table(budget_repo, table)
+
+    assert budget_repo.set_spread_if_absent("coffee", Decimal("600.00"), 3,
+                                            "2026-09-05", 30, "2026-01-01") is None
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_strips_lingering_rollover_fields_on_create(
+        shared, budget_repo, config_item_table):
+    # rollover OFF but a stale carryover buffer present: creating a spread strips it in the same
+    # write, exactly as set_spread does (spread XOR rollover).
+    entry = {"target": Decimal(250), "rollover": False, "carryover": Decimal("12.00"),
+             "carryover_from": "2026-07-01", "carryover_len": Decimal(30),
+             "carryover_paydate": "2026-01-01"}
+    table = config_item_table("BUDGETS", items={"insurance": entry})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3, "2026-09-05", 30, "2026-01-01")
+
+    stored = table.item["items"]["insurance"]
+    assert stored["spread_amount"] == Decimal("600.00")
+    assert "carryover" not in stored and "carryover_from" not in stored
+    assert stored["target"] == Decimal(250)
+
+
+def test_set_spread_if_absent_retries_once_under_a_version_race(
+        shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
+    table.race_next_update()
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3, "2026-09-05", 30, "2026-01-01")
+
+    assert table.item["items"]["insurance"]["spread_amount"] == Decimal("600.00")
+    assert table.update_calls == 2

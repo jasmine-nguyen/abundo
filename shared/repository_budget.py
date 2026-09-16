@@ -226,6 +226,58 @@ class BudgetRepository:
         }, drop=_ROLLOVER_FIELDS)
         return {"id": cat_id, "amount": entry["spread_amount"], "cycles": cycles}
 
+    def set_spread_if_absent(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
+                             spread_len: int, spread_paydate: str) -> Optional[dict]:
+        """Create a bill spread on a category ONLY when it is safe to — the create-only sibling of
+        set_spread, for a rule that auto-smooths a recurring bill (WHIT-559).
+
+        A no-op (returns None, no version bump) unless the category has a target, carries NO spread
+        already, and has rollover off. So a rule firing on every matching charge — on the webhook AND
+        the "apply my rules" sweep — is safe to run repeatedly: it creates the plan once and never
+        re-anchors, and it never overwrites a spread the user set or edited (contrast set_spread,
+        which unconditionally replaces — the user's deliberate re-anchor). The "already smoothed
+        once, don't re-seed after the user deletes it" guarantee lives on the RULE, not here; this
+        method only refuses to clobber a spread that currently exists.
+
+        The presence check is re-read inside the optimistic-lock loop, so a competing writer that
+        seeds a spread makes this converge to a no-op rather than a clobber. Strips any rollover
+        fields in the same write (a category has rollover OR a spread, never both), mirroring
+        set_spread. Raises VersionConflictError if it can't converge.
+        """
+        self._ensure_seeded()
+        for _attempt in range(2):
+            item = self._get_config()
+            entry = item["items"].get(cat_id)
+            if (entry is None or "target" not in entry
+                    or "spread_amount" in entry or entry.get("rollover")):
+                return None
+            version = item["version"]
+            kept = {k: v for k, v in entry.items() if k not in _ROLLOVER_FIELDS}
+            merged = {**kept,
+                      "spread_amount": amount,
+                      "spread_cycles": Decimal(cycles),
+                      "spread_from": spread_from,
+                      "spread_len": Decimal(spread_len),
+                      "spread_paydate": spread_paydate}
+            try:
+                self._get_table().update_item(
+                    Key=_BUDGETS_KEY,
+                    UpdateExpression="SET #items.#id = :val, #v = :next",
+                    ConditionExpression="attribute_exists(pk) AND #v = :expected",
+                    ExpressionAttributeNames={"#items": "items", "#id": cat_id, "#v": "version"},
+                    ExpressionAttributeValues={
+                        ":val": merged,
+                        ":expected": version,
+                        ":next": version + Decimal(1),
+                    },
+                )
+                return {"id": cat_id, "amount": amount, "cycles": cycles}
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    handle_database_error(e, "set spread if absent")
+                # The version moved under us; loop re-reads and re-checks the guard.
+        raise VersionConflictError("set_spread_if_absent: exhausted retries under write contention")
+
     def clear_rollover(self, cat_id: str) -> None:
         """Strip the rollover fields (see _ROLLOVER_FIELDS) from a category's budget entry,
         KEEPING its `target` — run when the category is reclassified out of a spend bucket
