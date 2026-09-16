@@ -8,6 +8,7 @@ import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, se
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
+import { RULE_FIELD_OPERATORS } from './ruleVocabulary';
 
 export type { LoanFacts, LoanFactsInput } from './api';
 export type { ApplyRulesResult, ApplyRulesJob } from './api';
@@ -405,7 +406,6 @@ function ruleClausesOf(rule: Rule): RuleCondition[][] {
 // contain every `contains` substring); with only `contains` values one of them must be a superstring
 // of all the others. Non-nested values (`COLES` vs `WOOLIES`) are treated as NOT co-satisfiable.
 function textConditionsSatisfiable(conditions: RuleCondition[]): boolean {
-  if (conditions.some((c) => c.operator !== 'contains' && c.operator !== 'equals')) return false;
   const equals = [...new Set(conditions.filter((c) => c.operator === 'equals').map((c) => foldRuleMatch(c.value)))];
   const contains = conditions.filter((c) => c.operator === 'contains').map((c) => foldRuleMatch(c.value));
   if (equals.length >= 2) return false;
@@ -418,8 +418,12 @@ function amountConditionsSatisfiable(conditions: RuleCondition[]): boolean {
   let low = 0, lowInclusive = true;          // magnitude is >= 0
   let high = Infinity, highInclusive = true;
   for (const condition of conditions) {
-    const threshold = Number((condition.value ?? '').trim());
-    if (!Number.isFinite(threshold)) return false; // a non-numeric value never matches
+    const raw = (condition.value ?? '').trim();
+    // A blank or non-numeric value never matches (the engine's Decimal("") fails closed), so it
+    // can't co-match — treat the clause as unsatisfiable. Number("") is 0, so guard the blank first.
+    if (raw === '') return false;
+    const threshold = Number(raw);
+    if (!Number.isFinite(threshold)) return false;
     if (condition.operator === 'less_than') {
       if (threshold < high || (threshold === high && highInclusive)) { high = threshold; highInclusive = false; }
     } else if (condition.operator === 'less_than_or_equal') {
@@ -449,6 +453,9 @@ function equalityConditionsSatisfiable(conditions: RuleCondition[], normalise: (
 // charge fields are independent, so the clause is satisfiable iff each field's conditions are — text
 // (description/merchant share the charge description), amount, direction, account, category.
 function clauseSatisfiable(conditions: RuleCondition[]): boolean {
+  // A (field, operator) the engine can't evaluate never matches (mirrors _condition_matches
+  // returning False), so it makes this AND-clause unsatisfiable — a rule can't co-match on it.
+  if (conditions.some((condition) => !RULE_FIELD_OPERATORS[condition.field]?.includes(condition.operator))) return false;
   const text: RuleCondition[] = [], amount: RuleCondition[] = [], direction: RuleCondition[] = [];
   const account: RuleCondition[] = [], category: RuleCondition[] = [];
   for (const condition of conditions) {
