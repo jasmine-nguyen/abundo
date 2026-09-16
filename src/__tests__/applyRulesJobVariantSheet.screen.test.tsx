@@ -77,14 +77,6 @@ async function mountAddRule(applyRulesJob: ApplyRulesJob | null, budgetExcluded 
   await act(async () => {});
 }
 
-// The FIRST mount here boots the whole RN module graph AND the file-by-shop confirm sheet; under the
-// v8 coverage run every line is instrumented, so that cold boot crosses Jest's 5s default and the
-// first test times out (WHIT-433's "slowness, not a hang"). The screen project's testTimeout:15000
-// is meant to cover this but is silently ignored under Jest 30's multi-project config (a 6s probe
-// test times out at 5s), so set the ceiling locally. Revert to the default and this file reddens
-// under `--coverage`. (Follow-up card: make the project-level testTimeout actually apply.)
-jest.setTimeout(15000);
-
 beforeEach(() => { jest.clearAllMocks(); });
 
 // --- file-this-shop -----------------------------------------------------------

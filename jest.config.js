@@ -72,9 +72,13 @@ module.exports = {
       // under coverage, and worse in a long-lived worker (whichever suite is mid-flight
       // fails, so "different tests fail on different runs"). It is slowness, not a hang:
       // the same run passes at a higher ceiling. 15s gives headroom without masking a real
-      // deadlock (which would still fail). The regression gate is fail-on-revert: drop this
-      // back to the default and `--runInBand --coverage` reddens deterministically.
-      testTimeout: 15000,
+      // deadlock (which would still fail).
+      // WHIT-567: the 15s ceiling lives in jest.setup.js (this project's setupFilesAfterEnv) as
+      // `jest.setTimeout(15000)`, NOT a project-level `testTimeout` here — Jest 30 silently ignores
+      // project-level testTimeout, so it had no effect. jest.setup.js is screen-only, so the fast
+      // `logic` project keeps the 5s default. Fail-on-revert: drop/lower the setup line and the
+      // heavy screen suites red under the sharded coverage run
+      // (scripts/coverage-run-local.sh: `jest --selectProjects screen --shard=… --coverage`).
     },
   ],
 };
