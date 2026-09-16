@@ -143,7 +143,7 @@ RULE_FIELD_OPERATORS = {
     "merchant": frozenset({"contains", "equals"}),
     "category": frozenset({"equals"}),
     "account": frozenset({"equals"}),
-    "amount": frozenset({"less_than", "greater_than"}),
+    "amount": frozenset({"less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal"}),
     "direction": frozenset({"is"}),
 }
 # Derived: every field, and the union of every operator — the legacy single-condition create check

@@ -125,6 +125,7 @@ _REGISTRY = [
          _API_TESTS / "test_rules_routes_multi_condition_gaps.py",
          _API_TESTS / "test_rules_routes_amount_normalisation.py",
          _API_TESTS / "test_rules_routes_amount_normalisation_gaps.py",
+         _API_TESTS / "test_rules_routes_or_equal_operators_gaps.py",
          _API_TESTS / "test_enrichments_routes_removed.py"),
     ),
     _Domain(
@@ -158,6 +159,7 @@ _REGISTRY = [
          _API_TESTS / "test_rules_routes_multi_condition_gaps.py",
          _API_TESTS / "test_rules_routes_amount_normalisation.py",
          _API_TESTS / "test_rules_routes_amount_normalisation_gaps.py",
+         _API_TESTS / "test_rules_routes_or_equal_operators_gaps.py",
          _API_TESTS / "test_enrichments_routes_removed.py",
          _SHARED_TESTS / "test_rule_fake_contract_gaps.py"),
     ),

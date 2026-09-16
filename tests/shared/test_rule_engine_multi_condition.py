@@ -76,8 +76,9 @@ def test_all_logic_requires_every_condition(rule_engine):
 def test_any_logic_needs_only_one(rule_engine):
     rule = _multi([{"field": "merchant", "operator": "equals", "value": "uber"},
                    {"field": "amount", "operator": "greater_than", "value": "1000"}], "any")
-    assert rule_engine.rule_matches(rule, _txn(amount=Decimal("-25.00")))   # merchant matches
-    assert not rule_engine.rule_matches(rule, _txn(merchant_name="LYFT", amount=Decimal("-25.00")))
+    # merchant matches the raw description (WHIT-561 follow-up), so equals compares to it.
+    assert rule_engine.rule_matches(rule, _txn(description="UBER", amount=Decimal("-25.00")))
+    assert not rule_engine.rule_matches(rule, _txn(description="LYFT", amount=Decimal("-25.00")))
 
 
 # --- the new per-field primitives -------------------------------------------------------------
@@ -107,9 +108,10 @@ def test_direction_debit_and_credit(rule_engine):
 
 
 def test_merchant_and_account_fields(rule_engine):
+    # merchant matches the raw description (WHIT-561 follow-up), not the cleaned merchant_name.
     merchant = _multi([{"field": "merchant", "operator": "equals", "value": "uber"}])
-    assert rule_engine.rule_matches(merchant, _txn(merchant_name="UBER"))
-    assert not rule_engine.rule_matches(merchant, _txn(merchant_name="UBER EATS"))  # equals, not contains
+    assert rule_engine.rule_matches(merchant, _txn(description="UBER"))
+    assert not rule_engine.rule_matches(merchant, _txn(description="UBER EATS"))  # equals, not contains
     account = _multi([{"field": "account", "operator": "equals", "value": "acct-1"}])
     assert rule_engine.rule_matches(account, _txn(account_id="acct-1"))
     assert not rule_engine.rule_matches(account, _txn(account_id="acct-2"))
@@ -145,7 +147,7 @@ def test_decide_does_not_let_a_specific_single_rule_dominate_a_multi_rule(rule_e
                    category_id="food", rule_id="m1")
     specific_single = {"id": "s1", "categoryId": "transport", "field": "merchant",
                        "operator": "contains", "value": "uber express"}
-    charge = _txn(merchant_name="UBER EXPRESS", amount=Decimal("-25.00"))
+    charge = _txn(description="UBER EXPRESS", amount=Decimal("-25.00"))
     resolved, _matched, _categories = rule_engine.decide([multi, specific_single], charge)
     assert resolved is None
 
@@ -156,3 +158,31 @@ def test_decide_files_a_lone_multi_rule(rule_engine):
     resolved, matched, _categories = rule_engine.decide([multi], _txn(amount=Decimal("-25.00")))
     assert resolved == "food"
     assert matched == [0]
+
+
+# --- WHIT-561 follow-up: merchant matches the raw description; amount <= / >= --------------------
+
+
+def test_merchant_matches_the_raw_description_not_the_cleaned_merchant_name(rule_engine):
+    # merchant is a friendlier label for the raw description (the field every other rule matches
+    # and the one stable across pending/posted). It must READ description and IGNORE merchant_name.
+    rule = _multi([{"field": "merchant", "operator": "contains", "value": "coles"}])
+    # description holds the value, merchant_name does not -> matches (reads description).
+    assert rule_engine.rule_matches(rule, _txn(description="COLES 123", merchant_name="WOOLIES"))
+    # merchant_name holds it, description does not -> does NOT match.
+    # FAIL-ON-REVERT: matching merchant_name (the old behaviour) makes this wrongly True.
+    assert not rule_engine.rule_matches(rule, _txn(description="WOOLIES 456", merchant_name="COLES"))
+
+
+def test_amount_or_equal_operators_include_the_exact_boundary(rule_engine):
+    at_30 = _txn(amount=Decimal("-30.00"))
+    lte = _multi([{"field": "amount", "operator": "less_than_or_equal", "value": "30"}])
+    gte = _multi([{"field": "amount", "operator": "greater_than_or_equal", "value": "30"}])
+    # FAIL-ON-REVERT: <= / >= match AT the exact magnitude (the strict forms, tested elsewhere, do not).
+    assert rule_engine.rule_matches(lte, at_30)
+    assert rule_engine.rule_matches(gte, at_30)
+    # and away from the boundary they behave like the strict forms
+    assert rule_engine.rule_matches(lte, _txn(amount=Decimal("-20.00")))
+    assert not rule_engine.rule_matches(lte, _txn(amount=Decimal("-40.00")))
+    assert rule_engine.rule_matches(gte, _txn(amount=Decimal("-40.00")))
+    assert not rule_engine.rule_matches(gte, _txn(amount=Decimal("-20.00")))

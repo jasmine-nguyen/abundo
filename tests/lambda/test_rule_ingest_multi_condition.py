@@ -27,8 +27,8 @@ def _multi_row(conditions, logic="all", category_id="transport", rule_id="m1"):
             "conditions": conditions, "logic": logic}
 
 
-def _charge(merchant_name="UBER", amount=Decimal("-25.00"), category=None):
-    return {"transaction_id": "t1", "account_id": "up-spending", "description": "UBER TRIP",
+def _charge(merchant_name="UBER", amount=Decimal("-25.00"), category=None, description="UBER TRIP"):
+    return {"transaction_id": "t1", "account_id": "up-spending", "description": description,
             "merchant_name": merchant_name, "amount": amount, "category": category,
             "counts_to_budget": True}
 
@@ -55,7 +55,9 @@ def test_webhook_any_logic_files_on_a_single_matching_condition(lam):
     any_rule = _multi_row([{"field": "merchant", "operator": "equals", "value": "uber"},
                            {"field": "amount", "operator": "greater_than", "value": "9999"}],
                           logic="any")
-    charge = _charge(amount=Decimal("-25.00"))    # only the merchant condition holds
+    # merchant matches the raw description (WHIT-561 follow-up), so equals compares to it; a
+    # non-matching merchant_name also pins that the source is the description, not merchant_name.
+    charge = _charge(description="UBER", merchant_name="LYFT", amount=Decimal("-25.00"))
     lam.rule_ingest.apply([charge], rule_repo=_Store([any_rule]),
                           category_repo=_Cats(["transport"]))
     assert charge["category"] == "transport"

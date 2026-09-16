@@ -135,5 +135,6 @@ def test_any_logic_ignores_an_unsupported_condition_but_matches_on_a_good_one(ru
     # still fires. (skip_reason would still flag the rule; this isolates the matcher's own OR.)
     rule = _multi([{"field": "postcode", "operator": "equals", "value": "3000"},
                    {"field": "merchant", "operator": "equals", "value": "uber"}], logic="any")
-    assert rule_engine.rule_matches(rule, _txn(merchant_name="UBER"))
-    assert not rule_engine.rule_matches(rule, _txn(merchant_name="LYFT"))
+    # merchant matches the raw description (WHIT-561 follow-up), so equals compares to it.
+    assert rule_engine.rule_matches(rule, _txn(description="UBER"))
+    assert not rule_engine.rule_matches(rule, _txn(description="LYFT"))
