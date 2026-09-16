@@ -2042,7 +2042,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       : { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded };
     patchRules((prev) => [optimistic, ...prev]);
     setSheet(null);
-    if (c) showToast(`Rule added — ${value} files as ${c.name}.`);
+    // WHIT-563: a multi-condition rule's `value` is just the first condition's raw value (an
+    // account id or a direction token for those fields), so it isn't shown — the toast names the
+    // category only. A classic single rule still quotes its readable pattern.
+    if (c) showToast(write ? `Rule added — files as ${c.name}.` : `Rule added — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
     const epoch = sessionEpoch.current;
     // WHIT-502: a new rule only files FUTURE charges (the webhook applies rules as charges land); no stored
@@ -2078,7 +2081,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
     setSheet(null);
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
-    if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
+    if (c) showToast(write ? `Rule updated — files as ${c.name}.` : `Rule updated — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
     const epoch = sessionEpoch.current;
     // WHIT-540: editing a rule now RE-FILES the stored charges it already touched (the server moves
