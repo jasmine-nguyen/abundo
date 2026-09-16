@@ -137,3 +137,15 @@ def test_apply_skips_a_vanished_row_without_resurrecting_it(rule_repo):
                                {"spread": True}, ["smooth"])
     assert applied is False
     assert ("RULE", "RULE#gone") not in rule_repo._table.store
+
+
+def test_migrate_does_not_count_a_row_that_vanished_mid_run(rule_repo, monkeypatch):
+    # [G7] End-to-end coupling: migrate() reads the rows, then a row is gone by the time _apply runs.
+    # The scan counts it, but it is NOT counted as migrated. Locks the `if _apply(...)` wiring, not
+    # just _apply in isolation. FAIL-ON-REVERT: `_apply(...); migrated += 1` (unconditional) reddens.
+    phantom = {"pk": "RULE", "sk": "RULE#gone", "field": "description", "operator": "contains",
+               "value": "ORIGIN", "category_id": "insurance", "smooth": True, "smooth_seeded": True}
+    monkeypatch.setattr(rule_repo, "list_rules", lambda: [dict(phantom)])  # store stays empty
+
+    assert migration.migrate(rule_repo) == {"scanned": 1, "migrated": 0}
+    assert ("RULE", "RULE#gone") not in rule_repo._table.store
