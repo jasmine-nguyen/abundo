@@ -17,6 +17,7 @@ Static: reads the files, imports nothing (the handler needs env + boto3 at load)
 import ast
 import pathlib
 import re
+import subprocess
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _LAMBDA_API = _REPO_ROOT / "lambda_api"
@@ -66,4 +67,26 @@ def test_every_lambda_api_module_the_handler_imports_is_in_the_deploy_allowlist(
         "lambda_api/handler.py imports these sibling modules, but "
         "scripts/build_terraform_artifacts.sh does not stage them — the deployed Lambda would "
         f"ImportError at cold start and EVERY route would 500: {missing}"
+    )
+
+
+def test_every_allowlisted_source_is_git_tracked():
+    """A module named in LAMBDA_API_SOURCES but NOT tracked by git ships from the author's disk yet
+    vanishes on a clean checkout — the build `cp` fails and, past that, the handler's import raises
+    and EVERY route 500s. This is exactly how WHIT-542 first landed: `lambda_api/filing_habits.py`
+    was staged in the allowlist but still matched the `.gitignore` `lambda_api/*` rule (no
+    `!lambda_api/filing_habits.py` whitelist line), so it existed locally — tests green — but never
+    committed. The allowlist↔.gitignore shell check misses a module absent from the .gitignore
+    whitelist; this asserts tracking directly."""
+    tracked = set(subprocess.run(
+        ["git", "ls-files", "lambda_api"], cwd=_REPO_ROOT,
+        capture_output=True, text=True, check=True).stdout.split())
+    untracked = sorted(
+        name for name in _allowlisted_sources()
+        if f"lambda_api/{name}" not in tracked
+    )
+    assert untracked == [], (
+        "these modules are staged by scripts/build_terraform_artifacts.sh but are NOT git-tracked "
+        "(likely still matched by the .gitignore `lambda_api/*` allowlist — add a "
+        f"`!lambda_api/<name>` line): they exist on your disk but not on a clean checkout: {untracked}"
     )
