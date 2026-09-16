@@ -1,4 +1,4 @@
-"""WHIT-559: the "Apply my rules" sweep auto-smooths a bill when the winning rule is a smooth one —
+"""WHIT-559: the "Apply my rules" sweep auto-spreads a bill when the winning rule is a spread one —
 creating the category's spread plan ONCE across the whole run, create-only so a user's plan is never
 clobbered. Reuses WritableFeedRepo + FakeRuleRepo like test_apply_rules_budget_excluded.py; a fake
 budget + pay-cycle repo record the seed."""
@@ -10,12 +10,12 @@ from _feed_fakes import SPENDING, _row, WritableFeedRepo, FakeCategoryRepo
 from _rule_fakes import FakeRuleRepo
 
 
-def _smooth_rule(value="ORIGIN", category_id="insurance", *, rule_id="r1", smooth=True,
-                 smooth_seeded=False):
+def _spread_rule(value="ORIGIN", category_id="insurance", *, rule_id="r1", spread=True,
+                 spread_seeded=False):
     row = {"id": rule_id, "field": "description", "operator": "contains", "value": value,
-           "category_id": category_id, "smooth": smooth, "smooth_seeded": smooth_seeded}
-    if smooth:
-        row.update(smooth_amount=Decimal("42.50"), smooth_gap_days=30)
+           "category_id": category_id, "spread": spread, "spread_seeded": spread_seeded}
+    if spread:
+        row.update(spread_amount=Decimal("42.50"), spread_gap_days=30)
     return row
 
 
@@ -56,23 +56,23 @@ def _origin(txn_id, date="2026-07-01"):
     return _row(SPENDING, date, txn_id, description="ORIGIN ENERGY BILL", category=None)
 
 
-def test_sweep_seeds_a_smooth_rules_plan_and_marks_it(handler):
+def test_sweep_seeds_a_spread_rules_plan_and_marks_it(handler):
     repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget = FakeBudget()
-    _, rule_repo = _call(handler, repo, [_smooth_rule()], budget=budget)
+    _, rule_repo = _call(handler, repo, [_spread_rule()], budget=budget)
 
     assert len(budget.calls) == 1
     cat, amount, cycles, _from, length, _paydate = budget.calls[0]
     assert (cat, amount, cycles, length) == ("insurance", Decimal("42.50"), 2, 14)
-    assert rule_repo.smoothed == ["r1"]
+    assert rule_repo.spread_seeded_ids == ["r1"]
 
 
-def test_a_smooth_rule_matching_many_charges_seeds_once(handler):
+def test_a_spread_rule_matching_many_charges_seeds_once(handler):
     # FAIL-ON-REVERT for the per-run dedup: three matching charges, one seed.
     repo = WritableFeedRepo({SPENDING: [
         _origin("t1", "2026-07-01"), _origin("t2", "2026-07-02"), _origin("t3", "2026-07-03")]})
     budget, paycycle = FakeBudget(), FakePaycycle()
-    _call(handler, repo, [_smooth_rule()], budget=budget, paycycle=paycycle)
+    _call(handler, repo, [_spread_rule()], budget=budget, paycycle=paycycle)
     assert len(budget.calls) == 1 and paycycle.reads == 1
 
 
@@ -80,19 +80,19 @@ def test_a_no_op_create_does_not_mark_the_rule(handler):
     # set_spread_if_absent returns None (category already has a spread / no target) -> stay unseeded.
     repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget = FakeBudget(result=None)
-    _, rule_repo = _call(handler, repo, [_smooth_rule()], budget=budget)
-    assert budget.calls and rule_repo.smoothed == []
+    _, rule_repo = _call(handler, repo, [_spread_rule()], budget=budget)
+    assert budget.calls and rule_repo.spread_seeded_ids == []
 
 
-def test_a_non_smooth_rule_never_touches_budget(handler):
+def test_a_non_spread_rule_never_touches_budget(handler):
     repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget, paycycle = FakeBudget(), FakePaycycle()
-    _call(handler, repo, [_smooth_rule(smooth=False)], budget=budget, paycycle=paycycle)
+    _call(handler, repo, [_spread_rule(spread=False)], budget=budget, paycycle=paycycle)
     assert budget.calls == [] and paycycle.reads == 0
 
 
 def test_an_already_seeded_rule_does_not_reseed(handler):
     repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget, paycycle = FakeBudget(), FakePaycycle()
-    _call(handler, repo, [_smooth_rule(smooth_seeded=True)], budget=budget, paycycle=paycycle)
+    _call(handler, repo, [_spread_rule(spread_seeded=True)], budget=budget, paycycle=paycycle)
     assert budget.calls == [] and paycycle.reads == 0

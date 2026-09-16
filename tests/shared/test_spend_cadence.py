@@ -1,5 +1,5 @@
 """Unit tests for cadence_cycles (shared/spend.py) — the cadence→pay-cycles conversion a rule uses
-to auto-smooth a bill (WHIT-559). Pure: a bill's day-gap and the user's pay-cycle length in,
+to auto-spread a bill (WHIT-559). Pure: a bill's day-gap and the user's pay-cycle length in,
 a clamped whole number of cycles out."""
 
 from decimal import Decimal

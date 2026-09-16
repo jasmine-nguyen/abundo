@@ -37,7 +37,7 @@ def _put_event(rule_id, conditions, logic="all", category_id="transport"):
 
 
 def _mint(handler, rule_repo, conditions, logic="all", category_id="transport"):
-    # A non-smooth create never touches the transaction repo; an empty one satisfies the signature.
+    # A non-spread create never touches the transaction repo; an empty one satisfies the signature.
     resp = handler.create_rule_route(
         _create_event(conditions, logic, category_id), rule_repo, FakeCategoryRepo(_CATEGORIES),
         WritableFeedRepo({}))

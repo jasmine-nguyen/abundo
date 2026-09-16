@@ -229,13 +229,13 @@ class BudgetRepository:
     def set_spread_if_absent(self, cat_id: str, amount: Decimal, cycles: int, spread_from: str,
                              spread_len: int, spread_paydate: str) -> Optional[dict]:
         """Create a bill spread on a category ONLY when it is safe to — the create-only sibling of
-        set_spread, for a rule that auto-smooths a recurring bill (WHIT-559).
+        set_spread, for a rule that auto-spreads a recurring bill (WHIT-559).
 
         A no-op (returns None, no version bump) unless the category has a target, carries NO spread
         already, and has rollover off. So a rule firing on every matching charge — on the webhook AND
         the "apply my rules" sweep — is safe to run repeatedly: it creates the plan once and never
         re-anchors, and it never overwrites a spread the user set or edited (contrast set_spread,
-        which unconditionally replaces — the user's deliberate re-anchor). The "already smoothed
+        which unconditionally replaces — the user's deliberate re-anchor). The "already spread
         once, don't re-seed after the user deletes it" guarantee lives on the RULE, not here; this
         method only refuses to clobber a spread that currently exists.
 

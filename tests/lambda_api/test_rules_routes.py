@@ -66,7 +66,7 @@ def test_get_rules_returns_a_bare_client_shaped_array(handler, monkeypatch):
     assert by_value["COLES"]["categoryId"] == "groceries"
     assert by_value["BP 2210"]["categoryId"] == "petrol"
     assert set(by_value["COLES"]) == {"id", "field", "operator", "value", "categoryId",
-                                      "budgetExcluded", "smooth", "smoothAmount", "smoothGapDays",
+                                      "budgetExcluded", "spread", "spreadAmount", "spreadGapDays",
                                       "conditions", "logic"}
 
 

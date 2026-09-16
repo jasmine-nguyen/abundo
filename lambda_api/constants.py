@@ -351,7 +351,7 @@ ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 # How many pay cycles a one-off bill may be paid back over. 1 = the whole bill is taken
 # back next cycle; 24 = about a year of fortnights (two years monthly). Used by the PUT
 # /budgets/{category}/spread validation here AND, since WHIT-559, by the shared cadence→cycles
-# conversion when a rule auto-smooths a bill — so these are MIRRORED in shared/constants.py, kept
+# conversion when a rule auto-spreads a bill — so these are MIRRORED in shared/constants.py, kept
 # equal by the WHIT-136 constants-sync guard.
 SPREAD_MIN_CYCLES = 1
 SPREAD_MAX_CYCLES = 24

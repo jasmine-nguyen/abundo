@@ -19,7 +19,7 @@ from _rule_fakes import FakeRuleRepo
 
 
 _CLIENT_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
-                "smooth", "smoothAmount", "smoothGapDays", "conditions", "logic"}
+                "spread", "spreadAmount", "spreadGapDays", "conditions", "logic"}
 
 
 def _legacy_row(value="COLES", category_id="groceries"):

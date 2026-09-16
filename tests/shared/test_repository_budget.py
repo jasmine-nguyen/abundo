@@ -497,7 +497,7 @@ def test_clear_spread_strips_a_partial_spread_entry(shared, budget_repo, config_
 
 
 
-# --- set_spread_if_absent: the create-only spread write for rule auto-smooth (WHIT-559) ---------
+# --- set_spread_if_absent: the create-only spread write for rule auto-spread (WHIT-559) ---------
 
 def test_set_spread_if_absent_creates_a_plan_when_the_category_has_a_target_and_none(
         shared, budget_repo, config_item_table):
@@ -557,7 +557,7 @@ def test_set_spread_if_absent_skips_an_absent_category(
 
 def test_set_spread_if_absent_skips_a_rollover_category(
         shared, budget_repo, config_item_table):
-    # A category has rollover OR a spread, never both — don't smooth a rollover category.
+    # A category has rollover OR a spread, never both — don't spread a rollover category.
     table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
     _with_table(budget_repo, table)
 

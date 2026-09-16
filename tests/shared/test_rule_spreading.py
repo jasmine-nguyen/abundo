@@ -1,4 +1,4 @@
-"""Unit tests for SmoothSeeder (shared/rule_smoothing.py) — the shared "seed one bill-spread plan"
+"""Unit tests for SpreadSeeder (shared/rule_spreading.py) — the shared "seed one bill-spread plan"
 side-effect the webhook and the sweep both use (WHIT-559). Driven with tiny fakes so the gate,
 the once-per-run dedup, the lazy pay-cycle read, and the best-effort swallow are exercised directly."""
 
@@ -33,20 +33,20 @@ class _FakeRule:
     def __init__(self):
         self.marked = []
 
-    def mark_smoothed(self, rule_id):
+    def mark_spread_seeded(self, rule_id):
         self.marked.append(rule_id)
 
 
 def _rule(**over):
-    return {"id": "r1", "categoryId": "insurance", "smooth": True, "smoothSeeded": False,
-            "smoothAmount": Decimal("42.50"), "smoothGapDays": 30, **over}
+    return {"id": "r1", "categoryId": "insurance", "spread": True, "spreadSeeded": False,
+            "spreadAmount": Decimal("42.50"), "spreadGapDays": 30, **over}
 
 
 def _seeder(shared, budget, paycycle, rule):
-    return shared.rule_smoothing.SmoothSeeder(budget, paycycle, rule)
+    return shared.rule_spreading.SpreadSeeder(budget, paycycle, rule)
 
 
-def test_seeds_a_smooth_unseeded_rule_and_marks_it(shared):
+def test_seeds_a_spread_unseeded_rule_and_marks_it(shared):
     budget = _FakeBudget(result={"id": "insurance"})
     paycycle, rule_repo = _FakePaycycle(), _FakeRule()
     _seeder(shared, budget, paycycle, rule_repo).seed(_rule())
@@ -57,15 +57,15 @@ def test_seeds_a_smooth_unseeded_rule_and_marks_it(shared):
     assert rule_repo.marked == ["r1"]   # cycles = cadence_cycles(30, 14) = 2
 
 
-def test_a_non_smooth_rule_reads_nothing(shared):
+def test_a_non_spread_rule_reads_nothing(shared):
     budget, paycycle, rule_repo = _FakeBudget(), _FakePaycycle(), _FakeRule()
-    _seeder(shared, budget, paycycle, rule_repo).seed(_rule(smooth=False))
+    _seeder(shared, budget, paycycle, rule_repo).seed(_rule(spread=False))
     assert budget.calls == [] and rule_repo.marked == [] and paycycle.reads == 0
 
 
 def test_an_already_seeded_rule_is_skipped(shared):
     budget, paycycle, rule_repo = _FakeBudget(result={"id": "x"}), _FakePaycycle(), _FakeRule()
-    _seeder(shared, budget, paycycle, rule_repo).seed(_rule(smoothSeeded=True))
+    _seeder(shared, budget, paycycle, rule_repo).seed(_rule(spreadSeeded=True))
     assert budget.calls == [] and paycycle.reads == 0
 
 

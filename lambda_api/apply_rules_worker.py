@@ -18,7 +18,7 @@ from constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
 from handler import (
     _apply_rules_write_phase,
     _as_leaf_rule,
-    _build_rule_smooth_map,
+    _build_rule_spread_map,
     _fetch_windowed_transactions,
     _rule_to_client,
 )
@@ -32,7 +32,7 @@ from repository import (
     RuleRepository,
     TransactionRepository,
 )
-from rule_smoothing import SmoothSeeder
+from rule_spreading import SpreadSeeder
 from repository_job import STATUS_FAILED, STATUS_SUCCEEDED
 from rule_engine import is_unfiled_category, plan_rule_application
 
@@ -80,8 +80,8 @@ def lambda_handler(event: dict, context=None) -> dict:
         rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
         rule_excluded_by_id = {
             rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
-        # The smooth context (WHIT-559) — from the raw rows, since it needs smooth_seeded.
-        rule_smooth_by_id = _build_rule_smooth_map(raw_rules)
+        # The spread context (WHIT-559) — from the raw rows, since it needs spread_seeded.
+        rule_spread_by_id = _build_rule_spread_map(raw_rules)
 
         if inline_rule is not None:
             # File ONLY this shop: mint the rule (idempotent, WHIT-497) then sweep with just it.
@@ -125,8 +125,8 @@ def lambda_handler(event: dict, context=None) -> dict:
             inline_stamp=(created_rule["id"] if inline_rule is not None else None),
             inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
             run_reconcile=(inline_rule is None),
-            rule_smooth_by_id=rule_smooth_by_id,
-            smooth_seeder=SmoothSeeder(budget_repo, paycycle_repo, rule_repo),
+            rule_spread_by_id=rule_spread_by_id,
+            spread_seeder=SpreadSeeder(budget_repo, paycycle_repo, rule_repo),
             max_writes=None, time_budget=None, on_progress=on_progress,
         )
 
