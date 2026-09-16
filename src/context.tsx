@@ -191,6 +191,12 @@ const APPLY_RULES_JOB_POLL_DELAY_MS = 2500;
 // Tolerate this many CONSECUTIVE network throws, then give up so the sheet isn't stuck polling a
 // truly unreachable server. A server `status:"failed"` or a 404 (expired) is terminal immediately.
 const APPLY_RULES_JOB_MAX_NET_ERRORS = 5;
+// WHIT-565: a job stuck at `running` with no advancing progress for this many consecutive polls
+// (~60s at 2500ms) shows a NON-destructive "taking longer than expected" nudge. Generous on
+// purpose: a large history's planning phase reports 0 progress until the whole plan lands, so a
+// smaller window would nag a healthy job. The nudge does NOT stop the poll loop — the job keeps
+// running and the nudge self-clears the moment progress resumes (or a terminal state arrives).
+const APPLY_RULES_JOB_MAX_STALL_POLLS = 24;
 
 // WHIT-292: the batch category write shared by applyCategory('all') and applyCategoryToMany.
 // Chunk the ids under the server's per-request cap (CATEGORY_BATCH_LIMIT), send the chunks
@@ -664,6 +670,7 @@ export interface AppContext {
   // polling — the plain sweep, and the inline "file this shop" / "add rule" variants (which mint a
   // rule and can clash 409). A running job blocks the sync writers above (one heavy run at a time).
   applyRulesJob: ApplyRulesJob | null;
+  applyRulesStalled: boolean;
   startApplyRulesSweep: () => Promise<ApplyRulesJobStart>;
   startFileByShopJob: (group: UncategorizedMerchantGroup, categoryId: string) => Promise<ApplyRulesJobStart>;
   startNewRuleJob: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<ApplyRulesJobStart>;
@@ -844,6 +851,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // writers check it too, so a sync sweep can't start on top of a running job even after the sheet
   // is dismissed (polling stops on dismiss and resumes on reopen; the lock does not).
   const [applyRulesJob, setApplyRulesJob] = useState<ApplyRulesJob | null>(null);
+  // WHIT-565: true when a running job has made no progress for APPLY_RULES_JOB_MAX_STALL_POLLS polls.
+  // A non-terminal hint the job view shows (the job stays `running` and keeps polling); the refs
+  // below drive it — `applyRulesLastProgress` is the last-seen matched:attempted signature.
+  const [applyRulesStalled, setApplyRulesStalled] = useState(false);
+  const applyRulesStallPolls = useRef(0);
+  const applyRulesLastProgress = useRef('');
   const applyRulesJobId = useRef<string | null>(null);
   const applyRulesPollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const applyRulesNetErrors = useRef(0);
@@ -973,7 +986,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // WHIT-560: a lock (or sign-out) unmounts the sheet, so stop polling and drop the job view —
       // the job keeps running server-side; on unlock the reopened sheet previews fresh. Releasing
       // the lock here matches the sheet's own lock→fresh-start model (WHIT-508). WHIT-566: the full
-      // teardown (poll stop + id/net-errors/lock reset) is endApplyRulesJob; drop the view too.
+      // teardown (poll stop + id/net-errors/lock reset, plus the WHIT-565 stall reset) is
+      // endApplyRulesJob; drop the view too.
       endApplyRulesJob();
       setApplyRulesJob(null);
     }
@@ -1668,6 +1682,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     stopApplyRulesPolling();
     applyRulesJobId.current = null;
     applyRulesNetErrors.current = 0;
+    applyRulesStallPolls.current = 0;
+    applyRulesLastProgress.current = '';
+    setApplyRulesStalled(false);
     applyRulesJobActive.current = false;
   }, [stopApplyRulesPolling]);
 
@@ -1717,6 +1734,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       applyRulesNetErrors.current = 0;
       if (job.status === 'running') {
         setApplyRulesJob(job);
+        // WHIT-565: stall nudge. Reset the counter whenever progress advances (and clear any
+        // existing nudge); otherwise count unchanged polls and raise the nudge at the threshold.
+        // Non-destructive — the job keeps polling either way.
+        const progress = `${job.matched}:${job.attempted}`;
+        if (progress !== applyRulesLastProgress.current) {
+          applyRulesLastProgress.current = progress;
+          applyRulesStallPolls.current = 0;
+          setApplyRulesStalled(false);
+        } else {
+          applyRulesStallPolls.current += 1;
+          if (applyRulesStallPolls.current >= APPLY_RULES_JOB_MAX_STALL_POLLS) setApplyRulesStalled(true);
+        }
         applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
         return;
       }
@@ -1748,6 +1777,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // so a failed job can be shown (and retried) from a different sheet than the one that started it.
     applyRulesJobRetryArgs.current = { rule, prependRule };
     applyRulesNetErrors.current = 0;
+    applyRulesStallPolls.current = 0;
+    applyRulesLastProgress.current = '';
+    setApplyRulesStalled(false);
     try {
       const job = await apiStartApplyRulesJob(rule);
       // A teardown during the POST wins. Sign-out bumps sessionEpoch; a Face-ID lock does NOT — it
@@ -1776,12 +1808,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const startNewRuleJob = useCallback(
     (pattern: string, categoryId: string, budgetExcluded = false) =>
       beginApplyRulesJob({ value: pattern.trim(), categoryId, budgetExcluded }, true), [beginApplyRulesJob]);
-  // "Try again" on a failed job re-runs the ORIGINAL variant (sweep / file-this-shop / add-rule),
-  // whichever started it — never a plain sweep by default. The three sheets all call this.
+  // "Try again" re-runs the ORIGINAL variant (sweep / file-this-shop / add-rule), whichever started
+  // it — never a plain sweep by default. The three sheets all call this. It tears the current run
+  // down FIRST (endApplyRulesJob) so it works from BOTH the failed arm and the WHIT-565 stall hint:
+  // a stalled job is still `running` and holds the one-heavy-run lock, which would otherwise refuse
+  // the restart. On an already-terminal (failed) job the teardown is a harmless no-op.
   const retryApplyRulesJob = useCallback((): Promise<ApplyRulesJobStart> => {
     const a = applyRulesJobRetryArgs.current;
-    return a ? beginApplyRulesJob(a.rule, a.prependRule) : Promise.resolve({ ok: false, clash: null });
-  }, [beginApplyRulesJob]);
+    if (!a) return Promise.resolve({ ok: false, clash: null });
+    endApplyRulesJob();
+    return beginApplyRulesJob(a.rule, a.prependRule);
+  }, [endApplyRulesJob, beginApplyRulesJob]);
 
   // WHIT-275: edit one transaction's note and/or tags, mirroring applyCategory's
   // single-transaction path — snapshot the current values, optimistically patch the
@@ -2318,9 +2355,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     requestUncategorizedSelect, clearUncategorizedSelect,
     toggleAlerts: () => setAlerts((a) => !a),
     setPayCycleLength, setPayday,
-    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
+    openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, applyRulesStalled, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones,
     aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights,
-  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
+  }), [alerts, sheet, toast, pendingUncategorizedSelect, readSheetDraft, writeSheetDraft, getSessionEpoch, showToast, requestUncategorizedSelect, clearUncategorizedSelect, setPayCycleLength, setPayday, openPicker, openMultiPicker, openGoalBalance, chooseCategory, applyCategory, applyCategoryToMany, previewRuleApplication, applyRulesToHistory, previewFileByShop, fileByShop, previewNewRule, fileNewRule, applyRulesJob, applyRulesStalled, startApplyRulesSweep, startFileByShopJob, startNewRuleJob, retryApplyRulesJob, applyTransactionEdit, saveBudget, deleteBudget, saveSpread, removeSpread, saveCategory, createCategoryInline, deleteCategory, deleteRule, saveManualRule, updateRule, saveGoal, deleteGoal, saveLoanFacts, saveMilestones, aiInsights, aiInsightsLoading, aiInsightsError, refreshAiInsights, generateAiInsights]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

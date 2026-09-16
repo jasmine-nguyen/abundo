@@ -983,7 +983,7 @@ type ApplyRulesPhase = 'loading' | 'preview' | 'applying' | 'done' | 'stuck' | '
 function ApplyRulesSheet() {
   // The provider's writers are useCallback-stable, so the mount effect below fires exactly once
   // even though the context value's identity changes on every toast.
-  const { previewRuleApplication, applyRulesToHistory, applyRulesJob, startApplyRulesSweep, setSheet, showToast } = useAppContext();
+  const { previewRuleApplication, applyRulesToHistory, applyRulesJob, applyRulesStalled, startApplyRulesSweep, setSheet, showToast } = useAppContext();
   const onRetryJob = useApplyRulesJobRetry();
   const { category } = useCategories();
   const runGuarded = useInFlightGuard();
@@ -1055,7 +1055,7 @@ function ApplyRulesSheet() {
 
   // Once a job is running (or finished), it owns the sheet — its status drives running/done/failed.
   if (applyRulesJob) {
-    return <ApplyRulesJobView job={applyRulesJob} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
+    return <ApplyRulesJobView job={applyRulesJob} stalled={applyRulesStalled} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
   }
 
   if (phase === 'loading' || phase === 'applying') {
@@ -1239,23 +1239,32 @@ function useApplyRulesJobRetry(): () => Promise<void> {
 // in the provider (see useApplyRulesJobRetry), so every host passes the same variant-aware `onRetry`.
 // The status comes from the provider's poll loop; leaving the sheet stops polling but the job keeps
 // running server-side.
-function ApplyRulesJobView({ job, onRetry, onClose }: { job: ApplyRulesJob; onRetry: () => void; onClose: () => void }) {
+function ApplyRulesJobView({ job, stalled, onRetry, onClose }: { job: ApplyRulesJob; stalled: boolean; onRetry: () => void; onClose: () => void }) {
   if (job.status === 'running') {
     // matched is 0 until the worker has planned (the first poll after the POST) — show an
     // indeterminate "Starting…" until then, and a real bar once the denominator lands.
     const pct = job.matched > 0 ? Math.min(100, Math.round((job.filed / job.matched) * 100)) : null;
+    // WHIT-565: a job that has made no progress for a while is not stopped — it keeps running in
+    // the background. Show a reassuring "taking longer" hint plus an optional Try again.
     return (
-      <View testID="apply-rules-job-running">
-        <Text style={styles.confirmTitle}>Filing your charges…</Text>
+      <View testID={stalled ? 'apply-rules-job-stalled' : 'apply-rules-job-running'}>
+        <Text style={styles.confirmTitle}>{stalled ? 'This is taking longer than expected' : 'Filing your charges…'}</Text>
         <Text style={styles.confirmSub}>
-          {job.matched > 0
-            ? `Filed ${job.filed} of ${job.matched} ${chargeNoun(job.matched)}. You can leave — this keeps going in the background.`
-            : 'Starting… you can leave this running in the background.'}
+          {stalled
+            ? 'Still working — a big history can take a while. You can keep waiting, or try again.'
+            : job.matched > 0
+              ? `Filed ${job.filed} of ${job.matched} ${chargeNoun(job.matched)}. You can leave — this keeps going in the background.`
+              : 'Starting… you can leave this running in the background.'}
         </Text>
         {pct !== null && (
           <View testID="apply-rules-job-progress" style={styles.jobProgressTrack}>
             <View style={[styles.jobProgressFill, { width: `${pct}%` }]} />
           </View>
+        )}
+        {stalled && (
+          <Pressable testID="apply-rules-job-stalled-retry" onPress={onRetry} style={[styles.btn, styles.btnPrimary]}>
+            <Text style={styles.btnPrimaryText}>Try again</Text>
+          </Pressable>
         )}
         <ApplyRulesCancel label="Leave running" onPress={onClose} />
       </View>
@@ -1548,7 +1557,7 @@ function FileByShopConfirmSheet() {
   // the value's identity changes on every toast (auto-clears 3.4s later), and a preview built off
   // the whole value would re-fire and snap the sheet back to its spinner. `sheet` only changes when
   // setSheet is called (a toast never touches it), so the memoised `preview` below stays stable.
-  const { sheet, previewFileByShop, fileByShop, applyRulesJob, startFileByShopJob, setSheet, showToast } = useAppContext();
+  const { sheet, previewFileByShop, fileByShop, applyRulesJob, applyRulesStalled, startFileByShopJob, setSheet, showToast } = useAppContext();
   const { category } = useCategories();
   const onRetryJob = useApplyRulesJobRetry();
   const group = sheet?.mode === 'fileByShopConfirm' ? sheet.group : null;
@@ -1566,7 +1575,7 @@ function FileByShopConfirmSheet() {
 
   // WHIT-560: once a background sweep for this shop is running (or finished), it owns the sheet.
   if (applyRulesJob) {
-    return <ApplyRulesJobView job={applyRulesJob} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
+    return <ApplyRulesJobView job={applyRulesJob} stalled={applyRulesStalled} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
   }
 
   return (
@@ -1735,7 +1744,7 @@ function AddRuleConfirmSheet() {
   // Destructure the STABLE context callbacks, NOT the whole value: its identity changes on every
   // toast, and a preview built off it would re-fire and snap the sheet back to its spinner. `sheet`
   // only changes when setSheet is called, so the memoised `preview` below stays stable.
-  const { sheet, previewNewRule, fileNewRule, saveManualRule, applyRulesJob, startNewRuleJob, setSheet, showToast } = useAppContext();
+  const { sheet, previewNewRule, fileNewRule, saveManualRule, applyRulesJob, applyRulesStalled, startNewRuleJob, setSheet, showToast } = useAppContext();
   const { category } = useCategories();
   const onRetryJob = useApplyRulesJobRetry();
   const pattern = sheet?.mode === 'addRuleConfirm' ? sheet.pattern : null;
@@ -1754,7 +1763,7 @@ function AddRuleConfirmSheet() {
 
   // WHIT-560: once the background sweep for this rule is running (or finished), it owns the sheet.
   if (applyRulesJob) {
-    return <ApplyRulesJobView job={applyRulesJob} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
+    return <ApplyRulesJobView job={applyRulesJob} stalled={applyRulesStalled} onRetry={onRetryJob} onClose={() => setSheet(null)} />;
   }
 
   return (
