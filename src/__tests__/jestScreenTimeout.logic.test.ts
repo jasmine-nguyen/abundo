@@ -3,8 +3,8 @@
 // The fix raises the per-test ceiling to 15000ms (from Jest's 5000ms default) for the `screen`
 // project, so heavy full-provider RN-animation suites don't time out under the slow v8-coverage
 // run. The real proof (the sharded-coverage repro) is far too slow to run on every CI merge, so
-// this cheap `logic` test is the backstop: if a future edit removes, lowers, OR comments out the
-// ceiling, the flake comes back silently — this reddens instead.
+// this cheap `logic` test is the backstop: if a future edit removes, lowers, or comments out (via
+// `//` OR a `/* */` block) the ceiling, the flake comes back silently — this reddens instead.
 //
 // WHIT-567: the ceiling is NOT a project-level `testTimeout` in jest.config.js — Jest 30 silently
 // ignores that — it is `jest.setTimeout(15000)` in jest.setup.js, which is the screen project's
@@ -32,17 +32,19 @@ const screen = jestConfig.projects.find((project) => project.displayName === 'sc
 const logic = jestConfig.projects.find((project) => project.displayName === 'logic');
 
 // jest.setup.js is not require-able in this node env (it calls jest.mock / RN globals), so read it
-// as text. Find an ACTIVE jest.setTimeout(...) call: a line whose trimmed form starts with the call
-// (not "//" or "*"), so a commented-out line does NOT satisfy the guard. Returns the ms, or null.
+// as text and find an ACTIVE jest.setTimeout(...) call. Strip /* ... */ block comments first, then
+// // line comments, so the ceiling read as "active" only if it is a live statement — a line
+// disabled by EITHER comment form does NOT satisfy the guard. Returns the ms, or null.
 function activeSetupTimeoutMs(): number | null {
   const source = readFileSync(join(__dirname, '../../jest.setup.js'), 'utf8');
-  for (const rawLine of source.split('\n')) {
-    const line = rawLine.trim();
-    if (line.startsWith('//') || line.startsWith('*')) continue;
-    const match = line.match(/^jest\.setTimeout\(\s*(\d+)\s*\)/);
-    if (match) return Number(match[1]);
+  const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, '');
+  let found: number | null = null;
+  for (const rawLine of withoutComments.split('\n')) {
+    const line = rawLine.replace(/\/\/.*$/, '');
+    const match = line.match(/jest\.setTimeout\(\s*(\d+)\s*\)/);
+    if (match) found = Number(match[1]);
   }
-  return null;
+  return found;
 }
 
 describe('WHIT-567: the 15s screen ceiling lives in the screen-only setup file', () => {
@@ -65,7 +67,9 @@ describe('WHIT-433: the fix is scoped to screen and does not slow the logic gate
   // in jest.setup.js (which would apply the 15s ceiling to it).
   it('the logic project does NOT set an inflated testTimeout', () => {
     expect(logic).toBeDefined();
-    expect(logic?.testTimeout ?? JEST_DEFAULT_TIMEOUT_MS).toBeLessThanOrEqual(JEST_DEFAULT_TIMEOUT_MS);
+    expect(logic?.testTimeout ?? JEST_DEFAULT_TIMEOUT_MS).toBeLessThanOrEqual(
+      JEST_DEFAULT_TIMEOUT_MS,
+    );
   });
 
   it('the logic project does NOT load the screen setup file', () => {
