@@ -1500,6 +1500,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // shrinks the groups.
     if (!opts?.skipRules) queryClient.invalidateQueries({ queryKey: ['rules'] });
     queryClient.invalidateQueries({ queryKey: ['uncategorizedMerchants'] });
+    // WHIT-542: accepting a suggestion mints a rule for that shop (and files its charges), so the
+    // shop no longer reads as a hand-filing habit — refresh the suggestions so it drops off.
+    queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
   }, []);
 
   // WHIT-508: preview what the user's existing rules would file, writing nothing. Lives here

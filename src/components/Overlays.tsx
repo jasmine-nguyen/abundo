@@ -9,7 +9,7 @@ import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FileBySho
 import type { UncategorizedMerchantGroup, RuleCondition, RuleLogic } from '../api';
 import { RULE_FIELD_OPERATORS, RULE_DIRECTIONS, ruleValueIsSafe } from '../ruleVocabulary';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
-import { useTransactionResolver, useCategories, useRulesScreenData, useRecentTransactionsScreenData, usePayCycle, useGoalsQuery, useIsAuthed, useUncategorizedMerchants } from '../queries';
+import { useTransactionResolver, useCategories, useRulesScreenData, useRecentTransactionsScreenData, usePayCycle, useGoalsQuery, useIsAuthed, useUncategorizedMerchants, useFilingSuggestions } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
 // The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
@@ -1316,7 +1316,11 @@ function ApplyRulesJobView({ job, stalled, onRetry, onClose }: { job: ApplyRules
 function FileByShopListSheet() {
   const s = useAppContext();
   const { merchants, isLoading, isError } = useUncategorizedMerchants();
-  const { categories: cats } = useCategories();
+  // WHIT-542: shops the user keeps hand-filing the same way — surfaced here as "make a rule?"
+  // suggestions above the unfiled list. A nudge, never load-bearing: undefined (loading / errored)
+  // just renders nothing, so it never blocks the file-by-shop flow.
+  const { suggestions } = useFilingSuggestions();
+  const { categories: cats, category } = useCategories();
   // Which shop the user tapped: null → the shop list, set → the category tree for that shop.
   const [selectedGroup, setSelectedGroup] = useState<UncategorizedMerchantGroup | null>(null);
   // Folded parents in the category tree (same expand-by-default model as PickerSheet).
@@ -1447,6 +1451,35 @@ function FileByShopListSheet() {
       <Text style={styles.sheetMerchant}>
         {merchants.unfiled} unfiled {chargeNoun(merchants.unfiled)}, grouped by shop. Pick a shop to file all its charges — and make a rule so future ones file themselves.
       </Text>
+      {suggestions && suggestions.length > 0 && (
+        <View testID="filing-suggestions" style={styles.filingSuggestions}>
+          <Text style={styles.filingSuggestionsHeading}>You keep filing these by hand</Text>
+          {suggestions.map((suggestion) => {
+            const suggestedCategory = category(suggestion.categoryId);
+            return (
+              <Pressable
+                key={`suggestion:${suggestion.rulePattern}`}
+                testID="filing-suggestion"
+                onPress={() => s.setSheet({ mode: 'addRuleConfirm', pattern: suggestion.rulePattern, categoryId: suggestion.categoryId, budgetExcluded: false })}
+                style={styles.pickRow}
+              >
+                <View style={styles.fileByShopGroupText}>
+                  <Text style={styles.applyRulesRuleText} numberOfLines={1}>{suggestion.merchant}</Text>
+                  <Text style={styles.applyRulesSample} numberOfLines={1}>
+                    Filed as {suggestedCategory?.name ?? 'a category'} on {suggestion.distinctDays} separate days — make a rule?
+                  </Text>
+                  {suggestion.alsoCatches.length > 0 && (
+                    <Text style={styles.applyRulesSample} numberOfLines={1}>
+                      + would also file {alsoCatchesTotal(suggestion)} from {suggestion.alsoCatches.length} other {suggestion.alsoCatches.length === 1 ? 'shop' : 'shops'}
+                    </Text>
+                  )}
+                </View>
+                <Glyph name="chevron" size={15} color={C.textFaint} />
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
       <ScrollView style={styles.applyRulesScroll}>
         {merchants.groups.map((group) => (
           <Pressable
@@ -1475,8 +1508,9 @@ function FileByShopListSheet() {
   );
 }
 
-/** The charges this group's rule would ALSO sweep from other shops — the over-broad-rule number. */
-function alsoCatchesTotal(group: UncategorizedMerchantGroup): string {
+/** The charges this rule would ALSO sweep from other shops — the over-broad-rule number. Takes any
+ *  payload carrying an `alsoCatches` list (a merchant group OR a filing suggestion, WHIT-542). */
+function alsoCatchesTotal(group: { alsoCatches: { merchant: string | null; count: number }[] }): string {
   const total = group.alsoCatches.reduce((sum, other) => sum + other.count, 0);
   return `${total} ${chargeNoun(total)}`;
 }
@@ -2086,4 +2120,7 @@ const styles = StyleSheet.create({
   sheetBackText: { fontFamily: FONT.body, fontSize: 14, color: C.textMid },
   fileByShopGroupText: { flex: 1 },
   fileByShopCount: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.accentSoft, marginRight: 4 },
+  // WHIT-542: the "make a rule?" suggestions block above the unfiled shop list.
+  filingSuggestions: { marginTop: 14, borderTopWidth: 1, borderTopColor: C.hairline, paddingTop: 8 },
+  filingSuggestionsHeading: { fontFamily: FONT.body, fontSize: 13, fontWeight: '700', color: C.textMid, marginBottom: 2 },
 });

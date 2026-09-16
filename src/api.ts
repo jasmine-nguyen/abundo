@@ -486,6 +486,41 @@ export async function fetchUncategorizedMerchants(): Promise<UncategorizedMercha
   return readJson(response, APPLY_RULES_TIMEOUT_MS);
 }
 
+/** One rule suggested from the user's hand-filing habits (WHIT-542): they have filed `merchant`
+ *  to `categoryId` by hand on `distinctDays` separate days. `rulePattern` is the exact
+ *  `description contains` value the rule would mint from; `alsoCatches` names the other shops that
+ *  rule would sweep out of the still-unfiled charges, so an over-broad rule is visible before
+ *  minting. All fields are server-authored (lambda_api/filing_habits.py). */
+export interface FilingSuggestion {
+  merchant: string;
+  rulePattern: string;
+  categoryId: string;
+  distinctDays: number;
+  alsoCatches: { merchant: string | null; count: number }[];
+}
+
+/** The "suggested rules" payload for the File-by-shop flow: the shops the user has hand-filed the
+ *  same way often enough to be worth a rule, most-filed first. */
+export interface FilingSuggestions {
+  suggestions: FilingSuggestion[];
+}
+
+/**
+ * Fetch the rules suggested from the user's hand-filing habits (WHIT-542). Whole-history server
+ * walk like fetchUncategorizedMerchants, so it gets APPLY_RULES_TIMEOUT_MS, not the 15s default.
+ *
+ * @returns The suggested rules, most-filed first.
+ * @throws If the response status is not OK.
+ */
+export async function fetchFilingSuggestions(): Promise<FilingSuggestions> {
+  const response = await apiFetch(`${API_BASE}/transactions/filing-suggestions`, {
+    headers: await buildHeaders(),
+  }, APPLY_RULES_TIMEOUT_MS);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, APPLY_RULES_TIMEOUT_MS);
+}
+
 /**
  * Fetch the full category taxonomy.
  *

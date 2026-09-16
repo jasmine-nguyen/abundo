@@ -6,8 +6,8 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, UncategorizedMerchants } from './api';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, UncategorizedMerchants, FilingSuggestions } from './api';
 import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
@@ -72,6 +72,11 @@ export const uncategorizedCountKey = ['uncategorizedCount'] as const;
 // refreshAfterApplyRules invalidates in context.tsx after any rule sweep (context imports
 // queryClient directly, not this key, to avoid a circular import), so a filed shop leaves the list.
 export const uncategorizedMerchantsKey = ['uncategorizedMerchants'] as const;
+// Rules suggested from the user's hand-filing habits, behind the "File by shop" screen (WHIT-542).
+// Whole-history server walk. Kept in sync with the literal ['filingSuggestions'] that
+// refreshAfterApplyRules invalidates in context.tsx after any rule sweep, so a shop that just got a
+// rule (or had its charges filed) drops off the suggestions.
+export const filingSuggestionsKey = ['filingSuggestions'] as const;
 // Loan facts (the Settings "Loan details" row + the loan form). Un-windowed flat key,
 // kept in sync with the literal ['loanFacts'] the saveLoanFacts write uses in context.tsx.
 export const loanFactsKey = ['loanFacts'] as const;
@@ -438,6 +443,32 @@ export function useUncategorizedMerchantsQuery(enabled: boolean) {
 export function useUncategorizedMerchants(enabled: boolean = true) {
   const q = useUncategorizedMerchantsQuery(useIsAuthed() && enabled);
   return { merchants: q.data, isLoading: q.isLoading, isError: q.isError };
+}
+
+// WHIT-542: rules suggested from the user's hand-filing habits. Fail loudly on a malformed shape
+// (missing / non-array `suggestions`) so a downstream .map can't crash and a broken payload can't
+// silently render as "no suggestions" over real data.
+export function selectFilingSuggestions(raw: FilingSuggestions): FilingSuggestions {
+  if (!raw || !Array.isArray(raw.suggestions)) {
+    throw new Error(
+      `selectFilingSuggestions: expected a suggestions array from /filing-suggestions, got ${typeof (raw as { suggestions?: unknown } | null)?.suggestions}`);
+  }
+  return raw;
+}
+
+// The suggested rules for the "File by shop" screen (WHIT-542). Longer staleTime (a whole-history
+// server walk, like useUncategorizedMerchantsQuery) so it stays cached during a filing session;
+// refreshAfterApplyRules invalidates it after a sweep so an accepted suggestion leaves the list.
+export function useFilingSuggestionsQuery(enabled: boolean) {
+  return useQuery({ queryKey: filingSuggestionsKey, queryFn: fetchFilingSuggestions, enabled, select: selectFilingSuggestions, staleTime: 5 * 60_000 });
+}
+
+// The suggested rules for the current user — `suggestions` is undefined while loading / errored /
+// pre-auth (a suggestion is a nudge, never load-bearing, so a consumer just shows nothing then).
+// `enabled` defaults on, gated on auth, so it rides the File-by-shop sheet's own visibility.
+export function useFilingSuggestions(enabled: boolean = true) {
+  const q = useFilingSuggestionsQuery(useIsAuthed() && enabled);
+  return { suggestions: q.data?.suggestions, isLoading: q.isLoading, isError: q.isError };
 }
 
 // WHIT-203: the shared category-taxonomy hook. Every screen/overlay that only needs to
