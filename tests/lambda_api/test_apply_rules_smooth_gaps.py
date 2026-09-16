@@ -76,7 +76,7 @@ def test_a_prior_seed_marked_in_the_store_blocks_the_sweep(handler):
     _sweep(handler, WritableFeedRepo({SPENDING: [_origin("t1")]}), rule_repo,
            budget=budget, paycycle=paycycle)
     assert budget.calls == [] and paycycle.reads == 0
-    assert getattr(rule_repo, "smoothed", []) == ["r1"]                 # no second mark
+    assert rule_repo.smoothed == ["r1"]                 # no second mark
 
 
 def test_two_sweeps_over_the_same_store_seed_once(handler):
@@ -86,7 +86,7 @@ def test_two_sweeps_over_the_same_store_seed_once(handler):
     rule_repo = FakeRuleRepo(rules=[_smooth_rule()])
     b1, p1 = FakeBudget(), FakePaycycle()
     _sweep(handler, WritableFeedRepo({SPENDING: [_origin("t1")]}), rule_repo, budget=b1, paycycle=p1)
-    assert len(b1.calls) == 1 and getattr(rule_repo, "smoothed", []) == ["r1"]
+    assert len(b1.calls) == 1 and rule_repo.smoothed == ["r1"]
 
     b2, p2 = FakeBudget(), FakePaycycle()
     _sweep(handler, WritableFeedRepo({SPENDING: [_origin("t2")]}), rule_repo, budget=b2, paycycle=p2)
@@ -108,7 +108,7 @@ def test_the_seed_fires_even_when_the_charge_write_no_ops(handler):
     resp = _sweep(handler, repo, rule_repo, budget=budget)
     body = json.loads(resp["body"])
     assert body["filed"] == [] and body["alreadyFiled"] == ["t1"]             # the write no-oped
-    assert len(budget.calls) == 1 and getattr(rule_repo, "smoothed", []) == ["r1"]            # ...but the bill seeded
+    assert len(budget.calls) == 1 and rule_repo.smoothed == ["r1"]            # ...but the bill seeded
     assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#t1")["category"] == "coffee"  # tap untouched
 
 
@@ -121,11 +121,11 @@ def test_a_none_create_stays_unseeded_and_a_later_run_retries(handler):
     rule_repo = FakeRuleRepo(rules=[_smooth_rule()])
     blocked = FakeBudget(result=None)
     _sweep(handler, WritableFeedRepo({SPENDING: [_origin("t1")]}), rule_repo, budget=blocked)
-    assert blocked.calls and getattr(rule_repo, "smoothed", []) == []           # attempted, not marked
+    assert blocked.calls and rule_repo.smoothed == []           # attempted, not marked
 
     ok = FakeBudget(result={"id": "insurance"})
     _sweep(handler, WritableFeedRepo({SPENDING: [_origin("t2")]}), rule_repo, budget=ok)
-    assert len(ok.calls) == 1 and getattr(rule_repo, "smoothed", []) == ["r1"]  # the retry seeds + marks
+    assert len(ok.calls) == 1 and rule_repo.smoothed == ["r1"]  # the retry seeds + marks
 
 
 # --- a multi-condition (WHIT-541) smooth rule carries smooth through the apply path ---------------
@@ -144,7 +144,7 @@ def test_a_multi_condition_smooth_rule_still_seeds(handler):
     budget = FakeBudget()
     _sweep(handler, repo, rule_repo, budget=budget)
     assert repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#t1")["category"] == "insurance"
-    assert len(budget.calls) == 1 and getattr(rule_repo, "smoothed", []) == ["m1"]
+    assert len(budget.calls) == 1 and rule_repo.smoothed == ["m1"]
 
 
 # --- a smooth rule matching nothing never touches the pay cycle -----------------------------------
@@ -170,7 +170,7 @@ def test_a_budget_excluded_non_smooth_rule_still_files_and_excludes(handler):
     _sweep(handler, repo, rule_repo, budget=budget, paycycle=paycycle)
     row = repo._find_row(f"ACCOUNT#{SPENDING}", "TXN#t1")
     assert row["category"] == "insurance" and row.get("budget_excluded") is True
-    assert budget.calls == [] and paycycle.reads == 0 and getattr(rule_repo, "smoothed", []) == []
+    assert budget.calls == [] and paycycle.reads == 0 and rule_repo.smoothed == []
 
 
 # --- the async worker route (impl suite tested only the sync route) -------------------------------
@@ -223,7 +223,7 @@ def test_worker_seeds_a_smooth_rules_plan_once_and_marks_it(apply_rules_worker, 
     result = worker.lambda_handler({"jobId": "job1"})
 
     assert result["status"] == "succeeded"
-    assert len(budget.calls) == 1 and paycycle.reads == 1 and getattr(rule_repo, "smoothed", []) == ["r1"]
+    assert len(budget.calls) == 1 and paycycle.reads == 1 and rule_repo.smoothed == ["r1"]
     assert job_repo.jobs["job1"]["filed"] == 3
 
 
@@ -236,4 +236,4 @@ def test_worker_with_a_non_smooth_rule_touches_no_budget(apply_rules_worker, mon
         rules=[_smooth_rule(smooth=False)], budget=budget, paycycle=paycycle)
 
     worker.lambda_handler({"jobId": "job1"})
-    assert budget.calls == [] and paycycle.reads == 0 and getattr(rule_repo, "smoothed", []) == []
+    assert budget.calls == [] and paycycle.reads == 0 and rule_repo.smoothed == []

@@ -62,6 +62,7 @@ class FakeRuleRepo:
         self.minted = []  # rows create_rule actually WROTE (a dedup hit does not append)
         self.updated = []  # rows update_rule returned (in-place or moved)
         self.deleted = []  # rule ids delete_rule (and a text-move update) removed
+        self.smoothed = []  # rule ids mark_smoothed flipped smooth_seeded True on
         self.list_calls = 0
 
     def list_rules(self):
@@ -167,5 +168,4 @@ class FakeRuleRepo:
         row = self._rows.get(rule_id)
         if row is not None:
             row["smooth_seeded"] = True
-        self.smoothed = getattr(self, "smoothed", [])
         self.smoothed.append(rule_id)

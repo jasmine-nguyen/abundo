@@ -64,7 +64,7 @@ def test_sweep_seeds_a_smooth_rules_plan_and_marks_it(handler):
     assert len(budget.calls) == 1
     cat, amount, cycles, _from, length, _paydate = budget.calls[0]
     assert (cat, amount, cycles, length) == ("insurance", Decimal("42.50"), 2, 14)
-    assert getattr(rule_repo, "smoothed", []) == ["r1"]
+    assert rule_repo.smoothed == ["r1"]
 
 
 def test_a_smooth_rule_matching_many_charges_seeds_once(handler):
@@ -81,7 +81,7 @@ def test_a_no_op_create_does_not_mark_the_rule(handler):
     repo = WritableFeedRepo({SPENDING: [_origin("t1")]})
     budget = FakeBudget(result=None)
     _, rule_repo = _call(handler, repo, [_smooth_rule()], budget=budget)
-    assert budget.calls and getattr(rule_repo, "smoothed", []) == []
+    assert budget.calls and rule_repo.smoothed == []
 
 
 def test_a_non_smooth_rule_never_touches_budget(handler):
