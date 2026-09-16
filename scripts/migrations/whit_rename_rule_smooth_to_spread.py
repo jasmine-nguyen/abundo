@@ -14,6 +14,8 @@ Lambdas):
     python scripts/migrations/whit_rename_rule_smooth_to_spread.py
 """
 
+# The full set of renamed rule-row attributes. A new smooth*-prefixed field would have to be
+# added here too (nothing else auto-discovers them).
 _RENAMES = {
     "smooth": "spread",
     "smooth_amount": "spread_amount",
@@ -41,7 +43,14 @@ def plan_row(row: dict):
     return set_map, remove
 
 
-def _apply(table, partition_key: str, sk: str, set_map: dict, remove: list) -> None:
+def _apply(table, partition_key: str, sk: str, set_map: dict, remove: list) -> bool:
+    """Rewrite one row's old keys, returning True if written, False if the row had vanished.
+
+    The list-then-rewrite is not atomic, so the write is guarded by ``attribute_exists(pk)`` (like
+    every other rule write): a rule the app deleted between the scan and this update fails the guard
+    and is skipped, rather than being resurrected as a keys-only ghost row by an upsert."""
+    from botocore.exceptions import ClientError
+
     names = {}
     values = {}
     set_clauses = []
@@ -66,10 +75,17 @@ def _apply(table, partition_key: str, sk: str, set_map: dict, remove: list) -> N
         "Key": {"pk": partition_key, "sk": sk},
         "UpdateExpression": " ".join(clauses),
         "ExpressionAttributeNames": names,
+        "ConditionExpression": "attribute_exists(pk)",
     }
     if values:
         kwargs["ExpressionAttributeValues"] = values
-    table.update_item(**kwargs)
+    try:
+        table.update_item(**kwargs)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
+    return True
 
 
 def migrate(repo=None) -> dict:
@@ -85,8 +101,8 @@ def migrate(repo=None) -> dict:
         if plan is None:
             continue
         set_map, remove = plan
-        _apply(table, _PK, row["sk"], set_map, remove)
-        migrated += 1
+        if _apply(table, _PK, row["sk"], set_map, remove):
+            migrated += 1
     return {"scanned": len(rows), "migrated": migrated}
 
 
