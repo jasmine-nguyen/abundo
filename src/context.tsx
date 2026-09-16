@@ -774,10 +774,11 @@ export function toRule(raw: RuleRecord): Rule {
 
 // WHIT-559: a spread rule save can be refused for a spread-specific reason the user can act on —
 // 422 (no recurring bill matches the rule yet) or 409 (the category already has a spread rule).
-// Both writers surface these; anything else falls back to the writer's generic message.
-function ruleWriteErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError && error.status === 422) return "We couldn't find a recurring bill matching this rule";
-  if (error instanceof ApiError && error.status === 409) return 'This category already has a spread rule';
+// Only a write that ACTUALLY requested spread gets this copy: 409/422 mean spread on the rules
+// endpoint today, but gating on `spread` keeps a future non-spread 409/422 from showing spread words.
+function ruleWriteErrorMessage(error: unknown, fallback: string, spread: boolean): string {
+  if (spread && error instanceof ApiError && error.status === 422) return "We couldn't find a recurring bill matching this rule";
+  if (spread && error instanceof ApiError && error.status === 409) return 'This category already has a spread rule';
   return fallback;
 }
 
@@ -2247,7 +2248,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
     } catch (e) {
       patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
-      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not save rule. Please try again.'));
+      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not save rule. Please try again.', spread));
     }
   }, [showToast, patchRules]);
 
@@ -2285,7 +2286,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
     } catch (e) {
       patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
-      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not update rule. Please try again.'));
+      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not update rule. Please try again.', spread));
     }
   }, [showToast, patchRules, refreshAfterApplyRules]);
 
