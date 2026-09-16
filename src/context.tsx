@@ -340,8 +340,10 @@ function normaliseRuleIdentity(pattern: string): string {
   return (pattern ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-// A new/edited rule pattern that clashes with one the user already has.
-export type RuleConflict = { kind: 'duplicate' | 'conflict'; existing: Rule };
+// A new/edited rule that clashes with one the user already has. `duplicate`/`conflict` are the
+// classic single-pattern cases (ruleConflict); `overlap` is the multi-condition case (ruleOverlap) —
+// two DIFFERENT rules that can match one charge and disagree on category (WHIT-562).
+export type RuleConflict = { kind: 'duplicate' | 'conflict' | 'overlap'; existing: Rule };
 
 // The first existing rule whose pattern is identity-equal to `pattern`, or null if none.
 // `duplicate` = same category (a no-op re-add); `conflict` = a different category (the two
@@ -358,6 +360,129 @@ export function ruleConflict(
     if (rule.id === editingId) continue;
     if (normaliseRuleIdentity(rule.pattern) !== target) continue;
     return { kind: rule.categoryId === categoryId ? 'duplicate' : 'conflict', existing: rule };
+  }
+  return null;
+}
+
+// WHIT-562: the pre-save "would these two rules fight?" guard for MULTI-CONDITION rules. A multi
+// rule has no single pattern, so ruleConflict's identity match can't see it — two different-but-
+// overlapping rules (e.g. `COLES AND under $40 → dining` vs `COLES → groceries`) both save, then
+// every charge they both match is left conflicted/unfiled by the server's `decide` (WHIT-355). The
+// builder shows this as a soft warning before saving — it does NOT block.
+//
+// CONSERVATIVE by design (WHIT-562 decision): it flags a clash only when it can PROVE the two rules
+// can co-match one charge, so it never false-blocks a legitimate rule. Text is compared by
+// CONTAINMENT — one value must be a substring of the other — NOT abstract joint-satisfiability, so
+// `COLES` vs `WOOLIES` is NOT flagged (they'd co-match only a contrived "COLES WOOLIES" string).
+// Whatever it misses stays safe: the server never files a conflicted charge, so correctness holds
+// without this guard — it is purely a heads-up.
+
+// Trim + lowercase, mirroring the engine's `_normalise` (shared/rule_engine.py) — the normalisation
+// the literal matcher applies. Deliberately does NOT collapse internal whitespace (unlike
+// normaliseRuleIdentity), so we never claim an overlap the real matcher wouldn't produce.
+function foldRuleMatch(value: string): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+// A rule's match region as a disjunction of conjunctive clauses: "all" (AND) → one clause holding
+// every condition; "any" (OR) → one single-condition clause each. Two rules can co-match iff some
+// clause of one is jointly satisfiable with some clause of the other.
+function ruleClauses(conditions: RuleCondition[], logic: RuleLogic): RuleCondition[][] {
+  return logic === 'any' ? conditions.map((condition) => [condition]) : [conditions];
+}
+
+// A Rule read as (conditions, logic): a multi rule carries them; a classic/single rule reads as one
+// condition from its flat field/operator/pattern (mirrors the engine's `_conditions_of`).
+function ruleClausesOf(rule: Rule): RuleCondition[][] {
+  if (rule.conditions && rule.conditions.length > 0) {
+    return ruleClauses(rule.conditions, rule.logic ?? 'all');
+  }
+  return [[{ field: rule.field ?? 'description', operator: rule.operator ?? 'contains', value: rule.pattern }]];
+}
+
+// Can a single charge's description satisfy every text (description/merchant) condition at once?
+// PROVABLE only by containment: with one `equals` value the charge string IS that value (it must
+// contain every `contains` substring); with only `contains` values one of them must be a superstring
+// of all the others. Non-nested values (`COLES` vs `WOOLIES`) are treated as NOT co-satisfiable.
+function textConditionsSatisfiable(conditions: RuleCondition[]): boolean {
+  if (conditions.some((c) => c.operator !== 'contains' && c.operator !== 'equals')) return false;
+  const equals = [...new Set(conditions.filter((c) => c.operator === 'equals').map((c) => foldRuleMatch(c.value)))];
+  const contains = conditions.filter((c) => c.operator === 'contains').map((c) => foldRuleMatch(c.value));
+  if (equals.length >= 2) return false;
+  if (equals.length === 1) return contains.every((substring) => equals[0].includes(substring));
+  return contains.some((candidate) => contains.every((substring) => candidate.includes(substring)));
+}
+
+// Do the amount conditions' magnitude intervals (abs dollars, mirroring `_amount_matches`) intersect?
+function amountConditionsSatisfiable(conditions: RuleCondition[]): boolean {
+  let low = 0, lowInclusive = true;          // magnitude is >= 0
+  let high = Infinity, highInclusive = true;
+  for (const condition of conditions) {
+    const threshold = Number((condition.value ?? '').trim());
+    if (!Number.isFinite(threshold)) return false; // a non-numeric value never matches
+    if (condition.operator === 'less_than') {
+      if (threshold < high || (threshold === high && highInclusive)) { high = threshold; highInclusive = false; }
+    } else if (condition.operator === 'less_than_or_equal') {
+      if (threshold < high) { high = threshold; highInclusive = true; }
+    } else if (condition.operator === 'greater_than') {
+      if (threshold > low || (threshold === low && lowInclusive)) { low = threshold; lowInclusive = false; }
+    } else if (condition.operator === 'greater_than_or_equal') {
+      if (threshold > low) { low = threshold; lowInclusive = true; }
+    } else {
+      return false; // unknown amount operator never matches
+    }
+  }
+  if (low < high) return true;
+  return low === high && lowInclusive && highInclusive;
+}
+
+// account/category/direction are equality matches: every condition must pin the SAME value, and a
+// value that never matches (empty, or a non-debit/credit direction) makes the clause unsatisfiable.
+function equalityConditionsSatisfiable(conditions: RuleCondition[], normalise: (value: string) => string,
+                                       isMatchable: (value: string) => boolean): boolean {
+  const values = conditions.map((c) => normalise(c.value));
+  if (values.some((value) => !isMatchable(value))) return false;
+  return new Set(values).size <= 1;
+}
+
+// Is there a single charge that satisfies EVERY condition in this AND-clause? Conditions on different
+// charge fields are independent, so the clause is satisfiable iff each field's conditions are — text
+// (description/merchant share the charge description), amount, direction, account, category.
+function clauseSatisfiable(conditions: RuleCondition[]): boolean {
+  const text: RuleCondition[] = [], amount: RuleCondition[] = [], direction: RuleCondition[] = [];
+  const account: RuleCondition[] = [], category: RuleCondition[] = [];
+  for (const condition of conditions) {
+    if (condition.field === 'description' || condition.field === 'merchant') text.push(condition);
+    else if (condition.field === 'amount') amount.push(condition);
+    else if (condition.field === 'direction') direction.push(condition);
+    else if (condition.field === 'account') account.push(condition);
+    else if (condition.field === 'category') category.push(condition);
+    else return false; // an unknown field never matches
+  }
+  if (text.length && !textConditionsSatisfiable(text)) return false;
+  if (amount.length && !amountConditionsSatisfiable(amount)) return false;
+  if (direction.length && !equalityConditionsSatisfiable(direction, foldRuleMatch, (v) => v === 'debit' || v === 'credit')) return false;
+  if (account.length && !equalityConditionsSatisfiable(account, (v) => (v ?? '').trim(), (v) => v.length > 0)) return false;
+  if (category.length && !equalityConditionsSatisfiable(category, foldRuleMatch, (v) => v.length > 0)) return false;
+  return true;
+}
+
+// The first existing rule that can co-match a charge with the candidate rule AND files it to a
+// DIFFERENT category (so the two would fight), or null. `editingId` excludes the rule being edited.
+// Pure + exported so the builder and its tests share it. Returns { kind: 'overlap' } so it slots
+// into the same pending-warning state as ruleConflict.
+export function ruleOverlap(
+  rules: Rule[], conditions: RuleCondition[], logic: RuleLogic, categoryId: string, editingId?: string,
+): RuleConflict | null {
+  const candidateClauses = ruleClauses(conditions, logic);
+  for (const rule of rules) {
+    if (rule.id === editingId) continue;
+    if (rule.categoryId === categoryId) continue; // agrees on category → no fight
+    const existingClauses = ruleClausesOf(rule);
+    const canCoincide = candidateClauses.some(
+      (candidateClause) => existingClauses.some(
+        (existingClause) => clauseSatisfiable([...candidateClause, ...existingClause])));
+    if (canCoincide) return { kind: 'overlap', existing: rule };
   }
   return null;
 }
