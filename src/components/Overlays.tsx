@@ -4,11 +4,12 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, categoryLabel, APPLY_RULES_MAX_WRITES } from '../context';
-import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FileByShopOutcome } from '../context';
-import type { UncategorizedMerchantGroup } from '../api';
+import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, categoryLabel, accountSummaries, APPLY_RULES_MAX_WRITES } from '../context';
+import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FileByShopOutcome, RuleWrite } from '../context';
+import type { UncategorizedMerchantGroup, RuleCondition, RuleLogic } from '../api';
+import { RULE_FIELD_OPERATORS, RULE_DIRECTIONS, ruleValueIsSafe } from '../ruleVocabulary';
 import { useInFlightGuard } from '../hooks/useInFlightGuard';
-import { useTransactionResolver, useCategories, useRulesScreenData, usePayCycle, useGoalsQuery, useIsAuthed, useUncategorizedMerchants } from '../queries';
+import { useTransactionResolver, useCategories, useRulesScreenData, useRecentTransactionsScreenData, usePayCycle, useGoalsQuery, useIsAuthed, useUncategorizedMerchants } from '../queries';
 import { useReduceMotion } from '../motion/useReduceMotion';
 import { springSheetIn, SHEET_ENTER_OFFSET, shouldDismissSheet } from '../motion/sheetMotion';
 // The last_pay_date is an ISO "YYYY-MM-DD" string; these parse/format it via LOCAL
@@ -394,100 +395,182 @@ function ConfirmSheet() {
   );
 }
 
+// WHIT-563 — the multi-condition rule builder. The fields the builder OFFERS: the server also
+// supports `merchant` and `category` (kept for externally-authored rules), but the builder omits
+// them — `merchant` duplicates `description`, and `category` clashes with the "file it as" target
+// picker and matches a raw external taxonomy, not the app's categories.
+const BUILDER_FIELDS = ['description', 'amount', 'account', 'direction'] as const;
+type BuilderField = (typeof BUILDER_FIELDS)[number];
+const FIELD_LABELS: Record<string, string> = {
+  description: 'Description', amount: 'Amount', account: 'Account', direction: 'Type',
+  merchant: 'Merchant', category: 'Category',
+};
+const OPERATOR_LABELS: Record<string, string> = {
+  contains: 'contains', equals: 'is exactly',
+  less_than: 'less than', less_than_or_equal: 'at most',
+  greater_than: 'more than', greater_than_or_equal: 'at least',
+};
+const DIRECTION_LABELS: Record<string, string> = { debit: 'Spending', credit: 'Income' };
+
+type DraftCondition = { field: string; operator: string; value: string };
+type RuleDraft = { conditions: DraftCondition[]; logic: RuleLogic; categoryId: string | null; budgetExcluded: boolean };
+
+// Only the classic single "description contains" rule keeps today's behaviour — the WHIT-538
+// preview/confirm flow for new rules and the pattern-based conflict warning. Anything else saves
+// via the conditions payload (WHIT-563).
+function isClassicSingle(conditions: DraftCondition[]): boolean {
+  return conditions.length === 1 && conditions[0].field === 'description' && conditions[0].operator === 'contains';
+}
+
+// A condition is saveable when its value fits the server's floor for that field (handler.py
+// _validate_condition_value + the contains value floor): a `contains` text value must clear the
+// alphanumeric floor; other text must be non-empty; an amount must be a positive number;
+// account/direction must be chosen.
+function conditionValid(condition: DraftCondition): boolean {
+  const value = condition.value.trim();
+  if (condition.field === 'amount') { const amount = parseAmount(value); return !isNaN(amount) && amount > 0; }
+  if (condition.field === 'direction') return value === 'debit' || value === 'credit';
+  if (condition.field === 'account') return value.length > 0;
+  if (condition.operator === 'contains') return ruleValueIsSafe(value);
+  return value.length > 0;
+}
+
+const ruleBuilderStyles = StyleSheet.create({
+  conditionCard: { backgroundColor: C.cardAlt, borderRadius: 12, borderWidth: 1, borderColor: C.hairline, padding: 12, marginTop: 10 },
+  pillWrap: { flexDirection: 'row', flexWrap: 'wrap' },
+  pill: { paddingVertical: 7, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, marginRight: 8, marginBottom: 8 },
+  pillText: { fontSize: 13, fontFamily: FONT.body },
+  connector: { fontSize: 12, fontFamily: FONT.body, color: C.textDim, marginTop: 12, marginBottom: 2, letterSpacing: 1 },
+  removeRow: { alignSelf: 'flex-end', marginTop: 4 },
+  removeText: { color: C.textDim, fontSize: 12, fontFamily: FONT.body },
+});
+
+function RulePill({ label, selected, onPress, testID }: { label: string; selected: boolean; onPress: () => void; testID?: string }) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      style={[ruleBuilderStyles.pill, { backgroundColor: selected ? tint(C.accentAlt, 0.14) : C.card, borderColor: selected ? C.accent : C.hairline }]}
+    >
+      <Text style={[ruleBuilderStyles.pillText, { color: selected ? C.textBright : C.textMid }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function AddRuleSheet() {
   const s = useAppContext(); // sheet + updateRule + saveManualRule (writers)
   const { rules } = useRulesScreenData();
   const { categories: cats, isLoading: catsLoading, isError: catsError, category } = useCategories();
+  // WHIT-563: the account-condition options — the synced-account SET (live balances) named from the
+  // recent transactions (accountSummaries is the only source of account names), mirroring the goal-
+  // edit picker (app/goal/edit.tsx). The stored condition value is the account_id the engine matches.
+  const { transactions, balances } = useRecentTransactionsScreenData();
+  const accountNameById = new Map(accountSummaries({ transactions }).map((a) => [a.id, a.name]));
+  const accountIds = new Set<string>(accountNameById.keys());
+  for (const b of balances.values()) accountIds.add(b.account_id);
+  const accountOptions = [...accountIds].map((id) => ({ id, name: accountNameById.get(id) ?? id }));
   const sh = s.sheet;
   // ruleId present -> editing an existing rule; prefill from it. The sheet is
-  // keyed on ruleId (see SheetHost), so it remounts per rule and these
-  // initialisers re-run.
+  // keyed on ruleId (see SheetHost), so it remounts per rule and these initialisers re-run.
   const editing = sh?.mode === 'addrule' && sh.ruleId ? rules.find((r) => r.id === sh.ruleId) : undefined;
-  // WHIT-277: survive a Face ID lock — restore any draft stashed before the lock (keyed on the
-  // rule, matching SheetHost's remount key), else fall back to today's prefill. Lazy init runs
-  // once on (re)mount, so the unlock remount reads back the stashed text.
+  // WHIT-277: survive a Face ID lock — restore any draft stashed before the lock, else fall back to
+  // today's prefill. Lazy init runs once on (re)mount, so the unlock remount reads back the stash.
   const draftKey = `addrule:${(sh?.mode === 'addrule' ? sh.ruleId : undefined) ?? 'new'}`;
-  // WHIT-285: persist + restore both fields under one key via the shared hook. The two fields
-  // share one object state so a single draft round-trips; the alias setters keep the JSX below
-  // byte-identical and bail on an unchanged value, so re-selecting the same category writes nothing.
-  // The aliases take a plain value (not a functional updater) — every call site passes one.
-  const [draft, setDraft] = useSheetDraft<{ pattern: string; categoryId: string | null; budgetExcluded: boolean }>(
+  const [draft, setDraft] = useSheetDraft<RuleDraft>(
     draftKey,
-    (stored) => ({
-      pattern: stored?.pattern ?? editing?.pattern ?? '',
-      categoryId: stored?.categoryId ?? editing?.categoryId ?? null,
-      budgetExcluded: stored?.budgetExcluded ?? editing?.budgetExcluded ?? false,
-    }),
+    (stored) => {
+      // WHIT-563: tolerate a pre-migration draft (the old {pattern, categoryId} shape) restored after
+      // an app update mid-edit — treat its pattern as one description-contains row so unlock never
+      // crashes. Otherwise: a stored multi draft > the edited rule's conditions > a synthesised single
+      // row from a flat/legacy rule > one blank row for a brand-new rule.
+      const legacyPattern = (stored as unknown as { pattern?: string } | undefined)?.pattern;
+      const conditions: DraftCondition[] =
+        stored?.conditions?.length ? stored.conditions
+        : legacyPattern != null ? [{ field: 'description', operator: 'contains', value: legacyPattern }]
+        : editing?.conditions?.length ? editing.conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value }))
+        : editing ? [{ field: editing.field ?? 'description', operator: editing.operator ?? 'contains', value: editing.pattern ?? '' }]
+        : [{ field: 'description', operator: 'contains', value: '' }];
+      return {
+        conditions,
+        logic: stored?.logic ?? editing?.logic ?? 'all',
+        categoryId: stored?.categoryId ?? editing?.categoryId ?? null,
+        budgetExcluded: stored?.budgetExcluded ?? editing?.budgetExcluded ?? false,
+      };
+    },
   );
-  const { pattern, categoryId, budgetExcluded } = draft;
-  const setPattern = (value: string) => setDraft((prev) => {
-    if (prev.pattern === value) return prev;
-    return { ...prev, pattern: value };
-  });
-  const setCategoryId = (value: string | null) => setDraft((prev) => {
-    if (prev.categoryId === value) return prev;
-    return { ...prev, categoryId: value };
-  });
-  const setBudgetExcluded = (value: boolean) => setDraft((prev) => {
-    if (prev.budgetExcluded === value) return prev;
-    return { ...prev, budgetExcluded: value };
-  });
+  const { conditions, logic, categoryId, budgetExcluded } = draft;
+  const setCategoryId = (value: string | null) => setDraft((prev) => (prev.categoryId === value ? prev : { ...prev, categoryId: value }));
+  const setBudgetExcluded = (value: boolean) => setDraft((prev) => (prev.budgetExcluded === value ? prev : { ...prev, budgetExcluded: value }));
+  const setLogic = (value: RuleLogic) => setDraft((prev) => (prev.logic === value ? prev : { ...prev, logic: value }));
+  const updateCondition = (index: number, patch: Partial<DraftCondition>) =>
+    setDraft((prev) => ({ ...prev, conditions: prev.conditions.map((c, i) => (i === index ? { ...c, ...patch } : c)) }));
+  const changeField = (index: number, field: string) => {
+    // A field switch resets the operator to that field's default and clears the value (direction
+    // seeds to spending so the row isn't invalid-empty by surprise).
+    const operator = RULE_FIELD_OPERATORS[field][0];
+    updateCondition(index, { field, operator, value: field === 'direction' ? 'debit' : '' });
+  };
+  const addCondition = () => setDraft((prev) => ({ ...prev, conditions: [...prev.conditions, { field: 'description', operator: 'contains', value: '' }] }));
+  const removeCondition = (index: number) =>
+    setDraft((prev) => (prev.conditions.length <= 1 ? prev : { ...prev, conditions: prev.conditions.filter((_, i) => i !== index) }));
   // WHIT-284: once the category list has LOADED, drop a restored/prefilled categoryId that no longer
-  // exists (its category was deleted — e.g. on another device while locked). This clears the (invisible)
-  // dead pill and lets the persist effect re-clean the draft so the dead id can't be re-restored on the
-  // next lock. Gate on `!catsLoading`, NOT cats.length: an EMPTY list is ambiguous (still loading vs the
-  // LAST category was just deleted), and a length gate would miss the last-category case — leaving the
-  // dead id live, the exact bug this fixes. Also gate on `!catsError`: a cold-load ERROR (no cache) also
-  // reports isLoading=false with an empty list, and dropping there would WRONGLY clear a valid id (and
-  // stickily wipe it from the draft) — so only drop on a genuine loaded-OK list, never on a failed one.
-  // Depends on `cats` (not the memoised `category` selector) so it re-fires whenever the list swaps —
-  // an in-session delete must re-run the drop. setCategoryId(null) routes through the hook's persist
-  // effect (WHIT-285), so the dead id is scrubbed from the stored draft too.
+  // exists (its category was deleted — e.g. on another device while locked). Gate on `!catsLoading`
+  // (NOT cats.length: an empty list is ambiguous — the last-category-deleted case would be missed)
+  // and `!catsError` (a cold-load error also reports loaded+empty, and dropping there would wrongly
+  // wipe a valid id). setCategoryId(null) routes through the persist effect so the dead id is
+  // scrubbed from the stored draft too.
   useEffect(() => {
     if (!catsLoading && !catsError && categoryId && !cats.some((c) => c.id === categoryId)) setCategoryId(null);
   }, [catsLoading, catsError, cats, categoryId]);
   // Alphabetical so a newly-created category isn't stranded at the bottom (WHIT-158).
   const categories = [...cats].sort((a, b) => a.name.localeCompare(b.name));
-  // WHIT-284: save is enabled only when the picked id resolves to a REAL category. This alone forbids
-  // submitting a dead id — including in the loading window before the drop effect runs (while loading
-  // the selector can't resolve any id, so save stays disabled until the list arrives; the effect above
-  // still keeps a valid restored id selected so it re-enables the moment the list loads).
-  const canSave = pattern.trim().length > 0 && !!category(categoryId);
-  // WHIT-355: a pending clash with an existing rule. Local (not persisted via useSheetDraft):
-  // it's re-derived on submit, so a Face-ID lock that drops it just re-shows on the next submit.
+  const classic = isClassicSingle(conditions);
+  const primaryValue = conditions[0].value.trim();
+  // WHIT-284: save needs a REAL category; WHIT-563: every condition must be valid for its field.
+  const canSave = !!category(categoryId) && conditions.every(conditionValid);
+  // WHIT-355: a pending clash with an existing rule — only meaningful on the classic single path
+  // (a multi rule has no single pattern; the server's id-keyed store dedups those). Local (not
+  // persisted), so a Face-ID lock that drops it just re-shows on the next submit.
   const [conflict, setConflict] = useState<RuleConflict | null>(null);
-  // Editing either field invalidates a pending conflict decision: clear it so the warning can't
-  // show a stale pattern, and so its Replace button can't clobber a rule the user has moved off.
-  // Doesn't fire after submit (submit sets `conflict` without changing pattern/categoryId).
-  useEffect(() => { if (conflict) setConflict(null); }, [pattern, categoryId]);
-  const write = () => {
-    if (editing) { s.updateRule(editing.id, pattern, categoryId!, budgetExcluded); return; }
-    // WHIT-538: a NEW rule goes through the preview/confirm step, which owns the save itself —
-    // either "mint + file the matching stored charges" or "rule only" (the old saveManualRule
-    // path). Pass the trimmed pattern so the preview and the eventual write see the value the
-    // form validated. Editing an existing rule never re-files history, so it stays a direct save.
-    // The draft survives this transition (drafts clear only when the sheet closes), so "Back"
-    // from the confirm step restores the typed pattern + category.
-    s.setSheet({ mode: 'addRuleConfirm', pattern: pattern.trim(), categoryId: categoryId!, budgetExcluded });
+  // Editing the conditions/category invalidates a pending conflict decision: clear it so the warning
+  // can't show a stale pattern or clobber a rule the user has moved off.
+  const conditionsKey = JSON.stringify(conditions);
+  useEffect(() => { if (conflict) setConflict(null); }, [conditionsKey, categoryId]);
+
+  const writeClassic = () => {
+    if (editing) { s.updateRule(editing.id, primaryValue, categoryId!, budgetExcluded); return; }
+    // WHIT-538: a NEW classic rule goes through the preview/confirm step, which owns the save.
+    s.setSheet({ mode: 'addRuleConfirm', pattern: primaryValue, categoryId: categoryId!, budgetExcluded });
+  };
+  const writeMulti = () => {
+    const cleaned: RuleCondition[] = conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value.trim() }));
+    const write: RuleWrite = { conditions: cleaned, logic };
+    // WHIT-563: a multi-condition new rule saves directly (the preview/confirm chain is pattern-only).
+    if (editing) s.updateRule(editing.id, cleaned[0].value, categoryId!, budgetExcluded, write);
+    else s.saveManualRule(cleaned[0].value, categoryId!, budgetExcluded, write);
   };
   const submit = () => {
     if (!canSave) return;
-    // Stop a silent duplicate/clashing rule (WHIT-355): warn instead of minting a second row.
-    const found = ruleConflict(rules, pattern, categoryId!, editing?.id);
-    if (found) { setConflict(found); return; }
-    write();
+    if (classic) {
+      // Stop a silent duplicate/clashing rule (WHIT-355): warn instead of minting a second row.
+      const found = ruleConflict(rules, primaryValue, categoryId!, editing?.id);
+      if (found) { setConflict(found); return; }
+      writeClassic();
+      return;
+    }
+    writeMulti();
   };
-  // Replace is only offered when CREATING (editing is undefined): retarget the existing rule to
-  // the new pattern + category, so exactly one row survives. On the edit path a "replace" would
-  // change the OTHER rule and strand the one being edited, so edit clashes are warn + cancel only.
-  const replace = () => { if (conflict) s.updateRule(conflict.existing.id, pattern, categoryId!, budgetExcluded); };
+  // Replace is only offered when CREATING a classic rule: retarget the existing rule so exactly one
+  // row survives. On the edit path a "replace" would strand the rule being edited, so edit clashes
+  // are warn + cancel only.
+  const replace = () => { if (conflict) s.updateRule(conflict.existing.id, primaryValue, categoryId!, budgetExcluded); };
   const existingName = conflict ? (category(conflict.existing.categoryId)?.name ?? 'another category') : '';
   const conflictBlock = () => {
     if (!conflict) return null;
     if (editing) {
       return (
         <View style={styles.ruleConflict} testID="rule-conflict">
-          <Text style={styles.ruleConflictText}>Another rule already matches “{pattern.trim()}”. Edit or delete that rule instead.</Text>
+          <Text style={styles.ruleConflictText}>Another rule already matches “{primaryValue}”. Edit or delete that rule instead.</Text>
           <Pressable testID="rule-conflict-ok" onPress={() => setConflict(null)} style={[styles.btn, styles.btnGhost, { marginTop: 12 }]}>
             <Text style={styles.btnGhostText}>OK</Text>
           </Pressable>
@@ -497,7 +580,7 @@ function AddRuleSheet() {
     if (conflict.kind === 'duplicate') {
       return (
         <View style={styles.ruleConflict} testID="rule-conflict">
-          <Text style={styles.ruleConflictText}>You already have a rule for “{pattern.trim()}”.</Text>
+          <Text style={styles.ruleConflictText}>You already have a rule for “{primaryValue}”.</Text>
           <Pressable testID="rule-conflict-ok" onPress={() => s.setSheet(null)} style={[styles.btn, styles.btnGhost, { marginTop: 12 }]}>
             <Text style={styles.btnGhostText}>OK</Text>
           </Pressable>
@@ -506,7 +589,7 @@ function AddRuleSheet() {
     }
     return (
       <View style={styles.ruleConflict} testID="rule-conflict">
-        <Text style={styles.ruleConflictText}>“{pattern.trim()}” already files as {existingName}.</Text>
+        <Text style={styles.ruleConflictText}>“{primaryValue}” already files as {existingName}.</Text>
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
           <Pressable testID="rule-conflict-replace" onPress={replace} style={[styles.btn, { flex: 1, backgroundColor: C.accent }]}>
             <Text style={[styles.btnPrimaryText, { color: C.accentInk }]}>Replace</Text>
@@ -518,20 +601,112 @@ function AddRuleSheet() {
       </View>
     );
   };
-  return (
-    <View>
-      <Text style={styles.sheetTitle}>{editing ? 'Edit rule' : 'New rule'}</Text>
-      <Text style={styles.fieldLabel}>WHEN DESCRIPTION CONTAINS</Text>
+
+  const renderValueControl = (condition: DraftCondition, index: number) => {
+    if (condition.field === 'amount') {
+      return (
+        <TextInput
+          value={condition.value}
+          onChangeText={(t) => updateCondition(index, { value: t })}
+          keyboardType="decimal-pad"
+          placeholder="e.g. 30"
+          placeholderTextColor={C.placeholder}
+          style={[styles.input, { marginTop: 8 }]}
+          testID={`rule-value-${index}`}
+        />
+      );
+    }
+    if (condition.field === 'direction') {
+      return (
+        <View style={[ruleBuilderStyles.pillWrap, { marginTop: 8 }]}>
+          {RULE_DIRECTIONS.map((dir) => (
+            <RulePill key={dir} label={DIRECTION_LABELS[dir]} selected={condition.value === dir} onPress={() => updateCondition(index, { value: dir })} testID={`rule-direction-${index}-${dir}`} />
+          ))}
+        </View>
+      );
+    }
+    if (condition.field === 'account') {
+      const options = accountOptions.some((o) => o.id === condition.value) || !condition.value
+        ? accountOptions
+        : [...accountOptions, { id: condition.value, name: accountNameById.get(condition.value) ?? condition.value }];
+      if (options.length === 0) {
+        return <Text style={[styles.cycleSectionHint, { marginTop: 8 }]}>No linked accounts yet.</Text>;
+      }
+      return (
+        <View style={[ruleBuilderStyles.pillWrap, { marginTop: 8 }]}>
+          {options.map((opt) => (
+            <RulePill key={opt.id} label={opt.name} selected={condition.value === opt.id} onPress={() => updateCondition(index, { value: opt.id })} testID={`rule-account-${index}-${opt.id}`} />
+          ))}
+        </View>
+      );
+    }
+    // description / merchant / category — a text value.
+    return (
       <TextInput
-        value={pattern}
-        onChangeText={setPattern}
+        value={condition.value}
+        onChangeText={(t) => updateCondition(index, { value: t })}
         autoCapitalize="characters"
         placeholder="e.g. NETFLIX"
         placeholderTextColor={C.placeholder}
-        style={styles.input}
+        style={[styles.input, { marginTop: 8 }]}
+        testID={`rule-value-${index}`}
       />
+    );
+  };
+
+  const renderCondition = (condition: DraftCondition, index: number) => {
+    const fieldOptions: string[] = BUILDER_FIELDS.includes(condition.field as BuilderField) ? [...BUILDER_FIELDS] : [...BUILDER_FIELDS, condition.field];
+    const operators = RULE_FIELD_OPERATORS[condition.field] ?? [];
+    return (
+      <View key={index} style={ruleBuilderStyles.conditionCard} testID={`rule-condition-${index}`}>
+        <View style={ruleBuilderStyles.pillWrap}>
+          {fieldOptions.map((field) => (
+            <RulePill key={field} label={FIELD_LABELS[field] ?? field} selected={condition.field === field} onPress={() => changeField(index, field)} testID={`rule-field-${index}-${field}`} />
+          ))}
+        </View>
+        {operators.length > 1 && (
+          <View style={[ruleBuilderStyles.pillWrap, { marginTop: 4 }]}>
+            {operators.map((operator) => (
+              <RulePill key={operator} label={OPERATOR_LABELS[operator] ?? operator} selected={condition.operator === operator} onPress={() => updateCondition(index, { operator })} testID={`rule-op-${index}-${operator}`} />
+            ))}
+          </View>
+        )}
+        {renderValueControl(condition, index)}
+        {conditions.length > 1 && (
+          <Pressable testID={`rule-remove-${index}`} onPress={() => removeCondition(index)} style={ruleBuilderStyles.removeRow}>
+            <Text style={ruleBuilderStyles.removeText}>Remove</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  };
+
+  return (
+    <View>
+      <Text style={styles.sheetTitle}>{editing ? 'Edit rule' : 'New rule'}</Text>
+      <Text style={styles.fieldLabel}>WHEN A CHARGE MATCHES</Text>
+      <ScrollView style={{ maxHeight: 300 }}>
+        {conditions.map((condition, index) => (
+          <View key={index}>
+            {index > 0 && <Text style={ruleBuilderStyles.connector}>{logic === 'all' ? 'AND' : 'OR'}</Text>}
+            {renderCondition(condition, index)}
+          </View>
+        ))}
+      </ScrollView>
+      <Pressable testID="rule-add-condition" onPress={addCondition} style={[styles.btn, styles.btnGhost, { marginTop: 10 }]}>
+        <Text style={styles.btnGhostText}>+ Add condition</Text>
+      </Pressable>
+      {conditions.length > 1 && (
+        <>
+          <Text style={[styles.fieldLabel, { marginTop: 14 }]}>MATCH</Text>
+          <View style={[ruleBuilderStyles.pillWrap, { marginTop: 6 }]}>
+            <RulePill label="All conditions" selected={logic === 'all'} onPress={() => setLogic('all')} testID="rule-logic-all" />
+            <RulePill label="Any condition" selected={logic === 'any'} onPress={() => setLogic('any')} testID="rule-logic-any" />
+          </View>
+        </>
+      )}
       <Text style={[styles.fieldLabel, { marginTop: 14 }]}>FILE IT AS</Text>
-      <ScrollView style={{ maxHeight: 220, marginTop: 6 }}>
+      <ScrollView style={{ maxHeight: 200, marginTop: 6 }}>
         <View style={styles.ruleCatWrap}>
           {categories.map((c) => {
             const sel = categoryId === c.id;

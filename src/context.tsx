@@ -4,7 +4,7 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -114,7 +114,11 @@ export interface Transaction {
 // server facts (default description/contains for app-authored rules) so a rule
 // surfaced from BankSync renders truthfully. `isNew` flags the "NEW" badge and
 // is client-only (server rules load as isNew:false).
-export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; }
+export interface Rule { id: string; pattern: string; categoryId: string; isNew: boolean; field?: string; operator?: string; budgetExcluded?: boolean; conditions?: RuleCondition[] | null; logic?: RuleLogic | null; }
+// WHIT-563: the multi-condition payload a rule writer sends when the builder produced more than a
+// plain "description contains" rule. Absent on the classic single-condition path (which stays a
+// flat value write, preserving the WHIT-538 preview flow and pattern-based conflict detection).
+export interface RuleWrite { conditions: RuleCondition[]; logic: RuleLogic; }
 // WHIT-539: the line shown when a rule auto-filed a charge but there is no readable
 // merchant text to name it — a rule that matched on category type (its pattern is a raw
 // enum, not human text), or a stamp whose rule was since renamed/deleted (a dangling id).
@@ -541,8 +545,8 @@ export interface AppContext {
   createCategoryInline: (form: { name: string; bucket: Bucket; icon: string; parent?: string | null }, opts?: { silent?: boolean }) => Promise<Category | null>;
   deleteCategory: (id: string) => Promise<boolean>;
   deleteRule: (id: string) => Promise<void>;
-  saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<void>;
-  updateRule: (id: string, pattern: string, categoryId: string, budgetExcluded?: boolean) => Promise<void>;
+  saveManualRule: (pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite) => Promise<void>;
+  updateRule: (id: string, pattern: string, categoryId: string, budgetExcluded?: boolean, write?: RuleWrite) => Promise<void>;
   saveGoal: (editId: string | null, body: GoalWriteBody) => Promise<boolean>;
   deleteGoal: (id: string) => Promise<boolean>;
   saveLoanFacts: (next: LoanFactsInput) => Promise<boolean>;
@@ -626,7 +630,7 @@ export function spreadPreview(amount: number, cycles: number): { cushion: number
 // (what the list renders); loaded rules are never "new". Module-level + exported
 // (WHIT-195) so the ['rules'] query's selectRules reuses the exact same mapping.
 export function toRule(raw: RuleRecord): Rule {
-  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded };
+  return { id: raw.id, pattern: raw.value, categoryId: raw.categoryId, isNew: false, field: raw.field, operator: raw.operator, budgetExcluded: raw.budgetExcluded, conditions: raw.conditions, logic: raw.logic };
 }
 
 const Ctx = createContext<AppContext | null>(null);
@@ -2023,14 +2027,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
   // not upper-cased) so both rule-creation paths POST a consistent `value`.
-  const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false) => {
-    const value = pattern.trim();
+  const saveManualRule = useCallback(async (pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite) => {
+    // WHIT-563: a multi-condition rule has no single pattern — its stored value is the first
+    // condition's value (what the server derives too), so both paths key the optimistic row + toast
+    // off `value`.
+    const value = write ? write.conditions[0].value : pattern.trim();
     if (!value || !categoryId) return;
     // WHIT-192: the toast copy needs the category name — sourced from the ['categories']
     // query cache the screens read, not a store useState.
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
     const tempRuleId = 'tmp-' + Date.now();
-    patchRules((prev) => [{ id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded }, ...prev]);
+    const optimistic: Rule = write
+      ? { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
+      : { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded };
+    patchRules((prev) => [optimistic, ...prev]);
     setSheet(null);
     if (c) showToast(`Rule added — ${value} files as ${c.name}.`);
     // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
@@ -2039,7 +2049,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // charge changes category here, so ['uncategorizedCount'] is intentionally NOT invalidated. Any later
     // bank-side re-tag arrives via the webhook, already covered by the count's staleTime + pull-to-refresh.
     try {
-      const created = await createRule({ value, categoryId, budgetExcluded });
+      const created = await createRule(write ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded } : { value, categoryId, budgetExcluded });
       // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
       // false for the load path, where rules genuinely aren't new).
       patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
@@ -2052,14 +2062,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
   // failure. The rule's field/operator are preserved (passed through) so a
   // non-default rule isn't silently reset to description/contains.
-  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false) => {
-    const value = pattern.trim();
+  const updateRule = useCallback(async (id: string, pattern: string, categoryId: string, budgetExcluded = false, write?: RuleWrite) => {
+    const value = write ? write.conditions[0].value : pattern.trim();
     if (!value || !categoryId) return;
     // WHIT-192: source the `before` snapshot (for rollback) + the category name from the
     // query caches the screens read, not store useStates.
     const before = queryClient.getQueryData<Rule[]>(['rules'])?.find((r) => r.id === id);
     if (!before) return;
-    patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, pattern: value, categoryId, budgetExcluded } : r)));
+    // WHIT-563: carry conditions/logic on a multi edit; explicitly null them on a classic edit so an
+    // edit that reduces a multi rule to one condition doesn't leave stale rows on the optimistic copy
+    // (the server settle replaces the row wholesale, but the interim must be consistent too).
+    const patch = write
+      ? { pattern: value, categoryId, budgetExcluded, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
+      : { pattern: value, categoryId, budgetExcluded, conditions: null, logic: null };
+    patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
     setSheet(null);
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
     if (c) showToast(`Rule updated — ${value} files as ${c.name}.`);
@@ -2070,7 +2086,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // reads DO move — refresh the count, feed, budgets and merchant groups. `skipRules` leaves the
     // ['rules'] cache alone: the optimistic edit above already patched this rule's row.
     try {
-      const saved = await apiUpdateRule(id, { value, categoryId, field: before.field, operator: before.operator, budgetExcluded });
+      const saved = await apiUpdateRule(id, write
+        ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded }
+        : { value, categoryId, field: before.field, operator: before.operator, budgetExcluded });
       patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
       if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
     } catch {

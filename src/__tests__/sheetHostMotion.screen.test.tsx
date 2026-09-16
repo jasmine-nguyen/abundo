@@ -341,15 +341,16 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
   });
 
   describe('WHIT-285 — AddRule two-field object collapse + guarded alias setters', () => {
-    // [B1] The object-merge: changing categoryId must keep the sibling `pattern` in the SAME draft.
-    // A non-merge setter (setDraft({ categoryId: value })) would drop `pattern` from the persisted
-    // object — this pins {...prev, categoryId: value}.
+    // [B1] The object-merge: changing categoryId must keep the sibling condition rows in the SAME
+    // draft. A non-merge setter (setDraft({ categoryId: value })) would drop `conditions` from the
+    // persisted object — this pins {...prev, categoryId: value}. (WHIT-563: the draft now holds a
+    // `conditions` array + `logic`, not a flat `pattern`.)
     it('[B1] selecting a category after typing a pattern persists BOTH fields (merge, no clobber)', () => {
       render(<Overlays />);
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'SPOTIFY');
       fireEvent.press(screen.getByText('Groceries'));
 
-      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'SPOTIFY', categoryId: 'groceries', budgetExcluded: false });
+      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false });
       // the live field still reflects it — the collapse didn't decouple state from the input
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY');
     });
@@ -361,7 +362,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
       fireEvent.press(screen.getByText('Subscriptions'));
       fireEvent.changeText(screen.getByPlaceholderText(RULE_INPUT), 'NETFLIX');
 
-      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'NETFLIX', categoryId: 'subs', budgetExcluded: false });
+      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'NETFLIX' }], logic: 'all', categoryId: 'subs', budgetExcluded: false });
     });
 
     // [B3] The guarded bailout: re-tapping the ALREADY-selected pill returns `prev` unchanged, so
@@ -379,7 +380,7 @@ describe('AddRule two-field object collapse (WHIT-285)', () => {
 
       expect(writeSheetDraft.mock.calls.length).toBe(writesBefore); // no rewrite
       expect(store.get(DRAFT_KEY)).toBe(draftBefore);               // same reference, not a fresh equal object
-      expect(store.get(DRAFT_KEY)).toEqual({ pattern: 'SPOTIFY', categoryId: 'groceries', budgetExcluded: false });
+      expect(store.get(DRAFT_KEY)).toEqual({ conditions: [{ field: 'description', operator: 'contains', value: 'SPOTIFY' }], logic: 'all', categoryId: 'groceries', budgetExcluded: false });
       expect(screen.getByPlaceholderText(RULE_INPUT).props.value).toBe('SPOTIFY'); // sibling field intact
     });
   });

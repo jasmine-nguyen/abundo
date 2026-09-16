@@ -243,7 +243,7 @@ it('[WHIT-491] applyCategory(all) rolls back ONLY the spelling whose rule save f
   const westpac = merchantTxn('t2', 'UNIFLEXREMEDIALMASSAGE', 'UNIFLEXREMEDIALMASSAGE');
   mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
     if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
-    return { id: 'r-anz', field: 'description', operator: 'contains', value, categoryId };
+    return { id: 'r-anz', field: 'description', operator: 'contains', value: value ?? '', categoryId };
   });
   const result = mount([anz, westpac]);
   queryClient.setQueryData(['rules'], []);
@@ -414,7 +414,7 @@ it('[WHIT-491][QA1] with 3 minted rules, a MIDDLE rejection removes exactly its 
   const c = merchantTxn('t3', 'UNIFLEX REMEDIALMASSAGE', 'UNIFLEX REMEDIALMASSAGE');
   mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
     if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom'); // the MIDDLE mint
-    return { id: `r-${value}`, field: 'description', operator: 'contains', value, categoryId };
+    return { id: `r-${value}`, field: 'description', operator: 'contains', value: value ?? '', categoryId };
   });
   const result = mount([a, b, c]);
   queryClient.setQueryData(['rules'], []);
@@ -467,7 +467,7 @@ it('[WHIT-491][QA3] charge-batch partial failure + a rule rejection → only the
   // ...and the westpac spelling's rule save also rejects.
   mockApi.createRule.mockImplementation(async ({ value, categoryId }) => {
     if (value === 'UNIFLEXREMEDIALMASSAGE') throw new Error('boom');
-    return { id: `r-${value}`, field: 'description', operator: 'contains', value, categoryId };
+    return { id: `r-${value}`, field: 'description', operator: 'contains', value: value ?? '', categoryId };
   });
   const result = mount([anz, westpac]);
   queryClient.setQueryData(['rules'], []);
