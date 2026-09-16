@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint, fmt2 } from '../theme';
 import { Icon, Glyph } from '../icons';
-import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, categoryLabel, accountSummaries, APPLY_RULES_MAX_WRITES } from '../context';
+import { useAppContext, merchantLabel, categoryTreeRows, ruleConflict, ruleOverlap, categoryLabel, accountSummaries, APPLY_RULES_MAX_WRITES } from '../context';
 import type { RuleConflict, ApplyRulesResult, ApplyRulesJob, Category, FileByShopOutcome, RuleWrite } from '../context';
 import type { UncategorizedMerchantGroup, RuleCondition, RuleLogic } from '../api';
 import { RULE_FIELD_OPERATORS, RULE_DIRECTIONS, ruleValueIsSafe } from '../ruleVocabulary';
@@ -542,13 +542,19 @@ function AddRuleSheet() {
     // WHIT-538: a NEW classic rule goes through the preview/confirm step, which owns the save.
     s.setSheet({ mode: 'addRuleConfirm', pattern: primaryValue, categoryId: categoryId!, budgetExcluded });
   };
+  // The conditions as the server stores them: trimmed values, field/operator only. Shared by the
+  // overlap check (submit) and the write (writeMulti) so the two can't drift.
+  const cleanedConditions = (): RuleCondition[] =>
+    conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value.trim() }));
   const writeMulti = () => {
-    const cleaned: RuleCondition[] = conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value.trim() }));
+    const cleaned = cleanedConditions();
     const write: RuleWrite = { conditions: cleaned, logic };
     // WHIT-563: a multi-condition new rule saves directly (the preview/confirm chain is pattern-only).
     if (editing) s.updateRule(editing.id, cleaned[0].value, categoryId!, budgetExcluded, write);
     else s.saveManualRule(cleaned[0].value, categoryId!, budgetExcluded, write);
   };
+  // WHIT-562: the user chose to save despite the overlap warning — clear it and save.
+  const saveMultiAnyway = () => { setConflict(null); writeMulti(); };
   const submit = () => {
     if (!canSave) return;
     if (classic) {
@@ -558,6 +564,11 @@ function AddRuleSheet() {
       writeClassic();
       return;
     }
+    // WHIT-562: a multi rule has no single pattern to identity-match, so warn (don't block) when it
+    // can co-match a charge with an existing rule that files elsewhere — those charges would sit
+    // unfiled. Conservative: only fires on a provable overlap, so it never blocks a valid rule.
+    const overlap = ruleOverlap(rules, cleanedConditions(), logic, categoryId!, editing?.id);
+    if (overlap) { setConflict(overlap); return; }
     writeMulti();
   };
   // Replace is only offered when CREATING a classic rule: retarget the existing rule so exactly one
@@ -567,6 +578,24 @@ function AddRuleSheet() {
   const existingName = conflict ? (category(conflict.existing.categoryId)?.name ?? 'another category') : '';
   const conflictBlock = () => {
     if (!conflict) return null;
+    if (conflict.kind === 'overlap') {
+      // WHIT-562: a soft warning — the user can save anyway. Names the category the existing rule
+      // files as, so the clash is concrete.
+      const overlapName = category(conflict.existing.categoryId)?.name ?? 'another category';
+      return (
+        <View style={styles.ruleConflict} testID="rule-overlap">
+          <Text style={styles.ruleConflictText}>This can clash with a rule that files as {overlapName}. Charges matching both may stay unfiled.</Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <Pressable testID="rule-overlap-save" onPress={saveMultiAnyway} style={[styles.btn, { flex: 1, backgroundColor: C.accent }]}>
+              <Text style={[styles.btnPrimaryText, { color: C.accentInk }]}>Save anyway</Text>
+            </Pressable>
+            <Pressable testID="rule-overlap-cancel" onPress={() => setConflict(null)} style={[styles.btn, styles.btnGhost, { flex: 1 }]}>
+              <Text style={styles.btnGhostText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      );
+    }
     if (editing) {
       return (
         <View style={styles.ruleConflict} testID="rule-conflict">
