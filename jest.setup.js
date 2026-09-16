@@ -2,6 +2,14 @@
 // component tests can render without a device/simulator.
 /* eslint-disable @typescript-eslint/no-var-requires */
 
+// WHIT-433 / WHIT-567: raise the per-test ceiling to 15s for the SCREEN project only.
+// This file is the screen project's setupFilesAfterEnv (jest.config.js), so jest.setTimeout here
+// scopes the ceiling to screen tests while the fast `logic` project stays at Jest's 5s default.
+// A project-level `testTimeout` is silently ignored under Jest 30 (the old jest.config.js home);
+// jest.setTimeout in setupFilesAfterEnv is honoured. Drop or lower this and the heavy full-provider
+// screen suites red under the sharded coverage run (fail-on-revert; see jestScreenTimeout.logic.test.ts).
+jest.setTimeout(15000);
+
 // The date picker is a native view; render a lightweight stand-in that still fires
 // onChange, so the pay-cycle sheet can be tested headlessly.
 jest.mock('@react-native-community/datetimepicker', () => {
