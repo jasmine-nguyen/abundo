@@ -173,6 +173,13 @@ ROLLOVER_SETTLE_LAG_DAYS = 10
 # long-gap read; older leftovers are dropped and the anchor jumps forward.
 ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 
+# How many pay cycles a bill spread may be paid back over (WHIT-504). 1 = the whole bill next
+# cycle; 24 ≈ a year of fortnights. Shared (WHIT-559) so a rule auto-smoothing a bill can convert a
+# cadence to a cycles count on BOTH the webhook and the sweep; mirrored in lambda_api/constants.py
+# (the PUT /budgets/{category}/spread validation), kept equal by the WHIT-136 constants-sync guard.
+SPREAD_MIN_CYCLES = 1
+SPREAD_MAX_CYCLES = 24
+
 # API Gateway route path for the read API that the abundo app calls.
 TRANSACTION_PATH = "/transactions"
 # All-accounts transactions feed route (Load More over full history). Consumed only by

@@ -134,7 +134,10 @@ _REGISTRY = [
          _API_TESTS / "test_recurring_bills_gaps.py",
          # WHIT-559: the smooth-rule route suite seeds charges via _row for the create-time capture.
          _API_TESTS / "test_rules_routes_smooth.py",
-         _API_TESTS / "test_rules_routes_smooth_gaps.py"),
+         _API_TESTS / "test_rules_routes_smooth_gaps.py",
+         _API_TESTS / "test_apply_rules_smooth.py",
+         # WHIT-559 PR2a gap suite: sweep + async-worker auto-smoothing edges.
+         _API_TESTS / "test_apply_rules_smooth_gaps.py"),
     ),
     _Domain(
         "rule",
@@ -173,6 +176,8 @@ _REGISTRY = [
          _API_TESTS / "test_enrichments_routes_removed.py",
          _API_TESTS / "test_rules_routes_smooth.py",
          _API_TESTS / "test_rules_routes_smooth_gaps.py",
+         _API_TESTS / "test_apply_rules_smooth.py",
+         _API_TESTS / "test_apply_rules_smooth_gaps.py",
          _SHARED_TESTS / "test_rule_fake_contract_gaps.py"),
     ),
     _Domain(

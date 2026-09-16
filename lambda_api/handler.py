@@ -87,6 +87,7 @@ from repository import (
 )
 from repository_job import STATUS_RUNNING, STATUS_FAILED
 from repository_rule import rule_identity
+from rule_smoothing import SmoothSeeder
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
 from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
@@ -204,7 +205,8 @@ def lambda_handler(event, context):
         # routes; the PATCH "/transactions/{id}" branch is method-gated and never sees a POST.
         if path == UNCATEGORIZED_APPLY_RULES_PATH and method == "POST":
             return apply_rules_to_uncategorized(
-                event, TransactionRepository(), CategoryRepository(), RuleRepository())
+                event, TransactionRepository(), CategoryRepository(), RuleRepository(),
+                BudgetRepository(), PayCycleRepository())
 
         # Async apply-rules job (WHIT-537): start a background sweep with no 300/15s cap. POST
         # starts a job (returns its id, 202); the {id} GET reports progress. The POST path is an
@@ -1833,11 +1835,28 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
     })
 
 
+def _build_rule_smooth_map(rows: list[dict]) -> dict:
+    """id -> engine-shaped smooth context {id, categoryId, smooth, smoothSeeded, smoothAmount,
+    smoothGapDays} for every SMOOTH rule (WHIT-559). Built from the RAW store rows, not
+    `_rule_to_client`, because the apply seed needs `smooth_seeded` — which the client shape omits.
+    Only smooth rows are kept, so a store with no smooth rules yields an empty map (zero apply cost).
+    """
+    return {
+        row["id"]: {
+            "id": row["id"], "categoryId": row.get("category_id"),
+            "smooth": True, "smoothSeeded": bool(row.get("smooth_seeded")),
+            "smoothAmount": row.get("smooth_amount"), "smoothGapDays": row.get("smooth_gap_days"),
+        }
+        for row in rows if row.get("smooth") and row.get("id")
+    }
+
+
 def _apply_rules_write_phase(
     transaction_repo: TransactionRepository, plan: dict, transactions: list[dict],
     rule_target_by_id: dict, rule_excluded_by_id: dict,
     is_unfiled: Callable[[str | None], bool], *,
     inline_stamp: str | None, inline_excluded: bool = False, run_reconcile: bool,
+    rule_smooth_by_id: dict | None = None, smooth_seeder: SmoothSeeder | None = None,
     max_writes: int | None = None, time_budget: float | None = None,
     started: float | None = None, on_progress: Callable[[dict], None] | None = None,
 ) -> tuple[list[dict], list[str], list[str], list[str], int]:
@@ -1893,6 +1912,11 @@ def _apply_rules_write_phase(
             stamp, budget_excluded = inline_stamp, inline_excluded
         else:
             stamp, budget_excluded = rule_id, rule_excluded_by_id.get(rule_id, False)
+        # Auto-smooth the bill if the winning rule is a smooth one (WHIT-559) — once per run,
+        # create-only, independent of whether the write below files or no-ops (the plan is about the
+        # bill, not this charge). Inline "file this shop" rules are never smooth (rule_id is None).
+        if smooth_seeder is not None and rule_smooth_by_id:
+            smooth_seeder.seed(rule_smooth_by_id.get(rule_id))
         try:
             # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
             # since keeps their choice (WHIT-508). Their tap always beats a rule.
@@ -1964,7 +1988,8 @@ def _apply_rules_write_phase(
 
 def apply_rules_to_uncategorized(
     event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository,
-    rule_repo: RuleRepository,
+    rule_repo: RuleRepository, budget_repo: BudgetRepository | None = None,
+    paycycle_repo: PayCycleRepository | None = None,
 ) -> dict:
     """POST /transactions/uncategorized/apply-rules — file charges already stored that a rule
     covers, across ALL history.
@@ -2005,11 +2030,15 @@ def apply_rules_to_uncategorized(
         return error
 
     try:
-        rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+        raw_rules = rule_repo.list_rules()
     except DatabaseError:
         # A read failure is OUR database, not an upstream — 500, and returning here (before the
         # whole-history scan and the write loop) guarantees nothing is written.
         return _json_response(500, {"error": "could not read your rules"})
+    rules = [_rule_to_client(row) for row in raw_rules]
+    # The smooth context (WHIT-559) needs `smooth_seeded`, absent from the client shape — build it
+    # from the raw rows, against the WHOLE store before the inline path narrows `rules`.
+    rule_smooth_by_id = _build_rule_smooth_map(raw_rules)
 
     # WHIT-540: each live rule's id -> its current target, captured BEFORE the inline path narrows
     # `rules` to the single minted rule below — the reconcile sweep needs the WHOLE store to tell an
@@ -2075,6 +2104,9 @@ def apply_rules_to_uncategorized(
         inline_stamp=(created_rule["id"] if inline_rule is not None else None),
         inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
         run_reconcile=(inline_rule is None),
+        rule_smooth_by_id=rule_smooth_by_id,
+        smooth_seeder=(SmoothSeeder(budget_repo, paycycle_repo, rule_repo)
+                       if budget_repo is not None and paycycle_repo is not None else None),
         max_writes=APPLY_RULES_MAX_WRITES, time_budget=APPLY_RULES_TIME_BUDGET_SECONDS,
         started=started,
     )

@@ -62,6 +62,7 @@ class FakeRuleRepo:
         self.minted = []  # rows create_rule actually WROTE (a dedup hit does not append)
         self.updated = []  # rows update_rule returned (in-place or moved)
         self.deleted = []  # rule ids delete_rule (and a text-move update) removed
+        self.smoothed = []  # rule ids mark_smoothed flipped smooth_seeded True on
         self.list_calls = 0
 
     def list_rules(self):
@@ -160,3 +161,11 @@ class FakeRuleRepo:
             raise DatabaseError("rule delete failed")
         self._rows.pop(rule_id, None)
         self.deleted.append(rule_id)
+
+    def mark_smoothed(self, rule_id):
+        # Faithful to RuleRepository.mark_smoothed (WHIT-559): flip smooth_seeded True; a missing id
+        # is a silent no-op (the real store's attribute_exists guard).
+        row = self._rows.get(rule_id)
+        if row is not None:
+            row["smooth_seeded"] = True
+        self.smoothed.append(rule_id)
