@@ -133,15 +133,47 @@ async function apiFetch(input: string, init?: RequestInit, timeoutMs: number = R
   }
 }
 
+/** One condition of a categorisation rule (WHIT-541 multi-condition). */
+export interface RuleCondition {
+  field: string;
+  operator: string;
+  value: string;
+}
+
+/** How a multi-condition rule combines its conditions: all = AND, any = OR. */
+export type RuleLogic = "all" | "any";
+
 /** A categorisation rule, as returned by the /rules API (our own store). */
 export interface RuleRecord {
   id: string;
-  field: "description" | "category";
-  operator: "contains" | "equals";
+  // WHIT-541: a rule may match on any supported field/operator, not only description/contains —
+  // so these are open strings (the flat facts the server derives from the first condition).
+  field: string;
+  operator: string;
   value: string;
   categoryId: string;
   /** When true, a charge this rule files is also kept out of the budget (WHIT-558). */
   budgetExcluded?: boolean;
+  // WHIT-541: multi-condition rules carry these; a single-condition rule has null and the engine
+  // falls back to the flat field/operator/value.
+  conditions?: RuleCondition[] | null;
+  logic?: RuleLogic | null;
+}
+
+/**
+ * A create/update rule body. Two shapes the server accepts (WHIT-541):
+ *  - single-condition (legacy): `{value, categoryId, field?, operator?, budgetExcluded?}`.
+ *  - multi-condition: `{conditions, logic?, categoryId, budgetExcluded?}`.
+ * `JSON.stringify` drops the undefined half, so one type serves both.
+ */
+export interface RuleWriteInput {
+  categoryId: string;
+  value?: string;
+  field?: string;
+  operator?: string;
+  budgetExcluded?: boolean;
+  conditions?: RuleCondition[];
+  logic?: RuleLogic;
 }
 
 /**
@@ -1213,9 +1245,7 @@ export async function listRules(): Promise<RuleRecord[]> {
  * @returns The created rule, including its store-assigned id.
  * @throws If the response status is not OK (400 on an invalid rule, 401 on auth).
  */
-export async function createRule(
-  input: { value: string; categoryId: string; field?: string; operator?: string; budgetExcluded?: boolean }
-): Promise<RuleRecord> {
+export async function createRule(input: RuleWriteInput): Promise<RuleRecord> {
   const response = await apiFetch(`${API_BASE}/rules`, {
     method: "POST",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
@@ -1235,10 +1265,7 @@ export async function createRule(
  * @returns The updated rule.
  * @throws If the response status is not OK (404 unknown id, 400 invalid, 401 auth).
  */
-export async function updateRule(
-  id: string,
-  input: { value: string; categoryId: string; field?: string; operator?: string; budgetExcluded?: boolean }
-): Promise<RuleRecord> {
+export async function updateRule(id: string, input: RuleWriteInput): Promise<RuleRecord> {
   const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: await buildHeaders({ "Content-Type": "application/json" }),
