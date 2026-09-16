@@ -542,8 +542,12 @@ function AddRuleSheet() {
     // WHIT-538: a NEW classic rule goes through the preview/confirm step, which owns the save.
     s.setSheet({ mode: 'addRuleConfirm', pattern: primaryValue, categoryId: categoryId!, budgetExcluded });
   };
+  // The conditions as the server stores them: trimmed values, field/operator only. Shared by the
+  // overlap check (submit) and the write (writeMulti) so the two can't drift.
+  const cleanedConditions = (): RuleCondition[] =>
+    conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value.trim() }));
   const writeMulti = () => {
-    const cleaned: RuleCondition[] = conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value.trim() }));
+    const cleaned = cleanedConditions();
     const write: RuleWrite = { conditions: cleaned, logic };
     // WHIT-563: a multi-condition new rule saves directly (the preview/confirm chain is pattern-only).
     if (editing) s.updateRule(editing.id, cleaned[0].value, categoryId!, budgetExcluded, write);
@@ -563,8 +567,7 @@ function AddRuleSheet() {
     // WHIT-562: a multi rule has no single pattern to identity-match, so warn (don't block) when it
     // can co-match a charge with an existing rule that files elsewhere — those charges would sit
     // unfiled. Conservative: only fires on a provable overlap, so it never blocks a valid rule.
-    const cleaned: RuleCondition[] = conditions.map((c) => ({ field: c.field, operator: c.operator, value: c.value.trim() }));
-    const overlap = ruleOverlap(rules, cleaned, logic, categoryId!, editing?.id);
+    const overlap = ruleOverlap(rules, cleanedConditions(), logic, categoryId!, editing?.id);
     if (overlap) { setConflict(overlap); return; }
     writeMulti();
   };

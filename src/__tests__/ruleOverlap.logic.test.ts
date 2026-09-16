@@ -49,13 +49,11 @@ describe('ruleOverlap — text (containment)', () => {
   });
 
   it('an equals rule co-matches only a contains substring of it', () => {
-    const exact = classic('g', 'COLES', 'groceries');
     // candidate `description equals COLES` co-matches existing `contains COLE` (the exact string COLES contains COLE)
     const existingContains = multi('e', 'groceries', [c('description', 'contains', 'COLE')]);
     expect(overlapKind(ruleOverlap([existingContains], [c('description', 'equals', 'COLES')], 'all', 'dining')))
       .toBe('overlap');
     // but not existing `equals WOOLIES` (two different exact strings can't both be the charge)
-    void exact;
     const existingEquals = multi('e2', 'groceries', [c('description', 'equals', 'WOOLIES')]);
     expect(ruleOverlap([existingEquals], [c('description', 'equals', 'COLES')], 'all', 'dining')).toBeNull();
   });
