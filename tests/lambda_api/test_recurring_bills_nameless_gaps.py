@@ -117,8 +117,8 @@ def test_only_the_trailing_reference_is_trimmed_so_an_interior_wobble_splits(rec
     # a DIFFERENT stem per month, so nothing folds and no bill emits. Documents (and guards) that
     # the stem is not a fuzzy match — only "KMART 0421 ONLINE 88/89/90…" (trailing wobble) would
     # fold. Conservative: a false negative here, never a false pool.
-    charges = [_nameless(f"2026-{m}-05", -42.50, description=f"KMART 04{m} ONLINE 88")
-               for m in ("21", "22", "23", "24")]
+    charges = [_nameless(f"2026-{month}-05", -42.50, description=f"KMART 04{ref} ONLINE 88")
+               for month, ref in zip(("01", "02", "03", "04"), ("21", "22", "23", "24"))]
     assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
 
 
