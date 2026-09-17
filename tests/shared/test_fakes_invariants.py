@@ -132,6 +132,8 @@ _REGISTRY = [
          # WHIT-559: the recurring-bill detector suites reuse _row/ANZ to build charge history.
          _API_TESTS / "test_recurring_bills.py",
          _API_TESTS / "test_recurring_bills_gaps.py",
+         # WHIT-569: the nameless direct-debit (description-stem) detector gap suite.
+         _API_TESTS / "test_recurring_bills_nameless_gaps.py",
          # WHIT-559: the spread-rule route suite seeds charges via _row for the create-time capture.
          _API_TESTS / "test_rules_routes_spread.py",
          _API_TESTS / "test_rules_routes_spread_gaps.py",

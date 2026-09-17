@@ -94,6 +94,24 @@ def test_spread_create_matching_more_than_one_bill_is_rejected(handler, monkeypa
     assert repo.minted == []
 
 
+def test_spread_create_matching_a_named_and_a_nameless_bill_is_rejected(handler, monkeypatch):
+    # WHIT-569: a rule whose matched history holds a NAMED recurring bill AND a NAMELESS recurring
+    # direct debit (now detected by the stem pass) reaches two bills → 422, be more specific. Fail-safe:
+    # the app refuses rather than silently capturing only the named amount.
+    repo = FakeRuleRepo()
+    named = _monthly("ORIGIN ENERGY", "ORIGIN ENERGY DIRECT DEBIT", "-50.00")
+    nameless = [_row(SPENDING, f"2026-{m}-12", f"dd-{m}", merchant_name="",
+                     description="RENT DIRECT DEBIT 4471", amount=Decimal("-1800.00"),
+                     category="subscriptions")
+                for m in ("01", "02", "03", "04")]
+    _inject(handler, monkeypatch, repo, transactions={SPENDING: named + nameless})
+    resp = handler.lambda_handler(
+        _event("POST", "/rules",
+               {"value": "DIRECT DEBIT", "categoryId": "subscriptions", "spread": True}), None)
+    assert resp["statusCode"] == 422
+    assert repo.minted == []
+
+
 def test_a_second_spreading_rule_on_a_category_is_rejected(handler, monkeypatch):
     # At most one spreading rule per category (one spread plan per category). FAIL-ON-REVERT: drop
     # the per-category check and this returns 201.
