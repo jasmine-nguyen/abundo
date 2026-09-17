@@ -2,7 +2,8 @@
 
 The implementer's suite (test_recurring_bills.py) locks the happy paths: cadence mapping,
 drift-within-tolerance median, half-cent quantise, volatile/missed-cycle rejection, the 3-occurrence
-floor, income exclusion, multi-category folding, nameless miss, same-day dup, malformed skip, order.
+floor, income exclusion, multi-category folding, the nameless-stem pass (WHIT-569) + its stricter
+floor/tolerance + the named/nameless partition, same-day dup, malformed skip, order.
 
 This suite hunts the edges those miss: the exact tolerance/window BOUNDARIES, casing folding,
 one-off charges polluting a real bill, regular-but-unnameable beats, empty/degenerate inputs, and
@@ -187,3 +188,39 @@ def test_median_gap_days_is_a_rounded_int_for_an_even_gap_count(recurring_bills)
     assert bill["cadence"] == "fortnightly"
     assert bill["medianGapDays"] == 14
     assert isinstance(bill["medianGapDays"], int)
+
+
+# --- Nameless-stem pass (WHIT-569) --------------------------------------------------------------
+
+def _nameless(date, amount, description="OSKO PAYMENT 447112", txn_id=None, **extra):
+    return _row(ANZ, date, txn_id or f"n-{date}-{amount}", merchant_name="",
+                description=description, amount=Decimal(str(amount)), **extra)
+
+
+def test_a_nameless_charge_with_an_unusable_stem_is_not_a_bill(recurring_bills):
+    # [A17] A description that is all reference (a bare number run) has no rulable stem — _description_stem
+    # returns None, so the charge never buckets and no bill emits, even at a clean monthly beat.
+    charges = [_nameless(f"2026-{m}-05", -42.50, description=f"0412 5566 90{m}")
+               for m in ("01", "02", "03", "04")]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
+
+
+def test_two_distinct_nameless_stems_stay_separate_bills(recurring_bills):
+    # [A18] Two different direct debits (distinct stems) must not merge into one bucket — each is its
+    # own bill, keyed by its own stem.
+    rent = [_nameless(f"2026-{m}-05", -1800.00, description=f"RENT PAYMENT {m}00")
+            for m in ("01", "02", "03", "04")]
+    insurance = [_nameless(f"2026-{m}-12", -60.00, description=f"NRMA INSURANCE {m}99")
+                 for m in ("01", "02", "03", "04")]
+
+    bills = recurring_bills.detect_recurring_bills(rent + insurance)["bills"]
+    assert {bill["merchant"] for bill in bills} == {"RENT PAYMENT", "NRMA INSURANCE"}
+    assert len(bills) == 2
+
+
+def test_a_nameless_credit_series_is_never_a_bill(recurring_bills):
+    # [A19] Money IN (a nameless recurring transfer credited to the account) is never a bill — the
+    # shared _is_bill_charge filter (amount < 0) applies to the stem pass too.
+    charges = [_nameless(f"2026-{m}-05", 500.00, description="OSKO DEPOSIT 5566")
+               for m in ("01", "02", "03", "04")]
+    assert recurring_bills.detect_recurring_bills(charges)["bills"] == []
