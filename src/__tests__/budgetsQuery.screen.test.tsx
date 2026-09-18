@@ -48,6 +48,7 @@ import Budgets from '../../app/(tabs)/budgets';
 // The REAL query hooks (../api + ../auth mocked above) — driven directly by the folded WHIT-72
 // tests via renderHook; the same regime the screen renders under.
 import { useBudgetsScreenData, useBudgetDetailScreenData } from '../queries';
+import { cycleStart } from '../context';
 
 // length 30 (NOT the default 14) so "windowed on the real length" genuinely proves
 // budgets waited for the pay cycle rather than fetching with the seeded default.
@@ -181,6 +182,31 @@ it('hides a Savings-bucket budget end-to-end and keeps it out of the hero total 
   expect(screen.queryByText('Nest Egg')).toBeNull();      // Savings row hidden
   expect(screen.getByText('of $100')).toBeTruthy();       // spend budget only
   expect(screen.queryByText('of $2,100')).toBeNull();     // NOT spend + Savings target
+});
+
+// WHIT-574 — [A-hookrender] through-the-hook render: a known last_pay_date fetched via the REAL
+// pay-cycle query renders a known "Started …" on the hero. The wrapper-states screen tests mock
+// useBudgetsScreenData directly; this drives the actual hook + cycleStart + formatDayMonth end to
+// end. Time is pinned (fake Date only; timers stay real so findByText polling works) so the ambient
+// `new Date()` inside cycleStart is deterministic.
+it('through the hook: a known last_pay_date renders a known "Started …" (WHIT-574)', async () => {
+  jest.useFakeTimers({
+    doNotFake: [
+      'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate',
+      'nextTick', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame',
+      'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
+    ],
+  });
+  jest.setSystemTime(new Date('2026-09-18T10:00:00+10:00')); // 18 Sep 2026, Melbourne local day
+  try {
+    // last_pay_date 1 Sep, 30-day cycle, today 18 Sep → cyclesElapsed 0 → start stays 1 Sep.
+    // Also proves the no-leading-zero format ("1 Sep") survives a real render.
+    mockFetchPayCycle.mockReset().mockResolvedValue({ length: 30, last_pay_date: '2026-09-01' });
+    renderBudgets();
+    expect(await screen.findByText('Started 1 Sep')).toBeTruthy();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 // ===== WHIT-188 adversarial gaps (folded in) — partial failure, empty state, auth-lock, cache
@@ -433,6 +459,15 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
       expect(result.current.payCycleError).toBe(false); // <-- data retained → NOT a first-load error
       expect(result.current.cycleLen).toBe(30);         // last-good cycle still drives the hero
       expect(result.current.budgets).toHaveLength(1);   // cached rows survive
+    });
+
+    it('exposes cycleStart derived from the pay cycle (WHIT-574)', async () => {
+      const { result } = renderHook(() => useBudgetsScreenData(), { wrapper: wrapper(makeClient()) });
+      await waitFor(() => expect(result.current.budgets).toHaveLength(1));
+      // The hero reads this. It equals the pure helper on the same (len 30) cycle — proving it's
+      // plumbed through, not hard-coded. Fail-on-revert: drop it from the return and this is undefined.
+      expect(result.current.cycleStart).toBe(cycleStart(PAY_CYCLE));
+      expect(result.current.cycleStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
 
     it('BOTH payCycle AND budgets fail on first load → error via both paths (payCycleError AND isError)', async () => {

@@ -4,7 +4,7 @@
 // exercised — Melbourne is UTC+10/+11, so a local midnight is the *previous* day
 // in UTC, which is exactly what would break a getUTC* slip.
 import { describe, it, expect } from '@jest/globals';
-import { isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from '../dateutil';
+import { isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, formatDayMonth } from '../dateutil';
 import { cycleClock, paydaysUntil, milestoneView } from '../context';
 import { milestoneTime, MILESTONES } from '../milestones';
 import { makeState } from './factory';
@@ -16,6 +16,35 @@ describe('isoToUtcDayMs', () => {
 
   it('is NaN on an unparseable date (callers decide what that means)', () => {
     expect(Number.isNaN(isoToUtcDayMs('not-a-date'))).toBe(true);
+  });
+});
+
+describe('utcDayMsToISO', () => {
+  it('is the exact inverse of isoToUtcDayMs (round-trips the calendar day)', () => {
+    // Guards the month +1, zero-padding and year fields of the inverse. NB: getUTC* vs local
+    // getters are indistinguishable here — the ms is always a UTC-day boundary and Melbourne is
+    // AHEAD of UTC, so that instant is the same calendar day locally. getUTC* is chosen for
+    // correctness in BEHIND-UTC zones, not because this test can tell the two reads apart.
+    for (const iso of ['2026-01-01', '2026-06-06', '2026-10-04', '2026-12-31']) {
+      expect(utcDayMsToISO(isoToUtcDayMs(iso))).toBe(iso);
+    }
+  });
+
+  it('is empty on NaN (an unparseable date), so callers render nothing', () => {
+    expect(utcDayMsToISO(NaN)).toBe('');
+    expect(utcDayMsToISO(isoToUtcDayMs('not-a-date'))).toBe('');
+  });
+});
+
+describe('formatDayMonth', () => {
+  it('formats an ISO date as "27 Aug" (no year), in local time', () => {
+    expect(formatDayMonth('2026-08-27')).toBe('27 Aug');
+    expect(formatDayMonth('2026-01-01')).toBe('1 Jan');
+  });
+
+  it('is empty on an empty/unparseable ISO (never "NaN undefined" on screen)', () => {
+    expect(formatDayMonth('')).toBe('');
+    expect(formatDayMonth('not-a-date')).toBe('');
   });
 });
 

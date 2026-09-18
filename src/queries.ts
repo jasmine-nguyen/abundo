@@ -8,7 +8,7 @@ import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@t
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, UncategorizedMerchants, FilingSuggestions } from './api';
-import { cycleClockView, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { cycleClockView, cycleStart, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
@@ -147,7 +147,7 @@ export function selectMilestones(raw: unknown): MilestoneRecord[] {
 // Server default, mirrored from AppProvider's seed (src/context.tsx) — used for the
 // cycle clock before the payCycle query resolves so the hero shows a sensible "days
 // left" rather than NaN on the very first paint.
-const DEFAULT_PAY_CYCLE: PayCycle = { length: 14, last_pay_date: '2024-01-03' };
+export const DEFAULT_PAY_CYCLE: PayCycle = { length: 14, last_pay_date: '2024-01-03' };
 
 // A query that ERRORED with nothing cached — a FIRST-LOAD failure, not a background-refetch
 // failure over good data (TanStack v5 retains `.data` on the latter). Composites use this to
@@ -567,6 +567,7 @@ export interface BudgetsScreenData {
   category: (id: string) => Category | undefined;
   cycleLen: number;
   daysLeft: number;
+  cycleStart: string; // ISO "YYYY-MM-DD" of the current cycle's start (its payday), for the hero
   isLoading: boolean; // actively loading with nothing cached yet → show a spinner
   isError: boolean; // a read failed after its retries → show the inline retry
   // WHIT-72: the pay-cycle read failed with NO cached cycle. Budgets now fetch in parallel
@@ -591,6 +592,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
   const payCycleQuery = usePayCycleQuery(authed);
   const payCycle = payCycleQuery.data ?? DEFAULT_PAY_CYCLE;
   const { cycleLen, daysLeft } = cycleClockView(payCycle);
+  const cycleStartDate = cycleStart(payCycle);
 
   const budgetsQuery = useBudgetsQuery(cycleLen, authed);
   const categoriesQuery = useCategoriesQuery(authed);
@@ -609,6 +611,7 @@ export function useBudgetsScreenData(): BudgetsScreenData {
     category,
     cycleLen,
     daysLeft,
+    cycleStart: cycleStartDate,
     payCycleError,
     ...status,
   };

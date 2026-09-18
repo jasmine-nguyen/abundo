@@ -3,7 +3,7 @@ import { C, tint, fmt, fmtExact, ADJUSTMENT_ROW, RECONCILE_EPSILON } from './the
 import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
-import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween } from './dateutil';
+import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, MS_PER_DAY } from './dateutil';
 import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
@@ -2407,6 +2407,23 @@ export function cycleClock(
   const daysIntoCycle = elapsedDays - cyclesElapsed * length;
   const daysLeft = Math.max(0, Math.min(length, length - daysIntoCycle));
   return { cycleLen: length, daysLeft };
+}
+
+// The current cycle's START date (ISO "YYYY-MM-DD"): the most recent payday on or before today,
+// anchored on last_pay_date and advanced by whole cycle lengths — the same UTC-whole-day clock as
+// cycleClock, so the date never drifts across a Melbourne daylight-saving change. This mirrors the
+// server's own cycle_start (see cycleClockViewParity), so it always lands on a real payday. Empty
+// string when there's no started cycle to show — the first payday is still in the future (showing
+// "Started today" then would be false), or the date is unparseable — and the caller hides the line.
+export function cycleStart(
+  payCycle: { length: number; last_pay_date: string },
+  today?: Date,
+): string {
+  const pay = isoToUtcDayMs(payCycle.last_pay_date);
+  const todayMs = dateToUtcDayMs(today ?? new Date());
+  if (pay > todayMs) return '';
+  const cyclesElapsed = Math.floor(wholeDaysBetween(pay, todayMs) / payCycle.length);
+  return utcDayMsToISO(pay + cyclesElapsed * payCycle.length * MS_PER_DAY);
 }
 
 // The cycle clock the screens read: prefer the server's authoritative `days_left` (one clock,

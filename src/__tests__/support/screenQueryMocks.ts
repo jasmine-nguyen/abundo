@@ -51,7 +51,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
   return {
     useIsAuthed: () => true,
     useCategories: () => ({ categories: cats(), category, ...status, isLoading: st().categoriesLoading ?? false, isError: st().categoriesError ?? false }),
-    useBudgetsScreenData: () => ({ budgets: st().budgets ?? [], category, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
+    useBudgetsScreenData: () => ({ budgets: st().budgets ?? [], category, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleStart: '2026-06-06', payCycleError: st().payCycleError ?? false, ...status }),
     useBudgetDetailScreenData: () => ({ category, budgets: st().budgets ?? [], transactions: st().transactions ?? [], cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
     useTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, isFetching: false, hasMore: false, loadMore: noop, isLoadingMore: false, ...status }),
     // The bounded recent list (tab dot, account detail, goal-edit picker). Same fixture as the
