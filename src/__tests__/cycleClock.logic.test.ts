@@ -46,6 +46,23 @@ describe('cycleClock', () => {
     expect(cycleClock(cycle(14, '2026-09-27'), day(2026, 10, 11)).daysLeft).toBe(14); // exactly 14 days later
     expect(cycleClock(cycle(14, '2026-09-27'), day(2026, 10, 4)).daysLeft).toBe(7);   // 7 days in, spans the change
   });
+
+  it('propagates NaN daysLeft for an unparseable last_pay_date (no silent 0)', () => {
+    // A bad date makes pay NaN → daysLeft stays NaN rather than reading as a real countdown. Locks
+    // cycleClock's half of the shared-anchor refactor (WHIT-575); cycleStart's NaN case is below.
+    expect(Number.isNaN(cycleClock(cycle(14, 'not-a-date'), day(2026, 6, 6)).daysLeft)).toBe(true);
+  });
+
+  it('ignores the wall-clock time on `today` — a fractional Date reads the same whole-day countdown', () => {
+    // dateToUtcDayMs keeps only local Y-M-D, so 23:59 must equal midnight — else a real "now" (always
+    // carries a time) would drift the countdown. Fail-on-revert: leak the time and this shifts.
+    expect(cycleClock(cycle(14, '2026-06-06'), new Date(2026, 5, 13, 23, 59, 59)).daysLeft).toBe(7);
+    expect(cycleClock(cycle(14, '2026-06-06'), new Date(2026, 5, 13, 0, 0, 0)).daysLeft).toBe(7);
+  });
+
+  it('propagates NaN daysLeft for an EMPTY last_pay_date (missing data, distinct from a garbage string)', () => {
+    expect(Number.isNaN(cycleClock(cycle(14, ''), day(2026, 6, 6)).daysLeft)).toBe(true);
+  });
 });
 
 // WHIT-341: the screens read cycleClockView, which prefers the server's authoritative
@@ -116,5 +133,13 @@ describe('cycleStart', () => {
 
   it('is empty for an unparseable last_pay_date (the caller hides the line)', () => {
     expect(cycleStart(cycle(14, 'not-a-date'), day(2026, 6, 6))).toBe('');
+  });
+
+  it('ignores the wall-clock time on `today` — 23:59 lands on the same payday as midnight', () => {
+    expect(cycleStart(cycle(14, '2026-06-06'), new Date(2026, 5, 19, 23, 59, 59))).toBe('2026-06-06');
+  });
+
+  it('is empty for an EMPTY last_pay_date (missing data → hide the line, same as unparseable)', () => {
+    expect(cycleStart(cycle(14, ''), day(2026, 6, 6))).toBe('');
   });
 });
