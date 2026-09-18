@@ -2389,6 +2389,25 @@ export function useAppContext(): AppContext {
 // Derived-value selectors (ported from renderVals). Pure functions over state.
 // ---------------------------------------------------------------------------
 
+// The current pay-cycle anchor, computed ONCE on the shared UTC-whole-day clock (WHIT-575). Both
+// cycleClock (daysLeft) and cycleStart (the "Started {date}" line) read this, so the hero's countdown
+// and start date can't drift apart. Returns the raw pieces; each caller applies its own edge policy
+// (cycleClock clamps to full length before the first payday; cycleStart hides the line for a
+// future/unparseable date). A NaN pay (unparseable last_pay_date) propagates through the pieces
+// exactly as dateutil's primitives define — the callers guard it.
+function currentCycleAnchor(
+  payCycle: { length: number; last_pay_date: string },
+  today?: Date,
+): { pay: number; todayMs: number; elapsedDays: number; cyclesElapsed: number; startMs: number } {
+  const length = payCycle.length;
+  const pay = isoToUtcDayMs(payCycle.last_pay_date);
+  const todayMs = dateToUtcDayMs(today ?? new Date());
+  const elapsedDays = wholeDaysBetween(pay, todayMs);        // integer-exact whole days
+  const cyclesElapsed = Math.max(0, Math.floor(elapsedDays / length));
+  const startMs = pay + cyclesElapsed * length * MS_PER_DAY;
+  return { pay, todayMs, elapsedDays, cyclesElapsed, startMs };
+}
+
 // The persisted pay cycle -> the live "days until the next payday" + cycle length,
 // mirroring the server's current_cycle_window. Computed in UTC whole days (every
 // UTC day is exactly 24h) so a Melbourne daylight-saving change can't shift the
@@ -2400,30 +2419,24 @@ export function cycleClock(
   today?: Date,
 ): { cycleLen: number; daysLeft: number } {
   const length = payCycle.length;
-  const pay = isoToUtcDayMs(payCycle.last_pay_date);
-  const now = today ?? new Date();
-  const elapsedDays = wholeDaysBetween(pay, dateToUtcDayMs(now));       // integer-exact whole days
-  const cyclesElapsed = Math.max(0, Math.floor(elapsedDays / length)); // mirrors max(0, //)
+  const { elapsedDays, cyclesElapsed } = currentCycleAnchor(payCycle, today);
   const daysIntoCycle = elapsedDays - cyclesElapsed * length;
   const daysLeft = Math.max(0, Math.min(length, length - daysIntoCycle));
   return { cycleLen: length, daysLeft };
 }
 
-// The current cycle's START date (ISO "YYYY-MM-DD"): the most recent payday on or before today,
-// anchored on last_pay_date and advanced by whole cycle lengths — the same UTC-whole-day clock as
-// cycleClock, so the date never drifts across a Melbourne daylight-saving change. This mirrors the
-// server's own cycle_start (see cycleClockViewParity), so it always lands on a real payday. Empty
-// string when there's no started cycle to show — the first payday is still in the future (showing
-// "Started today" then would be false), or the date is unparseable — and the caller hides the line.
+// The current cycle's START date (ISO "YYYY-MM-DD"): the most recent payday on or before today, on
+// the shared currentCycleAnchor clock — so it never drifts from the days-left countdown, and never
+// across a Melbourne daylight-saving change. Empty string when there's no started cycle to show: the
+// first payday is still in the future (showing "Started today" would be false), or the date is
+// unparseable (pay is NaN → utcDayMsToISO returns '').
 export function cycleStart(
   payCycle: { length: number; last_pay_date: string },
   today?: Date,
 ): string {
-  const pay = isoToUtcDayMs(payCycle.last_pay_date);
-  const todayMs = dateToUtcDayMs(today ?? new Date());
+  const { pay, todayMs, startMs } = currentCycleAnchor(payCycle, today);
   if (pay > todayMs) return '';
-  const cyclesElapsed = Math.floor(wholeDaysBetween(pay, todayMs) / payCycle.length);
-  return utcDayMsToISO(pay + cyclesElapsed * payCycle.length * MS_PER_DAY);
+  return utcDayMsToISO(startMs);
 }
 
 // The cycle clock the screens read: prefer the server's authoritative `days_left` (one clock,
