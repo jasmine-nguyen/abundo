@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { C, FONT, fmt, tint } from '../../src/theme';
+import { formatDayMonth } from '../../src/dateutil';
 import { Icon, Glyph } from '../../src/icons';
 import { budgetViews } from '../../src/context';
 import { useBudgetsScreenData } from '../../src/queries';
@@ -14,7 +15,7 @@ export default function Budgets() {
   // WHIT-188: data now comes from the cached, auth-gated, self-healing query layer
   // instead of the eager global store. A transient 5xx retries with backoff (no stuck
   // banner); the inline error/retry below is the local fallback for a sustained failure.
-  const { budgets, category, cycleLen, daysLeft, isLoading, isError, payCycleError, refetch, refetchStale } = useBudgetsScreenData();
+  const { budgets, category, cycleLen, daysLeft, cycleStart, isLoading, isError, payCycleError, refetch, refetchStale } = useBudgetsScreenData();
 
   // Load-on-focus: refresh when the tab regains focus, but only if the data has gone
   // stale (the window rolls over on payday; a save/categorise elsewhere moves numbers).
@@ -72,6 +73,7 @@ export default function Budgets() {
             <Text style={styles.heroDays}>{daysLeft}</Text>
             <Text style={styles.heroDaysLabel}>days left</Text>
           </View>
+          {cycleStart ? <Text style={[styles.heroSmall, styles.heroStarted]}>Started {formatDayMonth(cycleStart)}</Text> : null}
           <View style={styles.heroBottom}>
             <View>
               <Text style={styles.heroSmall}>{overBudget ? 'Over budget' : 'Budget remaining'}</Text>
@@ -135,6 +137,8 @@ const styles = StyleSheet.create({
   heroEyebrow: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.65)', letterSpacing: 0.2 },
   heroDays: { fontFamily: FONT.display, fontSize: 54, fontWeight: '800', color: C.heroInk, letterSpacing: -2, lineHeight: 54 },
   heroDaysLabel: { fontFamily: FONT.body, fontSize: 17, fontWeight: '600', color: C.heroInk2 },
+  // Reuses heroSmall's muted ink (no new raw colour); only adds spacing under the days-left row.
+  heroStarted: { marginTop: 6 },
   heroBottom: { marginTop: 18, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
   heroSmall: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: 'rgba(20,18,50,.6)' },
   heroRemain: { fontFamily: FONT.display, fontSize: 30, fontWeight: '800', color: C.heroInk, letterSpacing: -1, marginTop: 2 },

@@ -35,7 +35,7 @@ jest.mock('../motion/NavBarsContext', () => {
 import Budgets from '../../app/(tabs)/budgets';
 
 const base = {
-  budgets: [], category: () => undefined, cycleLen: 14, daysLeft: 7,
+  budgets: [], category: () => undefined, cycleLen: 14, daysLeft: 7, cycleStart: '2026-08-27',
   payCycleError: false, refetch: jest.fn(), refetchStale: jest.fn(),
 };
 
@@ -66,6 +66,20 @@ it('loaded: content scrolls normally — no flexGrow forced on the list', () => 
   mockBudgets = { ...base, isLoading: false, isError: false };
   render(<Budgets />);
   expect(contentStyle().flexGrow).toBeUndefined();
+});
+
+// WHIT-574: the hero shows the cycle's start date. Fail-on-revert: drop the "Started …" line and
+// this flips. base.cycleStart '2026-08-27' → "Started 27 Aug".
+it('loaded: the hero shows the cycle start date', () => {
+  mockBudgets = { ...base, isLoading: false, isError: false };
+  render(<Budgets />);
+  expect(screen.getByText('Started 27 Aug')).toBeTruthy();
+});
+
+it('loaded: no start-date line when cycleStart is empty (unparseable date guarded)', () => {
+  mockBudgets = { ...base, cycleStart: '', isLoading: false, isError: false };
+  render(<Budgets />);
+  expect(screen.queryByText(/^Started /)).toBeNull();
 });
 
 // ===== WHIT-184/200 (folded from budgetsMotionScroll.screen.test.tsx) — the scroll-to-hide wiring.

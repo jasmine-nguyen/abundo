@@ -1,7 +1,7 @@
 // WHIT-9: the "days until next payday" clock. Runs under TZ=Australia/Melbourne
 // (see the test script) so the daylight-saving-immunity is genuinely exercised.
 import { describe, it, expect } from '@jest/globals';
-import { cycleClock, cycleClockView } from '../context';
+import { cycleClock, cycleClockView, cycleStart } from '../context';
 
 // Build a local-calendar Date for a given Y-M-D (month is 1-based here for clarity).
 const day = (y: number, m: number, d: number) => new Date(y, m - 1, d);
@@ -72,5 +72,49 @@ describe('cycleClockView', () => {
     // A corrupt/older-cache value can't drive elapsedFrac out of [0,1] → no negative bars.
     expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: 21 }).daysLeft).toBe(14);
     expect(cycleClockView({ length: 14, last_pay_date: '2026-06-06', days_left: -3 }).daysLeft).toBe(0);
+  });
+});
+
+// WHIT-574: the current cycle's START date (its payday), anchored on last_pay_date and advanced by
+// whole cycle lengths on the same UTC-whole-day clock as cycleClock — so "Started X" and the
+// "N days left" countdown always agree in the normal case (start + daysLeft counts to the next payday).
+describe('cycleStart', () => {
+  const cycle = (length: number, last_pay_date: string) => ({ length, last_pay_date });
+
+  it('is the payday itself on payday (a fresh cycle just began)', () => {
+    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 6, 6))).toBe('2026-06-06');
+  });
+
+  it('stays the same payday through the cycle', () => {
+    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 6, 7))).toBe('2026-06-06');
+    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 6, 19))).toBe('2026-06-06');
+  });
+
+  it('advances to the current window’s payday after each full cycle (not the original)', () => {
+    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 6, 20))).toBe('2026-06-20'); // fresh cycle
+    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 7, 18))).toBe('2026-07-18'); // 3 fortnights on
+    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 7, 19))).toBe('2026-07-18'); // one day into the 4th
+  });
+
+  it('hides the line before the first payday (a future last_pay_date → empty)', () => {
+    // The cycle hasn't started yet — "Started today" would be a false statement, so cycleStart
+    // returns '' and the hero omits the line. Fail-on-revert: drop the `pay > todayMs` guard and
+    // this returns a bogus past date instead.
+    expect(cycleStart(cycle(14, '2026-06-06'), day(2026, 6, 5))).toBe('');
+    expect(cycleStart(cycle(30, '2026-06-06'), day(2026, 6, 1))).toBe('');
+  });
+
+  it.each([7, 14, 30])('anchors on the payday for length %d', (len) => {
+    expect(cycleStart(cycle(len, '2026-06-06'), day(2026, 6, 6))).toBe('2026-06-06');
+    expect(cycleStart(cycle(len, '2026-06-06'), day(2026, 6, 7))).toBe('2026-06-06');
+  });
+
+  it('lands on the exact payday across a Melbourne daylight-saving change (no day drift)', () => {
+    // Monthly (30d), today is 14 days in, spanning the 2026-10-04 spring-forward.
+    expect(cycleStart(cycle(30, '2026-09-27'), day(2026, 10, 11))).toBe('2026-09-27');
+  });
+
+  it('is empty for an unparseable last_pay_date (the caller hides the line)', () => {
+    expect(cycleStart(cycle(14, 'not-a-date'), day(2026, 6, 6))).toBe('');
   });
 });
