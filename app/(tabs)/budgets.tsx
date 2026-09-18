@@ -23,6 +23,12 @@ export default function Budgets() {
 
   const { rows, totBudget, totSpent, totRemain } = budgetViews({ budgets, category, cycleLen, daysLeft });
 
+  // WHIT-573: when spend has blown past the plan, totRemain is negative and the hero must read
+  // "Over budget", not "Budget remaining" — fmt() strips the sign, so a bare negative total would
+  // otherwise look like money still left. The -0.5 dust threshold mirrors the per-row/carryover
+  // rounding (context.tsx) so a sub-dollar residual, which fmt rounds to $0, doesn't flip the headline.
+  const overBudget = totRemain < -0.5;
+
   // Cache-first: once we have any rows, keep showing them while a background refetch
   // runs. Error takes precedence over the spinner — a failed read must never sit under an
   // endless spinner with no Retry (code-critic/qa #1). WHIT-72: also error out when the pay
@@ -68,8 +74,8 @@ export default function Budgets() {
           </View>
           <View style={styles.heroBottom}>
             <View>
-              <Text style={styles.heroSmall}>Budget remaining</Text>
-              <Text style={styles.heroRemain}>{fmt(totRemain)}</Text>
+              <Text style={styles.heroSmall}>{overBudget ? 'Over budget' : 'Budget remaining'}</Text>
+              <Text style={styles.heroRemain}>{overBudget ? `-${fmt(totRemain)}` : fmt(totRemain)}</Text>
             </View>
             <View style={styles.heroPill}>
               <Text style={styles.heroPillTop}>of {fmt(totBudget)}</Text>
