@@ -469,3 +469,130 @@ describe('WHIT-72 payCycleError guard (folded from budgetsPayCycleError)', () =>
     });
   });
 });
+
+// WHIT-573 — the hero must read "Over budget" with a signed total when spend has blown past the
+// plan (totRemain < 0). fmt() strips the sign, so before the fix a negative total rendered as a
+// bare positive figure under "Budget remaining" — money overspent looked like money still left.
+describe('WHIT-573 hero over-budget label + sign', () => {
+  it('reads "Over budget" with a signed total when spend exceeds the plan', async () => {
+    // spent 200 of available 100 → totRemain -100. Fail-on-revert: without the fix the hero says
+    // "Budget remaining" + unsigned "$100" — both assertions below flip.
+    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 200, pending: 0 } });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Over budget')).toBeTruthy();      // label flipped
+    expect(screen.getByText('-$100')).toBeTruthy();            // sign now visible (fmt gives "$100")
+    expect(screen.queryByText('Budget remaining')).toBeNull(); // the misleading label is gone
+  });
+
+  it('keeps "Budget remaining" (unsigned) when under the plan', async () => {
+    // spent 50 of 100 → totRemain +50: the happy path must be untouched.
+    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 40, pending: 10 } });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.queryByText('Over budget')).toBeNull();
+  });
+
+  it('reads "Budget remaining" when exactly on budget (totRemain === 0), not "Over budget"', async () => {
+    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100, pending: 0 } });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.queryByText('Over budget')).toBeNull();
+  });
+
+  it('a sub-dollar negative residual stays "Budget remaining" (does not flip to "Over budget -$0")', async () => {
+    // spent 100.30 of 100 → totRemain -0.30, which fmt rounds to $0. The -0.5 dust threshold must
+    // keep the headline calm. Fail-on-revert for the threshold: change `< -0.5` to `< 0` and this
+    // flips to "Over budget -$0".
+    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100, pending: 0.3 } });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.queryByText('Over budget')).toBeNull();
+  });
+});
+
+// WHIT-573 — adversarial gaps beyond the cases above: aggregation across multiple over-budget rows,
+// a rollover-deficit source of negativity (proves the hero total uses `available`, not target),
+// Income kept out of the over-budget hero, a large signed total's exact comma-grouped string + pill
+// coherence, and the true -0.5 threshold boundaries (-0.5 exact, -0.51).
+describe('WHIT-573 hero over-budget — gaps', () => {
+  it('sums MULTIPLE over-budget rows into one signed hero total + coherent pill', async () => {
+    mockFetchCategories.mockReset().mockResolvedValue([
+      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+      { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7fd1b9', recent: 12 },
+    ]);
+    mockFetchBudgets.mockReset().mockResolvedValue({
+      coffee: { target: 100, posted: 150, pending: 0 },
+      groceries: { target: 200, posted: 250, pending: 0 },
+    });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.getByText('-$100')).toBeTruthy();       // -(300 available - 400 spent)
+    expect(screen.getByText('of $300')).toBeTruthy();      // totBudget unchanged
+    expect(screen.getByText('$400 spent')).toBeTruthy();   // totSpent unchanged
+    expect(screen.queryByText('Budget remaining')).toBeNull();
+  });
+
+  it('negativity from a rollover DEFICIT (not raw overspend) still flips the hero, on the available envelope', async () => {
+    // carryover -80 → available = 100 + (-80) = 20; spent 50 > 20 → totRemain -30. Modest raw spend,
+    // but the borrowed envelope is blown — proves the hero total is built on `available`, not target.
+    mockFetchBudgets.mockReset().mockResolvedValue({
+      coffee: { target: 100, posted: 50, pending: 0, rollover: true, carryover: -80 },
+    });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.getByText('-$30')).toBeTruthy();
+    expect(screen.getByText('of $20')).toBeTruthy();       // available envelope, not the $100 target
+  });
+
+  it('keeps an Income budget OUT of the over-budget hero (earnings do not rescue it)', async () => {
+    mockFetchCategories.mockReset().mockResolvedValue([
+      { id: 'coffee', name: 'Cafes & Coffee', bucket: 'Lifestyle', icon: 'coffee', color: '#E8A87C', recent: 52 },
+      { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'cash', color: '#7fd1b9', recent: 0 },
+    ]);
+    mockFetchBudgets.mockReset().mockResolvedValue({
+      coffee: { target: 100, posted: 200, pending: 0 },
+      salary: { target: 5000, posted: 6000, pending: 0 },
+    });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Salary')).toBeTruthy();       // Income row still lists
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.getByText('-$100')).toBeTruthy();
+    expect(screen.getByText('of $100')).toBeTruthy();      // NOT of $5,100
+    expect(screen.getByText('$200 spent')).toBeTruthy();   // NOT $6,200 spent
+    expect(screen.queryByText('of $5,100')).toBeNull();
+  });
+
+  it('renders a large deficit as the exact comma-grouped -$6,056 with a coherent pill', async () => {
+    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 1000, posted: 7056, pending: 0 } });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.getByText('-$6,056')).toBeTruthy();
+    expect(screen.getByText('of $1,000')).toBeTruthy();
+    expect(screen.getByText('$7,056 spent')).toBeTruthy();
+  });
+
+  it('totRemain === -0.5 EXACTLY stays "Budget remaining" (strict `< -0.5` boundary)', async () => {
+    // -0.5 < -0.5 is false → NOT over budget. The true threshold boundary the -0.30 test only approaches.
+    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100, pending: 0.5 } });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Budget remaining')).toBeTruthy();
+    expect(screen.queryByText('Over budget')).toBeNull();
+  });
+
+  it('totRemain just past the threshold (-0.51) flips to "Over budget"', async () => {
+    mockFetchBudgets.mockReset().mockResolvedValue({ coffee: { target: 100, posted: 100.51, pending: 0 } });
+    renderBudgets();
+    await screen.findByText('Cafes & Coffee');
+    expect(screen.getByText('Over budget')).toBeTruthy();
+    expect(screen.getByText('-$1')).toBeTruthy();          // fmt rounds 0.51 → $1
+  });
+});
