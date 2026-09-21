@@ -1,0 +1,596 @@
+"""Unit tests for BudgetRepository.delete_budget (WHIT-73): the cascade run when a
+category is deleted, so a stale target can't linger and silently reappear if a
+same-slug category is re-created.
+
+The BUDGETS item uses a nested-map REMOVE + version SET under an optimistic lock,
+which the shared FakeTable can't model, so these tests use the shared
+``config_item_table`` fake from conftest (WHIT-251).
+"""
+
+from decimal import Decimal
+
+import pytest
+
+
+@pytest.fixture
+def budget_repo(shared):
+    r = shared.budget.BudgetRepository()
+    r._table = None  # ensure the lazy boto3 path is never taken
+    return r
+
+
+def _with_table(budget_repo, table):
+    budget_repo._table = table
+    return budget_repo
+
+
+def test_delete_budget_removes_an_existing_target(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {"target": Decimal(300)}, "coffee": {"target": Decimal(60)}})
+    _with_table(budget_repo, table)
+
+    budget_repo.delete_budget("groceries")
+
+    assert "groceries" not in table.item["items"]
+    assert "coffee" in table.item["items"]          # only the one key removed
+    assert table.item["version"] == Decimal(2)      # version bumped once
+    assert table.update_calls == 1
+
+
+def test_delete_budget_absent_target_is_a_silent_noop(shared, budget_repo, config_item_table):
+    # The common case: the deleted category never had a budget. No write, no bump.
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(60)}}, version=5)
+    _with_table(budget_repo, table)
+
+    budget_repo.delete_budget("groceries")
+
+    assert table.update_calls == 0                   # never touched the item
+    assert table.item["version"] == Decimal(5)       # version unchanged
+    assert "coffee" in table.item["items"]
+
+
+def test_delete_budget_no_config_item_is_a_noop(shared, budget_repo, config_item_table):
+    # No target was ever set -> the BUDGETS item doesn't exist. Nothing to cascade.
+    table = config_item_table("BUDGETS", present=False)
+    _with_table(budget_repo, table)
+
+    budget_repo.delete_budget("groceries")
+
+    assert table.update_calls == 0
+
+
+def test_delete_budget_retries_once_under_a_version_race(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"groceries": {"target": Decimal(300)}})
+    table.race_next_update()   # first update loses the lock; repo re-reads + retries
+    _with_table(budget_repo, table)
+
+    budget_repo.delete_budget("groceries")
+
+    assert "groceries" not in table.item["items"]    # converged after the retry
+    assert table.update_calls == 2
+
+
+def test_delete_budget_raises_a_conflict_when_it_cannot_converge(shared, budget_repo, config_item_table):
+    from repository_errors import VersionConflictError
+
+    table = config_item_table("BUDGETS", items={"groceries": {"target": Decimal(300)}})
+    table.always_race()   # every attempt loses the lock -> exhausts the retry budget
+    _with_table(budget_repo, table)
+
+    with pytest.raises(VersionConflictError):
+        budget_repo.delete_budget("groceries")
+    assert "groceries" in table.item["items"]        # never removed
+
+
+# --- set_budget preserves rollover fields + settle_carryover (budget rollover) ---
+
+
+def test_set_budget_preserves_rollover_fields_on_an_amount_edit(shared, budget_repo, config_item_table):
+    # FAIL-ON-REVERT for the clobber fix: a plain amount edit must merge onto the existing
+    # entry, never replace it — a stored carryover/rollover survives untouched.
+    table = config_item_table("BUDGETS", items={"groceries": {
+        "target": Decimal(300), "rollover": True, "carryover": Decimal(40),
+        "carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01",
+    }})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_budget("groceries", Decimal(350))
+
+    entry = table.item["items"]["groceries"]
+    assert entry["target"] == Decimal(350)            # amount updated
+    assert entry["rollover"] is True                  # NOT clobbered
+    assert entry["carryover"] == Decimal(40)          # accumulated buffer preserved
+    assert entry["carryover_from"] == "2026-08-06"
+
+
+def test_set_budget_creates_a_brand_new_entry(shared, budget_repo, config_item_table):
+    # The items.<id> map key doesn't exist yet — the whole-entry SET must create it cleanly
+    # (a nested per-field SET would error on the missing parent map).
+    table = config_item_table("BUDGETS", items={})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_budget("coffee", Decimal(58))
+
+    assert table.item["items"]["coffee"] == {"target": Decimal(58)}
+
+
+def test_set_budget_with_rollover_and_anchor_writes_the_anchor_fields(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(58)}})
+    _with_table(budget_repo, table)
+    anchor = {"carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01"}
+
+    budget_repo.set_budget("coffee", Decimal(60), rollover=True, anchor=anchor)
+
+    entry = table.item["items"]["coffee"]
+    assert entry["target"] == Decimal(60)
+    assert entry["rollover"] is True
+    assert entry["carryover_from"] == "2026-08-06"
+    assert entry["carryover_len"] == Decimal(30)
+    assert entry["carryover_paydate"] == "2026-01-01"
+
+
+def test_settle_carryover_persists_balance_and_anchor_preserving_target(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(58), "rollover": True}})
+    _with_table(budget_repo, table)
+
+    budget_repo.settle_carryover("coffee", Decimal(200), "2026-07-07", 30, "2026-01-01")
+
+    entry = table.item["items"]["coffee"]
+    assert entry["carryover"] == Decimal(200)
+    assert entry["carryover_from"] == "2026-07-07"
+    assert entry["carryover_len"] == Decimal(30)
+    assert entry["carryover_paydate"] == "2026-01-01"
+    assert entry["target"] == Decimal(58)   # not wiped by the settle
+    assert entry["rollover"] is True         # flag preserved
+
+
+def test_settle_carryover_retries_once_under_a_version_race(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(58), "rollover": True}})
+    table.race_next_update()   # first update loses the lock; repo re-reads + retries
+    _with_table(budget_repo, table)
+
+    budget_repo.settle_carryover("coffee", Decimal(-25), "2026-07-07", 30, "2026-01-01")
+
+    assert table.item["items"]["coffee"]["carryover"] == Decimal(-25)  # negative buffer converges
+    assert table.update_calls == 2
+
+
+# --- clear_rollover: strip rollover fields on a re-bucket out of spend (WHIT-474) ---
+
+
+def _rollover_entry(target=300):
+    return {
+        "target": Decimal(target), "rollover": True, "carryover": Decimal(120),
+        "carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01",
+    }
+
+
+def test_clear_rollover_strips_the_fields_but_keeps_the_target(shared, budget_repo, config_item_table):
+    # FAIL-ON-REVERT for the fix: the entry must lose every rollover field yet KEEP its target
+    # (an Income budget is a valid earn-target — clearing the whole entry would destroy it).
+    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry(), "food": {"target": Decimal(80)}})
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_rollover("coffee")
+
+    assert table.item["items"]["coffee"] == {"target": Decimal(300)}   # only the target survives
+    assert table.item["items"]["food"] == {"target": Decimal(80)}      # a sibling entry is untouched
+    assert table.item["version"] == Decimal(2)                          # bumped once
+    assert table.update_calls == 1
+
+
+def test_clear_rollover_strips_a_partial_rollover_entry(shared, budget_repo, config_item_table):
+    # A REMOVE of an already-absent field is a no-op — an entry with only SOME rollover fields
+    # still ends as a plain {target}, no crash.
+    partial = {"target": Decimal(50), "rollover": False, "carryover_from": "2026-08-06", "carryover_len": Decimal(30)}
+    table = config_item_table("BUDGETS", items={"coffee": partial})
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_rollover("coffee")
+
+    assert table.item["items"]["coffee"] == {"target": Decimal(50)}
+    assert table.item["version"] == Decimal(2)
+
+
+def test_clear_rollover_absent_entry_is_a_silent_noop(shared, budget_repo, config_item_table):
+    # No budget for this id -> nothing to clear, no seed, no version bump.
+    table = config_item_table("BUDGETS", items={"food": {"target": Decimal(80)}}, version=5)
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_rollover("coffee")
+
+    assert table.update_calls == 0
+    assert table.item["version"] == Decimal(5)
+
+
+def test_clear_rollover_plain_target_entry_is_a_noop(shared, budget_repo, config_item_table):
+    # An entry that carries only a target (no rollover fields) is already clean — no write,
+    # no version bump, so a plain edit of a non-rollover budget can't cause write contention.
+    table = config_item_table("BUDGETS", items={"coffee": {"target": Decimal(58)}}, version=3)
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_rollover("coffee")
+
+    assert table.update_calls == 0
+    assert table.item["version"] == Decimal(3)
+    assert table.item["items"]["coffee"] == {"target": Decimal(58)}
+
+
+def test_clear_rollover_no_config_item_is_a_noop(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", present=False)
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_rollover("coffee")
+
+    assert table.update_calls == 0
+
+
+def test_clear_rollover_retries_once_under_a_version_race(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
+    table.race_next_update()   # first update loses the lock; repo re-reads + retries
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_rollover("coffee")
+
+    assert table.item["items"]["coffee"] == {"target": Decimal(300)}   # converged after the retry
+    assert table.update_calls == 2
+
+
+def test_clear_rollover_raises_a_conflict_when_it_cannot_converge(shared, budget_repo, config_item_table):
+    from repository_errors import VersionConflictError
+
+    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
+    table.always_race()   # every attempt loses the lock -> exhausts the retry budget
+    _with_table(budget_repo, table)
+
+    with pytest.raises(VersionConflictError):
+        budget_repo.clear_rollover("coffee")
+    assert "rollover" in table.item["items"]["coffee"]   # never cleared
+
+
+def test_rollover_fields_tuple_matches_what_the_writes_persist(shared, budget_repo, config_item_table):
+    # GUARD (qa WHIT-474): _ROLLOVER_FIELDS is what clear_rollover strips. It MUST equal every
+    # rollover key the writes can persist — set_budget(anchor) + settle_carryover — minus target.
+    # If a future field is added to a write but not the tuple, clear_rollover would leave it
+    # behind (a partial clear that reintroduces the WHIT-474 buffer resurrection). Tie the tuple
+    # to the real writes so that drift fails HERE, loudly.
+    table = config_item_table("BUDGETS", items={})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_budget("coffee", Decimal(100), rollover=True, anchor={
+        "carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01"})
+    budget_repo.settle_carryover("coffee", Decimal(20), "2026-08-06", 30, "2026-01-01")
+
+    persisted_rollover_keys = set(table.item["items"]["coffee"].keys()) - {"target"}
+    assert persisted_rollover_keys == set(shared.budget._ROLLOVER_FIELDS)
+
+
+# --- set_spread / clear_spread: a bill spread on a budget entry (WHIT-504) ---
+
+
+def _spread_entry(target=250):
+    return {
+        "target": Decimal(target), "spread_amount": Decimal("1390.91"), "spread_cycles": Decimal(4),
+        "spread_from": "2026-08-06", "spread_len": Decimal(30), "spread_paydate": "2026-01-01",
+    }
+
+
+def test_set_spread_writes_the_plan_and_keeps_the_target(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
+    _with_table(budget_repo, table)
+
+    saved = budget_repo.set_spread("insurance", Decimal("1390.91"), 4, "2026-08-06", 30, "2026-01-01")
+
+    assert saved == {"id": "insurance", "amount": Decimal("1390.91"), "cycles": 4}
+    entry = table.item["items"]["insurance"]
+    assert entry["target"] == Decimal(250)              # NOT clobbered by the spread write
+    assert entry["spread_amount"] == Decimal("1390.91")
+    assert entry["spread_cycles"] == Decimal(4)
+    assert entry["spread_from"] == "2026-08-06"
+    assert entry["spread_len"] == Decimal(30)
+    assert entry["spread_paydate"] == "2026-01-01"
+
+
+def test_set_spread_replaces_an_existing_plan(shared, budget_repo, config_item_table):
+    # Spreading again on the same category is an upsert: the new amount/cycles/anchor win.
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread("insurance", Decimal("600.00"), 2, "2026-09-05", 30, "2026-01-01")
+
+    entry = table.item["items"]["insurance"]
+    assert entry["spread_amount"] == Decimal("600.00")
+    assert entry["spread_cycles"] == Decimal(2)
+    assert entry["spread_from"] == "2026-09-05"
+    assert entry["target"] == Decimal(250)
+
+
+def test_set_spread_retries_once_under_a_version_race(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
+    table.race_next_update()
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread("insurance", Decimal("1390.91"), 4, "2026-08-06", 30, "2026-01-01")
+
+    assert table.item["items"]["insurance"]["spread_amount"] == Decimal("1390.91")
+    assert table.update_calls == 2
+
+
+def test_clear_spread_strips_the_plan_but_keeps_the_target(shared, budget_repo, config_item_table):
+    # FAIL-ON-REVERT: every spread field goes, the target stays, a sibling entry is untouched.
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry(), "food": {"target": Decimal(80)}})
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_spread("insurance")
+
+    assert table.item["items"]["insurance"] == {"target": Decimal(250)}
+    assert table.item["items"]["food"] == {"target": Decimal(80)}
+    assert table.item["version"] == Decimal(2)
+    assert table.update_calls == 1
+
+
+def test_clear_spread_leaves_rollover_fields_alone_and_vice_versa(shared, budget_repo, config_item_table):
+    # The two clears are independent strips: neither may reach into the other's fields.
+    # (Prod never stores both on one entry — the write guards forbid it — but the repo
+    # must not rely on that to be correct.)
+    both = {**_rollover_entry(), **{k: v for k, v in _spread_entry().items() if k != "target"}}
+    table = config_item_table("BUDGETS", items={"coffee": dict(both)})
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_spread("coffee")
+    assert table.item["items"]["coffee"] == _rollover_entry()    # rollover fields intact
+
+    budget_repo.clear_rollover("coffee")
+    assert table.item["items"]["coffee"] == {"target": Decimal(300)}
+
+
+def test_clear_spread_absent_entry_is_a_silent_noop(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"food": {"target": Decimal(80)}}, version=5)
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_spread("insurance")
+
+    assert table.update_calls == 0
+    assert table.item["version"] == Decimal(5)
+
+
+def test_clear_spread_plain_target_entry_is_a_noop(shared, budget_repo, config_item_table):
+    # DELETE /budgets/{id}/spread on a category with no plan must not bump the version
+    # (idempotent, no write contention).
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}}, version=3)
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_spread("insurance")
+
+    assert table.update_calls == 0
+    assert table.item["version"] == Decimal(3)
+    assert table.item["items"]["insurance"] == {"target": Decimal(250)}
+
+
+def test_clear_spread_no_config_item_is_a_noop(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", present=False)
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_spread("insurance")
+
+    assert table.update_calls == 0
+
+
+def test_clear_spread_retries_once_under_a_version_race(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
+    table.race_next_update()
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_spread("insurance")
+
+    assert table.item["items"]["insurance"] == {"target": Decimal(250)}
+    assert table.update_calls == 2
+
+
+def test_clear_spread_raises_a_conflict_when_it_cannot_converge(shared, budget_repo, config_item_table):
+    from repository_errors import VersionConflictError
+
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
+    table.always_race()
+    _with_table(budget_repo, table)
+
+    with pytest.raises(VersionConflictError):
+        budget_repo.clear_spread("insurance")
+    assert "spread_amount" in table.item["items"]["insurance"]   # never cleared
+
+
+def test_spread_fields_tuple_matches_what_set_spread_persists(shared, budget_repo, config_item_table):
+    # GUARD (mirrors the rollover one): _SPREAD_FIELDS is what clear_spread strips, so it
+    # MUST equal every key set_spread writes minus target — a field added to the write but
+    # not the tuple would survive a clear and keep adjusting the spendable forever.
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread("insurance", Decimal("1390.91"), 4, "2026-08-06", 30, "2026-01-01")
+
+    persisted_spread_keys = set(table.item["items"]["insurance"].keys()) - {"target"}
+    assert persisted_spread_keys == set(shared.budget._SPREAD_FIELDS)
+    assert not set(shared.budget._SPREAD_FIELDS) & set(shared.budget._ROLLOVER_FIELDS)
+
+
+# --- rollover OR spread, never both: the write makes it structural (WHIT-504) ---
+
+
+def test_set_spread_strips_any_rollover_fields_in_the_same_write(shared, budget_repo, config_item_table):
+    # The handler's guard is check-then-act; a lost race could otherwise land both. The
+    # write itself resolves it: spreading strips rollover (last writer wins), target kept.
+    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread("coffee", Decimal("100.00"), 2, "2026-08-06", 30, "2026-01-01")
+
+    entry = table.item["items"]["coffee"]
+    assert entry["target"] == Decimal(300)
+    assert "spread_amount" in entry
+    assert not set(shared.budget._ROLLOVER_FIELDS) & set(entry)
+
+
+def test_turning_rollover_on_strips_any_spread_fields_in_the_same_write(shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
+    _with_table(budget_repo, table)
+    anchor = {"carryover_from": "2026-08-06", "carryover_len": Decimal(30), "carryover_paydate": "2026-01-01"}
+
+    budget_repo.set_budget("insurance", Decimal(250), rollover=True, anchor=anchor)
+
+    entry = table.item["items"]["insurance"]
+    assert entry["rollover"] is True
+    assert not set(shared.budget._SPREAD_FIELDS) & set(entry)
+
+
+def test_a_plain_target_edit_keeps_the_spread(shared, budget_repo, config_item_table):
+    # Only turning rollover ON strips a spread; an amount edit (rollover omitted or false)
+    # must leave the plan alone.
+    for rollover in (None, False):
+        table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
+        _with_table(budget_repo, table)
+
+        budget_repo.set_budget("insurance", Decimal(300), rollover=rollover)
+
+        entry = table.item["items"]["insurance"]
+        assert entry["target"] == Decimal(300)
+        assert entry["spread_amount"] == Decimal("1390.91"), rollover
+
+
+def test_the_strip_is_re_applied_on_a_version_race_retry(shared, budget_repo, config_item_table):
+    # The race that matters: the competing writer merged rollover in between our read and
+    # our write. The retry re-reads and must strip it again, not carry it through.
+    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
+    table.race_next_update()
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread("coffee", Decimal("100.00"), 2, "2026-08-06", 30, "2026-01-01")
+
+    assert not set(shared.budget._ROLLOVER_FIELDS) & set(table.item["items"]["coffee"])
+    assert table.update_calls == 2
+
+
+# --- qa gap tests: the delete cascade + a partial strip (WHIT-504) ---
+
+
+def test_delete_budget_drops_the_spread_along_with_the_target(shared, budget_repo, config_item_table):
+    # Deleting the whole budget removes the map key, so the plan can't linger and silently
+    # resume if the same id gets a target again.
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry(), "food": {"target": Decimal(80)}})
+    _with_table(budget_repo, table)
+
+    budget_repo.delete_budget("insurance")
+
+    assert "insurance" not in table.item["items"]
+    assert table.item["items"]["food"] == {"target": Decimal(80)}
+
+
+def test_clear_spread_strips_a_partial_spread_entry(shared, budget_repo, config_item_table):
+    # A half-written entry (only some spread_* keys) is still stripped back to a plain target
+    # in one write — the strip is per-field, not all-or-nothing.
+    table = config_item_table("BUDGETS", items={
+        "insurance": {"target": Decimal(250), "spread_amount": Decimal("100.00"), "spread_from": "2026-08-06"}})
+    _with_table(budget_repo, table)
+
+    budget_repo.clear_spread("insurance")
+
+    assert table.item["items"]["insurance"] == {"target": Decimal(250)}
+    assert table.update_calls == 1
+
+
+
+# --- set_spread_if_absent: the create-only spread write for rule auto-spread (WHIT-559) ---------
+
+def test_set_spread_if_absent_creates_a_plan_when_the_category_has_a_target_and_none(
+        shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
+    _with_table(budget_repo, table)
+
+    saved = budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
+                                             "2026-09-05", 30, "2026-01-01")
+
+    assert saved == {"id": "insurance", "amount": Decimal("600.00"), "cycles": 3}
+    entry = table.item["items"]["insurance"]
+    assert entry["target"] == Decimal(250)
+    assert entry["spread_amount"] == Decimal("600.00")
+    assert entry["spread_cycles"] == Decimal(3)
+    assert entry["spread_from"] == "2026-09-05"
+
+
+def test_set_spread_if_absent_never_clobbers_an_existing_plan(
+        shared, budget_repo, config_item_table):
+    # FAIL-ON-REVERT for the create-only guard: a category that already carries a spread (a user's,
+    # or an earlier rule seed) is left byte-identical and no version is bumped — the whole point of
+    # "create once, never re-anchor".
+    table = config_item_table("BUDGETS", items={"insurance": _spread_entry()})
+    before = dict(table.item["items"]["insurance"])
+    before_version = table.item["version"]
+    _with_table(budget_repo, table)
+
+    result = budget_repo.set_spread_if_absent("insurance", Decimal("999.00"), 2,
+                                              "2026-12-01", 30, "2026-01-01")
+
+    assert result is None
+    assert table.item["items"]["insurance"] == before  # untouched
+    assert table.item["version"] == before_version
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_skips_a_category_with_no_target(
+        shared, budget_repo, config_item_table):
+    # A spread needs a budget target (mirrors the user path's 400). No target -> no-op, no orphan.
+    table = config_item_table("BUDGETS", items={"insurance": {"rollover": False}})
+    _with_table(budget_repo, table)
+
+    assert budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
+                                            "2026-09-05", 30, "2026-01-01") is None
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_skips_an_absent_category(
+        shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"food": {"target": Decimal(80)}})
+    _with_table(budget_repo, table)
+
+    assert budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
+                                            "2026-09-05", 30, "2026-01-01") is None
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_skips_a_rollover_category(
+        shared, budget_repo, config_item_table):
+    # A category has rollover OR a spread, never both — don't spread a rollover category.
+    table = config_item_table("BUDGETS", items={"coffee": _rollover_entry()})
+    _with_table(budget_repo, table)
+
+    assert budget_repo.set_spread_if_absent("coffee", Decimal("600.00"), 3,
+                                            "2026-09-05", 30, "2026-01-01") is None
+    assert table.update_calls == 0
+
+
+def test_set_spread_if_absent_strips_lingering_rollover_fields_on_create(
+        shared, budget_repo, config_item_table):
+    # rollover OFF but a stale carryover buffer present: creating a spread strips it in the same
+    # write, exactly as set_spread does (spread XOR rollover).
+    entry = {"target": Decimal(250), "rollover": False, "carryover": Decimal("12.00"),
+             "carryover_from": "2026-07-01", "carryover_len": Decimal(30),
+             "carryover_paydate": "2026-01-01"}
+    table = config_item_table("BUDGETS", items={"insurance": entry})
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3, "2026-09-05", 30, "2026-01-01")
+
+    stored = table.item["items"]["insurance"]
+    assert stored["spread_amount"] == Decimal("600.00")
+    assert "carryover" not in stored and "carryover_from" not in stored
+    assert stored["target"] == Decimal(250)
+
+
+def test_set_spread_if_absent_retries_once_under_a_version_race(
+        shared, budget_repo, config_item_table):
+    table = config_item_table("BUDGETS", items={"insurance": {"target": Decimal(250)}})
+    table.race_next_update()
+    _with_table(budget_repo, table)
+
+    budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3, "2026-09-05", 30, "2026-01-01")
+
+    assert table.item["items"]["insurance"]["spread_amount"] == Decimal("600.00")
+    assert table.update_calls == 2

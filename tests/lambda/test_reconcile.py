@@ -1,0 +1,2995 @@
+"""Tests for pending→posted reconciliation in the BankSync webhook
+(`TransactionRepository.insert_or_reconcile`) and its wiring in `process_transaction`.
+
+Real data drives the scenarios: on settlement BankSync issues a NEW id with
+`pendingTransactionId: null` (e.g. pending b726e693 → posted 14e463, both
+authorizedDate 2026-06-29, -5.50), so a blind insert would leave a duplicate and
+lose the user's category. These tests build rows through `BankSyncClient.normalise`
+so the stored shapes match production, and inject a FakeTable via `repo._table`.
+"""
+
+from decimal import Decimal
+
+import pytest
+
+# A real BankSync account id (resolves via ACCOUNT_ID_MAP to an internal id).
+_BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"
+
+
+def _bank_row(txn_id, amount, authorized_date="2026-06-29", pending=True,
+              category="FOOD_AND_DRINK", pending_transaction_id=None, date="2026-06-29",
+              description="SQ *KKV INTERNATIONAL PTY", merchant_name="SQ *KKV INTERNATIONAL PTY"):
+    return {
+        "id": txn_id,
+        "date": date,
+        "authorizedDate": authorized_date,
+        "description": description,
+        "merchantName": merchant_name,
+        "amount": amount,
+        "accountId": _BANK_ACCOUNT_ID,
+        "accountName": "ANZ Rewards Black Visa",
+        "category": category,
+        "pending": pending,
+        "type": "PAYMENT",
+        "pendingTransactionId": pending_transaction_id,
+    }
+
+
+def _norm(lam, **kw):
+    return lam.banksync.BankSyncClient.normalise(_bank_row(**kw))
+
+
+def _seed_pending(repo, lam, **kw):
+    """Store a (typically already user-categorised) transaction and return it."""
+    txn = _norm(lam, **kw)
+    repo.insert_transactions([txn])
+    return txn
+
+
+def _acc(txn):
+    return "ACCOUNT#" + txn["account_id"]
+
+
+# --- the core bug: pending→posted with a new id -----------------------------
+
+
+def test_reconcile_carries_category_and_deletes_pending(lam, repo):
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert store[(acc, "TXN#B")]["category"] == "coffee"   # carried onto the posted row
+    assert (acc, "TXN#A") not in store                      # stale pending removed
+    assert len(store) == 1                                   # no duplicate
+
+
+def test_settled_charge_keeps_its_swipe_date_not_the_settlement_date(lam, repo):
+    # Fail-on-revert: a charge swiped a week ago that settles today must NOT
+    # jump to today's date. The pending and its posted twin share authorizedDate
+    # (2026-06-22, the swipe day); only the booking `date` moves to 2026-06-29 on
+    # settlement. After reconcile the surviving posted row must still read 2026-06-22.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-42.00"),
+                  authorized_date="2026-06-22", date="2026-06-22", pending=True, category="groceries")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-42.00"),
+                   authorized_date="2026-06-22", date="2026-06-29",  # booked/settled a week later
+                   pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["date"] == "2026-06-22"              # swipe day — does NOT jump to settlement day
+    assert row["authorized_date"] == "2026-06-22"
+    assert row["category"] == "groceries"           # category still carried across settlement
+
+
+# --- blank authorized_date on settlement (ANZ) ------------------------------
+# Some ANZ settlements arrive with authorized_date BLANK. The exact/tip tiers key on it,
+# so without a fallback the pending twin is orphaned (a duplicate) AND the settled row
+# keeps its settlement date instead of the swipe day. A blank-auth tier matches on
+# amount + merchant-in-description + a date window, then inherits the swipe date.
+
+
+def test_blank_auth_settlement_reconciles_and_inherits_swipe_date(lam, repo):
+    # Fail-on-revert: swiped 07-17 (pending); settled 07-21 with NO authorized_date. Must
+    # still match the twin, carry category, inherit the swipe date, and delete the pending.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-17", date="2026-07-17", pending=True, category="eating out",
+                  description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
+                  merchant_name="ISAN THAI STREET FOOD")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"),
+                   authorized_date="", date="2026-07-21", pending=False, category="FOOD_AND_DRINK",
+                   description="ISAN THAI STREET FOOD     MELBOURNE", merchant_name="ISAN THAI STREET FOOD")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    row = store[(acc, "TXN#POST")]
+    assert row["date"] == "2026-07-17"              # swipe day, inherited from the twin
+    assert row["authorized_date"] == "2026-07-17"
+    assert row["category"] == "eating out"          # category still carried across settlement
+    assert (acc, "TXN#PEND") not in store            # pending twin removed — no duplicate
+    assert len(store) == 1
+
+
+def test_resync_does_not_regress_a_corrected_blank_auth_date(lam, repo):
+    # After the first reconcile fixed the row to 07-17, BankSync re-sends the same posted
+    # (still blank auth, booking date 07-21) within the feed window. The re-sync must KEEP
+    # 07-17, not clobber it back to the settlement day.
+    existing = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="2026-07-17",
+                     date="2026-07-17", pending=False, merchant_name="ISAN THAI STREET FOOD",
+                     description="ISAN THAI STREET FOOD MELBOURNE")
+    repo.insert_transactions([existing])
+
+    resent = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, merchant_name="ISAN THAI STREET FOOD",
+                   description="ISAN THAI STREET FOOD MELBOURNE")
+    repo.insert_or_reconcile([resent])
+
+    row = repo._table.store[(_acc(resent), "TXN#POST")]
+    assert row["date"] == "2026-07-17"              # corrected swipe day preserved
+    assert row["authorized_date"] == "2026-07-17"
+
+
+def test_blank_auth_does_not_merge_a_different_merchant(lam, repo):
+    # A coincidental same-amount pending for a DIFFERENT merchant must not be consumed.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-17", date="2026-07-17", pending=True,
+                  description="POS AUTHORISATION COLES SUPERMARKET MELBOURNE AU",
+                  merchant_name="COLES SUPERMARKET")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, description="ISAN THAI STREET FOOD MELBOURNE",
+                   merchant_name="ISAN THAI STREET FOOD")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") in store                # different merchant -> not merged
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-21"  # no twin -> no inherit
+    assert len(store) == 2
+
+
+def test_blank_auth_does_not_merge_outside_the_date_window(lam, repo):
+    # Same merchant + amount, but the pending is 20 days older than the settlement — well
+    # past the window — so it must not be swept in.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-01", date="2026-07-01", pending=True,
+                  description="POS AUTHORISATION ISAN THAI STREET FOOD PTYMELBOURNE AU",
+                  merchant_name="ISAN THAI STREET FOOD")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, description="ISAN THAI STREET FOOD MELBOURNE",
+                   merchant_name="ISAN THAI STREET FOOD")
+
+    repo.insert_or_reconcile([posted])
+
+    assert (_acc(posted), "TXN#PEND") in repo._table.store   # outside window -> not merged
+    assert len(repo._table.store) == 2
+
+
+def test_blank_auth_single_word_merchant_does_not_reconcile(lam, repo):
+    # A one-word merchant is too weak to trust for a delete-a-pending merge (mirrors the
+    # tip tier), so a blank-auth posted with a single-word merchant falls through to insert.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-74.46"),
+                  authorized_date="2026-07-17", date="2026-07-17", pending=True,
+                  description="POS AUTHORISATION ISAN MELBOURNE AU", merchant_name="ISAN")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-74.46"), authorized_date="", date="2026-07-21",
+                   pending=False, description="ISAN MELBOURNE", merchant_name="ISAN")
+
+    repo.insert_or_reconcile([posted])
+
+    assert (_acc(posted), "TXN#PEND") in repo._table.store   # single-word merchant -> no merge
+    assert len(repo._table.store) == 2
+
+
+def test_reconcile_carries_notes_and_tags_onto_posted(lam, repo):
+    # WHIT-275: a note/tags on a pending charge must survive settlement, exactly as
+    # category does. notes/tags aren't bank fields (normalise strips them), so inject
+    # them onto the stored pending row directly.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = "reimburse from work"
+    repo._table.store[(acc, "TXN#A")]["tags"] = ["work", "travel"]
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["notes"] == "reimburse from work"   # note carried
+    assert row["tags"] == ["work", "travel"]        # tags carried
+    assert row["category"] == "coffee"              # category still carried too
+    assert (acc, "TXN#A") not in repo._table.store  # stale pending removed
+
+
+def test_reconcile_does_not_carry_an_empty_note(lam, repo):
+    # A cleared/absent note on the pending must NOT overwrite — the truthy carry
+    # guard means the posted keeps its own (here: no note).
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = ""  # cleared
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    assert "notes" not in repo._table.store[(acc, "TXN#B")]  # empty note not carried
+
+
+def test_no_match_inserts_posted_normally(lam, repo):
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    assert store[(_acc(posted), "TXN#B")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 1
+
+
+def test_same_id_resync_preserves_user_category(lam, repo):
+    # A posted row already stored + user-categorised.
+    _seed_pending(repo, lam, txn_id="B", amount=Decimal("-5.50"),
+                  pending=False, category="Groceries")
+    # The same posted id re-syncs with the bank's raw category.
+    resync = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([resync])
+
+    store = repo._table.store
+    assert store[(_acc(resync), "TXN#B")]["category"] == "Groceries"  # not clobbered
+    assert len(store) == 1                                             # not duplicated/deleted
+
+
+# --- WHIT-329: a still-pending re-send under the same id keeps the user's fields ------
+
+
+def test_pending_resync_preserves_user_category(lam, repo):
+    # The "Inner View Psych" bug: a charge categorised while still pending loses its
+    # category when the bank re-sends the same pending id (which it does for ~7 days).
+    # Fail-on-revert: drop the read-then-carry and the category reverts to the raw one.
+    seeded = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                           pending=True, category="health")
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([resent])
+
+    store = repo._table.store
+    row = store[(_acc(resent), "TXN#A")]
+    assert row["category"] == "health"            # user category kept, not the bank's raw one
+    assert row["status"] == seeded["status"]      # still pending
+    assert len(store) == 1                        # same row, no duplicate
+
+
+def test_pending_resync_preserves_notes_tags_and_budget_excluded(lam, repo):
+    # The same fields the settled path carries (WHIT-275/296) must survive a pending
+    # re-send too. These aren't bank fields, so inject them onto the stored pending row.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                            pending=True, category="health")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = "gap fee"
+    repo._table.store[(acc, "TXN#A")]["tags"] = ["health", "claimable"]
+    repo._table.store[(acc, "TXN#A")]["budget_excluded"] = True
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([resent])
+
+    row = repo._table.store[(acc, "TXN#A")]
+    assert row["category"] == "health"
+    assert row["notes"] == "gap fee"
+    assert row["tags"] == ["health", "claimable"]
+    assert row["budget_excluded"] is True
+
+
+def test_pending_resync_does_not_carry_a_cleared_field(lam, repo):
+    # WHIT-513: partial update leaves user fields untouched, so a cleared note ("")
+    # stays as-is — the bank update never touches it. This is correct: the user
+    # explicitly cleared the note, and the partial update respects that.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                            pending=True, category="health")
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["notes"] = ""  # cleared
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([resent])
+
+    assert repo._table.store[(acc, "TXN#A")]["notes"] == ""
+
+
+def test_first_sight_of_pending_inserts_plainly(lam, repo):
+    # No stored row yet -> nothing to carry, plain insert with the bank category.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                    pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([pending])
+
+    store = repo._table.store
+    assert store[(_acc(pending), "TXN#A")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 1
+
+
+def test_first_sight_of_pending_does_not_log_not_found(lam, repo, capsys):
+    # The pending branch reads the stored row on every re-send, so a first-sight pending
+    # (the common case) must not spam "Transaction not found". Fail-on-revert: restore the
+    # debug print in get_transaction and this assertion fails.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"),
+                    pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([pending])
+
+    assert "Transaction not found" not in capsys.readouterr().out
+
+
+# --- accepted edges (documented behaviour) ----------------------------------
+
+
+# --- tip-adjusted settlement (WHIT-116) -------------------------------------
+
+
+def test_tip_within_headroom_reconciles(lam, repo):
+    # A tip added at settlement makes the amount differ (5.50 -> 6.00, +9%), so the
+    # EXACT-amount tier misses — but the tip tier (same day + merchant + within +25%)
+    # now catches it. Same merchant string on both rows.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-6.00"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store                          # stale pending removed
+    assert store[(acc, "TXN#B")]["category"] == "coffee"        # category carried
+    assert len(store) == 1                                       # no duplicate
+
+
+def test_tip_real_doordash_shape_reconciles(lam, repo):
+    # The live pair that raised this card: the PENDING auth has NO merchantName and a
+    # noisy "POS AUTHORISATION  DD *DOORDASH XUANBANHC ..." description; the SETTLED
+    # charge carries the clean merchant column, +$2 tip. The posted merchant words
+    # ("DOORDASH XUANBANHC") must be found in the pending's raw description.
+    _seed_pending(
+        repo, lam, txn_id="A", amount=Decimal("-24.53"), authorized_date="2026-06-29",
+        pending=True, category="eatingout", merchant_name="",
+        description="POS AUTHORISATION         DD *DOORDASH XUANBANHC   +611800958316AU",
+    )
+    posted = _norm(
+        lam, txn_id="B", amount=Decimal("-26.53"), authorized_date="2026-06-29",
+        pending=False, category="FOOD_AND_DRINK", merchant_name="DD *DOORDASH XUANBANHC",
+        description="DD *DOORDASH XUANBANHC    MELBOURNE",
+    )
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store
+    assert store[(acc, "TXN#B")]["category"] == "eatingout"
+    assert len(store) == 1
+
+
+def test_tip_at_headroom_boundary_reconciles(lam, repo):
+    # Exactly auth * 1.25 is inside the headroom (inclusive).
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-4.00"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.00"),   # 4.00 * 1.25 = 5.00
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+
+
+def test_tip_just_over_headroom_leaves_both(lam, repo):
+    # A jump beyond +25% (5.50 -> 7.00) is too big to be a tip → miss → duplicate
+    # persists (the regression guard that a large amount change still does NOT merge).
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-7.00"),   # 5.50 * 1.25 = 6.875 < 7.00
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") in store                                    # pending survives
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"      # no carry
+
+
+def test_refund_not_swept_as_settlement(lam, repo):
+    # A refund/credit is a POSITIVE amount. Even same day + same merchant + matching
+    # magnitude, it must NOT be treated as the settlement of a pending spend (the
+    # same-sign guard) — otherwise a refund would delete the pending and mis-carry.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("5.50"),          # positive = refund
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") in store                                    # pending untouched
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_different_merchant_same_day_within_headroom_does_not_merge(lam, repo):
+    # THE over-match guard: a DIFFERENT same-day merchant whose stripped description
+    # coincidentally contains the token. "Nicole's Cafe" normalises to "nicoles cafe";
+    # a raw substring test would find "coles" inside it. The word-level merchant gate
+    # must block it — 'coles' is not a whole word in the pending description.
+    _seed_pending(
+        repo, lam, txn_id="A", amount=Decimal("-3.30"), authorized_date="2026-06-29",
+        pending=True, category="coffee", merchant_name="",
+        description="POS AUTHORISATION         NICOLE'S CAFE            MELBOURNE    AU",
+    )
+    posted = _norm(  # Coles, -4.00 (3.30 -> 4.00 is within +25%: 3.30*1.25 = 4.125)
+        lam, txn_id="B", amount=Decimal("-4.00"), authorized_date="2026-06-29",
+        pending=False, category="FOOD_AND_DRINK", merchant_name="COLES 0602",
+        description="COLES 0602               MELBOURNE    AU",
+    )
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") in store                                    # Nicole's untouched
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_tip_candidate_without_merchant_match_inserts_plainly(lam, repo):
+    # Same day + within-headroom amount but a genuinely different merchant whose words
+    # are NOT in the pending description → no tip match → the posted just inserts.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")  # KKV desc
+    posted = _norm(
+        lam, txn_id="B", amount=Decimal("-6.00"), authorized_date="2026-06-29",
+        pending=False, category="FOOD_AND_DRINK", merchant_name="WOOLWORTHS 1234",
+        description="WOOLWORTHS 1234          MELBOURNE",
+    )
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") in store                                    # KKV pending survives
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_exact_amount_preferred_over_tip_candidate(lam, repo):
+    # Pool has BOTH an exact-amount pending and a smaller tip-eligible one for the same
+    # posted charge. Tier 2 (exact) must win; the tip candidate is left untouched.
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),   # tip-eligible for -6.00
+                  authorized_date="2026-06-29", pending=True, category="groceries")
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-6.00"),   # exact
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-6.00"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A2") not in store                              # exact twin consumed
+    assert (acc, "TXN#A1") in store                                  # tip candidate untouched
+    assert store[(acc, "TXN#B")]["category"] == "coffee"            # carried from the exact twin
+
+
+def test_tip_tie_break_lowest_transaction_id(lam, repo):
+    # Two identical tip-eligible pendings; the posted consumes exactly one,
+    # deterministically the lowest transaction_id.
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-6.00"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A1") not in store                              # lowest id consumed
+    assert (acc, "TXN#A2") in store
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+
+
+def test_blank_auth_twin_reconciles_on_amount_and_merchant(lam, repo):
+    # Both legs blank-auth (some ANZ settlements) with matching amount + merchant + a close
+    # date now reconcile via the blank-auth tier — previously this pair was left as a
+    # duplicate. The false-positive guards (different merchant / outside window / one-word
+    # merchant) are covered by their own tests above.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store                   # pending twin consumed — no duplicate
+    assert store[(acc, "TXN#B")]["category"] == "coffee"  # category carried across settlement
+    assert len(store) == 1
+
+
+# --- same-day identical purchases (Jasmine's daily coffee) -------------------
+
+
+def test_two_same_day_identical_reconciles_exactly_one(lam, repo):
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    # consume-on-match: exactly one pending consumed; deterministic (lowest id A1).
+    assert (acc, "TXN#A1") not in store
+    assert (acc, "TXN#A2") in store
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+
+
+# --- forward-compat: pendingTransactionId exact link ------------------------
+
+
+def test_exact_pending_transaction_id_link(lam, repo):
+    # authorized_date AND amount differ, so the heuristic would NOT match — only the
+    # explicit link does. Proves the exact path works the day BankSync populates it.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-6.00"), authorized_date="2026-07-02",
+                   pending=False, category="FOOD_AND_DRINK", pending_transaction_id="A")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+
+
+def test_bogus_link_falls_through_to_heuristic(lam, repo):
+    # A pending_transaction_id that isn't a stored pending must NOT crash or fabricate
+    # a key — it falls through to the heuristic, which matches here.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                   pending=False, category="FOOD_AND_DRINK", pending_transaction_id="ghost")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+
+
+# --- batch behaviour --------------------------------------------------------
+
+
+def test_batch_mix_reconciles_and_queries_once_per_account(lam, repo):
+    _seed_pending(repo, lam, txn_id="P", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    repo._table.query_calls = 0
+
+    batch = [
+        _norm(lam, txn_id="C", amount=Decimal("-9.00"),
+              authorized_date="2026-07-01", pending=True, category="FOOD_AND_DRINK"),   # new pending
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),  # settles P
+        _norm(lam, txn_id="D", amount=Decimal("-3.00"),
+              authorized_date="2026-07-02", pending=False, category="FOOD_AND_DRINK"),  # no match
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert (acc, "TXN#C") in store                                   # new pending inserted
+    assert (acc, "TXN#P") not in store                               # settled + deleted
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+    assert (acc, "TXN#D") in store                                   # unmatched posted inserted
+    assert repo._table.query_calls == 1                              # pending pool fetched once
+
+
+# --- handler wiring ---------------------------------------------------------
+
+
+def test_process_transaction_uses_insert_or_reconcile(lam):
+    calls = {}
+
+    class FakeRepo:
+        def save_failed_transactions(self, rows):
+            calls["failed"] = rows
+
+        def insert_or_reconcile(self, txns, *, is_unfiled=None):
+            calls["reconcile"] = txns
+
+        def insert_transactions(self, txns):
+            calls["insert"] = txns
+
+    bad_row = {"id": "X", "accountId": "unknown-account"}  # missing fields -> unmapped
+    payload = {"data": [_bank_row("A", Decimal("-5.50"), pending=False), bad_row]}
+
+    lam.handler.process_transaction(payload, FakeRepo())
+
+    assert "reconcile" in calls and "insert" not in calls   # swapped to the new path
+    assert len(calls["reconcile"]) == 1                      # the one good row normalised
+    assert calls["failed"] == [bad_row]                      # the bad row diverted
+
+
+# --- consume-on-match across a batch (locks the pool.pop) --------------------
+
+
+def test_two_posted_consume_two_identical_pendings_in_one_batch(lam, repo):
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="C", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    # Each posted popped a DISTINCT pending — both consumed, both posted carry the tag.
+    assert (acc, "TXN#A1") not in store
+    assert (acc, "TXN#A2") not in store
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+    assert store[(acc, "TXN#C")]["category"] == "coffee"
+    assert len(store) == 2  # only the two posted rows remain
+
+
+def test_consume_on_match_pool_exhausts(lam, repo):
+    # One pending, two posted twins in the batch: the FIRST consumes it, the second
+    # finds an empty pool and falls through to a plain insert. Without pool.pop, the
+    # second would also match the pending and wrongly carry "coffee".
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="C", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert (acc, "TXN#A1") not in store                              # consumed by B
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+    assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK"     # no twin left -> plain insert
+
+
+# --- small edge coverage ----------------------------------------------------
+
+
+def test_empty_batch_is_a_noop(lam, repo):
+    repo.insert_or_reconcile([])
+    assert repo._table.store == {}
+    assert repo._table.query_calls == 0
+
+
+def test_matched_pending_without_category_still_dedupes(lam, repo):
+    # An uncategorised pending (falsy category) still gets reconciled/de-duped; the
+    # posted keeps its own (bank) category rather than carrying an empty one.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store                          # stale pending removed
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"  # empty not carried
+
+
+# --- WHIT-116 adversarial edges (QA) ----------------------------------------
+# Gaps beyond the happy-path/AC tests: partial/FX settlement, merchant-vs-tie-break
+# selection, None-amount pool rows, truncation, empty-category carry on the tip path,
+# cross-tier pool.pop contention, single pool query, and direct locks on the two new
+# pure helpers. All assert against the live production code and fail on revert.
+
+
+def test_single_common_word_merchant_does_not_merge(lam, repo):
+    # Money-safety (the >=2-word guard): a posted charge whose merchant cleans to a
+    # SINGLE common word ("EXPRESS") must not consume an unrelated same-day pending
+    # that merely contains that word ("COLES EXPRESS"). Without the guard the lone
+    # word would match and DELETE the Coles pending, mis-carrying its category.
+    _seed_pending(
+        repo, lam, txn_id="A", amount=Decimal("-25.00"), authorized_date="2026-06-29",
+        pending=True, category="groceries", merchant_name="",
+        description="POS AUTHORISATION         COLES EXPRESS            MELBOURNE    AU",
+    )
+    posted = _norm(  # merchant cleans to the lone word "EXPRESS"; -28.00 is within +25%
+        lam, txn_id="B", amount=Decimal("-28.00"), authorized_date="2026-06-29",
+        pending=False, category="FOOD_AND_DRINK", merchant_name="EXPRESS 1234",
+        description="EXPRESS 1234             MELBOURNE",
+    )
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") in store                                   # Coles pending untouched
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_partial_settlement_smaller_than_auth_does_not_merge(lam, repo):
+    # FX / partial settlement: the posted amount is SMALLER than the auth (a tip only
+    # makes spend larger). Same merchant + same day, but one-directional headroom must
+    # refuse it — otherwise a partial settlement would delete the real pending.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-20.00"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-19.00"),   # magnitude 19 < 20
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") in store                                    # pending untouched
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"      # no carry
+    assert len(store) == 2                                            # no merge
+
+
+def test_only_merchant_matching_pending_consumed_not_lowest_id(lam, repo):
+    # Two same-day pendings, BOTH within tip headroom of the posted charge. The only
+    # discriminator is the merchant: A1 (lower id) is a different merchant, A2 (higher
+    # id) is the real twin. The merchant gate must select A2 even though the tie-break
+    # would otherwise grab the lowest id A1 — proving the gate runs BEFORE the tie-break.
+    _seed_pending(
+        repo, lam, txn_id="A1", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+        pending=True, category="groceries", merchant_name="",
+        description="POS AUTHORISATION         WOOLWORTHS 1234           MELBOURNE    AU",
+    )
+    _seed_pending(
+        repo, lam, txn_id="A2", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+        pending=True, category="coffee",  # default KKV description contains the merchant
+    )
+    posted = _norm(lam, txn_id="B", amount=Decimal("-6.00"),   # KKV, +tip within headroom
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A2") not in store                              # true twin consumed
+    assert (acc, "TXN#A1") in store                                  # Woolworths untouched
+    assert store[(acc, "TXN#B")]["category"] == "coffee"            # carried from A2, not A1
+
+
+def test_pending_with_missing_amount_never_matches(lam, repo):
+    # A pooled pending with no amount (defensive: DB rows shouldn't, but must never
+    # KeyError). It has the matching merchant + day, so absent the None-guard the tip
+    # tier would try _is_tip_adjusted(item["amount"], ...) and raise. Must not crash,
+    # must not match.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    # Strip amount off the stored pending (the pool is the DB scan of this store).
+    acc = _acc(_norm(lam, txn_id="A", amount=Decimal("-5.50")))
+    del repo._table.store[(acc, "TXN#A")]["amount"]
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-6.00"),   # would tip-match if amount present
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])                          # must not raise
+
+    store = repo._table.store
+    assert (acc, "TXN#A") in store                                   # unmatched, survives
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"     # no carry
+    assert len(store) == 2
+
+
+def test_truncated_merchant_word_does_not_over_or_under_match(lam, repo):
+    # The bank truncates the merchant column mid-word ("MUJI RETAIL (AUSTRAL"). The
+    # auth carries the full word ("AUSTRALIA"). Word-level matching requires the LAST
+    # word to match exactly, so "austral" != "australia" -> no merge (fail-SAFE: a
+    # leftover duplicate, never a wrong merge). Also guards a substring regression.
+    _seed_pending(
+        repo, lam, txn_id="A", amount=Decimal("-30.00"), authorized_date="2026-06-29",
+        pending=True, category="shopping", merchant_name="",
+        description="POS AUTHORISATION         MUJI RETAIL AUSTRALIA     MELBOURNE    AU",
+    )
+    posted = _norm(
+        lam, txn_id="B", amount=Decimal("-32.00"), authorized_date="2026-06-29",
+        pending=False, category="FOOD_AND_DRINK", merchant_name="MUJI RETAIL (AUSTRAL",
+        description="MUJI RETAIL (AUSTRAL      MELBOURNE",
+    )
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") in store                                   # not swept
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_tip_match_empty_pending_category_keeps_bank_category(lam, repo):
+    # Tip path with an uncategorised pending: still de-dupes (pending deleted), but the
+    # posted keeps its own bank category rather than carrying an empty one.
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-6.00"),   # tip within headroom, KKV
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A") not in store                              # de-duped
+    assert store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"    # empty not carried
+    assert len(store) == 1
+
+
+def test_tip_tier_still_queries_pool_once_per_account(lam, repo):
+    # The tip tier must reuse the per-account pending pool, not re-scan. Batch: a tip
+    # settlement + an unrelated posted for the SAME account -> exactly one query.
+    _seed_pending(repo, lam, txn_id="P", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    repo._table.query_calls = 0
+
+    batch = [
+        _norm(lam, txn_id="B", amount=Decimal("-6.00"),   # tip-settles P (tier 3)
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="D", amount=Decimal("-3.00"),   # no match, same account
+              authorized_date="2026-07-02", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert (acc, "TXN#P") not in store                              # tip-settled + deleted
+    assert store[(acc, "TXN#B")]["category"] == "coffee"
+    assert repo._table.query_calls == 1                             # pool fetched once
+
+
+def test_exact_and_tip_compete_for_one_pending_consumed_once(lam, repo):
+    # One pending -5.50. Two posted rows target it in the same batch: an EXACT -5.50
+    # (tier 2) and a tip -6.00 (tier 3). Whichever runs first pops the single pending;
+    # the other must fall through to a plain insert. Money-safety invariant: the pending
+    # is consumed EXACTLY once (never double-deleted, never claimed twice).
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),   # exact twin, processed first
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="C", amount=Decimal("-6.00"),   # tip twin, pool now empty
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert (acc, "TXN#A") not in store                              # consumed once
+    assert store[(acc, "TXN#B")]["category"] == "coffee"           # exact twin carried it
+    assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK"   # no pending left -> plain
+    assert len(store) == 2                                          # no duplicate/ghost
+
+
+# --- WHIT-117: exact twin must not be starved by a tip sibling across rows ---
+# The companion of test_exact_and_tip_compete_for_one_pending_consumed_once (which
+# runs the BENIGN order, exact-first). Here the tip-eligible posting is FIRST. On the
+# old single-pass code it popped the one pending via the tip tier, so the exact posting
+# behind it inserted UNCATEGORISED. The two-pass resolves all exact twins before any tip,
+# so the exact posting wins its category regardless of batch order.
+
+
+def test_tip_first_does_not_starve_exact_twin(lam, repo):
+    # One pending -5.50 "coffee". Batch order: tip -6.00 FIRST, exact -5.50 SECOND.
+    # Fail-on-revert: on the single-pass code the -6.00 tip-pops the pending first, so
+    # -5.50 (B) inserts uncategorised — this asserts B carries "coffee".
+    _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="C", amount=Decimal("-6.00"),   # tip-eligible for A, processed FIRST
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="B", amount=Decimal("-5.50"),   # EXACT twin of A, processed SECOND
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert (acc, "TXN#A") not in store                              # consumed once
+    assert store[(acc, "TXN#B")]["category"] == "coffee"           # exact twin won it
+    assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK"   # tip sibling -> plain insert
+    assert len(store) == 2                                          # no duplicate/ghost
+
+
+def test_exact_beats_tip_regardless_of_batch_order(lam, repo):
+    # The same one-pending / exact+tip conflict must resolve identically whichever order
+    # the two postings arrive in. Locks order-independence (a partial fix that only
+    # reordered the loop would still fail one of the two orders).
+    for order in (["B", "C"], ["C", "B"]):   # B=exact -5.50, C=tip -6.00
+        repo._table.store.clear()
+        _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                      authorized_date="2026-06-29", pending=True, category="coffee")
+        rows = {
+            "B": _norm(lam, txn_id="B", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                       pending=False, category="FOOD_AND_DRINK"),
+            "C": _norm(lam, txn_id="C", amount=Decimal("-6.00"), authorized_date="2026-06-29",
+                       pending=False, category="FOOD_AND_DRINK"),
+        }
+        repo.insert_or_reconcile([rows[order[0]], rows[order[1]]])
+
+        store = repo._table.store
+        acc = _acc(rows["B"])
+        assert store[(acc, "TXN#B")]["category"] == "coffee", order          # exact always wins
+        assert store[(acc, "TXN#C")]["category"] == "FOOD_AND_DRINK", order  # tip never carries
+        assert (acc, "TXN#A") not in store, order
+        assert len(store) == 2, order
+
+
+def test_two_pass_is_scoped_per_account(lam, repo):
+    # The two-pass shares pools KEYED BY ACCOUNT, so exact-before-tip must not leak
+    # across accounts: account 1's exact twin must not defer or steal account 2's tip.
+    # Account 1: pending X1 -5.50, exact posting -5.50. Account 2: pending X2 -5.50,
+    # tip posting -6.00. Both must settle their own account's pending.
+    _ACCT2 = "3zVQJ8Btz_IRmqp78VrQnQ"  # -> up-spending (distinct from the default account)
+
+    def _bank2(txn_id, amount, pending, category):
+        row = _bank_row(txn_id, amount, authorized_date="2026-06-29",
+                        pending=pending, category=category)
+        row["accountId"] = _ACCT2
+        row["accountName"] = "Up Spending"
+        return lam.banksync.BankSyncClient.normalise(row)
+
+    _seed_pending(repo, lam, txn_id="X1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    repo.insert_transactions([_bank2("X2", Decimal("-5.50"), pending=True, category="groceries")])
+
+    batch = [
+        _norm(lam, txn_id="P1", amount=Decimal("-5.50"),   # acct1 exact twin of X1
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _bank2("P2", Decimal("-6.00"), pending=False, category="FOOD_AND_DRINK"),  # acct2 tip twin of X2
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc1 = "ACCOUNT#" + batch[0]["account_id"]
+    acc2 = "ACCOUNT#" + batch[1]["account_id"]
+    assert acc1 != acc2
+    assert store[(acc1, "TXN#P1")]["category"] == "coffee"      # acct1 settled its own pending
+    assert (acc1, "TXN#X1") not in store
+    assert store[(acc2, "TXN#P2")]["category"] == "groceries"   # acct2 settled its own pending
+    assert (acc2, "TXN#X2") not in store
+    assert len(store) == 2
+
+
+# ---------------------------------------------------------------------------
+# WHIT-117 GAP COVERAGE (adversarial half, authored by qa): multi-pending /
+# multi-posting conflicts, exact-tier money-safety, pass-2-on-emptied-pool, the
+# precomputed-match replay end-state, and degenerate batches. The four tests
+# above use ONE pending + ONE-or-two postings; these exercise the batch shapes
+# those miss. Each flips on the single-pass behaviour it names (two are refactor/
+# money-safety guards, labelled as such).
+# ---------------------------------------------------------------------------
+
+
+def test_two_pass_three_way_two_pendings_three_postings(lam, repo):
+    # GAP: two pendings, three postings, cross-eligible. X1 -5.50 "coffee" is the exact
+    # twin of E1 AND the tip twin of T1 (-6.00). X2 -10.00 "dinner" is the exact twin of
+    # E2. Batch order puts the TIP posting first.
+    #   two-pass (correct): E1 exact-claims X1, E2 exact-claims X2 in pass 1; T1's tip
+    #     finds an empty pool in pass 2 -> plain insert. Both exacts keep their category.
+    #   single-pass (revert): T1 tip-claims X1 first -> E1 inserts UNCATEGORISED.
+    _seed_pending(repo, lam, txn_id="X1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="X2", amount=Decimal("-10.00"),
+                  authorized_date="2026-06-29", pending=True, category="dinner")
+    batch = [
+        _norm(lam, txn_id="T1", amount=Decimal("-6.00"),   # tip-eligible for X1, FIRST
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="E1", amount=Decimal("-5.50"),   # EXACT twin of X1
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="E2", amount=Decimal("-10.00"),  # EXACT twin of X2
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#E1")]["category"] == "coffee"          # exact twin won it
+    assert store[(acc, "TXN#E2")]["category"] == "dinner"          # its exact twin too
+    assert store[(acc, "TXN#T1")]["category"] == "FOOD_AND_DRINK"  # tip sibling -> plain
+    assert (acc, "TXN#X1") not in store                            # each pending consumed
+    assert (acc, "TXN#X2") not in store                            #   exactly once
+    assert len(store) == 3                                         # no duplicate/ghost
+
+
+def test_pending_exact_for_one_and_tip_for_two_goes_to_exact(lam, repo):
+    # GAP: ONE pending X -5.50 "coffee" that is the exact twin of E and tip-eligible for
+    # TWO postings (T1 -6.00, T2 -6.50, both same day+merchant, within +25%). Both tips
+    # are ahead of the exact in the batch.
+    #   two-pass: E exact-claims X in pass 1; both tips hit an empty pool -> plain.
+    #   single-pass (revert): T1 tip-claims X, E inserts uncategorised.
+    _seed_pending(repo, lam, txn_id="X", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    batch = [
+        _norm(lam, txn_id="T1", amount=Decimal("-6.00"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="T2", amount=Decimal("-6.50"),  # 5.50*1.25 = 6.875, still in
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="E", amount=Decimal("-5.50"),   # EXACT twin, processed LAST
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#E")]["category"] == "coffee"
+    assert store[(acc, "TXN#T1")]["category"] == "FOOD_AND_DRINK"
+    assert store[(acc, "TXN#T2")]["category"] == "FOOD_AND_DRINK"
+    assert (acc, "TXN#X") not in store
+    assert len(store) == 3
+
+
+def test_multiple_exact_twins_each_consumed_once(lam, repo):
+    # GAP (money-safety of the exact tier across a batch): two indistinguishable same-day
+    # same-amount pendings A1 "coffee" / A2 "tea" and two identical exact postings. Each
+    # pending must be popped exactly once (no posting claims a pending already taken) and
+    # the min-transaction_id tie-break is deterministic: the first posting takes A1.
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="tea")
+    batch = [
+        _norm(lam, txn_id="P1", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="P2", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#P1")]["category"] == "coffee"   # lowest-id pending -> 1st posting
+    assert store[(acc, "TXN#P2")]["category"] == "tea"      # the other pending, not re-claimed
+    assert (acc, "TXN#A1") not in store
+    assert (acc, "TXN#A2") not in store
+    assert len(store) == 2                                  # both consumed once, no ghost
+
+
+def test_lone_tip_still_matches_in_pass_two_within_batch(lam, repo):
+    # GAP (pass 2 on a pool pass 1 already popped from): E exact-settles X1 in pass 1;
+    # T is a lone tip of X2 with NO exact sibling anywhere. The tip must still reconcile
+    # in pass 2 against the pool that pass 1 partially emptied.
+    _seed_pending(repo, lam, txn_id="X1", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    _seed_pending(repo, lam, txn_id="X2", amount=Decimal("-8.00"),
+                  authorized_date="2026-06-29", pending=True, category="lunch")
+    batch = [
+        _norm(lam, txn_id="E", amount=Decimal("-5.50"),   # exact twin of X1
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="T", amount=Decimal("-9.00"),   # tip of X2 (8*1.25=10), no exact
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#E")]["category"] == "coffee"
+    assert store[(acc, "TXN#T")]["category"] == "lunch"   # pass-2 tip fired on shared pool
+    assert (acc, "TXN#X1") not in store
+    assert (acc, "TXN#X2") not in store
+    assert len(store) == 2
+
+
+def test_resync_and_interleaved_pending_end_state(lam, repo):
+    # GAP (precomputed matches replayed via next(), with pending/posted interleaved). A
+    # posted resync produces a None match and a NEW pending row consumes NO match slot.
+    # This is an END-STATE guard: resync keeps the user category, the exact settle carries,
+    # the interleaved pending inserts. (It does NOT independently lock iterator alignment —
+    # the defensive `next(..., (None, None))` default would mask a misadvance into this same
+    # end-state.) Batch: [P exact-settles X] , [NP a brand-new pending] , [B same-id resync].
+    _seed_pending(repo, lam, txn_id="X", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+    # B already stored as a POSTED, user-categorised row (the resync target).
+    _seed_pending(repo, lam, txn_id="B", amount=Decimal("-9.99"),
+                  authorized_date="2026-06-29", pending=False, category="Groceries")
+    batch = [
+        _norm(lam, txn_id="P", amount=Decimal("-5.50"),   # exact twin of X
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="NP", amount=Decimal("-3.00"),  # interleaved NEW pending
+              authorized_date="2026-06-29", pending=True, category="misc"),
+        _norm(lam, txn_id="B", amount=Decimal("-9.99"),   # same-id resync, raw category
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#P")]["category"] == "coffee"      # exact settle carried
+    assert store[(acc, "TXN#B")]["category"] == "Groceries"   # resync kept user category
+    assert store[(acc, "TXN#NP")]["category"] == "misc"       # interleaved pending inserted
+    assert (acc, "TXN#X") not in store                        # settled pending removed
+    assert len(store) == 3
+
+
+def test_reconcile_matches_empty_and_all_pending_batch(lam, repo):
+    # GAP (degenerate): _reconcile_matches over an empty posted list is []. An all-pending
+    # batch builds an empty match iterator, so the loop must insert every pending without
+    # calling next() (a StopIteration here would 500 the webhook).
+    assert repo._reconcile_matches([], {}) == []
+
+    batch = [
+        _norm(lam, txn_id="Q1", amount=Decimal("-1.00"),
+              authorized_date="2026-06-29", pending=True, category="a"),
+        _norm(lam, txn_id="Q2", amount=Decimal("-2.00"),
+              authorized_date="2026-06-29", pending=True, category="b"),
+    ]
+
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    acc = _acc(batch[0])
+    assert store[(acc, "TXN#Q1")]["category"] == "a"
+    assert store[(acc, "TXN#Q2")]["category"] == "b"
+    assert len(store) == 2
+
+
+# --- direct locks on the new pure helpers -----------------------------------
+
+
+def test_is_tip_adjusted_edges(lam):
+    f = lam.repository._is_tip_adjusted
+    D = Decimal
+    # equal magnitude is inside the (inclusive) window
+    assert f(D("-5"), D("-5")) is True
+    # a real tip within +25%
+    assert f(D("-5"), D("-6")) is True
+    # exactly auth*1.25 (boundary, inclusive)
+    assert f(D("-4"), D("-5")) is True
+    # just over the boundary
+    assert f(D("-4"), D("-5.01")) is False
+    # settled SMALLER than auth -> never a tip (one-directional)
+    assert f(D("-5"), D("-4.99")) is False
+    # opposite signs / refunds are never tip-matches
+    assert f(D("5"), D("-5")) is False          # positive auth
+    assert f(D("-5"), D("5")) is False          # positive settled (refund)
+    # zero auth or both zero -> guarded out (>= 0)
+    assert f(D("0"), D("-1")) is False
+    assert f(D("0"), D("0")) is False
+
+
+def test_merchant_in_description_word_level(lam):
+    g = lam.repository._merchant_in_description
+    # empty merchant never over-matches
+    assert g("", "anything at all") is False
+    # single short token is NOT a substring match: 'bp' is not a word in 'bpay'
+    assert g("bp", "bpay convenience melbourne") is False
+    # 'coles' is not a whole word inside 'nicoles'
+    assert g("coles", "pos authorisation nicoles cafe melbourne au") is False
+    # multi-word merchant as a consecutive run inside the noisy auth description
+    assert g("DOORDASH XUANBANHC",
+             "POS AUTHORISATION DD *DOORDASH XUANBANHC +611800958316AU") is True
+    # order matters: the words must appear consecutively in order
+    assert g("XUANBANHC DOORDASH",
+             "POS AUTHORISATION DD *DOORDASH XUANBANHC AU") is False
+    # a legitimate single-word whole-word match (the >=2-word delete guard lives in the
+    # caller, not this helper)
+    assert g("coles", "coles express melbourne au") is True
+
+
+# --- WHIT-331: ANZ's Melbourne/UTC swipe-date skew --------------------------
+# ANZ dates a pending record in Melbourne-local time and its settled twin in UTC, so a
+# purchase swiped before 10:00 local carries two dates one day apart and the equal-date
+# tiers miss it. Verbatim shapes from the live table: the pending description is
+# fixed-width, and "SQ *KKV INTERNATIONAL PTY" exactly fills the 25-char merchant column
+# so the suburb fuses onto it ("PTYSunshine").
+
+_SKEW_PEND_DESC = "POS AUTHORISATION         SQ *KKV INTERNATIONAL PTYSunshine     AU"
+_SKEW_POST_DESC = "SQ *KKV INTERNATIONAL PTY Sunshine"
+_SKEW_POST_MERCHANT = "SQ *KKV INTERNATIONAL PTY "
+
+
+def _skew_pending(repo, lam, txn_id="PEND", amount=Decimal("-11.00"),
+                  authorized_date="2026-07-22", category="coffee", description=_SKEW_PEND_DESC):
+    # merchant_name="" mirrors production: ANZ pendings carry no merchantName column.
+    return _seed_pending(repo, lam, txn_id=txn_id, amount=amount,
+                         authorized_date=authorized_date, date=authorized_date,
+                         pending=True, category=category,
+                         description=description, merchant_name="")
+
+
+def _skew_posted(lam, txn_id="POST", amount=Decimal("-11.00"), authorized_date="2026-07-21",
+                 date="2026-07-24", description=_SKEW_POST_DESC,
+                 merchant_name=_SKEW_POST_MERCHANT):
+    return _norm(lam, txn_id=txn_id, amount=amount, authorized_date=authorized_date,
+                 date=date, pending=False, category="FOOD_AND_DRINK",
+                 description=description, merchant_name=merchant_name)
+
+
+def test_anz_skewed_date_pair_reconciles_and_keeps_the_melbourne_day(lam, repo):
+    # THE bug: one $11 coffee stored twice because the pending said 07-22 (Melbourne)
+    # and the settled row said 07-21 (UTC). Fail-on-revert anchor for the whole card.
+    _skew_pending(repo, lam)
+    posted = _skew_posted(lam)
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") not in store           # twin removed — no double count
+    assert len(store) == 1
+    row = store[(acc, "TXN#POST")]
+    assert row["date"] == "2026-07-22"              # Melbourne day, the day it was swiped
+    assert row["authorized_date"] == "2026-07-22"
+    assert row["category"] == "coffee"              # user's category survives settlement
+
+
+def test_resync_does_not_regress_a_skew_corrected_date(lam, repo):
+    # BankSync re-sends a settled row for FEED_WINDOW_DAYS, each time carrying the UTC
+    # date again. By then the pending is gone, so the row falls to the re-sync path — it
+    # must keep the corrected Melbourne day instead of flipping back every sync.
+    _skew_pending(repo, lam)
+    repo.insert_or_reconcile([_skew_posted(lam)])
+    assert repo._table.store[(_acc(_skew_posted(lam)), "TXN#POST")]["date"] == "2026-07-22"
+
+    repo.insert_or_reconcile([_skew_posted(lam)])   # verbatim re-send, UTC date again
+
+    row = repo._table.store[(_acc(_skew_posted(lam)), "TXN#POST")]
+    assert row["date"] == "2026-07-22"
+    assert row["authorized_date"] == "2026-07-22"
+
+
+def test_resync_after_skew_merge_does_not_consume_an_unrelated_pending(lam, repo):
+    # BankSync re-sends a settled row for FEED_WINDOW_DAYS. A SECOND genuine purchase at
+    # the same shop for the same amount, dated a day after the settled row, is exactly the
+    # shape the skew tier looks for — so without the re-send guard the re-send would eat
+    # it, deleting a real pending and grafting its category onto the older row.
+    _skew_pending(repo, lam)
+    repo.insert_or_reconcile([_skew_posted(lam)])
+    _skew_pending(repo, lam, txn_id="LATER", authorized_date="2026-07-22", category="lunch")
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    store = repo._table.store
+    assert (_acc(_skew_posted(lam)), "TXN#LATER") in store
+    assert store[(_acc(_skew_posted(lam)), "TXN#POST")]["category"] == "coffee"
+
+
+def test_two_genuine_consecutive_day_purchases_do_not_merge(lam, repo):
+    # Same coffee, same price, bought two days running. The exact tier must claim the
+    # same-day pending FIRST, leaving the next day's real purchase untouched.
+    _skew_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _skew_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-21")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND21") not in store         # exact same-day twin consumed
+    assert (acc, "TXN#PEND22") in store             # the OTHER real purchase survives
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-21"   # equal dates -> no carry
+
+
+def test_both_consecutive_day_purchases_settle_without_losing_a_row(lam, repo):
+    # Follow the pair all the way through settlement: two real purchases in, two out.
+    _skew_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _skew_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST21", authorized_date="2026-07-21")])
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}
+    assert len(store) == 2                          # nothing lost, nothing duplicated
+
+
+def test_pending_earlier_than_posted_does_not_merge(lam, repo):
+    # The clocks can only put the Melbourne day AHEAD. A pending dated earlier than its
+    # posting is not a skew, so it must not be swept in.
+    _skew_pending(repo, lam, authorized_date="2026-07-20")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-21")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_two_day_gap_does_not_merge(lam, repo):
+    _skew_pending(repo, lam, authorized_date="2026-07-23")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-21")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_different_merchant_does_not_merge(lam, repo):
+    _skew_pending(repo, lam, description="POS AUTHORISATION  COLES SUPERMARKET  MELBOURNE AU")
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_single_word_merchant_does_not_merge_a_neighbouring_brand(lam, repo):
+    # Was `test_skew_single_word_merchant_does_not_merge`, which asserted that a
+    # one-word merchant never reconciles at all — that WAS the bug. The protection it
+    # was reaching for still stands, but it now rests on the two cleaned names being
+    # equal rather than on the word appearing in the description: "COLES" IS a whole
+    # word of "COLES EXPRESS 1157", so the old description search would have merged
+    # these two different brands and deleted a real pending.
+    _skew_pending(repo, lam,
+                  description="POS AUTHORISATION         COLES EXPRESS 1157       FOOTSCRAY    AU")
+
+    repo.insert_or_reconcile([_skew_posted(lam, description="COLES 0602 MELBOURNE",
+                                          merchant_name="COLES 0602               ")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_tip_sized_amount_gap_does_not_merge(lam, repo):
+    # Skewed AND tipped is a compound rarity — this tier requires the exact amount.
+    _skew_pending(repo, lam, amount=Decimal("-11.00"))
+
+    repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("-12.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_skew_merchant_running_into_the_next_column_is_not_a_match(lam, repo):
+    # "DHP SA" ran into "Salvation" in the column. WHIT-331 handled this by letting the
+    # final word match as a PREFIX, which is what over-matched; WHIT-336 reads the column
+    # by position instead, so the two names simply differ. Either way a leftover
+    # duplicate, never a wrong merge — that is the property being pinned.
+    _skew_pending(repo, lam, description=_pend_col("DHP SASalvation", "ST ALBANS"))
+
+    repo.insert_or_reconcile([_skew_posted(lam, description="DHP SA St Albans",
+                                          merchant_name="DHP SA")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_exact_twin_beats_skew_candidate_across_the_batch(lam, repo):
+    # One pending is posting X's exact twin AND posting Y's skew candidate. Y comes
+    # first in the batch, but the exact pass must claim the pending for X regardless.
+    _skew_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    skew_first = _skew_posted(lam, txn_id="Y", authorized_date="2026-07-21")
+    exact_later = _skew_posted(lam, txn_id="X", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([skew_first, exact_later])
+
+    store = repo._table.store
+    acc = _acc(skew_first)
+    assert (acc, "TXN#PEND") not in store
+    assert store[(acc, "TXN#X")]["category"] == "coffee"   # exact twin won the pending
+    assert store[(acc, "TXN#Y")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_two_skew_postings_consume_one_pending_only_once(lam, repo):
+    # Money-safety: a single pending can never be claimed twice.
+    _skew_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    first = _skew_posted(lam, txn_id="AAA", authorized_date="2026-07-21")
+    second = _skew_posted(lam, txn_id="BBB", authorized_date="2026-07-21")
+
+    repo.insert_or_reconcile([first, second])
+
+    store = repo._table.store
+    acc = _acc(first)
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 2                          # both postings kept, one merge only
+    merged = [k for k in ("TXN#AAA", "TXN#BBB") if store[(acc, k)]["category"] == "coffee"]
+    assert merged == ["TXN#AAA"]                    # deterministic: lowest transaction_id
+
+
+def test_skew_merge_carries_every_user_owned_field(lam, repo):
+    # A pending the user categorised, noted, tagged and excluded must ride through.
+    pending = _norm(lam, txn_id="PEND", amount=Decimal("-11.00"), authorized_date="2026-07-22",
+                    date="2026-07-22", pending=True, category="coffee",
+                    description=_SKEW_PEND_DESC, merchant_name="")
+    pending["notes"] = "flat white x2"
+    pending["tags"] = ["treat"]
+    pending["budget_excluded"] = True
+    repo.insert_transactions([pending])
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    row = repo._table.store[(_acc(pending), "TXN#POST")]
+    assert row["category"] == "coffee"
+    assert row["notes"] == "flat white x2"
+    assert row["tags"] == ["treat"]
+    assert row["budget_excluded"] is True
+
+
+def test_skew_posting_wins_a_pending_contested_by_a_blank_auth_posting(lam, repo):
+    # Both postings want the SAME pending: one is a skew match (exactly one day, tight),
+    # the other a blank-auth match (anywhere in a 7-day window, loose). The tighter tier
+    # must win, and the loser must insert plainly rather than steal it — put the loose one
+    # first in the batch so a wrong tier order shows up.
+    _skew_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    loose = _skew_posted(lam, txn_id="LOOSE", authorized_date="", date="2026-07-24")
+    tight = _skew_posted(lam, txn_id="TIGHT", authorized_date="2026-07-21")
+
+    repo.insert_or_reconcile([loose, tight])
+
+    store = repo._table.store
+    acc = _acc(tight)
+    assert (acc, "TXN#PEND") not in store                      # claimed exactly once
+    assert store[(acc, "TXN#TIGHT")]["category"] == "coffee"   # tighter tier won it
+    assert store[(acc, "TXN#LOOSE")]["category"] == "FOOD_AND_DRINK"
+    assert len(store) == 2
+
+
+def test_is_skewed_next_day_edges(lam):
+    f = lam.repository._is_skewed_next_day
+    # the real pair: pending (Melbourne) one day after the settled (UTC) day
+    assert f("2026-07-22", "2026-07-21") is True
+    assert f("2026-07-21", "2026-07-21") is False   # same day -> the exact tier's job
+    assert f("2026-07-20", "2026-07-21") is False   # the clocks can't skew backwards
+    assert f("2026-07-23", "2026-07-21") is False   # two days is not a clock split
+    assert f("2026-08-01", "2026-07-31") is True    # month boundary
+    assert f("2027-01-01", "2026-12-31") is True    # year boundary
+    # a full timestamp still yields its date, and junk is never a skew
+    assert f("2026-07-22T00:00:00+10:00", "2026-07-21") is True
+    assert f("", "2026-07-21") is False
+    assert f(None, "2026-07-21") is False
+    assert f("2026-07-22", None) is False
+    assert f("not-a-date", "2026-07-21") is False
+
+
+# --- WHIT-331 QA gaps (adversarial) -----------------------------------------
+# Authored by QA on top of the implementer's WHIT-331 section above. These cover only
+# what that section leaves open: calendar boundaries end-to-end, the merchant gate vs
+# the lowest-id tie-break, sign/credit rows, the pending-re-send-in-the-same-payload
+# ordering, the date carry on the LINK tier (not just the skew tier), the skew gate's
+# ragged-input boundaries, account scoping, and the merge log line.
+
+_UP_ACCOUNT_ID = "3zVQJ8Btz_IRmqp78VrQnQ"   # -> "up-spending"
+_ISAN_PEND_DESC = "POS AUTHORISATION         ISAN THAI STREET FOOD     MELBOURNE   AU"
+
+
+def _skew_posted_on_up(lam, **kw):
+    """The same skewed posting, but on the OTHER mapped account."""
+    row = _bank_row(**{"txn_id": "UPPOST", "amount": Decimal("-11.00"),
+                       "authorized_date": "2026-07-21", "date": "2026-07-24",
+                       "pending": False, "category": "FOOD_AND_DRINK",
+                       "description": _SKEW_POST_DESC,
+                       "merchant_name": _SKEW_POST_MERCHANT, **kw})
+    row["accountId"] = _UP_ACCOUNT_ID
+    row["accountName"] = "Up Spending"
+    return lam.banksync.BankSyncClient.normalise(row)
+
+
+def _seed_pending_on_up(repo, lam, **kw):
+    row = _bank_row(**{"txn_id": "UPPEND", "amount": Decimal("-11.00"),
+                       "authorized_date": "2026-07-22", "date": "2026-07-22",
+                       "pending": True, "category": "coffee",
+                       "description": _SKEW_PEND_DESC, "merchant_name": "", **kw})
+    row["accountId"] = _UP_ACCOUNT_ID
+    row["accountName"] = "Up Spending"
+    txn = lam.banksync.BankSyncClient.normalise(row)
+    repo.insert_transactions([txn])
+    return txn
+
+
+# [A10] / [A11] calendar boundaries, end to end (the unit test above only checks the
+# _is_skewed_next_day predicate, never the merge + date carry through the repository).
+
+
+def test_skew_merge_across_a_month_boundary_keeps_the_melbourne_day(lam, repo):
+    # Swiped 1 Aug just after midnight Melbourne -> settled row still reads 31 Jul (UTC).
+    _skew_pending(repo, lam, authorized_date="2026-08-01")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2026-07-31",
+                                           date="2026-08-03")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 1
+    assert store[(acc, "TXN#POST")]["date"] == "2026-08-01"      # August, not July
+    assert store[(acc, "TXN#POST")]["authorized_date"] == "2026-08-01"
+
+
+def test_skew_merge_across_a_leap_day_keeps_the_melbourne_day(lam, repo):
+    # 29 Feb 2028 (UTC) -> 1 Mar 2028 (Melbourne). A naive "+1 day" done on strings
+    # rather than dates would produce 2028-02-30 and never match.
+    _skew_pending(repo, lam, authorized_date="2028-03-01")
+
+    repo.insert_or_reconcile([_skew_posted(lam, authorized_date="2028-02-29",
+                                           date="2028-03-02")])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert store[(acc, "TXN#POST")]["date"] == "2028-03-01"
+
+
+# [A12] the merchant gate must beat the lowest-transaction_id tie-break.
+
+
+def test_skew_tier_picks_the_matching_merchant_not_the_lowest_id(lam, repo):
+    # Two pendings, both -$11 and both dated exactly one day after the posting, so ONLY
+    # the merchant gate separates them — and the WRONG one sorts first by id, which is
+    # what the deterministic min() tie-break would otherwise pick.
+    _seed_pending(repo, lam, txn_id="AAA", amount=Decimal("-11.00"),
+                  authorized_date="2026-07-22", date="2026-07-22", pending=True,
+                  category="thai", description=_ISAN_PEND_DESC, merchant_name="")
+    _skew_pending(repo, lam, txn_id="ZZZ", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#ZZZ") not in store            # the KKV pending was the twin
+    assert (acc, "TXN#AAA") in store                # the Thai pending is a real charge
+    assert store[(acc, "TXN#POST")]["category"] == "coffee"   # not "thai"
+
+
+# [A13] / [A14] sign: the tier keys on EXACT amount equality, so it is sign-agnostic.
+
+
+def test_skew_merge_reconciles_a_refund_pair(lam, repo):
+    # A credit (positive amount) is dated off the same two clocks, so its pending twin
+    # skews the same way and must still collapse to one row on the Melbourne day.
+    _skew_pending(repo, lam, amount=Decimal("11.00"))
+
+    repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("11.00"))])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 1
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+
+
+def test_skew_tier_never_takes_a_refund_pending_for_a_purchase(lam, repo):
+    # A +$11 refund and a -$11 purchase, same merchant, same skewed day. The refund
+    # sorts FIRST by transaction_id; only exact amount equality (not magnitude) keeps
+    # the purchase's posting off it.
+    _skew_pending(repo, lam, txn_id="AAA_REFUND", amount=Decimal("11.00"))
+    _skew_pending(repo, lam, txn_id="ZZZ_SPEND", amount=Decimal("-11.00"))
+
+    repo.insert_or_reconcile([_skew_posted(lam, amount=Decimal("-11.00"))])
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert (acc, "TXN#ZZZ_SPEND") not in store      # the purchase's twin was consumed
+    assert (acc, "TXN#AAA_REFUND") in store         # the refund is untouched
+
+
+# [A15] a pending re-send arriving in the SAME payload as its skewed settlement.
+
+
+def test_pending_resend_and_its_skewed_posting_in_one_payload_leave_one_row(lam, repo):
+    # BankSync re-sends an open pending under the same id until it settles. A catch-up
+    # payload can carry that re-send AND the settlement together, with the POSTED row
+    # first — the delete of the stale pending runs after the inserts, so the re-sent
+    # pending must not survive as a duplicate.
+    _skew_pending(repo, lam, txn_id="PEND", category="coffee")
+    resend = _norm(lam, txn_id="PEND", amount=Decimal("-11.00"), authorized_date="2026-07-22",
+                   date="2026-07-22", pending=True, category="FOOD_AND_DRINK",
+                   description=_SKEW_PEND_DESC, merchant_name="")
+
+    repo.insert_or_reconcile([_skew_posted(lam), resend])   # posted FIRST
+
+    store = repo._table.store
+    acc = _acc(_skew_posted(lam))
+    assert set(store) == {(acc, "TXN#POST")}        # exactly one row, the settled one
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["category"] == "coffee"
+
+
+# [A16] the date carry is gated on the skew SHAPE, not on the tier — so a LINKED twin
+# that is one day ahead must move the settled row to the Melbourne day too.
+
+
+def test_linked_twin_one_day_ahead_also_wins_the_melbourne_day(lam, repo):
+    # pendingTransactionId is null in ANZ data today but the tier is live (forward-compat).
+    # If the link resolves to a twin dated one day later, the same clock split applies.
+    _skew_pending(repo, lam, txn_id="LINK", authorized_date="2026-07-22")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-11.00"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="FOOD_AND_DRINK",
+                   description=_SKEW_POST_DESC, merchant_name=_SKEW_POST_MERCHANT,
+                   pending_transaction_id="LINK")
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#POST")]
+    assert row["date"] == "2026-07-22"
+    assert row["authorized_date"] == "2026-07-22"
+
+
+# [A17] ragged inputs to the skew gate — names longer than the description, empty and
+# whitespace-only names — must return False rather than raise.
+
+
+def test_skew_gate_index_boundaries(lam):
+    # The fused matcher's index-boundary guard, carried over to the gate that replaced
+    # it: ragged inputs must return False, never raise.
+    g = lam.repository._merchant_matches_pending
+    # merchant LONGER than the whole description
+    assert g("KKV INTERNATIONAL PTY LTD AUSTRALIA", "KKV INTERNATIONAL",
+             "kkv international") is False
+    # description exactly one word short of the merchant
+    assert g("KKV INTERNATIONAL PTY", "KKV INTERNATIONAL", "kkv international") is False
+    # empty / whitespace-only inputs on either side
+    assert g("KKV INTERNATIONAL PTY", "", "") is False
+    assert g("   ", "KKV INTERNATIONAL PTY", _SKEW_PEND_DESC) is False
+    assert g("", "", "") is False
+    # a truncated column is NOT a prefix match any more — the whole point of WHIT-336
+    assert g("KKV INTERNATIONAL PTY LTD", "", _SKEW_PEND_DESC) is False
+
+
+# [A18] the pending pool is per account: an identical skew-eligible pending on another
+# card must not be consumed by this account's settlement.
+
+
+def test_skew_merge_does_not_reach_across_accounts(lam, repo):
+    # The other account's pending is IDENTICAL (same amount, same merchant, same skewed
+    # day) and sorts FIRST by transaction_id, so an unscoped pool would consume it
+    # instead of this card's own pending.
+    _seed_pending_on_up(repo, lam, txn_id="AAA_UPPEND")     # a different account
+    _skew_pending(repo, lam, txn_id="ZZZ_PEND")             # the ANZ card's own twin
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    store = repo._table.store
+    assert (_acc(_skew_posted(lam)), "TXN#ZZZ_PEND") not in store    # merged on ANZ
+    assert ("ACCOUNT#up-spending", "TXN#AAA_UPPEND") in store        # untouched elsewhere
+    assert store[(_acc(_skew_posted(lam)), "TXN#POST")]["category"] == "coffee"
+    assert len(store) == 2
+
+
+# [A19] the merge is otherwise invisible (it DELETES a row), so the INFO log is the only
+# operational trace — lock it.
+
+
+def test_skew_merge_logs_both_transaction_ids_at_info(lam, repo, caplog):
+    _skew_pending(repo, lam, txn_id="PEND")
+    caplog.set_level("INFO", logger="repository")
+
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="POST")])
+
+    merged = [r for r in caplog.records if "skewed-date twin merged" in r.getMessage()]
+    assert len(merged) == 1
+    message = merged[0].getMessage()
+    assert "posted=POST (auth 2026-07-21)" in message
+    assert "pending=PEND (auth 2026-07-22)" in message
+
+
+# --- Single-word merchants across the Melbourne/UTC split ---------------------
+# clean_merchant strips trailing store numbers and processor prefixes, so plenty of
+# real shops reduce to ONE word (COLES, MUJI, EASYPARK). Those were skipped by the
+# skewed-date tier entirely, so an early-morning purchase at one of them duplicated
+# until the age-out sweep. Strings below are the verbatim live shapes from
+# tests/lambda/test_merchant.py — fixed-width columns, real store numbers.
+
+_COLES_PEND_DESC = "POS AUTHORISATION         COLES 0602               MELBOURNE    AU"
+_COLES_POST_DESC = "COLES 0602 MELBOURNE"
+_COLES_POST_MERCHANT = "COLES 0602               "
+
+
+def _coles_pending(repo, lam, txn_id="PEND", amount=Decimal("-63.40"),
+                   authorized_date="2026-07-22", category="groceries",
+                   description=_COLES_PEND_DESC):
+    return _seed_pending(repo, lam, txn_id=txn_id, amount=amount,
+                         authorized_date=authorized_date, date=authorized_date,
+                         pending=True, category=category,
+                         description=description, merchant_name="")
+
+
+def _coles_posted(lam, txn_id="POST", amount=Decimal("-63.40"), authorized_date="2026-07-21",
+                  date="2026-07-24", merchant_name=_COLES_POST_MERCHANT):
+    return _norm(lam, txn_id=txn_id, amount=amount, authorized_date=authorized_date,
+                 date=date, pending=False, category="FOOD_AND_DRINK",
+                 description=_COLES_POST_DESC, merchant_name=merchant_name)
+
+
+def test_one_word_merchant_skewed_pair_reconciles_and_keeps_the_melbourne_day(lam, repo):
+    # The whole point of the card, on the real ANZ row shape: both sides clean to
+    # "COLES", so the pair collapses to one row on the day it was actually swiped.
+    _coles_pending(repo, lam)
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#PEND") not in store
+    assert len(store) == 1
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["authorized_date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["category"] == "groceries"
+
+
+@pytest.mark.parametrize("label, damage", [
+    # a row written before clean_merchant existed carries no merchant_name at all
+    ("missing", lambda row: row.pop("merchant_name")),
+    # clean_merchant can return "", and sanitise_transaction only strips None, so ""
+    # persists. The gate reads `.get(...) or ""`, so both shapes arrive identically —
+    # parametrized rather than duplicated to say so out loud.
+    ("empty", lambda row: row.update(merchant_name="")),
+])
+def test_unusable_stored_merchant_name_is_recovered_from_the_anz_column(lam, repo,
+                                                                        label, damage):
+    # Since WHIT-336 an ANZ pending does not depend on the stored name — the name is read
+    # straight out of the row's own fixed-width column — so this reconciles rather than
+    # leaving a duplicate behind.
+    pending = _coles_pending(repo, lam)
+    damage(repo._table.store[(_acc(pending), "TXN#PEND")])
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 1, f"{label}: pending twin left behind"
+
+
+def test_missing_merchant_name_on_a_non_anz_row_still_never_merges(lam, repo):
+    # The other half of the control above: with no column to read and no stored name,
+    # there is nothing to compare, so a single-word merchant must fail toward leaving
+    # the pending alone rather than merging on the description alone.
+    pending = _coles_pending(repo, lam, description="COLES 0602 MELBOURNE")
+    del repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"]
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+def test_one_word_merchant_skew_still_requires_the_exact_amount(lam, repo):
+    _coles_pending(repo, lam, amount=Decimal("-63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, amount=Decimal("-64.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_one_word_exact_same_day_twin_still_wins_over_the_skew_candidate(lam, repo):
+    # Two real COLES purchases on consecutive days. The exact tier must claim the
+    # same-day pending first, leaving the next day's genuine purchase alone.
+    _coles_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _coles_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_coles_posted(lam, authorized_date="2026-07-21")])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#PEND21") not in store
+    assert (acc, "TXN#PEND22") in store
+
+
+def test_one_word_pair_survives_settlement_of_both_days(lam, repo):
+    _coles_pending(repo, lam, txn_id="PEND21", authorized_date="2026-07-21")
+    _coles_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22")
+
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST21", authorized_date="2026-07-21")])
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
+
+    store = repo._table.store
+    assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}
+
+
+def test_one_word_merchant_merges_across_branches_of_a_chain(lam, repo):
+    # Documented, not desired: clean_merchant strips store numbers, so COLES 1157
+    # (Footscray) and COLES 0602 (Melbourne) are both "COLES" and this tier cannot
+    # tell them apart. Pinned so the behaviour is discovered here, not in production.
+    _coles_pending(repo, lam,
+                   description="POS AUTHORISATION         COLES 1157               FOOTSCRAY    AU")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 1
+
+
+def test_one_word_merchant_still_does_not_tip_reconcile(lam, repo):
+    # The tip tier keeps its own >=2-word rule: same day, tip-sized gap, one word.
+    _coles_pending(repo, lam, authorized_date="2026-07-21", amount=Decimal("-63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, authorized_date="2026-07-21",
+                                            amount=Decimal("-70.00"))])
+
+    assert len(repo._table.store) == 2
+
+
+def test_one_word_merchant_still_does_not_blank_auth_reconcile(lam, repo):
+    # The blank-auth tier keeps its own >=2-word rule too.
+    _coles_pending(repo, lam, authorized_date="2026-07-20")
+
+    repo.insert_or_reconcile([_coles_posted(lam, authorized_date="", date="2026-07-22")])
+
+    assert len(repo._table.store) == 2
+
+
+def test_same_cleaned_merchant_edges(lam):
+    f = lam.repository._same_cleaned_merchant
+    # Both sides arrive already cleaned (banksync.normalise writes merchant_name through
+    # clean_merchant on pending and posted alike), so this only has to absorb padding
+    # and casing — not raw store numbers, which never reach it.
+    assert f("COLES ", " COLES") is True            # fixed-width padding is irrelevant
+    assert f("coles", "COLES") is True              # casing is irrelevant
+    assert f("COLES 0602", "COLES") is False        # an UNcleaned name must not match
+    assert f("COLES", "COLES EXPRESS") is False     # a different brand
+    assert f("COLES EXPRESS", "COLES") is False     # and the reverse
+    assert f("", "COLES") is False                  # underivable name never matches
+    assert f("COLES", "") is False
+
+
+def test_merchant_matches_pending_branches(lam):
+    g = lam.repository._merchant_matches_pending
+    # ANZ rows take the COLUMN branch (both of these), where the stored name is never
+    # consulted — the name is read straight out of the fixed-width column
+    assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) is True
+    assert g("COLES", "", _COLES_PEND_DESC.lower()) is True
+    # a neighbouring brand in that column is not the same merchant
+    assert g("COLES", "COLES", _pend_col("COLES EXPRESS 1157", "FOOTSCRAY")) is False
+    # non-ANZ description -> the fallback. 1 word: the cleaned names must agree AND the
+    # name must appear in the description; a description search alone is not enough
+    assert g("COLES", "COLES", "COLES 0602 MELBOURNE") is True
+    assert g("COLES", "COLES EXPRESS", "coles express 1157 footscray au") is False
+    # non-ANZ, >=2 words: the description alone carries it (no stored name needed)
+    assert g("HARERUYA PANTRY", "", "SQ *HARERUYA PANTRY       Carlton") is True
+
+
+def test_merchant_gate_returns_the_matched_branch_name(lam):
+    # WHIT-338: the gate names WHICH branch matched, and the skewed-date merge log's
+    # gate= label is read straight from this — so this is the single source both the
+    # match and the label depend on. A branch-order or predicate change that mislabels
+    # the log reds here.
+    g = lam.repository._merchant_gate
+    assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) == "column"
+    # a single-word merchant on an ANZ column is still "column" — the column branch is
+    # checked first, so it never falls to the name branch (the QUEENVICTORIAMARKETSKIDAT case)
+    assert g("COLES", "", _COLES_PEND_DESC.lower()) == "column"
+    # non-ANZ, one word -> the name-equality branch
+    assert g("COLES", "COLES", "COLES 0602 MELBOURNE") == "name"
+    # non-ANZ, two-plus words -> the description branch
+    assert g("HARERUYA PANTRY", "", "SQ *HARERUYA PANTRY       Carlton") == "description"
+    # no match -> None (a neighbouring brand in the same ANZ column)
+    assert g("COLES", "COLES", _pend_col("COLES EXPRESS 1157", "FOOTSCRAY")) is None
+    assert g("COLES", "COLES EXPRESS", "coles express 1157 footscray au") is None
+
+
+def test_gate_and_bool_agree_on_the_anz_shape_boundaries(lam):
+    # WHIT-338 — the label and the bool now BOTH hinge on is_anz_pending vs
+    # pending_merchant_column. Pin the two boundaries where an is_anz/column split would
+    # silently flip a label from "column" to "name" (or admit a merge on nothing).
+    g = lam.repository._merchant_gate
+    m = lam.repository._merchant_matches_pending
+    # ANZ-shaped but the merchant column is BLANK (padding >= column width): the gate must
+    # REFUSE, never fall through to a name/description containment search over the suburb.
+    anz_blank = "POS AUTHORISATION" + " " * 30 + "AU"
+    assert g("COLES", "COLES", anz_blank) is None
+    assert m("COLES", "COLES", anz_blank) is False
+    # a SINGLE space after the prefix is NOT column padding -> not ANZ -> the name branch.
+    one_space = "POS AUTHORISATION COLES 0602 MELBOURNE"
+    assert g("COLES", "COLES", one_space) == "name"
+    assert m("COLES", "COLES", one_space) is True
+
+
+def test_gate_name_branch_is_logged_end_to_end(lam, repo, caplog):
+    # WHIT-338 — gate=name is the ONE label branch no full reconcile in the suite
+    # exercises (column and description are; name was only pinned at the unit level). It
+    # is the branch the deleted `single_word` local used to produce, so this anchors that
+    # removing the local did not change the log. A single-word merchant on a NON-ANZ
+    # pending is the only path to "name": "LEAPTEL 1234" cleans to the one word "LEAPTEL",
+    # the row is not ANZ-shaped, so the name-equality branch carries it.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-30.00"),
+                  authorized_date="2026-07-22", date="2026-07-22", pending=True,
+                  category="internet", description="LEAPTEL 1234",
+                  merchant_name="LEAPTEL 1234")
+    caplog.set_level("INFO", logger="repository")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-30.00"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="GENERAL_SERVICES",
+                   description="LEAPTEL 1234", merchant_name="LEAPTEL 1234")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") not in store          # twin reconciled — no double count
+    assert len(store) == 1
+    merges = [r.getMessage() for r in caplog.records if "twin merged" in r.getMessage()]
+    assert len(merges) == 1
+    assert "gate=name" in merges[0]                # NOT column, NOT description
+
+
+def test_near_miss_log_shows_the_column_the_gate_actually_compared(lam, repo, caplog):
+    # On an ANZ row the gate compares the COLUMN, not the stored name, so the line has to
+    # print the column — otherwise the fused case this exists to diagnose reads as an
+    # ordinary name mismatch and gets misdiagnosed.
+    _skew_pending(repo, lam, txn_id="PEND", description=_SKEW_PEND_DESC)
+    caplog.set_level("INFO", logger="repository")
+
+    repo.insert_or_reconcile([_skew_posted(lam, merchant_name="KKV INTERNATIONAL PTY LTD")])
+
+    rejected = [r.getMessage() for r in caplog.records if "rejected on merchant" in r.getMessage()]
+    assert len(rejected) == 1
+    # the stored name is the FUSED one; the column is the real merchant. Both are shown,
+    # and it is their disagreement that identifies the fusion.
+    assert "pending_merchant='KKV INTERNATIONAL PTYSunshine'" in rejected[0]
+    assert "pending_column='KKV INTERNATIONAL PTY'" in rejected[0]
+
+
+def test_one_word_near_miss_logs_the_rejected_pending(lam, repo, caplog):
+    # The merge log only fires on success, so this line is the only signal that the
+    # single-word gate ran and said no. Without it a broken gate looks like a quiet week.
+    _coles_pending(repo, lam,
+                   description="POS AUTHORISATION         COLES EXPRESS 1157       FOOTSCRAY    AU")
+    caplog.set_level("INFO", logger="repository")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    rejected = [r for r in caplog.records if "rejected on merchant" in r.getMessage()]
+    assert len(rejected) == 1
+    message = rejected[0].getMessage()
+    assert "merchant='COLES'" in message
+    assert "pending_merchant='COLES EXPRESS'" in message
+    assert "pending=PEND" in message
+
+
+def test_merge_log_names_which_gate_matched(lam, repo, caplog):
+    # `gate` is the only production signal for which branch matched. It matters most for
+    # "column": that branch reads a fixed-width offset, so if ANZ ever shifts its padding
+    # the symptom is column merges falling to zero rather than silence.
+    caplog.set_level("INFO", logger="repository")
+    _coles_pending(repo, lam)
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    _skew_pending(repo, lam, txn_id="KKVPEND")
+    repo.insert_or_reconcile([_skew_posted(lam, txn_id="KKVPOST")])
+
+    merges = [r.getMessage() for r in caplog.records if "twin merged" in r.getMessage()]
+    assert len(merges) == 2
+    # both are ANZ fixed-width pendings, so both match on the column
+    assert "gate=column" in merges[0]
+    assert "gate=column" in merges[1]
+
+
+def test_anz_column_overrides_a_stored_merchant_name_that_disagrees(lam, repo):
+    # The row IS an ISAN THAI pending but carries a stored name of "COLES". Since
+    # WHIT-336 the column is authoritative and the stored name is not consulted, so the
+    # wrong name cannot buy a merge. Pinned in this direction because the failure that
+    # matters is a WRONG merge, and a stored name is the field most likely to be wrong
+    # (a legacy row, or ANZ starting to populate merchantName on pendings).
+    pending = _coles_pending(repo, lam, description=_ISAN_PEND_DESC)
+    repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"] = "COLES"
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert len(repo._table.store) == 2
+
+
+# --- Single-word merchants: adversarial gaps (QA) ----------------------------
+# The section above exercises COLES only. These cover the other named shops, the two
+# whose real live shapes still miss, the wrong-pending ordering hazard the widened gate
+# makes routine, the tie-break, refunds, the re-send guard, and the two log lines.
+
+
+def _pend_col(merchant_col: str, suburb: str = "MELBOURNE") -> str:
+    """A verbatim-shaped ANZ pending description: "POS AUTHORISATION" + padding, the
+    25-character merchant column, then the suburb column and the country. Built rather
+    than hand-spaced so a column width is never accidentally off by one."""
+    return "POS AUTHORISATION" + " " * 9 + merchant_col.ljust(25) + suburb.ljust(13) + "AU"
+
+
+def _posted_col(merchant_col: str) -> str:
+    """A posted row's `merchantName`: the same merchant column, space-padded."""
+    return merchant_col.ljust(25) + " "
+
+
+@pytest.mark.parametrize("label, pending_col, posted_col", [
+    ("woolworths", "WOOLWORTHS 1234", "WOOLWORTHS 1234"),
+    ("mcdonalds", "McDonalds 951152", "McDonalds 951152"),
+    ("officeworks", "OFFICEWORKS 0355", "OFFICEWORKS 0355"),
+    ("easypark", "EASYPARK AU", "EASYPARK AU"),
+    ("paystay", "PAYSTAY 1093482", "PAYSTAY 1093482"),
+    ("leaptel", "LEAPTEL", "LEAPTEL"),
+    ("amazon", "AMAZON RETA* AMAZON AU", "AMAZON RETA* AMAZON AU"),
+    ("tesla", "TESLA", "TESLA"),
+    ("parkable", "PARKABLE", "PARKABLE"),
+    ("muji", "MUJI 1102", "MUJI 1102"),
+])
+def test_one_word_skew_merges_for_every_named_single_word_shop(lam, repo, label,
+                                                               pending_col, posted_col):
+    # COLES is the only shop the section above proves; without this the fix could be
+    # silently COLES-shaped and deliver nothing for the rest.
+    _seed_pending(repo, lam, txn_id="PEND", amount=Decimal("-8.25"),
+                  authorized_date="2026-07-22", date="2026-07-22", pending=True,
+                  category="groceries", merchant_name="",
+                  description=_pend_col(pending_col))
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-8.25"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="FOOD_AND_DRINK",
+                   description=f"{posted_col} MELBOURNE", merchant_name=_posted_col(posted_col))
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#PEND") not in store, f"{label}: pending twin left behind"
+    assert len(store) == 1, f"{label}: duplicated"
+    assert store[(acc, "TXN#POST")]["date"] == "2026-07-22"
+    assert store[(acc, "TXN#POST")]["category"] == "groceries"
+
+
+def test_full_column_merchant_reconciles_and_near_names_still_miss(lam):
+    # WHIT-336. WOOLWORTHS/330 MILLERS RD exactly fills the 25-char column, so it fused
+    # onto the suburb and never reconciled. The positional slice recovers it. The
+    # negatives below are what stops that from becoming a substring search — every pair
+    # is two names that BOTH exist in the live table, and each is a DIFFERENT store, so
+    # merging one would delete a real transaction.
+    g = lam.repository._merchant_matches_pending
+    # the fix: a full column no longer defeats the match
+    assert g("WOOLWORTHS/330 MILLERS RD", "WOOLWORTHS/330 MILLERS RDMELBOURNE",
+             _pend_col("WOOLWORTHS/330 MILLERS RD")) is True
+    # real different-store pairs — a containment test merges all three, this must not
+    assert g("CHEMIST WAREHOUSE", "", _pend_col("CHEMIST WAREHOUSE DARLING")) is False
+    assert g("McDonalds", "", _pend_col("MCDONALDS SYD DOMEST")) is False
+    assert g("WOOLWORTHS", "", _pend_col("WOOLWORTHS/330 MILLERS RD")) is False
+    # a name truncated on ONE side only stays a miss (fail-safe: a leftover duplicate)
+    assert g("MUJI RETAIL (AUSTRAL", "MUJI RETAIL AUSTRALIA",
+             _pend_col("MUJI RETAIL AUSTRALIA")) is False
+    assert g("KKV INTERNATIONAL PTY LTD", "", _pend_col("SQ *KKV INTERNATIONAL PTY")) is False
+    # positive controls, so a reverted gate reds here too
+    assert g("MUJI", "MUJI", _pend_col("MUJI 1102")) is True
+    assert g("WOOLWORTHS", "WOOLWORTHS", _pend_col("WOOLWORTHS 1234")) is True
+    assert g("KKV INTERNATIONAL PTY", "", _pend_col("SQ *KKV INTERNATIONAL PTY")) is True
+
+
+def test_multi_word_non_anz_pending_with_no_stored_name_still_reconciles(lam, repo, caplog):
+    # On the live table (queried 2026-07-25) 75 rows carry an empty merchant_name and
+    # NONE of them is an ANZ shape, so the non-ANZ fallback must keep matching on the
+    # description alone. Tightening it to name equality silently stops 108 live pairs
+    # reconciling — this is the fail-on-revert anchor for that. Shape and name are
+    # verbatim from that table.
+    pending = _seed_pending(
+        repo, lam, txn_id="PEND", amount=Decimal("-42.00"), authorized_date="2026-07-22",
+        date="2026-07-22", pending=True, category="shopping", merchant_name="",
+        description="SQ *HARERUYA PANTRY       Carlton",
+    )
+    repo._table.store[(_acc(pending), "TXN#PEND")]["merchant_name"] = ""
+    caplog.set_level("INFO", logger="repository")
+    posted = _norm(lam, txn_id="POST", amount=Decimal("-42.00"), authorized_date="2026-07-21",
+                   date="2026-07-24", pending=False, category="FOOD_AND_DRINK",
+                   description="SQ *HARERUYA PANTRY       Carlton",
+                   merchant_name="SQ *HARERUYA PANTRY       ")
+
+    repo.insert_or_reconcile([posted])
+
+    assert len(repo._table.store) == 1
+    # and the merge log names the branch that carried it — "column" would be a lie here
+    merges = [r.getMessage() for r in caplog.records if "twin merged" in r.getMessage()]
+    assert len(merges) == 1
+    assert "gate=description" in merges[0]
+
+
+def test_one_word_posted_resend_does_not_consume_a_later_genuine_pending(lam, repo):
+    # The re-send guard, on the single-word path: a settled row already stored under its
+    # own id must not re-enter the twin search and eat the next day's real purchase.
+    _coles_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    _coles_pending(repo, lam, txn_id="LATER", authorized_date="2026-07-23", category="lunch")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])   # verbatim re-send
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#LATER") in store
+    assert store[(acc, "TXN#POST")]["category"] == "groceries"
+    assert len(store) == 2
+
+
+def test_one_word_merged_row_keeps_the_melbourne_day_across_resends(lam, repo):
+    _coles_pending(repo, lam, txn_id="PEND", authorized_date="2026-07-22")
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    acc = _acc(_coles_posted(lam))
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    row = repo._table.store[(acc, "TXN#POST")]
+    assert row["date"] == "2026-07-22"
+    assert row["authorized_date"] == "2026-07-22"
+
+
+def test_one_word_settlement_takes_the_wrong_pending_when_only_the_later_one_is_open(lam, repo):
+    # The accepted cost of the widened gate, pinned as it actually behaves. Day 1's
+    # settlement arrives when only day 2's pending is open; nothing distinguishes them,
+    # so day 1's charge takes day 2's DAY and CATEGORY. The total stays right.
+    _coles_pending(repo, lam, txn_id="PEND22", authorized_date="2026-07-22", category="lunch")
+
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST21", authorized_date="2026-07-21")])
+    repo.insert_or_reconcile([_coles_posted(lam, txn_id="POST22", authorized_date="2026-07-22")])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert {k[1] for k in store} == {"TXN#POST21", "TXN#POST22"}   # count right
+    assert store[(acc, "TXN#POST21")]["date"] == "2026-07-22"      # but wrong day
+    assert store[(acc, "TXN#POST21")]["category"] == "lunch"       # and wrong label
+    assert store[(acc, "TXN#POST22")]["category"] == "FOOD_AND_DRINK"
+
+
+def test_one_word_tie_break_takes_the_lowest_id_and_carries_only_its_fields(lam, repo):
+    first = _norm(lam, txn_id="AAA", amount=Decimal("-63.40"), authorized_date="2026-07-22",
+                  date="2026-07-22", pending=True, category="groceries",
+                  description=_COLES_PEND_DESC, merchant_name="")
+    first["notes"] = "milk run"
+    first["tags"] = ["weekly"]
+    second = _norm(lam, txn_id="ZZZ", amount=Decimal("-63.40"), authorized_date="2026-07-22",
+                   date="2026-07-22", pending=True, category="lunch",
+                   description=_COLES_PEND_DESC, merchant_name="")
+    second["notes"] = "birthday cake"
+    repo.insert_transactions([first, second])
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#AAA") not in store            # lowest id, deterministically
+    assert store[(acc, "TXN#ZZZ")]["notes"] == "birthday cake"
+    row = store[(acc, "TXN#POST")]
+    assert row["category"] == "groceries"           # only the consumed row's fields ride
+    assert row["notes"] == "milk run"
+    assert row["tags"] == ["weekly"]
+
+
+def test_one_word_skew_reconciles_a_refund_pair(lam, repo):
+    _coles_pending(repo, lam, amount=Decimal("63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, amount=Decimal("63.40"))])
+
+    assert len(repo._table.store) == 1
+
+
+def test_one_word_skew_never_takes_a_refund_pending_for_a_purchase(lam, repo):
+    # The refund sorts FIRST by id; only exact amount equality (not magnitude) saves it.
+    _coles_pending(repo, lam, txn_id="AAA_REFUND", amount=Decimal("63.40"))
+    _coles_pending(repo, lam, txn_id="ZZZ_SPEND", amount=Decimal("-63.40"))
+
+    repo.insert_or_reconcile([_coles_posted(lam, amount=Decimal("-63.40"))])
+
+    store = repo._table.store
+    acc = _acc(_coles_posted(lam))
+    assert (acc, "TXN#ZZZ_SPEND") not in store
+    assert (acc, "TXN#AAA_REFUND") in store
+
+
+def test_near_miss_is_not_logged_on_a_successful_one_word_merge(lam, repo, caplog):
+    caplog.set_level("INFO", logger="repository")
+    _coles_pending(repo, lam)
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    assert [r for r in caplog.records if "twin rejected" in r.getMessage()] == []
+
+
+def test_near_miss_is_logged_for_a_multi_word_merchant(lam, repo, caplog):
+    # WHIT-336 widened the near-miss line to EVERY rejection, not just single-word ones.
+    # Multi-word merchants now match on a positional column slice, so they are just as
+    # exposed to a padding drift and need the same trace.
+    caplog.set_level("INFO", logger="repository")
+    _skew_pending(repo, lam, txn_id="PEND", description=_ISAN_PEND_DESC)
+
+    repo.insert_or_reconcile([_skew_posted(lam)])
+
+    assert len(repo._table.store) == 2                       # KKV posted vs ISAN pending
+    rejected = [r.getMessage() for r in caplog.records if "twin rejected" in r.getMessage()]
+    assert len(rejected) == 1
+    assert "pending=PEND" in rejected[0]
+
+
+def test_near_miss_logs_only_the_amount_and_date_matched_pendings(lam, repo, caplog):
+    # One webhook must not emit a line per open pending — the loop runs over the
+    # amount + one-day-skew subset, not the whole pool.
+    caplog.set_level("INFO", logger="repository")
+    other = "POS AUTHORISATION         COLES EXPRESS 1157       FOOTSCRAY    AU"
+    _coles_pending(repo, lam, txn_id="P1", description=other)
+    _coles_pending(repo, lam, txn_id="P2", description=other)
+    _coles_pending(repo, lam, txn_id="P3", description=other, amount=Decimal("-9"))
+    _coles_pending(repo, lam, txn_id="P4", description=other, authorized_date="2026-07-25")
+
+    repo.insert_or_reconcile([_coles_posted(lam)])
+
+    near = [r.getMessage() for r in caplog.records
+            if "twin rejected on merchant" in r.getMessage()]
+    assert len(near) == 2
+    assert {m.rsplit("pending=", 1)[1] for m in near} == {"P1", "P2"}
+
+
+# ======================================================================================
+# Folded from per-ticket reconcile satellites (WHIT-452 Slice 1). Bodies moved verbatim;
+# the duplicated local _bank_row/_norm/_acc copies were dropped in favour of this file's
+# canonical helpers above (identical defaults).
+# ======================================================================================
+
+
+# --- WHIT-275: _with_carried_category tag/note conflict resolution --------------------
+# (was test_reconcile_whit275_gaps.py) Carry guard is `if value:` — a truthy SOURCE
+# (pending) value overwrites the posted's own; a falsy/absent source never clobbers.
+
+
+def test_carried_source_tags_overwrite_the_posted_existing_tags(lam, repo):  # [A14]
+    posted = {"transaction_id": "B", "category": "FOOD", "tags": ["stale"], "notes": "stale note"}
+    source = {"category": "coffee", "tags": ["work", "travel"], "notes": "reimburse"}
+
+    carried = repo._with_carried_category(posted, source)
+
+    # Truthy source value overwrites the posted's own — the pending user edit wins.
+    assert carried["tags"] == ["work", "travel"]
+    assert carried["notes"] == "reimburse"
+    assert carried["category"] == "coffee"
+    # And the original posted dict is not mutated (it's a copy).
+    assert posted["tags"] == ["stale"]
+
+
+def test_carried_absent_source_tags_keep_the_posted_existing_tags(lam, repo):  # [A15]
+    # The mirror: when the source has NO tags, the posted's own survive (falsy/absent
+    # source never clobbers a real value).
+    posted = {"transaction_id": "B", "category": "FOOD", "tags": ["keep"]}
+    source = {"category": "coffee"}  # no tags/notes
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["tags"] == ["keep"]
+    assert carried["category"] == "coffee"
+
+
+# --- WHIT-296/300: the budget_excluded override rides the same carry (static helper) --
+# (was test_reconcile_whit296.py) Survives re-sync like notes/tags; the dedupe sweep is
+# posted-authoritative for the exclude override.
+
+
+def test_carry_brings_budget_excluded_onto_a_fresh_posted(lam, repo):
+    # The pending leg the user marked as a transfer; the freshly-normalised posted has
+    # no override yet. The carry moves it across so the exclusion survives settlement.
+    posted = {"transaction_id": "B", "category": "FOOD", "counts_to_budget": True}
+    source = {"category": "coffee", "budget_excluded": True}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["budget_excluded"] is True
+    assert posted.get("budget_excluded") is None  # original not mutated (it's a copy)
+
+
+def test_bank_recompute_of_counts_to_budget_does_not_wipe_the_override(lam, repo):
+    # The re-imported posted carries the bank's own counts_to_budget=True; the override
+    # lives in a SEPARATE field, so the recompute leaves it untouched — the whole point
+    # of storing budget_excluded apart from counts_to_budget.
+    posted = {"transaction_id": "B", "category": "coffee", "counts_to_budget": True}
+    source = {"category": "coffee", "budget_excluded": True}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["counts_to_budget"] is True  # bank value intact
+    assert carried["budget_excluded"] is True    # user override intact
+
+
+def test_absent_source_override_keeps_the_posted_own_override(lam, repo):
+    # A source with no override never clobbers an override the posted already holds
+    # (falsy/absent source is skipped) — mirrors the notes/tags carry rule.
+    posted = {"transaction_id": "B", "category": "coffee", "budget_excluded": True}
+    source = {"category": "coffee"}  # no override
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["budget_excluded"] is True
+
+
+def test_dedupe_guard_keeps_a_post_settlement_override(lam, repo):
+    # dedupe_sweep (the dedupe sweep): the user excluded the POSTED after
+    # settlement; a stale pending twin without the override must not un-exclude it.
+    posted = {"transaction_id": "B", "category": "coffee", "budget_excluded": True}
+    source = {"category": "coffee"}  # stale pending, no override
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried["budget_excluded"] is True
+
+
+# --- WHIT-536: the filed_by_rule stamp rides the carry in lockstep with the category -----
+
+def test_carry_brings_the_rule_stamp_with_the_category(lam, repo):
+    # A rule-filed pending settling onto a posted with no category → both carry across.
+    posted = {"transaction_id": "B", "counts_to_budget": True}
+    source = {"category": "groceries", "filed_by_rule": "rule-1"}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["category"] == "groceries"
+    assert carried["filed_by_rule"] == "rule-1"
+
+
+def test_hand_filed_pending_strips_an_incoming_rule_stamp(lam, repo):
+    # Fail-on-revert anchor: pending the user filed by hand (category, NO stamp); the incoming
+    # posted arrived rule-stamped (rule_ingest stamps unfiled posted rows). The category is
+    # carried from the hand-filed pending, so its (absent) stamp must win — strip the posted's.
+    # Dropping the `pop` in _with_carried_category leaves "rule-1" and this goes red.
+    posted = {"transaction_id": "B", "category": "AUTO", "filed_by_rule": "rule-1", "counts_to_budget": True}
+    source = {"category": "groceries"}  # hand-filed: a category, no stamp
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["category"] == "groceries"
+    assert "filed_by_rule" not in carried
+
+
+def test_posted_keeps_its_own_stamp_when_no_category_is_carried(lam, repo):
+    # Source has nothing to carry → the posted keeps its own category AND its own stamp.
+    posted = {"transaction_id": "B", "category": "groceries", "filed_by_rule": "rule-2", "counts_to_budget": True}
+    source = {"notes": "x"}
+
+    carried = repo._with_carried_category(posted, source)
+
+    assert carried["filed_by_rule"] == "rule-2"
+
+
+def test_dedupe_sweep_carries_the_rule_stamp_with_the_category(lam, repo):
+    posted = {"transaction_id": "B", "counts_to_budget": True}
+    source = {"category": "groceries", "filed_by_rule": "rule-3"}
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried["filed_by_rule"] == "rule-3"
+
+
+def test_dedupe_guard_does_not_carry_a_stale_exclude_onto_a_reincluded_posted(lam, repo):
+    # The user RE-INCLUDED the posted (override cleared -> absent). On the sweep a stale
+    # pending twin still marked excluded must NOT re-exclude it — that's the WHIT-300 bug.
+    # Fail-on-revert: restore the old fill-if-absent carry and budget_excluded reappears.
+    # (The live path staying intact — the sweep-only scope of this change — is guarded by
+    # test_carry_brings_budget_excluded_onto_a_fresh_posted above.)
+    posted = {"transaction_id": "B", "category": "coffee"}  # re-included: no override
+    source = {"category": "coffee", "budget_excluded": True}  # stale pending
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried.get("budget_excluded") is None  # stays included
+
+
+# --- WHIT-296: budget_excluded survives the LIVE reconcile (insert_or_reconcile) ------
+# (was test_reconcile_whit296_live.py) budget_excluded is not a bank field (normalise
+# strips it), so — like the note/tag reconcile tests — it's injected onto the stored row.
+# Fail-on-revert: drop "budget_excluded" from the carry tuple in _with_carried_category.
+
+
+def test_reconcile_carries_budget_excluded_onto_posted(lam, repo):
+    # WHIT-296 — [A-R1] the user marked the PENDING leg as a transfer; on settlement the
+    # override must ride onto the new posted row (whose bank feed knows nothing of it),
+    # and the stale pending must be deleted.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="coffee")
+    repo.insert_transactions([pending])
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["budget_excluded"] = True
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["budget_excluded"] is True            # override carried onto the posted
+    assert (acc, "TXN#A") not in repo._table.store   # stale pending removed
+    assert len(repo._table.store) == 1               # no duplicate
+
+
+def test_reconcile_resync_preserves_override_on_existing_posted(lam, repo):
+    # WHIT-296 — [A-R2] a plain re-import (no pending twin) of an already-stored posted the
+    # user excluded AFTER it settled must keep the override — the read-then-carry branch
+    # (repository.py:300). The bank's re-imported row carries no override; the existing
+    # one must not be wiped by the recompute.
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="coffee")
+    repo.insert_transactions([posted])
+    acc = _acc(posted)
+    repo._table.store[(acc, "TXN#B")]["budget_excluded"] = True
+
+    reimport = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([reimport])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["budget_excluded"] is True   # survived the re-sync recompute
+    assert row["category"] == "coffee"      # (user category still carried too)
+
+
+def test_reconcile_does_not_carry_a_falsy_override_onto_posted(lam, repo):
+    # WHIT-296 — [A-R3] edge: a stored budget_excluded=False on the pending is falsy, so the
+    # truthy carry guard skips it — the posted stays absent (not excluded), never storing a
+    # read-back-as-excluded value. Mirrors the "cleared note not carried" rule.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="coffee")
+    repo.insert_transactions([pending])
+    acc = _acc(pending)
+    repo._table.store[(acc, "TXN#A")]["budget_excluded"] = False  # falsy
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    assert "budget_excluded" not in repo._table.store[(acc, "TXN#B")]
+
+
+# --- WHIT-333: the four twin-matching tiers share their candidate-pick / pop tail -----
+# (was test_reconcile_whit333.py + _e2e.py) _pop_lowest_id is the money-safety core that
+# DELETES a financial row; _select_twin is the shared predicate->pick->pop tail. Each is
+# fail-on-revert: break the extracted behaviour and the named assert goes red.
+
+
+def _row(txn_id, amount=Decimal("-9.00")):
+    return {"transaction_id": txn_id, "amount": amount, "authorized_date": "2026-06-29"}
+
+
+def test_pop_lowest_id_picks_lowest_among_indices_and_pops_it(repo):
+    # Only indices 0 and 2 are offered; the helper must pick the lower transaction_id
+    # BETWEEN THEM ("A") and pop just it — the un-offered lower id at index 1 ("0") and
+    # the loser both survive. min->max or the wrong pop target fails an assert.
+    pool = [_row("A"), _row("0"), _row("C")]
+    picked = repo._pop_lowest_id(pool, [0, 2])
+    assert picked["transaction_id"] == "A"
+    assert [r["transaction_id"] for r in pool] == ["0", "C"]
+
+
+def test_pop_lowest_id_missing_transaction_id_sorts_first(repo):
+    # `.get("transaction_id", "")` defaults a keyless row to "" so it wins the min
+    # instead of raising. Drop the default and this raises KeyError.
+    keyless = {"amount": Decimal("-9.00")}
+    pool = [_row("A"), keyless]
+    picked = repo._pop_lowest_id(pool, [0, 1])
+    assert "transaction_id" not in picked
+    assert [r.get("transaction_id") for r in pool] == ["A"]
+
+
+def test_select_twin_filters_then_picks_lowest_and_pops(repo):
+    # The predicate rejects the lowest-id row ("A"); among the matches ("M","N") the
+    # helper picks the lower id and pops only it. A regression that min'd over the whole
+    # pool would pick "A"; one that popped a candidate-list position not the pool index
+    # would drop the wrong row.
+    pool = [_row("A", Decimal("-1.00")), _row("M"), _row("N")]
+    picked = repo._select_twin(pool, lambda item: item.get("amount") == Decimal("-9.00"))
+    assert picked["transaction_id"] == "M"
+    assert [r["transaction_id"] for r in pool] == ["A", "N"]
+
+
+def test_select_twin_no_candidate_returns_none_and_keeps_pool(repo):
+    pool = [_row("A")]
+    assert repo._select_twin(pool, lambda item: False) is None
+    assert len(pool) == 1
+
+
+def test_exact_tier_matches_a_null_amount_pair(repo):
+    # The exact tier deliberately has NO `amount is not None` guard, so a posted row with
+    # a null amount still pairs with a null-amount pending on an equal date. Add a guard
+    # "to clean up" and this goes red.
+    pending = {"transaction_id": "A", "amount": None, "authorized_date": "2026-06-29"}
+    posted = {"account_id": "ACC", "amount": None, "authorized_date": "2026-06-29",
+              "transaction_id": "P"}
+    twin = repo._find_exact_twin(posted, {"ACC": [pending]})
+    assert twin is not None
+    assert twin["transaction_id"] == "A"
+
+
+def test_blank_auth_tie_break_consumes_lowest_transaction_id(lam, repo):
+    # WHIT-333 e2e (was test_reconcile_whit333_e2e.py): two indistinguishable blank-auth
+    # pendings (same amount, >=2-word merchant, in-window date). Exactly one may die and it
+    # must be the lowest id (A1) — the deterministic pick the shared _pop_lowest_id makes.
+    _seed_pending(repo, lam, txn_id="A2", amount=Decimal("-5.50"),
+                  authorized_date="", pending=True, category="treats")
+    _seed_pending(repo, lam, txn_id="A1", amount=Decimal("-5.50"),
+                  authorized_date="", pending=True, category="coffee")
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="", pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    store = repo._table.store
+    acc = _acc(posted)
+    assert (acc, "TXN#A1") not in store              # lowest id consumed via _select_twin
+    assert (acc, "TXN#A2") in store                  # the other survives untouched
+    assert store[(acc, "TXN#A2")]["category"] == "treats"
+    assert store[(acc, "TXN#B")]["category"] == "coffee"   # A1's category carried across
+    assert len(store) == 2                                  # exactly one pending consumed
+
+
+# --- WHIT-513: partial update — re-sends only touch bank-owned fields --------
+
+
+def test_pending_resync_uses_partial_update_not_full_put(lam, repo):
+    # The pending re-send path must use update_item (partial), not a full put_item.
+    # Fail-on-revert: reverting to the old full-put path means the row goes through
+    # insert_transactions (batch_writer put_item), so the update_item call count stays 0.
+    seeded = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                           pending=True, category="health")
+    acc = _acc(seeded)
+    repo._table.store[(acc, "TXN#A")]["notes"] = "gap fee"
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                   pending=True, category="FOOD_AND_DRINK")
+
+    table = repo._table
+    update_calls = []
+    orig_update = table.update_item
+
+    def tracking_update(*a, **kw):
+        update_calls.append(kw)
+        return orig_update(*a, **kw)
+
+    table.update_item = tracking_update
+    repo.insert_or_reconcile([resent])
+
+    assert len(update_calls) == 1
+    assert update_calls[0]["Key"] == {"pk": acc, "sk": "TXN#A"}
+
+
+def test_posted_resync_uses_partial_update_not_full_put(lam, repo):
+    # The posted re-sync path must also use update_item, not a full put.
+    _seed_pending(repo, lam, txn_id="B", amount=Decimal("-5.50"),
+                  pending=False, category="Groceries")
+    resync = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="FOOD_AND_DRINK")
+
+    table = repo._table
+    update_calls = []
+    orig_update = table.update_item
+
+    def tracking_update(*a, **kw):
+        update_calls.append(kw)
+        return orig_update(*a, **kw)
+
+    table.update_item = tracking_update
+    repo.insert_or_reconcile([resync])
+
+    assert len(update_calls) == 1
+
+
+def test_pending_resync_updates_bank_fields(lam, repo):
+    # Bank-owned fields (description, merchant_name, amount, etc.) MUST be updated
+    # even though user fields are preserved.
+    seeded = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-260.00"),
+                           pending=True, category="health",
+                           description="SQ *OLD MERCHANT", merchant_name="SQ *OLD MERCHANT")
+    acc = _acc(seeded)
+
+    resent = _norm(lam, txn_id="A", amount=Decimal("-265.00"),
+                   pending=True, category="FOOD_AND_DRINK",
+                   description="SQ *NEW MERCHANT", merchant_name="SQ *NEW MERCHANT")
+    repo.insert_or_reconcile([resent])
+
+    row = repo._table.store[(acc, "TXN#A")]
+    assert row["amount"] == Decimal("-265.00")
+    assert row["category"] == "health"  # user field untouched
+
+
+def test_pending_resync_falls_back_to_insert_when_row_gone(lam, repo):
+    # If the row was deleted between pool scan and the update, the partial update
+    # returns False (ConditionalCheckFailedException), and the row is inserted fresh.
+    txn = _norm(lam, txn_id="A", amount=Decimal("-260.00"),
+                pending=True, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([txn])
+
+    acc = _acc(txn)
+    assert (acc, "TXN#A") in repo._table.store
+    assert repo._table.store[(acc, "TXN#A")]["category"] == "FOOD_AND_DRINK"
+
+
+def test_posted_resync_preserves_category_via_partial_update(lam, repo):
+    # A re-import of an already-stored posted row must keep the user's category.
+    # Regression guard: all four user-owned fields must survive a posted re-sync.
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="Groceries")
+    repo.insert_transactions([posted])
+    acc = _acc(posted)
+    repo._table.store[(acc, "TXN#B")]["category"] = "coffee"
+    repo._table.store[(acc, "TXN#B")]["notes"] = "weekly shop"
+    repo._table.store[(acc, "TXN#B")]["tags"] = ["food"]
+    repo._table.store[(acc, "TXN#B")]["budget_excluded"] = True
+
+    reimport = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                     pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([reimport])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["category"] == "coffee"
+    assert row["notes"] == "weekly shop"
+    assert row["tags"] == ["food"]
+    assert row["budget_excluded"] is True
+
+
+def test_settlement_re_reads_twin_with_consistent_read(lam, repo):
+    # The first-time settlement path re-reads the twin with ConsistentRead=True to
+    # close the race window between pool scan and carry.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+
+    table = repo._table
+    consistent_reads = []
+    orig_get = table.get_item
+
+    def tracking_get(Key, ConsistentRead=False):
+        consistent_reads.append(ConsistentRead)
+        return orig_get(Key, ConsistentRead=ConsistentRead)
+
+    table.get_item = tracking_get
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    # The first get_item is the resync-check (eventually consistent), the second is
+    # _refresh_carried_fields (must be ConsistentRead=True).
+    assert True in consistent_reads
+
+
+def test_settlement_carries_fresh_category_after_re_read(lam, repo):
+    # Simulates the race: user categorises between pool scan and settlement insert.
+    # The re-read picks up the fresh category.
+    pending = _seed_pending(repo, lam, txn_id="A", amount=Decimal("-5.50"),
+                            authorized_date="2026-06-29", pending=True, category="coffee")
+    acc = _acc(pending)
+    # Simulate the user updating after the pool was scanned but before settlement:
+    repo._table.store[(acc, "TXN#A")]["category"] = "eating out"
+
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(acc, "TXN#B")]
+    assert row["category"] == "eating out"  # the fresh category, not the stale "coffee"
+
+
+def test_bank_owned_fields_excludes_user_fields(lam):
+    # category, notes, tags, budget_excluded must NOT be in _BANK_OWNED_FIELDS.
+    # If any were, _update_bank_fields would overwrite the user's edits.
+    fields = lam.repository._BANK_OWNED_FIELDS
+    for user_field in ("category", "notes", "tags", "budget_excluded"):
+        assert user_field not in fields
+
+
+def test_posted_resync_falls_back_to_insert_when_row_vanishes(lam, repo):
+    # A posted re-sync whose stored row vanishes between get_transaction and
+    # _update_bank_fields must fall back to insert (not crash).
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="Groceries")
+    repo.insert_transactions([posted])
+    acc = _acc(posted)
+
+    table = repo._table
+    orig_update = table.update_item
+
+    def sabotaging_update(*a, **kw):
+        table.store.pop((acc, "TXN#B"), None)
+        return orig_update(*a, **kw)
+
+    table.update_item = sabotaging_update
+
+    resync = _norm(lam, txn_id="B", amount=Decimal("-5.50"),
+                   pending=False, category="FOOD_AND_DRINK")
+    repo.insert_or_reconcile([resync])
+
+    assert (acc, "TXN#B") in repo._table.store
+    assert repo._table.store[(acc, "TXN#B")]["category"] == "FOOD_AND_DRINK"
+
+
+def test_batch_mixes_pending_resend_posted_resync_and_settlement(lam, repo):
+    # A batch containing all three WHIT-513 paths must handle each correctly.
+    pending_resend = _seed_pending(repo, lam, txn_id="PR", amount=Decimal("-10.00"),
+                                   pending=True, category="transport")
+    acc = _acc(pending_resend)
+    repo._table.store[(acc, "TXN#PR")]["notes"] = "uber to work"
+
+    posted_resync = _norm(lam, txn_id="RS", amount=Decimal("-20.00"),
+                          pending=False, category="Groceries")
+    repo.insert_transactions([posted_resync])
+    repo._table.store[(acc, "TXN#RS")]["category"] = "weekly shop"
+    repo._table.store[(acc, "TXN#RS")]["budget_excluded"] = True
+
+    _seed_pending(repo, lam, txn_id="SP", amount=Decimal("-5.50"),
+                  authorized_date="2026-06-29", pending=True, category="coffee")
+
+    batch = [
+        _norm(lam, txn_id="PR", amount=Decimal("-10.00"),
+              pending=True, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="RS", amount=Decimal("-20.00"),
+              pending=False, category="FOOD_AND_DRINK"),
+        _norm(lam, txn_id="NEW", amount=Decimal("-5.50"),
+              authorized_date="2026-06-29", pending=False, category="FOOD_AND_DRINK"),
+    ]
+    repo.insert_or_reconcile(batch)
+
+    store = repo._table.store
+    assert store[(acc, "TXN#PR")]["category"] == "transport"
+    assert store[(acc, "TXN#PR")]["notes"] == "uber to work"
+    assert store[(acc, "TXN#RS")]["category"] == "weekly shop"
+    assert store[(acc, "TXN#RS")]["budget_excluded"] is True
+    assert store[(acc, "TXN#NEW")]["category"] == "coffee"
+    assert (acc, "TXN#SP") not in store
+
+
+# --- WHIT-536 GAP: the stamp through the FULL reconcile path (not the helper in isolation) ---
+
+def _rule_stamped(txn, rule_id):
+    txn["filed_by_rule"] = rule_id
+    return txn
+
+
+# [G1] [A13] End-to-end: a RULE-filed pending settles onto its posted twin -> the stored posted
+# row keeps BOTH the carried category and the rule stamp. FAIL-ON-REVERT: drop the carry block
+# in _with_carried_category and the stamp is gone from the settled row.
+def test_whit536_rule_filed_pending_settles_and_posted_keeps_the_stamp(lam, repo):
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="groceries")
+    _rule_stamped(pending, "rule-7")
+    repo.insert_transactions([pending])
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "groceries"
+    assert row["filed_by_rule"] == "rule-7"
+    assert (_acc(posted), "TXN#A") not in repo._table.store   # stale pending removed
+
+
+# [G3] [A14] End-to-end: a HAND-filed pending (category, NO stamp) settles onto a posted twin
+# that arrived rule-stamped (rule_ingest stamps unfiled incoming). The hand-filed category wins
+# the carry, so the posted's own stamp must be STRIPPED — no unexplained "a rule filed this" on a
+# row the user filed. FAIL-ON-REVERT: drop the else/pop branch and "rule-1" survives.
+def test_whit536_hand_filed_pending_settles_and_strips_incoming_stamp(lam, repo):
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="groceries")
+    repo.insert_transactions([pending])                       # hand-filed: category, no stamp
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+    _rule_stamped(posted, "rule-1")                           # rule_ingest stamped the incoming posted
+
+    repo.insert_or_reconcile([posted])
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "groceries"
+    assert "filed_by_rule" not in row
+
+
+# [G2] [A15] A rule-filed PENDING re-sent while STILL pending goes through the partial
+# _update_bank_fields path (WHIT-513): bank fields update in place, but the rule category AND
+# the stamp (neither is bank-owned) must survive. FAIL-ON-REVERT: revert the pending branch to a
+# full insert/overwrite and the bank's raw category clobbers both.
+def test_whit536_pending_resend_keeps_category_and_stamp(lam, repo):
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True,
+                    category="groceries", description="OLD DESC")
+    _rule_stamped(pending, "rule-5")
+    repo.insert_transactions([pending])
+    resend = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True,
+                   category="FOOD_AND_DRINK", description="NEW DESC FROM BANK")
+
+    repo.insert_or_reconcile([resend])
+
+    row = repo._table.store[(_acc(resend), "TXN#A")]
+    assert row["description"] == "NEW DESC FROM BANK"   # bank field updated in place
+    assert row["category"] == "groceries"              # rule category untouched
+    assert row["filed_by_rule"] == "rule-5"            # stamp survives the re-send
+
+
+# --- WHIT-545: a stored unfiled raw category must not clobber a rule-fill; recompute the flag ---
+
+def _unfiled_check(taxonomy_ids):
+    """Stand-in for the reconcile's taxonomy check (rule_engine.is_unfiled_category for the
+    non-income case the reconcile carry sees): a category is unfiled when it is not one of the
+    user's real categories."""
+    def is_unfiled(category):
+        return category not in taxonomy_ids
+    return is_unfiled
+
+
+def test_whit545_unfiled_stored_category_loses_to_a_rule_fill(lam, repo):
+    # Unit: the pending twin holds a raw bank enum (unfiled); the incoming posted was
+    # rule-filled. The unfiled stored category must NOT clobber the rule-fill, and the posted
+    # keeps its own stamp. FAIL-ON-REVERT: drop the is_unfiled gate -> "FOOD_AND_DRINK" carries.
+    posted = {"transaction_id": "B", "category": "groceries", "filed_by_rule": "rule-1",
+              "account_id": "up-spending", "counts_to_budget": True}
+    source = {"category": "FOOD_AND_DRINK"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+
+    assert carried["category"] == "groceries"
+    assert carried["filed_by_rule"] == "rule-1"
+
+
+def test_whit545_filed_stored_category_still_wins(lam, repo):
+    # Unit: a real-taxonomy stored category still carries over — the gate only blocks unfiled
+    # source categories, never over-gates a genuine hand-fill.
+    posted = {"transaction_id": "B", "category": "AUTO", "account_id": "up-spending",
+              "counts_to_budget": True}
+    source = {"category": "groceries"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+
+    assert carried["category"] == "groceries"
+
+
+def test_whit545_counts_to_budget_recomputed_for_the_carried_category(lam, repo):
+    # Unit: the incoming posted's flag was computed for its OWN (non-budget) raw category, but a
+    # budget category is carried in — the flag must be recomputed to match what lands.
+    # FAIL-ON-REVERT: remove the recompute and counts_to_budget stays False.
+    posted = {"transaction_id": "B", "category": "TRANSFER_OUT", "account_id": "up-spending",
+              "counts_to_budget": False}
+    source = {"category": "groceries"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+
+    assert carried["category"] == "groceries"
+    assert carried["counts_to_budget"] is True
+
+
+def test_whit545_settlement_unfiled_twin_does_not_clobber_the_rule_fill(lam, repo):
+    # End-to-end through insert_or_reconcile: a pending holds the bank's raw enum, the incoming
+    # posted was rule-filled. The stored posted keeps the rule category + stamp, its flag
+    # matches, and the stale pending is gone. FAIL-ON-REVERT: drop the gate -> raw enum wins.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="FOOD_AND_DRINK")
+    repo.insert_transactions([pending])
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="groceries")
+    posted["filed_by_rule"] = "rule-1"
+
+    repo.insert_or_reconcile([posted], is_unfiled=_unfiled_check({"groceries"}))
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "groceries"
+    assert row["filed_by_rule"] == "rule-1"
+    assert row["counts_to_budget"] is True
+    assert (_acc(posted), "TXN#A") not in repo._table.store
+
+
+def test_whit545_hand_filed_pending_category_still_wins_on_settlement(lam, repo):
+    # Regression: a real-taxonomy pending category still carries onto the posted with is_unfiled
+    # wired — the everyday settlement path is unchanged.
+    pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="coffee")
+    repo.insert_transactions([pending])
+    posted = _norm(lam, txn_id="B", amount=Decimal("-5.50"), pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted], is_unfiled=_unfiled_check({"coffee"}))
+
+    row = repo._table.store[(_acc(posted), "TXN#B")]
+    assert row["category"] == "coffee"
+
+
+# ============================================================================
+# WHIT-545 QA GAP TESTS (adversarial half — not duplicating the implementer's four)
+# ============================================================================
+
+
+class _QAFakeRuleStore:
+    def __init__(self, rules=()):
+        self._rules = [dict(r) for r in rules]
+
+    def list_rules(self):
+        return [dict(r) for r in self._rules]
+
+
+class _QAFakeCategoryRepo:
+    def __init__(self, ids):
+        self._ids = list(ids)
+
+    def list_categories(self):
+        return [{"id": i} for i in self._ids]
+
+
+class _QANoTokensDevice:
+    def list_tokens(self):
+        return []
+
+
+def _qa_real_is_unfiled(taxonomy_ids):
+    """The REAL production taxonomy check the reconcile carry actually receives — NOT the
+    implementer's `_unfiled_check` stand-in, which reimplements it as bare set-membership and
+    silently omits the income exclusion. Using the real one guards that exclusion too."""
+    import rule_engine
+    return lambda category: rule_engine.is_unfiled_category(category, taxonomy_ids)
+
+
+# [A4] Income is filed-but-not-a-taxonomy-id: is_unfiled_category excludes "income", so a
+# carried "income" source category must NOT be gated as unfiled. FAIL-ON-REVERT: drop the
+# `category != "income"` arm of is_unfiled_category and income is wrongly gated -> the raw enum
+# survives instead of income.
+def test_whit545_income_source_category_is_never_gated_as_unfiled(lam, repo):
+    is_unfiled = _qa_real_is_unfiled({"groceries"})   # "income" is deliberately NOT a taxonomy id
+    posted = {"transaction_id": "B", "category": "FOOD_AND_DRINK", "account_id": "up-spending",
+              "counts_to_budget": True}
+    source = {"category": "income"}
+
+    carried = repo._with_carried_category(posted, source, is_unfiled=is_unfiled)
+
+    assert carried["category"] == "income"            # income carried, never gated as "unfiled"
+
+
+# [A5] The dedupe sweep (is_unfiled is None) must stay byte-identical to before WHIT-545: it
+# still carries even a raw enum category AND must NOT recompute counts_to_budget. FAIL-ON-REVERT:
+# make either the gate or the recompute unconditional and this flips.
+def test_whit545_dedupe_sweep_carries_raw_category_and_never_recomputes_the_flag(lam, repo):
+    posted = {"transaction_id": "B", "category": "groceries", "account_id": "up-spending",
+              "counts_to_budget": "SENTINEL"}
+    source = {"category": "FOOD_AND_DRINK"}          # a raw bank enum
+
+    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+
+    assert carried["category"] == "FOOD_AND_DRINK"   # raw category still carries — no gate applied
+    assert carried["counts_to_budget"] == "SENTINEL"  # flag untouched — no recompute on the sweep
+
+
+# [A6] One batch, one is_unfiled, two settlements: B's twin is an unfiled raw enum + B was
+# rule-filled (rule-fill must win + keep its stamp); D's twin is a hand-filed real category (must
+# win). FAIL-ON-REVERT: drop the gate -> B lands as the raw enum.
+def test_whit545_batch_mixes_rule_fill_and_hand_fill_settlements(lam, repo):
+    is_unfiled = _qa_real_is_unfiled({"groceries", "coffee"})
+    pend_unfiled = _norm(lam, txn_id="A", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                         pending=True, category="FOOD_AND_DRINK")
+    pend_handfiled = _norm(lam, txn_id="C", amount=Decimal("-9.00"), authorized_date="2026-06-29",
+                           pending=True, category="coffee")
+    repo.insert_transactions([pend_unfiled, pend_handfiled])
+    posted_rulefill = _norm(lam, txn_id="B", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                            pending=False, category="groceries")
+    posted_rulefill["filed_by_rule"] = "rule-1"
+    posted_over_handfill = _norm(lam, txn_id="D", amount=Decimal("-9.00"), authorized_date="2026-06-29",
+                                 pending=False, category="FOOD_AND_DRINK")
+
+    repo.insert_or_reconcile([posted_rulefill, posted_over_handfill], is_unfiled=is_unfiled)
+
+    store = repo._table.store
+    acc = _acc(posted_rulefill)
+    assert store[(acc, "TXN#B")]["category"] == "groceries"     # unfiled twin gated -> rule-fill kept
+    assert store[(acc, "TXN#B")]["filed_by_rule"] == "rule-1"   # posted's own stamp stands
+    assert store[(acc, "TXN#D")]["category"] == "coffee"        # hand-filed twin still wins
+    assert (acc, "TXN#A") not in store and (acc, "TXN#C") not in store   # both stale pendings reaped
+
+
+# [A7] End-to-end through process_transaction: the handler must thread the taxonomy check
+# returned by rule_ingest.apply into insert_or_reconcile. A pending twin holds the raw enum; the
+# incoming posted is rule-filled by the user's KKV rule. FAIL-ON-REVERT: change handler.py's
+# insert_or_reconcile call to is_unfiled=None and the raw enum clobbers the rule-fill.
+def test_whit545_handler_threads_is_unfiled_end_to_end(lam, repo, monkeypatch):
+    h = lam.handler
+    monkeypatch.setattr(h, "RuleRepository",
+                        lambda: _QAFakeRuleStore([{"id": "r-kkv", "field": "description",
+                                                   "operator": "contains", "value": "KKV",
+                                                   "category_id": "groceries"}]))
+    monkeypatch.setattr(h, "CategoryRepository", lambda: _QAFakeCategoryRepo(["groceries"]))
+    # Neutralise the budget-alert side path (no device tokens -> capture returns None early).
+    monkeypatch.setattr(h, "DeviceRepository", lambda: _QANoTokensDevice())
+    monkeypatch.setattr(h, "BudgetRepository", lambda: None)
+    monkeypatch.setattr(h, "PayCycleRepository", lambda: None)
+    monkeypatch.setattr(h, "WindowRepo", lambda: None)
+    monkeypatch.setattr(h, "NotifyRepository", lambda: None)
+
+    _seed_pending(repo, lam, txn_id="P", amount=Decimal("-5.50"), authorized_date="2026-06-29",
+                  pending=True, category="FOOD_AND_DRINK")
+    payload = {"data": [_bank_row("POST", Decimal("-5.50"), authorized_date="2026-06-29",
+                                  pending=False, category="FOOD_AND_DRINK")]}
+
+    h.process_transaction(payload, repo)
+
+    row = repo._table.store[(_acc(_norm(lam, txn_id="POST", amount=Decimal("-5.50"))), "TXN#POST")]
+    assert row["category"] == "groceries"                        # rule-fill survives settlement
+    assert (_acc(_norm(lam, txn_id="P", amount=Decimal("-5.50"))), "TXN#P") not in repo._table.store

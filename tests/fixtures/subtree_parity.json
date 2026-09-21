@@ -1,0 +1,917 @@
+{
+  "_comment": "WHIT-348 shared parity fixture. Taxonomy + FULL cross-product truth table (every budgetId x categoryId) derived from the server's shared.spend.subtree_ids. tests/shared/test_subtree_parity.py (server rule) and src/__tests__/budgetSubtreeParity.logic.test.ts (client budgetSubtreeContains) both assert their rule reproduces every case, so accidental drift on either side reddens. Regenerate only on an intentional, coordinated rule change.",
+  "categories": [
+    {
+      "id": "living_root",
+      "parent": null,
+      "bucket": "Living"
+    },
+    {
+      "id": "living_kid",
+      "parent": "living_root",
+      "bucket": "Living"
+    },
+    {
+      "id": "cross",
+      "parent": "living_root",
+      "bucket": "Lifestyle"
+    },
+    {
+      "id": "deep_living",
+      "parent": "cross",
+      "bucket": "Living"
+    },
+    {
+      "id": "deep_lifestyle",
+      "parent": "cross",
+      "bucket": "Lifestyle"
+    },
+    {
+      "id": "savings_root",
+      "parent": null,
+      "bucket": "Savings"
+    },
+    {
+      "id": "savings_kid",
+      "parent": "savings_root",
+      "bucket": "Savings"
+    },
+    {
+      "id": "none_root",
+      "parent": null,
+      "bucket": null
+    },
+    {
+      "id": "none_kid",
+      "parent": "none_root",
+      "bucket": null
+    },
+    {
+      "id": "none_kid_living",
+      "parent": "none_root",
+      "bucket": "Living"
+    },
+    {
+      "id": "cyc_a",
+      "parent": "cyc_b",
+      "bucket": "Living"
+    },
+    {
+      "id": "cyc_b",
+      "parent": "cyc_a",
+      "bucket": "Living"
+    },
+    {
+      "id": "lonely",
+      "parent": null,
+      "bucket": "Lifestyle"
+    }
+  ],
+  "cases": [
+    {
+      "budgetId": "living_root",
+      "categoryId": "living_root",
+      "expected": true
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "living_kid",
+      "expected": true
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "deep_living",
+      "expected": true
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "living_root",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "living_kid",
+      "expected": true
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "living_kid",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "cross",
+      "expected": true
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "deep_lifestyle",
+      "expected": true
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "cross",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "deep_living",
+      "expected": true
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_living",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "deep_lifestyle",
+      "expected": true
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "deep_lifestyle",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "savings_root",
+      "expected": true
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "savings_kid",
+      "expected": true
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_root",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "savings_kid",
+      "expected": true
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "savings_kid",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "none_root",
+      "expected": true
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "none_kid",
+      "expected": true
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "none_root",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "none_kid",
+      "expected": true
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "none_kid_living",
+      "expected": true
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "none_kid_living",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "cyc_a",
+      "expected": true
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "cyc_b",
+      "expected": true
+    },
+    {
+      "budgetId": "cyc_a",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "cyc_a",
+      "expected": true
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "cyc_b",
+      "expected": true
+    },
+    {
+      "budgetId": "cyc_b",
+      "categoryId": "lonely",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "living_root",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "living_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "cross",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "deep_living",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "deep_lifestyle",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "savings_root",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "savings_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "none_root",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "none_kid",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "none_kid_living",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "cyc_a",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "cyc_b",
+      "expected": false
+    },
+    {
+      "budgetId": "lonely",
+      "categoryId": "lonely",
+      "expected": true
+    }
+  ]
+}

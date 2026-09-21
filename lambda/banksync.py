@@ -1,0 +1,112 @@
+import logging
+from constants import ACCOUNT_ID_MAP, HOMELOAN_ACCOUNT_ID, NON_BUDGET_CATEGORIES
+from decimal import Decimal
+from typing import Optional
+
+from merchant import clean_merchant
+from models import Transaction
+
+logger = logging.getLogger(__name__)
+
+
+class UnknownAccountError(Exception):
+    pass
+
+
+def _date_only(raw: str, field: str = "date") -> str:
+    """Return the ``YYYY-MM-DD`` prefix of a BankSync date, defending the invariant
+    the budget window relies on.
+
+    The budget window is a string range compare (``Key("date").between(start, end)``
+    with ``end = today``), which is sound *only* while dates are bare ``YYYY-MM-DD``:
+    a datetime like ``"2026-01-16T10:00:00Z"`` sorts *after* ``"2026-01-16"``, so
+    today's own charge would silently drop out of the window. BankSync sends
+    date-only today, but the field is an unconstrained string, so we normalise on
+    write rather than trust it.
+
+    Slice, don't reject: per WHIT-83/84 the webhook must never drop a transaction, so
+    a malformed value is truncated and logged (surfacing a format change in
+    CloudWatch) instead of raising.
+    """
+    text = str(raw)
+    head = text[:10]
+    if text != head:
+        logger.warning("%s carried more than YYYY-MM-DD, truncating: %r", field, text)
+    return head
+
+
+def resolve_account_id(banksync_account_id: str) -> str:
+    internal_id = ACCOUNT_ID_MAP.get(banksync_account_id)
+    if internal_id is None:
+        raise UnknownAccountError(
+            f"Unknown BankSync accountId {banksync_account_id!r} — add it to ACCOUNT_ID_MAP"
+        )
+    return internal_id
+
+
+def counts_to_budget(internal_account_id: str, category: Optional[str]) -> bool:
+    """Whether a transaction counts toward a SPENDING budget (WHIT-50).
+
+    Excluded: anything on the home-loan account (interest, repayment credits) and any
+    transfer/loan-payment category (own-account transfers, investments, card payments,
+    and the repayment debit leaving Spending). Income and refunds are left counting —
+    the earn-target feature handles those. `category` is BankSync's raw value.
+    """
+    return (
+        internal_account_id != HOMELOAN_ACCOUNT_ID
+        and category not in NON_BUDGET_CATEGORIES
+    )
+
+
+class BankSyncClient:
+    @staticmethod
+    def normalise(row: dict) -> Transaction:
+        """Maps BankSync's specific fields to abundo's standard format"""
+        internal_account_id = resolve_account_id(str(row["accountId"]))
+        # Swipe = spend: key a charge off the day the user actually paid
+        # (`authorizedDate`), NOT the day the bank settles it (`date`). BankSync's `date`
+        # is the booking/settlement date, so a charge would show on its swipe day while
+        # pending, then JUMP to the settlement day once it posts (a Costco run from a week
+        # ago surfacing as "yesterday"). authorized_date is USUALLY preserved across
+        # settlement, so anchoring `date` to it keeps the charge on one day for its whole
+        # life. The exception (WHIT-331): ANZ renders the pending's authorizedDate in
+        # Melbourne-local time and the settled one in UTC, so a purchase swiped before
+        # 10:00 local carries two dates a day apart. The reconciler's skewed-date tier
+        # pairs those and keeps the Melbourne day, which is the day the user swiped.
+        # Fall back to the booking `date` when the bank sent no
+        # authorizedDate, so `date` stays a required, non-empty "YYYY-MM-DD" (the budget
+        # window, the date-index GSI, and the age-out sweep all depend on that invariant).
+        swipe_date = _date_only(row.get("authorizedDate", ""), "authorizedDate")
+        booking_date = _date_only(row["date"])
+        # BankSync normally tags every row with a category, but a row can arrive with the
+        # key absent (a rare upstream gap). Read it as None rather than raising, so a
+        # tagless charge is stored uncategorised instead of being dropped (WHIT-83/84:
+        # never drop a transaction). A missing key then behaves exactly like a JSON-null
+        # category, which is already tolerated. Log it so the gap surfaces in CloudWatch,
+        # the same way _date_only surfaces a malformed date.
+        if "category" not in row:
+            logger.warning("row %s carried no category; storing it uncategorised", row.get("id"))
+        category = row.get("category")
+        normalised: Transaction = {
+            "transaction_id": str(row["id"]),
+            # Date-only on write: the budget window (date range compare) and
+            # reconciliation (exact authorized_date match) both assume YYYY-MM-DD.
+            "date": swipe_date or booking_date,
+            "authorized_date": swipe_date,
+            "description": row["description"],
+            # description stays RAW (rules + audit rely on it); merchant_name is the
+            # cleaned display name derived from it / merchantName (see merchant.py).
+            "merchant_name": clean_merchant(row["description"], row.get("merchantName", "")),
+            "amount": Decimal(str(row["amount"])),
+            "account_id": internal_account_id,
+            "account_name": row["accountName"],
+            "category": category,
+            "status": "pending" if row["pending"] else "posted",
+            "type": row["type"],
+            "counts_to_budget": counts_to_budget(internal_account_id, category),
+            # None when missing or JSON-null (the case today). sanitise_transaction
+            # strips None, so it never bloats the stored item.
+            "pending_transaction_id": row.get("pendingTransactionId"),
+        }
+
+        return normalised
