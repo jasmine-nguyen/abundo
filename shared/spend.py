@@ -1,0 +1,626 @@
+"""Pay-cycle window + per-category spend summariser — the single source shared by
+the /budgets & /breakdown read API (lambda_api) and the budget-alert detection on
+the webhook write path (WHIT-22).
+
+Lives in the shared layer so BOTH lambdas compute the cycle window and the
+spent/pending contribution rule identically — the alert can never disagree with
+the /budgets screen about what a category has spent this cycle. Moved here from
+lambda_api/handler.py (WHIT-106 established the single-source contribution rule;
+WHIT-22 needed it reachable from the webhook). Imports POSTED_STATUS/PENDING_STATUS
+from the shared constants (present in both constants files per the WHIT-136 guard).
+"""
+
+from collections.abc import Callable
+from datetime import date, datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from constants import (
+    PENDING_STATUS, POSTED_STATUS,
+    ROLLOVER_MAX_LOOKBACK_CYCLES, ROLLOVER_SETTLE_LAG_DAYS,
+    SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES,
+)
+
+_MELBOURNE = None  # ZoneInfo("Australia/Melbourne"), built lazily on first use.
+
+
+def _melbourne_today() -> date:
+    """Today's date in the user's timezone (Australia/Melbourne), so the budget
+    window resets at LOCAL midnight on payday, not UTC midnight.
+
+    Built lazily and cached. If the tzdata package is ever missing from the layer,
+    ZoneInfo raises here (only the budget path, not at module import). We catch that
+    and FAIL SAFE to UTC: /budgets keeps working with a reset that's off by at most
+    a day at the UTC/Melbourne seam, rather than 500ing the whole budget path. Melbourne
+    observes DST (+10/+11) so a fixed offset isn't a substitute for the tz database
+    — UTC is only the degraded fallback, and the WARN makes the packaging gap loud.
+    """
+    global _MELBOURNE
+    if _MELBOURNE is None:
+        try:
+            _MELBOURNE = ZoneInfo("Australia/Melbourne")
+        except ZoneInfoNotFoundError:
+            print("WARN: tzdata unavailable in layer; budget window falling back to UTC today")
+            return datetime.now(timezone.utc).date()
+    return datetime.now(_MELBOURNE).date()
+
+
+def current_cycle_window(last_pay_date: str, length: int, today: date | None = None) -> tuple[str, str]:
+    """Return (start, end) ISO dates for the CURRENT pay cycle: the inclusive
+    window [cycle_start, today] that resets on the user's payday.
+
+    `cycle_start` is the most recent payday on or before today — the latest
+    `last_pay_date + k*length` days (integer k >= 0) that is <= today. `today` defaults
+    to the Melbourne-local date (injectable for deterministic tests). Both bounds are
+    inclusive: transaction `date` is stored date-only (YYYY-MM-DD) and the date-range
+    query uses DynamoDB `between`, which is inclusive on both ends, so `end = today`
+    covers all of today's spend while excluding tomorrow's (WHIT-75 — a `today+1` end
+    used to leak a transaction dated tomorrow into the cycle). cycle_start is inclusive,
+    so payday spend lands in the fresh cycle.
+
+    A future last_pay_date has no valid k (Slice 1 rejects one at write, but stay safe):
+    max(0, ...) plus the cycle_start>today clamp keep the window from inverting (they
+    collapse it to the single inclusive day [today, today]).
+    """
+    if today is None:
+        today = _melbourne_today()
+    pay_date = date.fromisoformat(last_pay_date)
+    elapsed_days = (today - pay_date).days
+    cycles_elapsed = max(0, elapsed_days // length)
+    cycle_start = pay_date + timedelta(days=cycles_elapsed * length)
+    if cycle_start > today:
+        cycle_start = today
+    end = today
+    return cycle_start.isoformat(), end.isoformat()
+
+
+def cadence_cycles(gap_days, length: int) -> int:
+    """How many pay cycles a bill on a `gap_days` cadence is spread over (WHIT-559): the bill's
+    period in pay cycles, rounded, clamped to [SPREAD_MIN_CYCLES, SPREAD_MAX_CYCLES].
+
+    A monthly (~30-day) bill on a fortnightly (14-day) pay cycle → ~2 cycles; a weekly bill → the
+    floor (1). `gap_days` may arrive as a Decimal off a stored rule row, so the division stays
+    numeric. A non-positive gap or length falls back to the minimum rather than dividing by zero or
+    returning nonsense — a malformed cadence spreads over one cycle, never crashes.
+    """
+    if length <= 0 or gap_days <= 0:
+        return SPREAD_MIN_CYCLES
+    cycles = round(gap_days / length)
+    return max(SPREAD_MIN_CYCLES, min(cycles, SPREAD_MAX_CYCLES))
+
+
+def nth_prior_cycle_window(cycle_start: str, length: int, n: int) -> tuple[str, str]:
+    """Return (start, end) ISO dates for the Nth full pay cycle BEFORE the one that
+    begins at `cycle_start` (n >= 1).
+
+    Each prior window is a full `length`-day span that abuts the next with no overlap
+    or gap: the 1st prior is [cycle_start - length, cycle_start - 1], the 2nd steps back
+    another `length`, and so on — the same stepping the AI-insight trend already walks
+    (WHIT-104), extracted here so /breakdown and the insight share one implementation
+    (WHIT-68). Both bounds are inclusive, matching the DynamoDB `between` date query.
+
+    `cycle_start` is the CURRENT cycle's start, already derived from the pay cycle (e.g.
+    by `current_cycle_window`). It's passed in — not recomputed from last_pay_date — so
+    the caller's single clock read is authoritative and this stays a pure date function
+    (deterministic in tests). The current window comes from `current_cycle_window`, not
+    here, so n < 1 is a caller bug and raises rather than returning an inverted window.
+    """
+    if n < 1:
+        raise ValueError(f"nth_prior_cycle_window needs n >= 1, got {n}")
+    start = date.fromisoformat(cycle_start)
+    prior_start = start - timedelta(days=n * length)
+    prior_end = start - timedelta(days=(n - 1) * length + 1)
+    return prior_start.isoformat(), prior_end.isoformat()
+
+
+def completed_cycle_windows(anchor_start: str, current_start: str, length: int,
+                            max_cycles: int) -> list[tuple[str, str]]:
+    """The FULLY-COMPLETED pay cycles between `anchor_start` (inclusive) and the current
+    cycle `current_start` (exclusive), oldest-first, capped to the most recent `max_cycles`.
+
+    Each window is one `length`-day span `[s, s + length - 1]`, abutting the next with no
+    gap or overlap (the same stepping as `nth_prior_cycle_window`), so bucketing a
+    transaction by its inclusive date lands it in exactly one. Used by the rollover
+    settlement to fold each elapsed cycle's leftover once.
+
+    Returns [] when no full cycle has elapsed since the anchor (`current_start <=
+    anchor_start`). The `max_cycles` cap bounds a first-open-after-a-long-gap read: only
+    the most recent `max_cycles` cycles are returned (older leftovers are dropped, and the
+    caller advances its anchor past them — an accepted cold-start limit).
+    """
+    anchor = date.fromisoformat(anchor_start)
+    current = date.fromisoformat(current_start)
+    starts = []
+    step = anchor
+    while step < current:
+        starts.append(step)
+        step = step + timedelta(days=length)
+    if len(starts) > max_cycles:
+        starts = starts[-max_cycles:]
+    return [(s.isoformat(), (s + timedelta(days=length - 1)).isoformat()) for s in starts]
+
+
+def spread_index(spread_from: str, current_start: str, length: int) -> int:
+    """How many whole pay cycles the current cycle is past a bill spread's anchor cycle:
+    0 while still in the cycle the spread was created in, 1 the next cycle, and so on.
+
+    A plain, UNCAPPED count — deliberately not `len(completed_cycle_windows(...))`, whose
+    `max_cycles` cap truncates the list and would pin the position at the cap, so a plan
+    could never be seen to end. `spread_from` is a cycle-aligned start captured at write
+    (like `carryover_from`), so on an unchanged pay cycle the day delta is an exact multiple
+    of `length` and this steps 0, 1, 2, ... with no drift.
+    """
+    return (date.fromisoformat(current_start) - date.fromisoformat(spread_from)).days // length
+
+
+def spread_adjustment(amount: Decimal, cycles: int, index: int) -> Decimal:
+    """The signed amount a bill spread adds to a category's spendable in the cycle at
+    `index` (see spread_index): the full `+amount` cushion in the anchor cycle (index 0),
+    an equal slice taken back in each of the next `cycles` cycles, and 0 once the plan
+    has run its course (or for a negative index, which no aligned plan produces).
+
+    Slices are worked out in whole cents so they sum back to `amount` EXACTLY — no lost
+    cent: `divmod` splits the cents evenly and the first `extra` slices carry one cent
+    more. `amount` is expected to be quantised to cents already (the write does that);
+    the half-up rounding is only a guard against a stray fraction.
+    """
+    if index == 0:
+        return amount
+    if index < 0 or index > cycles:
+        return Decimal(0)
+    cents = int((amount * 100).to_integral_value(rounding=ROUND_HALF_UP))
+    base, extra = divmod(cents, cycles)
+    slice_cents = base + (1 if index <= extra else 0)
+    return Decimal(-slice_cents) / 100
+
+
+# ── Unified "Smoothing" engine (WHIT-547, slice 1 of the WHIT-546 epic) ──────────────
+# Pure maths for the model that will replace Rollover + Spread: one signed buffer per
+# category + an even payback that STARTS the current cycle. Slice 1 is deliberately
+# invisible — these are new functions with no call site yet; the read path (slice 2) and
+# storage/migration (slice 5) wire them in later.
+
+
+def payback_slice(amount: Decimal, cycles: int, index: int) -> Decimal:
+    """The signed amount a unified smoothing plan takes off a category's spendable in the
+    cycle at `index` (0 = the cycle the bill lands in).
+
+    Unlike spread_adjustment — which gives a full +amount cushion in cycle 0 then claws it
+    back over the NEXT cycles — smoothing pays the bill back in equal slices STARTING the
+    current cycle: an even negative slice for index 0..cycles-1, and 0 outside the plan.
+    The slices reuse spread_adjustment's whole-cent split (index i -> ordinal i+1, so
+    ordinals 1..cycles), so they sum to exactly -amount — net-zero, no lost cent.
+    """
+    if index < 0 or index >= cycles:
+        return Decimal(0)
+    return spread_adjustment(amount, cycles, index + 1)
+
+
+def unified_available(budget: Decimal, buffer: Decimal, payback: Decimal) -> Decimal:
+    """A smoothed category's spendable this cycle: base budget + the signed running buffer
+    (leftover accrued from past cycles) + this cycle's payback slice (already negative, from
+    payback_slice). The single source of the `budget + buffer - slice` identity so the read
+    path (slice 2) can't re-derive it inconsistently."""
+    return budget + buffer + payback
+
+
+def accrue_buffer(buffer: Decimal, target: Decimal, spend: Decimal) -> Decimal:
+    """Fold ONE completed cycle's signed leftover (`target - spend`, spend = posted + pending)
+    into the running buffer: underspend grows it, overspend shrinks it (a sinking fund).
+
+    This is the per-cycle leftover rule ONLY — it mirrors the single-window leftover in
+    lambda_api/handler.py's rollover seal, NOT the seal/settle-lag or multi-window folding,
+    which the composed cycle-sealer adds in a later slice."""
+    return buffer + (target - spend)
+
+
+# The five fields a stored bill spread carries — mirrors repository_budget._SPREAD_FIELDS (a
+# test pins the two equal). A read only trusts an entry that has all of them.
+_SPREAD_ENTRY_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
+
+
+def _settle_spread(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
+    """After a pay-cycle change, the ONE-cycle plan that collects what a spread still owes —
+    or None when nothing is owed.
+
+    The old slice grid is fictional under the new cycle, so instead of reading slices off it
+    we settle up. "Taken" means what the user was actually SHOWN: `elapsed` is the index the
+    plan had reached under its OWN grid as of today (not the new cycle start — a new start
+    that lands a day inside a completed old cycle would otherwise un-take that cycle's slice
+    and charge it twice), so the slices for old cycles 1..elapsed−1, each shown for a full
+    cycle, count as taken. `outstanding = amount − taken` is re-saved as a fresh plan of
+    `outstanding` over 1 cycle, anchored one cycle BACK on the new grid — so it reads as
+    index 1 (the whole outstanding comes off THIS cycle) for the rest of the cycle and
+    finishes on the next. Net over the plan's life = +amount − taken − outstanding = 0,
+    exactly; nothing is forgiven, nothing invented. Persisting it (rather than showing a
+    one-shot and clearing) is what keeps the settle visible past the first read, and lets
+    a second cycle change re-settle it the same way.
+
+    None when the change lands while still in the anchor cycle (elapsed 0 — the cushion and
+    the settle would cancel in the same cycle) or when every slice was already taken.
+    """
+    amount = entry["spread_amount"]
+    cycles = int(entry["spread_cycles"])
+    elapsed = spread_index(entry["spread_from"], today, int(entry["spread_len"]))
+    if elapsed <= 0:
+        return None
+    taken_through = min(cycles, elapsed - 1)
+    taken = -sum((spread_adjustment(amount, cycles, k) for k in range(1, taken_through + 1)), Decimal(0))
+    outstanding = amount - taken
+    if outstanding == 0:
+        return None
+    previous_start = (date.fromisoformat(cycle_start) - timedelta(days=length)).isoformat()
+    return {
+        "spread_amount": outstanding, "spread_cycles": Decimal(1), "spread_from": previous_start,
+        "spread_len": Decimal(length), "spread_paydate": last_pay_date,
+    }
+
+
+def _spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
+    """The bill-spread contribution for one category this read (WHIT-504).
+
+    Returns (spread_row, finished, reanchor). `spread_row` is the {amount, cycles, index,
+    adjustment} object for the /budgets row — `adjustment` is the signed amount added to the
+    cycle's spendable — or None when there is nothing to show. `finished` asks for the stored
+    fields to be cleared (best-effort, from the read path); `reanchor` is a replacement plan
+    to persist instead (the pay-cycle-change settle, see _settle_spread). At most one is set.
+
+    Aligned (the plan was created under the CURRENT pay cycle): index 0 shows the `+amount`
+    cushion, cycles 1..N take back a slice each, and past N the plan is finished — nothing
+    shown, fields cleared. Alignment is the exact length+payday, as _rollover_windows checks.
+    Misaligned: the settle plan is computed and then read exactly like an aligned one.
+
+    An entry missing any of the five fields (a hand-edited item — every write sets and
+    strips all five together) is treated as finished and cleared, rather than letting one
+    bad entry 500 every budget row.
+    """
+    fields = [entry.get(field) for field in _SPREAD_ENTRY_FIELDS]
+    if None in fields:
+        return None, True, None
+    amount, cycles, spread_from, stored_len, stored_paydate = fields
+    cycles = int(cycles)
+    if int(stored_len) != length or stored_paydate != last_pay_date:
+        reanchor = _settle_spread(entry, cycle_start, length, last_pay_date, today)
+        if reanchor is None:
+            return None, True, None
+        spread_row, _, _ = _spread_state(reanchor, cycle_start, length, last_pay_date, today)
+        return spread_row, False, reanchor
+    index = spread_index(spread_from, cycle_start, length)
+    if index > cycles:
+        return None, True, None
+    return {"amount": amount, "cycles": cycles, "index": index,
+            "adjustment": spread_adjustment(amount, cycles, index)}, False, None
+
+
+def transactions_in_window(transactions: list[dict], start: str, end: str) -> list[dict]:
+    """The subset of `transactions` whose date-only `date` falls in the inclusive
+    [start, end] window. ISO YYYY-MM-DD strings compare lexicographically, matching the
+    DynamoDB `between` the fetch uses. A row with no `date` is skipped (can't be placed).
+
+    Kept separate so the rollover settlement can split ONE widened fetch into per-cycle
+    slices before summarising — the `summarise_*` functions take a flat list and sum ALL
+    of it, so the caller must pre-filter to a single cycle.
+    """
+    return [t for t in transactions if start <= t.get("date", "") <= end]
+
+
+def contributes_to_budget(transaction: dict) -> bool:
+    """Whether a transaction counts toward a budget summary: it's flagged to count
+    (`counts_to_budget`), the user hasn't manually excluded it (`budget_excluded`,
+    WHIT-296), and its `status` is a known pending/posted (unknown status is skipped,
+    never guessed).
+
+    The gate shared by the spend/income summarisers (via `_spend_contribution`) and the
+    budget-detail transaction list (`/budgets/{id}/transactions`), so the list can't
+    disagree with the total about which rows count.
+    """
+    if not transaction.get("counts_to_budget") or transaction.get("budget_excluded"):
+        return False
+    return transaction.get("status") in (PENDING_STATUS, POSTED_STATUS)
+
+
+def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal] | None:
+    """The (bucket, amount) a transaction adds to a budget summary, or None if it
+    doesn't count. Shared by summarise_transactions, summarise_uncategorized and
+    summarise_income: they differ only in WHICH categories they roll up and the
+    direction of the amount, not in how a contributing transaction maps to a bucket.
+
+    Contributes only if `contributes_to_budget` (counts_to_budget, not budget_excluded,
+    known pending/posted status).
+
+    `sign` flips the stored amount into a positive contribution:
+      * spend (default `sign=-1`): stored NEGATIVE, so `-amount` is positive spend —
+        a refund (positive amount) yields a negative contribution that reduces it.
+      * income (`sign=+1`): stored POSITIVE, so `+amount` is positive earnings —
+        a reversal/clawback (negative amount) reduces it.
+    Callers clamp each bucket at >= 0.
+    """
+    if not contributes_to_budget(transaction):
+        return None
+    bucket = "pending" if transaction.get("status") == PENDING_STATUS else "posted"
+    # A missing/None amount counts as 0 rather than crashing the summary — the row still
+    # shows in /budgets/{id}/transactions, so treating it as 0 keeps the header and the
+    # list consistent (Decimal(str(None)) would otherwise raise and 500 the header).
+    amount = transaction.get("amount")
+    return bucket, sign * Decimal(str(amount if amount is not None else 0))
+
+
+def _summarise(
+    transactions: list[dict],
+    *,
+    keep: Callable[[str | None], bool],
+    key: Callable[[str | None], str],
+    sign: int = -1,
+    clamp: bool = True,
+) -> dict[str, dict]:
+    """The one summing loop shared by the three public summarisers (WHIT-167).
+
+    For each transaction: gate on `keep(category)`, map it to a result bucket via
+    `key(category)`, turn it into a posted/pending contribution via
+    `_spend_contribution(transaction, sign=sign)`, accumulate, then (when `clamp`)
+    clamp every bucket at >= 0 (a net refund/reversal can't drive a bar negative). The
+    three public functions differ ONLY in `keep` (which categories count), `key` (per-id
+    vs a single aggregate bucket), and `sign` (spend is -amount, income is +amount);
+    the clamp + accumulation rule lives here so a change to it can't drift between them.
+
+    `clamp` defaults True — the per-id floor every single-category caller relies on. A
+    SUBTREE rollup passes `clamp=False` to get the raw signed net per id, so the caller
+    can sum across the subtree and clamp the total ONCE (aggregate-then-clamp, WHIT-343);
+    clamping per id first would floor a net-negative sibling to 0 and inflate the sum.
+
+    Returns {key(category): {"posted": Decimal, "pending": Decimal}} for keys that had
+    at least one contributing transaction. Insertion order follows first contribution.
+    """
+    totals: dict[str, dict] = {}
+    for transaction in transactions:
+        category = transaction.get("category")
+        if not keep(category):
+            continue
+        contribution = _spend_contribution(transaction, sign=sign)
+        if contribution is None:
+            continue
+        bucket, amount = contribution
+        entry = totals.setdefault(key(category), {"posted": Decimal(0), "pending": Decimal(0)})
+        entry[bucket] += amount
+    if clamp:
+        for entry in totals.values():
+            entry["posted"] = max(Decimal(0), entry["posted"])
+            entry["pending"] = max(Decimal(0), entry["pending"])
+    return totals
+
+
+def summarise_transactions(transactions: list[dict], target_ids: set[str], clamp: bool = True) -> dict[str, dict]:
+    """Sum posted vs pending spend per budgeted category over `transactions`.
+
+    A transaction contributes only if it counts toward a budget (see
+    `_spend_contribution`) AND its `category` is a real budgeted id (not None, not
+    "income", and present in `target_ids`). Each bucket is clamped at >= 0 (unless
+    `clamp=False`) so a net refund can't drive a bar negative. Pending vs posted is
+    decided by the transaction's own `status`, so a pending->posted settlement needs no
+    special handling: the next call just re-reads the current status.
+
+    Pass `clamp=False` when folding a subtree so a net-negative sibling nets against the
+    rest before the caller clamps the total once (aggregate-then-clamp, WHIT-343).
+
+    Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
+    that had at least one contributing transaction.
+    """
+    return _summarise(
+        transactions,
+        keep=lambda category: category is not None and category != "income" and category in target_ids,
+        key=lambda category: category,
+        clamp=clamp,
+    )
+
+
+def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) -> dict:
+    """Sum posted vs pending spend that counts to budget but has no home in the
+    taxonomy: a raw BankSync category (e.g. "MEDICAL"), a deleted category's
+    dangling id, or a null category. The complement of what summarise_transactions
+    rolls up — same contribution rule (counts_to_budget, spend is a NEGATIVE
+    amount) and the same >= 0 clamp. The income sentinel ("income") is excluded,
+    matching the client's isUncategorized so the two views agree.
+
+    Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate
+    (every contributor folds into one bucket), not a per-category dict.
+    """
+    totals = _summarise(
+        transactions,
+        keep=lambda category: category != "income" and category not in taxonomy_ids,
+        key=lambda category: "__all__",
+    )
+    return totals.get("__all__", {"posted": Decimal(0), "pending": Decimal(0)})
+
+
+def summarise_income(transactions: list[dict], income_ids: set[str], clamp: bool = True) -> dict[str, dict]:
+    """Sum posted vs pending EARNINGS per income-target category over `transactions`
+    — the earn-target counterpart of summarise_transactions (WHIT-69).
+
+    Income earn-targets are floors (over-is-good), so this rolls up the POSITIVE
+    amount (`sign=+1`) rather than spend. A transaction contributes only if it counts
+    to budget (see `_spend_contribution`) AND its `category` is in `income_ids` — the
+    ids of the user's Income-bucket categories that carry a target. Unlike the spend
+    summariser it does NOT special-case the raw "income" sentinel: income *categories*
+    have their own ids (never the sentinel), and gating purely on `income_ids`
+    membership is the correct filter (a user category that happens to slug to "income"
+    is a real target and must count). Each bucket is clamped at >= 0 (unless
+    `clamp=False`, for a subtree rollup that clamps the folded total once) so a reversal
+    can't drive an earnings bar negative.
+
+    Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
+    that had at least one contributing transaction — the same shape as
+    summarise_transactions, so a caller can merge the two uniformly.
+    """
+    return _summarise(
+        transactions,
+        keep=lambda category: category in income_ids,
+        key=lambda category: category,
+        sign=1,
+        clamp=clamp,
+    )
+
+
+def summarise_earned(transactions: list[dict], income_ids: set[str]) -> dict:
+    """Total posted vs pending EARNINGS over `transactions`, across ALL Income-bucket
+    categories — the "actual earned this cycle" figure for the Insights Earned-vs-Spent
+    chart (WHIT-312). The earnings counterpart of summarise_uncategorized: same single
+    aggregate + >= 0 clamp shape, but income (`sign=+1`, stored positive) rather than
+    spend, and gated on income_ids membership.
+
+    Unlike summarise_income (which gates on the ids that carry an earn-TARGET), this
+    counts every Income-bucket category, targeted or not — the chart wants what was
+    actually earned, not progress against a target. Aggregate-then-clamp: a net
+    reversal in one category can reduce the headline, but earned can't go negative.
+
+    Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate.
+    """
+    totals = _summarise(
+        transactions,
+        keep=lambda category: category in income_ids,
+        key=lambda category: "__all__",
+        sign=1,
+    )
+    return totals.get("__all__", {"posted": Decimal(0), "pending": Decimal(0)})
+
+
+def build_category_children(categories: list[dict]) -> dict[str, list[str]]:
+    """A parent-id -> [child ids] map from the taxonomy (each category carries a
+    `parent`, None for top-level). The inverse of the stored `parent` link, built
+    once so a rollup can walk down the tree without rescanning the list per node.
+    Categories with no children simply never appear as a key.
+    """
+    children: dict[str, list[str]] = {}
+    for category in categories:
+        parent = category.get("parent")
+        if parent is not None:
+            children.setdefault(parent, []).append(category["id"])
+    return children
+
+
+def subtree_ids(root_id: str, children: dict[str, list[str]],
+                bucket_by_id: dict[str, str] | None = None) -> set[str]:
+    """Every category id whose spend rolls into a budget on `root_id`: the root
+    itself PLUS every descendant at any depth — intermediate sub-categories and
+    leaves alike — given a prebuilt `children` map (from build_category_children).
+
+    A budgeted parent's spend is the sum over this whole set, because a
+    transaction can be tagged onto ANY node: a leaf, an intermediate sub, or the
+    parent itself (the categorize picker offers all of them). Counting the entire
+    subtree — not just the leaves — is what keeps /budgets, the over-budget alerts
+    and the AI roll-up in agreement with each other (WHIT-228): each sums a parent's
+    spend over this set. NOTE (WHIT-343): those three now fold the subtree UNCLAMPED
+    then clamp the total once; /breakdown stays per-category (its parent roll-up is
+    client-side over per-id-floored leaves), so a net-refunded sub can read differently
+    there — a known follow-up, not aligned here.
+
+    When `bucket_by_id` is given, the result is restricted to ids in the SAME bucket
+    as `root_id` (the root is always kept). This matches the client's roll-up, which
+    only folds a category into a budget when their buckets agree (WHIT-229): a sub
+    corruptly filed under a parent of a different bucket must not count toward it —
+    and, in particular, an Income sub can never inflate a spend parent. The walk still
+    descends through a cross-bucket node so a SAME-bucket descendant beneath it is
+    kept (the filter is on membership, not on descent) — matching the client, which
+    still rolls such a descendant up under a same-bucket ancestor rather than dropping
+    it. This is a per-target set: as with every roll-up here, each budgeted target sums
+    its OWN same-bucket subtree independently, so if two same-bucket ancestors are both
+    budgeted a shared descendant counts toward each bar (the hero de-dup across
+    overlapping budgets is a client concern, WHIT-221). On clean data (every descendant
+    shares the root's bucket) nothing is dropped, so the set — and every downstream
+    /budgets, alert and AI total — is byte-identical.
+
+    A leaf, or an orphan id absent from the taxonomy, rolls up as just `{root_id}`
+    — byte-identical to summing that id on its own, so a flat leaf budget (and a
+    budgeted parent with no direct spend) is unchanged. Cycle-safe via `visited`:
+    single-parent data can't form a legitimate diamond, so `visited` only guards a
+    corrupt stored cycle, which yields the nodes on the cycle once each rather than
+    an infinite walk.
+    """
+    visited: set[str] = set()
+    stack = [root_id]
+    while stack:
+        node = stack.pop()
+        if node in visited:
+            continue
+        visited.add(node)
+        kids = children.get(node)
+        if kids:
+            stack.extend(kids)
+    if bucket_by_id is None:
+        return visited
+    # Filter the full subtree to the root's bucket (root always kept). Filtering the
+    # RESULT, not the descent, keeps a same-bucket descendant that sits UNDER a
+    # cross-bucket intermediate — matching the client's nearest-same-bucket-ancestor rule.
+    root_bucket = bucket_by_id.get(root_id)
+    return {node for node in visited
+            if node == root_id or bucket_by_id.get(node) == root_bucket}
+
+
+def fold_subtree(per_id: dict[str, dict], ids: set[str]) -> dict[str, Decimal]:
+    """Fold a clamp=False per-id spend summary across a subtree's ids: sum posted and
+    pending UNCLAMPED over every id in `ids` present in `per_id`, then floor posted and
+    pending INDEPENDENTLY at 0 (aggregate-then-clamp, WHIT-343). `per_id` is the output
+    of summarise_transactions/summarise_income with clamp=False — keyed by category id
+    with Decimal posted/pending. An id absent from `per_id` contributes 0; an empty
+    `ids` yields {"posted": 0, "pending": 0}. Always returns Decimals.
+
+    The single source for the /budgets fold, the AI parent roll-up and the budget-alert
+    combined target, so those three can never drift — they MUST agree (see subtree_ids).
+    """
+    posted = sum((per_id[cid]["posted"] for cid in ids if cid in per_id), Decimal(0))
+    pending = sum((per_id[cid]["pending"] for cid in ids if cid in per_id), Decimal(0))
+    return {"posted": max(Decimal(0), posted), "pending": max(Decimal(0), pending)}
+
+
+def rollover_windows(entry: dict, cycle_start: str, length: int, last_pay_date: str):
+    """Pure date math for one rollover category: the completed pay cycles to fold,
+    and a re-anchor payload if accumulation must restart.
+
+    Returns (windows, reanchor). `windows` is the completed-cycle [(start, end), ...]
+    since the stored anchor (oldest-first, capped). `reanchor` is a
+    {carryover, carryover_from} payload when the stored anchor is missing or was sealed
+    under a DIFFERENT pay cycle (length or payday changed); `windows` is then [] (a
+    changed cycle makes the old windows fictional).
+    """
+    anchor = entry.get("carryover_from")
+    aligned = (
+        anchor is not None
+        and int(entry.get("carryover_len", 0)) == length
+        and entry.get("carryover_paydate") == last_pay_date
+    )
+    if not aligned:
+        reanchor = {"carryover": entry.get("carryover", Decimal(0)), "carryover_from": cycle_start}
+        return [], reanchor
+    windows = completed_cycle_windows(anchor, cycle_start, length, ROLLOVER_MAX_LOOKBACK_CYCLES)
+    return windows, None
+
+
+def seal_rollover(entry: dict, windows: list, subtree: set, transactions: list,
+                  length: int, today: str):
+    """Fold each completed cycle's leftover (target - spend) for one rollover category,
+    sealing cycles older than the settle lag into the stored balance.
+
+    Returns (display_carryover, persist). `display_carryover` is the full buffer =
+    sealed + not-yet-sealed completed-cycle leftovers (signed). `persist` is a
+    {carryover, carryover_from} payload when the sealed balance or anchor advanced,
+    else None. The current in-progress cycle is NOT in `windows`.
+    """
+    stored_carryover = entry.get("carryover", Decimal(0))
+    target = entry["target"]
+    lag_cutoff = date.fromisoformat(today) - timedelta(days=ROLLOVER_SETTLE_LAG_DAYS)
+    sealed = stored_carryover
+    unsealed = Decimal(0)
+    new_anchor = windows[0][0] if windows else entry.get("carryover_from")
+    for window_start, window_end in windows:
+        cycle_txns = transactions_in_window(transactions, window_start, window_end)
+        per_id = summarise_transactions(cycle_txns, subtree, clamp=False)
+        spend = fold_subtree(per_id, subtree)
+        leftover = target - (spend["posted"] + spend["pending"])
+        if date.fromisoformat(window_end) < lag_cutoff:
+            sealed += leftover
+            new_anchor = (date.fromisoformat(window_start) + timedelta(days=length)).isoformat()
+        else:
+            unsealed += leftover
+    persist = None
+    if sealed != stored_carryover or new_anchor != entry.get("carryover_from"):
+        persist = {"carryover": sealed, "carryover_from": new_anchor}
+    return sealed + unsealed, persist
