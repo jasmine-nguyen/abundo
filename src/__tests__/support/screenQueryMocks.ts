@@ -1,0 +1,79 @@
+// WHIT-203 test support — the screens migrated their server-data reads from the old
+// store (useAppContext) to the query layer (src/queries hooks). Screen tests that seed a
+// store-shaped fixture can re-route those reads with a single jest.mock line:
+//
+//   jest.mock('../queries', () => require('./support/screenQueryMocks').queryMocksFromState(() => mockState));
+//
+// The `() => mockState` getter is read at render time, so it tracks a fixture reassigned
+// per test. Only the hooks a screen calls need to resolve; the rest are harmless stubs.
+// (Not a *.test.ts file, so the jest testMatch never runs it as a suite.)
+
+// A store-shaped screen fixture. WHIT-192: the old eager store is gone, so screen tests
+// no longer type these against AppContext — they carry just the fields a screen's query
+// composite reads (re-routed here) plus any client-state (AI slice, openPicker, writers)
+// the screen still pulls off the provider. The index signature keeps it open for those.
+export type ScreenState = Record<string, unknown> & {
+  categories?: { id: string }[];
+  categoriesLoading?: boolean;
+  budgets?: unknown[];
+  transactions?: unknown[];
+  rules?: unknown[];
+  payCycle?: { length: number; last_pay_date: string };
+  cycleLen?: number;
+  daysLeft?: number;
+  cycleName?: () => string;
+  loanFacts?: unknown;
+  homeLoan?: unknown;
+  repayment?: unknown;
+  goals?: unknown[];
+  balances?: Record<string, number>; // account_id -> live signed balance, for the Goals hub
+  // WHIT-501: the whole-history uncategorized tally (server). Left undefined here so the tab dot /
+  // badge fall back to the LOCAL count off `transactions`, exactly like the real hook does while the
+  // server value is loading. A consumer that wants the resolved "All caught up" empty state (which is
+  // gated on the server value being exactly 0) sets this explicitly.
+  uncategorizedCount?: number;
+  // WHIT-517: the shops behind unfiled charges, for the "File by shop" button/sheet. Undefined here
+  // by default so the button hides (the real hook is undefined while loading/pre-auth); a test that
+  // wants the button visible sets it to { unfiled, groups, ungrouped }.
+  uncategorizedMerchants?: unknown;
+  // WHIT-542: the "make a rule?" suggestions in the File-by-shop sheet. Undefined by default (the
+  // real hook is undefined while loading/pre-auth, and the section just hides); a test sets an array.
+  filingSuggestions?: unknown[];
+};
+
+const noop = () => {};
+
+export function queryMocksFromState(getState: () => ScreenState) {
+  const st = () => getState() ?? {};
+  const cats = () => (st().categories ?? []) as { id: string }[];
+  const category = (id: string | null) => (id == null ? undefined : cats().find((c) => c.id === id));
+  const status = { isLoading: false, isError: false, refetch: noop, refetchStale: noop };
+  return {
+    useIsAuthed: () => true,
+    useCategories: () => ({ categories: cats(), category, ...status, isLoading: st().categoriesLoading ?? false, isError: st().categoriesError ?? false }),
+    useBudgetsScreenData: () => ({ budgets: st().budgets ?? [], category, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleStart: '2026-06-06', payCycleError: st().payCycleError ?? false, ...status }),
+    useBudgetDetailScreenData: () => ({ category, budgets: st().budgets ?? [], transactions: st().transactions ?? [], cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
+    useTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, isFetching: false, hasMore: false, loadMore: noop, isLoadingMore: false, ...status }),
+    // The bounded recent list (tab dot, account detail, goal-edit picker). Same fixture as the
+    // tab composite here — screens needing real per-account balances use an inline mock instead.
+    useRecentTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, balances: new Map(), isFetching: false, ...status }),
+    // The by-id resolver the picker/confirm sheets + detail screen use. Resolves over the same
+    // fixture list; findTx searches it by transaction_id.
+    useTransactionResolver: () => {
+      const txns = (st().transactions ?? []) as { transaction_id: string }[];
+      return { transactions: txns, findTx: (id: string) => txns.find((t) => t.transaction_id === id) };
+    },
+    useRulesScreenData: () => ({ rules: st().rules ?? [], rulesError: st().rulesError ?? false, ...status }),
+    usePayCycle: () => ({ payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleName: st().cycleName ?? (() => 'Fortnightly'), isLoading: false, isError: false }),
+    useSettingsScreenData: () => ({ categoriesCount: cats().length, loanReady: false, categoriesError: st().categoriesError ?? false, loanReadyError: st().loanReadyError ?? false, ...status }),
+    useGoalScreenData: () => ({ loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, repayment: st().repayment ?? {}, homeLoanError: false, repaymentError: false, ...status }),
+    useGoalsScreenData: () => ({ goals: st().goals ?? [], payCycle: st().payCycle ?? { length: 14, last_pay_date: '2026-06-06' }, balanceFor: (id: string | null | undefined) => (id == null ? null : (st().balances ?? {})[id] ?? null), loanFacts: st().loanFacts ?? {}, homeLoan: st().homeLoan ?? { balance: null, asOf: null }, mortgageError: false, ...status }),
+    useLoanFactsQuery: () => ({ data: st().loanFacts }),
+    // WHIT-501: whole-history uncategorized tally. Undefined by default (see ScreenState.uncategorizedCount).
+    useUncategorizedCount: () => st().uncategorizedCount,
+    // WHIT-517: shops behind unfiled charges. Undefined by default (see ScreenState.uncategorizedMerchants).
+    useUncategorizedMerchants: () => ({ merchants: st().uncategorizedMerchants, isLoading: false, isError: false }),
+    // WHIT-542: hand-filing suggestions. Undefined by default (see ScreenState.filingSuggestions).
+    useFilingSuggestions: () => ({ suggestions: st().filingSuggestions, isLoading: false, isError: false }),
+  };
+}

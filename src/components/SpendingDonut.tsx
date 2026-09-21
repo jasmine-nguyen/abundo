@@ -1,0 +1,366 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import Svg, { G, Circle, Path } from 'react-native-svg';
+import { C, FONT, fmt } from '../theme';
+import { CHART_BG, OTHER_COLOR } from '../chartColors';
+import { wedgeDimOpacity } from '../contrast';
+import { useReduceMotion } from '../motion/useReduceMotion';
+
+// The opacity a dimmed wedge takes when its colour cannot be measured (wedgeDimOpacity returns
+// null). A drawing decision, so it lives here at the draw site rather than in the contrast maths
+// (WHIT-430). NOT 1: a wedge that does not fade at all reads as the picked one, so this still steps
+// visibly back. Deliberately high — if we cannot measure a colour we cannot promise it is visible,
+// so err toward more opaque. No shipped colour hits this; it is the guard for a colour off the wire.
+export const WEDGE_DIM_FALLBACK = 0.85;
+
+// WHIT: a donut ("pie") chart of where the cycle's money went — one slice per top-level
+// category, sized by its share of the total, painted in that category's own colour so the
+// ring and the rows below it read as one legend. The category rows underneath double as the
+// chart's legend + table view (name · amount · share), so the donut needs no separate key.
+// At rest the hole shows the TOTAL spent. Tap a wedge to read that category's name + total instead;
+// tap it again — OR tap the hole — to clear back to the total.
+
+// The grouped "Other" slice grey comes from the chart palette (OTHER_COLOR) — distinct from any
+// category hue and low-saturation so it reads as "not one thing".
+
+export interface DonutSlice { id: string; name: string; color: string; value: number }
+
+// The synthesised fold bucket's id, named so reduceSlices below does not carry a bare literal.
+// Nothing keys behaviour off it — the bucket fades exactly like a real category. Deliberately NOT
+// exported: the donut tests write '__other__' directly, so a rename reddens them instead of
+// quietly following along.
+const OTHER_SLICE_ID = '__other__';
+
+// Reduce the full top-level list to at most `max` painted slices: keep the largest `max-1`,
+// fold everything smaller into a single neutral "Other" slice. A pie with too many thin
+// wedges is unreadable (dataviz: a 9th series folds into "Other"), and the rows below still
+// show every category in full. Pure + exported so a unit test can pin the grouping.
+export function reduceSlices(slices: DonutSlice[], max = 6): DonutSlice[] {
+  const positive = slices.filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
+  if (positive.length <= max) return positive;
+  const kept = positive.slice(0, max - 1);
+  const rest = positive.slice(max - 1);
+  const otherValue = rest.reduce((sum, s) => sum + s.value, 0);
+  if (otherValue > 0) kept.push({ id: OTHER_SLICE_ID, name: 'Other', color: OTHER_COLOR, value: otherValue });
+  return kept;
+}
+
+// Where a wedge sits on the emphasis axis, given the current selection: +1 popped (this is the
+// tapped one), −1 dimmed (something else is tapped), 0 at rest (nothing tapped). Pure so a test
+// can pin it without reaching into the animation. The scale/opacity below are just this mapped.
+export function sliceEmphasis(isSelected: boolean, anySelected: boolean): -1 | 0 | 1 {
+  if (isSelected) return 1;
+  return anySelected ? -1 : 0;
+}
+
+// A tapped category can leave the data — its spend drops to 0, or it folds into "Other" on a cycle
+// change. Treat the selection as active only while its category is still painted: a stale id would
+// otherwise dim every wedge for a selection that no longer exists. Pure + exported so a test pins it.
+export function activeSelection(selectedId: string | null, painted: DonutSlice[]): string | null {
+  return selectedId !== null && painted.some((s) => s.id === selectedId) ? selectedId : null;
+}
+
+// Fixed geometry — the ring is DRAWN centred on the coordinate origin (0,0); a single static
+// parent <G> then shifts it to the box centre (see the render). The ring band is sized as if
+// inscribed in a RING_BOX square with a PAD margin — that's what fixes its radius. The actual
+// (transparent) canvas is larger (VIEW, below) so a popped wedge has room to grow without clipping.
+// A bigger ring gives every wedge a longer arc, so a small category isn't a hair-thin tap
+// target that takes two tries to hit.
+const RING_BOX = 240;
+const STROKE = 30;                          // VISIBLE band width — the painted ring's thickness
+const PAD = 11;
+const R = RING_BOX / 2 - PAD - STROKE / 2;  // 94 — mid-line radius of the ring band
+const CIRC = 2 * Math.PI * R;
+// The TAP target is a wider, invisible band concentric with the visible one, so a thin wedge isn't
+// a hair-thin target that takes two tries to hit. Each wedge paints its colour at STROKE, then lays
+// a transparent HIT_STROKE-wide copy on top that owns the tap — and that copy takes its FULL sweep
+// (no inter-wedge gap), so the tap targets tile the ring edge-to-edge instead of leaving a dead
+// strip between neighbours. The extra inner reach is harmlessly overlaid by the centre reset disc
+// (drawn on top), so in practice the radial widening lands OUTWARD, into the transparent margin —
+// never into the hole where the readout + the reset tap live.
+const HIT_STROKE = 46;
+// The divider between adjacent wedges. It is a GAP over the CHART_BG track below, not a drawn
+// line: the track is the same colour, so the gap reads as a clean divider that grows and moves
+// with a popped wedge (a static line would not — see the pop scale below).
+// As an angle: the whole ring is 360°, so DIVIDER_PX of the circumference is (DIVIDER_PX / CIRC) × 360.
+// A constant ANGLE is a constant width only at the mid-line radius R: the divider measures ~1.05px
+// at the band's inner edge and ~1.45px at the outer, straddling the 1.25px mid-line figure.
+// Raising DIVIDER_PX also raises the thin-wedge threshold below (GAP_DEG * 1.5), so more thin
+// wedges keep their full sweep — check that guard before retuning this.
+const DIVIDER_PX = 1.25;
+const GAP_DEG = (DIVIDER_PX / CIRC) * 360;
+// The popped wedge grows a touch (1.1×) to lift it off its neighbours, and must grow ABOUT THE
+// CENTRE so it stays in place. react-native-svg's native group takes a single pre-composed
+// `matrix`, and on an *animated* G only the scale component of that matrix reliably lands each
+// frame — any translate/origin is dropped (so scaling an animated G alone happens about the
+// origin (0,0), sliding the wedge toward a corner). The centring therefore lives on the STATIC
+// parent group (baked in once at render, never dropped); each wedge's animation carries ONLY a
+// scale about its own origin, which the parent's shift turns into a scale about the centre.
+const SEL_SCALE = 1.1;
+// How far an un-focused wedge fades back when another is picked — DERIVED per wedge, not chosen.
+//
+// A faded wedge sits on the opaque CHART_BG track below and nothing else: it never scales (the −1
+// side of SEL_SCALE outputs 1) and never overlaps a neighbour (`inset` is always positive), so its
+// backdrop is known exactly and the fade can be computed. Each wedge fades only as far as it can
+// while still clearing WCAG 1.4.11's 3:1 against that track — so a darker wedge fades less than a
+// bright one. Equal visibility, unequal fade. WHIT-425 replaced a flat 0.4 here, which left the
+// wedges at 1.65–2.46:1; the flat value had been tuned against a faint blue lift that WHIT-403
+// deleted when it repainted the track to the flat page background.
+//
+// The grey "Other" wedge fades like any other, to ~0.83. That reads as barely a fade as a NUMBER,
+// which is misleading: it starts far darker than a category colour, so 0.83 of it lands at the same
+// brightness 0.50 of a bright blue does. Every faded wedge ends up level. Exempting it instead was
+// tried and reverted — leaving it at full opacity made the one non-category wedge the second
+// brightest thing on the ring, and left tapping it with no effect on the wedge but its size.
+// Size the (transparent) canvas from the pop so a popped wedge never reaches the edge and clips.
+// POP_OUTER is the farthest anything DRAWN OR TAPPED reaches from the centre — the wider HIT band
+// out-reaches the visible one, so budget from whichever is thicker (else a popped wedge's tap area
+// would be clipped by the SVG bounds and stop responding near the rim). Pad past it by MARGIN, and
+// centre the ring in the box so the headroom is symmetric on every side. Derived from SEL_SCALE
+// (not a hardcoded budget) so the margin can't silently go negative if the pop is retuned.
+const POP_OUTER = (R + Math.max(STROKE, HIT_STROKE) / 2) * SEL_SCALE;  // farthest reach when popped
+const MARGIN = 10;                                // breathing room around the popped ring
+const VIEW = 2 * Math.ceil(POP_OUTER + MARGIN);   // box grows, ring stays the same size
+// The clear-selection tap disc fills the visible hole exactly (inner edge of the VISIBLE band).
+// Drawn on top of the wedges so a centre tap always resets, and so each wedge's inward hit reach
+// (from the wider HIT_STROKE) is ceded to the hole rather than stealing centre taps.
+const HOLE_R = R - STROKE / 2;
+
+const AnimatedG = Animated.createAnimatedComponent(G);
+
+// A point at `deg` on a circle of radius `r` centred on the origin (0° = 3 o'clock, +ve clockwise
+// in SVG's y-down space). Origin-centred so a wedge's scale (about its own origin) grows it in
+// place; the static parent <G> shifts the whole ring to the box centre.
+function ptOnRing(deg: number, r: number): [number, number] {
+  const a = (deg * Math.PI) / 180;
+  return [r * Math.cos(a), r * Math.sin(a)];
+}
+
+// A stroked arc path following radius `r` from `startDeg` to `endDeg` (clockwise). The stroke
+// band IS the visible wedge, and — unlike a full-circle dashed stroke — its hit area is only
+// this segment, so each wedge can own a tap.
+function arcPath(startDeg: number, endDeg: number, r: number): string {
+  const [x1, y1] = ptOnRing(startDeg, r);
+  const [x2, y2] = ptOnRing(endDeg, r);
+  const large = endDeg - startDeg > 180 ? 1 : 0;
+  return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+}
+
+// A donut of category spend for the selected cycle. `slices` are the top-level categories
+// (already this cycle's). The hole shows the total spent by default; tap any wedge to pop it out
+// and read that category's name + total instead, and tap the hole to clear back to the total.
+// Renders nothing when there is no positive spend — the screen shows its own empty state instead.
+export function SpendingDonut({ slices, testID }: { slices: DonutSlice[]; testID?: string }) {
+  // Ring order is exactly reduceSlices' output: spend descending, with the folded "Other" appended
+  // AFTER the sort — so Other is last even when it outweighs most kept slices. The spoken a11y
+  // summary below reads the same list, so a screen-reader hears categories in the painted order,
+  // matching the category rows. Colour is NOT decided here: each slice arrives with the colour the
+  // caller resolved from that category's persisted colorSlot. WHIT-403 removed a second pass that
+  // re-ordered the ring to alternate warm and cool hues. Note what does and does not replace it:
+  // ASSIGNMENT_ORDER spreads CONSECUTIVELY ASSIGNED slots, so categories a user creates back-to-back
+  // land far apart. It does NOT protect the 13 built-ins, whose slots are hand-picked. WHIT-415
+  // re-spaced those: eatingout/health/coffee used to resolve to ramp 0/1/2 (three adjacent hues);
+  // coffee moved to ramp 3, leaving eatingout/health as a pair. Adjacent hues
+  // are still possible — 13 colours in a 20-entry ramp force at least 5 touching pairs — so two
+  // similar colours CAN still sit side by side, and the ring stays strictly spend-ordered.
+  // NOTE: re-spacing paints only NEW stores; a slot is permanent once stored (WHIT-405), so an
+  // existing account keeps the old layout.
+  const painted = reduceSlices(slices);
+  const sum = painted.reduce((acc, s) => acc + s.value, 0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const reduceMotion = useReduceMotion();
+  // The selection is only live while its category is still painted (a tapped category can drop out
+  // of the data). Declared above emphasisOf + the effect + the early return, all of which read it.
+  const activeId = activeSelection(selectedId, painted);
+  // Where a wedge should sit given the current selection — its birth value AND its spring target, so
+  // the two can never drift out of sync.
+  const targetFor = (id: string): -1 | 0 | 1 => sliceEmphasis(id === activeId, activeId !== null);
+  // One Animated.Value per wedge on the [−1, +1] emphasis axis (see sliceEmphasis). Kept in a ref so
+  // it survives redraws. A brand-new wedge starts at its CURRENT target, not 0 — so a wedge that
+  // appears while another category is selected paints dimmed on frame one instead of flashing full.
+  const anims = useRef<Map<string, Animated.Value>>(new Map()).current;
+  const emphasisOf = (id: string): Animated.Value => {
+    let v = anims.get(id);
+    if (!v) { v = new Animated.Value(targetFor(id)); anims.set(id, v); }
+    return v;
+  };
+
+  // A stable key for the set of painted ids (JSON so any backend category id is escaped safely).
+  // Adding it to the effect deps makes the springs re-target when a wedge enters or leaves, not
+  // only when the selection changes.
+  const paintedKey = JSON.stringify(painted.map((s) => s.id));
+
+  // Spring each wedge toward its target when the selection OR the painted set changes (instant under
+  // reduce-motion).
+  useEffect(() => {
+    const springs = painted.map((s) => {
+      const target = targetFor(s.id);
+      const v = emphasisOf(s.id);
+      if (reduceMotion) { v.setValue(target); return null; }
+      return Animated.spring(v, { toValue: target, useNativeDriver: false, friction: 7, tension: 120 });
+    });
+    if (!reduceMotion) Animated.parallel(springs.filter(Boolean) as Animated.CompositeAnimation[]).start();
+    // Re-targets on selection change (activeId) AND on any wedge entering/leaving (paintedKey): a
+    // category that appears or re-appears while another is selected dims to match its peers, and a
+    // selected category leaving flips activeId to null and springs everything back to rest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, reduceMotion, paintedKey]);
+
+  // Not just `<= 0`. An Infinity value survives reduceSlices' `> 0` filter, and enough huge-but-
+  // finite values can overflow the total on their own — either way `sum` goes infinite and every
+  // sweep below becomes Infinity / Infinity = NaN, painting a ring of NaN arcs. Guarding the total
+  // covers both, so the filter above does not need its own finite check. (NaN values are already
+  // dropped by that filter: NaN > 0 is false.)
+  if (!Number.isFinite(sum) || sum <= 0) return null;
+
+  const pct = (v: number) => (sum > 0 ? Math.round((v / sum) * 100) : 0);
+  const single = painted.length === 1;
+  const selected = painted.find((s) => s.id === activeId) ?? null;
+
+  // Lay the wedges out by angle, starting at 12 o'clock (−90°) and running clockwise. Compute
+  // each wedge's arc geometry once so the on-top overlay can reuse it without recomputing.
+  let cursor = -90;
+  const layout = painted.map((s) => {
+    const sweep = (s.value / sum) * 360;
+    const start = cursor;
+    const end = cursor + sweep;
+    cursor = end;
+    // Give up half a divider at each end so neighbours don't touch. A wedge narrower than three
+    // halves of a divider cannot afford that without inverting, so it gives up a third of its sweep
+    // instead — always keeping a third of itself, with boundaries as wide as it can pay for.
+    // `Math.min`, not a threshold: the old `sweep > GAP_DEG * 1.5 ? GAP_DEG / 2 : 0` had a CLIFF at
+    // the cutoff, where a wedge dropping from 1.15° to 1.14° of sweep jumped from painting 0.39° to
+    // painting the full 1.14° — a category with LESS spend drawn three times wider than one with
+    // more. Taking the min is continuous, so painted width only ever moves with spend.
+    // Above the cutoff `sweep / 3` always exceeds half a divider, so a normal wedge is unaffected.
+    const inset = Math.min(GAP_DEG / 2, sweep / 3);
+    return { s, start, end, inset };
+  });
+
+  // Render one wedge's animated group. Two concentric shapes: the VISIBLE band (the painted colour,
+  // STROKE wide, inset a hair from its neighbours for the surface gap) and, on top of it, a wider
+  // TRANSPARENT hit band (HIT_STROKE wide, taking the FULL sweep) that owns the tap + a11y — so the
+  // touch target is fatter than the paint and tiles the ring with no dead gap between wedges. The
+  // base (interactive) wedge owns the accessibility label; the single on-top overlay copy is not
+  // exposed to screen readers (the base beneath owns a11y) but DOES carry the same tap handler, so
+  // tapping a popped wedge still deselects it whether the tap lands on this top copy or the base
+  // under it — no reliance on the tap falling through.
+  const renderWedge = ({ s, start, end, inset }: (typeof layout)[number], interactive: boolean) => {
+    // The wedge's animated group: scale up (pop) on the +1 side, fade (dim) on the −1 side. Scale
+    // ONLY — no translate/origin (those get dropped on an animated G). The wedge is drawn about the
+    // origin, so this scales it in place; the static parent <G> shifts it to the box centre.
+    const v = emphasisOf(s.id);
+    const scale = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [1, 1, SEL_SCALE], extrapolate: 'clamp' });
+    const opacity = v.interpolate({ inputRange: [-1, 0, 1], outputRange: [wedgeDimOpacity(s.color) ?? WEDGE_DIM_FALLBACK, 1, 1], extrapolate: 'clamp' });
+
+    const isSel = s.id === activeId;
+    const toggle = () => setSelectedId((cur) => (cur === s.id ? null : s.id));
+    const hitProps = interactive
+      ? {
+          testID: `donut-slice-${s.id}`,
+          onPress: toggle,
+          accessible: true,
+          // react-native-svg's native types expose only accessibilityLabel (not role/state), so
+          // the selected state rides in the label rather than accessibilityState.
+          accessibilityLabel: `${s.name}, ${fmt(s.value)}, ${pct(s.value)} percent${isSel ? ', selected' : ''}`,
+        }
+      : { testID: 'donut-top', onPress: toggle, accessible: false };
+
+    // The painted band and its transparent tap target. The lone 100% slice is a full ring — an arc
+    // whose start and end coincide degenerates, so both are drawn as plain circles. The hit copy
+    // fills its FULL sweep (start→end, no inset) so adjacent tap targets meet edge-to-edge, and the
+    // visible band's opacity/dim never touches the hit copy (it's fully transparent either way).
+    // Gated on `interactive` like hitProps above: renderWedge runs a SECOND time for the popped-wedge
+    // overlay (interactive=false), and an ungated id would give the selected wedge two painted-band
+    // nodes. Separate from the hit band's id because they measure different things — the hit band
+    // takes the FULL sweep, so a divider measured there always reads zero.
+    const bandTestID = interactive ? `donut-band-${s.id}` : undefined;
+    const visible = single ? (
+      <Circle cx={0} cy={0} r={R} fill="none" stroke={s.color} strokeWidth={STROKE} testID={bandTestID} />
+    ) : (
+      <Path d={arcPath(start + inset, end - inset, R)} fill="none" stroke={s.color} strokeWidth={STROKE} strokeLinecap="butt" testID={bandTestID} />
+    );
+    const hit = single ? (
+      <Circle cx={0} cy={0} r={R} fill="none" stroke="transparent" strokeWidth={HIT_STROKE} {...hitProps} />
+    ) : (
+      <Path d={arcPath(start, end, R)} fill="none" stroke="transparent" strokeWidth={HIT_STROKE} strokeLinecap="butt" {...hitProps} />
+    );
+
+    return (
+      <AnimatedG key={interactive ? s.id : '__top__'} scale={scale} opacity={opacity}>
+        {visible}
+        {hit}
+      </AnimatedG>
+    );
+  };
+
+  // Base wedges in stable paint order — never reordered. Reordering keyed children mid-animation
+  // detaches the animating node and hitches; instead the selected wedge is redrawn once by an
+  // appended overlay, so it sits on top of its neighbours without any reorder.
+  const wedges = layout.map((d) => renderWedge(d, true));
+  const selectedLayout = activeId ? layout.find((d) => d.s.id === activeId) : null;
+  const topWedge = selectedLayout ? renderWedge(selectedLayout, false) : null;
+
+  const label = `Spending by category. ${painted
+    .map((s) => `${s.name} ${pct(s.value)} percent`)
+    .join(', ')}. Tap a slice for its total, or the centre for the total spent.`;
+
+  return (
+    <View style={styles.wrap} testID={testID} accessibilityLabel={label}>
+      {/* The box is VIEW×VIEW with 1:1 pixels. Everything is drawn about the origin and shifted to
+          the box centre by ONE static parent <G> (its translate is baked into the group's matrix
+          at render, so — unlike an animated translate — it's never dropped). A popped wedge then
+          scales about that centre and grows in place with symmetric headroom, never clipping. */}
+      <Svg width={VIEW} height={VIEW} viewBox={`0 0 ${VIEW} ${VIEW}`}>
+        <G x={VIEW / 2} y={VIEW / 2}>
+          {/* The ring's surface, spanning the full painted band — this is what shows through the
+              gap between wedges, so it IS the divider colour. CHART_BG matches the screen behind
+              the chart today, which makes the divider an owned token rather than an accident of
+              whatever sits behind the SVG: drop the donut on a card tomorrow and the dividers stay
+              chart-background instead of silently picking up the card's colour. */}
+          <Circle cx={0} cy={0} r={R} fill="none" stroke={CHART_BG} strokeWidth={STROKE} testID="donut-track" />
+          {wedges}
+          {topWedge}
+          {/* Tap the hole to clear the selection and return to the total-spent readout. A
+              transparent disc filling the whole visible hole, drawn LAST so it sits on top: it
+              always wins a centre tap, and cedes each wedge's inward hit reach to itself. Only a
+              live a11y target while something is selected — at rest a centre tap is a harmless
+              no-op (the readout already shows the total). */}
+          <Circle
+            cx={0}
+            cy={0}
+            r={HOLE_R}
+            fill="transparent"
+            testID="donut-center-reset"
+            onPress={() => setSelectedId(null)}
+            accessible={activeId !== null}
+            accessibilityLabel="Show total spent"
+          />
+        </G>
+      </Svg>
+      {/* Centre readout. Default: the total spent this cycle. Tapped: that category's name +
+          total — which is what "tap a slice to see the amount" asks for. pointerEvents=none so
+          taps fall through to the reset disc + wedges beneath. */}
+      <View style={styles.center} pointerEvents="none">
+        {selected ? (
+          <>
+            <Text testID="donut-center-amount" style={styles.centerAmount}>{fmt(selected.value)}</Text>
+            <Text style={styles.centerName} numberOfLines={2}>{selected.name}</Text>
+          </>
+        ) : (
+          <>
+            <Text testID="donut-center-total" style={styles.centerAmount}>{fmt(sum)}</Text>
+            <Text style={styles.centerName}>total spent</Text>
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
+  center: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 34 },
+  centerAmount: { fontFamily: FONT.display, fontSize: 28, fontWeight: '800', color: C.textBright, letterSpacing: -1 },
+  centerName: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.textDim, marginTop: 2, textAlign: 'center' },
+});

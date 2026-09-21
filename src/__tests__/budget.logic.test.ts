@@ -1,0 +1,669 @@
+// Budget selectors: elapsedFrac, budgetViews (the list bars + pace copy) and
+// budgetDetail (the single-category screen). These drive every number and colour
+// on the budgets screens, so they're the highest-value regression lock.
+import { describe, it, expect } from '@jest/globals';
+import { elapsedFrac, budgetViews, budgetDetail, groupTransactionsByDate } from '../context';
+import type { Budget } from '../context';
+import { C } from '../theme';
+import { makeState, cat, budget, txn } from './factory';
+
+describe('elapsedFrac', () => {
+  it('is (cycleLen - daysLeft) / cycleLen', () => {
+    expect(elapsedFrac(makeState({ cycleLen: 14, daysLeft: 7 }))).toBeCloseTo(0.5, 5);
+    expect(elapsedFrac(makeState({ cycleLen: 14, daysLeft: 14 }))).toBe(0); // fresh cycle
+    expect(elapsedFrac(makeState({ cycleLen: 14, daysLeft: 0 }))).toBe(1);  // cycle ended
+  });
+});
+
+describe('budgetViews', () => {
+  const base = () => makeState({
+    categories: [cat({ id: 'coffee', name: 'Cafes & Coffee', color: '#E8A87C' })],
+    cycleLen: 14, daysLeft: 7, // elapsed = 0.5
+  });
+
+  it('sums posted + pending as spend and computes remaining', () => {
+    const s = makeState({ ...{}, categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 });
+    const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
+    expect(totBudget).toBe(100);
+    expect(totSpent).toBe(50);
+    expect(totRemain).toBe(50);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('splits the bar into posted% and pending% within the budget', () => {
+    const s = makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 });
+    const [row] = budgetViews(s).rows;
+    expect(row.postedPct).toBeCloseTo(40, 5);
+    expect(row.pendingPct).toBeCloseTo(10, 5);
+    expect(row.over).toBe(false);
+  });
+
+  it('caps the pending segment so posted% + pending% never exceeds 100', () => {
+    // posted 90 + pending 40 = 130 of 100 → over budget; bars must still sum to <= 100.
+    const s = makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 90, pending: 40 })], cycleLen: 14, daysLeft: 7 });
+    const [row] = budgetViews(s).rows;
+    expect(row.over).toBe(true);
+    expect(row.postedPct + row.pendingPct).toBeLessThanOrEqual(100.0001);
+    expect(row.paceLabel).toContain('over budget');
+  });
+
+  it('labels pace relative to the linear target (elapsed * budget)', () => {
+    // elapsed 0.5, budget 100 → target 50.
+    const under = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 20, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(under.paceLabel).toContain('under pace');
+    const over = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 80, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(over.paceLabel).toContain('over pace');
+    expect(over.over).toBe(false); // over PACE, not over budget
+  });
+
+  it('folds pending into the spent amount and omits the "(… pending)" breakout', () => {
+    // spent = posted + pending = 50, so pending is counted without a separate breakout.
+    const withPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 10 })], cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(withPending.spentLabel).toBe('$50 spent of $100');
+    expect(withPending.spentLabel).not.toContain('pending');
+    const noPending = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 40, pending: 0 })], cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(noPending.spentLabel).toBe('$40 spent of $100');
+  });
+
+  it('skips a budget whose category no longer exists', () => {
+    const s = makeState({ categories: [cat({ id: 'coffee' })], budgets: [budget({ id: 'ghost', budget: 50, posted: 0, pending: 0 })], cycleLen: 14, daysLeft: 7 });
+    expect(budgetViews(s).rows).toHaveLength(0);
+  });
+
+  it('shows exact cents on a fractional spent + left so the list row matches the detail and reconciles to the budget', () => {
+    // posted 62.50 + pending 11.00 = 73.50 spent of $80 → 6.50 left (the Cafes & Coffee case).
+    const row = budgetViews(makeState({ categories: [cat()], budgets: [budget({ budget: 80, posted: 62.5, pending: 11 })], cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.spentLabel).toBe('$73.50 spent of $80'); // fail-on-revert: fmt(73.5) → '$74'
+    expect(row.remainAmount).toBe('$6.50');             // spent + left = the $80 budget
+  });
+});
+
+// WHIT-69: an Income-bucket category's budget is an earn-target (a floor). Over is
+// GOOD, so the direction and colours invert — never the red "over budget" branch —
+// and income rows are kept OUT of the spend hero totals.
+const RED = C.bad;
+const income = (over = {}) => cat({ id: 'salary', name: 'Salary', color: '#35d9a0', bucket: 'Income', ...over });
+
+describe('budgetViews — income earn-targets (over-is-good)', () => {
+  // elapsed = 0.5, budget 5000 → linear target 2500.
+  const state = (posted: number, pending = 0) => makeState({
+    categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted, pending })],
+    cycleLen: 14, daysLeft: 7,
+  });
+
+  it('under target early in the cycle is never red and reads "to go"', () => {
+    const row = budgetViews(state(1000)).rows[0];
+    expect(row.over).toBe(false);
+    expect(row.remainLabel).toBe('to go');
+    expect(row.remainAmount).toBe('$4,000');       // 5000 - 1000 still to earn
+    expect(row.remainColor).not.toBe(RED);
+    expect(row.postedColor).not.toBe(RED);          // bar uses the category colour, not red
+    expect(row.paceColor).not.toBe(RED);
+    expect(row.paceLabel).toContain('to go');       // 2500 target vs 1000 earned → behind, but calm
+  });
+
+  it('ahead of the linear pace reads "ahead of pace" (muted pace), still not met', () => {
+    const row = budgetViews(state(3000)).rows[0];   // 3000 > 2500 target, < 5000 goal
+    expect(row.paceLabel).toContain('ahead of pace');
+    expect(row.paceColor).toBe('#cfd2ff'); // pace sub-label is muted; the remain amount is the cyan highlight
+    expect(row.remainLabel).toBe('to go');
+    expect(row.over).toBe(false);
+  });
+
+  it('meeting or exceeding the target is green and reads "over target"', () => {
+    const row = budgetViews(state(6000)).rows[0];   // earned 6000 ≥ 5000 floor
+    expect(row.remainLabel).toBe('over target');
+    expect(row.remainAmount).toBe('$1,000');        // 6000 - 5000 over the floor
+    expect(row.remainColor).toBe(C.good);
+    expect(row.paceLabel).toContain('over target');
+    expect(row.over).toBe(false);
+  });
+
+  it('labels the earned/target amount as "earned", not "spent"', () => {
+    expect(budgetViews(state(1000)).rows[0].spentLabel).toBe('$1,000 earned of $5,000');
+    // earned already includes pending (1000 + 200), no separate pending breakout.
+    expect(budgetViews(state(1000, 200)).rows[0].spentLabel).toBe('$1,200 earned of $5,000');
+  });
+
+  it('excludes income rows from the spend hero totals but still lists them', () => {
+    const s = makeState({
+      categories: [cat({ id: 'coffee' }), income()],
+      budgets: [
+        budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 }),
+        budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }),
+      ],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
+    expect(rows).toHaveLength(2);                    // income row is still listed
+    expect(totBudget).toBe(100);                     // only the spend budget counts
+    expect(totSpent).toBe(50);
+    expect(totRemain).toBe(50);
+  });
+});
+
+describe('budgetDetail — income earn-targets', () => {
+  const detail = (posted: number) => budgetDetail(makeState({
+    categories: [income()], budgets: [budget({ id: 'salary', budget: 5000, posted, pending: 0 })],
+    cycleLen: 14, daysLeft: 7,
+  }), 'salary')!;
+
+  it('under target: calm "keep earning" status, never red, reframed daily label', () => {
+    const d = detail(1000);
+    expect(d.statusLabel).toBe('On track — keep earning');
+    expect(d.statusColor).not.toBe(RED);
+    expect(d.postedColor).not.toBe(RED);
+    expect(d.dailyLabel).toContain('to target');    // "$X/day to target", not "Daily limit"
+    expect(d.dailyLabel).not.toContain('Daily limit');
+  });
+
+  it('target reached: green status and no daily-to-go', () => {
+    const d = detail(6000);
+    expect(d.statusLabel).toBe('Target reached — nice');
+    expect(d.statusColor).toBe(C.good);
+    expect(d.dailyLabel).toBe('Target reached');
+  });
+});
+
+// WHIT-201: a Savings-bucket budget has no meaningful rollup (savings is an account
+// balance, not categorised spend), so budgetViews skips it entirely — row AND totals —
+// and budgetDetail treats it as absent. New Savings budgets are blocked in the picker;
+// this covers one set before that / via re-bucketing.
+describe('budgetViews — Savings budgets are skipped (WHIT-201)', () => {
+  it('omits a Savings budget row and excludes it from the hero totals, while other buckets still render', () => {
+    const s = makeState({
+      categories: [
+        cat({ id: 'coffee', bucket: 'Lifestyle' }),
+        cat({ id: 'salary', name: 'Salary', bucket: 'Income' }),
+        cat({ id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings' }),
+      ],
+      budgets: [
+        budget({ id: 'coffee', budget: 100, posted: 40, pending: 10 }),
+        budget({ id: 'salary', budget: 5000, posted: 1000, pending: 0 }),
+        budget({ id: 'nest_egg', budget: 2000, posted: 0, pending: 0 }),
+      ],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
+    expect(rows.map((r) => r.id)).toEqual(['coffee', 'salary']);  // no nest_egg row
+    // Totals are the spend row only (income is excluded too, per WHIT-69); the $2000
+    // Savings target must NOT leak into totBudget.
+    expect(totBudget).toBe(100);
+    expect(totSpent).toBe(50);
+    expect(totRemain).toBe(50);
+  });
+});
+
+describe('budgetDetail', () => {
+  it('returns null when the category or budget is missing', () => {
+    expect(budgetDetail(makeState(), 'nope')).toBeNull();
+  });
+
+  it('returns null for a Savings-bucket budget (WHIT-201)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'nest_egg', name: 'Nest Egg', bucket: 'Savings' })],
+      budgets: [budget({ id: 'nest_egg', budget: 2000, posted: 0, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    expect(budgetDetail(s, 'nest_egg')).toBeNull();
+  });
+
+  it('pluralises the days-remaining label (1 day vs N days)', () => {
+    const s1 = makeState({ categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 1 });
+    expect(budgetDetail(s1, 'coffee')!.daysLeftLabel).toBe('1 day remaining');
+    const s2 = makeState({ categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 5 });
+    expect(budgetDetail(s2, 'coffee')!.daysLeftLabel).toBe('5 days remaining');
+  });
+
+  it('computes a daily limit from remaining / days left, and $0 when over', () => {
+    const ok = budgetDetail(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 30, pending: 0 })], cycleLen: 14, daysLeft: 7 }), 'coffee')!;
+    expect(ok.dailyLabel).toBe('Daily limit: $10'); // (100-30)/7 = 10
+    const over = budgetDetail(makeState({ categories: [cat()], budgets: [budget({ budget: 100, posted: 130, pending: 0 })], cycleLen: 14, daysLeft: 7 }), 'coffee')!;
+    expect(over.dailyLabel).toBe('Daily limit: $0');
+    expect(over.statusLabel).toContain('Over budget');
+  });
+
+  it('exposes the server-provided related transactions and flags empty', () => {
+    const withTx = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7,
+      transactions: [txn({ transaction_id: 'x', category: 'coffee', date: '2026-05-01' })],
+    }), 'coffee')!;
+    expect(withTx.relEmpty).toBe(false);
+    expect(withTx.relItems.map((t) => t.transaction_id)).toEqual(['x']);
+    const noTx = budgetDetail(makeState({ categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7 }), 'coffee')!;
+    expect(noTx.relEmpty).toBe(true);
+  });
+
+  // The cycle window + subtree filtering now lives on the server (/budgets/{id}/transactions),
+  // so budgetDetail must show the list VERBATIM — not re-filter it. Re-adding the old
+  // `t.category === b.id` filter would drop a sub-category row that the total (a subtree
+  // rollup) DOES count, re-opening the reconciliation gap.
+  // FAIL-ON-REVERT: a client-side `t.category === 'coffee'` filter drops 'sub'.
+  it('passes the server list through unfiltered (keeps a sub-category row)', () => {
+    const bd = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 10,
+      transactions: [
+        txn({ transaction_id: 'parent', category: 'coffee', date: '2026-07-19' }),
+        txn({ transaction_id: 'sub', category: 'coffee-beans', date: '2026-07-18' }),
+      ],
+    }), 'coffee')!;
+    expect(bd.relItems.map((t) => t.transaction_id)).toEqual(['parent', 'sub']);
+  });
+
+  // WHIT-525: during the optimistic window, a just-excluded row lingers in the budget cache
+  // (stamped budget_excluded:true). budgetDetail must filter it out so the budget-detail list
+  // doesn't show it. FAIL-ON-REVERT: removing the contributesToBudget filter lets the excluded
+  // row through → relItems includes it → the budget list shows a charge it shouldn't.
+  it('filters out a budget_excluded row from relItems (WHIT-525)', () => {
+    const bd = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7,
+      transactions: [
+        txn({ transaction_id: 'kept', category: 'coffee' }),
+        txn({ transaction_id: 'excluded', category: 'coffee', budget_excluded: true }),
+      ],
+    }), 'coffee')!;
+    expect(bd.relItems.map((t) => t.transaction_id)).toEqual(['kept']);
+    expect(bd.relEmpty).toBe(false);
+  });
+
+  it('relEmpty is true when all rows are budget_excluded (WHIT-525)', () => {
+    const bd = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget()], cycleLen: 14, daysLeft: 7,
+      transactions: [
+        txn({ transaction_id: 'only', category: 'coffee', budget_excluded: true }),
+      ],
+    }), 'coffee')!;
+    expect(bd.relItems).toEqual([]);
+    expect(bd.relEmpty).toBe(true);
+  });
+});
+
+// The detail status must be pace-aware, matching the list (budgetViews): spending past
+// today's linear target is an amber caution, not a green "keep it up". Pace rides the base
+// per-cycle budget (b.budget * elapsed), so it stays consistent with the list on both screens.
+describe('budgetDetail — spend pace status', () => {
+  const detail = (over: Partial<Budget>, clock: { cycleLen: number; daysLeft: number }) =>
+    budgetDetail(makeState({ categories: [cat()], budgets: [budget({ id: 'coffee', pending: 0, ...over })], ...clock }), 'coffee')!;
+
+  // FAIL-ON-REVERT: today's binary code reads 3667 <= 3667 as green "On target — keep it up".
+  it('100% spent on day 1 reads amber "ahead of pace", not green (the mortgage bug)', () => {
+    const d = detail({ budget: 3667, posted: 3667 }, { cycleLen: 30, daysLeft: 29 });
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
+    expect(d.statusColor).not.toBe(C.good);
+    expect(d.dailyLabel).toBe('Daily limit: $0'); // envelope gone → nothing left per day
+  });
+
+  it('over pace but still under budget → amber, and the daily limit is not zeroed', () => {
+    // elapsed 2/14 ≈ 0.143, target ≈ 14.3; spent 60 is well past pace, still under 100.
+    const d = detail({ budget: 100, posted: 60 }, { cycleLen: 14, daysLeft: 12 });
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
+    expect(d.dailyLabel).toContain('Daily limit');
+    expect(d.dailyLabel).not.toBe('Daily limit: $0');
+  });
+
+  it('on/under pace late in the cycle stays green even near 100% (no over-flagging)', () => {
+    // elapsed 13/14 ≈ 0.929, target ≈ 92.9; spent 90 is under pace → legit late spend.
+    const d = detail({ budget: 100, posted: 90 }, { cycleLen: 14, daysLeft: 1 });
+    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusColor).toBe(C.good);
+  });
+
+  it('within the $0.50 pace tolerance stays green (guards against flagging rounding noise)', () => {
+    // elapsed 0.5, target 50; spent 50.30 is 0.30 over → within tolerance → green.
+    const d = detail({ budget: 100, posted: 50.3 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusColor).toBe(C.good);
+  });
+
+  it('pending spend counts toward pace (low posted, high pending crosses the target)', () => {
+    // elapsed 0.5, target 50; spent = posted 10 + pending 45 = 55 → over pace → amber.
+    const d = budgetDetail(makeState({
+      categories: [cat()], budgets: [budget({ id: 'coffee', budget: 100, posted: 10, pending: 45 })],
+      cycleLen: 14, daysLeft: 7,
+    }), 'coffee')!;
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
+  });
+
+  it('$0 spent is never flagged — green', () => {
+    const d = detail({ budget: 100, posted: 0 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('On target — keep it up');
+    expect(d.statusColor).toBe(C.good);
+  });
+
+  it('truly over budget still reads red — the middle state did not steal it', () => {
+    const d = detail({ budget: 100, posted: 130 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('Over budget — ease up');
+    expect(d.statusColor).toBe(C.bad);
+    expect(d.dailyLabel).toBe('Daily limit: $0');
+  });
+
+  it('rollover: pace rides the base budget while over-budget uses the buffered envelope', () => {
+    // available = 100 + 100 = 200 (not over), pace target = base 100 × 0.5 = 50; spent 120 → amber.
+    const d = detail({ budget: 100, posted: 120, rollover: true, carryover: 100 }, { cycleLen: 14, daysLeft: 7 });
+    expect(d.statusLabel).toBe('Ahead of pace — ease up');
+    expect(d.statusColor).toBe(C.warn);
+  });
+});
+
+describe('groupTransactionsByDate', () => {
+  it('groups by date heading, preserving the input (newest-first) order', () => {
+    const groups = groupTransactionsByDate([
+      txn({ transaction_id: 'a', date: '2026-07-21' }),
+      txn({ transaction_id: 'b', date: '2026-07-21' }),
+      txn({ transaction_id: 'c', date: '2026-07-18' }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.items.map((t) => t.transaction_id))).toEqual([['a', 'b'], ['c']]);
+  });
+
+  it('returns an empty array for no transactions', () => {
+    expect(groupTransactionsByDate([])).toEqual([]);
+  });
+});
+
+describe('budgetViews sub-category tree + hero de-dup (WHIT-221)', () => {
+  const car = () => cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null });
+  const parking = () => cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' });
+
+  it('de-dups the hero total: a parent and its budgeted sub count the parent ONCE', () => {
+    // Car (parent) rolled-up spend £75 (server-folded Parking+Other); Parking budgeted £50/£30.
+    // Fail-on-revert: dropping the `depth === 0` guard makes this read 105 / 250.
+    const s = makeState({
+      categories: [car(), parking()],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 }),
+                budget({ id: 'parking', budget: 50, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totBudget, totSpent, totRemain } = budgetViews(s);
+    expect(totSpent).toBe(75);   // only Car — Parking is already inside Car's roll-up
+    expect(totBudget).toBe(200); // only Car's cap
+    expect(totRemain).toBe(125);
+    // both rows present, ordered parent-then-child, with depth/parentId set
+    expect(rows.map((r) => r.id)).toEqual(['car', 'parking']);
+    expect(rows[0]).toMatchObject({ id: 'car', depth: 0, parentId: null });
+    expect(rows[1]).toMatchObject({ id: 'parking', depth: 1, parentId: 'car' });
+  });
+
+  it('counts only the top of a 3-level chain; depth increases per level', () => {
+    const s = makeState({
+      categories: [car(),
+                   cat({ id: 'daily', bucket: 'Living', parent: 'car' }),
+                   cat({ id: 'petrol', bucket: 'Living', parent: 'daily' })],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 }),
+                budget({ id: 'daily', budget: 100, posted: 60, pending: 0 }),
+                budget({ id: 'petrol', budget: 40, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    expect(totSpent).toBe(75);   // only the top-most (car)
+    expect(totBudget).toBe(200);
+    expect(rows.map((r) => [r.id, r.depth])).toEqual([['car', 0], ['daily', 1], ['petrol', 2]]);
+  });
+
+  it('walks through an UN-budgeted middle node to find the budgeted ancestor', () => {
+    // car budgeted, daily NOT budgeted, petrol budgeted under daily. petrol's nearest
+    // budgeted ancestor is car → it nests under car at depth 1 and is skipped from the hero.
+    const s = makeState({
+      categories: [car(),
+                   cat({ id: 'daily', bucket: 'Living', parent: 'car' }),
+                   cat({ id: 'petrol', bucket: 'Living', parent: 'daily' })],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 }),
+                budget({ id: 'petrol', budget: 40, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent } = budgetViews(s);
+    expect(totSpent).toBe(75); // petrol skipped (has a budgeted ancestor)
+    expect(rows.map((r) => r.id)).toEqual(['car', 'petrol']);
+    expect(rows[1]).toMatchObject({ id: 'petrol', depth: 1, parentId: 'car' });
+  });
+
+  it('counts a budgeted sub whose parent is NOT budgeted, at top level', () => {
+    // car has no budget row (target 0 → absent from budgets[]); parking budgeted under it.
+    const s = makeState({
+      categories: [car(), parking()],
+      budgets: [budget({ id: 'parking', budget: 50, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    expect(totSpent).toBe(30);   // no budgeted ancestor → counts
+    expect(totBudget).toBe(50);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'parking', depth: 0, parentId: null });
+  });
+
+  it('keeps Income parent/sub out of the spend hero but still nests them', () => {
+    const s = makeState({
+      categories: [cat({ id: 'income', bucket: 'Income', parent: null }),
+                   cat({ id: 'salary', bucket: 'Income', parent: 'income' })],
+      budgets: [budget({ id: 'income', budget: 6000, posted: 4000, pending: 0 }),
+                budget({ id: 'salary', budget: 5000, posted: 4000, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    expect(totSpent).toBe(0);    // income never enters the spend hero
+    expect(totBudget).toBe(0);
+    expect(rows.map((r) => [r.id, r.depth])).toEqual([['income', 0], ['salary', 1]]);
+  });
+});
+
+// ===== WHIT-221 (folded from budgetTreeGaps.logic.test.ts) — budgetViews sub-category tree:
+// ADVERSARIAL GAP tests the implementer's budget.logic.test.ts does NOT cover: multi-family
+// independence, the exact child-before-parent ordering the two-pass exists to fix, depth-first
+// emission with multiple children + a grandchild, a parent with all subs un-budgeted, and a Savings
+// parent/sub pair (both skipped, no crash). No module-level const collisions; imports covered by the
+// survivor.
+describe('budgetViews sub-category tree — gaps (WHIT-221)', () => {
+  // [A20] The exact bug the two-pass prevents: a budgeted sub sorts BEFORE its
+  // budgeted parent in budgets[]. A single build-as-you-go pass would not yet know
+  // the parent is budgeted when it hits the sub, count the sub at depth 0, and
+  // double-count the family. Pass 1 (build budgetedRowIds up front) must prevent that.
+  it('de-dups even when the sub sorts BEFORE its parent in budgets[]', () => {
+    const s = makeState({
+      categories: [cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+                   cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' })],
+      // parking (the CHILD) listed first — the ordering that breaks a naive one-pass.
+      budgets: [budget({ id: 'parking', budget: 50, posted: 30, pending: 0 }),
+                budget({ id: 'car', budget: 200, posted: 75, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget, totRemain } = budgetViews(s);
+    expect(totSpent).toBe(75);   // Car only; NOT 75 + 30 = 105
+    expect(totBudget).toBe(200); // Car only; NOT 250
+    expect(totRemain).toBe(125);
+    // Emitted parent-first regardless of the incoming child-first order.
+    expect(rows.map((r) => r.id)).toEqual(['car', 'parking']);
+    expect(rows[0]).toMatchObject({ id: 'car', depth: 0, parentId: null });
+    expect(rows[1]).toMatchObject({ id: 'parking', depth: 1, parentId: 'car' });
+  });
+
+  // [A21] Two independent parent+sub families. Each must de-dup on its own; the hero
+  // sums the two parents only, never a sub.
+  it('de-dups two separate families independently and sums both parents', () => {
+    const s = makeState({
+      categories: [cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+                   cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' }),
+                   cat({ id: 'food', name: 'Food', bucket: 'Living', parent: null }),
+                   cat({ id: 'snacks', name: 'Snacks', bucket: 'Living', parent: 'food' })],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 }),
+                budget({ id: 'parking', budget: 50, posted: 30, pending: 0 }),
+                budget({ id: 'food', budget: 400, posted: 120, pending: 0 }),
+                budget({ id: 'snacks', budget: 60, posted: 40, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget, totRemain } = budgetViews(s);
+    expect(totSpent).toBe(75 + 120);   // both parents, neither sub
+    expect(totBudget).toBe(200 + 400);
+    expect(totRemain).toBe((200 - 75) + (400 - 120));
+    // Each family emitted contiguously, parent then child.
+    expect(rows.map((r) => [r.id, r.depth])).toEqual([
+      ['car', 0], ['parking', 1], ['food', 0], ['snacks', 1],
+    ]);
+  });
+
+  // [A22] Depth-first emission with two children AND a grandchild. Order must be
+  // parent → child1 → grandchild(of child1) → child2, with depths 0,1,2,1.
+  it('emits depth-first: parent, child1, grandchild, child2 (multi-child + grandchild)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+                   cat({ id: 'daily', name: 'Daily', bucket: 'Living', parent: 'car' }),
+                   cat({ id: 'petrol', name: 'Petrol', bucket: 'Living', parent: 'daily' }),
+                   cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' })],
+      budgets: [budget({ id: 'car', budget: 300, posted: 100, pending: 0 }),
+                budget({ id: 'daily', budget: 100, posted: 50, pending: 0 }),
+                budget({ id: 'petrol', budget: 40, posted: 20, pending: 0 }),
+                budget({ id: 'parking', budget: 50, posted: 30, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent } = budgetViews(s);
+    expect(rows.map((r) => [r.id, r.depth])).toEqual([
+      ['car', 0], ['daily', 1], ['petrol', 2], ['parking', 1],
+    ]);
+    expect(totSpent).toBe(100); // only Car (top of the single family)
+  });
+
+  // [A23] A parent budgeted but ALL its subs un-budgeted: parent shows, no child
+  // rows, hero counts the parent exactly once (nothing to de-dup, nothing dropped).
+  it('a budgeted parent with all subs un-budgeted shows one row and counts once', () => {
+    const s = makeState({
+      categories: [cat({ id: 'car', name: 'Car', bucket: 'Living', parent: null }),
+                   cat({ id: 'parking', name: 'Parking', bucket: 'Living', parent: 'car' }),
+                   cat({ id: 'petrol', name: 'Petrol', bucket: 'Living', parent: 'car' })],
+      budgets: [budget({ id: 'car', budget: 200, posted: 75, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    expect(rows.map((r) => r.id)).toEqual(['car']);
+    expect(rows[0]).toMatchObject({ depth: 0, parentId: null });
+    expect(totSpent).toBe(75);
+    expect(totBudget).toBe(200);
+  });
+
+  // [A24] A Savings parent with a Savings sub: BOTH skipped (row + totals), no crash,
+  // no orphaned child row. Guards the Savings-skip interacting with the tree walk.
+  it('skips a Savings parent AND its Savings sub entirely (no row, no crash)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'nest', name: 'Nest Egg', bucket: 'Savings', parent: null }),
+                   cat({ id: 'holiday', name: 'Holiday', bucket: 'Savings', parent: 'nest' })],
+      budgets: [budget({ id: 'nest', budget: 2000, posted: 0, pending: 0 }),
+                budget({ id: 'holiday', budget: 500, posted: 0, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget, totRemain } = budgetViews(s);
+    expect(rows).toHaveLength(0);
+    expect(totSpent).toBe(0);
+    expect(totBudget).toBe(0);
+    expect(totRemain).toBe(0);
+  });
+
+  // [A25] A spend sub with a CROSS-BUCKET budgeted ancestor (a Living sub under a
+  // budgeted Income parent — only reachable via legacy/corrupt data; the server's
+  // same-bucket rule blocks it on write). The de-dup only skips a row that has a
+  // SAME-BUCKET budgeted ancestor, so this spend sub is NOT dropped: it counts once
+  // on its own (depth 0). Fail-on-revert: removing the same-bucket check in
+  // walkBudgetedAncestors makes `odd` depth 1 and silently drops its £40 from the hero.
+  it('counts a spend sub whose only budgeted ancestor is a different bucket (no silent drop)', () => {
+    const s = makeState({
+      categories: [cat({ id: 'income', name: 'Income', bucket: 'Income', parent: null }),
+                   cat({ id: 'odd', name: 'Odd Spend', bucket: 'Living', parent: 'income' })],
+      budgets: [budget({ id: 'income', budget: 5000, posted: 4000, pending: 0 }),
+                budget({ id: 'odd', budget: 100, posted: 40, pending: 0 })],
+      cycleLen: 14, daysLeft: 7,
+    });
+    const { rows, totSpent, totBudget } = budgetViews(s);
+    // The spend sub counts once (Income parent is excluded from the spend hero by bucket).
+    expect(totSpent).toBe(40);
+    expect(totBudget).toBe(100);
+    // and it renders at the top level, not nested under the Income row.
+    expect(rows.find((r) => r.id === 'odd')).toMatchObject({ depth: 0, parentId: null });
+  });
+});
+
+// The spendable "available" is now computed server-side and read straight off the Budget
+// (WHIT-549). The client keeps a fallback (target + cushion) only for a server that predates
+// the field. These pin: the server value wins when present, the fallback fires when absent,
+// and a legitimate server 0 is honoured (guarded with `??`, not `||`).
+describe('budgetViews — server-computed available (WHIT-549)', () => {
+  it('uses the server available when present, not the client parts-sum', () => {
+    // budget 100 but the server sends available 500 (a big smoothing cushion). The row spends the
+    // SERVER envelope: remain / "of" read 500, not the 100 the parts-sum fallback would give.
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, available: 500 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.remainAmount).toBe('$500');
+    expect(row.spentLabel).toBe('$0 spent of $500');
+  });
+
+  it('falls back to the parts-sum when the server omits available', () => {
+    // available undefined (old server): envelope = budget + carryover = 100 + 200.
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, rollover: true, carryover: 200 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.remainAmount).toBe('$300');
+  });
+
+  it('honours a server available of 0 (?? not ||): a smoothed-away envelope, not the target', () => {
+    // available 0 must be kept, not treated as missing (|| would fall back to the 100 sum). remain
+    // reads 0 and the bar denominator stays finite (falls back to the base target for the % only).
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, available: 0 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.remainAmount).toBe('$0');
+    expect(Number.isNaN(row.postedPct)).toBe(false);
+  });
+});
+
+describe('budgetDetail — server-computed available (WHIT-549)', () => {
+  const detail = (b: object) => budgetDetail(makeState({
+    categories: [cat()], budgets: [budget({ id: 'coffee', ...b })], cycleLen: 14, daysLeft: 7,
+  }), 'coffee')!;
+
+  it('uses the server available for the header envelope', () => {
+    expect(detail({ budget: 100, posted: 0, pending: 0, available: 500 }).ofBudget).toBe('of $500');
+  });
+
+  it('honours a server available of 0 (?? not ||)', () => {
+    expect(detail({ budget: 100, posted: 0, pending: 0, available: 0 }).ofBudget).toBe('of $0');
+  });
+});
+
+// WHIT-549 GAP — a NEGATIVE server available (a payback cycle or a rollover deficit drains the
+// envelope below 0). The implementer pinned available 500 / 0 / undefined; these pin that a
+// negative server value is read verbatim and drives over/den, not clamped or bypassed.
+describe('budgetViews/budgetDetail — negative server available (WHIT-549 gap)', () => {
+  it('[Gc1] a negative server available reads as over, with a finite bar % from the base-target den', () => {
+    // The server sends available -50 (envelope borrowed past 0); the parts-sum fallback would be
+    // +100 (calm, under). posted 20 is the discriminator: the `den = available>0 ? available : base`
+    // guard makes postedPct = 20/100 = 20; if den wrongly used the -50 envelope, clamp() floors it
+    // to 0. So this pins the fallback den guard, not merely non-NaN. over = 20 > -50 = true.
+    const row = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 20, pending: 0, available: -50 })],
+      cycleLen: 14, daysLeft: 7 })).rows[0];
+    expect(row.over).toBe(true);
+    expect(row.remainLabel).toBe('over');
+    expect(row.postedPct).toBeCloseTo(20, 5);   // finite AND correct: den fell back to the base target
+    // "of" reflects the SERVER envelope (fmt drops the sign, so it prints as $50) — proving it isn't
+    // the +100 the fallback parts-sum would have produced.
+    expect(row.spentLabel).toBe('$20 spent of $50');
+  });
+
+  it('[Gc2] budgetDetail reads a negative server available as over budget', () => {
+    const d = budgetDetail(makeState({ categories: [cat()],
+      budgets: [budget({ id: 'coffee', budget: 100, posted: 0, pending: 0, available: -50 })],
+      cycleLen: 14, daysLeft: 7 }), 'coffee')!;
+    expect(d.ofBudget).toBe('of $50');       // the server envelope, not the fallback +100
+    expect(d.statusLabel).toBe('Over budget — ease up');
+  });
+
+  it('[Gc3] a negative available still feeds hero totals from available, not budget', () => {
+    // Hero totBudget/totRemain sum `available`, not the base budget. A -50 envelope must contribute
+    // -50 to totBudget, proving the totals read the server value too (fallback would add +100).
+    const { totBudget, totRemain } = budgetViews(makeState({ categories: [cat()],
+      budgets: [budget({ budget: 100, posted: 0, pending: 0, available: -50 })],
+      cycleLen: 14, daysLeft: 7 }));
+    expect(totBudget).toBe(-50);
+    expect(totRemain).toBe(-50);
+  });
+});

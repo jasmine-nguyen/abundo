@@ -1,0 +1,111 @@
+// WHIT-200/199 GAP — the three tab screens (Goals / Insights / Settings) get their list
+// bottom inset from the shared geometry, not a hard-coded 120. Since WHIT-199 they route
+// through the shared ScrollChromeHeader wrapper, whose contentPadding carries the clearance,
+// so this guards that they use the wrapper's shared inset rather than a re-hardcoded literal.
+//
+// Fail-on-revert is REAL: the wrapper's contentPadding.paddingBottom is mocked to a SENTINEL
+// (999), not its production value (120). A screen that bypassed the wrapper with a literal
+// `paddingBottom: 120` would read 120 !== 999 and flip — a guard that would silently pass if
+// we asserted === 120.
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import React from 'react';
+import { ScrollView } from 'react-native';
+import { render } from '@testing-library/react-native';
+import type { AppContext } from '../context';
+import { makeState } from './factory';
+
+const SENTINEL = 999;
+// The wrapper (via useNavBarsHeader) owns the header geometry + list insets. Mock the whole
+// module so ScrollChromeHeader renders with a SENTINEL bottom clearance; floatingHeaderStyle
+// is a plain object the wrapper spreads into its Animated.View header.
+jest.mock('../motion/useNavBarsHeader', () => ({
+  HEADER_BODY_HEIGHT: 58,
+  TAB_BAR_CLEARANCE: 999,
+  floatingHeaderStyle: {},
+  useNavBarsHeader: () => ({
+    onScroll: jest.fn(),
+    scrollEventThrottle: 16,
+    headerStyle: {},
+    headerHeight: 58,
+    headerPaddingTop: 6,
+    contentPadding: { paddingTop: 58, paddingBottom: 999 },
+  }),
+}));
+
+// Real selectors (goalView/categoryBreakdown/aiGoalSignal/…), controlled state.
+let mockState: AppContext;
+jest.mock('../context', () => {
+  const actual = jest.requireActual('../context') as typeof import('../context');
+  return { ...actual, useAppContext: () => mockState };
+});
+
+// Query-fed rows for Insights/Settings — minimal loaded shapes so each ScrollView renders.
+const category = (_id: string | null) => undefined;
+jest.mock('../queries', () => ({
+  // WHIT-233: the Goals tab is now the hub, reading useGoalsScreenData. Empty goals → the
+  // empty state + the always-shown mortgage card render inside the shared ScrollChromeHeader.
+  useGoalsScreenData: () => ({
+    goals: [],
+    payCycle: { length: 14, last_pay_date: '2024-01-03' },
+    balanceFor: () => null,
+    loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
+    homeLoan: { balance: null, asOf: null },
+    mortgageError: false,
+    isLoading: false, isError: false,
+    refetch: jest.fn(), refetchStale: jest.fn(),
+  }),
+  // Insights (also rendered below) still reads the mortgage composite for its aiGoalSignal.
+  useGoalScreenData: () => ({
+    loanFacts: { original: null, homeValue: null, lvr: null, ratePct: null, baseRepay: null, extra: null },
+    homeLoan: { balance: null, asOf: null },
+    repayment: { amount: null, date: null, principal: null, interest: null },
+    refetchStale: jest.fn(),
+  }),
+  useInsightsScreenData: () => ({ breakdown: {}, earned: 0, category, isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
+  useSettingsScreenData: () => ({ categoriesCount: 12, loanReady: true, isLoading: false, refetchStale: jest.fn() }),
+  useRulesScreenData: () => ({ rules: [], isLoading: false, isError: false, rulesError: false, refetch: jest.fn(), refetchStale: jest.fn() }),
+  usePayCycle: () => ({ payCycle: { length: 14, last_pay_date: '2024-01-03' }, cycleLen: 14, daysLeft: 7, cycleName: () => 'Fortnightly', isLoading: false, isError: false }),
+}));
+
+jest.mock('../auth', () => ({ getCurrentUser: () => null, signOut: jest.fn() }));
+
+jest.mock('expo-router', () => {
+  const React2 = require('react');
+  return {
+    useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+    useFocusEffect: (cb: () => void) => React2.useEffect(() => cb(), [cb]),
+  };
+});
+
+import Goals from '../../app/(tabs)/goals';
+import Insights from '../../app/(tabs)/insights';
+// WHIT-495: Settings left the tab bar (now a root screen with a plain ScrollView + Header), so it
+// no longer routes through the shared ScrollChromeHeader/TAB_BAR_CLEARANCE — dropped from this
+// suite. Goals + Insights still exercise the shared inset, so the guard keeps its teeth.
+
+beforeEach(() => {
+  mockState = {
+    ...makeState(),
+    refreshAiInsights: jest.fn(),
+    aiInsights: null,
+    aiInsightsError: false,
+    aiInsightsLoading: false,
+    rules: [],
+    setSheet: jest.fn(),
+  } as unknown as AppContext;
+});
+
+function bottomPaddingOf(ui: React.ReactElement): number {
+  const { UNSAFE_getAllByType } = render(ui);
+  const sv = UNSAFE_getAllByType(ScrollView)[0] as unknown as { props: { contentContainerStyle: { paddingBottom: number } } };
+  return sv.props.contentContainerStyle.paddingBottom;
+}
+
+describe('unwired tab screens use the shared TAB_BAR_CLEARANCE, not a literal 120', () => {
+  it('Goals list bottom inset comes from TAB_BAR_CLEARANCE', () => {
+    expect(bottomPaddingOf(<Goals />)).toBe(SENTINEL);
+  });
+  it('Insights list bottom inset comes from TAB_BAR_CLEARANCE', () => {
+    expect(bottomPaddingOf(<Insights />)).toBe(SENTINEL);
+  });
+});

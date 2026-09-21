@@ -1,0 +1,248 @@
+// WHIT-308/WHIT-342 — the category drill-in screen (app/category/[id].tsx): the total card +
+// grouped transaction list, the empty state, and the error paths (a hard read failure with
+// nothing cached; a background refetch over cached rows stays quiet). The query composite
+// (../queries) is mocked and CAPTURES the (id, cycle) it's called with, so WHIT-309 can assert
+// the cycle param was clamped to {0,1} before the fetch. ../context is partially mocked (real
+// selectors, a stubbed categoryTransactions for determinism). The categoryTransactions MATH is
+// covered by the logic tests. Post-WHIT-342 the window is server-owned — no payCycle here.
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react-native';
+
+let mockData: ReturnType<typeof screenData>;
+let mockDetail: unknown;
+let mockParams: { id: string; cycle?: string };
+// The (id, cycle) the screen passed into the composite — captured so WHIT-309 can assert the
+// cycle was clamped to the integer set {0,1} before it reached the fetch.
+let mockCapturedCycle: number | undefined;
+jest.mock('../queries', () => ({
+  useCategoryTransactionsScreenData: (_id: string, cycle: number) => { mockCapturedCycle = cycle; return mockData; },
+}));
+
+jest.mock('../context', () => {
+  const actual = jest.requireActual('../context') as typeof import('../context');
+  return {
+    ...actual,
+    useAppContext: () => ({ openPicker: jest.fn(), category: () => undefined }),
+    categoryTransactions: (_s: unknown, _id: unknown) => mockDetail,
+  };
+});
+
+jest.mock('expo-router', () => ({
+  useLocalSearchParams: () => mockParams,
+  useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
+}));
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+
+import CategoryDetail from '../../app/category/[id]';
+
+const ROW = {
+  transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
+  description: 'ST ALi', merchant_name: 'ST Ali', amount: -8.5, account_id: 'a1',
+  account_name: 'Everyday', category: null, status: 'posted', type: 'purchase', counts_to_budget: true,
+};
+
+const DETAIL = {
+  id: 'coffee', name: 'Cafes & Coffee',
+  groups: [{ label: 'Jul 1', items: [ROW] }],
+  count: 1, total: 8.5, posted: 8.5, pending: 0,
+};
+
+function screenData(over: Partial<{ transactions: unknown[]; categoriesReady: boolean; isLoading: boolean; isError: boolean; refetch: () => void }> = {}) {
+  return {
+    transactions: [ROW], category: (_id: string | null) => undefined,
+    categoriesReady: true, // WHIT-374: taxonomy loaded by default; override to exercise the cold-taxonomy gate
+    isLoading: false, isError: false, refetch: jest.fn(), refetchStale: jest.fn(),
+    ...over,
+  };
+}
+
+beforeEach(() => { mockData = screenData(); mockDetail = DETAIL; mockParams = { id: 'coffee', cycle: '0' }; });
+
+// The total-card label must reflect WHICH cycle was drilled (matching the Insights hero's
+// "THIS / LAST PAY CYCLE"), not hard-code "this cycle".
+it('labels the total "this cycle" for cycle 0 and "last cycle" for cycle 1', () => {
+  mockParams = { id: 'coffee', cycle: '0' };
+  const { unmount } = render(<CategoryDetail />);
+  expect(screen.getByText('Spent this cycle')).toBeTruthy();
+  expect(screen.queryByText('Spent last cycle')).toBeNull();
+  unmount();
+
+  mockParams = { id: 'coffee', cycle: '1' };
+  render(<CategoryDetail />);
+  expect(screen.getByText('Spent last cycle')).toBeTruthy();
+  expect(screen.queryByText('Spent this cycle')).toBeNull();
+});
+
+// WHIT-366 — an Income-bucket category reached from the Earned drill reads "Earned", not "Spent".
+// The verb comes from the drilled category's bucket; a spend/Uncategorized category stays "Spent".
+it('labels the total "Earned" for an Income-bucket category', () => {
+  mockData = screenData({ category: (id: string | null) => (id === 'salary' ? { id: 'salary', name: 'Salary', bucket: 'Income', icon: 'briefcase', color: '#2ac3de', recent: 0 } : undefined) } as never);
+  mockParams = { id: 'salary', cycle: '0' };
+  render(<CategoryDetail />);
+  expect(screen.getByText('Earned this cycle')).toBeTruthy();
+  expect(screen.queryByText('Spent this cycle')).toBeNull();
+});
+
+// WHIT-374 — the cold-taxonomy gate. When transactions are cached but the category list hasn't
+// loaded yet, the detail must NOT render (it would read the income sign / labels off a cold
+// taxonomy and show "Spent $0" with grey rows). The screen shows the spinner until categories
+// load. FAIL-ON-REVERT: dropping `&& categoriesReady` from hasCache lets the detail render here.
+it('waits for the category taxonomy before rendering the detail (spinner, not a cold "$0")', () => {
+  mockData = screenData({ categoriesReady: false, isLoading: true });  // txns cached, categories in flight
+  render(<CategoryDetail />);
+  expect(screen.getByTestId('category-loading')).toBeTruthy();
+  expect(screen.queryByTestId('category-total')).toBeNull();  // the cold detail is NOT shown
+});
+
+// WHIT-374 regression — the gate must not break cache-first: once categories ARE loaded, a
+// background refetch (isLoading true over cached rows) keeps the detail visible, no spinner.
+it('keeps the detail visible during a background refetch once the taxonomy is loaded', () => {
+  mockData = screenData({ categoriesReady: true, isLoading: true });
+  render(<CategoryDetail />);
+  expect(screen.queryByTestId('category-loading')).toBeNull();
+  expect(screen.getByTestId('category-total')).toBeTruthy();
+});
+
+// WHIT-309 — a stale/hand-edited ?cycle=2+ deep-link is clamped to 1, so the fetch can't request
+// an older cycle. The cycle reaching the composite (→ the endpoint's ?cycle=) is what's clamped.
+// Fail-on-revert: reverting the Math.min(1, …) clamp sends cycle 2 to the server.
+it('clamps an out-of-range cycle down to 1 before the fetch', () => {
+  mockParams = { id: 'coffee', cycle: '2' };
+  render(<CategoryDetail />);
+  expect(mockCapturedCycle).toBe(1);
+});
+
+// WHIT-309 — lower bound: a negative cycle clamps to 0, and the label agrees ("this cycle").
+it('clamps a negative cycle up to 0 (fetch cycle 0, label "this cycle")', () => {
+  mockParams = { id: 'coffee', cycle: '-1' };
+  render(<CategoryDetail />);
+  expect(mockCapturedCycle).toBe(0);
+  expect(screen.getByText('Spent this cycle')).toBeTruthy();
+});
+
+// WHIT-309 — a fractional cycle in (0,1) floors to 0, so the fetch + label are the current cycle.
+it('floors a fractional cycle (0.5) to 0', () => {
+  mockParams = { id: 'coffee', cycle: '0.5' };
+  render(<CategoryDetail />);
+  expect(mockCapturedCycle).toBe(0);
+  expect(screen.getByText('Spent this cycle')).toBeTruthy();
+});
+
+// WHIT-309 (qa gap) — non-numeric / empty / undefined ?cycle falls back to the CURRENT cycle.
+// Fail-on-revert: reverting the `|| 0` sends NaN through the clamp into the fetch.
+it('falls non-numeric / empty / undefined ?cycle back to the current cycle', () => {
+  for (const bad of ['abc', '', undefined, '  '] as (string | undefined)[]) {
+    mockParams = { id: 'coffee', cycle: bad };
+    const { unmount } = render(<CategoryDetail />);
+    expect(mockCapturedCycle).toBe(0);
+    expect(screen.getByText('Spent this cycle')).toBeTruthy();
+    unmount();
+  }
+});
+
+// WHIT-309 (qa gap) — a huge finite cycle ('1e9') clamps to 1 (the upper bound holds far beyond 2).
+it('clamps a huge finite cycle (1e9) down to 1', () => {
+  mockParams = { id: 'coffee', cycle: '1e9' };
+  render(<CategoryDetail />);
+  expect(mockCapturedCycle).toBe(1);
+  expect(screen.getByText('Spent last cycle')).toBeTruthy();
+});
+
+it('renders the category name, the total card, and the grouped transactions', () => {
+  render(<CategoryDetail />);
+  expect(screen.getByText('Cafes & Coffee')).toBeTruthy();      // header
+  expect(screen.getByTestId('category-total')).toBeTruthy();
+  expect(screen.getByText('$9')).toBeTruthy();                   // fmt(8.5) rounds
+  expect(screen.getByText('1 transaction')).toBeTruthy();
+  expect(screen.getByText('Jul 1')).toBeTruthy();               // date group
+  expect(screen.getByText('ST Ali')).toBeTruthy();              // the row
+});
+
+it('shows the pending line only when there is pending spend', () => {
+  mockDetail = { ...DETAIL, total: 20, posted: 12, pending: 8 };
+  render(<CategoryDetail />);
+  expect(screen.getByText('$8 pending')).toBeTruthy();
+});
+
+it('shows the empty state when nothing matches this category/cycle (detail is null)', () => {
+  mockDetail = null;
+  render(<CategoryDetail />);
+  expect(screen.getByText('No transactions')).toBeTruthy();
+  expect(screen.queryByTestId('category-total')).toBeNull();
+});
+
+it('a hard read failure with nothing cached shows the inline error + an accessible Retry', () => {
+  const refetch = jest.fn();
+  mockData = screenData({ transactions: [], isError: true, refetch });
+  render(<CategoryDetail />);
+  expect(screen.getByTestId('category-error')).toBeTruthy();
+  const retry = screen.getByTestId('category-retry');
+  expect(retry.props.accessibilityLabel).toBe('Retry loading this category');
+  fireEvent.press(retry);
+  expect(refetch).toHaveBeenCalledTimes(1);
+});
+
+it('does NOT show the error when a background refetch fails over cached rows (cache-first)', () => {
+  mockData = screenData({ transactions: [ROW], isError: true });
+  render(<CategoryDetail />);
+  expect(screen.queryByTestId('category-error')).toBeNull();
+});
+
+// WHIT-308 adversarial gaps (folded in) — the header-title fallback and the non-null $0 detail
+// path, both distinct from the detail===null empty state above.
+// [A-S1] detail is null (empty cycle / stale deep-link) → the header must still read a sensible
+// title. Fail-on-revert: dropping the `?? 'Category'` fallback makes the title `undefined`.
+it('shows the fallback header title "Category" when detail is null', () => {
+  mockDetail = null;
+  render(<CategoryDetail />);
+  expect(screen.getByText('Category')).toBeTruthy();
+});
+
+// [A-S2] A non-null detail whose total clamped to 0 must still render the total card + list, NOT
+// the empty state — the screen branches on `detail` truthiness, not on total > 0.
+it('renders the $0 total card and list (not the empty state) for a non-null zero-total detail', () => {
+  mockDetail = {
+    id: 'coffee', name: 'Cafes & Coffee',
+    groups: [{ label: 'Jul 1', items: [ROW] }],
+    count: 2, total: 0, posted: 0, pending: 0,
+  };
+  render(<CategoryDetail />);
+  expect(screen.getByTestId('category-total')).toBeTruthy();
+  expect(screen.getByText('$0')).toBeTruthy();
+  expect(screen.getByText('ST Ali')).toBeTruthy();       // the list still renders
+  expect(screen.queryByText('No transactions')).toBeNull();
+});
+
+// ===== WHIT-374 (folded from categoryDetailColdError.gaps.screen.test.tsx) =====
+// The cold-taxonomy-FAILS-over-cached-transactions gap. Same three module mocks as above
+// serve this test: this file's ../queries factory (which also captures the cycle) and its
+// ../context factory (categoryTransactions accepting args) are supersets of the gaps file's;
+// expo-router reads `mockParams`, so the gaps' salary deep-link is reproduced by seeding
+// mockParams in this block's beforeEach. The salary ROW/DETAIL are block-scoped here so the
+// module-level coffee fixtures are untouched.
+describe('WHIT-374 gap — cold taxonomy over cached transactions', () => {
+  const ROW = {
+    transaction_id: 't1', date: '2026-07-01', authorized_date: '2026-07-01',
+    description: 'Payroll', merchant_name: 'Payroll', amount: 4200, account_id: 'a1',
+    account_name: 'Everyday', category: null, status: 'posted', type: 'deposit', counts_to_budget: false,
+  };
+  const DETAIL = { id: 'salary', name: 'Salary', groups: [{ label: 'Jul 1', items: [ROW] }], count: 1, total: 4200, posted: 4200, pending: 0 };
+
+  beforeEach(() => { mockData = screenData({ transactions: [ROW] }); mockDetail = DETAIL; mockParams = { id: 'salary', cycle: '0' }; });
+
+  // WHIT-374 [A-CE1] (P0) — taxonomy read failed but transactions are cached. Because categoriesReady
+  // is false, hasCache is false, so the error card (which needs the taxonomy to label/sign rows)
+  // wins over rendering a cold detail. FAIL-ON-REVERT: dropping `&& categoriesReady` from hasCache
+  // makes hasCache true → showError false → the cold detail renders and this assertion fails.
+  it('shows the error+retry (not a cold detail) when the taxonomy fails over cached transactions', () => {
+    const refetch = jest.fn();
+    mockData = screenData({ transactions: [ROW], categoriesReady: false, isError: true, refetch });
+    render(<CategoryDetail />);
+    expect(screen.getByTestId('category-error')).toBeTruthy();
+    expect(screen.queryByTestId('category-total')).toBeNull(); // no cold "$0" total card
+    const retry = screen.getByTestId('category-retry');
+    fireEvent.press(retry);
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
