@@ -1,0 +1,1449 @@
+import { Transaction, Category, Bucket } from "./context";
+import { ApiError } from "./apiError";
+import { getAuthToken } from "./auth";
+import { withBodyTimeout } from "./httpTimeout";
+
+// Re-exported for the api-level tests, which assert the thrown shape alongside the fetchers.
+// Production callers import it from ./apiError directly.
+export { ApiError } from "./apiError";
+const API_BASE = "https://xlja6cpdbf.execute-api.ap-southeast-2.amazonaws.com";
+
+/**
+ * Build the Authorization header from the Cognito ID token (WHIT-162). Every app
+ * route is now guarded by the API Gateway JWT authorizer, so the token is the
+ * user's Cognito ID token (`getAuthToken`), not the old baked-in static secret —
+ * which has been retired. Throws "Not signed in" when there is no session, so a
+ * pre-login fetch fails loudly (the caller catches it) rather than sending an
+ * empty Bearer and getting a confusing 401 on every call. The auth gate
+ * (src/AuthGate.tsx) forces login before the app is usable, and src/context.tsx
+ * reloads once auth lands, so this throw is only hit transiently before sign-in.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  const idToken = await getAuthToken();
+  if (!idToken) throw new Error("Not signed in");
+  return { Authorization: `Bearer ${idToken}` };
+}
+
+/**
+ * The single async choke point for request headers: merge any per-call headers
+ * (e.g. Content-Type) with the auth header. Routing EVERY call site through this
+ * one `await` is what makes the async cutover safe — a spread of a Promise
+ * (`...authHeaders()` once it returns a Promise) would silently drop the auth
+ * header, so no call site is allowed to build headers by hand.
+ */
+async function buildHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  return { ...(extra ?? {}), ...(await authHeaders()) };
+}
+
+/**
+ * How long a single API request may run before it's aborted and treated as a failed
+ * read. Without this a dead socket leaves `fetch` pending forever — the screen's query
+ * never settles, so `isLoading` stays true and the "—" + Retry affordance never appears
+ * (WHIT-198). 15s is comfortable for a slow mobile connection while still eventually
+ * surfacing the error state instead of hanging.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * The paid AI generation ("Analyse my spending") legitimately runs longer than a REST read —
+ * a summary + suggestions commonly takes 10–25s — so it gets a roomier budget. The default 15s
+ * would abort a mostly-successful paid call and surface a false failure (WHIT-198 review). The
+ * server caches the generation, so even a rare timeout here self-heals on the next read.
+ */
+const AI_GENERATE_TIMEOUT_MS = 60_000;
+
+/**
+ * The on-demand balance refresh calls the bank live (BankSync), which takes seconds — the
+ * default 15s read budget would falsely abort it. The server caps each account at ~10s and
+ * fans them out concurrently, so it stays under the 30s API-Gateway ceiling; this matches
+ * that ceiling as the client-side safety cap.
+ */
+const BALANCE_REFRESH_TIMEOUT_MS = 30_000;
+
+/**
+ * Applying rules to history walks the WHOLE stored history, reads the live rule list from
+ * BankSync, then writes up to 300 charges — seconds of work, so the default 15s read budget
+ * would abort a run that is actually succeeding. Its own constant rather than a reuse of
+ * BALANCE_REFRESH_TIMEOUT_MS: same number today, unrelated reasons, so retuning one must not
+ * silently move the other. 30s is the API-Gateway integration ceiling.
+ */
+const APPLY_RULES_TIMEOUT_MS = 30_000;
+
+/**
+ * A single poll of an apply-rules background job's status (WHIT-560) is a cheap key read, not the
+ * long sweep — so it gets a SHORT budget, not APPLY_RULES_TIMEOUT_MS. A dead socket then fails the
+ * poll fast and the self-scheduling loop retries on its next tick, instead of one hung read
+ * blocking several ticks. Its own constant (same reasons-differ rule as the others above).
+ */
+const APPLY_RULES_JOB_POLL_TIMEOUT_MS = 6_000;
+
+/**
+ * Read a SUCCESS response's JSON body under the same stall timeout `failed()` gives the error body.
+ * apiFetch's abort timer only bounds the HEADERS (cleared the instant they resolve), so a 2xx whose
+ * body never finishes streaming would hang the read — and the query/writer behind it — leaving the
+ * Save button spinning forever (WHIT-448, the success-path twin of WHIT-441). Defaults to the 15s
+ * read budget; the long-running paid generation passes AI_GENERATE_TIMEOUT_MS. Return type is
+ * inferred Promise<any>, exactly like the bare response.json() it replaces, so every typed return
+ * stays assignable with no call-site change.
+ */
+function readJson(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<any> {
+  return withBodyTimeout(response.json(), timeoutMs);
+}
+
+/**
+ * Build the rejection for a not-OK response, carrying the server's stated reason (WHIT-437).
+ *
+ * TOTAL BY CONSTRUCTION: it RETURNS an error, it never throws one. An HTML gateway 403/502, an
+ * empty body, or a mock Response without .json() must still yield `API error: N` — a SyntaxError
+ * escaping here would carry no status, which defeats src/queryClient.ts's auth detection and
+ * breaks the message contract the suite pins.
+ *
+ * Used by the three category writes only. The other 30 not-OK guards still throw a plain Error;
+ * widening one is a one-line swap (see WHIT-437's follow-up card). The error-body read runs under
+ * withBodyTimeout so a stalled body can't hang the failed-save writer (WHIT-441).
+ */
+async function failed(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<ApiError> {
+  let serverMessage: string | null = null;
+  try {
+    const body = await withBodyTimeout(response.json(), timeoutMs);
+    const raw = (body as { error?: unknown } | null)?.error;
+    if (typeof raw === "string" && raw.trim()) serverMessage = raw.trim();
+  } catch {
+    // non-JSON, empty, no json(), OR a body that stalled past the timeout — a status-only error
+    // is the right answer, and keeps failed() TOTAL (it returns an ApiError, never throws).
+  }
+  return new ApiError(response.status, serverMessage);
+}
+
+/**
+ * The single fetch choke point: every API call runs through here so it inherits a request
+ * timeout. An AbortController fires after `timeoutMs` (a cleared timer rather than
+ * `AbortSignal.timeout`, which isn't guaranteed on the RN runtime), turning a hung request
+ * into a rejected read the query layer surfaces as an error. Per-call `init`
+ * (method/body/headers) is preserved; only the abort signal is injected. `timeoutMs` defaults
+ * to the fast-read budget — slow endpoints (the AI generation) pass a larger one.
+ */
+async function apiFetch(input: string, init?: RequestInit, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One condition of a categorisation rule (WHIT-541 multi-condition). */
+export interface RuleCondition {
+  field: string;
+  operator: string;
+  value: string;
+}
+
+/** How a multi-condition rule combines its conditions: all = AND, any = OR. */
+export type RuleLogic = "all" | "any";
+
+/** A categorisation rule, as returned by the /rules API (our own store). */
+export interface RuleRecord {
+  id: string;
+  // WHIT-541: a rule may match on any supported field/operator, not only description/contains —
+  // so these are open strings (the flat facts the server derives from the first condition).
+  field: string;
+  operator: string;
+  value: string;
+  categoryId: string;
+  /** When true, a charge this rule files is also kept out of the budget (WHIT-558). */
+  budgetExcluded?: boolean;
+  // WHIT-559: when true, matching this rule auto-creates the category's bill-spread plan. The
+  // amount + gap are captured server-side from the matched recurring bill (read-only here).
+  spread?: boolean;
+  spreadAmount?: number | null;
+  spreadGapDays?: number | null;
+  // WHIT-541: multi-condition rules carry these; a single-condition rule has null and the engine
+  // falls back to the flat field/operator/value.
+  conditions?: RuleCondition[] | null;
+  logic?: RuleLogic | null;
+}
+
+/**
+ * A create/update rule body. Two shapes the server accepts (WHIT-541):
+ *  - single-condition (legacy): `{value, categoryId, field?, operator?, budgetExcluded?}`.
+ *  - multi-condition: `{conditions, logic?, categoryId, budgetExcluded?}`.
+ * `JSON.stringify` drops the undefined half, so one type serves both.
+ */
+export interface RuleWriteInput {
+  categoryId: string;
+  value?: string;
+  field?: string;
+  operator?: string;
+  budgetExcluded?: boolean;
+  /** WHIT-559: when true, the server auto-creates the category's bill-spread plan on a match. */
+  spread?: boolean;
+  conditions?: RuleCondition[];
+  logic?: RuleLogic;
+}
+
+/**
+ * Fetch the recent transactions (the server's rolling window, newest first). Backs the
+ * bounded "recent" reads — the tab-bar uncategorized dot, the account-detail list, and the
+ * goal-edit account picker — which must stay a fixed window, NOT the Transactions tab's
+ * growing feed.
+ *
+ * @returns The recent-window transactions from the API.
+ * @throws If the response status is not OK.
+ */
+export async function fetchTransactions(): Promise<Transaction[]> {
+  const response = await apiFetch(`${API_BASE}/transactions`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/** One page of the all-accounts transaction feed (the Transactions tab's "Load More"). */
+export interface TransactionFeedPage {
+  transactions: Transaction[];
+  nextCursor: string | null; // an opaque cursor for the next (older) page; null at end-of-history
+}
+
+/**
+ * Fetch one page of the all-accounts transaction feed, newest first — every account merged,
+ * cursor-paged back through the full history (no 7-day floor). Backs the Transactions tab's
+ * "Load More": pass the previous page's `nextCursor` to get the next, older batch. A null
+ * `nextCursor` in the response means there is no more history.
+ *
+ * @param cursor - The previous page's nextCursor, or undefined/absent for the newest page.
+ * @param limit - Optional page size; the server clamps to its own max and applies a default.
+ * @returns One page: its transactions plus the cursor for the next page (null at the end).
+ * @throws If the response status is not OK.
+ */
+export async function fetchTransactionsFeed(cursor?: string, limit?: number): Promise<TransactionFeedPage> {
+  const parts: string[] = [];
+  if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+  if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
+  const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
+  const response = await apiFetch(`${API_BASE}/transactions/feed${qs}`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Fetch one page of the UNCATEGORIZED-only feed, newest first — every account merged,
+ * cursor-paged back through the full history, filtered server-side to uncategorized charges
+ * (the same rule as the badge count). Backs the Uncategorized tab's "Load More", so the list
+ * shows real uncategorized rows from all history instead of client-filtering the general feed's
+ * loaded pages. Same page shape and cursor format as the plain feed; a null `nextCursor` means
+ * there is no more history. A page can be sparse (or empty) with a non-null cursor when the
+ * uncategorized rows sit deep in history — keep loading.
+ *
+ * @param cursor - The previous page's nextCursor, or undefined/absent for the newest page.
+ * @param limit - Optional target page size; the server clamps to its own max and applies a default.
+ * @returns One page: its uncategorized transactions plus the cursor for the next page (null at the end).
+ * @throws If the response status is not OK.
+ */
+export async function fetchUncategorizedFeed(cursor?: string, limit?: number): Promise<TransactionFeedPage> {
+  const parts: string[] = [];
+  if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+  if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
+  const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/feed${qs}`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Fetch the full-history uncategorized count (WHIT-500): how many uncategorized charges
+ * exist across ALL history, not just the loaded feed pages. Backs the tab badge, the tab-bar
+ * dot, and the "All caught up" empty state so they reflect the whole picture. Auth-gated.
+ *
+ * @returns The count (a bare number, unwrapped from the server's {count}).
+ * @throws If the response status is not OK.
+ */
+export async function fetchUncategorizedCount(): Promise<number> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/count`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  const body = await readJson(response);
+  // Fail LOUD on a malformed envelope (missing / stringified count), mirroring selectCategories.
+  // A non-number would otherwise flow straight through as the badge TEXT and defeat the `=== 0`
+  // "All caught up" gate (a stringified "0" is not `=== 0`). Throwing → the query errors → the hook
+  // stays undefined → consumers fall back to the local count, never a wrong badge or false empty state.
+  if (typeof body?.count !== 'number' || Number.isNaN(body.count))
+    throw new Error(`fetchUncategorizedCount: expected a numeric count, got ${JSON.stringify(body?.count)}`);
+  return body.count;
+}
+
+/** One applicable rule's share of an apply-rules plan: how many unfiled charges it catches,
+ *  with a few example descriptions so an over-eager rule is visible before anything is written.
+ *  `ruleId`/`value` are nullable — a rule authored outside the app can arrive without them. */
+export interface ApplyRulesRule {
+  ruleId: string | null;
+  value: string | null;
+  categoryId: string;
+  count: number;
+  samples: (string | null)[];
+}
+
+/** A charge two rules disagree about. It is deliberately left unfiled — we never guess. */
+export interface ApplyRulesConflict {
+  description: string | null;
+  categoryIds: string[];
+}
+
+/** A rule the server would not apply, with its plain-English reason (authored server-side in
+ *  shared/rule_engine.py and rendered verbatim, so a new reason needs no client change). */
+export interface ApplyRulesSkipped {
+  id: string | null;
+  value: string | null;
+  reason: string;
+}
+
+/**
+ * The one summary both the preview and the write return.
+ *
+ * The COUNTS (rulesConsidered/unfiled/matched/conflicted/byCategory/byRule) describe the PLAN —
+ * what the rules cover. The LISTS (filed/vanished/failed/remaining) describe THIS request's
+ * outcome. After a capped or time-boxed run they deliberately disagree, so "what was filed" is
+ * always `filed`, never `byCategory`.
+ *
+ * `remaining` counts matched rows this request never attempted. Rows in `failed` were attempted
+ * and are NOT in `remaining`, yet they are still unfiled — so the work left over is
+ * `remaining + failed.length`, never bare `remaining`.
+ */
+export interface ApplyRulesResult {
+  dryRun: boolean;
+  rulesConsidered: number;
+  unfiled: number;
+  matched: number;
+  conflicted: number;
+  conflictedSamples: ApplyRulesConflict[];
+  byCategory: Record<string, number>;
+  byRule: ApplyRulesRule[];
+  skippedRules: ApplyRulesSkipped[];
+  filed: { id: string; category: string }[];
+  vanished: string[];
+  failed: string[];
+  /** Rows something else filed between the scan and the write — a tap on the phone, or a
+   *  settlement carrying a category across. Nothing was written and nothing needs retrying: the
+   *  user's own choice stands (WHIT-508). OPTIONAL because the app and the server ship
+   *  independently — a released app must not crash against a server that predates this field. */
+  alreadyFiled?: string[];
+  remaining: number;
+  /** The rule minted by an inline "file by shop" run (WHIT-517), or null when the run carried no
+   *  inline rule. Client-shaped ({id, field, operator, value, categoryId}). OPTIONAL for the same
+   *  ship-independently reason as `alreadyFiled` — a plain "Apply my rules" run omits it. */
+  createdRule?: CreatedRule | null;
+}
+
+/** The client-shaped rule the server returns after minting via an inline "file by shop" run. */
+export interface CreatedRule {
+  id: string;
+  field: string;
+  operator: string;
+  value: string;
+  categoryId: string;
+  /** When true, charges this rule files are kept out of the budget (WHIT-558). */
+  budgetExcluded?: boolean;
+}
+
+/**
+ * Apply the user's existing rules to charges ALREADY stored (WHIT-507/508). BankSync only runs
+ * rules as a transaction arrives, so history never gets re-labelled; this walks it and files what
+ * the rules cover.
+ *
+ * `dryRun: true` previews and writes nothing. `dryRun: false` writes, capped by the server. The
+ * flag is always sent explicitly — the server defaults a missing key to preview, but leaning on an
+ * omitted field to mean "don't write" is the one mistake that turns a typo into a 300-row write.
+ *
+ * Runs long (whole-history scan + a live BankSync rules read + writes), so it gets
+ * APPLY_RULES_TIMEOUT_MS on both the request and the body read, not the 15s default.
+ *
+ * @param dryRun - True to preview, false to file.
+ * @returns The plan summary plus this request's outcome.
+ * @throws If the response status is not OK (the sheet shows phase-specific copy).
+ */
+export async function applyRulesToUncategorized(
+  dryRun: boolean,
+  rule?: { value: string; categoryId: string; budgetExcluded?: boolean },
+): Promise<ApplyRulesResult> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules`, {
+    method: "POST",
+    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
+    // The inline rule is sent ONLY when present — "Apply my rules" (no rule) stays byte-identical
+    // on the wire ({dryRun}). "File by shop" (WHIT-517) sends {dryRun, rule} to mint + file in one call.
+    body: JSON.stringify(rule ? { dryRun, rule } : { dryRun }),
+  }, APPLY_RULES_TIMEOUT_MS);
+  // Throw an ApiError carrying the STATUS but NOT the server body: "file by shop" needs to spot a
+  // 409 clash (an existing rule already files this shop elsewhere) to show its own copy for it
+  // (WHIT-517), and the status is the only thing it reads. serverMessage stays null on purpose —
+  // this endpoint's 4xx wording ("dryRun must be a boolean", BankSync internals) is never shown to
+  // the user, so it must not be carried. The message is byte-identical to the old `API error: N`
+  // throw, so the plain "Apply my rules" path and its tests are unaffected.
+  if (response.ok == false) throw new ApiError(response.status, null);
+
+  return readJson(response, APPLY_RULES_TIMEOUT_MS);
+}
+
+export type ApplyRulesJobStatus = "running" | "succeeded" | "failed";
+
+/**
+ * The status of an async "apply my rules over all history" background job (WHIT-560/537).
+ *
+ * Unlike ApplyRulesResult, the counts here are NUMBERS, not id lists — the job GET reports totals
+ * only, so a completed job reconciles the app's caches by INVALIDATION, never per-row patching.
+ * `createdRule` is populated only for the inline "file this shop / add rule" variant.
+ */
+export interface ApplyRulesJob {
+  jobId: string;
+  status: ApplyRulesJobStatus;
+  matched: number;
+  attempted: number;
+  filed: number;
+  vanished: number;
+  failed: number;
+  alreadyFiled: number;
+  remaining: number;
+  createdRule?: CreatedRule | null;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+/**
+ * Start an async apply-rules sweep over all history (WHIT-560). Returns immediately with the job's
+ * id and `status: "running"`; the caller then polls getApplyRulesJob until it is terminal. The
+ * uncapped sweep runs server-side, so this POST only enqueues — it keeps the default read budget.
+ *
+ * @param rule - The inline "file this shop / add rule" rule to mint and sweep with, or omitted for
+ *   the plain "apply all my rules" sweep.
+ * @throws ApiError carrying the status (not the body) so the sheet can branch on 400 (bad rule),
+ *   409 (a rule that would clash), and 502 (the worker could not be dispatched).
+ */
+export async function startApplyRulesJob(
+  rule?: { value: string; categoryId: string; budgetExcluded?: boolean },
+): Promise<ApplyRulesJob> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules/jobs`, {
+    method: "POST",
+    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
+    // Plain sweep sends a byte-identical {}; "file this shop" sends {rule}, mirroring the sync call.
+    body: JSON.stringify(rule ? { rule } : {}),
+  });
+  if (response.ok == false) throw new ApiError(response.status, null);
+  return readJson(response);
+}
+
+/**
+ * Poll one apply-rules background job's status (WHIT-560). A short timeout (a status read is tiny),
+ * so a dropped poll fails fast and the self-scheduling loop retries.
+ *
+ * @throws ApiError carrying the status. A 404 means the job is unknown or has expired (its ~24h
+ *   TTL) — the caller treats that as a real terminal failure, distinct from a thrown network error
+ *   (offline/airplane), which it tolerates and retries.
+ */
+export async function getApplyRulesJob(jobId: string): Promise<ApplyRulesJob> {
+  const response = await apiFetch(
+    `${API_BASE}/transactions/uncategorized/apply-rules/jobs/${encodeURIComponent(jobId)}`,
+    { headers: await buildHeaders() },
+    APPLY_RULES_JOB_POLL_TIMEOUT_MS,
+  );
+  if (response.ok == false) throw new ApiError(response.status, null);
+  return readJson(response, APPLY_RULES_JOB_POLL_TIMEOUT_MS);
+}
+
+/** One rule-group of unfiled charges the server proposes for "file by shop" (WHIT-517). The
+ *  `alsoCatches` list names other shops the same rule would sweep, so an over-broad rule is
+ *  visible before minting. `firstDate`/`lastDate` bound the group; `samples` are example
+ *  descriptions. `groupedBy` says whether the group keys on a cleaned merchant name or a raw
+ *  description stem. All fields are server-authored (lambda_api/merchant_groups.py). */
+export interface UncategorizedMerchantGroup {
+  merchant: string;
+  rulePattern: string;
+  groupedBy: 'merchant' | 'description';
+  count: number;
+  samples: string[];
+  firstDate: string | null;
+  lastDate: string | null;
+  alsoCatches: { merchant: string | null; count: number }[];
+}
+
+/** The "file by shop" payload: the unfiled total, the rule-able groups (biggest first), and the
+ *  leftover one-off charges that can't be grouped into a rule. */
+export interface UncategorizedMerchants {
+  unfiled: number;
+  groups: UncategorizedMerchantGroup[];
+  ungrouped: { count: number; samples: string[] };
+}
+
+/**
+ * Fetch the unfiled charges grouped by shop for the "file by shop" screen (WHIT-517). Whole-history
+ * server walk + grouping, so it gets APPLY_RULES_TIMEOUT_MS like the apply-rules call, not the 15s
+ * default.
+ *
+ * @returns The grouped shops plus the ungrouped one-offs.
+ * @throws If the response status is not OK.
+ */
+export async function fetchUncategorizedMerchants(): Promise<UncategorizedMerchants> {
+  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/merchants`, {
+    headers: await buildHeaders(),
+  }, APPLY_RULES_TIMEOUT_MS);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, APPLY_RULES_TIMEOUT_MS);
+}
+
+/** One rule suggested from the user's hand-filing habits (WHIT-542): they have filed `merchant`
+ *  to `categoryId` by hand on `distinctDays` separate days. `rulePattern` is the exact
+ *  `description contains` value the rule would mint from; `alsoCatches` names the other shops that
+ *  rule would sweep out of the still-unfiled charges, so an over-broad rule is visible before
+ *  minting. All fields are server-authored (lambda_api/filing_habits.py). */
+export interface FilingSuggestion {
+  merchant: string;
+  rulePattern: string;
+  categoryId: string;
+  distinctDays: number;
+  alsoCatches: { merchant: string | null; count: number }[];
+}
+
+/** The "suggested rules" payload for the File-by-shop flow: the shops the user has hand-filed the
+ *  same way often enough to be worth a rule, most-filed first. */
+export interface FilingSuggestions {
+  suggestions: FilingSuggestion[];
+}
+
+/**
+ * Fetch the rules suggested from the user's hand-filing habits (WHIT-542). Whole-history server
+ * walk like fetchUncategorizedMerchants, so it gets APPLY_RULES_TIMEOUT_MS, not the 15s default.
+ *
+ * @returns The suggested rules, most-filed first.
+ * @throws If the response status is not OK.
+ */
+export async function fetchFilingSuggestions(): Promise<FilingSuggestions> {
+  const response = await apiFetch(`${API_BASE}/transactions/filing-suggestions`, {
+    headers: await buildHeaders(),
+  }, APPLY_RULES_TIMEOUT_MS);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, APPLY_RULES_TIMEOUT_MS);
+}
+
+/**
+ * Fetch the full category taxonomy.
+ *
+ * @returns The list of categories from the API.
+ * @throws If the response status is not OK.
+ */
+export async function fetchCategories(): Promise<Category[]> {
+  const response = await apiFetch(`${API_BASE}/categories`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Create a new category. The server derives the immutable id/slug from the name
+ * and owns the color; only name, bucket, and icon are client-supplied.
+ *
+ * @param input - The new category's name, bucket, and icon.
+ * @returns The created category, including its server-assigned id and color.
+ * @throws If the response status is not OK (e.g. 409 when the slug already exists).
+ */
+export async function createCategory(
+  input: { name: string; bucket: Bucket; icon: string; parent?: string | null }
+): Promise<Category> {
+  const response = await apiFetch(`${API_BASE}/categories`, {
+    method: "POST",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(input),
+  });
+  if (response.ok == false) throw await failed(response);
+
+  return readJson(response);
+}
+
+/**
+ * Update an existing category's name, bucket, and icon. The id/slug is immutable
+ * and the color is server-owned, so neither can be changed here.
+ *
+ * @param id - The immutable category id/slug (e.g. "groceries").
+ * @param input - The category's new name, bucket, and icon.
+ * @returns The updated category.
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export async function updateCategory(
+  id: string,
+  input: { name: string; bucket: Bucket; icon: string; parent?: string | null }
+): Promise<Category> {
+  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(input),
+  });
+  if (response.ok == false) throw await failed(response);
+
+  return readJson(response);
+}
+
+/**
+ * Hard-delete a category. The server does no cascade, so transactions still
+ * pointing at the deleted id render as Uncategorized client-side.
+ *
+ * @param id - The immutable category id/slug to delete (e.g. "groceries").
+ * @returns The id of the deleted category.
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export async function deleteCategory(id: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw await failed(response);
+
+  return readJson(response);
+}
+
+/** A bill spread's shape on a budget (WHIT-504/505). `adjustment` is the signed dollars this
+ * cycle's spendable moves by — a positive cushion in the anchor cycle, a negative slice in a
+ * payback cycle. Shared by the wire `BudgetRollup.spread` and the client `Budget.spread`. */
+export interface SpreadPlan {
+  amount: number;
+  cycles: number;
+  index: number;
+  adjustment: number;
+}
+
+/** A budget's target plus its computed spend for the current window. */
+export interface BudgetRollup {
+  target: number;
+  posted: number;   // settled (posted) spend
+  pending: number;  // not-yet-settled (pending) spend
+  // Rollover (envelope carryover): present only for a rollover category. `carryover` is the
+  // signed accumulated buffer (positive = saved up, negative = a spike cycle's overspend
+  // carried as a deficit). Absent on a non-rollover/legacy budget — the client defaults them.
+  rollover?: boolean;
+  carryover?: number;
+  // Bill spread (WHIT-504): present only for a spend category with an active plan (see SpreadPlan).
+  // A category has rollover OR a spread, never both. Absent = no plan; the client defaults it.
+  spread?: SpreadPlan;
+  // The spendable this cycle, computed server-side on the unified Smoothing model (WHIT-549):
+  // target + this-cycle cushion (rollover carryover OR spread adjustment). Absent on a server
+  // that predates this field — the client falls back to computing it from the parts above.
+  available?: number;
+}
+
+/**
+ * Fetch every budgeted category's target plus its computed posted/pending spend
+ * for the current window. Empty {} before any target is set.
+ *
+ * @param days - The client's pay-cycle length. The server derives the window from the
+ *   stored pay cycle and ignores this (WHIT-72); kept for symmetry with fetchBreakdown.
+ * @returns A map of category id to its { target, posted, pending }.
+ * @throws If the response status is not OK.
+ */
+export async function fetchBudgets(days: number): Promise<Record<string, BudgetRollup>> {
+  const response = await apiFetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Fetch the transactions behind a budget's total: every contributing charge in the
+ * current pay cycle across the category's whole subtree, newest first. Backs the
+ * budget-detail "Related transactions" list so it reconciles with the header total
+ * (the old rolling 7-day feed under-counted a cycle longer than the feed window and
+ * dropped sub-category spend).
+ *
+ * @param categoryId - The budgeted category id.
+ * @returns The cycle's transactions for that budget, newest first.
+ * @throws If the response status is not OK.
+ */
+export async function fetchBudgetTransactions(categoryId: string): Promise<Transaction[]> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/transactions`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/** A category's computed spend for the current pay cycle. */
+export interface CategorySpend {
+  posted: number;   // settled (posted) spend
+  pending: number;  // not-yet-settled (pending) spend
+}
+
+/** One hidden net-refunded member under a parent — `amount` is negative (WHIT-349). */
+export interface RefundLine {
+  id: string;       // the refunded member's category id (a tap drills into its transactions)
+  amount: number;   // its combined signed net, < 0
+}
+
+/**
+ * The server-owned Insights parent roll-up carried under the __rollup__ key in a /breakdown
+ * response (WHIT-349). `nodes[id]` is a parent's NETTED subtree spend (aggregate-then-clamp;
+ * equals its /budgets bar). `refunds[parentId]` lists the members whose net is negative and
+ * hidden from the flat rows, so the client can render a "refund" line and an expanded parent
+ * still sums to its node. `refunds` absent when none. Read via `readRollup` in context.ts (the
+ * ROLLUP_KEY sentinel lives there alongside UNCATEGORIZED_KEY/EARNED_KEY).
+ */
+export interface BreakdownRollup {
+  nodes: Record<string, CategorySpend>;
+  refunds?: Record<string, RefundLine[]>;
+}
+
+/**
+ * Fetch spend by category for the current pay cycle (WHIT-23) — every category
+ * with spend this cycle, plus the special "__uncategorized__" bucket for spend
+ * that counts to budget but isn't in the taxonomy. Empty {} when nothing had spend.
+ *
+ * @param days - The client's pay-cycle length. The server derives the window from
+ *   the stored pay cycle and ignores this; kept for symmetry with fetchBudgets.
+ * @param cycle - Which pay cycle to read (WHIT-68): 0 = the current cycle (default),
+ *   n >= 1 = the nth prior cycle for the historical look-back. Only sent when > 0, so
+ *   the default request is byte-identical to before.
+ * @returns A map of category id to its { posted, pending }.
+ * @throws If the response status is not OK.
+ */
+export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<string, CategorySpend>> {
+  const cycleParam = cycle > 0 ? `&cycle=${encodeURIComponent(cycle)}` : '';
+  const response = await apiFetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}${cycleParam}`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Fetch the transactions behind one /breakdown row: every charge filed on a single
+ * category (or the "__uncategorized__" bucket) over the selected pay cycle, newest
+ * first. Backs the category drill-in so its list + total reconcile with the Insights
+ * card (the old 7-day feed under-counted a longer cycle and showed nothing for last
+ * cycle).
+ *
+ * @param categoryId - The category id, or the UNCATEGORIZED_KEY sentinel.
+ * @param cycle - Which cycle: 0 = current (default), n >= 1 = the nth prior cycle. Only
+ *   sent when > 0, so the default request stays minimal.
+ * @returns The cycle's transactions for that category, newest first.
+ * @throws If the response status is not OK.
+ */
+export async function fetchCategoryTransactions(categoryId: string, cycle = 0): Promise<Transaction[]> {
+  const cycleParam = cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : '';
+  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(categoryId)}/transactions${cycleParam}`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Set (persist) a single transaction's category. Thin wrapper over
+ * setTransactionFields (WHIT-278): the route/headers/body/error-guard live there, so
+ * the single-transaction category and note/tags writes can't drift apart.
+ *
+ * @param id - The transaction_id to categorise.
+ * @param category - The category id/slug to file it under.
+ * @returns The saved transaction_id and category.
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export async function setTransactionCategory(
+  id: string,
+  category: string
+): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[] }> {
+  return setTransactionFields(id, { category });
+}
+
+/**
+ * Set (persist) a single transaction's editable fields — any of category, notes,
+ * tags, budget_excluded — in one PATCH (WHIT-275, WHIT-296). The canonical
+ * single-transaction PATCH: only the provided keys are sent, so editing the note
+ * never touches the tags (and vice-versa); a "" note or a [] tags list clears that
+ * field server-side, as does budget_excluded=false.
+ *
+ * @throws If the response status is not OK (e.g. 404 when the id is unknown).
+ */
+export async function setTransactionFields(
+  id: string,
+  fields: { category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean }
+): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean }> {
+  const response = await apiFetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(fields),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/** One transaction's outcome in a batch category update (WHIT-70). */
+export interface BatchCategoryResult {
+  id: string;
+  status: "updated" | "not_found";
+}
+
+/**
+ * Set the category on many transactions in ONE request (WHIT-70) — the batch
+ * behind "All from this merchant", replacing N parallel single PATCHes. Each
+ * update is applied independently server-side; the returned `results` carry a
+ * per-item status (keyed by `id`, not position) so the caller can roll back only
+ * the ones that didn't land. Auth-gated like every app route (WHIT-110).
+ *
+ * @throws If the response status is not OK.
+ */
+export async function setTransactionCategories(
+  updates: { id: string; category: string }[]
+): Promise<{ results: BatchCategoryResult[] }> {
+  const response = await apiFetch(`${API_BASE}/transactions`, {
+    method: "PATCH",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ updates }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * The live home-loan balance (WHIT-8). `balance` is the outstanding mortgage
+ * principal as a positive number; all three fields are null before the balance
+ * poller's first run has stored a value.
+ */
+export interface HomeLoan {
+  balance: number | null;
+  as_of: string | null;   // ISO timestamp BankSync reported the balance
+  currency: string | null;
+}
+
+/**
+ * Fetch the latest live home-loan balance. Returns a null-filled shape (not an
+ * error) before the poller has stored anything, so the caller can simply keep
+ * its placeholder until a real balance lands.
+ *
+ * @returns The stored { balance, as_of, currency } (balance null if unpolled).
+ * @throws If the response status is not OK.
+ */
+export async function fetchHomeLoan(): Promise<HomeLoan> {
+  const response = await apiFetch(`${API_BASE}/homeloan`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * One account's live balance (WHIT-212), as served by GET /accounts/balances. `amount`
+ * is SIGNED — a spending account is positive, a loan or credit-card balance negative —
+ * matching what the bank reports. `available_balance`/`account_type` are null when the
+ * bank didn't report them; `as_of` is the ISO timestamp BankSync read the balance.
+ */
+export interface AccountBalance {
+  account_id: string;
+  amount: number;
+  available_balance: number | null;
+  currency: string;
+  as_of: string;
+  account_type: string | null;
+}
+
+/**
+ * Fetch the latest live balance for each linked account. Poller-fed, like the home-loan
+ * balance: an account not yet polled is simply absent, and before ANY poll this is an
+ * empty array — a normal success, not an error — so the caller shows a "—" placeholder
+ * per card rather than an error state.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchAccountBalances(): Promise<AccountBalance[]> {
+  const response = await apiFetch(`${API_BASE}/accounts/balances`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Ask the server to fetch FRESH balances from the bank right now (pull-to-refresh), rather than
+ * re-reading the once-a-day stored values. The server throttles to ~60s and returns the same
+ * shape as fetchAccountBalances (stored values instantly while throttled, freshly-fetched
+ * otherwise). Runs long (a live bank call), so it gets BALANCE_REFRESH_TIMEOUT_MS on both the
+ * request and the body read, not the 15s default.
+ *
+ * @throws If the response status is not OK (the caller keeps the last-good balances + toasts).
+ */
+export async function refreshAccountBalances(): Promise<AccountBalance[]> {
+  const response = await apiFetch(`${API_BASE}/accounts/balances/refresh`, {
+    method: "POST",
+    headers: await buildHeaders(),
+  }, BALANCE_REFRESH_TIMEOUT_MS);
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, BALANCE_REFRESH_TIMEOUT_MS);
+}
+
+/**
+ * One step on the way to a goal's target (WHIT-476) — a labelled amount the balance passes
+ * through. Amounts are ABSOLUTE (not deltas), ordered in the goal's own direction: a grow
+ * ladder climbs toward the target, a paydown ladder falls toward it.
+ *
+ * `id` is permanent: the once-ever celebration keys on it, so it has to survive a rename or a
+ * reorder. Like the goal's own id the client mints it; the server mints one for any row that
+ * arrives without, and rejects a blank.
+ */
+export interface GoalCheckpoint {
+  id: string;
+  label: string;
+  amount: number;
+}
+
+/** A checkpoint on a WRITE: omit `id` for a new row and the server mints a permanent one. */
+export type GoalCheckpointInput = Omit<GoalCheckpoint, "id"> & { id?: string };
+
+/**
+ * A saved goal record as served by the /goals API (WHIT-231/233). A "grow" goal is a
+ * savings target (balance should RISE to target_amount); a "paydown" goal is a debt
+ * target (balance should FALL to target_amount, usually 0). EXACTLY ONE balance source:
+ * a synced `account_id` (the account's live balance IS the current balance) OR a manual
+ * pair (`manual_balance` + `manual_as_of`, the user's own snapshot). `baseline` is an
+ * optional "count from £X" start. Every field is client-authored except `id`, which the
+ * client mints and the server just echoes back.
+ */
+export interface GoalRecord {
+  id: string;
+  name: string;
+  icon: string;
+  direction: "grow" | "paydown";
+  target_amount: number;
+  target_date: string;            // ISO "YYYY-MM-DD"
+  baseline?: number | null;       // optional "count from £X" start
+  checkpoints?: GoalCheckpoint[] | null; // optional ladder of steps toward the target
+  account_id?: string | null;     // present => synced source (the live account balance)
+  manual_balance?: number | null; // present => manual source (this value IS the balance)
+  manual_as_of?: string | null;   // ISO date the manual balance was true
+  // Server-stamped, immutable (WHIT-252): the goal's fixed START — the date + balance when
+  // it began, captured as a pair. Feeds the (deferred) ahead/behind status. The client NEVER
+  // sends these; a synced goal created before its first poll carries neither until then.
+  start_date?: string | null;     // ISO date the start was stamped (create/first-poll day)
+  start_balance?: number | null;  // balance at start (SIGNED for synced; as-entered, may be negative, for manual)
+}
+
+/** The always-present half of a goal write body — everything except the balance source. */
+interface GoalWriteCommon {
+  name: string;
+  icon: string;
+  direction: "grow" | "paydown";
+  target_amount: number;
+  target_date: string;
+  baseline?: number | null;
+  // Omitting this KEEPS the server's saved ladder (WHIT-476 option B); an explicit list
+  // replaces it, and an explicit [] clears it. Writers still re-send the full list so the
+  // instant on-screen update stays correct — the server protects the data, not the UI.
+  checkpoints?: GoalCheckpointInput[];
+}
+
+/**
+ * The body a goal write (PUT /goals/{id}) carries: every GoalRecord field EXCEPT the id
+ * (which lives in the path only). The server enforces EXACTLY ONE balance source, so this
+ * is a union — the synced arm carries `account_id` alone, the manual arm carries
+ * `manual_balance` + `manual_as_of` together. The `?: never` on the other arm's fields
+ * makes "both sources" a compile error here, mirroring the server's 400 (WHIT-231).
+ */
+export type GoalWriteBody =
+  | (GoalWriteCommon & { account_id: string; manual_balance?: never; manual_as_of?: never })
+  | (GoalWriteCommon & { manual_balance: number; manual_as_of: string; account_id?: never });
+
+/**
+ * Fetch every saved goal. Before the user creates one this is an empty array — a normal
+ * success, not an error — so the caller shows the "no goals yet" empty state.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchGoals(): Promise<GoalRecord[]> {
+  const response = await apiFetch(`${API_BASE}/goals`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * A saved milestone in the user's home-loan paydown plan. The server owns the id (it mints one
+ * when a new row is saved). There is no `sprint` — the screen derives the step number from the
+ * row's position in the list. Matches the server's client shape (shared/repository_milestone.py).
+ */
+export interface MilestoneRecord {
+  id: string;
+  label: string;
+  targetBalance: number;   // outstanding loan balance to reach by targetDate
+  targetDate: string;      // ISO "YYYY-MM-DD"
+}
+
+/**
+ * Fetch the user's saved milestone plan. Empty until the user has saved one — a normal success,
+ * not an error — so the caller falls back to the built-in default plan.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchMilestones(): Promise<MilestoneRecord[]> {
+  const response = await apiFetch(`${API_BASE}/milestones`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Save (replace) the user's milestone plan — the whole ordered list at once. The client mints an
+ * id for a new row; the server preserves supplied ids and mints one for any missing. Returns the
+ * saved list the server echoes back.
+ *
+ * @throws If the response status is not OK (e.g. 400 on an empty / invalid / out-of-order list).
+ */
+export async function setMilestones(milestones: MilestoneRecord[]): Promise<MilestoneRecord[]> {
+  const response = await apiFetch(`${API_BASE}/milestones`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ milestones }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Save (create or replace) a goal — an idempotent upsert at PUT /goals/{id}. A create and
+ * an edit are the same call; the client mints the id, so the two are indistinguishable to
+ * the server. The body carries exactly one balance source (see GoalWriteBody).
+ *
+ * @param id - The client-minted goal id (path only; never in the body).
+ * @param body - The goal's fields for this id.
+ * @returns The saved goal, with its id echoed by the server.
+ * @throws If the response status is not OK (e.g. 400 on an invalid field or two sources).
+ */
+export async function saveGoal(id: string, body: GoalWriteBody): Promise<GoalRecord> {
+  const response = await apiFetch(`${API_BASE}/goals/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Delete a goal. Idempotent server-side — deleting an unknown/already-gone id still
+ * returns 200 — so a rollback that races a refresh can't wedge.
+ *
+ * @param id - The goal id to delete.
+ * @returns The id of the deleted goal.
+ * @throws If the response status is not OK.
+ */
+export async function deleteGoal(id: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/goals/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * The most recent home-loan repayment (WHIT-115), derived server-side from the
+ * up-homeloan transaction history. `amount`/`date` are null when there is no
+ * repayment on record; `principal`/`interest` are null when the interest leg
+ * can't be paired (total-only — never a fabricated split).
+ */
+export interface Repayment {
+  amount: number | null;
+  date: string | null;       // ISO "YYYY-MM-DD"
+  principal: number | null;
+  interest: number | null;
+}
+
+/**
+ * Fetch the latest home-loan repayment. Returns a null-filled shape (not an
+ * error) when none is on record, so the caller shows a graceful empty state.
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchRepayment(): Promise<Repayment> {
+  const response = await apiFetch(`${API_BASE}/repayment`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * The user-entered home-loan facts no bank feed provides (Loan facts card).
+ * Every field is null until the user saves the form the first time — the app
+ * shows a friendly "set this up" state rather than fabricating defaults.
+ */
+export interface LoanFacts {
+  original: number | null;   // original loan amount
+  homeValue: number | null;  // current property value
+  lvr: number | null;        // loan-to-value ratio, a fraction 0–1
+  ratePct: number | null;    // interest rate, a percent
+  baseRepay: number | null;  // scheduled repayment per cycle
+  extra: number | null;      // extra repayment per cycle
+  // WHIT-126: target payoff date, ISO "YYYY-MM-DD". Independently OPTIONAL — unlike
+  // the six all-or-nothing facts above, it's null/absent until the user sets one, and
+  // drives the required-repayment solver on the "won't pay off" state.
+  payoffGoalDate?: string | null;
+  // WHIT-378: the user's real next-place deposit target, in dollars. Independently
+  // OPTIONAL like payoffGoalDate — null/absent until set. Drives the equity card's
+  // "% toward deposit"; when unset the card shows equity without a fake denominator.
+  depositTarget?: number | null;
+}
+
+/**
+ * The saved shape the form PUTs. The six numeric facts are always present; the
+ * optional payoff goal date rides alongside them (null/absent when unset/cleared).
+ */
+export interface LoanFactsInput {
+  original: number; homeValue: number; lvr: number; ratePct: number; baseRepay: number; extra: number;
+  payoffGoalDate?: string | null;
+  depositTarget?: number | null;
+}
+
+/**
+ * Fetch the user's saved loan facts. Returns all-null fields until the user has
+ * saved them (so the caller shows a set-up prompt), never an error for "unset".
+ *
+ * @throws If the response status is not OK.
+ */
+export async function fetchLoanFacts(): Promise<LoanFacts> {
+  const response = await apiFetch(`${API_BASE}/loanfacts`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Save (replace) the user's loan facts — all six fields together.
+ *
+ * @param facts - The full { original, homeValue, lvr (fraction), ratePct, baseRepay, extra }.
+ * @returns The saved facts.
+ * @throws If the response status is not OK (e.g. 400 on an invalid field).
+ */
+export async function setLoanFacts(facts: LoanFactsInput): Promise<LoanFactsInput> {
+  const response = await apiFetch(`${API_BASE}/loanfacts`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(facts),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/** The persisted pay cycle: window length in days + the last pay date. */
+export interface PayCycle {
+  length: number;        // 7 | 14 | 30 (Weekly / Fortnightly / Monthly)
+  last_pay_date: string;        // a real past payday, as an ISO "YYYY-MM-DD" date
+  // Days to the next payday, computed server-side over the Melbourne clock (WHIT-341). The
+  // client prefers this over its own cycleClock so the countdown can't drift a day at the
+  // UTC/Melbourne seam. Optional: absent from an older server / cold cache → cycleClock fallback.
+  days_left?: number;
+}
+
+/**
+ * Fetch the persisted pay cycle (length + last pay date). Seeds a default
+ * server-side on first read, so this always resolves to a valid cycle.
+ *
+ * @returns The stored { length, last_pay_date }.
+ * @throws If the response status is not OK.
+ */
+export async function fetchPayCycle(): Promise<PayCycle> {
+  const response = await apiFetch(`${API_BASE}/paycycle`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Set (replace) the persisted pay cycle. Both fields are written together, so
+ * pass the full cycle even when only one field changed.
+ *
+ * @param cycle - The new { length, last_pay_date }. last_pay_date must be a past ISO date.
+ * @returns The saved { length, last_pay_date }.
+ * @throws If the response status is not OK (e.g. 400 on a bad length or a
+ *   future/malformed last_pay_date).
+ */
+export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
+  const response = await apiFetch(`${API_BASE}/paycycle`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(cycle),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Set (upsert) a category's budget target. Idempotent — works whether or not
+ * the category already had a target.
+ *
+ * @param categoryId - The category id/slug to budget (e.g. "groceries").
+ * @param target - The pay-cycle target amount (must be >= 0).
+ * @returns The saved id and target.
+ * @throws If the response status is not OK (e.g. 400 on an invalid target).
+ */
+export async function setBudget(
+  categoryId: string,
+  target: number,
+  rollover?: boolean
+): Promise<{ id: string; target: number }> {
+  // Send `rollover` only when the caller passes it, so a plain amount edit leaves the
+  // stored flag untouched (the server treats an absent `rollover` as "no change").
+  const body = rollover === undefined ? { target } : { target, rollover };
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Delete a category's budget target. Idempotent — a category with no target
+ * (or an unknown id) still returns 200. Only the target is removed; the
+ * category and its transactions are untouched.
+ *
+ * @param categoryId - The category id/slug whose budget to remove (e.g. "groceries").
+ * @returns The id whose budget was removed.
+ * @throws If the response status is not OK.
+ */
+export async function deleteBudget(categoryId: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Spread a one-off bill over the coming pay cycles (WHIT-504): cushion `amount` this cycle,
+ * take it back in `cycles` equal slices. Creating a plan on a category that already has one
+ * replaces it. Spend-only, and rejected (400) while the category has rollover on.
+ *
+ * @param categoryId - The spend category to spread the bill on.
+ * @param amount - The bill amount (must be > 0). Stored rounded to cents server-side.
+ * @param cycles - How many cycles to pay it back over (1..24).
+ * @returns The saved id, amount and cycle count.
+ * @throws If the response status is not OK (e.g. 400 on a bad amount/cycles, rollover on, or no budget).
+ */
+export async function setSpread(
+  categoryId: string,
+  amount: number,
+  cycles: number
+): Promise<{ id: string; amount: number; cycles: number }> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/spread`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ amount, cycles }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Remove a category's bill spread (WHIT-504). Idempotent — a category with no plan (or an
+ * unknown id) still returns 200. Only the plan is removed; the budget target is untouched.
+ *
+ * @param categoryId - The category whose spread to remove.
+ * @returns The id whose spread was removed.
+ * @throws If the response status is not OK.
+ */
+export async function deleteSpread(categoryId: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/spread`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * List every categorisation rule from the /rules API. Auth-gated.
+ *
+ * @returns The rules currently held in our own rule store.
+ * @throws If the response status is not OK (401 when the token is wrong/missing).
+ */
+export async function listRules(): Promise<RuleRecord[]> {
+  const response = await apiFetch(`${API_BASE}/rules`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Create a categorisation rule. `field`/`operator` are omitted by default so the
+ * server applies its "description contains" default — matching what the app's
+ * rule UI produces. Auth-gated.
+ *
+ * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
+ * @returns The created rule, including its store-assigned id.
+ * @throws {ApiError} If the response status is not OK — carrying `.status` so the caller can
+ *   tell a spread rule's 409 (category already spread) / 422 (no recurring bill) apart (WHIT-559),
+ *   from a 400 (invalid) or 401 (auth).
+ */
+export async function createRule(input: RuleWriteInput): Promise<RuleRecord> {
+  const response = await apiFetch(`${API_BASE}/rules`, {
+    method: "POST",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(input),
+  });
+  if (response.ok == false) throw new ApiError(response.status, null);
+
+  return readJson(response);
+}
+
+/**
+ * Update (replace) a categorisation rule. `field`/`operator` are omitted by
+ * default so the server keeps its "description contains" default. Auth-gated.
+ *
+ * @param id - The id of the rule to update.
+ * @param input - `{value, categoryId}` (+ optional `field`/`operator`).
+ * @returns The updated rule.
+ * @throws {ApiError} If the response status is not OK — carrying `.status` so an edit that turns
+ *   spread on can surface its 409/422 (WHIT-559), apart from 404 (unknown id) / 400 / 401.
+ */
+export async function updateRule(id: string, input: RuleWriteInput): Promise<RuleRecord> {
+  const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(input),
+  });
+  if (response.ok == false) throw new ApiError(response.status, null);
+
+  return readJson(response);
+}
+
+/**
+ * Delete a categorisation rule. Idempotent server-side (an unknown id still
+ * returns 200). Auth-gated.
+ *
+ * @param id - The id of the rule to remove.
+ * @returns The id of the deleted rule.
+ * @throws If the response status is not OK (401 on auth).
+ */
+export async function deleteRule(id: string): Promise<{ id: string }> {
+  const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: await buildHeaders(),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * AI spending insights (WHIT-104): a short summary + a few suggestions grounded in
+ * the user's real spend. `summary` is null before any have been generated this
+ * cycle. `cached` is true when the server returned a stored result without paying
+ * for a fresh generation.
+ */
+export interface AiInsights {
+  summary: string | null;
+  suggestions: string[];
+  generated_at: string | null;
+  cycle_start: string | null;
+  cached: boolean;
+}
+
+/**
+ * Home-loan goal signal sent with a generate request (WHIT-134) so the advice can
+ * tie spend cuts to becoming mortgage-free sooner. Derived on-device from WHIT-114's
+ * payoff projection (the single source of truth — the server does NOT recompute the
+ * amortization). Only sent when there's an honest payoff signal; null otherwise.
+ *
+ * Two shapes, discriminated on payoff_mode:
+ *
+ * On-track ('partial' | 'flat' | 'ahead') — the loan DOES clear:
+ * - mortgage_free_date: the projected month-year, e.g. "Nov 2042".
+ * - current_extra_monthly: extra $/month currently paid on top of the scheduled repayment.
+ * - months_sooner_per_100_extra: months the payoff moves in for each additional
+ *   $100/month (exact, from the same amortization). null when it rounds to < 1 month.
+ *
+ * Shortfall ('shortfall') — the loan will NOT clear at the current repayment, but
+ * the user has set a target payoff date (WHIT-126):
+ * - goal_date: the target month-year label, e.g. "Nov 2030" (matches mortgage_free_date's format).
+ * - required_repayment: the $/month needed to clear the loan by goal_date.
+ * - required_extra: how much more than the current total repayment that is, per month.
+ * - current_extra_monthly: extra $/month currently paid on top of the scheduled repayment.
+ */
+export type AiGoalSignal =
+  | {
+      payoff_mode: 'partial' | 'flat' | 'ahead';
+      mortgage_free_date: string;
+      current_extra_monthly: number;
+      months_sooner_per_100_extra: number | null;
+    }
+  | {
+      payoff_mode: 'shortfall';
+      goal_date: string;
+      required_repayment: number;
+      required_extra: number;
+      current_extra_monthly: number;
+    };
+
+/**
+ * Read the cached AI insights for the current pay cycle WITHOUT generating (no
+ * paid call). Returns a null-summary shape when none has been generated yet.
+ * Auth-gated (the endpoint costs money, so it sits behind the token like
+ * /rules).
+ *
+ * @throws If the response status is not OK (401 on auth).
+ */
+export async function fetchAiInsights(): Promise<AiInsights> {
+  const response = await apiFetch(`${API_BASE}/insights/ai`, { headers: await buildHeaders() });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
+
+/**
+ * Generate (or return the cached) AI insights for the current cycle — the paid
+ * action behind the "Analyse my spending" button. The server skips the paid call
+ * when nothing has changed since the cached run. Auth-gated.
+ *
+ * When a `goal` is supplied it's sent in the body so the advice can tie cuts to the
+ * mortgage-free date (WHIT-134). The signal is part of what the server hashes for its
+ * per-cycle cache, so a changed goal regenerates. Sending `{goal: null}` keeps the
+ * body shape stable and is treated exactly like the spend-only request.
+ *
+ * @throws If the response status is not OK (401 auth, 502 when the AI is unavailable).
+ */
+export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<AiInsights> {
+  const response = await apiFetch(`${API_BASE}/insights/ai`, {
+    method: "POST",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ goal: goal ?? null }),
+  }, AI_GENERATE_TIMEOUT_MS); // the paid generation runs long — don't cap it at the 15s read budget
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, AI_GENERATE_TIMEOUT_MS); // the long body budget too, not just the headers
+}
+
+/**
+ * Register this device's Expo push token so the server can send it notifications.
+ * Auth-gated (the /devices route is behind the Cognito JWT authorizer, like every
+ * app route), so it presents the Bearer ID token like the other calls. The server
+ * stores tokens in a Set, so re-registering the same token is a no-op.
+ *
+ * @param token - The device's `ExpoPushToken[...]` value.
+ * @returns The registered token, echoed by the server.
+ * @throws If the response status is not OK (400 invalid token, 401 auth).
+ */
+export async function registerDevice(token: string): Promise<{ token: string }> {
+  const response = await apiFetch(`${API_BASE}/devices`, {
+    method: "POST",
+    headers: await buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ token }),
+  });
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response);
+}
