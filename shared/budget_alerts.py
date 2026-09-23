@@ -41,7 +41,6 @@ from decimal import Decimal
 import rule_engine
 from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
 from push import send_push
-from repository_errors import DatabaseError
 from spend import (
     _spread_state,
     build_category_children,
@@ -337,7 +336,9 @@ def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_r
     try:
         for cat_id, pct_to_send, reached in due:
             send_marker = f"{cat_id}#{pct_to_send}"
-            if send_marker in fired:
+            # A higher threshold already fired (e.g. 100% landed but its 80% mark was lost, then
+            # a refund dropped spend back): an 80% nag after "Budget hit" would be backwards.
+            if _fired_at_or_above(cat_id, pct_to_send, fired):
                 _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired)
                 continue
             if notify_repo.claim_fired(cycle_start, length, send_marker):
@@ -365,8 +366,12 @@ def _release_all(notify_repo, cycle_start, length, claimed) -> None:
         marker = f"{cat_id}#{pct_to_send}"
         try:
             notify_repo.release_fired(cycle_start, length, marker)
-        except DatabaseError:
+        except Exception:  # a network timeout isn't a DatabaseError, and must not stop the loop
             logger.exception("budget-alert release of %s failed; it stays silent this cycle", marker)
+
+
+def _fired_at_or_above(cat_id, pct, fired) -> bool:
+    return any(f"{cat_id}#{higher}" in fired for _, higher in _THRESHOLDS if higher >= pct)
 
 
 def _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired) -> None:
