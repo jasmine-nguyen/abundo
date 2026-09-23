@@ -145,17 +145,35 @@ describe('what the list shows', () => {
 });
 
 describe('when the server search fails', () => {
-  it('says so with a Retry — never "No matches" — and keeps the loaded matches', () => {
+  it('says so with a Retry — never "No matches", even when nothing loaded matches', () => {
     const retry = jest.fn();
-    mockTx = transactionsScreenData({ transactions: [COLES, STEVEN_LOADED], search: { ...idleSearch, active: true, isError: true, retry } });
+    mockTx = transactionsScreenData({ transactions: [COLES], search: { ...idleSearch, active: true, isError: true, retry } });
     render(<Transactions />);
     type('steven');
     pauseTyping();
     expect(screen.getByTestId('transactions-search-error')).toBeTruthy();
     expect(screen.queryByTestId('transactions-no-results')).toBeNull();
-    expect(screen.getByText('-$11.00')).toBeTruthy();
     fireEvent.press(screen.getByLabelText('Retry searching your full history'));
     expect(retry).toHaveBeenCalled();
+  });
+
+  it('keeps showing the loaded matches', () => {
+    mockTx = transactionsScreenData({ transactions: [COLES, STEVEN_LOADED], search: { ...idleSearch, active: true, isError: true } });
+    render(<Transactions />);
+    type('steven');
+    pauseTyping();
+    expect(screen.getByText('-$11.00')).toBeTruthy();
+  });
+
+  it('an earlier query\'s failure does not show while the next query waits to be sent', () => {
+    mockTx = transactionsScreenData({ transactions: [COLES], search: { ...idleSearch, active: true, isError: true } });
+    render(<Transactions />);
+    type('stev');
+    pauseTyping();
+    expect(screen.getByTestId('transactions-search-error')).toBeTruthy();
+    type('steven');
+    expect(screen.queryByTestId('transactions-search-error')).toBeNull();
+    expect(screen.getByTestId('transactions-searching')).toBeTruthy();
   });
 });
 

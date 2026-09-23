@@ -2131,12 +2131,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // WHIT-271: return false (not just skip the toast) so app/category/edit.tsx doesn't run
         // its summary toast + router.back() after a mid-save sign-out.
         if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
+        const previousName = queryClient.getQueryData<Category[]>(['categories'])?.find((c) => c.id === editId)?.name;
         queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
         // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
         // pickers; the invalidate then reconciles with the server.
         queryClient.invalidateQueries({ queryKey: ['categories'] });
         // WHIT-576: a rename changes the category text a search matches on.
-        queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
+        if (updated.name !== previousName) queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
         if (!opts?.silent) showToast('Category updated.');
         return true;
       } catch (error) {

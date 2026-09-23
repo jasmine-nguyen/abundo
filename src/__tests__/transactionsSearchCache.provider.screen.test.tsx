@@ -9,7 +9,7 @@
 //   3. INVALIDATE — server-side re-files (apply-rules) and category delete/rename refresh searches.
 //
 // Fail-on-revert: drop readSearchRows from readTransactionsCache → [1] fails; drop the
-// setQueriesData arm from patchTransactionsCache → [2]/[3]/[4]/[5] fail; drop an invalidate → [6]/[7] fail.
+// setQueriesData arm from patchTransactionsCache → [2]/[3]/[4]/[5] fail; drop an invalidate → [6]/[7] fail; drop the name-changed check → [8] fails.
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act } from '@testing-library/react-native';
@@ -130,5 +130,16 @@ it('[7] renaming a category refreshes search results (the name is searchable tex
   await act(async () => { await result.current.saveCategory('groceries', { name: 'Food shop', bucket: 'Living', icon: 'cart' }); });
 
   expect(invalidatedKeys(spy)).toContain('transactionsSearch');
+  spy.mockRestore();
+});
+
+it('[8] an icon-only category save leaves search results alone (no pointless full-history re-scan)', async () => {
+  mockApi.updateCategory.mockResolvedValue({ ...CAT, icon: 'basket' } as never);
+  const result = mount();
+  const spy = jest.spyOn(queryClient, 'invalidateQueries');
+
+  await act(async () => { await result.current.saveCategory('groceries', { name: 'Groceries', bucket: 'Living', icon: 'basket' }); });
+
+  expect(invalidatedKeys(spy)).not.toContain('transactionsSearch');
   spy.mockRestore();
 });

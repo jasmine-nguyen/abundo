@@ -98,7 +98,7 @@ export default function Transactions() {
   // them (before grouping), so typing narrows instantly and a just-re-filed row drops out.
   const searchingServer = needsServerSearch(query);
   const searchAnswered = searchingServer && debouncedQuery === query && serverSearch.answered;
-  const searchFailed = searchingServer && serverSearch.isError;
+  const searchFailed = searchingServer && debouncedQuery === query && serverSearch.isError;
   const searchPending = searchingServer && !searchAnswered && !searchFailed;
   let listSource = transactions;
   if (searchAnswered) listSource = serverSearch.results;

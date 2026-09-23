@@ -3,7 +3,7 @@
 //        `transactions` as the NORMAL feed (the badge's local fallback count reads it).
 //   [Q2] `answered` is false while the previous query's result is only a placeholder.
 //   [Q3] a placeholder is never carried across tabs (no Uncategorized matches on All).
-//   [Q4] pull-to-refresh under a search refetches the SEARCH, not the feed.
+//   [Q4] pull-to-refresh under a search refetches the SEARCH, not the feed — unless the feed failed.
 //   [Q5] useTransactionResolver finds a row that lives only in a search result, and picks up a
 //        patch to it (the picker/confirm sheets resolve through this).
 import { it, expect, jest, beforeEach } from '@jest/globals';
@@ -106,6 +106,18 @@ it('[Q4] pull-to-refresh under a search refetches the search, not the feed', asy
 
   expect(mockSearch).toHaveBeenCalledWith('all', 'steven');
   expect(mockFeed).not.toHaveBeenCalled();
+});
+
+it('[Q4b] Retry under a search still reloads a FAILED feed (its error screen hides the search)', async () => {
+  mockFeed.mockRejectedValueOnce(new Error('offline'));
+  const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  mockFeed.mockClear();
+
+  await act(async () => { await result.current.refetchList(); });
+
+  expect(mockFeed).toHaveBeenCalled();
+  await waitFor(() => expect(result.current.isError).toBe(false));
 });
 
 it('[Q5] the resolver finds a search-only row and sees a patch to it', async () => {

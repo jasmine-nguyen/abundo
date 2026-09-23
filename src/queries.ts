@@ -259,10 +259,6 @@ export function useKeepTransactionsFeedWarm(): void {
   useTransactionsFeedQuery(useIsAuthed());
 }
 
-// The Uncategorized tab's own feed as an infinite query: same shape and cursor semantics as the
-// all-accounts feed, but each page is server-filtered to uncategorized charges. hasNextPage stays
-// true while nextCursor is non-null — a page can come back sparse (or empty) with more history
-// behind it, so "Load More" keeps working until the server exhausts history.
 // The Transactions-tab search over ALL history (WHIT-576). While a new query loads, the previous
 // result stays as a placeholder — but only from the SAME tab, so the Uncategorized tab's matches
 // never flash on the All tab (or the reverse).
@@ -276,6 +272,10 @@ export function useTransactionsSearchQuery(tab: 'all' | 'uncategorized', query: 
   });
 }
 
+// The Uncategorized tab's own feed as an infinite query: same shape and cursor semantics as the
+// all-accounts feed, but each page is server-filtered to uncategorized charges. hasNextPage stays
+// true while nextCursor is non-null — a page can come back sparse (or empty) with more history
+// behind it, so "Load More" keeps working until the server exhausts history.
 export function useUncategorizedFeedQuery(enabled: boolean) {
   return useInfiniteQuery({
     queryKey: uncategorizedFeedKey,
@@ -288,8 +288,8 @@ export function useUncategorizedFeedQuery(enabled: boolean) {
 
 /** Resolve a tapped transaction by id across every list cache it might live in — the
  *  all-accounts feed, the uncategorized feed (a deep-history unfiled row shown on the
- *  Uncategorized tab lives ONLY here), and the bounded recent window (a row tapped on
- *  account-detail). One place, so the picker, confirm sheet, and detail screen can't drift on
+ *  Uncategorized tab lives ONLY here), the bounded recent window (a row tapped on
+ *  account-detail), and the search results (WHIT-576: a deep-history match lives only there). One place, so the picker, confirm sheet, and detail screen can't drift on
  *  which caches they search. Only LOADED pages are in cache, but only loaded rows are ever
  *  visible/tappable, so that is exactly the set the user can act on. */
 export interface TransactionResolver {
@@ -857,7 +857,9 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
   //  • manual pull / inline Retry: SNAP to newest — trim to the first page, then refetch it fresh
   //    (+ the taxonomy). One round-trip, and it re-pages history cleanly from the top.
   const refetchList = useCallback(() => {
-    if (searchActive) {
+    // Under a search, refresh the search instead of the feed — unless the feed itself failed (its
+    // full-screen error hides the search too), so Retry can still recover it.
+    if (searchActive && !feedQuery.isError) {
       return Promise.all([
         searchQueryResult.refetch(),
         categoriesQuery.refetch(),
@@ -905,14 +907,15 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     if (feedQuery.isStale) feedQuery.refetch(); // refetches every loaded page in place (keeps place)
   }, [feedQuery, categoriesQuery, searchActive, searchQueryResult]);
 
+  const { data: searchData, isPlaceholderData: searchIsPlaceholder, isError: searchIsError, refetch: refetchSearch } = searchQueryResult;
   const search = useMemo<TransactionsSearchState>(() => ({
     active: searchActive,
-    results: (searchActive && searchQueryResult.data?.transactions) || EMPTY_TX,
-    answered: searchActive && !!searchQueryResult.data && !searchQueryResult.isPlaceholderData,
-    truncated: searchActive && !searchQueryResult.isPlaceholderData && !!searchQueryResult.data?.truncated,
-    isError: searchActive && searchQueryResult.isError,
-    retry: () => { searchQueryResult.refetch(); },
-  }), [searchActive, searchQueryResult]);
+    results: (searchActive && searchData?.transactions) || EMPTY_TX,
+    answered: searchActive && !!searchData && !searchIsPlaceholder,
+    truncated: searchActive && !searchIsPlaceholder && !!searchData?.truncated,
+    isError: searchActive && searchIsError,
+    retry: () => { refetchSearch(); },
+  }), [searchActive, searchData, searchIsPlaceholder, searchIsError, refetchSearch]);
 
   return { search, transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }

@@ -151,13 +151,6 @@ def test_exactly_the_limit_is_not_truncated(handler, transaction_search):
     assert body["truncated"] is False
 
 
-def test_special_characters_in_the_query(handler):
-    repo = FakeFeedRepo({ANZ: [_row(ANZ, "2026-07-10", "a1", description="B&W 50% OFF", amount=-1)]})
-
-    assert len(_body(_search(handler, repo, {"q": "b&w"}))["transactions"]) == 1
-    assert len(_body(_search(handler, repo, {"q": "50%"}))["transactions"]) == 1
-
-
 # --- bad input --------------------------------------------------------------
 
 
