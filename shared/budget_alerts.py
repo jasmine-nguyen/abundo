@@ -1,45 +1,38 @@
-"""Budget-threshold alert detection on the webhook write path (WHIT-22).
+"""Budget-threshold alerts on the webhook write path (WHIT-22).
 
-When an ingested transaction pushes a budgeted category's cycle spend across 80%
-or 100% of its target, send one Expo push per (category, threshold) per pay cycle.
+When a budgeted category's cycle spend is at or past 80% or 100% of its target, send one
+Expo push per (category, threshold) per pay cycle.
+
+Level, not crossing (WHIT-577): every delivery checks each budget's CURRENT spend and fires
+any threshold it has reached that hasn't fired yet this cycle. Firing only when a delivery's
+own charges crossed a line missed every budget pushed over in the app — filing by hand,
+"Apply my rules", file-by-shop — none of which runs this check. The next delivery, even an
+empty sync, now catches those.
 
 Two entry points straddle the webhook's `insert_or_reconcile`, both best-effort at
 the call site (a failure never breaks the transaction write):
   * `capture_pre_write` — BEFORE the write: snapshot tokens, budget targets, the
     cycle window, the pre-write windowed rows, AND the pending pools reconcile will
     consume. Returns None (skip) when there are no tokens or no budgets.
-  * `fire_if_crossed` — AFTER the write succeeds: compute the post-write spend as
-    `before + Δ`, where Δ is derived by replaying the write in memory over the
-    snapshot (reusing the repo's OWN reconcile primitives), NOT by re-reading the
-    date-index GSI (which is eventually consistent and would miss the just-written
-    row). Fire on any newly-crossed threshold, debounced via NotifyRepository.
+  * `fire_budget_alerts` — AFTER the write succeeds: compute the post-write spend by
+    replaying the write in memory over the snapshot (reusing the repo's OWN reconcile
+    primitives), NOT by re-reading the date-index GSI (which is eventually consistent
+    and would miss the just-written row).
 
-The `before` snapshot still reads the date-index GSI, which is eventually
-consistent, so it's biased toward a spurious-extra crossing (deduped by the
-marker) rather than a miss. One residual edge remains: right after a settlement
-webhook, GSI delete-lag can briefly show BOTH the stale pending and its posted
-twin, overstating `before` and rarely SUPPRESSING a true crossing. Accepted as a
-best-effort miss (never a lost write); a strongly-consistent `before` is tracked
-as follow-up tech debt. For a rolled-up PARENT budget (WHIT-222) this residual
-sums across its descendant leaves, so a parent that aggregates several active subs
-is marginally more exposed to the miss — still a miss, never a wrong alert.
+The snapshot reads the date-index GSI, which is eventually consistent. Right after a
+settlement webhook, GSI delete-lag can briefly show BOTH the stale pending and its posted
+twin, overstating spend and rarely firing a threshold a moment early. Accepted: it needs
+overlapping deliveries within seconds.
 
-Spend basis = posted + pending (committed spend). A single write that vaults past
-both thresholds sends only the higher (100%) but marks both fired. Mark-on-landing
-(WHIT-154): a threshold is marked fired ONLY when its send actually reached Expo
-(`send_push(...)["ok"] > 0`) — including the secondary "mark the lower thresholds
-too" step, which exists only to suppress a redundant lower nag GIVEN the higher push
-went out; if the higher push never landed, suppressing the lower one would silence
-the user entirely, so neither is marked.
+Spend basis = posted + pending (committed spend). A budget past both thresholds sends only
+the higher (100%) but marks both. Two or more budgets due in one delivery get ONE combined
+push instead of a burst (e.g. the first delivery after hand-filing several budgets over).
 
-Unlike the repayment path, this does NOT guarantee a retry. `_simulate_after`
-replaces rows by id (not add), and on a re-ingest `before_rows` reads the GSI which
-by then already holds the first-ingest write — so the crossing only re-detects while
-the GSI still lags (the same brief window the debounce marker guards). For a real
-minutes-long Expo outage the GSI has caught up, `before` already sits past the
-threshold, `newly` is empty, and nothing re-fires. So the guarantee here is only
-"don't falsely record a fired marker", not "retry until delivered"; a persisted
-send-failed retry queue would be a separate, larger change.
+Exactly-once: each push's marker is CLAIMED with a conditional write before sending, so two
+overlapping deliveries (several feeds sync on the same tick) can't both send it. If the push
+doesn't land (`send_push(...)["ok"] == 0`) the claim is RELEASED, so the next delivery retries
+(WHIT-154: never record a push that didn't land). A crash between claim and send loses that
+one alert for the cycle — accepted as rare.
 """
 
 import logging
@@ -100,7 +93,7 @@ def _window_rows(window_repo, start: str, end: str) -> list[dict]:
 
 
 def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, window_repo, webhook_repo):
-    """Snapshot (BEFORE the write) everything `fire_if_crossed` needs. Returns a
+    """Snapshot (BEFORE the write) everything `fire_budget_alerts` needs. Returns a
     context dict, or None to skip alerting. Short-circuits cheapest-first: no
     registered device tokens → done; no budget targets → done."""
     tokens = device_repo.list_tokens()
@@ -117,7 +110,7 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
     # Rollover: compute the completed-cycle windows each rollover target needs, and
     # widen the single fetch if any look further back than the current cycle. The wider
     # rows are stored separately as `rollover_txns` — `before_rows` stays current-cycle-
-    # only so `before` spend (line ~245) is never inflated by prior-cycle transactions.
+    # only so this cycle's spend is never inflated by prior-cycle transactions.
     rollover_ids = {cat_id for cat_id, e in targets.items() if e.get("rollover")}
     windows_by_id = {}
     reanchor_by_id = {}
@@ -229,9 +222,9 @@ def _combined_target(spend: dict, ids: set[str]) -> Decimal:
     return folded["posted"] + folded["pending"]
 
 
-def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
-    """Given the pre-write context and the just-written batch, send a push for each
-    budgeted category whose combined spend newly crossed a threshold this cycle."""
+def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
+    """Given the pre-write context and the just-written batch, push for every budgeted
+    category whose combined spend has reached a threshold not yet fired this cycle."""
     if ctx is None:
         return
     targets = ctx["targets"]
@@ -271,9 +264,6 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     children = build_category_children(categories)
     ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in target_ids}
     needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
-    # Unclamped per id (clamp=False) so _combined_target can net a refunded sibling
-    # across the subtree before clamping the total — aggregate-then-clamp, WHIT-343.
-    before = summarise_transactions(ctx["before_rows"], needed_ids, clamp=False)
     # WHIT-545: mirror the write's settlement carry gate, so the preview buckets a charge
     # under the category that will actually land. Built from the categories already read
     # above; a best-effort second read of the taxonomy, like the write's own.
@@ -282,12 +272,14 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     def is_unfiled(category):
         return rule_engine.is_unfiled_category(category, taxonomy_ids)
 
+    # Unclamped per id (clamp=False) so _combined_target can net a refunded sibling
+    # across the subtree before clamping the total — aggregate-then-clamp, WHIT-343.
     after = summarise_transactions(
         _simulate_after(ctx, normalised, webhook_repo, is_unfiled), needed_ids, clamp=False
     )
 
-    # (cat_id, pct_to_send, [all newly-crossed pcts]) — pct_to_send is the highest.
-    crossings = []
+    # (cat_id, pct_to_send, [every reached pct]) — pct_to_send is the highest.
+    due = []
     rollover_ids = ctx.get("rollover_ids", set())
     for cat_id in target_ids:
         entry = targets[cat_id]
@@ -318,19 +310,17 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
             if spread_row is not None:
                 adjustment_term = spread_row["adjustment"]
         basis = target + buffer_term + adjustment_term
-        # basis <= 0 (a payback slice bigger than the whole target) can't cross: with a, b >= 0
-        # the test b < frac*basis <= a is already vacuously false, so this just skips the work.
-        # Such a cycle reads over-budget on screen but sends no push — a push the user couldn't
-        # act on — a deliberate, defensible silence.
+        # basis <= 0 (a payback slice bigger than the whole target) would read every threshold
+        # as reached at $0 spend. Such a cycle reads over-budget on screen but sends no push — a
+        # push the user couldn't act on — a deliberate, defensible silence.
         if basis <= 0:
             continue
-        ids = ids_by_target[cat_id]
-        b, a = _combined_target(before, ids), _combined_target(after, ids)
-        newly = [pct for frac, pct in _THRESHOLDS if b < frac * basis <= a]
-        if newly:
-            crossings.append((cat_id, newly[0], newly))  # _THRESHOLDS is high→low
+        spend = _combined_target(after, ids_by_target[cat_id])
+        reached = [pct for frac, pct in _THRESHOLDS if frac * basis <= spend]
+        if reached:
+            due.append((cat_id, reached[0], reached))  # _THRESHOLDS is high→low
 
-    if not crossings:
+    if not due:
         return
 
     # Debounce markers key on the CURRENT cycle's start (ctx["start"], the rolled-forward
@@ -342,26 +332,50 @@ def fire_if_crossed(ctx, normalised, *, webhook_repo, category_repo, notify_repo
     cycle_start, length = ctx["start"], ctx["length"]
     fired = notify_repo.fired_markers(cycle_start, length)
 
-    for cat_id, pct_to_send, newly in crossings:
+    claimed = []
+    for cat_id, pct_to_send, reached in due:
         send_marker = f"{cat_id}#{pct_to_send}"
         if send_marker in fired:
-            landed = True  # already delivered in a prior ingest → repair secondary marks
+            _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired)
+            continue
+        if notify_repo.claim_fired(cycle_start, length, send_marker):
+            claimed.append((cat_id, pct_to_send, reached))
+    if not claimed:
+        return
+
+    title, body, data = _push_copy(claimed, names)
+    landed = send_push(title, body, ctx["tokens"], data=data)["ok"] > 0
+    for cat_id, pct_to_send, reached in claimed:
+        if landed:
+            # Mark the lower reached thresholds too, so a lower one can't nag later this cycle.
+            _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired)
         else:
-            title, body = _COPY[pct_to_send]
-            landed = send_push(
-                title,
-                body.format(name=names.get(cat_id, cat_id)),
-                ctx["tokens"],
-                data={"type": "budget", "category": cat_id},  # deep-link a tap to this category (WHIT-322)
-            )["ok"] > 0
-            if landed:
-                notify_repo.mark_fired(cycle_start, length, send_marker)  # mark on landing
-        if not landed:
-            continue  # send failed → mark nothing → the crossing can re-fire on re-ingest
-        # The primary push went out (now or earlier): mark every other newly-crossed
-        # threshold too, so a lower one can't alert later this cycle — without sending
-        # a second push.
-        for pct in newly:
-            marker = f"{cat_id}#{pct}"
-            if pct != pct_to_send and marker not in fired:
-                notify_repo.mark_fired(cycle_start, length, marker)
+            notify_repo.release_fired(cycle_start, length, f"{cat_id}#{pct_to_send}")
+
+
+def _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired) -> None:
+    for pct in reached:
+        marker = f"{cat_id}#{pct}"
+        if pct != pct_to_send and marker not in fired:
+            notify_repo.mark_fired(cycle_start, length, marker)
+
+
+# How many budget names a combined push lists before "+N more".
+_COMBINED_NAMES_SHOWN = 3
+
+
+def _push_copy(claimed, names) -> tuple[str, str, dict]:
+    """One budget: its own copy and a deep link to it (WHIT-322). Several: one combined push
+    naming them, which opens the app — so a single delivery never buzzes once per budget."""
+    if len(claimed) == 1:
+        cat_id, pct, _ = claimed[0]
+        title, body = _COPY[pct]
+        return title, body.format(name=names.get(cat_id, cat_id)), {"type": "budget", "category": cat_id}
+    labels = sorted(names.get(cat_id, cat_id) for cat_id, _, _ in claimed)
+    shown = ", ".join(labels[:_COMBINED_NAMES_SHOWN])
+    hidden = len(labels) - _COMBINED_NAMES_SHOWN
+    if hidden > 0:
+        shown = f"{shown} +{hidden} more"
+    title = f"{len(labels)} budgets need a look"
+    body = f"{shown} are at 80% or more of their budget this cycle."
+    return title, body, {"type": "budget"}

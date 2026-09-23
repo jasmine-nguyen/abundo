@@ -2,8 +2,10 @@
 
 Budget alerts (WHIT-22): one item per pay cycle at pk="NOTIFY#<cycle_start>#<length>",
 sk="FIRED", whose `fired` attribute is a String Set of "<catId>#<pct>" markers (e.g.
-"groceries#80"). A crossing fires at most once per (category, threshold) per cycle:
-before sending we check the set, after sending we ADD the marker. `cycle_start` is the
+"groceries#80"). A threshold fires at most once per (category, threshold) per cycle:
+the sender CLAIMS the marker with a conditional ADD before sending (so two overlapping
+webhook deliveries can't both send), and RELEASES it if the push didn't land, so the
+next delivery retries (WHIT-577). `cycle_start` is the
 CURRENT cycle's start (the rolled-forward payday from current_cycle_window), so each new
 cycle gets a fresh pk → an empty set → re-arms automatically. (The key was previously the
 raw stored last_pay_date, which never rolled forward once the user's saved payday went
@@ -81,7 +83,8 @@ _REPAYMENT_PUSH_KEY = {"pk": "NOTIFY#REPAYPUSH", "sk": "FIRED"}
 
 class NotifyRepository:
     """Per-cycle budget-alert debounce markers. `fired_markers` reads the set of
-    already-sent "<catId>#<pct>" strings for a cycle; `mark_fired` adds one."""
+    already-sent "<catId>#<pct>" strings for a cycle; `claim_fired` adds one only if it's
+    absent, `release_fired` drops one, `mark_fired` adds one unconditionally."""
 
     def __init__(self) -> None:
         self._dynamodb = None
@@ -118,6 +121,40 @@ class NotifyRepository:
             )
         except ClientError as e:
             handle_database_error(e, "mark budget-alert fired")
+
+    def claim_fired(self, last_pay_date: str, length: int, marker: str) -> bool:
+        """Add "<marker>" to this cycle's set ONLY if it isn't there yet, and refresh the TTL.
+        True if this caller claimed it (and so owns the send), False if another delivery
+        already had (WHIT-577). The first claim creates the item."""
+        key = {"pk": _pk(last_pay_date, length), "sk": "FIRED"}
+        try:
+            self._get_table().update_item(
+                Key=key,
+                UpdateExpression="ADD #f :m SET #e = :exp",
+                ConditionExpression="attribute_not_exists(#f) OR NOT contains(#f, :v)",
+                ExpressionAttributeNames={"#f": "fired", "#e": "expires_at"},
+                ExpressionAttributeValues={
+                    ":m": {marker}, ":v": marker, ":exp": int(time.time()) + NOTIFY_TTL_SECONDS},
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            handle_database_error(e, "claim budget-alert marker")
+        return True
+
+    def release_fired(self, last_pay_date: str, length: int, marker: str) -> None:
+        """Drop a claimed "<marker>" whose push never landed, so the next delivery can retry
+        it. Deleting the last member drops the `fired` attribute; fired_markers reads set()."""
+        key = {"pk": _pk(last_pay_date, length), "sk": "FIRED"}
+        try:
+            self._get_table().update_item(
+                Key=key,
+                UpdateExpression="DELETE #f :m",
+                ExpressionAttributeNames={"#f": "fired"},
+                ExpressionAttributeValues={":m": {marker}},
+            )
+        except ClientError as e:
+            handle_database_error(e, "release budget-alert marker")
 
     def fired_repayments(self) -> set:
         """The set of home-loan repayment transaction ids already notified (WHIT-15)."""

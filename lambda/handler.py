@@ -115,9 +115,9 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
         paycycle_repo=PayCycleRepository(),
     )
 
-    # Budget-threshold alerts (WHIT-22): snapshot spend BEFORE the write, so a
-    # crossing can be detected against the pre-write state. Best-effort — a failure
-    # here must never affect the write; it just skips alerting for this event.
+    # Budget-threshold alerts (WHIT-22): snapshot BEFORE the write, so the post-write
+    # spend can be replayed in memory. Best-effort — a failure here must never affect
+    # the write; it just skips alerting for this event.
     alert_ctx = None
     try:
         alert_ctx = budget_alerts.capture_pre_write(
@@ -138,10 +138,10 @@ def process_transaction(payload: dict, repo: TransactionRepository) -> None:
     # ClientError to a DatabaseError before it could reach here (WHIT-83, WHIT-127).
     repo.insert_or_reconcile(normalised_transactions, is_unfiled=is_unfiled)
 
-    # After the write succeeds, fire any budget-threshold crossing (best-effort).
+    # After the write succeeds, fire any budget threshold reached this cycle (best-effort).
     if alert_ctx is not None:
         try:
-            budget_alerts.fire_if_crossed(
+            budget_alerts.fire_budget_alerts(
                 alert_ctx, normalised_transactions,
                 webhook_repo=repo,
                 category_repo=CategoryRepository(),
