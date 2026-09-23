@@ -115,7 +115,7 @@ export default function Transactions() {
   // "All caught up", or cold-load states. `hasMore` distinguishes "keep loading" from "pull to
   // refresh"; the `serverCount > 0` arm covers the stale-badge skew when there are no more pages.
   const showUncategorizedMore = tab === 'uncategorized' && !allCaughtUp && groups.length === 0
-    && query.length === 0 && !showSpinner && !showError && (hasMore || (serverCount ?? 0) > 0);
+    && !searchingServer && !showSpinner && !showError && (hasMore || (serverCount ?? 0) > 0);
   // Pull-to-refresh (WHIT-489: shared hook): refresh the visible list AND fetch fresh account
   // balances live from the bank, with the WHIT-363 stuck-spinner invariant owned in one place.
   // The other screens (budgets, loan, rules, pay-cycle) refresh themselves on focus via their
@@ -284,7 +284,7 @@ export default function Transactions() {
         {/* Search returned nothing on this tab (the "all caught up" state below still owns the
             genuinely-empty uncategorized case, so don't double up on it). WHIT-576: only once the
             server has searched ALL history — never while it's still looking or after it failed. */}
-        {!showSpinner && !showError && query.length > 0 && groups.length === 0 && !allCaughtUp && !searchPending && !searchFailed && (
+        {!showSpinner && !showError && searchingServer && groups.length === 0 && !allCaughtUp && !searchPending && !searchFailed && (
           <View testID="transactions-no-results" style={styles.empty}>
             <View style={[styles.emptyIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="search" size={30} color={C.textDim} /></View>
             <Text style={styles.emptyTitle}>No matches</Text>

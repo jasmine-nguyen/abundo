@@ -35,6 +35,11 @@
     { "name": "percent in description", "txn": { "merchant_name": "", "description": "50% OFF SALE", "amount": -4, "category": null }, "query": "50%", "match": true },
     { "name": "notes", "via": "notesTags", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "Steven's birthday" }, "query": "birthday", "match": true },
     { "name": "tags", "via": "notesTags", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "tags": ["reimburse", "work"] }, "query": "reimburse", "match": true },
-    { "name": "notes and tags miss", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "dinner", "tags": ["work"] }, "query": "holiday", "match": false }
+    { "name": "notes and tags miss", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "dinner", "tags": ["work"] }, "query": "holiday", "match": false },
+    { "name": "accented upper-case merchant, lower-case query", "txn": { "merchant_name": "CAFÉ ÉCLAIR", "description": "x", "amount": -4, "category": null }, "query": "café éclair", "match": true },
+    { "name": "sharp s in the merchant matches a typed sharp s", "txn": { "merchant_name": "Straße Deli", "description": "x", "amount": -4, "category": null }, "query": "STRAßE", "match": true },
+    { "name": "sharp s is not folded to ss (no casefold on either side)", "txn": { "merchant_name": "STRASSE BAKERY", "description": "x", "amount": -4, "category": null }, "query": "straße", "match": false },
+    { "name": "decomposed accent is not normalised to the composed one", "txn": { "merchant_name": "Cafe\u0301 Luna", "description": "x", "amount": -4, "category": null }, "query": "caf\u00e9", "match": false },
+    { "name": "dotted capital I lower-cases the same on both sides", "txn": { "merchant_name": "İSTANBUL KEBAB", "description": "x", "amount": -4, "category": null }, "query": "istanbul", "match": false }
   ]
 }

@@ -6,7 +6,8 @@
 //      tapping a found row files nothing (applyCategory bails "not found" → no API call).
 //   2. PATCH — every instant edit lands in the search cache, again by prefix (the real key carries
 //      the tab + query, so an exact ['transactionsSearch'] write would silently match nothing).
-//   3. INVALIDATE — server-side re-files (apply-rules) and category delete/rename refresh searches.
+//   3. INVALIDATE — category delete/rename refresh searches (apply-rules is locked in
+//      transactionsSearchApplyRules.provider.screen.test.tsx).
 //
 // Fail-on-revert: drop readSearchRows from readTransactionsCache → [1] fails; drop the
 // setQueriesData arm from patchTransactionsCache → [2]/[3]/[4]/[5] fail; drop an invalidate → [6]/[7] fail; drop the name-changed check → [8] fails.

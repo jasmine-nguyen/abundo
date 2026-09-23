@@ -120,6 +120,24 @@ it('[Q4b] Retry under a search still reloads a FAILED feed (its error screen hid
   await waitFor(() => expect(result.current.isError).toBe(false));
 });
 
+// A search that already had an answer and then failed a refresh keeps its error flag while a
+// manual Retry runs — the screen must show "Searching…", not the stale error.
+it('[Q4c] a manual Retry after a failed refresh reports "searching", not the old error', async () => {
+  let resolveRetry: (value: unknown) => void = () => {};
+  const { result } = mountScreenData(makeClient(), { tab: 'all', query: 'steven' });
+  await waitFor(() => expect(result.current.search.answered).toBe(true));
+  mockSearch.mockRejectedValueOnce(new Error('offline'));
+  await act(async () => { await result.current.refetchList(); });
+  await waitFor(() => expect(result.current.search.isError).toBe(true));
+
+  mockSearch.mockImplementation(() => new Promise((resolve) => { resolveRetry = resolve; }));
+  act(() => { result.current.search.retry(); });
+
+  await waitFor(() => expect(result.current.search.isError).toBe(false));
+  await act(async () => { resolveRetry({ transactions: [tx('all-steven')], truncated: false }); });
+  await waitFor(() => expect(result.current.search.answered).toBe(true));
+});
+
 it('[Q5] the resolver finds a search-only row and sees a patch to it', async () => {
   const client = makeClient();
   client.setQueryData(['transactionsSearch', 'all', 'steven'], { transactions: [tx('deep1')], truncated: false });

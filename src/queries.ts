@@ -907,15 +907,16 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
     if (feedQuery.isStale) feedQuery.refetch(); // refetches every loaded page in place (keeps place)
   }, [feedQuery, categoriesQuery, searchActive, searchQueryResult]);
 
-  const { data: searchData, isPlaceholderData: searchIsPlaceholder, isError: searchIsError, refetch: refetchSearch } = searchQueryResult;
+  const { data: searchData, isPlaceholderData: searchIsPlaceholder, isError: searchIsError, isFetching: searchIsFetching, refetch: refetchSearch } = searchQueryResult;
   const search = useMemo<TransactionsSearchState>(() => ({
     active: searchActive,
     results: (searchActive && searchData?.transactions) || EMPTY_TX,
     answered: searchActive && !!searchData && !searchIsPlaceholder,
     truncated: searchActive && !searchIsPlaceholder && !!searchData?.truncated,
-    isError: searchActive && searchIsError,
+    // A manual Retry keeps the error flag set while it runs; report it as searching again instead.
+    isError: searchActive && searchIsError && !searchIsFetching,
     retry: () => { refetchSearch(); },
-  }), [searchActive, searchData, searchIsPlaceholder, searchIsError, refetchSearch]);
+  }), [searchActive, searchData, searchIsPlaceholder, searchIsError, searchIsFetching, refetchSearch]);
 
   return { search, transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }
