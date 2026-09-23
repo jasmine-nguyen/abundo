@@ -21,8 +21,11 @@ the call site (a failure never breaks the transaction write):
 
 The snapshot reads the date-index GSI, which is eventually consistent. Right after a
 settlement webhook, GSI delete-lag can briefly show BOTH the stale pending and its posted
-twin, overstating spend and rarely firing a threshold a moment early. Accepted: it needs
-overlapping deliveries within seconds.
+twin, double-counting that charge. A delivery that reads inside that window can fire a
+threshold the real spend hasn't reached (a false "Budget hit" that also marks 80%, so the real
+80% heads-up never comes this cycle). Accepted by Jas (WHIT-577): it needs a second delivery
+within the sub-second lag, and without a stored pending→posted link, de-duplicating by
+merchant + amount could hide a real charge instead.
 
 Spend basis = posted + pending (committed spend). A budget past both thresholds sends only
 the higher (100%) but marks both. Two or more budgets due in one delivery get ONE combined
