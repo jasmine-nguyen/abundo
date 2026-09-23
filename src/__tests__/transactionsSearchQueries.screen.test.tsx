@@ -120,6 +120,23 @@ it('[Q4b] Retry under a search still reloads a FAILED feed (its error screen hid
   await waitFor(() => expect(result.current.isError).toBe(false));
 });
 
+it('[Q4d] with rows still on screen, a failed feed refresh does not stop a pull re-asking the search', async () => {
+  const client = makeClient();
+  const { result } = mountScreenData(client, { tab: 'all', query: 'steven' });
+  await waitFor(() => expect(result.current.search.answered).toBe(true));
+  await waitFor(() => expect(ids(result.current.transactions)).toEqual(['feed1']));
+  mockFeed.mockRejectedValueOnce(new Error('offline'));
+  await act(async () => { await client.refetchQueries({ queryKey: ['transactions'] }); });
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  mockSearch.mockClear();
+  mockFeed.mockClear();
+
+  await act(async () => { await result.current.refetchList(); });
+
+  expect(mockSearch).toHaveBeenCalledWith('all', 'steven');
+  expect(mockFeed).not.toHaveBeenCalled();
+});
+
 // A search that already had an answer and then failed a refresh keeps its error flag while a
 // manual Retry runs — the screen must show "Searching…", not the stale error.
 it('[Q4c] a manual Retry after a failed refresh reports "searching", not the old error', async () => {

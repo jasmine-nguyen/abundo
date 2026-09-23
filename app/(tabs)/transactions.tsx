@@ -284,7 +284,7 @@ export default function Transactions() {
         {/* Search returned nothing on this tab (the "all caught up" state below still owns the
             genuinely-empty uncategorized case, so don't double up on it). WHIT-576: only once the
             server has searched ALL history — never while it's still looking or after it failed. */}
-        {!showSpinner && !showError && searchingServer && groups.length === 0 && !allCaughtUp && !searchPending && !searchFailed && (
+        {!showSpinner && !showError && searchAnswered && groups.length === 0 && !allCaughtUp && (
           <View testID="transactions-no-results" style={styles.empty}>
             <View style={[styles.emptyIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="search" size={30} color={C.textDim} /></View>
             <Text style={styles.emptyTitle}>No matches</Text>

@@ -117,7 +117,7 @@ it('[A5] "$" on the Uncategorized tab never claims "No matches" while Load More 
   fireEvent.press(screen.getByTestId('tab-uncategorized'));
   type('$');
   pauseTyping();
-  const loadMoreShowing = screen.queryByTestId('transactions-load-more') !== null;
-  const noMatchesShowing = screen.queryByTestId('transactions-no-results') !== null;
-  expect(loadMoreShowing && noMatchesShowing).toBe(false);
+  expect(screen.queryByTestId('transactions-no-results')).toBeNull();
+  expect(screen.getByTestId('transactions-uncategorized-more')).toBeTruthy();
+  expect(screen.getByTestId('transactions-load-more')).toBeTruthy();
 });

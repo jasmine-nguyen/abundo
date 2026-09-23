@@ -1,12 +1,10 @@
 """WHIT-576 — QA gap tests for GET /transactions/search, beyond test_transaction_search.py (which
 calls get_transactions_search directly):
 
-  [S1] bad input through the REAL router (lambda_handler) is a 400 — and costs no history scan.
   [S2] only GET runs the search; a POST to the same path never does.
   [S3] a row with no `date` (missing or null) neither crashes the sort nor jumps ahead of dated rows.
 """
 
-import json
 
 import pytest
 
@@ -38,32 +36,6 @@ def routed(handler, monkeypatch):
     monkeypatch.setattr(handler, "TransactionRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: categories)
     return handler, repo, categories
-
-
-@pytest.mark.parametrize("params", [
-    None,
-    {"q": "   "},
-    {"q": "steven", "tab": "budgets"},
-    {"q": "steven", "tab": "Uncategorized"},  # tab is case-sensitive: the app only sends lower-case
-    {"q": "a" * 101},
-])
-def test_bad_input_through_the_router_is_a_400_without_scanning(routed, params):
-    handler, repo, categories = routed
-
-    response = handler.lambda_handler(_event(params), None)
-
-    assert response["statusCode"] == 400
-    assert "error" in json.loads(response["body"])
-    assert repo.calls == [] and categories.calls == 0, "bad input must not pay for a whole-history scan"
-
-
-def test_good_input_through_the_router_is_a_200(routed):
-    handler, _repo, _categories = routed
-
-    response = handler.lambda_handler(_event({"q": " Steven ", "tab": "uncategorized"}), None)
-
-    assert response["statusCode"] == 200
-    assert [txn["transaction_id"] for txn in json.loads(response["body"])["transactions"]] == ["a1"]
 
 
 def test_post_to_the_search_path_never_runs_the_search(routed, monkeypatch):

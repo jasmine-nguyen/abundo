@@ -155,19 +155,26 @@ def test_exactly_the_limit_is_not_truncated(handler, transaction_search):
 
 
 @pytest.mark.parametrize("params", [None, {}, {"q": ""}, {"q": "   "}])
-def test_blank_query_is_a_400(handler, params):
-    response = handler.get_transactions_search(_search_event(params), FakeFeedRepo({}), _CATEGORIES)
+def test_blank_query_is_a_400_without_scanning(handler, params):
+    repo = FakeFeedRepo({})
+    response = handler.get_transactions_search(_search_event(params), repo, _CATEGORIES)
     assert response["statusCode"] == 400
+    assert repo.calls == [], "bad input must not pay for a whole-history scan"
 
 
 def test_query_length_limit(handler, transaction_search):
     max_len = transaction_search.SEARCH_QUERY_MAX_LEN
     assert _search(handler, FakeFeedRepo({}), {"q": "a" * max_len})["statusCode"] == 200
-    assert _search(handler, FakeFeedRepo({}), {"q": "a" * (max_len + 1)})["statusCode"] == 400
+    too_long = FakeFeedRepo({})
+    assert _search(handler, too_long, {"q": "a" * (max_len + 1)})["statusCode"] == 400
+    assert too_long.calls == []
 
 
-def test_unknown_tab_is_a_400(handler):
-    assert _search(handler, FakeFeedRepo({}), {"q": "steven", "tab": "budgets"})["statusCode"] == 400
+@pytest.mark.parametrize("tab", ["budgets", "Uncategorized"])  # case-sensitive: the app sends lower-case
+def test_unknown_tab_is_a_400_without_scanning(handler, tab):
+    repo = FakeFeedRepo({})
+    assert _search(handler, repo, {"q": "steven", "tab": tab})["statusCode"] == 400
+    assert repo.calls == []
 
 
 def test_the_router_dispatches_the_search_path(handler, monkeypatch):

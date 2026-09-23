@@ -289,7 +289,8 @@ export function useUncategorizedFeedQuery(enabled: boolean) {
 /** Resolve a tapped transaction by id across every list cache it might live in — the
  *  all-accounts feed, the uncategorized feed (a deep-history unfiled row shown on the
  *  Uncategorized tab lives ONLY here), the bounded recent window (a row tapped on
- *  account-detail), and the search results (WHIT-576: a deep-history match lives only there). One place, so the picker, confirm sheet, and detail screen can't drift on
+ *  account-detail), and the search results (WHIT-576: a deep-history match lives only
+ *  there). One place, so the picker, confirm sheet, and detail screen can't drift on
  *  which caches they search. Only LOADED pages are in cache, but only loaded rows are ever
  *  visible/tappable, so that is exactly the set the user can act on. */
 export interface TransactionResolver {
@@ -857,9 +858,10 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
   //  • manual pull / inline Retry: SNAP to newest — trim to the first page, then refetch it fresh
   //    (+ the taxonomy). One round-trip, and it re-pages history cleanly from the top.
   const refetchList = useCallback(() => {
-    // Under a search, refresh the search instead of the feed — unless the feed itself failed (its
-    // full-screen error hides the search too), so Retry can still recover it.
-    if (searchActive && !feedQuery.isError) {
+    // Under a search, refresh the search instead of the feed — unless the feed failed with nothing
+    // loaded: its full-screen error then hides the search too, so Retry must recover the feed.
+    const feedErrorHidesSearch = feedQuery.isError && transactions.length === 0;
+    if (searchActive && !feedErrorHidesSearch) {
       return Promise.all([
         searchQueryResult.refetch(),
         categoriesQuery.refetch(),
@@ -880,7 +882,7 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', 
       categoriesQuery.refetch(),
       queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
     ]);
-  }, [feedQuery, categoriesQuery, queryClient, activeFeedKey, searchActive, searchQueryResult]);
+  }, [feedQuery, categoriesQuery, queryClient, activeFeedKey, searchActive, searchQueryResult, transactions]);
   // Inline Retry (list-load error) refreshes the list AND re-reads the STORED balances — cheap,
   // no live bank call. The live call is pull-only (refreshLiveBalances). Balances stay out of
   // isFetching/isError so a balances hiccup can't blank or stick-spin the list (WHIT-212/363).
