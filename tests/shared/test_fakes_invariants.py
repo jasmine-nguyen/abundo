@@ -224,6 +224,13 @@ _REGISTRY = [
         (_LAMBDA_TESTS / "test_reprocess.py",
          _LAMBDA_TESTS / "test_westpac_recovery_qa.py"),
     ),
+    _Domain(
+        "budget-alert",
+        [_Module("_budget_alert_fakes", {"FakeNotifyRepo"})],
+        (_LAMBDA_TESTS / "test_budget_alerts.py",
+         _LAMBDA_TESTS / "test_whit329_qa.py",
+         _LAMBDA_TESTS / "test_reconcile_merchant_match.py"),
+    ),
 ]
 
 # A malformed registry (an empty suite tuple, or a domain that owns no names) would make the

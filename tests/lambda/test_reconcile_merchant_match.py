@@ -29,6 +29,7 @@ or from the repo's own existing fixtures. No invented merchants.
 from decimal import Decimal
 
 import pytest
+from _budget_alert_fakes import FakeNotifyRepo
 
 _BANK_ACCOUNT_ID = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> anz-rewards-black-visa
 
@@ -358,19 +359,8 @@ class _FakeRepo:
         return dict(self._v)
 
 
-class _FakeNotifyRepo:
-    def __init__(self):
-        self.store = {}
-
-    def fired_markers(self, last, length):
-        return set(self.store.get((last, length), set()))
-
-    def mark_fired(self, last, length, marker):
-        self.store.setdefault((last, length), set()).add(marker)
-
-
-def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo):
-    """Drive capture_pre_write + fire_if_crossed with the REAL webhook repository, so
+def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo, notify=None):
+    """Drive capture_pre_write + fire_budget_alerts with the REAL webhook repository, so
     the Δ simulation runs the production `_reconcile_matches` (and therefore the
     WHIT-336 gate) rather than a stand-in."""
     import spend
@@ -381,7 +371,7 @@ def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo):
                         lambda t, b, toks, data=None: (sent.append((t, b)),
                                                        {"sent": len(list(toks)), "ok": 1,
                                                         "pruned": []})[1])
-    notify = _FakeNotifyRepo()
+    notify = notify or FakeNotifyRepo()
     ctx = ba.capture_pre_write(
         normalised,
         device_repo=_FakeRepo(["ExpoPushToken[a]"]),
@@ -390,7 +380,7 @@ def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo):
         window_repo=_FakeWindowRepo(before),
         webhook_repo=webhook_repo,
     )
-    ba.fire_if_crossed(ctx, normalised, webhook_repo=webhook_repo,
+    ba.fire_budget_alerts(ctx, normalised, webhook_repo=webhook_repo,
                        category_repo=_FakeRepo([{"id": "groceries", "name": "Groceries",
                                                  "bucket": "Needs"}]),
                        notify_repo=notify)
@@ -401,20 +391,22 @@ def test_budget_alert_preview_does_not_double_count_a_full_column_settlement(lam
     # [A9] budget_alerts previews the alert by replaying the write over a pre-write
     # snapshot through the repo's own `_reconcile_matches`. Pending -88.10 groceries
     # (target 100) settles as the skewed posting. Correct Δ: the twin is removed and the
-    # posting added → combined stays 88.10, which is past 80% — already crossed BEFORE
-    # the write, so nothing newly crosses and no push fires. If the gate stops matching,
-    # the twin survives, combined reads 176.20 and a FALSE 100% push goes out.
+    # posting added → combined stays 88.10, past 80% (already warned — seeded below) but under
+    # 100%, so no push fires. If the gate stops matching, the twin survives, combined reads
+    # 176.20 and a FALSE 100% push goes out.
     _woolies_pending(repo, lam, txn_id="PEND", category="groceries")
     before = list(repo._table.store.values())
     posted = _woolies_posted(lam, txn_id="POST")
     posted = dict(posted)
     posted["category"] = "groceries"
+    notify = FakeNotifyRepo()
+    notify.mark_fired("2026-07-15", 14, "groceries#80")
 
     sent, notify = _run_alerts(lam, monkeypatch, budgets={"groceries": {"target": Decimal("100")}},
-                               before=before, normalised=[posted], webhook_repo=repo)
+                               before=before, normalised=[posted], webhook_repo=repo, notify=notify)
 
     assert sent == []
-    assert notify.fired_markers("2026-07-15", 14) == set()
+    assert notify.fired_markers("2026-07-15", 14) == {"groceries#80"}
 
 
 def test_budget_alert_preview_still_fires_when_the_gate_correctly_refuses(lam, repo, monkeypatch):

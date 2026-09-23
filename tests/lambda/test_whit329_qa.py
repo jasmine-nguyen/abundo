@@ -16,6 +16,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from _budget_alert_fakes import FakeNotifyRepo
 
 _BANK_ACCT = "9h2FO6S58zunrwF3U3MhBoaEQNDDfqVlEC5bLSWNdN0"  # -> "anz-rewards-black-visa"
 _TODAY = date(2026, 7, 14)   # cycle [2026-07-01, 2026-07-14] with payday 07-01, len 14
@@ -89,17 +90,6 @@ class _CategoryRepo:
         return self._c
 
 
-class _NotifyRepo:
-    def __init__(self):
-        self.store = {}
-
-    def fired_markers(self, last, length):
-        return set(self.store.get((last, length), set()))
-
-    def mark_fired(self, last, length, marker):
-        self.store.setdefault((last, length), set()).add(marker)
-
-
 def _run_alerts(alerts, monkeypatch, *, budgets, before, normalised, webhook_repo,
                 cats=(("groceries", "Groceries", "Living"),)):
     ba = alerts.budget_alerts
@@ -107,13 +97,13 @@ def _run_alerts(alerts, monkeypatch, *, budgets, before, normalised, webhook_rep
     monkeypatch.setattr(ba, "send_push",
                         lambda title, body, toks, data=None:
                         (sent.append((title, body)), {"sent": 1, "ok": 1, "pruned": []})[1])
-    notify = _NotifyRepo()
+    notify = FakeNotifyRepo()
     catlist = [{"id": c[0], "name": c[1], "bucket": c[2]} for c in cats]
     ctx = ba.capture_pre_write(
         normalised, device_repo=_DeviceRepo(), budget_repo=_BudgetRepo(budgets),
         paycycle_repo=_PaycycleRepo(), window_repo=_WindowRepo(before), webhook_repo=webhook_repo,
     )
-    ba.fire_if_crossed(ctx, normalised, webhook_repo=webhook_repo,
+    ba.fire_budget_alerts(ctx, normalised, webhook_repo=webhook_repo,
                        category_repo=_CategoryRepo(catlist), notify_repo=notify)
     return sent, notify
 

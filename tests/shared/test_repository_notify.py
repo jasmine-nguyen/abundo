@@ -11,35 +11,52 @@ from decimal import Decimal
 
 
 class FakeNotifyTable:
-    """In-memory stand-in modelling the ADD-to-set + SET-ttl update_item + get_item
-    the NotifyRepository issues, keyed by (pk, sk) so cycles are isolated."""
+    """In-memory stand-in modelling the update_item + get_item the NotifyRepository issues,
+    keyed by (pk, sk) so cycles are isolated: ADD-to-set + SET-ttl, the WHIT-577 conditional
+    claim, and DELETE-from-set. `client_error` builds the ConditionalCheckFailed a real table
+    raises when the claim's condition fails."""
 
-    def __init__(self):
+    CLAIM_CONDITION = "attribute_not_exists(#f) OR NOT contains(#f, :v)"
+
+    def __init__(self, client_error=None):
         self.store: dict = {}
+        self._client_error = client_error
 
     def get_item(self, Key):
         item = self.store.get((Key["pk"], Key["sk"]))
         return {"Item": dict(item)} if item is not None else {}
 
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
+    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues,
+                    ConditionExpression=None):
+        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
+        fired_attr = ExpressionAttributeNames["#f"]
+        member = ExpressionAttributeValues[":m"]
+        assert isinstance(member, set), "String-Set ADD/DELETE must pass a set"
+        if UpdateExpression == "DELETE #f :m":
+            remaining = set(item.get(fired_attr, set())) - member
+            if remaining:
+                item[fired_attr] = remaining
+            else:
+                item.pop(fired_attr, None)  # deleting the last member drops the attribute
+            return
+        if ConditionExpression is not None:
+            assert ConditionExpression == self.CLAIM_CONDITION, ConditionExpression
+            if ExpressionAttributeValues[":v"] in item.get(fired_attr, set()):
+                raise self._client_error("ConditionalCheckFailedException")
         # "ADD #f :m SET <assign>[, <assign>...]" — budget markers set the TTL only;
         # repayment markers also set last_fired_at (WHIT-316). Parse the SET clause
         # generically so both shapes round-trip.
         add_part, _, set_part = UpdateExpression.partition(" SET ")
         assert add_part == "ADD #f :m", UpdateExpression
-        member = ExpressionAttributeValues[":m"]
-        assert isinstance(member, set), "String-Set ADD must pass a set"
-        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
-        fired_attr = ExpressionAttributeNames["#f"]
         item[fired_attr] = set(item.get(fired_attr, set())) | member
         for assignment in set_part.split(","):
             name_alias, value_alias = (part.strip() for part in assignment.split("="))
             item[ExpressionAttributeNames[name_alias]] = ExpressionAttributeValues[value_alias]
 
 
-def _repo(shared):
+def _repo(shared, client_error=None):
     r = shared.notify.NotifyRepository()
-    r._table = FakeNotifyTable()
+    r._table = FakeNotifyTable(client_error)
     return r
 
 
@@ -90,6 +107,70 @@ def test_client_error_surfaces_as_database_error(shared, client_error, database_
     r._table.update_item = boom
     with pytest.raises(database_error):
         r.mark_fired("2026-07-01", 14, "groceries#80")
+
+
+# --- WHIT-577: claim before send, release when the push didn't land -----------
+
+
+def test_claim_on_a_new_cycle_creates_the_marker_and_ttl(shared, client_error):
+    r = _repo(shared, client_error)
+    assert r.claim_fired("2026-07-01", 14, "groceries#80") is True
+    item = r._table.store[("NOTIFY#2026-07-01#14", "FIRED")]
+    assert item["fired"] == {"groceries#80"}
+    assert isinstance(item["expires_at"], int) and item["expires_at"] > 0
+
+
+def test_claim_beside_other_markers_adds_this_one(shared, client_error):
+    r = _repo(shared, client_error)
+    r.mark_fired("2026-07-01", 14, "coffee#80")
+    assert r.claim_fired("2026-07-01", 14, "groceries#80") is True
+    assert r.fired_markers("2026-07-01", 14) == {"coffee#80", "groceries#80"}
+
+
+def test_second_claim_of_the_same_marker_loses_without_raising(shared, client_error):
+    # Another delivery already claimed it. Fail-on-revert: route ConditionalCheckFailed
+    # through handle_database_error → DatabaseError instead of False.
+    r = _repo(shared, client_error)
+    assert r.claim_fired("2026-07-01", 14, "groceries#80") is True
+    assert r.claim_fired("2026-07-01", 14, "groceries#80") is False
+
+
+def test_claim_other_errors_surface_as_database_error(shared, client_error, database_error):
+    r = _repo(shared, client_error)
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    r._table.update_item = boom
+    with pytest.raises(database_error):
+        r.claim_fired("2026-07-01", 14, "groceries#80")
+
+
+def test_release_lets_the_marker_be_claimed_again(shared, client_error):
+    r = _repo(shared, client_error)
+    r.claim_fired("2026-07-01", 14, "groceries#80")
+    r.release_fired("2026-07-01", 14, "groceries#80")
+    assert r.fired_markers("2026-07-01", 14) == set()
+    assert r.claim_fired("2026-07-01", 14, "groceries#80") is True
+
+
+def test_release_keeps_the_other_markers(shared, client_error):
+    r = _repo(shared, client_error)
+    r.mark_fired("2026-07-01", 14, "coffee#80")
+    r.claim_fired("2026-07-01", 14, "groceries#80")
+    r.release_fired("2026-07-01", 14, "groceries#80")
+    assert r.fired_markers("2026-07-01", 14) == {"coffee#80"}
+
+
+def test_release_error_surfaces_as_database_error(shared, client_error, database_error):
+    r = _repo(shared, client_error)
+
+    def boom(**kwargs):
+        raise client_error("InternalServerError")
+
+    r._table.update_item = boom
+    with pytest.raises(database_error):
+        r.release_fired("2026-07-01", 14, "groceries#80")
 
 
 # --- repayment-notify markers (WHIT-15), keyed on transaction id --------------
