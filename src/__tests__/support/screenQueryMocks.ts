@@ -8,6 +8,8 @@
 // per test. Only the hooks a screen calls need to resolve; the rest are harmless stubs.
 // (Not a *.test.ts file, so the jest testMatch never runs it as a suite.)
 
+import { idleSearch } from './transactionsScreenData';
+
 // A store-shaped screen fixture. WHIT-192: the old eager store is gone, so screen tests
 // no longer type these against AppContext — they carry just the fields a screen's query
 // composite reads (re-routed here) plus any client-state (AI slice, openPicker, writers)
@@ -53,7 +55,7 @@ export function queryMocksFromState(getState: () => ScreenState) {
     useCategories: () => ({ categories: cats(), category, ...status, isLoading: st().categoriesLoading ?? false, isError: st().categoriesError ?? false }),
     useBudgetsScreenData: () => ({ budgets: st().budgets ?? [], category, cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, cycleStart: '2026-06-06', payCycleError: st().payCycleError ?? false, ...status }),
     useBudgetDetailScreenData: () => ({ category, budgets: st().budgets ?? [], transactions: st().transactions ?? [], cycleLen: st().cycleLen ?? 14, daysLeft: st().daysLeft ?? 7, payCycleError: st().payCycleError ?? false, ...status }),
-    useTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, isFetching: false, hasMore: false, loadMore: noop, isLoadingMore: false, ...status }),
+    useTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, isFetching: false, hasMore: false, loadMore: noop, isLoadingMore: false, search: idleSearch, ...status }),
     // The bounded recent list (tab dot, account detail, goal-edit picker). Same fixture as the
     // tab composite here — screens needing real per-account balances use an inline mock instead.
     useRecentTransactionsScreenData: () => ({ transactions: st().transactions ?? [], category, balances: new Map(), isFetching: false, ...status }),

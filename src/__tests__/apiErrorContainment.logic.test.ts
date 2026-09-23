@@ -52,6 +52,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   fetchTransactions: () => api.fetchTransactions(),
   fetchTransactionsFeed: () => api.fetchTransactionsFeed('cur', 25),
   fetchUncategorizedFeed: () => api.fetchUncategorizedFeed('cur', 25), // a read → generic error, NOT a reason-carrying write
+  fetchTransactionsSearch: () => api.fetchTransactionsSearch('all', 'steven'), // WHIT-576: a read → generic error, NOT a reason-carrying write
   fetchUncategorizedCount: () => api.fetchUncategorizedCount(), // WHIT-501: a read → generic error, NOT a reason-carrying write
   fetchUncategorizedMerchants: () => api.fetchUncategorizedMerchants(), // WHIT-517: a read → generic error, NOT a reason-carrying write
   fetchFilingSuggestions: () => api.fetchFilingSuggestions(), // WHIT-542: a read → generic error, NOT a reason-carrying write

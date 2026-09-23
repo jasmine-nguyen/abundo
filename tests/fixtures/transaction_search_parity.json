@@ -1,0 +1,40 @@
+{
+  "_comment": "WHIT-576 parity: the app's transactionMatchesSearch (src/context.tsx) and the server's transaction_matches_search (lambda_api/transaction_search.py) must agree on every case. Loaded by src/__tests__/transactionSearchParity.logic.test.ts and tests/lambda_api/test_transaction_search.py.",
+  "includeNotesAndTags": true,
+  "queryMaxLength": 100,
+  "categories": [
+    { "id": "groceries", "name": "Groceries" },
+    { "id": "eating_out", "name": "Eating Out" }
+  ],
+  "cases": [
+    { "name": "merchant name", "txn": { "merchant_name": "Steven Nguyen", "description": "OSKO 123", "amount": -50, "category": null }, "query": "steven", "match": true },
+    { "name": "mixed-case query", "txn": { "merchant_name": "Steven Nguyen", "description": "OSKO 123", "amount": -50, "category": null }, "query": "  STEVEN ", "match": true },
+    { "name": "no match", "txn": { "merchant_name": "Coles", "description": "COLES 0421", "amount": -12.3, "category": "groceries" }, "query": "steven", "match": false },
+    { "name": "description when merchant differs", "txn": { "merchant_name": "Osko", "description": "Payment to Steven for dinner", "amount": -20, "category": null }, "query": "steven", "match": true },
+    { "name": "cleaned merchant label", "txn": { "merchant_name": "UNIFLEXREMEDIALMASSAGE", "description": "UNIFLEXREMEDIALMASSAGE SYD", "amount": -90, "category": null }, "query": "uniflex massage", "match": true },
+    { "name": "cleaned label of each CLEAN_NAME key: doordash", "txn": { "merchant_name": "DD *DOORDASH HUTIEUGOO", "description": "x", "amount": -1, "category": null }, "query": "doordash", "match": true },
+    { "name": "cleaned label of each CLEAN_NAME key: kkv", "txn": { "merchant_name": "SQ *KKV INTERNATIONAL", "description": "x", "amount": -1, "category": null }, "query": "kkv international", "match": true },
+    { "name": "merchant falls back to description", "txn": { "merchant_name": "", "description": "UNIFLEX REMEDIAL MASSAGE", "amount": -90, "category": null }, "query": "uniflex massage", "match": true },
+    { "name": "missing description", "txn": { "merchant_name": "Coles", "amount": -5, "category": "groceries" }, "query": "coles", "match": true },
+    { "name": "both missing never matches the word undefined", "txn": { "amount": -5, "category": "groceries" }, "query": "undefined", "match": false },
+    { "name": "both missing never matches the word none", "txn": { "amount": -5, "category": "groceries" }, "query": "none", "match": false },
+    { "name": "category name", "txn": { "merchant_name": "Pho Hung", "description": "PHO HUNG", "amount": -30, "category": "eating_out" }, "query": "eating out", "match": true },
+    { "name": "income label", "txn": { "merchant_name": "Employer", "description": "SALARY", "amount": 3000, "category": "income" }, "query": "income", "match": true },
+    { "name": "null category is Uncategorized", "txn": { "merchant_name": "Shop", "description": "SHOP", "amount": -3, "category": null }, "query": "uncategorized", "match": true },
+    { "name": "raw bank enum is Uncategorized", "txn": { "merchant_name": "Shop", "description": "SHOP", "amount": -3, "category": "FOOD_AND_DRINK" }, "query": "uncategorized", "match": true },
+    { "name": "filed row is not Uncategorized", "txn": { "merchant_name": "Shop", "description": "SHOP", "amount": -3, "category": "groceries" }, "query": "uncategorized", "match": false },
+    { "name": "whole amount", "txn": { "merchant_name": "A", "description": "A", "amount": -42, "category": null }, "query": "42", "match": true },
+    { "name": "amount with cents", "txn": { "merchant_name": "A", "description": "A", "amount": -42.5, "category": null }, "query": "42.50", "match": true },
+    { "name": "amount with dollar sign", "txn": { "merchant_name": "A", "description": "A", "amount": -42, "category": null }, "query": "$42", "match": true },
+    { "name": "amount with thousands comma", "txn": { "merchant_name": "A", "description": "A", "amount": -1234.5, "category": null }, "query": "1,234.50", "match": true },
+    { "name": "amount with dollar and unpadded cents", "txn": { "merchant_name": "A", "description": "A", "amount": 1234.5, "category": null }, "query": "$1234.5", "match": true },
+    { "name": "negative zero formats as 0.00", "txn": { "merchant_name": "A", "description": "A", "amount": -0.0, "category": null }, "query": "0.00", "match": true },
+    { "name": "dollar-only query matches everything", "txn": { "merchant_name": "A", "description": "A", "amount": -1, "category": null }, "query": "$", "match": true },
+    { "name": "whitespace-only query matches everything", "txn": { "merchant_name": "A", "description": "A", "amount": -1, "category": null }, "query": "   ", "match": true },
+    { "name": "ampersand in description", "txn": { "merchant_name": "", "description": "B&W CAFE", "amount": -4, "category": null }, "query": "b&w", "match": true },
+    { "name": "percent in description", "txn": { "merchant_name": "", "description": "50% OFF SALE", "amount": -4, "category": null }, "query": "50%", "match": true },
+    { "name": "notes", "via": "notesTags", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "Steven's birthday" }, "query": "birthday", "match": true },
+    { "name": "tags", "via": "notesTags", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "tags": ["reimburse", "work"] }, "query": "reimburse", "match": true },
+    { "name": "notes and tags miss", "txn": { "merchant_name": "Osko", "description": "OSKO 99", "amount": -20, "category": null, "notes": "dinner", "tags": ["work"] }, "query": "holiday", "match": false }
+  ]
+}

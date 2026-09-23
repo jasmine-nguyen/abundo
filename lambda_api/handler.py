@@ -59,6 +59,7 @@ from constants import (
     UNCATEGORIZED_KEY,
     UNCATEGORIZED_MERCHANTS_PATH,
     FILING_SUGGESTIONS_PATH,
+    TRANSACTIONS_SEARCH_PATH,
 )
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
@@ -125,6 +126,7 @@ from merchant_groups import (
     rule_value_is_safe,
 )
 from filing_habits import suggest_rules_from_filing_habits
+from transaction_search import SEARCH_QUERY_MAX_LEN, search_transactions
 from milestones import mint_migration_markers
 from rule_engine import (
     plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
@@ -198,6 +200,11 @@ def lambda_handler(event, context):
         if path == FILING_SUGGESTIONS_PATH and method == "GET":
             return get_filing_suggestions(
                 TransactionRepository(), CategoryRepository(), RuleRepository())
+
+        # Transactions-tab search over ALL history (WHIT-576). An EXACT path, disjoint from the
+        # other GET transaction routes; the PATCH "/transactions/{id}" branch is method-gated.
+        if path == TRANSACTIONS_SEARCH_PATH and method == "GET":
+            return get_transactions_search(event, TransactionRepository(), CategoryRepository())
 
         # Apply the user's BankSync rules to charges ALREADY stored (BankSync only applies them
         # to incoming charges — WHIT-502). POST-only, and it PREVIEWS unless the body says
@@ -1640,6 +1647,42 @@ def get_filing_suggestions(
     transactions = _fetch_windowed_transactions(transaction_repo, None, None)
     body = suggest_rules_from_filing_habits(transactions, rules, taxonomy_ids)
     return _json_response(200, body)
+
+
+_SEARCH_TABS = ("all", "uncategorized")
+
+
+def get_transactions_search(
+    event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository
+) -> dict:
+    """GET /transactions/search?q=&tab=all|uncategorized — the Transactions-tab search over ALL
+    history (WHIT-576), not just the feed pages the app has loaded.
+
+    Reads every transaction once (like get_uncategorized_count), keeps the ones matching `q` the
+    way the app's search box does, and returns the newest SEARCH_RESULT_LIMIT of them:
+    {"transactions": [...], "truncated": bool}. `tab=uncategorized` keeps only unfiled charges.
+    A blank or over-long `q`, or an unknown `tab`, → 400.
+    """
+    params = event.get("queryStringParameters") or {}
+    tab = params.get("tab") or "all"
+    if tab not in _SEARCH_TABS:
+        return _json_response(400, {"error": "invalid tab; expected all or uncategorized"})
+    query = (params.get("q") or "").strip()
+    if query == "":
+        return _json_response(400, {"error": "q is required"})
+    if len(query) > SEARCH_QUERY_MAX_LEN:
+        return _json_response(400, {"error": f"q must be at most {SEARCH_QUERY_MAX_LEN} characters"})
+
+    started = time.monotonic()
+    category_names = {category["id"]: category["name"] for category in category_repo.list_categories()}
+    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    matches, truncated = search_transactions(
+        transactions, query, category_names, unfiled_only=tab == "uncategorized")
+    _shape_feed_rows(matches)
+    logger.info(
+        "transactions search: tab=%s scanned=%d returned=%d truncated=%s elapsed_ms=%d",
+        tab, len(transactions), len(matches), truncated, (time.monotonic() - started) * 1000)
+    return _json_response(200, {"transactions": matches, "truncated": truncated})
 
 
 def _as_leaf_rule(inline_rule: dict) -> dict:

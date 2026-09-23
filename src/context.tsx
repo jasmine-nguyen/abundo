@@ -4,7 +4,7 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, MS_PER_DAY } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, TransactionSearchResult, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -235,11 +235,26 @@ export const CLEAN_NAME: Record<string, string> = {
 };
 export function cleanName(m: string) { return CLEAN_NAME[m] || m; }
 
+// Concatenate transaction lists, keeping the FIRST copy of each id — so callers list their
+// freshest source first.
+export function unionById(lists: Transaction[][]): Transaction[] {
+  const seen = new Set<string>();
+  const merged: Transaction[] = [];
+  for (const list of lists) {
+    for (const transaction of list) {
+      if (seen.has(transaction.transaction_id)) continue;
+      seen.add(transaction.transaction_id);
+      merged.push(transaction);
+    }
+  }
+  return merged;
+}
+
 // Best-effort display name for a transaction's merchant, applying the cleanup
 // map. Single source of truth so the transaction row and the categorize sheets
 // never diverge (the Transaction shape has merchant_name/description, not payee).
 export function merchantLabel(t: Transaction): string {
-  return cleanName(t.merchant_name || t.description);
+  return cleanName(t.merchant_name || t.description || '');
 }
 
 // The merchant slice of a description: where the merchant name appears inside the
@@ -803,20 +818,19 @@ function readUncategorizedFeedRows(): Transaction[] {
   const data = queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed']);
   return data ? data.pages.flatMap((p) => p.transactions) : [];
 }
-// The union of the three list caches, de-duped by id (a charge in more than one appears once).
-// Newest-first from the feed, then uncategorized-feed-only rows, then recent-only rows.
+// WHIT-576: the Transactions-tab search results (one flat list per tab + query). A deep-history
+// match lives ONLY here, so it joins the union — or tapping it would "not find" the row.
+function readSearchRows(): Transaction[] {
+  return queryClient
+    .getQueriesData<TransactionSearchResult>({ queryKey: ['transactionsSearch'] })
+    .flatMap(([, data]) => data?.transactions ?? []);
+}
+// The union of the list caches, de-duped by id (a charge in more than one appears once).
+// Newest-first from the feed, then uncategorized-feed-only rows, then recent-only rows, then
+// search-only rows (last, so a fresher list copy wins).
 function readTransactionsCache(): Transaction[] {
-  const feed = readFeedRows();
-  const uncategorized = readUncategorizedFeedRows();
   const recent = queryClient.getQueryData<Transaction[]>(['transactionsRecent']) ?? [];
-  const seen = new Set(feed.map((t) => t.transaction_id));
-  const merged = [...feed];
-  for (const row of [...uncategorized, ...recent]) {
-    if (seen.has(row.transaction_id)) continue;
-    seen.add(row.transaction_id);
-    merged.push(row);
-  }
-  return merged;
+  return unionById([readFeedRows(), readUncategorizedFeedRows(), recent, readSearchRows()]);
 }
 // Map the caller's per-row transform over the feed pages, the uncategorized-feed pages (page
 // boundaries + cursors preserved) AND the flat recent array, so an optimistic edit reflects on the
@@ -836,6 +850,8 @@ function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): voi
   patchInfiniteFeed(['transactions'], fn);
   patchInfiniteFeed(['uncategorizedFeed'], fn);
   queryClient.setQueryData<Transaction[]>(['transactionsRecent'], (prev) => (prev ? fn(prev) : prev));
+  queryClient.setQueriesData<TransactionSearchResult>({ queryKey: ['transactionsSearch'] }, (prev) =>
+    prev ? { ...prev, transactions: fn(prev.transactions) } : prev);
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
@@ -1499,6 +1515,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
     queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
     queryClient.invalidateQueries({ queryKey: ['uncategorizedFeed'] });
+    // WHIT-576: a server-side re-file can move rows into or out of a search's results.
+    queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
     // The reconcile writes the SERVER's category id onto the row, and a row whose id isn't in the
     // client's taxonomy still counts as unfiled (categoryIsUnmapped). So a category created in
     // another session during the run would leave its charges sitting in the Uncategorized list
@@ -2117,6 +2135,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
         // pickers; the invalidate then reconciles with the server.
         queryClient.invalidateQueries({ queryKey: ['categories'] });
+        // WHIT-576: a rename changes the category text a search matches on.
+        queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
         if (!opts?.silent) showToast('Category updated.');
         return true;
       } catch (error) {
@@ -2165,6 +2185,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // suffices, so the frequent path avoids an InfiniteData refetch storm), deleting a category
       // is rare, so invalidating the paged feed here is cheap and keeps the list correct.
       queryClient.invalidateQueries({ queryKey: ['uncategorizedFeed'] });
+      queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
       // WHIT-271: return false (not just skip the toast) so app/category/edit.tsx's `if (ok)`
       // doesn't router.back() the next session after a mid-delete sign-out.
       if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
@@ -3550,14 +3571,21 @@ export function countUncategorized(s: TransactionListInput) {
 
 // Whether a transaction matches the Transactions-tab search box. Matches the text the user
 // SEES on the row — the merchant label + raw description + the category label (Uncategorized /
-// Income / the category name) — plus the amount, so "coffee", "eating out" and "42" all work.
+// Income / the category name) — plus the amount, so "coffee", "eating out" and "42" all work,
+// plus the user's own notes and tags when SEARCH_NOTES_AND_TAGS is on.
 // Case-insensitive substring; `$` and `,` are stripped from the query so "$42" / "1,234" match.
 // An empty query matches everything (the list is unfiltered). Pure over { category }.
+// WHIT-576: the server runs the same match over ALL history (lambda_api/transaction_search.py);
+// tests/fixtures/transaction_search_parity.json and a crosslang drift test keep the two in step.
+export const SEARCH_NOTES_AND_TAGS = true;
+export const SEARCH_QUERY_MAX_LEN = 100;
 export function transactionMatchesSearch(s: Pick<TransactionListInput, 'category'>, t: Transaction, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
   const categoryLabel = t.category === 'income' ? 'Income' : isUncategorized(s, t) ? 'Uncategorized' : (s.category(t.category)?.name ?? '');
-  const haystack = `${merchantLabel(t)} ${t.description} ${categoryLabel} ${Math.abs(t.amount).toFixed(2)}`.toLowerCase();
+  const parts = [merchantLabel(t), t.description || '', categoryLabel, Math.abs(t.amount || 0).toFixed(2)];
+  if (SEARCH_NOTES_AND_TAGS) parts.push(t.notes ?? '', (t.tags ?? []).join(' '));
+  const haystack = parts.join(' ').toLowerCase();
   return haystack.includes(q) || haystack.includes(q.replace(/[$,]/g, ''));
 }
 

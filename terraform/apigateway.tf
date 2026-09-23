@@ -38,6 +38,8 @@ locals {
     # WHIT-542: rules suggested from the user's hand-filing habits. Rides the shared app_api
     # integration + authorizer like the sibling GET routes, so no new integration is needed.
     "GET /transactions/filing-suggestions",
+    # WHIT-576: search over ALL history for the Transactions tab. Same shared integration + authorizer.
+    "GET /transactions/search",
     "POST /transactions/uncategorized/apply-rules",
     # WHIT-537: async apply-rules job — start (POST) + poll status (GET {id}). Both ride the
     # shared app_api integration + app_api_apigw_invoke permission (execution_arn/*/*), so no new

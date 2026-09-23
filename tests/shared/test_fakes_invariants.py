@@ -98,6 +98,8 @@ _REGISTRY = [
          _API_TESTS / "test_uncategorized_count.py",
          _API_TESTS / "test_uncategorized_feed.py",
          _API_TESTS / "test_uncategorized_feed_gaps.py",
+         # WHIT-576: the full-history search reads every account through FakeFeedRepo.
+         _API_TESTS / "test_transaction_search.py",
          _API_TESTS / "test_apply_rules.py",
          _API_TESTS / "test_apply_rules_gaps.py",
          _API_TESTS / "test_apply_rules_budget_excluded.py",

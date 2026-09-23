@@ -4,9 +4,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { C, FONT, tint } from '../../src/theme';
 import { Glyph } from '../../src/icons';
-import { transactionGroups, transactionMatchesSearch, countUncategorized, useAppContext } from '../../src/context';
+import { transactionGroups, transactionMatchesSearch, countUncategorized, unionById, useAppContext, SEARCH_QUERY_MAX_LEN } from '../../src/context';
 import { useTransactionsScreenData, useUncategorizedCount, useUncategorizedMerchants } from '../../src/queries';
 import { usePullToRefresh } from '../../src/hooks/usePullToRefresh';
+import { useDebouncedValue } from '../../src/hooks/useDebouncedValue';
 import { ScrollChromeHeader } from '../../src/motion/ScrollChromeHeader';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { ListStates } from '../../src/components/ListStates';
@@ -14,14 +15,28 @@ import { SettingsButton } from '../../src/components/SettingsButton';
 
 type Tab = 'all' | 'uncategorized';
 
+// WHIT-576: how long typing must pause before the full-history search asks the server.
+const SEARCH_DEBOUNCE_MS = 300;
+
+// A query of only `$` / `,` matches every row locally, so asking the server would just return the
+// newest few hundred rows of everything.
+function needsServerSearch(query: string): boolean {
+  return query.replace(/[$,]/g, '').trim() !== '';
+}
+
 export default function Transactions() {
   const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
+  const query = search.trim();
+  // WHIT-576: the box searches ALL history on the server once typing pauses; until the server
+  // answers, the loaded rows (and the previous answer) filter instantly by the live text below.
+  const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
+  const serverQuery = needsServerSearch(debouncedQuery) ? debouncedQuery : '';
   const insets = useSafeAreaInsets();
   const { openMultiPicker, showToast, setSheet, pendingUncategorizedSelect, clearUncategorizedSelect } = useAppContext();
   // WHIT-190a: transactions now come from the cached, auth-gated query layer — an all-accounts
   // cursor feed, so `loadMore` pages older history in and `hasMore` is false at end-of-history.
-  const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore } = useTransactionsScreenData(tab);
+  const { transactions, category, isLoading, isError, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore, search: serverSearch } = useTransactionsScreenData(tab, serverQuery);
   useFocusEffect(useCallback(() => { refetchStale(); }, [refetchStale]));
 
   // WHIT-291: multi-select re-categorise. `selectionMode` swaps the rows for checkboxes; `selected`
@@ -78,10 +93,17 @@ export default function Transactions() {
   // 0, never during loading/error (undefined). Named once so the empty state and the two controls it
   // must exclude (search-no-results, Load More) can't drift.
   const allCaughtUp = tab === 'uncategorized' && serverCount === 0;
-  // Live search over the visible fields (merchant + category + amount). Filtered before grouping
-  // so the date sections only show matching rows. Empty query → the full list (no-op filter).
-  const query = search.trim();
-  const searched = query ? transactions.filter((t) => transactionMatchesSearch({ category }, t, query)) : transactions;
+  // WHIT-576: once the server has answered THIS query, its full-history matches are the list.
+  // Before that, show the loaded rows plus the previous answer. Either way the live text filters
+  // them (before grouping), so typing narrows instantly and a just-re-filed row drops out.
+  const searchingServer = needsServerSearch(query);
+  const searchAnswered = searchingServer && debouncedQuery === query && serverSearch.answered;
+  const searchFailed = searchingServer && serverSearch.isError;
+  const searchPending = searchingServer && !searchAnswered && !searchFailed;
+  let listSource = transactions;
+  if (searchAnswered) listSource = serverSearch.results;
+  else if (searchingServer) listSource = unionById([transactions, serverSearch.results]);
+  const searched = query ? listSource.filter((t) => transactionMatchesSearch({ category }, t, query)) : listSource;
   const groups = transactionGroups({ transactions: searched, category }, tab === 'uncategorized' ? 'uncategorized' : 'all');
 
   const showError = isError && transactions.length === 0;
@@ -132,7 +154,7 @@ export default function Transactions() {
           // `showUncategorizedMore` is the ONE empty-list state that invites a pull ("pull down to
           // refresh"), so let the spinner show there too — otherwise the instruction gives no feedback.
           // (It requires !showSpinner, so it can never re-introduce the cold-load double-spin.)
-          refreshing={pulling && (transactions.length > 0 || showUncategorizedMore)}
+          refreshing={pulling && (listSource.length > 0 || showUncategorizedMore)}
           onRefresh={onRefresh}
           tintColor={C.accent}
           progressViewOffset={headerHeight}
@@ -157,6 +179,7 @@ export default function Transactions() {
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="search"
+              maxLength={SEARCH_QUERY_MAX_LEN}
               accessibilityLabel="Search transactions"
             />
             {search.length > 0 && (
@@ -236,9 +259,32 @@ export default function Transactions() {
           </View>
         ))}
 
+        {!showSpinner && !showError && searchPending && (
+          <View testID="transactions-searching" style={styles.searchStatus}>
+            <ActivityIndicator color={C.accent} />
+            <Text style={styles.searchStatusText}>Searching your full history…</Text>
+          </View>
+        )}
+
+        {!showSpinner && !showError && searchFailed && (
+          <View testID="transactions-search-error" style={styles.searchStatus}>
+            <Text style={styles.searchStatusText}>Couldn't search your full history.</Text>
+            <Pressable onPress={serverSearch.retry} hitSlop={8} accessibilityRole="button" accessibilityLabel="Retry searching your full history">
+              <Text style={styles.searchRetry}>Retry</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {!showSpinner && !showError && searchAnswered && serverSearch.truncated && (
+          <Text testID="transactions-search-truncated" style={styles.searchStatusText}>
+            Showing the newest {serverSearch.results.length} matches — refine your search to see older ones.
+          </Text>
+        )}
+
         {/* Search returned nothing on this tab (the "all caught up" state below still owns the
-            genuinely-empty uncategorized case, so don't double up on it). */}
-        {!showSpinner && !showError && query.length > 0 && groups.length === 0 && !allCaughtUp && (
+            genuinely-empty uncategorized case, so don't double up on it). WHIT-576: only once the
+            server has searched ALL history — never while it's still looking or after it failed. */}
+        {!showSpinner && !showError && query.length > 0 && groups.length === 0 && !allCaughtUp && !searchPending && !searchFailed && (
           <View testID="transactions-no-results" style={styles.empty}>
             <View style={[styles.emptyIcon, { backgroundColor: 'rgba(255,255,255,.06)' }]}><Glyph name="search" size={30} color={C.textDim} /></View>
             <Text style={styles.emptyTitle}>No matches</Text>
@@ -277,8 +323,9 @@ export default function Transactions() {
         {/* Load More: page older history in via the feed cursor. Hidden at end-of-history
             (hasMore false), while the cold-load spinner / error own the empty state, and on the
             uncategorized "all caught up" empty state (nothing to page toward there). The newest
-            batch shows first; each tap appends the next, older batch. */}
-        {!showSpinner && !showError && hasMore && !allCaughtUp && (
+            batch shows first; each tap appends the next, older batch. Hidden during a search
+            (WHIT-576): the server already searched all history. */}
+        {!showSpinner && !showError && hasMore && !allCaughtUp && !searchingServer && (
           isLoadingMore ? (
             <View testID="transactions-load-more-spinner" style={styles.loadMoreState}>
               <ActivityIndicator color={C.accent} />
@@ -371,6 +418,11 @@ const styles = StyleSheet.create({
   loadMore: { marginTop: 18, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
   loadMoreText: { fontFamily: FONT.body, fontSize: 14, fontWeight: '600', color: C.accentSoft },
   loadMoreState: { marginTop: 18, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+
+  // WHIT-576: the full-history search's status line (searching / failed / cut off).
+  searchStatus: { flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 18, paddingVertical: 8 },
+  searchStatusText: { fontFamily: FONT.body, fontSize: 13, color: C.textDim, textAlign: 'center', marginTop: 12 },
+  searchRetry: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.accentSoft, marginTop: 12 },
 
   // "Apply my rules" (WHIT-508): the Load More treatment, sitting under the hint.
   applyRules: { marginTop: 10, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.hairline, alignItems: 'center' },
