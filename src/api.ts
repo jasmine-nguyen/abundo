@@ -252,6 +252,34 @@ export async function fetchUncategorizedFeed(cursor?: string, limit?: number): P
   return readJson(response);
 }
 
+/** The Transactions-tab search over ALL history (WHIT-576): the newest matches, and whether the
+ *  server's result cap cut any off. */
+export interface TransactionSearchResult {
+  transactions: Transaction[];
+  truncated: boolean;
+}
+
+/**
+ * Search ALL history for the Transactions tab (WHIT-576), not just the loaded feed pages. The
+ * server reads the whole history once, so it gets APPLY_RULES_TIMEOUT_MS like the other
+ * whole-history walks, not the 15s default.
+ *
+ * @param tab - 'uncategorized' narrows to unfiled charges, as that tab shows.
+ * @param query - The search box text (non-blank).
+ * @returns The newest matches plus whether more were cut off.
+ * @throws If the response status is not OK.
+ */
+export async function fetchTransactionsSearch(tab: 'all' | 'uncategorized', query: string): Promise<TransactionSearchResult> {
+  const response = await apiFetch(
+    `${API_BASE}/transactions/search?tab=${encodeURIComponent(tab)}&q=${encodeURIComponent(query)}`,
+    { headers: await buildHeaders() },
+    APPLY_RULES_TIMEOUT_MS,
+  );
+  if (response.ok == false) throw new Error(`API error: ${response.status}`);
+
+  return readJson(response, APPLY_RULES_TIMEOUT_MS);
+}
+
 /**
  * Fetch the full-history uncategorized count (WHIT-500): how many uncategorized charges
  * exist across ALL history, not just the loaded feed pages. Backs the tab badge, the tab-bar

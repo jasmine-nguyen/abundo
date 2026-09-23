@@ -21,7 +21,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # only these files are copied into the deterministic build dir, so on-disk cruft
 # (a stray __pycache__, a leftover stale module) can never ship.
 # Keep this on ONE line — scripts/tests/build_artifacts_test.sh parses it literally.
-LAMBDA_API_SOURCES=(handler.py constants.py insights_ai.py anthropic_client.py merchant_groups.py filing_habits.py apply_rules_worker.py recurring_bills.py)
+LAMBDA_API_SOURCES=(handler.py constants.py insights_ai.py anthropic_client.py merchant_groups.py filing_habits.py apply_rules_worker.py recurring_bills.py transaction_search.py)
 
 build_webhook() {
   # Install the webhook lambda's third-party deps into lambda/ (standardwebhooks).

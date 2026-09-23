@@ -66,6 +66,11 @@ UNCATEGORIZED_MERCHANTS_PATH = "/transactions/uncategorized/merchants"
 # consumes it (no shared repository_* imports it), so the WHIT-136 sync guard doesn't require a
 # shared mirror.
 FILING_SUGGESTIONS_PATH = "/transactions/filing-suggestions"
+# API Gateway route path for the Transactions-tab search over ALL history (WHIT-576). The app
+# used to filter only its loaded feed pages, so an older match showed "No matches". Only
+# lambda_api/handler.py consumes it (no shared repository_* imports it), so the WHIT-136 sync
+# guard doesn't require a shared mirror.
+TRANSACTIONS_SEARCH_PATH = "/transactions/search"
 # Ceiling on rows one apply-rules request will write. A secondary guard behind the wall-clock
 # budget below: the response reports `remaining` and the app says "tap again", which is safe
 # because re-running only ever files what is STILL unfiled.

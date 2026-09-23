@@ -44,6 +44,7 @@ jest.mock('expo-router', () => {
 });
 
 import Transactions from '../../app/(tabs)/transactions';
+import { transactionsScreenData } from './support/transactionsScreenData';
 
 const CAT = { id: 'groceries', name: 'Groceries', bucket: 'Living', icon: 'cart', color: '#7FD49B', recent: 0 };
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
@@ -54,12 +55,7 @@ const unfiled = (id: string) => ({
 });
 
 function txData(over: Record<string, unknown> = {}) {
-  return {
-    transactions: [unfiled('t1')], category, balances: new Map(),
-    isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
-    refetchList: jest.fn(() => Promise.resolve()), refreshLiveBalances: jest.fn(() => Promise.resolve()),
-    hasMore: false, loadMore: jest.fn(), isLoadingMore: false, ...over,
-  };
+  return transactionsScreenData({ transactions: [unfiled('t1')], category, ...over });
 }
 
 beforeEach(() => {

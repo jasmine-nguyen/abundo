@@ -6,9 +6,9 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
-import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, UncategorizedMerchants, FilingSuggestions } from './api';
-import { cycleClockView, cycleStart, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
+import { cycleClockView, cycleStart, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, unionById, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
@@ -61,6 +61,10 @@ export const uncategorizedFeedKey = ['uncategorizedFeed'] as const;
 // account-detail screen, and the goal-edit picker. A SEPARATE key from the feed so those
 // counts stay fixed and can't drift as the tab pages back through full history.
 export const transactionsRecentKey = ['transactionsRecent'] as const;
+// The Transactions-tab search over ALL history (WHIT-576): one flat result per [tab, query].
+// Kept in sync with the literal ['transactionsSearch'] prefix the optimistic write path patches
+// and invalidates in context.tsx (context imports queryClient directly, not this key).
+export const transactionsSearchKey = ['transactionsSearch'] as const;
 // The full-history uncategorized count (WHIT-500/501) behind the tab badge, the tab-bar dot,
 // and the "All caught up" empty state — a single server number that reflects ALL history, not
 // just the loaded pages. Kept in sync with the literal ['uncategorizedCount'] the categorise +
@@ -255,6 +259,19 @@ export function useKeepTransactionsFeedWarm(): void {
   useTransactionsFeedQuery(useIsAuthed());
 }
 
+// The Transactions-tab search over ALL history (WHIT-576). While a new query loads, the previous
+// result stays as a placeholder — but only from the SAME tab, so the Uncategorized tab's matches
+// never flash on the All tab (or the reverse).
+export function useTransactionsSearchQuery(tab: 'all' | 'uncategorized', query: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...transactionsSearchKey, tab, query],
+    queryFn: () => fetchTransactionsSearch(tab, query),
+    enabled,
+    placeholderData: (previous: TransactionSearchResult | undefined, previousQuery) =>
+      previousQuery?.queryKey[1] === tab ? previous : undefined,
+  });
+}
+
 // The Uncategorized tab's own feed as an infinite query: same shape and cursor semantics as the
 // all-accounts feed, but each page is server-filtered to uncategorized charges. hasNextPage stays
 // true while nextCursor is non-null — a page can come back sparse (or empty) with more history
@@ -271,16 +288,17 @@ export function useUncategorizedFeedQuery(enabled: boolean) {
 
 /** Resolve a tapped transaction by id across every list cache it might live in — the
  *  all-accounts feed, the uncategorized feed (a deep-history unfiled row shown on the
- *  Uncategorized tab lives ONLY here), and the bounded recent window (a row tapped on
- *  account-detail). One place, so the picker, confirm sheet, and detail screen can't drift on
+ *  Uncategorized tab lives ONLY here), the bounded recent window (a row tapped on
+ *  account-detail), and the search results (WHIT-576: a deep-history match lives only
+ *  there). One place, so the picker, confirm sheet, and detail screen can't drift on
  *  which caches they search. Only LOADED pages are in cache, but only loaded rows are ever
  *  visible/tappable, so that is exactly the set the user can act on. */
 export interface TransactionResolver {
   findTx: (id: string) => Transaction | undefined;
   transactions: Transaction[]; // the de-duped union, for "has anything loaded yet" checks
 }
-// A version counter that ticks ONLY when a ['budgetTransactions', *] or
-// ['categoryTransactions', *] cache changes. It's the reactive trigger for the resolver's
+// A version counter that ticks ONLY when a ['budgetTransactions', *],
+// ['categoryTransactions', *] or ['transactionsSearch', *] cache changes. It's the reactive trigger for the resolver's
 // point-in-time getQueriesData reads below: those caches aren't observed by a useQuery here,
 // so without this a note/tag edit that patches them wouldn't re-run the merge. The key-prefix
 // filter is deliberate — useTransactionResolver is also used by the root-mounted picker/confirm
@@ -293,7 +311,7 @@ function useScopedTransactionCachesVersion(queryClient: QueryClient): number {
     (onStoreChange: () => void) =>
       queryClient.getQueryCache().subscribe((event) => {
         const key = event.query.queryKey[0];
-        if (key === budgetTransactionsKey[0] || key === categoryTransactionsKey[0]) {
+        if (key === budgetTransactionsKey[0] || key === categoryTransactionsKey[0] || key === transactionsSearchKey[0]) {
           versionRef.current += 1;
           onStoreChange();
         }
@@ -321,25 +339,18 @@ export function useTransactionResolver(): TransactionResolver {
   // lives ONLY there used to resolve to nothing and show a false "not found". scopedVersion
   // re-runs the merge when one of those caches changes (getQueriesData is a point-in-time read).
   const scopedVersion = useScopedTransactionCachesVersion(queryClient);
-  const transactions = useMemo(() => {
-    const seen = new Set<string>();
-    const merged: Transaction[] = [];
-    const add = (rows: Transaction[]) => {
-      for (const transaction of rows) {
-        if (seen.has(transaction.transaction_id)) continue;
-        seen.add(transaction.transaction_id);
-        merged.push(transaction);
-      }
-    };
-    // Feed / uncategorized / recent FIRST, so their fresher (optimistically-patched) copy wins
-    // the de-dup over a stale budget/category copy of the same charge.
-    if (feedQuery.data) for (const page of feedQuery.data.pages) add(page.transactions);
-    if (uncategorizedFeedQuery.data) for (const page of uncategorizedFeedQuery.data.pages) add(page.transactions);
-    add(recentQuery.data ?? EMPTY_TX);
-    for (const [, rows] of queryClient.getQueriesData<Transaction[]>({ queryKey: budgetTransactionsKey })) add(rows ?? EMPTY_TX);
-    for (const [, rows] of queryClient.getQueriesData<Transaction[]>({ queryKey: categoryTransactionsKey })) add(rows ?? EMPTY_TX);
-    return merged;
-  }, [feedQuery.data, uncategorizedFeedQuery.data, recentQuery.data, scopedVersion, queryClient]);
+  // Feed / uncategorized / recent / search FIRST, so their fresher (optimistically-patched) copy
+  // wins the de-dup over a stale budget/category copy of the same charge. A deep-history search
+  // match (WHIT-576) lives only in the search cache.
+  const transactions = useMemo(() => unionById([
+    ...(feedQuery.data?.pages ?? []).map((page) => page.transactions),
+    ...(uncategorizedFeedQuery.data?.pages ?? []).map((page) => page.transactions),
+    recentQuery.data ?? EMPTY_TX,
+    ...queryClient.getQueriesData<TransactionSearchResult>({ queryKey: transactionsSearchKey })
+      .map(([, result]) => result?.transactions ?? EMPTY_TX),
+    ...queryClient.getQueriesData<Transaction[]>({ queryKey: budgetTransactionsKey }).map(([, rows]) => rows ?? EMPTY_TX),
+    ...queryClient.getQueriesData<Transaction[]>({ queryKey: categoryTransactionsKey }).map(([, rows]) => rows ?? EMPTY_TX),
+  ]), [feedQuery.data, uncategorizedFeedQuery.data, recentQuery.data, scopedVersion, queryClient]);
   const findTx = useCallback(
     (id: string) => transactions.find((transaction) => transaction.transaction_id === id),
     [transactions],
@@ -751,8 +762,19 @@ export interface RecentTransactionsScreenData {
   refetch: () => void; // force refresh (inline Retry / pull)
   refetchStale: () => void; // focus refresh — only refetches stale queries
 }
+// WHIT-576: the tab's search over ALL history. `results` holds the server's matches for the
+// current query — or, while it loads, the previous same-tab query's (a placeholder).
+export interface TransactionsSearchState {
+  active: boolean; // a server search query is set
+  results: Transaction[];
+  answered: boolean; // the server has answered the CURRENT query (not a placeholder)
+  truncated: boolean; // the server's result cap cut off older matches
+  isError: boolean;
+  retry: () => void;
+}
 // The Transactions TAB adds cursor pagination ("Load More") on top of the recent shape.
 export interface TransactionsScreenData extends RecentTransactionsScreenData {
+  search: TransactionsSearchState;
   hasMore: boolean; // more (older) history to page in → show the Load More control
   loadMore: () => void; // fetch the next (older) page
   isLoadingMore: boolean; // the next page is in flight → Load More spinner (NOT the pull spinner)
@@ -795,8 +817,10 @@ function useBalancesMap(authed: boolean) {
  *  refetch paths — swaps to the active feed with the tab, so the spinner/error/empty/Load-More
  *  states stay coherent. Defaults to 'all', so the other callers (Accounts, detail) are
  *  unaffected and never mount the uncategorized query. */
-export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all'): TransactionsScreenData {
+export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', searchQuery = ''): TransactionsScreenData {
   const authed = useIsAuthed();
+  const searchActive = searchQuery !== '';
+  const searchQueryResult = useTransactionsSearchQuery(tab, searchQuery, authed && searchActive);
   const onUncategorized = tab === 'uncategorized';
   // Both hooks are always called (rules of hooks); the uncategorized one only FETCHES on its tab.
   const allFeedQuery = useTransactionsFeedQuery(authed);
@@ -834,6 +858,16 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all'):
   //  • manual pull / inline Retry: SNAP to newest — trim to the first page, then refetch it fresh
   //    (+ the taxonomy). One round-trip, and it re-pages history cleanly from the top.
   const refetchList = useCallback(() => {
+    // Under a search, refresh the search instead of the feed — unless the feed failed with nothing
+    // loaded: its full-screen error then hides the search too, so Retry must recover the feed.
+    const feedErrorHidesSearch = feedQuery.isError && transactions.length === 0;
+    if (searchActive && !feedErrorHidesSearch) {
+      return Promise.all([
+        searchQueryResult.refetch(),
+        categoriesQuery.refetch(),
+        queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
+      ]);
+    }
     queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(activeFeedKey, (prev) =>
       prev && prev.pages.length > 1
         ? { pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
@@ -848,7 +882,7 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all'):
       categoriesQuery.refetch(),
       queryClient.invalidateQueries({ queryKey: uncategorizedCountKey }),
     ]);
-  }, [feedQuery, categoriesQuery, queryClient, activeFeedKey]);
+  }, [feedQuery, categoriesQuery, queryClient, activeFeedKey, searchActive, searchQueryResult, transactions]);
   // Inline Retry (list-load error) refreshes the list AND re-reads the STORED balances — cheap,
   // no live bank call. The live call is pull-only (refreshLiveBalances). Balances stay out of
   // isFetching/isError so a balances hiccup can't blank or stick-spin the list (WHIT-212/363).
@@ -868,10 +902,25 @@ export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all'):
   }, [queryClient]);
   const refetchStale = useCallback(() => {
     if (categoriesQuery.isStale) categoriesQuery.refetch();
+    if (searchActive) {
+      if (searchQueryResult.isStale) searchQueryResult.refetch();
+      return;
+    }
     if (feedQuery.isStale) feedQuery.refetch(); // refetches every loaded page in place (keeps place)
-  }, [feedQuery, categoriesQuery]);
+  }, [feedQuery, categoriesQuery, searchActive, searchQueryResult]);
 
-  return { transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
+  const { data: searchData, isPlaceholderData: searchIsPlaceholder, isError: searchIsError, isFetching: searchIsFetching, refetch: refetchSearch } = searchQueryResult;
+  const search = useMemo<TransactionsSearchState>(() => ({
+    active: searchActive,
+    results: (searchActive && searchData?.transactions) || EMPTY_TX,
+    answered: searchActive && !!searchData && !searchIsPlaceholder,
+    truncated: searchActive && !searchIsPlaceholder && !!searchData?.truncated,
+    // A manual Retry keeps the error flag set while it runs; report it as searching again instead.
+    isError: searchActive && searchIsError && !searchIsFetching,
+    retry: () => { refetchSearch(); },
+  }), [searchActive, searchData, searchIsPlaceholder, searchIsError, searchIsFetching, refetchSearch]);
+
+  return { search, transactions, category, balances, isLoading, isError, isFetching, refetch, refetchStale, refetchList, refreshLiveBalances, hasMore, loadMore, isLoadingMore };
 }
 
 /** The bounded "recent" reads (tab-bar dot, account detail, goal-edit picker): a fixed

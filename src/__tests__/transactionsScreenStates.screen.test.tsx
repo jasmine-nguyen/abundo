@@ -55,6 +55,7 @@ jest.mock('expo-router', () => {
 });
 
 import Transactions from '../../app/(tabs)/transactions';
+import { transactionsScreenData, idleSearch } from './support/transactionsScreenData';
 
 const refetch = jest.fn();
 const refetchStale = jest.fn();
@@ -85,10 +86,9 @@ function txData(over: Partial<{
   transactions: unknown[]; isLoading: boolean; isError: boolean; isFetching: boolean;
   balances: Map<string, unknown>;
 }> = {}) {
-  return {
-    transactions: [], category: (id: string | null) => (id === 'groceries' ? CAT : undefined),
-    balances: new Map(), isLoading: false, isError: false, isFetching: false, refetch, refetchStale, ...over,
-  };
+  return transactionsScreenData({
+    category: (id: string | null) => (id === 'groceries' ? CAT : undefined), refetch, refetchStale, ...over,
+  });
 }
 
 beforeEach(() => {
@@ -157,11 +157,7 @@ const row = (id: string) => ({
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
 
 function txData(over: Partial<{ transactions: unknown[]; hasMore: boolean; isLoadingMore: boolean }> = {}) {
-  return {
-    transactions: [row('t1')], category, balances: new Map(),
-    isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
-    hasMore: false, loadMore: mockLoadMore, isLoadingMore: false, ...over,
-  };
+  return transactionsScreenData({ transactions: [row('t1')], category, loadMore: mockLoadMore, ...over });
 }
 
 beforeEach(() => {
@@ -221,7 +217,7 @@ describe('Transactions — pull-to-refresh (WHIT-363)', () => {
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
 
 function txData(over: Partial<{ transactions: unknown[]; isFetching: boolean; isLoading: boolean }> = {}) {
-  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch, refetchStale, refetchList, refreshLiveBalances, ...over };
+  return transactionsScreenData({ category, refetch, refetchStale, refetchList, refreshLiveBalances, ...over });
 }
 
 // `props` is `any` to match testing-library's UNSAFE_getByType return (ReactTestInstance).
@@ -316,7 +312,7 @@ describe('Transactions — pull-to-refresh adversarial edges (WHIT-363)', () => 
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
 
 function txData(over: Partial<{ transactions: unknown[]; isFetching: boolean; isError: boolean; isLoading: boolean }> = {}) {
-  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch, refetchStale, refetchList, refreshLiveBalances, ...over };
+  return transactionsScreenData({ category, refetch, refetchStale, refetchList, refreshLiveBalances, ...over });
 }
 
 type GetByType = (t: typeof RefreshControl) => { props: any };
@@ -420,11 +416,8 @@ const row = (over: Record<string, unknown>) => ({
 const WOOLIES = row({ transaction_id: 'w', merchant_name: 'Woolworths', description: 'WOOLWORTHS', category: 'groceries', amount: -42 });
 const COFFEE = row({ transaction_id: 'c', merchant_name: 'ST Ali', description: 'ST ALI', category: 'coffee', amount: -8.5 });
 
-function txData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean }> = {}) {
-  return {
-    transactions: [WOOLIES, COFFEE], category, balances: new Map(),
-    isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(), ...over,
-  };
+function txData(over: Partial<{ transactions: unknown[]; isLoading: boolean; isError: boolean; search: unknown }> = {}) {
+  return transactionsScreenData({ transactions: [WOOLIES, COFFEE], category, ...over });
 }
 
 beforeEach(() => { mockTx = txData(); });
@@ -465,12 +458,20 @@ it('the ✕ clears the search and restores the full list', () => {
   expect(screen.getByText('-$8.50')).toBeTruthy();
 });
 
-it('a query with no matches shows the empty state and no rows', () => {
+// WHIT-576: "No matches" is a claim about ALL history, so it waits for the server's answer.
+it('a query with no matches shows the empty state and no rows once the server has searched', () => {
+  jest.useFakeTimers();
+  mockTx = txData({ search: { ...idleSearch, active: true, answered: true, results: [] } });
   render(<Transactions />);
   type('zzzzz');
+  expect(screen.queryByTestId('transactions-no-results')).toBeNull(); // still waiting for typing to pause
+  expect(screen.getByTestId('transactions-searching')).toBeTruthy();
+  act(() => { jest.advanceTimersByTime(300); });
   expect(screen.getByTestId('transactions-no-results')).toBeTruthy();
+  expect(screen.queryByTestId('transactions-searching')).toBeNull();
   expect(screen.queryByText('-$42.00')).toBeNull();
   expect(screen.queryByText('-$8.50')).toBeNull();
+  jest.useRealTimers();
 });
 
 it('entering selection mode clears an active search (the box hides, so no secret filter)', () => {
@@ -501,7 +502,7 @@ const row = (id: string, merchant: string) => ({
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
 
 function txData(over: Partial<{ transactions: unknown[] }> = {}) {
-  return { transactions: [], category, isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(), ...over };
+  return transactionsScreenData({ category, ...over });
 }
 
 beforeEach(() => {
@@ -564,12 +565,8 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
     description: 'WOOLWORTHS', merchant_name: 'Woolworths', amount: -42, account_id: 'a1',
     account_name: 'ANZ', category: 'groceries', status: 'posted', type: 'purchase', counts_to_budget: true,
   });
-  function txData(over: Partial<{ transactions: unknown[]; hasMore: boolean; isLoadingMore: boolean }> = {}) {
-    return {
-      transactions: [catRow('t1')], category, balances: new Map(),
-      isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
-      hasMore: false, loadMore: mockLoadMore, isLoadingMore: false, ...over,
-    };
+  function txData(over: Partial<{ transactions: unknown[]; hasMore: boolean; isLoadingMore: boolean; search: unknown }> = {}) {
+    return transactionsScreenData({ transactions: [catRow('t1')], category, loadMore: mockLoadMore, ...over });
   }
   const type = (q: string) => fireEvent.changeText(screen.getByPlaceholderText('Search transactions'), q);
   beforeEach(() => { mockLoadMore.mockClear(); mockTx = txData(); });
@@ -590,18 +587,20 @@ describe('Transactions — Load More × search & tab-switch (WHIT-491)', () => {
   });
 
   // [A-S2] Uncategorized tab WITH real uncategorized rows (count > 0), search matches nothing:
-  // identical to the All-tab behaviour, unchanged by the fix — "No matches" shows AND Load More
-  // still shows (guard is false because count > 0, so a search miss must not strand paging).
-  // Fail-on-revert: widen the guard to hide on the whole uncategorized tab and Load More vanishes.
-  it('[A-S2] uncategorized + uncategorized-rows + search miss: No matches shows AND Load More still shows', () => {
+  // "No matches" shows once the server has searched ALL history, and Load More is hidden — the
+  // server already looked past every loaded page (WHIT-576), so there is nothing to page toward.
+  it('[A-S2] uncategorized + uncategorized-rows + answered search miss: No matches shows, Load More hidden', () => {
+    jest.useFakeTimers();
     const uncategorized = { ...catRow('t1'), category: null }; // no resolvable category -> uncategorized
-    mockTx = txData({ transactions: [uncategorized], hasMore: true });
+    mockTx = txData({ transactions: [uncategorized], hasMore: true, search: { ...idleSearch, active: true, answered: true, results: [] } });
     render(<Transactions />);
     fireEvent.press(screen.getByTestId('tab-uncategorized'));
     type('zzzzz');
+    act(() => { jest.advanceTimersByTime(300); });
     expect(screen.getByTestId('transactions-no-results')).toBeTruthy();
     expect(screen.queryByText('All caught up')).toBeNull();
-    expect(screen.getByTestId('transactions-load-more')).toBeTruthy(); // unchanged from the All tab
+    expect(screen.queryByTestId('transactions-load-more')).toBeNull();
+    jest.useRealTimers();
   });
 
   // [A-T1] Round-trip All -> Uncategorized -> All with more history and 0 uncategorized: Load More

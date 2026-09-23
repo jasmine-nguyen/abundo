@@ -32,15 +32,11 @@ jest.mock('expo-router', () => {
 });
 
 import Transactions from '../../app/(tabs)/transactions';
+import { transactionsScreenData } from './support/transactionsScreenData';
 
 const category = (id: string | null) => (id === 'groceries' ? CAT : undefined);
 function txData(over: Record<string, unknown> = {}) {
-  return {
-    transactions: [], category, balances: new Map(),
-    isLoading: false, isError: false, isFetching: false, refetch: jest.fn(), refetchStale: jest.fn(),
-    refetchList: jest.fn(() => Promise.resolve()), refreshLiveBalances: jest.fn(() => Promise.resolve()),
-    hasMore: false, loadMore: jest.fn(), isLoadingMore: false, ...over,
-  };
+  return transactionsScreenData({ category, ...over });
 }
 
 beforeEach(() => { mockTx = txData(); mockServerCount = undefined; });
