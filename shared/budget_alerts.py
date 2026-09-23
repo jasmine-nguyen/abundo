@@ -30,9 +30,9 @@ push instead of a burst (e.g. the first delivery after hand-filing several budge
 
 Exactly-once: each push's marker is CLAIMED with a conditional write before sending, so two
 overlapping deliveries (several feeds sync on the same tick) can't both send it. If the push
-doesn't land (`send_push(...)["ok"] == 0`) the claim is RELEASED, so the next delivery retries
-(WHIT-154: never record a push that didn't land). A crash between claim and send loses that
-one alert for the cycle — accepted as rare.
+doesn't land (`send_push(...)["ok"] == 0`), or a claim or the send raises, every claim is
+RELEASED, so the next delivery retries (WHIT-154: never record a push that didn't land). Only a
+hard process crash between claim and send loses that one alert for the cycle — accepted as rare.
 """
 
 import logging
@@ -41,6 +41,7 @@ from decimal import Decimal
 import rule_engine
 from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
 from push import send_push
+from repository_errors import DatabaseError
 from spend import (
     _spread_state,
     build_category_children,
@@ -55,8 +56,8 @@ from spend import (
 
 logger = logging.getLogger(__name__)
 
-# (fraction, pct-label), HIGH → LOW so a write that jumps straight past 100% picks
-# the 100% alert; both crossed thresholds still get marked fired.
+# (fraction, pct-label), HIGH → LOW so a budget past 100% sends the 100% alert; every
+# reached threshold is still marked fired.
 _THRESHOLDS = ((Decimal("1.0"), 100), (Decimal("0.8"), 80))
 
 # Bounded pagination backstop per account (mirrors _fetch_windowed_transactions).
@@ -333,24 +334,39 @@ def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_r
     fired = notify_repo.fired_markers(cycle_start, length)
 
     claimed = []
-    for cat_id, pct_to_send, reached in due:
-        send_marker = f"{cat_id}#{pct_to_send}"
-        if send_marker in fired:
-            _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired)
-            continue
-        if notify_repo.claim_fired(cycle_start, length, send_marker):
-            claimed.append((cat_id, pct_to_send, reached))
-    if not claimed:
+    try:
+        for cat_id, pct_to_send, reached in due:
+            send_marker = f"{cat_id}#{pct_to_send}"
+            if send_marker in fired:
+                _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired)
+                continue
+            if notify_repo.claim_fired(cycle_start, length, send_marker):
+                claimed.append((cat_id, pct_to_send, reached))
+        if not claimed:
+            return
+        title, body, data = _push_copy(claimed, names)
+        landed = send_push(title, body, ctx["tokens"], data=data)["ok"] > 0
+    except Exception:
+        # A claim that raised (a throttle) or a failed send must not strand the earlier claims.
+        _release_all(notify_repo, cycle_start, length, claimed)
+        raise
+    if not landed:
+        _release_all(notify_repo, cycle_start, length, claimed)
         return
-
-    title, body, data = _push_copy(claimed, names)
-    landed = send_push(title, body, ctx["tokens"], data=data)["ok"] > 0
     for cat_id, pct_to_send, reached in claimed:
-        if landed:
-            # Mark the lower reached thresholds too, so a lower one can't nag later this cycle.
-            _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired)
-        else:
-            notify_repo.release_fired(cycle_start, length, f"{cat_id}#{pct_to_send}")
+        # Mark the lower reached thresholds too, so a lower one can't nag later this cycle.
+        _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired)
+
+
+def _release_all(notify_repo, cycle_start, length, claimed) -> None:
+    """Release every claim whose push didn't go out, so the next delivery retries it. One failed
+    release must not strand the rest."""
+    for cat_id, pct_to_send, _ in claimed:
+        marker = f"{cat_id}#{pct_to_send}"
+        try:
+            notify_repo.release_fired(cycle_start, length, marker)
+        except DatabaseError:
+            logger.exception("budget-alert release of %s failed; it stays silent this cycle", marker)
 
 
 def _mark_lower_thresholds(notify_repo, cycle_start, length, cat_id, pct_to_send, reached, fired) -> None:

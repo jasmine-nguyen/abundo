@@ -6,8 +6,8 @@ cycle window is deterministic. `send_push` is stubbed to capture pushes.
 
 The load-bearing test is `test_crossing_fires_via_delta_not_a_reread`: the fake
 window repo returns ONLY the pre-write rows (it never sees the just-written row),
-so a crossing can only be detected by the in-memory Δ — locking that detection is
-immune to the date-index GSI's eventual consistency (the bug the design fixes).
+so the post-write spend level can only come from the in-memory replay — locking that the
+alert is immune to the date-index GSI's eventual consistency.
 """
 
 from datetime import date
@@ -2418,7 +2418,7 @@ def test_hand_filed_overspend_warns_on_an_empty_sync(alerts, monkeypatch):
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#100", "groceries#80"}
 
 
-def test_only_the_arriving_budget_used_to_warn(alerts, monkeypatch):
+def test_budget_over_by_hand_is_warned_alongside_the_arriving_one(alerts, monkeypatch):
     # Health crosses on arrival while Groceries was already over by hand: both are due, so
     # ONE combined push names both (before WHIT-577 only Health would have fired).
     cats = [{"id": "health", "name": "Health"}, {"id": "groceries", "name": "Groceries"}]
@@ -2497,3 +2497,58 @@ def test_a_new_cycle_key_warns_an_already_over_budget_again(alerts, monkeypatch)
                            before=before, normalised=[], notify=notify)
     assert len(sent) == 1
     assert notify.fired_markers("2026-07-01", 14) == {"groceries#80"}
+
+
+class _RaisingNotifyRepo(FakeNotifyRepo):
+    """Raises DatabaseError on the Nth claim or release, to drive the partial-failure paths."""
+
+    def __init__(self, database_error, fail_claim_number=None, fail_release_number=None):
+        super().__init__()
+        self._error = database_error
+        self._fail_claim_number = fail_claim_number
+        self._fail_release_number = fail_release_number
+        self._claims = 0
+        self._releases = 0
+
+    def claim_fired(self, cycle_start, length, marker):
+        self._claims += 1
+        if self._claims == self._fail_claim_number:
+            raise self._error("throttled")
+        return super().claim_fired(cycle_start, length, marker)
+
+    def release_fired(self, cycle_start, length, marker):
+        self._releases += 1
+        if self._releases == self._fail_release_number:
+            raise self._error("throttled")
+        super().release_fired(cycle_start, length, marker)
+
+
+_THREE_OVER = {
+    "budgets": {name: {"target": Decimal("100")} for name in ("alpha", "bravo", "coffee")},
+    "before": [_txn(f"t-{name}", name, -90, "posted") for name in ("alpha", "bravo", "coffee")],
+    "cats": [{"id": name, "name": name.title()} for name in ("alpha", "bravo", "coffee")],
+}
+
+
+def test_a_claim_that_raises_releases_the_earlier_claims(alerts, monkeypatch):
+    # The 2nd claim is throttled: nothing is sent and the 1st claim must be released, or that
+    # budget stays silent all cycle. Fail-on-revert: drop the except-release → 1st stays claimed.
+    import repository_errors
+    notify = _RaisingNotifyRepo(repository_errors.DatabaseError, fail_claim_number=2)
+    with pytest.raises(repository_errors.DatabaseError):
+        _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=_THREE_OVER["before"],
+             normalised=[], cats=_THREE_OVER["cats"], notify=notify)
+    assert notify.fired_markers("2026-07-01", 14) == set()
+    assert len(notify.released) == 1
+
+
+def test_one_failed_release_does_not_strand_the_others(alerts, monkeypatch):
+    # A combined push that didn't land: the 1st release is throttled, the rest still release.
+    # Fail-on-revert: release in a bare loop → the exception aborts it, stranding two claims.
+    import repository_errors
+    notify = _RaisingNotifyRepo(repository_errors.DatabaseError, fail_release_number=1)
+    sent, notify, _ = _run(alerts, monkeypatch, budgets=_THREE_OVER["budgets"], before=_THREE_OVER["before"],
+                           normalised=[], cats=_THREE_OVER["cats"], notify=notify, send_ok=0)
+    assert len(sent) == 1
+    assert len(notify.released) == 2
+    assert len(notify.fired_markers("2026-07-01", 14)) == 1   # only the failed release is left behind
