@@ -204,7 +204,8 @@ class FeedWatchRepository:
     """The bank-feed stall watch — one row per watched account (WHIT-606).
 
     Remembers every transaction id the balance poller has seen in the look-back window (id ->
-    bank date, so old ids can be dropped), when it last saw a new one, the balance at that moment, and whether the stall push has already gone out. Own partition
+    bank date, so old ids can be dropped), when it last saw a new one, the balance at that
+    moment, and whether the stall push has already gone out. Own partition
     (pk="FEEDWATCH#<account_id>") and no `account_id`/`date` attributes, so the row stays out of
     the date-index GSI the poller reads those ids from. One writer (the poller).
     """

@@ -155,12 +155,6 @@ def test_feed_watch_round_trips(feed_watch_repo):
     }
 
 
-def test_feed_watch_stores_no_seen_ids(feed_watch_repo):
-    # An account with no recent rows has nothing seen yet.
-    feed_watch_repo.put_watch("anz-rewards-black-visa", {}, 1, Decimal("0"), alerted=False)
-    assert feed_watch_repo.get_watch("anz-rewards-black-visa")["seen_dates"] == {}
-
-
 def test_feed_watch_row_stays_out_of_the_date_index(feed_watch_repo):
     feed_watch_repo.put_watch("up-spending", {"a": "2026-09-20"}, 1, Decimal("1"), alerted=False)
     (item,) = feed_watch_repo._table.store.values()

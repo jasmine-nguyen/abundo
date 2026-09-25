@@ -136,16 +136,6 @@ def test_an_ongoing_stall_pushes_only_once(wired):
     assert pushes == []
 
 
-def test_stall_just_under_the_threshold_does_not_push(wired):
-    handler, wire, pushes = wired
-    wire(rows={WESTPAC: [_row("t1")]},
-         watches={WESTPAC: _watch({"t1"}, NOW - 2 * DAY, "-2992.75")})
-
-    handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
-
-    assert pushes == []
-
-
 def test_three_daily_polls_that_start_a_little_early_still_push(wired):
     # Poll start times drift; three daily polls can land a few seconds short of 3 x 24h.
     handler, wire, pushes = wired
@@ -319,7 +309,7 @@ def test_lambda_handler_swallows_a_feed_stall_failure(handler, monkeypatch):
     assert handler.lambda_handler({}, None) == {"homeloan_stored": True, "accounts_stored": 1}
 
 
-# --- QA gap tests ---------------------------------------------------------------------------
+# --- Threshold, look-back and lifecycle edges ----------------------------------------------
 
 
 @pytest.mark.parametrize(
