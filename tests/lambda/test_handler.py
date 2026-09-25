@@ -127,6 +127,51 @@ def test_webhook_logs_event_id_and_row_count(lam, monkeypatch, caplog):
     assert "2 rows" in caplog.text
 
 
+def test_summary_delivery_logs_keys_and_allow_listed_fields_only(lam, monkeypatch, caplog):
+    # WHIT-606: a row-less delivery logs its shape so a stalled feed can be diagnosed, but only
+    # allow-listed plain values — an unknown field's value never reaches the logs.
+    handler = lam.handler
+    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
+    payload = {
+        "id": "evt_sum", "data": [], "status": "failed", "error": "consent expired",
+        "account_number": "123-456", "job": {"state": "error", "feed": "f1"},
+    }
+    handler = _wire(lam, monkeypatch, _Repo(), payload)
+
+    with caplog.at_level(logging.INFO, logger="handler"):
+        handler.lambda_handler({}, None)
+
+    summary_line = next(r.getMessage() for r in caplog.records if "summary:" in r.getMessage())
+    assert "'status': 'failed'" in summary_line
+    assert "'error': 'consent expired'" in summary_line
+    assert "account_number" in summary_line          # the key is logged...
+    assert "123-456" not in summary_line             # ...its value is not
+    assert "'job': ['feed', 'state']" in summary_line
+    assert "'state': 'error'" not in summary_line   # nested values aren't logged either
+
+
+def test_summary_delivery_without_data_key_is_logged(lam, monkeypatch, caplog):
+    handler = lam.handler
+    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
+    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_nodata", "status": "ok"})
+
+    with caplog.at_level(logging.INFO, logger="handler"):
+        handler.lambda_handler({}, None)
+
+    assert "evt_nodata summary:" in caplog.text
+
+
+def test_row_carrying_delivery_logs_no_summary_line(lam, monkeypatch, caplog):
+    handler = lam.handler
+    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
+    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_rows", "data": [{"a": 1}]})
+
+    with caplog.at_level(logging.INFO, logger="handler"):
+        handler.lambda_handler({}, None)
+
+    assert "summary:" not in caplog.text
+
+
 def test_webhook_logs_even_a_duplicate_delivery(lam, monkeypatch, caplog):
     # The log sits BEFORE the dedup check, so a re-delivered (duplicate) event is
     # logged too — that's the point: it reveals how many of the hourly deliveries are

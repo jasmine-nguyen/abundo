@@ -30,6 +30,9 @@ from constants import (
     BALANCE_SOURCES,
     BANKSYNC_API_KEY_PATH,
     BANKSYNC_BASE_URL,
+    FEED_STALL_ACCOUNT_IDS,
+    FEED_STALL_DAYS,
+    FEED_STALL_LOOKBACK_DAYS,
     HOMELOAN_ACCOUNT_ID,
     HOMELOAN_BALANCE_SOURCE,
     HOMELOAN_BALANCE_TIMEOUT_SECONDS,
@@ -44,6 +47,7 @@ from goal_checkpoints import notify_goal_checkpoint_crossing
 from repository import (
     AccountBalanceRepository,
     DeviceRepository,
+    FeedWatchRepository,
     GoalsRepository,
     HomeLoanBalanceRepository,
     LoanFactsRepository,
@@ -51,6 +55,7 @@ from repository import (
     TransactionRepository,
 )
 from repository_notify import NotifyRepository
+from push import send_push
 from api_key import get_api_key as _fetch_api_key
 # BalanceError + normalise_account_balance + the raw fetch now live in the shared
 # balance_fetch module (reused by the on-demand refresh API). `import urllib.request`
@@ -60,6 +65,11 @@ from balance_fetch import BalanceError, normalise_account_balance, fetch_balance
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+SECONDS_PER_DAY = 24 * 60 * 60
+# The poll is daily, so its start time drifts by seconds-to-minutes. Without this slack a
+# stall seen on exactly FEED_STALL_DAYS polls could land a few seconds short and wait a day.
+FEED_STALL_SLACK_SECONDS = 60 * 60
 
 
 def get_api_key() -> str:
@@ -353,6 +363,103 @@ def _check_goal_checkpoints(deltas: list) -> None:
             logger.error("goal checkpoint push failed for %s, continuing: %s", goal_id, e)
 
 
+def _recent_transactions(transaction_repo, account_id: str, now: int) -> list:
+    """Every stored transaction for `account_id` dated in the last FEED_STALL_LOOKBACK_DAYS."""
+    start_date = time.strftime("%Y-%m-%d", time.gmtime(now - FEED_STALL_LOOKBACK_DAYS * SECONDS_PER_DAY))
+    transactions = []
+    cursor = None
+    while True:
+        rows, cursor = transaction_repo.get_transactions_by_date_range(
+            account_id, start_date, None, MAX_PAGE_SIZE, cursor
+        )
+        transactions.extend(rows)
+        if cursor is None:
+            return transactions
+
+
+def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, watch_repo,
+                      device_repo, now: int) -> None:
+    """Push once when `account_id`'s balance has moved but no new transaction id has arrived for
+    FEED_STALL_DAYS; push again when one finally arrives (WHIT-606).
+
+    Only a NEVER-SEEN id counts as new data. A re-send, a date correction or a deleted row (the
+    age-out sweep, a settled pending) changes no id we haven't seen, so none of them can hide a
+    stall. The balance baseline lives on the watch row, not the stored balance, because the
+    app's on-demand refresh also rewrites that row and would hide the move.
+    """
+    transactions = _recent_transactions(transaction_repo, account_id, now)
+    current_ids = {transaction["transaction_id"] for transaction in transactions}
+    account_name = next(
+        (transaction["account_name"] for transaction in transactions if transaction.get("account_name")),
+        account_id,
+    )
+    watch = watch_repo.get_watch(account_id)
+
+    if watch is None or current_ids - watch["seen_ids"]:
+        if watch is not None and watch["alerted"]:
+            _send_feed_push(
+                device_repo, account_id,
+                "\u2705 Transactions are coming in again",
+                f"New transactions arrived for {account_name}.",
+            )
+        watch_repo.put_watch(account_id, current_ids, now, balance, alerted=False)
+        return
+
+    if balance == watch["amount_at_seen"]:
+        return
+    stalled_seconds = now - watch["seen_at"]
+    if stalled_seconds < FEED_STALL_DAYS * SECONDS_PER_DAY - FEED_STALL_SLACK_SECONDS:
+        return
+
+    logger.error(
+        "TRANSACTION_FEED_STALLED account=%s no new transaction for %.1f days while the balance "
+        "moved %s -> %s",
+        account_id, stalled_seconds / SECONDS_PER_DAY, watch["amount_at_seen"], balance,
+    )
+    if watch["alerted"]:
+        return
+    sent = _send_feed_push(
+        device_repo, account_id,
+        "\u26a0\ufe0f Bank transactions have stopped",
+        f"No new transactions from {account_name} for {stalled_seconds // SECONDS_PER_DAY} days, "
+        "but its balance changed. Check the bank connection in BankSync.",
+    )
+    if sent:
+        watch_repo.put_watch(account_id, watch["seen_ids"], watch["seen_at"],
+                             watch["amount_at_seen"], alerted=True)
+
+
+def _send_feed_push(device_repo, account_id: str, title: str, body: str) -> bool:
+    """Send a feed-health push. False when no device is registered, so the stall alert is
+    retried on the next poll instead of being marked as sent to no one."""
+    tokens = device_repo.list_tokens()
+    if not tokens:
+        return False
+    send_push(title, body, tokens, data={"type": "feedstall", "account": account_id})
+    return True
+
+
+def check_feed_stalls(deltas: list, now: int) -> None:
+    """Run the feed-stall check for every watched account polled this run (WHIT-606). An
+    account whose balance fetch failed isn't in `deltas`, so it's skipped, not judged."""
+    transaction_repo = TransactionRepository()
+    watch_repo = FeedWatchRepository()
+    device_repo = DeviceRepository()
+    for delta in deltas:
+        account_id = delta["account_id"]
+        if account_id not in FEED_STALL_ACCOUNT_IDS:
+            continue
+        # Per-account isolation: one account's DB hiccup must not skip the others.
+        try:
+            _check_feed_stall(
+                account_id, delta["new"],
+                transaction_repo=transaction_repo, watch_repo=watch_repo,
+                device_repo=device_repo, now=now,
+            )
+        except Exception as e:
+            logger.error("feed-stall check failed for %s, continuing: %s", account_id, e)
+
+
 def lambda_handler(event, context):
     """Poll the live balances and upsert them.
 
@@ -380,4 +487,9 @@ def lambda_handler(event, context):
         _check_goal_checkpoints(deltas)
     except Exception as e:
         logger.error("goal checkpoint push failed (balances still stored): %s", e)
+    # WHIT-606: alert when a bank feed stops delivering transactions. Best-effort, isolated.
+    try:
+        check_feed_stalls(deltas, int(time.time()))
+    except Exception as e:
+        logger.error("feed-stall check failed (balances still stored): %s", e)
     return {"homeloan_stored": homeloan_stored, "accounts_stored": accounts_stored}

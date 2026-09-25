@@ -194,3 +194,61 @@ class AccountBalanceRepository:
             )
         except ClientError as e:
             handle_database_error(e, "write balance refresh marker")
+
+
+def _feed_watch_key(account_id: str) -> dict:
+    return {"pk": f"FEEDWATCH#{account_id}", "sk": "MARKER"}
+
+
+class FeedWatchRepository:
+    """The bank-feed stall watch — one row per watched account (WHIT-606).
+
+    Remembers which transaction ids the balance poller last saw, when it first saw them, the
+    balance at that moment, and whether the stall push has already gone out. Own partition
+    (pk="FEEDWATCH#<account_id>") and no `account_id`/`date` attributes, so the row stays out of
+    the date-index GSI the poller reads those ids from. One writer (the poller).
+    """
+
+    def __init__(self) -> None:
+        self._dynamodb = None
+        self._table = None
+
+    def _get_table(self) -> Any:
+        if self._table is None:
+            self._dynamodb = boto3.resource("dynamodb", region_name=REGION_NAME)
+            self._table = self._dynamodb.Table(TABLE_NAME)
+        return self._table
+
+    def get_watch(self, account_id: str) -> Optional[dict]:
+        """Return {"seen_ids": set, "seen_at": int, "amount_at_seen": Decimal, "alerted": bool},
+        or None before the account's first check."""
+        try:
+            item = self._get_table().get_item(Key=_feed_watch_key(account_id)).get("Item")
+        except ClientError as e:
+            handle_database_error(e, "read feed watch")
+        if item is None:
+            return None
+        return {
+            "seen_ids": set(item["seen_ids"]),
+            "seen_at": int(item["seen_at"]),
+            "amount_at_seen": item["amount_at_seen"],
+            "alerted": item["alerted"],
+        }
+
+    def put_watch(
+        self, account_id: str, seen_ids: set, seen_at: int, amount_at_seen: Decimal, alerted: bool
+    ) -> None:
+        """Overwrite the account's watch row (plain put — single writer). `seen_ids` is stored
+        as a list: a DynamoDB string set can't be empty, and an account can have no rows."""
+        try:
+            self._get_table().put_item(
+                Item={
+                    **_feed_watch_key(account_id),
+                    "seen_ids": sorted(seen_ids),
+                    "seen_at": seen_at,
+                    "amount_at_seen": amount_at_seen,
+                    "alerted": alerted,
+                }
+            )
+        except ClientError as e:
+            handle_database_error(e, "write feed watch")

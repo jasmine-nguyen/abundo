@@ -32,6 +32,10 @@ BANKSYNC_WEBHOOK_SECRET_PATH = "/abundo/banksync-webhook-secret"
 
 _webhook_signing_secret = None
 
+# Plain fields of a summary delivery that are safe and useful to log (WHIT-606).
+SUMMARY_LOG_FIELDS = ("type", "status", "error", "message", "timestamp")
+SUMMARY_FIELD_MAX_CHARS = 200
+
 
 def get_webhook_signing_secret() -> str:
     global _webhook_signing_secret
@@ -67,6 +71,8 @@ def lambda_handler(event, context) -> dict:
     # hourly webhook fan-out — and which deliveries are duplicates vs carry rows — is
     # visible in the logs.
     logger.info("webhook %s: %d rows", payload["id"], len(payload.get("data", [])))
+    if not payload.get("data"):
+        log_summary_delivery(payload)
 
     if repo.has_event(payload["id"]):
         return {"statusCode": 200, "body": "duplicate event - skipped"}
@@ -83,6 +89,25 @@ def lambda_handler(event, context) -> dict:
 
     repo.mark_event(payload["id"])
     return {"statusCode": 200, "body": "ok"}
+
+
+def log_summary_delivery(payload: dict) -> None:
+    """Log what a row-less (summary) delivery says, so a stalled feed can be diagnosed from the
+    logs (WHIT-606). BankSync's summary shape isn't documented in this repo, so this logs the
+    keys (and the keys of any nested object), plus only the allow-listed plain values, never
+    the whole payload."""
+    nested_keys = {
+        key: sorted(value.keys()) for key, value in payload.items() if isinstance(value, dict)
+    }
+    fields = {
+        key: str(payload[key])[:SUMMARY_FIELD_MAX_CHARS]
+        for key in SUMMARY_LOG_FIELDS
+        if isinstance(payload.get(key), (str, int, float, bool))
+    }
+    logger.info(
+        "webhook %s summary: keys=%s nested_keys=%s fields=%s",
+        payload["id"], sorted(payload.keys()), nested_keys, fields,
+    )
 
 
 def process_transaction(payload: dict, repo: TransactionRepository) -> None:
