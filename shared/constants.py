@@ -160,6 +160,24 @@ assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
     "every BALANCE_SOURCES `aid` must be a key in ACCOUNT_ID_MAP"
 )
 
+# --- Bank-feed stall alert (WHIT-606) ----------------------------------------
+# The balance poller pushes an alert when a watched account's balance has moved but no new
+# transaction has arrived for FEED_STALL_DAYS (22-25 Sept 2026: BankSync went quiet for 3
+# days while the Westpac balance kept moving, and nobody noticed). The home loan is NOT
+# watched: interest moves its balance with no transaction, so it would false-alarm.
+# Poller-only (no shared repository_* imports these), so no lambda_api/constants.py mirror.
+FEED_STALL_ACCOUNT_IDS = ("up-spending", "westpac-altitude-qantas-black", "anz-rewards-black-visa")
+FEED_STALL_DAYS = 3
+# How far back (by bank date) the poller reads transaction ids to spot a new one. Past
+# FEED_WINDOW_DAYS so every BankSync re-send lands inside it and is recognised as seen.
+FEED_STALL_LOOKBACK_DAYS = 14
+# An account missing from BALANCE_SOURCES never gets a fresh balance, so it would silently
+# never be checked. Fail at import instead.
+assert set(FEED_STALL_ACCOUNT_IDS) <= {ACCOUNT_ID_MAP[s["aid"]] for s in BALANCE_SOURCES}, (
+    "every FEED_STALL_ACCOUNT_IDS entry must be a polled BALANCE_SOURCES account"
+)
+assert HOMELOAN_ACCOUNT_ID not in FEED_STALL_ACCOUNT_IDS, "the home loan must not be stall-watched"
+
 # --- Budget rollover (envelope carryover) -----------------------------------
 # A completed pay cycle's leftover is SEALED into the stored carryover balance only
 # once the cycle ended at least this many days ago. Transactions keep moving (pendings

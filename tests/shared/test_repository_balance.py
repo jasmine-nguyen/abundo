@@ -135,3 +135,30 @@ def test_refresh_marker_never_leaks_into_list_balances_or_gsi(account_balance_re
     assert marker["sk"] == "MARKER"
     assert "account_id" not in marker
     assert "date" not in marker
+
+
+# --- FeedWatchRepository (WHIT-606) ------------------------------------------
+
+
+def test_feed_watch_is_none_before_first_write(feed_watch_repo):
+    assert feed_watch_repo.get_watch("up-spending") is None
+
+
+def test_feed_watch_round_trips(feed_watch_repo):
+    feed_watch_repo.put_watch("up-spending", {"a": "2026-09-20"}, 1_700_000_000, Decimal("-12.50"),
+                              alerted=True)
+    assert feed_watch_repo.get_watch("up-spending") == {
+        "seen_dates": {"a": "2026-09-20"},
+        "seen_at": 1_700_000_000,
+        "amount_at_seen": Decimal("-12.50"),
+        "alerted": True,
+    }
+
+
+def test_feed_watch_row_stays_out_of_the_date_index(feed_watch_repo):
+    feed_watch_repo.put_watch("up-spending", {"a": "2026-09-20"}, 1, Decimal("1"), alerted=False)
+    (item,) = feed_watch_repo._table.store.values()
+    assert "account_id" not in item
+    assert "date" not in item
+    assert item["pk"] == "FEEDWATCH#up-spending"
+    assert item["sk"] == "MARKER"
