@@ -70,10 +70,17 @@ def _watch(seen_ids, seen_at, amount, alerted=False):
 def wired(handler, monkeypatch):
     """Wire the fakes into the handler and record every push."""
     pushes = []
-    monkeypatch.setattr(handler, "send_push",
-                        lambda title, body, tokens, data=None: pushes.append((title, body, data)))
+    expo = {"accepts": True}
 
-    def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",)):
+    def fake_send_push(title, body, tokens, data=None):
+        if tokens:
+            pushes.append((title, body, data))
+        return {"sent": len(tokens), "ok": len(tokens) if expo["accepts"] else 0, "pruned": []}
+
+    monkeypatch.setattr(handler, "send_push", fake_send_push)
+
+    def wire(rows=None, watches=None, tokens=("ExponentPushToken[x]",), expo_accepts=True):
+        expo["accepts"] = expo_accepts
         transaction_repo = _FakeTransactionRepo(rows or {})
         watch_repo = _FakeWatchRepo(watches)
         monkeypatch.setattr(handler, "TransactionRepository", lambda: transaction_repo)
@@ -148,6 +155,7 @@ def test_three_daily_polls_that_start_a_little_early_still_push(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
 
     assert len(pushes) == 1
+    assert "3 days" in pushes[0][1]
 
 
 def test_unchanged_balance_never_pushes(wired):
@@ -226,6 +234,30 @@ def test_no_registered_device_retries_the_push_next_poll(wired):
 
     assert pushes == []
     assert watch_repo.watches[WESTPAC]["alerted"] is False
+
+
+def test_a_push_expo_rejects_is_retried_next_poll(wired):
+    handler, wire, pushes = wired
+    _, watch_repo = wire(
+        rows={WESTPAC: [_row("t1")]},
+        watches={WESTPAC: _watch({"t1"}, NOW - 3 * DAY, "-2992.75")},
+        expo_accepts=False,
+    )
+
+    handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
+
+    assert watch_repo.watches[WESTPAC]["alerted"] is False
+
+
+def test_a_cursor_that_never_ends_fails_this_account_only(wired, caplog):
+    handler, wire, pushes = wired
+    transaction_repo, watch_repo = wire()
+    transaction_repo.get_transactions_by_date_range = lambda *args: ([], "more")
+
+    handler.check_feed_stalls([_delta(WESTPAC, "-1")], NOW)
+
+    assert watch_repo.puts == []
+    assert "did not finish" in caplog.text
 
 
 def test_every_page_of_recent_ids_is_read(wired):

@@ -158,6 +158,8 @@ def test_feed_watch_stores_an_empty_id_set(feed_watch_repo):
     # An account with no recent rows has no ids; a DynamoDB string set can't be empty.
     feed_watch_repo.put_watch("anz-rewards-black-visa", set(), 1, Decimal("0"), alerted=False)
     assert feed_watch_repo.get_watch("anz-rewards-black-visa")["seen_ids"] == set()
+    (item,) = feed_watch_repo._table.store.values()
+    assert item["seen_ids"] == []
 
 
 def test_feed_watch_row_stays_out_of_the_date_index(feed_watch_repo):

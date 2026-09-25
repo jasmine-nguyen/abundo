@@ -102,7 +102,7 @@ def log_summary_delivery(payload: dict) -> None:
     fields = {
         key: str(payload[key])[:SUMMARY_FIELD_MAX_CHARS]
         for key in SUMMARY_LOG_FIELDS
-        if isinstance(payload.get(key), (str, int, float, bool))
+        if isinstance(payload.get(key), (str, int, float))
     }
     logger.info(
         "webhook %s summary: keys=%s nested_keys=%s fields=%s",

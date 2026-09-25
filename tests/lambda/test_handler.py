@@ -150,6 +150,18 @@ def test_summary_delivery_logs_keys_and_allow_listed_fields_only(lam, monkeypatc
     assert "'state': 'error'" not in summary_line   # nested values aren't logged either
 
 
+def test_summary_delivery_truncates_a_long_field(lam, monkeypatch, caplog):
+    handler = lam.handler
+    monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)
+    handler = _wire(lam, monkeypatch, _Repo(), {"id": "evt_long", "message": "x" * 500})
+
+    with caplog.at_level(logging.INFO, logger="handler"):
+        handler.lambda_handler({}, None)
+
+    assert "x" * 200 in caplog.text
+    assert "x" * 201 not in caplog.text
+
+
 def test_summary_delivery_without_data_key_is_logged(lam, monkeypatch, caplog):
     handler = lam.handler
     monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)

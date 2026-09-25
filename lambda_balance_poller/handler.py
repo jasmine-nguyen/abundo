@@ -70,6 +70,9 @@ SECONDS_PER_DAY = 24 * 60 * 60
 # The poll is daily, so its start time drifts by seconds-to-minutes. Without this slack a
 # stall seen on exactly FEED_STALL_DAYS polls could land a few seconds short and wait a day.
 FEED_STALL_SLACK_SECONDS = 60 * 60
+# 14 days of one account's transactions fit in a page or two; this only stops a cursor that
+# never ends from looping until the Lambda times out.
+FEED_STALL_MAX_PAGES = 20
 
 
 def get_api_key() -> str:
@@ -364,17 +367,21 @@ def _check_goal_checkpoints(deltas: list) -> None:
 
 
 def _recent_transactions(transaction_repo, account_id: str, now: int) -> list:
-    """Every stored transaction for `account_id` dated in the last FEED_STALL_LOOKBACK_DAYS."""
+    """Every stored transaction for `account_id` dated in the last FEED_STALL_LOOKBACK_DAYS,
+    following the date-index cursor to completion (bounded)."""
     start_date = time.strftime("%Y-%m-%d", time.gmtime(now - FEED_STALL_LOOKBACK_DAYS * SECONDS_PER_DAY))
     transactions = []
     cursor = None
-    while True:
+    for _ in range(FEED_STALL_MAX_PAGES):
         rows, cursor = transaction_repo.get_transactions_by_date_range(
             account_id, start_date, None, MAX_PAGE_SIZE, cursor
         )
         transactions.extend(rows)
         if cursor is None:
             return transactions
+    raise RuntimeError(
+        f"feed-stall read for {account_id} did not finish after {FEED_STALL_MAX_PAGES} pages"
+    )
 
 
 def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, watch_repo,
@@ -421,7 +428,7 @@ def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, wa
     sent = _send_feed_push(
         device_repo, account_id,
         "\u26a0\ufe0f Bank transactions have stopped",
-        f"No new transactions from {account_name} for {stalled_seconds // SECONDS_PER_DAY} days, "
+        f"No new transactions from {account_name} for {round(stalled_seconds / SECONDS_PER_DAY)} days, "
         "but its balance changed. Check the bank connection in BankSync.",
     )
     if sent:
@@ -430,13 +437,11 @@ def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, wa
 
 
 def _send_feed_push(device_repo, account_id: str, title: str, body: str) -> bool:
-    """Send a feed-health push. False when no device is registered, so the stall alert is
-    retried on the next poll instead of being marked as sent to no one."""
-    tokens = device_repo.list_tokens()
-    if not tokens:
-        return False
-    send_push(title, body, tokens, data={"type": "feedstall", "account": account_id})
-    return True
+    """Send a feed-health push. False when it reached no device (none registered, or Expo
+    rejected it), so the stall alert is retried on the next poll instead of marked as sent."""
+    summary = send_push(title, body, device_repo.list_tokens(),
+                        data={"type": "feedstall", "account": account_id})
+    return summary["ok"] > 0
 
 
 def check_feed_stalls(deltas: list, now: int) -> None:
