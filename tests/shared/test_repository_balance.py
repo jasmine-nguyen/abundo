@@ -145,25 +145,24 @@ def test_feed_watch_is_none_before_first_write(feed_watch_repo):
 
 
 def test_feed_watch_round_trips(feed_watch_repo):
-    feed_watch_repo.put_watch("up-spending", {"b", "a"}, 1_700_000_000, Decimal("-12.50"), alerted=True)
+    feed_watch_repo.put_watch("up-spending", {"a": "2026-09-20"}, 1_700_000_000, Decimal("-12.50"),
+                              alerted=True)
     assert feed_watch_repo.get_watch("up-spending") == {
-        "seen_ids": {"a", "b"},
+        "seen_dates": {"a": "2026-09-20"},
         "seen_at": 1_700_000_000,
         "amount_at_seen": Decimal("-12.50"),
         "alerted": True,
     }
 
 
-def test_feed_watch_stores_an_empty_id_set(feed_watch_repo):
-    # An account with no recent rows has no ids; a DynamoDB string set can't be empty.
-    feed_watch_repo.put_watch("anz-rewards-black-visa", set(), 1, Decimal("0"), alerted=False)
-    assert feed_watch_repo.get_watch("anz-rewards-black-visa")["seen_ids"] == set()
-    (item,) = feed_watch_repo._table.store.values()
-    assert item["seen_ids"] == []
+def test_feed_watch_stores_no_seen_ids(feed_watch_repo):
+    # An account with no recent rows has nothing seen yet.
+    feed_watch_repo.put_watch("anz-rewards-black-visa", {}, 1, Decimal("0"), alerted=False)
+    assert feed_watch_repo.get_watch("anz-rewards-black-visa")["seen_dates"] == {}
 
 
 def test_feed_watch_row_stays_out_of_the_date_index(feed_watch_repo):
-    feed_watch_repo.put_watch("up-spending", {"a"}, 1, Decimal("1"), alerted=False)
+    feed_watch_repo.put_watch("up-spending", {"a": "2026-09-20"}, 1, Decimal("1"), alerted=False)
     (item,) = feed_watch_repo._table.store.values()
     assert "account_id" not in item
     assert "date" not in item

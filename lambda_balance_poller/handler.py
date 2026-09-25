@@ -366,10 +366,9 @@ def _check_goal_checkpoints(deltas: list) -> None:
             logger.error("goal checkpoint push failed for %s, continuing: %s", goal_id, e)
 
 
-def _recent_transactions(transaction_repo, account_id: str, now: int) -> list:
-    """Every stored transaction for `account_id` dated in the last FEED_STALL_LOOKBACK_DAYS,
-    following the date-index cursor to completion (bounded)."""
-    start_date = time.strftime("%Y-%m-%d", time.gmtime(now - FEED_STALL_LOOKBACK_DAYS * SECONDS_PER_DAY))
+def _recent_transactions(transaction_repo, account_id: str, start_date: str) -> list:
+    """Every stored transaction for `account_id` dated on or after `start_date`, following the
+    date-index cursor to completion (bounded)."""
     transactions = []
     cursor = None
     for _ in range(FEED_STALL_MAX_PAGES):
@@ -394,22 +393,33 @@ def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, wa
     stall. The balance baseline lives on the watch row, not the stored balance, because the
     app's on-demand refresh also rewrites that row and would hide the move.
     """
-    transactions = _recent_transactions(transaction_repo, account_id, now)
-    current_ids = {transaction["transaction_id"] for transaction in transactions}
+    start_date = time.strftime("%Y-%m-%d", time.gmtime(now - FEED_STALL_LOOKBACK_DAYS * SECONDS_PER_DAY))
+    transactions = _recent_transactions(transaction_repo, account_id, start_date)
+    current_dates = {transaction["transaction_id"]: transaction["date"] for transaction in transactions}
     account_name = next(
         (transaction["account_name"] for transaction in transactions if transaction.get("account_name")),
         account_id,
     )
     watch = watch_repo.get_watch(account_id)
 
-    if watch is None or current_ids - watch["seen_ids"]:
-        if watch is not None and watch["alerted"]:
+    if watch is None:
+        watch_repo.put_watch(account_id, current_dates, now, balance, alerted=False)
+        return
+
+    if current_dates.keys() - watch["seen_dates"].keys():
+        if watch["alerted"]:
             _send_feed_push(
                 device_repo, account_id,
                 "\u2705 Transactions are coming in again",
                 f"New transactions arrived for {account_name}.",
             )
-        watch_repo.put_watch(account_id, current_ids, now, balance, alerted=False)
+        # Keep ids already seen (a deleted row BankSync re-sends is not new), minus any that
+        # have aged out of the look-back window so the row can't grow forever.
+        still_recent = {
+            transaction_id: date for transaction_id, date in watch["seen_dates"].items()
+            if date >= start_date
+        }
+        watch_repo.put_watch(account_id, {**still_recent, **current_dates}, now, balance, alerted=False)
         return
 
     if balance == watch["amount_at_seen"]:
@@ -432,7 +442,7 @@ def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, wa
         "but its balance changed. Check the bank connection in BankSync.",
     )
     if sent:
-        watch_repo.put_watch(account_id, watch["seen_ids"], watch["seen_at"],
+        watch_repo.put_watch(account_id, watch["seen_dates"], watch["seen_at"],
                              watch["amount_at_seen"], alerted=True)
 
 

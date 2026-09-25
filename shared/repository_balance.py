@@ -203,8 +203,8 @@ def _feed_watch_key(account_id: str) -> dict:
 class FeedWatchRepository:
     """The bank-feed stall watch — one row per watched account (WHIT-606).
 
-    Remembers which transaction ids the balance poller last saw, when it first saw them, the
-    balance at that moment, and whether the stall push has already gone out. Own partition
+    Remembers every transaction id the balance poller has seen in the look-back window (id ->
+    bank date, so old ids can be dropped), when it last saw a new one, the balance at that moment, and whether the stall push has already gone out. Own partition
     (pk="FEEDWATCH#<account_id>") and no `account_id`/`date` attributes, so the row stays out of
     the date-index GSI the poller reads those ids from. One writer (the poller).
     """
@@ -220,8 +220,8 @@ class FeedWatchRepository:
         return self._table
 
     def get_watch(self, account_id: str) -> Optional[dict]:
-        """Return {"seen_ids": set, "seen_at": int, "amount_at_seen": Decimal, "alerted": bool},
-        or None before the account's first check."""
+        """Return {"seen_dates": {id: date}, "seen_at": int, "amount_at_seen": Decimal,
+        "alerted": bool}, or None before the account's first check."""
         try:
             item = self._get_table().get_item(Key=_feed_watch_key(account_id)).get("Item")
         except ClientError as e:
@@ -229,22 +229,21 @@ class FeedWatchRepository:
         if item is None:
             return None
         return {
-            "seen_ids": set(item["seen_ids"]),
+            "seen_dates": dict(item["seen_dates"]),
             "seen_at": int(item["seen_at"]),
             "amount_at_seen": item["amount_at_seen"],
             "alerted": item["alerted"],
         }
 
     def put_watch(
-        self, account_id: str, seen_ids: set, seen_at: int, amount_at_seen: Decimal, alerted: bool
+        self, account_id: str, seen_dates: dict, seen_at: int, amount_at_seen: Decimal, alerted: bool
     ) -> None:
-        """Overwrite the account's watch row (plain put — single writer). `seen_ids` is stored
-        as a list: a DynamoDB string set can't be empty, and an account can have no rows."""
+        """Overwrite the account's watch row (plain put — single writer)."""
         try:
             self._get_table().put_item(
                 Item={
                     **_feed_watch_key(account_id),
-                    "seen_ids": sorted(seen_ids),
+                    "seen_dates": seen_dates,
                     "seen_at": seen_at,
                     "amount_at_seen": amount_at_seen,
                     "alerted": alerted,

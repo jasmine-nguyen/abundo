@@ -162,6 +162,18 @@ def test_summary_delivery_truncates_a_long_field(lam, monkeypatch, caplog):
     assert "x" * 201 not in caplog.text
 
 
+def test_summary_delivery_hides_an_allow_listed_key_holding_an_object(lam, caplog):
+    payload = {"id": "evt_obj", "data": [], "error": {"detail": "card 4111-1111 declined"},
+               "timestamp": 1790000000}
+
+    with caplog.at_level(logging.INFO, logger="handler"):
+        lam.handler.log_summary_delivery(payload)
+
+    assert "4111-1111" not in caplog.text
+    assert "'error': ['detail']" in caplog.text
+    assert "'timestamp': '1790000000'" in caplog.text
+
+
 def test_summary_delivery_without_data_key_is_logged(lam, monkeypatch, caplog):
     handler = lam.handler
     monkeypatch.setattr(handler, "process_transaction", lambda payload, repo: None)

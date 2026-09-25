@@ -39,12 +39,12 @@ class _FakeWatchRepo:
 
     def get_watch(self, account_id):
         watch = self.watches.get(account_id)
-        return None if watch is None else {**watch, "seen_ids": set(watch["seen_ids"])}
+        return None if watch is None else {**watch, "seen_dates": dict(watch["seen_dates"])}
 
-    def put_watch(self, account_id, seen_ids, seen_at, amount_at_seen, alerted):
+    def put_watch(self, account_id, seen_dates, seen_at, amount_at_seen, alerted):
         self.puts.append(account_id)
         self.watches[account_id] = {
-            "seen_ids": set(seen_ids), "seen_at": seen_at,
+            "seen_dates": dict(seen_dates), "seen_at": seen_at,
             "amount_at_seen": amount_at_seen, "alerted": alerted,
         }
 
@@ -61,9 +61,9 @@ def _row(transaction_id, date="2026-09-22", account_name="Altitude Qantas Black 
     return {"transaction_id": transaction_id, "date": date, "account_name": account_name}
 
 
-def _watch(seen_ids, seen_at, amount, alerted=False):
-    return {"seen_ids": set(seen_ids), "seen_at": seen_at, "amount_at_seen": Decimal(amount),
-            "alerted": alerted}
+def _watch(seen_ids, seen_at, amount, alerted=False, date="2026-09-22"):
+    return {"seen_dates": {transaction_id: date for transaction_id in seen_ids}, "seen_at": seen_at,
+            "amount_at_seen": Decimal(amount), "alerted": alerted}
 
 
 @pytest.fixture
@@ -179,7 +179,9 @@ def test_a_new_transaction_resets_the_watch(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
 
     assert pushes == []
-    assert watch_repo.watches[WESTPAC] == _watch({"t1", "t3"}, NOW, "-3232.56")
+    assert watch_repo.watches[WESTPAC]["seen_dates"] == {"t1": "2026-09-22", "t3": "2026-09-19"}
+    assert watch_repo.watches[WESTPAC]["seen_at"] == NOW
+    assert watch_repo.watches[WESTPAC]["amount_at_seen"] == Decimal("-3232.56")
 
 
 def test_a_deleted_row_does_not_reset_the_watch(wired):
@@ -270,7 +272,7 @@ def test_every_page_of_recent_ids_is_read(wired):
     handler.check_feed_stalls([_delta(WESTPAC, "-2")], NOW)
 
     assert pushes == []
-    assert "t_new" in watch_repo.watches[WESTPAC]["seen_ids"]
+    assert "t_new" in watch_repo.watches[WESTPAC]["seen_dates"]
 
 
 def test_home_loan_and_unpolled_accounts_are_skipped(wired):
@@ -315,3 +317,118 @@ def test_lambda_handler_swallows_a_feed_stall_failure(handler, monkeypatch):
     monkeypatch.setattr(handler, "check_feed_stalls", boom)
 
     assert handler.lambda_handler({}, None) == {"homeloan_stored": True, "accounts_stored": 1}
+
+
+# --- QA gap tests ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "stalled_for, expect_push",
+    [(3 * DAY - 60 * 60, True),        # exactly the threshold minus the 1h slack -> push
+     (3 * DAY - 60 * 60 - 1, False)],  # one second earlier -> wait for tomorrow
+)
+def test_stall_threshold_edge_is_exactly_three_days_minus_one_hour(wired, stalled_for, expect_push):
+    handler, wire, pushes = wired
+    wire(rows={WESTPAC: [_row("t1")]},
+         watches={WESTPAC: _watch({"t1"}, NOW - stalled_for, "-2992.75")})
+
+    handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
+
+    assert (len(pushes) == 1) is expect_push
+
+
+def test_daily_lifecycle_one_push_per_stall_one_all_clear_then_a_fresh_stall(wired):
+    # Nine daily polls against one persisted watch: a stall push on day 3, silence on day 4, the
+    # all-clear on day 5, and a second, separate stall gets its own push on day 8.
+    handler, wire, pushes = wired
+    transaction_repo, _ = wire(rows={WESTPAC: [_row("t1")]})
+    start = NOW - 8 * DAY
+
+    def poll(day, balance, rows=None):
+        if rows is not None:
+            transaction_repo.rows_by_account[WESTPAC] = rows
+        handler.check_feed_stalls([_delta(WESTPAC, balance)], start + day * DAY)
+        return len(pushes)
+
+    assert poll(0, "-100") == 0
+    assert poll(1, "-150") == 0
+    assert poll(2, "-200") == 0
+    assert poll(3, "-250") == 1
+    assert "stopped" in pushes[0][0]
+    assert poll(4, "-300") == 1
+    assert poll(5, "-300", rows=[_row("t2", "2026-09-20"), _row("t1")]) == 2
+    assert "coming in again" in pushes[1][0]
+    assert poll(6, "-350") == 2
+    assert poll(7, "-400") == 2
+    assert poll(8, "-450") == 3
+    assert "stopped" in pushes[2][0]
+
+
+@pytest.mark.parametrize(
+    "new_row_date, expect_push",
+    [("2026-09-06", True),    # a never-seen id dated 15 days back: outside the look-back
+     ("2026-09-07", False)],  # exactly 14 days back (UTC): inside -> counts as new data
+)
+def test_only_a_new_id_inside_the_14_day_lookback_counts(wired, new_row_date, expect_push):
+    handler, wire, pushes = wired
+    wire(rows={WESTPAC: [_row("t1"), _row("t_late", new_row_date)]},
+         watches={WESTPAC: _watch({"t1"}, NOW - 3 * DAY, "-2992.75")})
+
+    handler.check_feed_stalls([_delta(WESTPAC, "-3232.56")], NOW)
+
+    assert (len(pushes) == 1) is expect_push
+
+
+def test_lambda_handler_runs_the_stall_check_on_this_polls_deltas(handler, monkeypatch):
+    # Even when the goal-checkpoint step before it blows up.
+    deltas = [_delta(WESTPAC, "-3232.56")]
+    monkeypatch.setattr(handler, "get_api_key", lambda: "k")
+    monkeypatch.setattr(handler, "_poll_homeloan", lambda api_key: True)
+    monkeypatch.setattr(handler, "_poll_account_balances", lambda api_key: (1, deltas))
+
+    def goal_boom(d):
+        raise RuntimeError("goals table down")
+
+    monkeypatch.setattr(handler, "_check_goal_checkpoints", goal_boom)
+    monkeypatch.setattr(handler.time, "time", lambda: NOW + 0.9)
+    calls = []
+    monkeypatch.setattr(handler, "check_feed_stalls", lambda d, now: calls.append((d, now)))
+
+    handler.lambda_handler({}, None)
+
+    assert calls == [(deltas, NOW)]
+
+
+def test_a_deleted_id_that_banksync_resends_later_is_not_new_data(wired):
+    # Day 0 sees pending p1; day 1 its settled twin t2 arrives and p1 is deleted; days 2-4 only
+    # re-sends, and the webhook re-inserts the re-sent p1. p1 was already seen, so the stall that
+    # began on day 1 must still push on day 4.
+    handler, wire, pushes = wired
+    transaction_repo, _ = wire()
+    start = NOW - 4 * DAY
+
+    def poll(day, balance, rows):
+        transaction_repo.rows_by_account[WESTPAC] = rows
+        handler.check_feed_stalls([_delta(WESTPAC, balance)], start + day * DAY)
+
+    poll(0, "-100", [_row("p1"), _row("t1")])
+    poll(1, "-150", [_row("t2"), _row("t1")])
+    poll(2, "-200", [_row("t2"), _row("p1"), _row("t1")])
+    poll(3, "-250", [_row("t2"), _row("p1"), _row("t1")])
+    poll(4, "-300", [_row("t2"), _row("p1"), _row("t1")])
+
+    assert len(pushes) == 1
+    assert "stopped" in pushes[0][0]
+
+
+def test_ids_older_than_the_lookback_are_dropped_on_reset(wired):
+    handler, wire, pushes = wired
+    _, watch_repo = wire(
+        rows={WESTPAC: [_row("t_new", "2026-09-20")]},
+        watches={WESTPAC: {"seen_dates": {"t_old": "2026-08-01", "t_recent": "2026-09-15"},
+                           "seen_at": NOW - DAY, "amount_at_seen": Decimal("-1"), "alerted": False}},
+    )
+
+    handler.check_feed_stalls([_delta(WESTPAC, "-2")], NOW)
+
+    assert watch_repo.watches[WESTPAC]["seen_dates"] == {"t_recent": "2026-09-15", "t_new": "2026-09-20"}
