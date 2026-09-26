@@ -256,42 +256,51 @@ builder.add_conditional_edges("escalation", after_escalation)
 builder.add_conditional_edges("fix_or_ship", after_code_critic_and_qa)
 
 # --- cli ---
+#
+# Usage:
+#   python3 build_graph.py CARD-123                  → start a new build
+#   python3 build_graph.py CARD-123 --resume "go"    → resume with answer
+#
+# The script runs until it hits an interrupt (plan sign-off, escalation)
+# or finishes. It prints the interrupt and exits — no input() needed.
+# The caller (Claude Code, a terminal, etc.) handles the conversation
+# and calls --resume with the answer.
 
-card_number = sys.argv[1]
-config: RunnableConfig = {"configurable": {"thread_id": card_number}}
+import argparse
+import asyncio
 
+parser = argparse.ArgumentParser()
+parser.add_argument("card_number")
+parser.add_argument("--resume", default=None)
+args = parser.parse_args()
 
-def show_interrupt(result: dict) -> bool:
-    interrupts = result.get("__interrupt__")
-    if not interrupts:
-        return False
-    value = interrupts[0].value
-    print("\n" + "=" * 60)
-    print(value)
-    print("=" * 60)
-    return True
+config: RunnableConfig = {"configurable": {"thread_id": args.card_number}}
 
 
 async def main():
     async with AsyncSqliteSaver.from_conn_string("build_graph.db") as saver:
         await saver.setup()
         graph = builder.compile(checkpointer=saver)
-        await saver.adelete_thread(card_number)
 
-        print(f"Starting build for {card_number}...\n")
-        result = await graph.ainvoke(
-            {"card_number": card_number, "card_details": "some details"}, config
-        )
+        if args.resume is not None:
+            result = await graph.ainvoke(Command(resume=args.resume), config)
+        else:
+            await saver.adelete_thread(args.card_number)
+            print(f"Starting build for {args.card_number}...\n")
+            result = await graph.ainvoke(
+                {"card_number": args.card_number, "card_details": "some details"},
+                config,
+            )
 
-        while show_interrupt(result):
-            answer = input("\n> ").strip()
-            if not answer:
-                continue
-            result = await graph.ainvoke(Command(resume=answer), config)
+        interrupts = result.get("__interrupt__")
+        if interrupts:
+            print("\n" + "=" * 60)
+            print(interrupts[0].value)
+            print("=" * 60)
+            print("\nPaused. Resume with:")
+            print(f'  python3 build_graph.py {args.card_number} --resume "your answer"')
+        else:
+            print("\nDone.")
 
-        print("\nDone.")
-
-
-import asyncio
 
 asyncio.run(main())
