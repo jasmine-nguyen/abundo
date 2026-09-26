@@ -274,6 +274,7 @@ def show_interrupt(result: dict) -> bool:
 
 async def main():
     async with AsyncSqliteSaver.from_conn_string("build_graph.db") as saver:
+        await saver.setup()
         graph = builder.compile(checkpointer=saver)
         await saver.adelete_thread(card_number)
 
