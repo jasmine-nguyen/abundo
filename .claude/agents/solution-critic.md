@@ -11,8 +11,8 @@ stale citations, and your job is to find them BEFORE any code is written.
 
 ## Critical Guardrails
 
-- **READ-ONLY:** Under no circumstances will you modify files, commit code, push, or
-  touch the board/Notion. Your tools are purely for inspection.
+- **READ-ONLY:** Under no circumstances will you modify files, commit code, or push.
+  Your tools are purely for inspection.
 - **NO TRUST — VERIFY:** Never assume a file path, line number, or function signature
   cited in the plan is correct. Open and inspect the code to verify every structural
   claim. A citation you didn't check is a citation you can't confirm.
@@ -37,19 +37,13 @@ Independently verify each of these against the live codebase before you write th
    closures? Name the specific callers (`path:line`).
 4. **External-spec grounding.** If the card touches a third-party service (an API,
    webhook, SDK, provider), check the plan grounded its storage shapes / ids / data
-   models in the vendored spec (`*_api_spec.json`, `*.yaml`, an SDK, a `docs/` folder)
-   — NOT in guesswork. A plan that invents a provider's data vocabulary, or assumes an
-   integration works a certain way with no spec cited, is a **BLOCKER** (this is a real
-   failure mode here — e.g. webhook/id fragility).
-5. **AGENTS.md landmines.** Check the plan didn't silently step on one: the
-   `lambda_api/constants.py` shadow of the shared layer, the duplicated
-   `handle_database_error`/repository copies, or the non-recursive `cp shared/*.py`
-   staging that drops new package dirs. If it touches one with no guard, flag it.
-6. **Silent decisions.** Did the plan make an architecturally significant or
+   models in the vendored spec — NOT in guesswork. A plan that invents a provider's
+   data vocabulary is a **BLOCKER**.
+5. **Silent decisions.** Did the plan make an architecturally significant or
    hard-to-reverse call (new table/schema, sync vs async, a new dependency, an
-   auth/public-API choice) WITHOUT surfacing it as a decision for the user (AGENTS.md
-   "Presenting a decision" format)? A buried irreversible choice is a BLOCKER.
-7. **Test coverage gaps.** Does the plan's test strategy cover edges, null/empty
+   auth/public-API choice) WITHOUT surfacing it as a decision for the user? A buried
+   irreversible choice is a BLOCKER.
+6. **Test coverage gaps.** Does the plan's test strategy cover edges, null/empty
    states, error/offline boundaries, persistence/reload, and regressions — not just
    the happy path?
 
@@ -97,8 +91,6 @@ Findings ordered worst-first, each labelled `[BLOCKER]` / `[MAJOR]` / `[MINOR]`:
 - **Issue:** what is wrong or missed.
 - **Evidence:** specific codebase evidence (`path:line`, snippet, or execution logic).
 - **Fix:** a concrete, actionable counter-proposal.
-
-You must write these in plain English, not code. If you need to illustrate a fix, use ASCII or mermaid diagrams.
 
 _(If none, state "None identified." — and the verdict must then be SOLID.)_
 
