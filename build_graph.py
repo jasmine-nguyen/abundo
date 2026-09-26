@@ -276,23 +276,42 @@ builder.add_conditional_edges("fix_or_ship", after_code_critic_and_qa)
 # --- cli ---
 #
 # Usage:
-#   python3 build_graph.py CARD-123                  → start a new build
-#   python3 build_graph.py CARD-123 --resume "go"    → resume with answer
+#   python3 build_graph.py --card WHIT-123                     → existing card
+#   python3 build_graph.py "add a chat button for spending"    → ad-hoc request
+#   python3 build_graph.py --thread abc123 --resume "go"       → resume
 #
-# The script runs until it hits an interrupt (plan sign-off, escalation)
-# or finishes. It prints the interrupt and exits — no input() needed.
-# The caller (Claude Code, a terminal, etc.) handles the conversation
-# and calls --resume with the answer.
+# If no --card, the request text is the card. A short thread ID is
+# generated from a hash so the checkpoint has a clean key.
 
 import argparse
 import asyncio
+import hashlib
 
 parser = argparse.ArgumentParser()
-parser.add_argument("card_number")
+parser.add_argument("request", nargs="?", default=None)
+parser.add_argument("--card", default=None)
+parser.add_argument("--thread", default=None)
 parser.add_argument("--resume", default=None)
 args = parser.parse_args()
 
-config: RunnableConfig = {"configurable": {"thread_id": args.card_number}}
+if args.resume and not args.thread:
+    parser.error("--resume requires --thread")
+
+if args.card:
+    card_number = args.card
+    card_details = ""
+    thread_id = args.card
+elif args.request:
+    card_number = ""
+    card_details = args.request
+    thread_id = hashlib.sha256(args.request.encode()).hexdigest()[:8]
+elif not args.resume:
+    parser.error("provide a request or --card")
+
+if args.thread:
+    thread_id = args.thread
+
+config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
 
 async def main():
@@ -303,10 +322,10 @@ async def main():
         if args.resume is not None:
             result = await graph.ainvoke(Command(resume=args.resume), config)
         else:
-            await saver.adelete_thread(args.card_number)
-            print(f"Starting build for {args.card_number}...\n")
+            await saver.adelete_thread(thread_id)
+            print(f"Starting build (thread {thread_id})...\n")
             result = await graph.ainvoke(
-                {"card_number": args.card_number, "card_details": "some details"},
+                {"card_number": card_number, "card_details": card_details},
                 config,
             )
 
@@ -315,8 +334,8 @@ async def main():
             print("\n" + "=" * 60)
             print(interrupts[0].value)
             print("=" * 60)
-            print("\nPaused. Resume with:")
-            print(f'  python3 build_graph.py {args.card_number} --resume "your answer"')
+            print(f"\nPaused. Resume with:")
+            print(f'  python3 build_graph.py --thread {thread_id} --resume "your answer"')
         else:
             print("\nDone.")
 
