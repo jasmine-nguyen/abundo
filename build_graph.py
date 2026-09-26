@@ -16,7 +16,13 @@
 #                   implementer        END
 #                (NEEDS REWORK      (all good)
 #                  & attempts < 2)
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    ToolUseBlock,
+    query,
+)
 import sys
 from typing import NotRequired, TypedDict
 
@@ -52,6 +58,13 @@ def agent_prompt(agent_file: str) -> str:
     return open(f".claude/agents/{agent_file}").read() + "\n\n" + PROJECT_CONTEXT
 
 
+def print_progress(message):
+    if isinstance(message, AssistantMessage):
+        for block in message.content:
+            if isinstance(block, ToolUseBlock):
+                print(f"  → {block.name}", flush=True)
+
+
 # --- nodes ---
 
 
@@ -70,6 +83,7 @@ async def designer(state: BuildState):
     )
 
     async for message in query(prompt=prompt, options=options):
+        print_progress(message)
         if isinstance(message, ResultMessage):
             return {
                 "plan": message.result,
@@ -88,6 +102,7 @@ async def plan_critic(state: BuildState):
     )
 
     async for message in query(prompt=prompt, options=options):
+        print_progress(message)
         if isinstance(message, ResultMessage):
             verdict = message.result
             if "NEEDS REWORK" in verdict:
@@ -126,6 +141,7 @@ async def implementer(state: BuildState):
     )
 
     async for message in query(prompt=prompt, options=options):
+        print_progress(message)
         if isinstance(message, ResultMessage):
             if "ESCALATION:" in message.result:
                 return {
@@ -152,6 +168,7 @@ async def code_critic(state: BuildState):
     )
 
     async for message in query(prompt=prompt, options=options):
+        print_progress(message)
         if isinstance(message, ResultMessage):
             if "DO NOT SHIP" in message.result:
                 return {"code_verdict": "NEEDS REWORK"}
@@ -172,6 +189,7 @@ async def qa(state: BuildState):
     )
 
     async for message in query(prompt=prompt, options=options):
+        print_progress(message)
         if isinstance(message, ResultMessage):
             if "real bug" in message.result.lower():
                 return {"qa_verdict": "NEEDS REWORK"}
