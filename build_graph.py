@@ -5,7 +5,9 @@
 #                     sign_off (pause)
 #                    /         \
 #              designer         implementer
-#            (REJECTED)            |
+#            (REJECTED)        /     |
+#                    escalation      |  (if ESCALATION: in output)
+#                      (pause)       |
 #                             /        \
 #                      code_critic      qa
 #                             \        /
@@ -36,6 +38,9 @@ class BuildState(TypedDict):
     implementation: NotRequired[str]
     code_verdict: NotRequired[str]
     qa_verdict: NotRequired[str]
+    escalation: NotRequired[str]
+    escalation_source: NotRequired[str]
+    escalation_answer: NotRequired[str]
 
 
 # --- helpers ---
@@ -111,6 +116,10 @@ async def implementer(state: BuildState):
     plan = state.get("plan", "")
     prompt = f"Card: {state.get('card_number')}\n\nApproved plan:\n{plan}"
 
+    escalation_answer = state.get("escalation_answer", "")
+    if escalation_answer:
+        prompt += f"\n\nYou previously escalated a decision. The answer: {escalation_answer}"
+
     options = ClaudeAgentOptions(
         system_prompt=agent_prompt("implementer.md"),
         allowed_tools=["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
@@ -118,9 +127,15 @@ async def implementer(state: BuildState):
 
     async for message in query(prompt=prompt, options=options):
         if isinstance(message, ResultMessage):
+            if "ESCALATION:" in message.result:
+                return {
+                    "escalation": message.result,
+                    "escalation_source": "implementer",
+                }
             return {
                 "implementation": message.result,
                 "implementation_attempts": state.get("implementation_attempts", 0) + 1,
+                "escalation_answer": "",
             }
 
 
@@ -163,6 +178,12 @@ async def qa(state: BuildState):
             return {"qa_verdict": "APPROVED"}
 
 
+def escalation(state: BuildState):
+    print("escalation running")
+    answer = interrupt(state.get("escalation", ""))
+    return {"escalation_answer": answer, "escalation": ""}
+
+
 def fix_or_ship(state: BuildState):
     print("fix_or_ship running")
     return {}
@@ -184,6 +205,16 @@ def after_sign_off(state: BuildState):
     if state.get("plan_decision") == "APPROVED":
         return "implementer"
     return "designer"
+
+
+def after_implementer(state: BuildState):
+    if state.get("escalation"):
+        return "escalation"
+    return ["code_critic", "qa"]
+
+
+def after_escalation(state: BuildState):
+    return state.get("escalation_source", "implementer")
 
 
 def after_code_critic_and_qa(state: BuildState):
@@ -210,17 +241,18 @@ builder.add_node("sign_off", sign_off)
 builder.add_node("implementer", implementer)
 builder.add_node("code_critic", code_critic)
 builder.add_node("qa", qa)
+builder.add_node("escalation", escalation)
 builder.add_node("fix_or_ship", fix_or_ship)
 
 builder.add_edge(START, "designer")
 builder.add_edge("designer", "plan_critic")
-builder.add_edge("implementer", "code_critic")
-builder.add_edge("implementer", "qa")
 builder.add_edge("code_critic", "fix_or_ship")
 builder.add_edge("qa", "fix_or_ship")
 
 builder.add_conditional_edges("plan_critic", after_critic)
 builder.add_conditional_edges("sign_off", after_sign_off)
+builder.add_conditional_edges("implementer", after_implementer)
+builder.add_conditional_edges("escalation", after_escalation)
 builder.add_conditional_edges("fix_or_ship", after_code_critic_and_qa)
 
 # --- cli ---
