@@ -106,5 +106,11 @@ For each deferred issue, a ready-to-file card:
 
 If no deferred debt, say "No tech-debt cards to file."
 
+## Project context updates
+If this change introduces a new landmine, gotcha, or structural pattern that
+future changes need to know about (e.g. a new shared module with staging
+quirks, a new shadow/duplicate, a non-obvious deployment constraint), flag it
+here with the exact text to add to `project-context.md`. If none, say "None."
+
 ## Checked but fine
 Briefly, the risky-looking things you examined and confirmed are correct/clean.
