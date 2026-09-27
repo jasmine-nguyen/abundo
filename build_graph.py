@@ -290,6 +290,7 @@ import hashlib
 parser = argparse.ArgumentParser()
 parser.add_argument("request", nargs="?", default=None)
 parser.add_argument("--card", default=None)
+parser.add_argument("--details", default=None)
 parser.add_argument("--thread", default=None)
 parser.add_argument("--resume", default=None)
 args = parser.parse_args()
@@ -299,7 +300,9 @@ if args.resume and not args.thread:
 
 if args.card:
     card_number = args.card
-    card_details = ""
+    card_details = args.details or ""
+    if not card_details:
+        parser.error(f"--card {args.card} requires --details (fetch from Notion first)")
     thread_id = args.card
 elif args.request:
     card_number = ""
