@@ -1,4 +1,4 @@
-// The loan-facts dollar ceiling, mirrored from the server (lambda_api/constants.py
+// The loan-facts dollar ceiling, mirrored from the server (lambda_api/api_constants.py
 // LOANFACTS_FIELD_MAX). The loan form checks it so a too-large amount gets a friendly
 // message before any round-trip, instead of a 400 and the generic save-error toast.
 //

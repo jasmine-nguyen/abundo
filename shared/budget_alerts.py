@@ -250,8 +250,7 @@ def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_r
     #     and its name would only render as a raw id.
     # A positive membership test (not `set(targets) - income_ids`) is what closes the
     # orphan hole: subtraction kept unknown-category targets in. "Income"/"Savings" are
-    # bucket literals — no `constants` import, so no WHIT-136 shared-constant mirror is
-    # dragged in. NOTE: list_budgets (the /budgets read) intentionally still sums these
+    # bucket literals. NOTE: list_budgets (the /budgets read) intentionally still sums these
     # as spend; the asymmetry is deliberate — this card is about the false push, and the
     # client hides Savings budget rows (WHIT-201).
     target_ids = {cat_id for cat_id in targets

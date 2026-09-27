@@ -165,13 +165,12 @@ def test_contains_with_an_empty_value_is_vacuously_true_so_callers_must_guard(ru
     assert rule_engine.contains("   ", "anything at all")   # stripped to "" -> still vacuous
 
 
-# --- the module is the shared copy, not a lambda_api shadow -------------------
+# --- the module is the shared copy, not a lambda_api copy ---------------------
 
 
 def test_rule_engine_is_the_shared_layer_module_with_no_constants_import(rule_engine):
-    # [G13] WHIT-527 moved this OUT of lambda_api (where constants.py shadows the shared layer).
-    # It must resolve to shared/ and stay constants-free, or the deployed API ImportErrors at
-    # cold start. build_artifacts_test.sh + the bundle test guard the deploy; this guards the
+    # [G13] WHIT-527 moved this OUT of lambda_api. It must resolve to shared/ and stay pure and
+    # constants-free. build_artifacts_test.sh + the bundle test guard the deploy; this guards the
     # import path the tests themselves exercise.
     import os
     assert rule_engine.__file__.replace(os.sep, "/").endswith("shared/rule_engine.py")

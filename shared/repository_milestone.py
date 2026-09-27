@@ -28,8 +28,7 @@ from milestone_rows import (
 )
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
-# The single tenant every request maps to until multi-user lands. A module literal,
-# not a shared constant, so it never crosses the lambda_api constants shadow (WHIT-136).
+# The single tenant every request maps to until multi-user lands.
 _MILESTONE_SCOPE_SHARED = "SHARED"
 
 

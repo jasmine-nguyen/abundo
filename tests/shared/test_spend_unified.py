@@ -149,7 +149,7 @@ def test_accrue_buffer_chains_across_cycles(shared):
 
 from itertools import permutations  # noqa: E402
 
-SPREAD_MAX_CYCLES = 24  # mirrors lambda_api/constants.py
+SPREAD_MAX_CYCLES = 24  # mirrors shared/constants.py
 
 
 # --- payback_slice: large amounts & the real max cycle count stay cent-exact ----

@@ -10,9 +10,7 @@ Matching is LITERAL — what BankSync itself would do with the same leaf rule �
 fuzzy merchant-similarity gate the client's "every charge from this merchant" sweep uses.
 A rule is by definition "description contains VALUE" / "category equals VALUE".
 
-No I/O and NO `from constants import`: this is a flat shared-layer module (the layer is
-staged with a non-recursive `cp shared/*.py`, and `lambda_api/constants.py` shadows the
-shared constants at runtime — AGENTS.md), so it stays pure and constants-free. Stdlib
+No I/O and NO `from constants import`: it stays pure and constants-free. Stdlib
 `re` + `hashlib` only.
 """
 
@@ -21,10 +19,9 @@ import re
 from decimal import Decimal, InvalidOperation
 
 # The (field, operator) pairs the engine can evaluate — the SOURCE OF TRUTH for the match
-# vocabulary. `lambda_api/constants.py` (RULE_FIELDS/RULE_OPERATORS) mirrors this for request
-# validation and MUST be widened in lockstep: the engine is constants-free (the shared-layer
-# staging + shadow landmine, see the module docstring), so the two lists are unlinked and a field
-# the validator accepts but the engine can't evaluate silently matches nothing.
+# vocabulary. `lambda_api/api_constants.py` (RULE_FIELDS/RULE_OPERATORS) mirrors this for request
+# validation and MUST be widened in lockstep: the engine is constants-free, so the two lists are
+# unlinked and a field the validator accepts but the engine can't evaluate silently matches nothing.
 #   description/merchant: `contains` (substring) + `equals` (exact, folded).
 #   category: `equals` — a raw-enum mapping (FOOD_AND_DRINK -> groceries) for rules made outside
 #             the app; unfiled rows carry raw enums, so it is worth honouring when present.

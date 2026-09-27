@@ -13,8 +13,8 @@ import path from 'path';
 import { APPLY_RULES_MAX_WRITES } from '../context';
 
 describe('the apply-rules write cap mirrors the server', () => {
-  it('matches APPLY_RULES_MAX_WRITES in lambda_api/constants.py', () => {
-    const source = fs.readFileSync(path.join(__dirname, '../../lambda_api/constants.py'), 'utf8');
+  it('matches APPLY_RULES_MAX_WRITES in lambda_api/api_constants.py', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../lambda_api/api_constants.py'), 'utf8');
     const match = source.match(/^APPLY_RULES_MAX_WRITES\s*=\s*(\d+)/m);
 
     // If this throws, the server constant was renamed or moved — fix the mirror, don't loosen

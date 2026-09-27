@@ -11,8 +11,7 @@ acknowledge PING with 200, fetch the full transaction from Up (the webhook event
 thin — just an id), then decide and push.
 
 The Up-specific constants live here (not in shared/constants.py) because only this
-module uses them — same reasoning as push.py's Expo constants, and it keeps them
-clear of the lambda_api/constants.py shadow trap.
+module uses them — same reasoning as push.py's Expo constants.
 """
 
 import base64

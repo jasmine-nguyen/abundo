@@ -35,9 +35,8 @@ from merchant_groups import (
 from repayment_rules import is_number
 
 # How many times a merchant must be billed before it counts as recurring. Three occurrences is the
-# floor: it gives two gaps, the minimum needed to judge whether the beat is regular. Local, not a
-# constants.py value — filing_habits keeps its own floor the same way, and it sidesteps the
-# lambda_api/constants.py-shadows-the-shared-layer landmine (WHIT-136).
+# floor: it gives two gaps, the minimum needed to judge whether the beat is regular. Local, not an
+# api_constants.py value — filing_habits keeps its own floor the same way.
 MIN_OCCURRENCES = 3
 
 # How far each gap between charges may sit from the median gap before the beat reads as irregular.

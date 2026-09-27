@@ -19,10 +19,6 @@ On reachability, so the next reader isn't misled about which guard earns its kee
     bugs. Note boto3 is asymmetric: it serialises Decimal("-Infinity") happily, so that one is
     not clearly unreachable.
 The save endpoint blocks all of the above, so any such row predates it or bypassed it.
-
-Flat top-level module on purpose: the Lambda layer stages shared/ with a NON-RECURSIVE
-`cp shared/*.py` (terraform/layers.tf), so a package directory here would be silently
-dropped and every Lambda importing it would 500 on import.
 """
 
 import math

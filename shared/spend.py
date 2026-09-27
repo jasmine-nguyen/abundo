@@ -7,7 +7,7 @@ spent/pending contribution rule identically — the alert can never disagree wit
 the /budgets screen about what a category has spent this cycle. Moved here from
 lambda_api/handler.py (WHIT-106 established the single-source contribution rule;
 WHIT-22 needed it reachable from the webhook). Imports POSTED_STATUS/PENDING_STATUS
-from the shared constants (present in both constants files per the WHIT-136 guard).
+from the shared constants.
 """
 
 from collections.abc import Callable

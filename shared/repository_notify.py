@@ -50,8 +50,7 @@ _REPAYMENT_KEY = {"pk": "NOTIFY#REPAYMENT", "sk": "FIRED"}
 # crossed milestone can be re-crossed; the marker, not monotonicity, is what dedups it). The
 # plan store (MilestoneRepository) scopes its shared tenant as "SHARED"; the two literals differ
 # only for the shared default and only for back-compat — real per-user scopes pass the SAME user
-# id to both. A module literal, not a shared constant, so it never crosses the lambda_api
-# constants shadow (WHIT-136).
+# id to both.
 _MILESTONE_SCOPE = "FIRED"
 
 
@@ -64,8 +63,7 @@ def _milestone_key(scope: Optional[str] = None) -> dict:
 # The already-celebrated goal-checkpoint markers (WHIT-479), a SEPARATE item from
 # NOTIFY#MILESTONE so the mortgage feature is untouched. Same once-ever, no-TTL contract: a goal
 # balance isn't monotonic (a grow balance rises and falls, a debt is redrawn), so a crossed
-# checkpoint can be re-crossed — the marker, not monotonicity, dedups it. A module literal, not a
-# shared constant, so it never crosses the lambda_api constants shadow (WHIT-136).
+# checkpoint can be re-crossed — the marker, not monotonicity, dedups it.
 _GOALCHECKPOINT_SCOPE = "FIRED"
 
 

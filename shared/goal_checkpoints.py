@@ -6,8 +6,7 @@ mortgage-milestone marker SHAPE (repository_notify's NOTIFY#GOALCHECKPOINT set) 
 the mortgage feature (shared/milestones.py, NOTIFY#MILESTONE) — the crossing predicate is net-new
 because crossed_milestones is downward-only and structurally can't detect an upward crossing.
 
-A flat top-level module (staged by `cp shared/*.py`, terraform/layers.tf). Imports no name from
-`constants` at load, so it never crosses the lambda_api/constants.py shadow (WHIT-136).
+Imports no name from `constants` at load.
 """
 
 import logging

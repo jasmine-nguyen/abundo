@@ -14,7 +14,7 @@ from _lambda_api_constants import api_constant
 
 VALID = {"original": 600000, "homeValue": 770000, "lvr": 0.8, "ratePct": 5.74, "baseRepay": 1240, "extra": 200}
 _FIELDS = ("original", "homeValue", "lvr", "ratePct", "baseRepay", "extra")
-# Read from lambda_api/constants.py rather than hand-copied (WHIT-393), bound at import time so the
+# Read from lambda_api/api_constants.py rather than hand-copied (WHIT-393), bound at import time so the
 # folded boundary parametrize tables (built at collection time) can use it (WHIT-469).
 CEILING = api_constant("LOANFACTS_FIELD_MAX")
 

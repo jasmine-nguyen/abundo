@@ -40,8 +40,7 @@ _STALE_BODY = "Your {name} balance is {days} days old — tap to update."
 # A manual goal's balance only changes when the user updates it, so it goes stale silently.
 # 30 days matches the client's own "haven't updated in a while" tag (STALE_DAYS in
 # app/(tabs)/goals.tsx) so the push and the on-screen tag agree. Kept a plain module constant
-# (not in shared/constants.py) so goal_nudge stays clear of the WHIT-136 constants-sync guard,
-# like goal_pace.
+# (not in shared/constants.py), like goal_pace.
 STALE_DAYS = 30
 
 _MONTHS = (

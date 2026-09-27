@@ -2,13 +2,11 @@
 
 The commit widened amount operators in TWO places that must stay equal: the engine's
 `rule_engine._FIELD_OPERATORS` (source of truth for what CAN be evaluated) and
-`lambda_api/constants.py::RULE_FIELD_OPERATORS` (source of truth for what the API ACCEPTS).
-rule_engine is deliberately constants-free (shared-layer staging + shadow landmine, AGENTS.md),
-so the two dicts are UNLINKED — a single-sided edit is silent: the validator would 400 an operator
+`lambda_api/api_constants.py::RULE_FIELD_OPERATORS` (source of truth for what the API ACCEPTS).
+rule_engine is deliberately constants-free, so the two dicts are UNLINKED — a single-sided edit is silent: the validator would 400 an operator
 the engine can evaluate, or accept one it can't (which then matches nothing).
 
-No existing test compares these two dicts (grep: only WHIT-136 constants_sync, which checks
-`from constants import` names, not RULE_FIELD_OPERATORS). This closes that gap and pins all four
+No other test compares these two dicts. This closes that gap and pins all four
 amount operators explicitly so a future single-sided edit reddens.
 """
 

@@ -217,9 +217,8 @@ def test_settlement_is_bounded_by_the_max_lookback_cap(handler):
 
 
 def test_rollover_settle_lag_equals_shared_pending_age_out():
-    # The lag is handler-only but its VALUE must track shared PENDING_AGE_OUT_DAYS (the point
-    # past which a transaction can no longer move). If the age-out window changes and this
-    # doesn't, the plan's rationale silently breaks — this test fails first.
-    api = constants_namespace(_ROOT / "lambda_api" / "constants.py")
+    # The lag's VALUE must track PENDING_AGE_OUT_DAYS (the point past which a transaction can
+    # no longer move). If the age-out window changes and this doesn't, the plan's rationale
+    # silently breaks — this test fails first.
     shared = constants_namespace(_ROOT / "shared" / "constants.py")
-    assert api["ROLLOVER_SETTLE_LAG_DAYS"] == shared["PENDING_AGE_OUT_DAYS"]
+    assert shared["ROLLOVER_SETTLE_LAG_DAYS"] == shared["PENDING_AGE_OUT_DAYS"]

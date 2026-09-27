@@ -50,12 +50,13 @@ def test_enrichment_handler_symbols_are_gone(handler):
 
 
 def test_enrichments_constants_removed_from_lambda_api(handler):
-    api = constants_namespace(_ROOT / "lambda_api" / "constants.py")
+    api = constants_namespace(_ROOT / "lambda_api" / "api_constants.py")
     assert "ENRICHMENTS_PATH" not in api
     assert "BANKSYNC_TIMEOUT_SECONDS" not in api
-    # The kept BankSync values the balance refresh still imports survive.
-    assert api["BANKSYNC_API_KEY_PATH"] == "/abundo/banksync-api-key"
-    assert api["BANKSYNC_BASE_URL"] == "https://api.banksync.io"
+    # The kept BankSync values the balance refresh still imports survive (in shared).
+    shared = constants_namespace(_ROOT / "shared" / "constants.py")
+    assert shared["BANKSYNC_API_KEY_PATH"] == "/abundo/banksync-api-key"
+    assert shared["BANKSYNC_BASE_URL"] == "https://api.banksync.io"
 
 
 def test_rules_store_route_still_works_after_the_proxy_removal(handler, monkeypatch):

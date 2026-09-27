@@ -1,6 +1,6 @@
 """WHIT-393 — meta-guard: does the WHIT-392 ceiling-sync test STILL go red on real drift?
 
-test_loanfacts_ceiling_sync.py stopped reading lambda_api/constants.py itself and now
+test_loanfacts_ceiling_sync.py stopped reading lambda_api/api_constants.py itself and now
 delegates to tests/shared/_lambda_api_constants.py. A refactor of a guard is exactly the
 change that can leave the guard passing unconditionally — and nothing would notice, because
 a guard's normal state IS green. These drive the guard against a fabricated client file /
@@ -63,7 +63,7 @@ def test_guard_is_green_as_shipped(sync_guard):
 
 @pytest.mark.crosslang  # reads src/loanLimits.ts before the monkeypatch
 def test_guard_goes_red_when_the_server_ceiling_drifts(sync_guard, monkeypatch):
-    """[D2] Someone edits lambda_api/constants.py and forgets src/loanLimits.ts."""
+    """[D2] Someone edits lambda_api/api_constants.py and forgets src/loanLimits.ts."""
     client = sync_guard._client_ceiling()
     monkeypatch.setattr(sync_guard, "api_constant", lambda name: client + 1)
     with pytest.raises(AssertionError, match="ceiling drift"):
@@ -113,6 +113,6 @@ def test_guard_reads_an_exported_declaration(sync_guard, tmp_path, monkeypatch):
 
 def test_helper_reads_the_ceiling_the_handler_enforces(handler):
     """[D7] The guard compares the client against whatever `api_constant` reads. If that
-    ever pointed at the wrong constants.py (shared/ has no LOANFACTS_FIELD_MAX; a stale path
+    ever pointed at the wrong constants file (shared/ has no LOANFACTS_FIELD_MAX; a stale path
     would read an old copy), the guard would be policing a number the API doesn't use."""
     assert api_constant("LOANFACTS_FIELD_MAX") == handler.LOANFACTS_FIELD_MAX

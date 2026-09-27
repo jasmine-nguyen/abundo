@@ -26,9 +26,8 @@ data "archive_file" "lambda_zip" {
   output_path = "${path.module}/artifacts/lambda.zip"
 }
 
-# Stage the lambda_api package from ONLY its true source (handler.py + its own
-# constants.py, which intentionally shadows the layer's constants with
-# category-aware values). repository.py, models.py, and encoders.py come from the
+# Stage the lambda_api package from ONLY its true source (handler.py + its
+# API-only api_constants.py; shared constants come from the layer). repository.py, models.py, and encoders.py come from the
 # shared layer. Previously this zipped the raw lambda_api/ dir — a leftover stale
 # repository.py once landed in /var/task, shadowed the layer's fresh copy, and
 # 500'd every route on import. Staging a clean dir keeps the package deterministic
@@ -234,7 +233,7 @@ resource "aws_lambda_function" "app_api" {
 # WHIT-537: runs the uncapped "Apply my rules over all history" sweep as a background job. Reuses
 # the app_api zip (the sweep IS lambda_api code — apply_rules_worker.py + the shared write phase in
 # handler.py) rather than the webhook zip, so no apply-rules logic has to move into shared/ (which
-# would drag APPLY_RULES_* into shared/constants.py, the WHIT-136 landmine). Async-invoked by
+# would drag APPLY_RULES_* into shared/constants.py). Async-invoked by
 # app_api (no API integration, no event source, like transaction_reprocess); 300s so a large sweep
 # finishes; 512 MB to match app_api (same whole-history windowed read + in-memory plan).
 resource "aws_lambda_function" "apply_rules_worker" {

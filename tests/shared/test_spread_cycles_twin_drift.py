@@ -2,12 +2,11 @@
 
 SPREAD_MIN_CYCLES / SPREAD_MAX_CYCLES are transcribed into TWO files:
 
-    - lambda_api/constants.py  -> the server validates PUT /budgets/{id}/spread against them
-    - src/context.tsx          -> the client clamps the cycle stepper to them
+    - shared/constants.py  -> the server validates PUT /budgets/{id}/spread against them
+    - src/context.tsx      -> the client clamps the cycle stepper to them
 
 If they drift, the app's stepper offers a value the server 400s (or forbids a valid one).
-Unlike the WHIT-136 shared-constants pair, nothing guarded this one — so this reads both
-files and asserts the two integers match. A one-sided edit fails loudly.
+This reads both files and asserts the two integers match. A one-sided edit fails loudly.
 
 Parses the TypeScript twin as TEXT (no JS runtime in the pytest suite): the declarations
 are plain `export const NAME = <int>;`, so a scoped regex is enough.
@@ -22,7 +21,7 @@ pytestmark = pytest.mark.crosslang
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _TS_TWIN = _REPO_ROOT / "src" / "context.tsx"
-_PY_CONSTANTS = _REPO_ROOT / "lambda_api" / "constants.py"
+_PY_CONSTANTS = _REPO_ROOT / "shared" / "constants.py"
 
 
 def _ts_const(text: str, name: str) -> int:
@@ -35,7 +34,7 @@ def _ts_const(text: str, name: str) -> int:
 
 def _py_const(text: str, name: str) -> int:
     matches = re.findall(rf"^{name}\s*=\s*(\d+)\s*$", text, re.MULTILINE)
-    assert len(matches) == 1, f"expected exactly one `{name} = ...` in lambda_api/constants.py, found {len(matches)}"
+    assert len(matches) == 1, f"expected exactly one `{name} = ...` in shared/constants.py, found {len(matches)}"
     return int(matches[0])
 
 

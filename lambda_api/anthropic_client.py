@@ -8,7 +8,7 @@ extraction. Each caller supplies only its own system prompt, user prefix, and
 reply parser.
 
 Lives in lambda_api/ (not the shared layer) on purpose: the ANTHROPIC_* constants
-it reads live only in lambda_api/constants.py, and lambda_api is the only function
+it reads live only in lambda_api/api_constants.py, and lambda_api is the only function
 that calls Anthropic.
 """
 
@@ -17,7 +17,7 @@ import re
 import urllib.error
 import urllib.request
 
-from constants import (
+from api_constants import (
     ANTHROPIC_API_KEY_PATH,
     ANTHROPIC_BASE_URL,
     ANTHROPIC_MAX_TOKENS,

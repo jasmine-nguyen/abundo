@@ -14,7 +14,7 @@ rules leave the charge unfiled, and a rule to a deleted category is skipped.
 
 Not a method on the transaction store — a plain function taking the stores as arguments (the same
 shape as budget_alerts.capture_pre_write), so the WHIT-454 subclass wiring stays untouched. Imports
-no shared `constants` (the lambda_api/constants.py shadow landmine); rule_engine is constants-free.
+no shared `constants`; rule_engine is constants-free.
 """
 
 import logging

@@ -25,7 +25,7 @@
 // src-rooted walk never reaches it.
 //
 // walkSrc's own behaviour is proven against synthetic fixtures in the folded WHIT-413 block below.
-// Same shape as the server's structural guards (tests/lambda_api/test_constants_sync.py).
+// Same shape as the server's structural guards (tests/lambda_api/test_no_shared_name_shadowing.py).
 import { afterEach, beforeEach, describe, it, expect } from '@jest/globals';
 import { existsSync, statSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';

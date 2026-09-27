@@ -1,10 +1,7 @@
 """BankSync getBalance fetch + normalise, shared by the daily poller and the
 on-demand refresh endpoint (WHIT — live balance refresh).
 
-Kept as a flat top-level module (not a package dir) so the non-recursive
-``cp shared/*.py`` layer staging picks it up. It imports NO constants: callers
-pass ``base_url``/``timeout``/``user_agent`` in, so this module never needs a
-matching entry in ``lambda_api/constants.py`` (the runtime constants shadow).
+It imports NO constants: callers pass ``base_url``/``timeout``/``user_agent`` in.
 """
 
 import json

@@ -13,9 +13,8 @@ lets the sweep Query every pending id in one call instead of scanning the table.
 write sets an ``expires_at`` epoch-seconds TTL so an id that is never resolved (Expo
 retains receipts ~24h) self-cleans instead of accumulating.
 
-The TTL is defined LOCALLY (not imported from the shared ``constants`` module) so this
-module doesn't trip the constants-shadow guard (lambda_api/constants.py) — mirroring
-how shared/push.py keeps its Expo constants local.
+The TTL is defined LOCALLY (not imported from the shared ``constants`` module), the
+same way shared/push.py keeps its Expo constants local.
 """
 
 import logging

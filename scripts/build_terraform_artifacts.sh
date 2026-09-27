@@ -21,7 +21,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # only these files are copied into the deterministic build dir, so on-disk cruft
 # (a stray __pycache__, a leftover stale module) can never ship.
 # Keep this on ONE line — scripts/tests/build_artifacts_test.sh parses it literally.
-LAMBDA_API_SOURCES=(handler.py constants.py insights_ai.py anthropic_client.py merchant_groups.py filing_habits.py apply_rules_worker.py recurring_bills.py transaction_search.py)
+LAMBDA_API_SOURCES=(handler.py api_constants.py insights_ai.py anthropic_client.py merchant_groups.py filing_habits.py apply_rules_worker.py recurring_bills.py transaction_search.py)
 
 build_webhook() {
   # Install the webhook lambda's third-party deps into lambda/ (standardwebhooks).
@@ -32,7 +32,7 @@ build_webhook() {
 
 build_lambda_api() {
   # Stage lambda_api from ONLY its true source into a clean dir, so a stale local
-  # copy can't shadow the shared layer at runtime.
+  # copy can never ship.
   rm -rf "$ROOT/terraform/build/lambda_api"
   mkdir -p "$ROOT/terraform/build/lambda_api"
   local f
@@ -45,14 +45,17 @@ build_shared_layer() {
   # Rebuild the shared layer from scratch (a deleted shared file must not linger),
   # copy only .py files, and bundle tzdata (handler.py's ZoneInfo needs the IANA db,
   # which Lambda's base image doesn't reliably ship). --no-deps: tzdata is pure data.
-  # LANDMINE (AGENTS.md): this cp is non-recursive — a new shared *package directory*
-  # (shared/subpkg/) would be silently dropped from the layer. Flatten new shared code
-  # into shared/*.py, or extend this copy (and layers.tf's fileset trigger) if a
-  # subpackage is ever added.
-  rm -rf "$ROOT/terraform/layer/python"
-  mkdir -p "$ROOT/terraform/layer/python"
-  cp "$ROOT"/shared/*.py "$ROOT/terraform/layer/python/"
-  python3 -m pip install --no-deps --quiet --target "$ROOT/terraform/layer/python" tzdata
+  # The copy is recursive (subpackages ship), .py only, skipping tests and caches.
+  local dest="$ROOT/terraform/layer/python" f
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  (cd "$ROOT/shared" && find . \( -name __pycache__ -o -name tests \) -prune -o \
+      -name '*.py' ! -name 'test_*.py' ! -name conftest.py -print) |
+    while IFS= read -r f; do
+      mkdir -p "$dest/$(dirname "$f")"
+      cp "$ROOT/shared/$f" "$dest/$f"
+    done
+  python3 -m pip install --no-deps --quiet --target "$dest" tzdata
 }
 
 target="${1:-all}"

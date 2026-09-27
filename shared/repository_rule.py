@@ -8,11 +8,7 @@ the same rule text always lands on the same row, so a conditional ``attribute_no
 put is all the dedup we need. The shared partition lets ``list_rules`` read every rule in one
 Query (paged) instead of scanning the table.
 
-Kept as a flat top-level module (not a ``repository/`` package) and constants-free on purpose:
-the shared layer is staged with a non-recursive ``cp shared/*.py`` (terraform/layers.tf), which
-would silently drop a package directory; and ``lambda_api/constants.py`` shadows the shared
-constants at runtime, so importing a shared ``constants`` name here would 500 the deployed API
-(AGENTS.md). The one tunable — the page cap — is defined LOCALLY below.
+Kept constants-free: the one tunable — the page cap — is defined LOCALLY below.
 """
 
 import logging

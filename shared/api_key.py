@@ -6,9 +6,6 @@ The cache is keyed BY PATH on purpose: lambda_api reads two different keys (Bank
 and Anthropic) in the SAME process, so a single un-keyed slot would hand whichever
 key was fetched first to the other caller. Each consumer keeps a thin no-argument
 wrapper passing its own path.
-
-Flat top-level module (not a package) so the non-recursive `cp shared/*.py`
-(terraform/layers.tf) ships it into the layer.
 """
 
 from ssm import get_param
