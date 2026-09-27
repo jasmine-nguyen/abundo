@@ -15,7 +15,11 @@ let mockBudgets: Budget[] = [];
 // so the existing tests (no filed_by_rule) render no line; the rule tests set rules/isLoading.
 let mockRules: { rules: Rule[]; isLoading: boolean } = { rules: [], isLoading: false };
 jest.mock('../queries', () => ({
-  useTransactionsScreenData: () => mockTx,
+  useTransactionDetailScreenData: () => mockTx,
+  // WHIT-614: the tab composite always sets up the search query, which looped the resolver.
+  useTransactionsScreenData: () => {
+    throw new Error('detail screen must not mount the Transactions-tab composite (it sets up the search query)');
+  },
   // The detail screen resolves the row via the shared resolver; back it with the same fixture list.
   useTransactionResolver: () => ({
     transactions: mockTx.transactions,

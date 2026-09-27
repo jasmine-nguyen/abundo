@@ -298,9 +298,13 @@ export interface TransactionResolver {
   transactions: Transaction[]; // the de-duped union, for "has anything loaded yet" checks
 }
 // A version counter that ticks ONLY when a ['budgetTransactions', *],
-// ['categoryTransactions', *] or ['transactionsSearch', *] cache changes. It's the reactive trigger for the resolver's
+// ['categoryTransactions', *] or ['transactionsSearch', *] cache's DATA changes ('updated' /
+// 'removed'). It's the reactive trigger for the resolver's
 // point-in-time getQueriesData reads below: those caches aren't observed by a useQuery here,
-// so without this a note/tag edit that patches them wouldn't re-run the merge. The key-prefix
+// so without this a note/tag edit that patches them wouldn't re-run the merge. Observer events
+// ('observerAdded', 'observerOptionsUpdated', …) are skipped (WHIT-614): a screen that mounts one
+// of these queries re-applies its options on every redraw, so counting them bumps the version →
+// redraw → options re-applied → bump, an endless loop. The key-prefix
 // filter is deliberate — useTransactionResolver is also used by the root-mounted picker/confirm
 // sheets, so an unfiltered subscription would recompute on every unrelated cache event (the
 // balance poller, feed refetches). getVersion returns the ref's integer, referentially stable
@@ -310,6 +314,7 @@ function useScopedTransactionCachesVersion(queryClient: QueryClient): number {
   const subscribe = useCallback(
     (onStoreChange: () => void) =>
       queryClient.getQueryCache().subscribe((event) => {
+        if (event.type !== 'updated' && event.type !== 'removed') return;
         const key = event.query.queryKey[0];
         if (key === budgetTransactionsKey[0] || key === categoryTransactionsKey[0] || key === transactionsSearchKey[0]) {
           versionRef.current += 1;
@@ -815,7 +820,7 @@ function useBalancesMap(authed: boolean) {
  *  (matching the badge) rather than client-filtering the general feed's loaded pages. Every
  *  derived field — transactions, isLoading/isError/isFetching, hasMore/loadMore, and the
  *  refetch paths — swaps to the active feed with the tab, so the spinner/error/empty/Load-More
- *  states stay coherent. Defaults to 'all', so the other callers (Accounts, detail) are
+ *  states stay coherent. Defaults to 'all', so the other caller (Accounts) is
  *  unaffected and never mount the uncategorized query. */
 export function useTransactionsScreenData(tab: 'all' | 'uncategorized' = 'all', searchQuery = ''): TransactionsScreenData {
   const authed = useIsAuthed();
@@ -941,6 +946,17 @@ export function useRecentTransactionsScreenData(): RecentTransactionsScreenData 
     isFetching,
     ...status,
   };
+}
+
+/** The transaction detail screen: the category lookup plus the feed/taxonomy load status for its
+ *  cache-first spinner/error. The row itself comes from useTransactionResolver. No search query,
+ *  no balances — the screen shows neither. */
+export function useTransactionDetailScreenData() {
+  const authed = useIsAuthed();
+  const feedQuery = useTransactionsFeedQuery(authed);
+  const { categoriesQuery, category } = useCategoryLookup(authed);
+  const { isLoading, isError, refetch } = useCombineScreenQueries([feedQuery, categoriesQuery]);
+  return { category, isLoading, isError, refetch };
 }
 
 // --- the category drill-in screen's composite view (WHIT-308, WHIT-342) -------

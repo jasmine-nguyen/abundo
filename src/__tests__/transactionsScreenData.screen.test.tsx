@@ -76,7 +76,7 @@ jest.mock('expo-router', () => {
   return { useFocusEffect: (cb: () => void) => ReactLib.useEffect(() => cb(), [cb]), useRouter: () => ({ push: jest.fn() }) };
 });
 
-import { useTransactionsScreenData, useRecentTransactionsScreenData, accountBalancesKey } from '../queries';
+import { useTransactionsScreenData, useRecentTransactionsScreenData, useTransactionDetailScreenData, accountBalancesKey, transactionsSearchKey } from '../queries';
 import Transactions from '../../app/(tabs)/transactions';
 
 const TXNS = [{
@@ -510,5 +510,64 @@ describe('the Transactions list on the real query layer (WHIT-190a)', () => {
     expect(screen.getByText('-$42.00')).toBeTruthy();              // rows still there
     // The spinner cleared once the pull settled, even though the live call rejected.
     await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false));
+  });
+});
+
+// WHIT-614: the transaction detail screen's own composite. It must NOT set up the search query
+// (the tab composite always does, which looped the resolver on the detail screen), and its
+// spinner/error/Retry must mirror the feed + taxonomy exactly as before.
+describe('useTransactionDetailScreenData (WHIT-614)', () => {
+  function makeClient() {
+    return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+  }
+
+  beforeEach(() => {
+    mockAuthStatus = 'authed';
+    mockAuthListeners.clear();
+    mockFetchTransactionsFeed.mockReset().mockResolvedValue({ transactions: TXNS, nextCursor: null });
+    mockFetchCategories.mockReset().mockResolvedValue(CATS);
+  });
+
+  it('never creates a search query in the cache', async () => {
+    const client = makeClient();
+    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(client.getQueryCache().findAll({ queryKey: transactionsSearchKey })).toHaveLength(0);
+  });
+
+  it('loads the feed + taxonomy: not loading, no error, categories resolve', async () => {
+    const client = makeClient();
+    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
+    expect(result.current.isLoading).toBe(true);
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isError).toBe(false);
+    expect(result.current.category('groceries')?.name).toBe('Groceries');
+    expect(result.current.category(null)).toBeUndefined();
+  });
+
+  it('isError surfaces when the categories read fails', async () => {
+    mockFetchCategories.mockReset().mockRejectedValue(new Error('API error: 500'));
+    const client = makeClient();
+    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+
+  it('isError surfaces when the feed read fails', async () => {
+    mockFetchTransactionsFeed.mockReset().mockRejectedValue(new Error('API error: 500'));
+    const client = makeClient();
+    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+
+  it('refetch (Retry) re-runs the feed and categories fetches', async () => {
+    const client = makeClient();
+    const { result } = renderHook(() => useTransactionDetailScreenData(), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(1);
+    expect(mockFetchCategories).toHaveBeenCalledTimes(1);
+
+    await act(async () => { result.current.refetch(); });
+    await waitFor(() => expect(mockFetchTransactionsFeed).toHaveBeenCalledTimes(2));
+    expect(mockFetchCategories).toHaveBeenCalledTimes(2);
   });
 });

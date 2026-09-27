@@ -16,6 +16,7 @@ let mockTx: ReturnType<typeof txData>;
 // depend on) useRecentTransactionsScreenData, so it's exported here harmlessly.
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
+  useTransactionDetailScreenData: () => mockTx,
   useRecentTransactionsScreenData: () => ({ transactions: [] }),
   // The detail screen resolves the row via the shared resolver; back it with the same fixture list.
   useTransactionResolver: () => ({
