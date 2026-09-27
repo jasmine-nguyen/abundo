@@ -78,6 +78,12 @@ const APPLY_RULES_TIMEOUT_MS = 30_000;
 const APPLY_RULES_JOB_POLL_TIMEOUT_MS = 6_000;
 
 /**
+ * A single poll of an Ask Abundo chat job (card 609) is the same cheap key read, polled every ~1s,
+ * so it gets the same short budget. Its own constant (same reasons-differ rule as the others).
+ */
+const AI_CHAT_JOB_POLL_TIMEOUT_MS = 6_000;
+
+/**
  * Read a SUCCESS response's JSON body under the same stall timeout `failed()` gives the error body.
  * apiFetch's abort timer only bounds the HEADERS (cleared the instant they resolve), so a 2xx whose
  * body never finishes streaming would hang the read — and the query/writer behind it — leaving the
@@ -480,6 +486,83 @@ export async function getApplyRulesJob(jobId: string): Promise<ApplyRulesJob> {
   return readJson(response, APPLY_RULES_JOB_POLL_TIMEOUT_MS);
 }
 
+/** An inclusive YYYY-MM-DD date range. */
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
+/** One turn of an Ask Abundo conversation, as sent to the server (card 609). */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+/** The answer card: a figure plus one bar per period. Every number came from a server lookup. */
+export interface ChatCard {
+  type: 'metric_bars';
+  label: string;
+  value: number;
+  series: { label: string; value: number }[];
+  categoryId?: string;
+  budgetLine?: number;
+  delta?: { amount: number; vs: 'budget' | 'previous' };
+}
+
+/** A chip under an answer: open a category's transactions, or send a follow-up question. */
+export type ChatAction =
+  | { kind: 'deeplink'; label: string; categoryId: string; dateFrom: string; dateTo: string }
+  | { kind: 'prompt'; label: string; text: string };
+
+export interface ChatReply {
+  text: string;
+  source?: string;
+  card?: ChatCard;
+  actions?: ChatAction[];
+}
+
+/** A chat job as the server reports it. `reply` is set once it has succeeded. */
+export interface ChatJob {
+  jobId: string;
+  status: 'running' | 'succeeded' | 'failed';
+  toolStatus?: string | null;
+  reply?: ChatReply | null;
+  error?: string | null;
+}
+
+/**
+ * Ask Abundo: start answering the latest user message in the background (card 609). Returns the
+ * job id straight away; the caller polls getAiChatJob until it is terminal.
+ *
+ * @param messages - The conversation so far, ending with the user's new question.
+ * @throws ApiError carrying the status.
+ */
+export async function startAiChat(messages: ChatTurn[]): Promise<ChatJob> {
+  const response = await apiFetch(`${API_BASE}/ai/chat`, {
+    method: "POST",
+    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ messages }),
+  });
+  if (response.ok == false) throw new ApiError(response.status, null);
+  return readJson(response);
+}
+
+/**
+ * Poll one chat job: its status, the "Looking at …" line, and the reply once done. A short
+ * timeout (same reason as getApplyRulesJob), so a dropped poll fails fast and the loop retries.
+ *
+ * @throws ApiError carrying the status; 404 = unknown or expired job.
+ */
+export async function getAiChatJob(jobId: string): Promise<ChatJob> {
+  const response = await apiFetch(
+    `${API_BASE}/ai/chat/jobs/${encodeURIComponent(jobId)}`,
+    { headers: await buildHeaders() },
+    AI_CHAT_JOB_POLL_TIMEOUT_MS,
+  );
+  if (response.ok == false) throw new ApiError(response.status, null);
+  return readJson(response, AI_CHAT_JOB_POLL_TIMEOUT_MS);
+}
+
 /** One rule-group of unfiled charges the server proposes for "file by shop" (WHIT-517). The
  *  `alsoCatches` list names other shops the same rule would sweep, so an over-broad rule is
  *  visible before minting. `firstDate`/`lastDate` bound the group; `samples` are example
@@ -753,9 +836,12 @@ export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<st
  * @returns The cycle's transactions for that category, newest first.
  * @throws If the response status is not OK.
  */
-export async function fetchCategoryTransactions(categoryId: string, cycle = 0): Promise<Transaction[]> {
-  const cycleParam = cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : '';
-  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(categoryId)}/transactions${cycleParam}`, { headers: await buildHeaders() });
+export async function fetchCategoryTransactions(categoryId: string, cycle = 0, range?: DateRange): Promise<Transaction[]> {
+  // Card 609: a date range (the Ask Abundo deep link) replaces the cycle. The server then
+  // includes the category's subcategories, so the list adds up to the chat's figure.
+  let query = cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : '';
+  if (range) query = `?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
+  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(categoryId)}/transactions${query}`, { headers: await buildHeaders() });
   if (response.ok == false) throw new Error(`API error: ${response.status}`);
 
   return readJson(response);

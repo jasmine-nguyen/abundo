@@ -44,6 +44,7 @@ const REASON_CARRYING = ['createCategory', 'updateCategory', 'deleteCategory'] a
 // reason (serverMessage null); the client picks the wording.
 const STATUS_ONLY = [
   'applyRulesToUncategorized', 'startApplyRulesJob', 'getApplyRulesJob', 'createRule', 'updateRule',
+  'startAiChat', 'getAiChatJob',
 ] as const;
 
 // Every exported endpoint with plausible arguments. Keyed by name so the tripwire below can
@@ -65,6 +66,10 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   // (start reads a 409 clash; get reads a 404 expired id) but carry NO server reason — STATUS_ONLY.
   startApplyRulesJob: () => api.startApplyRulesJob(),
   getApplyRulesJob: () => api.getApplyRulesJob('j1'),
+  // Card 609: the Ask Abundo chat job endpoints — same job pattern, status only (the chat reads a
+  // 404 as an expired job).
+  startAiChat: () => api.startAiChat([{ role: 'user', text: 'How much on coffee?' }]),
+  getAiChatJob: () => api.getAiChatJob('c1'),
   fetchCategories: () => api.fetchCategories(),
   createCategory: () => api.createCategory({ name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),
   updateCategory: () => api.updateCategory('gym', { name: 'Gym', bucket: 'Lifestyle', icon: 'dumbbell' }),

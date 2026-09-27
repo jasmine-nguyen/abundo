@@ -52,7 +52,7 @@ it('loading: spinner is centered (flexGrow) inside the wrapper, clearance still 
   expect(screen.getByTestId('budgets-loading')).toBeTruthy();
   const cc = contentStyle();
   expect(cc.flexGrow).toBe(1);        // centred fill
-  expect(cc.paddingBottom).toBe(120); // shared TAB_BAR_CLEARANCE still merged in (real geometry)
+  expect(cc.paddingBottom).toBe(120 + 72); // shared TAB_BAR_CLEARANCE + the Ask pill's clearance (card 609), real geometry
 });
 
 it('error: retry state is centered (flexGrow) inside the wrapper', () => {

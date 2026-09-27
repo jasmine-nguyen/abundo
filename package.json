@@ -46,7 +46,7 @@
     "react-native-web": "^0.21.0"
   },
   "private": true,
-  "//async-storage": "@react-native-async-storage/async-storage has no direct import in our code, but amazon-cognito-identity-js needs it at runtime to persist sessions. Keep it — do NOT remove it as 'unused'.",
+  "//async-storage": "@react-native-async-storage/async-storage stores the Ask Abundo consent (src/chat/ChatContext.tsx), and amazon-cognito-identity-js also needs it at runtime to persist sessions. Keep it.",
   "//overrides": "React Native 0.85's jest preset pulls jest 30, but jest-expo 56 pins some jest-* internals to 29 and npm mixes patch levels. Force one consistent jest 30 toolchain so the runtime/mock/env versions agree.",
   "overrides": {
     "jest": "30.4.1",

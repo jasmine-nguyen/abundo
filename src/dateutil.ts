@@ -34,6 +34,15 @@ export function formatDayMonth(iso: string): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
+// An ISO range -> "12 Jun – 11 Sep" when both ends fall in the current year; otherwise with years
+// ("1 Aug 2025 – 31 Aug 2025"), so a past-year or 12-month range can't read as a recent one.
+export function formatDateRange(fromIso: string, toIso: string, now: Date = new Date()): string {
+  const thisYear = String(now.getFullYear());
+  const bare = fromIso.startsWith(thisYear) && toIso.startsWith(thisYear);
+  const format = bare ? formatDayMonth : formatDayMonthYear;
+  return `${format(fromIso)} – ${format(toIso)}`;
+}
+
 // --- UTC whole-day math (WHIT-253) -----------------------------------------
 // DISTINCT from the LOCAL helpers above: these count days on a fixed UTC clock,
 // where every day is exactly 24h, so a daylight-saving change can't shift a day

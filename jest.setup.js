@@ -58,6 +58,10 @@ jest.mock('react-native-svg', () => {
   );
 });
 
+// AsyncStorage (the Ask Abundo consent, card 609) is a native module; use the package's own
+// in-memory stand-in so the chat provider renders headlessly.
+jest.mock('@react-native-async-storage/async-storage', () => require('@react-native-async-storage/async-storage/jest'));
+
 // expo-font: pretend fonts are always loaded so screens don't block on useFonts.
 jest.mock('expo-font', () => ({
   useFonts: () => [true, null],
