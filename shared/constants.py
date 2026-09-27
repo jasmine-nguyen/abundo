@@ -117,11 +117,8 @@ DEFAULT_PAYCYCLE = {"length": 14, "last_pay_date": "2024-01-03"}
 
 # BankSync feeds triggered on every scheduled sync run, keyed by feed id -> label.
 SYNC_FEED_IDS = {
-    "xXkBR72EKo4Qxkz8667l": "spending-anz",
+    "ZDlL4aShYkOd8A3dw8Tb": "up-spending",
     "LwO4ZvpH5SMBhEkAO2br": "up-homeloan",
-    # This feed also carries its own daily schedule inside BankSync, so our hourly
-    # tick can overlap it; trigger_sync treats the resulting 409 ("sync already in
-    # progress") as a skip, so the overlap is harmless.
     "zJiG0SNKKWScMp9bFdD4": "westpac-altitude-qantas-black",
 }
 
