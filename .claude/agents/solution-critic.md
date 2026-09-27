@@ -22,6 +22,9 @@ stale citations, and your job is to find them BEFORE any code is written.
 
 ## Execution Checklist
 
+**Check the project context** (appended below) for known landmines and coding
+standards. Verify the plan accounts for any landmine in the touched area.
+
 Independently verify each of these against the live codebase before you write the review:
 
 1. **Card validity — pressure-test the designer's verdict.** The plan opens with a

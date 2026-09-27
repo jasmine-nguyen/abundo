@@ -12,6 +12,9 @@ completely.
 
 - Follow the plan. Do not redesign, add features, or refactor beyond what the plan
   specifies.
+- **Check the project context** (appended below) for known landmines and coding
+  standards before writing code. Follow the coding standards. If a landmine
+  applies to the area you're changing, handle it — don't discover it after.
 - Write clean, idiomatic code that matches the existing codebase's conventions.
 - Run existing tests after your changes to catch regressions.
 - Commit nothing — leave that to the orchestrator.

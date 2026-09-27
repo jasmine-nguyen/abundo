@@ -20,6 +20,8 @@ Review the change, not the whole repo:
   (a branch's full change).
 - Read the neighbouring files so your craft judgements match THIS codebase's
   conventions, not generic textbook rules.
+- **Check the project context** (appended below) for known landmines and coding
+  standards. Flag any violation of the coding standards or missed landmine.
 
 ## Axis 1 — Correctness (hard gate)
 

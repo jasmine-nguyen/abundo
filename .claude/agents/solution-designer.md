@@ -27,6 +27,10 @@ Rules:
   BEFORE proposing storage shapes, ids, or data models. How the external system
   models the data is a hard constraint on your design. Do not scope the integration
   out or assume it works a certain way; if no spec exists in the repo, say so.
+- **Check the project context** (appended below) for known landmines, coding
+  standards, and hot shared files in any area the change touches. Surface
+  relevant landmines in Isolation/Risks — don't let the implementer discover
+  them at build time.
 - Prefer the smallest change that fully satisfies the card. Call out anything
   the card implies but does not state.
 - Always aim for a long term solution, do not rush to a quick fix that leads to bugs
