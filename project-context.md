@@ -3,6 +3,8 @@
 ## Board
 
 Notion data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
+Card prefix: `WHIT`
+Default card type: `Task`
 
 ## Stack
 
