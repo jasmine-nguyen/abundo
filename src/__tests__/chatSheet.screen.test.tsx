@@ -207,3 +207,39 @@ describe('the answer card difference colour', () => {
     expect(deltaColor('salary', -200)).toBe(C.bad);
   });
 });
+
+// WHIT-617 — iOS keeps a shape's `%` lengths from its first draw, so a `100%` budget line stops
+// short when the plot grows. The line must be measured and drawn with plain numbers.
+describe('the answer card budget line', () => {
+  const LENGTH_PROPS = ['width', 'height', 'x', 'y', 'x1', 'y1', 'x2', 'y2'];
+
+  const expectNoPercentLengths = () => {
+    for (const node of screen.UNSAFE_root.findAll(() => true)) {
+      for (const prop of LENGTH_PROPS) {
+        const value = node.props[prop];
+        if (typeof value === 'string') expect(value).not.toMatch(/%$/);
+      }
+    }
+  };
+
+  const layout = (width: number) => fireEvent(screen.getByTestId('chat-card-budget-line'), 'layout', {
+    nativeEvent: { layout: { width, height: 2 } },
+  });
+
+  const dashedLine = () => screen.getByTestId('chat-card-budget-line')
+    .find((node) => node.props.strokeDasharray === '5 4');
+
+  it('draws a dashed line the measured width of the plot, with no % lengths', () => {
+    render(<ChatAnswer text="ok" reply={REPLY} onAction={() => {}} />);
+    expectNoPercentLengths();
+
+    layout(300);
+    const line = dashedLine();
+    expect(line.props).toMatchObject({ x1: 0, x2: 300, strokeWidth: 1.5, strokeOpacity: 0.7, stroke: C.text });
+    expect(line.parent?.props).toMatchObject({ width: 300, height: 2 });
+    expectNoPercentLengths();
+
+    layout(200);
+    expect(dashedLine().props.x2).toBe(200);
+  });
+});
