@@ -21,8 +21,13 @@ Board data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
 2. Run the script:
    `python3 build_graph.py --card <number> --details "<title and description>"`
 
-3. If the script pauses (prints "Paused. Resume with:"), present the
-   interrupt message to the user using AskUserQuestion with these options:
+3. If the script pauses (prints "Paused. Resume with:"), summarise the
+   plan for the user before asking. Show:
+   - **Task:** what we're building (1-2 sentences, plain english)
+   - **Plan:** the approach (bullet points, plain english, no jargon)
+   - **Risks:** anything to watch out for (or "None" if clean)
+
+   Then present options using AskUserQuestion:
    - "Approve" — resume with "go"
    - "Rework" — ask for feedback, then resume with that feedback
    - "Stop" — end the build, don't resume
