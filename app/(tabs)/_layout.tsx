@@ -9,6 +9,7 @@ import { useRecentTransactionsScreenData, useKeepTransactionsFeedWarm, useUncate
 import { NavBarsProvider, useNavBars } from '../../src/motion/NavBarsContext';
 import { NavBarsRouteReset } from '../../src/motion/NavBarsRouteReset';
 import { useReduceMotion } from '../../src/motion/useReduceMotion';
+import { AskButton } from '../../src/chat/AskButton';
 
 const TABS = [
   { name: 'budgets', label: 'Budgets', icon: 'navBudgets' },
@@ -54,32 +55,37 @@ export function TabBar({ state, navigation }: TabBarShape) {
   const translateY = visibility.interpolate({ inputRange: [0, 1], outputRange: [barHeight, 0] });
 
   return (
-    <Animated.View onLayout={onLayout} style={[styles.bar, { paddingBottom: insets.bottom + 14, transform: [{ translateY }] }]}>
-      {state.routes.map((route, idx) => {
-        const meta = TABS.find((t) => t.name === route.name);
-        if (!meta) return null;
-        const focused = state.index === idx;
-        const color = focused ? C.accent : C.textFaint;
-        return (
-          <Pressable
-            key={route.key}
-            // Press feedback (WHIT-184 taste): instant dim + slight shrink on tap so a
-            // tab doesn't feel dead. Pure visual — no animation lib, no data path.
-            style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
-            onPress={() => {
-              const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-              if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
-            }}
-          >
-            <View>
-              <Glyph name={meta.icon} size={24} color={color} />
-              {meta.name === 'transactions' && hasUncategorized && <View testID="tab-uncat-dot" style={styles.dot} />}
-            </View>
-            <Text style={[styles.label, { color }]} numberOfLines={1}>{meta.label}</Text>
-          </Pressable>
-        );
-      })}
-    </Animated.View>
+    <>
+      <Animated.View onLayout={onLayout} style={[styles.bar, { paddingBottom: insets.bottom + 14, transform: [{ translateY }] }]}>
+        {state.routes.map((route, idx) => {
+          const meta = TABS.find((t) => t.name === route.name);
+          if (!meta) return null;
+          const focused = state.index === idx;
+          const color = focused ? C.accent : C.textFaint;
+          return (
+            <Pressable
+              key={route.key}
+              // Press feedback (WHIT-184 taste): instant dim + slight shrink on tap so a
+              // tab doesn't feel dead. Pure visual — no animation lib, no data path.
+              style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
+              onPress={() => {
+                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
+              }}
+            >
+              <View>
+                <Glyph name={meta.icon} size={24} color={color} />
+                {meta.name === 'transactions' && hasUncategorized && <View testID="tab-uncat-dot" style={styles.dot} />}
+              </View>
+              <Text style={[styles.label, { color }]} numberOfLines={1}>{meta.label}</Text>
+            </Pressable>
+          );
+        })}
+      </Animated.View>
+      {/* Card 609: the Ask pill sits 16pt above the bar and outside its slide, so it stays put
+          while the bar hides on scroll. barHeight already includes the bottom safe area. */}
+      <AskButton style={{ right: 18, bottom: barHeight + 16 }} />
+    </>
   );
 }
 

@@ -8,24 +8,39 @@ import { useCategoryTransactionsScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { TransactionRow } from '../../src/components/TransactionRow';
 import { DetailStates } from '../../src/components/DetailStates';
+import { formatDateRange } from '../../src/dateutil';
+import type { DateRange } from '../../src/api';
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Card 609: the Ask Abundo deep link passes `from`/`to` (the exact dates the answer used). Only a
+// well-formed, in-order pair counts; anything else falls back to the cycle view.
+function dateRangeParam(from?: string, to?: string): DateRange | undefined {
+  if (!from || !to || !ISO_DATE.test(from) || !ISO_DATE.test(to) || from > to) return undefined;
+  return { from, to };
+}
 
 // WHIT-308/WHIT-342: the category drill-in. Reached by tapping a spend row on the Insights tab;
 // `id` is the category id (or UNCATEGORIZED_KEY for the "?" bucket) and `cycle` is which pay
 // cycle the row was showing (0 = this, 1 = last). The transactions are fetched server-side for
 // that category + cycle (/categories/{id}/transactions), over the SAME window as the Insights
-// card, so the header total reconciles with it.
+// card, so the header total reconciles with it. From the chat, `from`/`to` replace `cycle`: the
+// server then folds in subcategories, so the total matches the chat's answer.
 export default function CategoryDetail() {
   const insets = useSafeAreaInsets();
-  const { id, cycle } = useLocalSearchParams<{ id: string; cycle?: string }>();
+  const { id, cycle, from, to } = useLocalSearchParams<{ id: string; cycle?: string; from?: string; to?: string }>();
+  const range = dateRangeParam(from, to);
   // 0 = this cycle, 1 = last (the only values Insights pushes). Floor + clamp to the integer set
   // {0,1} so a stale or hand-edited deep-link (?cycle=2, ?cycle=-1, ?cycle=0.5) can't request an
   // older window or mislabel it — cycleNum is a discrete cycle index, so it must be whole (WHIT-309).
   const cycleNum = Math.min(1, Math.max(0, Math.floor(Number(cycle) || 0)));
-  const { transactions, category, categoriesReady, isLoading, isError, refetch } = useCategoryTransactionsScreenData(id, cycleNum);
+  const { transactions, category, categoriesReady, isLoading, isError, refetch } = useCategoryTransactionsScreenData(id, cycleNum, range);
   const detail = categoryTransactions({ transactions, category }, id);
   // WHIT-366: an Income-bucket category reached from the Earned drill reads "Earned", not "Spent".
   const isIncome = category(id)?.bucket === 'Income';
   const verb = isIncome ? 'Earned' : 'Spent';
+  let periodLabel = cycleNum === 0 ? 'this cycle' : 'last cycle';
+  if (range) periodLabel = formatDateRange(range.from, range.to);
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + 6 }}>
@@ -50,7 +65,7 @@ export default function CategoryDetail() {
           {detail ? (
             <>
               <View testID="category-total" style={styles.totalCard}>
-                <Text style={styles.totalLabel}>{verb} {cycleNum === 0 ? 'this cycle' : 'last cycle'}</Text>
+                <Text style={styles.totalLabel}>{verb} {periodLabel}</Text>
                 <Text style={styles.totalAmount}>{fmt(detail.total)}</Text>
                 {detail.pending > 0 && <Text style={styles.totalPending}>{fmt(detail.pending)} pending</Text>}
               </View>
@@ -66,7 +81,7 @@ export default function CategoryDetail() {
             // No transaction in this category this cycle (or a stale deep-link) — settled, not loading.
             <View style={styles.empty}>
               <Text style={styles.emptyTitle}>No transactions</Text>
-              <Text style={styles.emptySub}>Nothing in this category for the selected cycle.</Text>
+              <Text style={styles.emptySub}>Nothing in this category for the selected {range ? 'dates' : 'cycle'}.</Text>
             </View>
           )}
         </DetailStates>

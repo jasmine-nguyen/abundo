@@ -4,7 +4,7 @@
 // exercised — Melbourne is UTC+10/+11, so a local midnight is the *previous* day
 // in UTC, which is exactly what would break a getUTC* slip.
 import { describe, it, expect } from '@jest/globals';
-import { isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, formatDayMonth } from '../dateutil';
+import { isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, formatDayMonth, formatDateRange } from '../dateutil';
 import { cycleClock, paydaysUntil, milestoneView } from '../context';
 import { milestoneTime, MILESTONES } from '../milestones';
 import { makeState } from './factory';
@@ -45,6 +45,22 @@ describe('formatDayMonth', () => {
   it('is empty on an empty/unparseable ISO (never "NaN undefined" on screen)', () => {
     expect(formatDayMonth('')).toBe('');
     expect(formatDayMonth('not-a-date')).toBe('');
+  });
+});
+
+describe('formatDateRange', () => {
+  const now = new Date(2026, 8, 27); // 27 Sep 2026
+
+  it('leaves the year off a range inside the current year', () => {
+    expect(formatDateRange('2026-06-12', '2026-09-11', now)).toBe('12 Jun – 11 Sep');
+  });
+
+  it('shows both years when the range crosses a year, so a full year never reads "20 Sep – 20 Sep"', () => {
+    expect(formatDateRange('2025-09-20', '2026-09-20', now)).toBe('20 Sep 2025 – 20 Sep 2026');
+  });
+
+  it('shows the year for a range inside a past year, so last August never reads as this one', () => {
+    expect(formatDateRange('2025-08-01', '2025-08-31', now)).toBe('1 Aug 2025 – 31 Aug 2025');
   });
 });
 
