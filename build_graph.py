@@ -285,6 +285,7 @@ builder.add_conditional_edges("fix_or_ship", after_code_critic_and_qa)
 #   python3 build_graph.py --card WHIT-123                     → existing card
 #   python3 build_graph.py "add a chat button for spending"    → ad-hoc request
 #   python3 build_graph.py --thread abc123 --resume "go"       → resume
+#   python3 build_graph.py --thread abc123 --status            → show pause point
 #
 # If no --card, the request text is the card. A short thread ID is
 # generated from a hash so the checkpoint has a clean key.
@@ -299,10 +300,14 @@ parser.add_argument("--card", default=None)
 parser.add_argument("--details", default=None)
 parser.add_argument("--thread", default=None)
 parser.add_argument("--resume", default=None)
+parser.add_argument("--status", action="store_true")
 args = parser.parse_args()
 
 if args.resume and not args.thread:
     parser.error("--resume requires --thread")
+
+if args.status and not args.thread:
+    parser.error("--status requires --thread")
 
 if args.card:
     card_number = args.card
@@ -327,6 +332,27 @@ async def main():
     async with AsyncSqliteSaver.from_conn_string("build_graph.db") as saver:
         await saver.setup()
         graph = builder.compile(checkpointer=saver)
+
+        if args.status:
+            state = await graph.aget_state(config)
+            if not state or not state.values:
+                print(f"No saved build found for thread {thread_id}.")
+                return
+            values = state.values
+            print(f"Thread: {thread_id}")
+            print(f"Card: {values.get('card_number', '?')}")
+            print(f"Next node: {state.next}")
+            if values.get("plan"):
+                print(f"Plan: present ({len(values['plan'])} chars)")
+            print(f"Plan verdict: {values.get('plan_verdict', 'pending')}")
+            print(f"Plan decision: {values.get('plan_decision', 'pending')}")
+            if values.get("implementation"):
+                print(f"Implementation: present ({len(values['implementation'])} chars)")
+            print(f"Code verdict: {values.get('code_verdict', 'pending')}")
+            print(f"QA verdict: {values.get('qa_verdict', 'pending')}")
+            if values.get("escalation"):
+                print(f"Escalation: {values['escalation'][:100]}...")
+            return
 
         if args.resume is not None:
             result = await graph.ainvoke(Command(resume=args.resume), config)
