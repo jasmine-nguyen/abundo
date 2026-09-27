@@ -7,7 +7,7 @@ import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@tanstack/react-query';
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
-import type { AccountBalance, BudgetRollup, CategorySpend, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
+import type { AccountBalance, BudgetRollup, CategorySpend, DateRange, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
 import { cycleClockView, cycleStart, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, unionById, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
@@ -210,11 +210,15 @@ export function useBudgetTransactionsQuery(categoryId: string, enabled: boolean)
 // The transactions behind one /breakdown row, for the category drill-in — the whole
 // selected cycle, server-scoped to one category (or the uncategorized bucket), so the
 // list reconciles with the Insights card (the old 7-day feed under-counted / went empty
-// for last cycle). Keyed per category AND cycle, like useBreakdownQuery.
-export function useCategoryCycleTransactionsQuery(categoryId: string, cycle: number, enabled: boolean) {
+// for last cycle). Keyed per category AND cycle, like useBreakdownQuery. A date range (the
+// Ask Abundo deep link, card 609) replaces the cycle; its key stays under the same prefix, so the
+// categorise writes' prefix invalidation still refreshes it.
+export function useCategoryCycleTransactionsQuery(categoryId: string, cycle: number, enabled: boolean, range?: DateRange) {
   return useQuery({
-    queryKey: [...categoryTransactionsKey, categoryId, cycle],
-    queryFn: () => fetchCategoryTransactions(categoryId, cycle),
+    queryKey: range
+      ? [...categoryTransactionsKey, categoryId, 'range', range.from, range.to]
+      : [...categoryTransactionsKey, categoryId, cycle],
+    queryFn: () => fetchCategoryTransactions(categoryId, cycle, range),
     enabled: enabled && !!categoryId,
   });
 }
@@ -979,9 +983,9 @@ export interface CategoryTransactionsScreenData {
   refetch: () => void;
   refetchStale: () => void;
 }
-export function useCategoryTransactionsScreenData(categoryId: string, cycle: number): CategoryTransactionsScreenData {
+export function useCategoryTransactionsScreenData(categoryId: string, cycle: number, range?: DateRange): CategoryTransactionsScreenData {
   const authed = useIsAuthed();
-  const categoryTransactionsQuery = useCategoryCycleTransactionsQuery(categoryId, cycle, authed);
+  const categoryTransactionsQuery = useCategoryCycleTransactionsQuery(categoryId, cycle, authed, range);
   const categoriesQuery = useCategoriesQuery(authed);
 
   const categories = categoriesQuery.data ?? [];

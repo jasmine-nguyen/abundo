@@ -9,7 +9,7 @@ import React from 'react';
 import { ScrollView, Animated } from 'react-native';
 import { render } from '@testing-library/react-native';
 import type { AppContext } from '../context';
-import { HEADER_BODY_HEIGHT, TAB_BAR_CLEARANCE } from '../motion/useNavBarsHeader';
+import { ASK_BUTTON_CLEARANCE, HEADER_BODY_HEIGHT, TAB_BAR_CLEARANCE } from '../motion/useNavBarsHeader';
 
 let mockTx: { transactions: unknown[]; category: (id: string | null) => unknown; isLoading: boolean; isError: boolean; isFetching: boolean; refetch: jest.Mock; refetchStale: jest.Mock };
 jest.mock('../queries', () => ({
@@ -96,5 +96,5 @@ it('insets the list by the shared header height (top) and tab-bar clearance (bot
   const { UNSAFE_getAllByType } = render(<Transactions />);
   const sv = UNSAFE_getAllByType(ScrollView)[0] as unknown as { props: { contentContainerStyle: { paddingTop: number; paddingBottom: number } } };
   expect(sv.props.contentContainerStyle.paddingTop).toBe(HEADER_BODY_HEIGHT); // insets.top (0 in tests) + HEADER_BODY_HEIGHT
-  expect(sv.props.contentContainerStyle.paddingBottom).toBe(TAB_BAR_CLEARANCE);
+  expect(sv.props.contentContainerStyle.paddingBottom).toBe(TAB_BAR_CLEARANCE + ASK_BUTTON_CLEARANCE);
 });

@@ -1,0 +1,209 @@
+// Card 609 — the Ask Abundo sheet, rendered with the real chat provider: the one-time consent
+// step, suggested prompts, the answer card's category colour, and the action chips.
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import React from 'react';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { ChatJob, ChatReply, ChatTurn } from '../api';
+import { chartCategoryColor } from '../chartColors';
+
+const mockStartAiChat = jest.fn<(messages: ChatTurn[]) => Promise<ChatJob>>();
+const mockGetAiChatJob = jest.fn<(jobId: string) => Promise<ChatJob>>();
+jest.mock('../api', () => ({
+  startAiChat: (messages: ChatTurn[]) => mockStartAiChat(messages),
+  getAiChatJob: (jobId: string) => mockGetAiChatJob(jobId),
+}));
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
+
+// Eating Out carries a stored colour slot that differs from its built-in default, so a card that
+// ignored the slot would draw a different colour.
+const EATING_OUT = { id: 'eatingout', name: 'Eating Out', colorSlot: 5 };
+const SALARY = { id: 'salary', name: 'Salary', bucket: 'Income', colorSlot: 2 };
+jest.mock('../queries', () => ({
+  useIsAuthed: () => true,
+  useCategories: () => ({
+    categories: [EATING_OUT, SALARY],
+    category: (id: string | null) => [EATING_OUT, SALARY].find((c) => c.id === id),
+    isLoading: false, isError: false, refetch: () => {}, refetchStale: () => {},
+  }),
+}));
+
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
+
+import { ChatProvider, CHAT_CONSENT_KEY, useChat } from '../chat/ChatContext';
+import type { ChatContextValue } from '../chat/ChatContext';
+import { ChatSheet } from '../chat/ChatSheet';
+import { ChatAnswer } from '../chat/ChatAnswer';
+import { C } from '../theme';
+
+const REPLY: ChatReply = {
+  text: 'You spent **$31.11** per cycle on Eating Out.',
+  source: '3 completed pay cycles · 30 Jul – 9 Sep',
+  card: {
+    type: 'metric_bars', label: 'Eating Out · 3-cycle average', value: 31.11, categoryId: 'eatingout',
+    budgetLine: 60, delta: { amount: -28.89, vs: 'budget' },
+    series: [{ label: '30 Jul', value: 60 }, { label: '13 Aug', value: 0 }, { label: '27 Aug', value: 33.34 }],
+  },
+  actions: [
+    { kind: 'deeplink', label: 'See Eating Out transactions', categoryId: 'eatingout', dateFrom: '2026-07-30', dateTo: '2026-09-09' },
+    { kind: 'prompt', label: 'Compare to Groceries', text: 'Compare that to Groceries' },
+  ],
+};
+
+let chat: ChatContextValue;
+function Probe() {
+  chat = useChat();
+  return null;
+}
+
+async function flush() {
+  await act(async () => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); });
+}
+
+async function mountOpen() {
+  const view = render(<ChatProvider><Probe /><ChatSheet /></ChatProvider>);
+  await flush();
+  act(() => chat.openChat());
+  return view;
+}
+
+async function askAndAnswer() {
+  jest.useFakeTimers();
+  act(() => chat.send('Average eating out?'));
+  await flush();
+  await act(async () => { jest.advanceTimersByTime(1000); });
+  await flush();
+  jest.useRealTimers();
+}
+
+beforeEach(async () => {
+  jest.clearAllMocks();
+  await AsyncStorage.clear();
+  mockStartAiChat.mockResolvedValue({ jobId: 'j1', status: 'running' });
+  mockGetAiChatJob.mockResolvedValue({ jobId: 'j1', status: 'succeeded', reply: REPLY });
+});
+
+describe('consent', () => {
+  it('shows once; after Continue it never shows again', async () => {
+    const first = await mountOpen();
+    expect(screen.getByTestId('chat-consent')).toBeTruthy();
+    expect(screen.queryByTestId('chat-prompt-0')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('chat-consent-continue'));
+    await flush();
+    expect(screen.queryByTestId('chat-consent')).toBeNull();
+    expect(screen.getByText('What do you want to know about your spending?')).toBeTruthy();
+
+    first.unmount();
+    await mountOpen();
+    expect(screen.queryByTestId('chat-consent')).toBeNull();
+  });
+
+  it('Not now closes the sheet without saving consent', async () => {
+    await mountOpen();
+    fireEvent.press(screen.getByTestId('chat-consent-not-now'));
+    expect(chat.open).toBe(false);
+    expect(await AsyncStorage.getItem(CHAT_CONSENT_KEY)).toBeNull();
+  });
+});
+
+describe('with consent given', () => {
+  beforeEach(async () => { await AsyncStorage.setItem(CHAT_CONSENT_KEY, '2026-09-01T00:00:00.000Z'); });
+
+  it('a suggested prompt is sent straight away', async () => {
+    await mountOpen();
+    fireEvent.press(screen.getByTestId('chat-prompt-1'));
+    await flush();
+    expect(mockStartAiChat).toHaveBeenCalledWith([{ role: 'user', text: 'Average Eating Out over the last 3 months' }]);
+    expect(screen.getByTestId('chat-typing')).toBeTruthy();
+  });
+
+  it('typing and sending uses the text box; the send button is off while it is empty', async () => {
+    await mountOpen();
+    expect(screen.getByTestId('chat-send').props.accessibilityState?.disabled).toBe(true);
+    fireEvent.changeText(screen.getByTestId('chat-input'), 'How much on coffee?');
+    fireEvent.press(screen.getByTestId('chat-send'));
+    await flush();
+    expect(mockStartAiChat).toHaveBeenCalledWith([{ role: 'user', text: 'How much on coffee?' }]);
+    expect(screen.getByTestId('chat-stop')).toBeTruthy();
+  });
+
+  it('draws the answer card bars in the category colour from its colour slot', async () => {
+    await mountOpen();
+    await askAndAnswer();
+
+    const expected = chartCategoryColor('eatingout', { slot: 5 });
+    expect(expected).not.toBe(chartCategoryColor('eatingout'));
+    const bars = screen.getAllByTestId('chat-card-bar');
+    expect(bars).toHaveLength(3);
+    for (const bar of bars) expect(StyleFlat(bar.props.style).backgroundColor).toBe(expected);
+    expect(StyleFlat(screen.getByTestId('chat-card-dot').props.style).backgroundColor).toBe(expected);
+    expect(screen.getByText('3 completed pay cycles · 30 Jul – 9 Sep')).toBeTruthy();
+    expect(screen.getByText('$60 budget')).toBeTruthy();
+  });
+
+  it('a deep link closes the sheet and opens the category over the exact dates', async () => {
+    await mountOpen();
+    await askAndAnswer();
+    fireEvent.press(screen.getByTestId('chat-action-0'));
+    expect(chat.open).toBe(false);
+    expect(mockPush).toHaveBeenCalledWith('/category/eatingout?from=2026-07-30&to=2026-09-09');
+  });
+
+  it('a prompt chip sends its question', async () => {
+    await mountOpen();
+    await askAndAnswer();
+    fireEvent.press(screen.getByTestId('chat-action-1'));
+    await flush();
+    expect(mockStartAiChat).toHaveBeenLastCalledWith(expect.arrayContaining([
+      { role: 'user', text: 'Compare that to Groceries' },
+    ]));
+  });
+
+  it('shows New chat only once a conversation exists', async () => {
+    await mountOpen();
+    expect(screen.queryByTestId('chat-new')).toBeNull();
+    await askAndAnswer();
+    fireEvent.press(screen.getByTestId('chat-new'));
+    expect(chat.messages).toEqual([]);
+    expect(screen.queryByTestId('chat-new')).toBeNull();
+  });
+
+  it('an error shows the message with a Retry chip', async () => {
+    mockStartAiChat.mockRejectedValueOnce(new Error('offline'));
+    await mountOpen();
+    fireEvent.press(screen.getByTestId('chat-prompt-0'));
+    await flush();
+    expect(screen.getByText("Couldn't reach the assistant. Try again.")).toBeTruthy();
+    fireEvent.press(screen.getByTestId('chat-retry'));
+    await flush();
+    expect(mockStartAiChat).toHaveBeenCalledTimes(2);
+  });
+});
+
+// RN style props may be arrays; flatten for the colour assertions.
+function StyleFlat(style: unknown): Record<string, unknown> {
+  if (Array.isArray(style)) return Object.assign({}, ...style.map(StyleFlat));
+  return (style as Record<string, unknown>) ?? {};
+}
+
+describe('the answer card difference colour', () => {
+  const deltaColor = (categoryId: string, amount: number) => {
+    const card = { ...REPLY.card!, categoryId, delta: { amount, vs: 'budget' as const } };
+    render(<ChatAnswer text="ok" reply={{ ...REPLY, card }} onAction={() => {}} />);
+    return StyleFlat(screen.getByTestId('chat-card-delta').props.style).color;
+  };
+
+  it('is red over a spending budget and green under it', () => {
+    expect(deltaColor('eatingout', 14)).toBe(C.bad);
+    screen.unmount();
+    expect(deltaColor('eatingout', -14)).toBe(C.chatUnder);
+  });
+
+  it('is green over an Income target — earning more than planned is good news', () => {
+    expect(deltaColor('salary', 200)).toBe(C.chatUnder);
+    screen.unmount();
+    expect(deltaColor('salary', -200)).toBe(C.bad);
+  });
+});

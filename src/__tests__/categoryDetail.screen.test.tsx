@@ -11,12 +11,18 @@ import { render, screen, fireEvent } from '@testing-library/react-native';
 
 let mockData: ReturnType<typeof screenData>;
 let mockDetail: unknown;
-let mockParams: { id: string; cycle?: string };
+let mockParams: { id: string; cycle?: string; from?: string; to?: string };
 // The (id, cycle) the screen passed into the composite — captured so WHIT-309 can assert the
 // cycle was clamped to the integer set {0,1} before it reached the fetch.
 let mockCapturedCycle: number | undefined;
+// Card 609: the date range (the Ask Abundo deep link) the screen passed, if any.
+let mockCapturedRange: { from: string; to: string } | undefined;
 jest.mock('../queries', () => ({
-  useCategoryTransactionsScreenData: (_id: string, cycle: number) => { mockCapturedCycle = cycle; return mockData; },
+  useCategoryTransactionsScreenData: (_id: string, cycle: number, range?: { from: string; to: string }) => {
+    mockCapturedCycle = cycle;
+    mockCapturedRange = range;
+    return mockData;
+  },
 }));
 
 jest.mock('../context', () => {
@@ -245,4 +251,49 @@ describe('WHIT-374 gap — cold taxonomy over cached transactions', () => {
     fireEvent.press(retry);
     expect(refetch).toHaveBeenCalledTimes(1);
   });
+});
+
+// ===== Card 609 — the Ask Abundo deep link: ?from=&to= instead of ?cycle= =====
+
+// The header drops the year only for a range inside the CURRENT year, so these dates follow the
+// real clock — fixed 2026 dates would start showing "2026" (and fail) on 1 Jan 2027.
+const THIS_YEAR = new Date().getFullYear();
+const JUN_12 = `${THIS_YEAR}-06-12`;
+const SEP_11 = `${THIS_YEAR}-09-11`;
+
+it('a from/to pair fetches that date range and labels the total with the dates', () => {
+  mockParams = { id: 'coffee', from: JUN_12, to: SEP_11 };
+  render(<CategoryDetail />);
+  expect(mockCapturedRange).toEqual({ from: JUN_12, to: SEP_11 });
+  expect(screen.getByText('Spent 12 Jun – 11 Sep')).toBeTruthy();
+  expect(screen.queryByText('Spent this cycle')).toBeNull();
+});
+
+it.each([
+  [{ from: '2026-06-12' }],                                 // only one end
+  [{ from: '2026-6-12', to: '2026-09-11' }],                // not YYYY-MM-DD
+  [{ from: '2026-09-11', to: '2026-06-12' }],               // out of order
+])('a bad range falls back to the cycle view (%j)', (range) => {
+  mockParams = { id: 'coffee', cycle: '1', ...range };
+  render(<CategoryDetail />);
+  expect(mockCapturedRange).toBeUndefined();
+  expect(mockCapturedCycle).toBe(1);
+  expect(screen.getByText('Spent last cycle')).toBeTruthy();
+});
+
+// [A23] QA: a valid range wins over a leftover ?cycle= — the dates the chat answered for are
+// what the screen fetches and labels.
+it('a valid range with a leftover cycle=1 still shows the range, not last cycle', () => {
+  mockParams = { id: 'coffee', cycle: '1', from: JUN_12, to: SEP_11 };
+  render(<CategoryDetail />);
+  expect(mockCapturedRange).toEqual({ from: JUN_12, to: SEP_11 });
+  expect(screen.getByText('Spent 12 Jun – 11 Sep')).toBeTruthy();
+  expect(screen.queryByText('Spent last cycle')).toBeNull();
+});
+
+// [A23] QA: a same-day range (from === to) is valid, not "out of order".
+it('a one-day range is accepted', () => {
+  mockParams = { id: 'coffee', from: '2026-09-11', to: '2026-09-11' };
+  render(<CategoryDetail />);
+  expect(mockCapturedRange).toEqual({ from: '2026-09-11', to: '2026-09-11' });
 });

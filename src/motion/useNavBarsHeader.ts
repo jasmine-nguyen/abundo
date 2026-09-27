@@ -18,6 +18,10 @@ export const HEADER_BODY_HEIGHT = 58;
 // every tab list so the number lives in exactly one place.
 export const TAB_BAR_CLEARANCE = 120;
 
+// Extra bottom padding so the last row of a tab list can scroll clear of the floating "Ask" pill
+// that sits above the tab bar (card 609).
+export const ASK_BUTTON_CLEARANCE = 72;
+
 // The absolute, opaque header shell shared verbatim by the floating-header screens. The
 // per-screen paddingTop (safe-area inset) and the animated headerStyle are layered on top.
 export const floatingHeaderStyle = StyleSheet.create({
@@ -44,6 +48,6 @@ export function useNavBarsHeader() {
     // Layer under floatingHeaderStyle: the safe-area top padding.
     headerPaddingTop: insets.top + 6,
     // Spread into the ScrollView's contentContainerStyle.
-    contentPadding: { paddingTop: headerHeight, paddingBottom: TAB_BAR_CLEARANCE },
+    contentPadding: { paddingTop: headerHeight, paddingBottom: TAB_BAR_CLEARANCE + ASK_BUTTON_CLEARANCE },
   };
 }

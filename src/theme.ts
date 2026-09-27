@@ -78,6 +78,19 @@ export const C = {
   // WHIT-560: the unfilled track behind the apply-rules progress bar — a faint neutral rail.
   progressTrack: 'rgba(255,255,255,.1)',
 
+  // Card 609 — Ask Abundo chat (the design handoff's Tokyo Night values).
+  chatSheet: '#1a1b26',
+  chatControl: '#24283b', // close button, highlighted prompt, stop/idle send, dividers
+  chatPrompt: '#1f2335', // suggested-prompt surface
+  chatFieldBorder: '#292e42',
+  chatChipBorder: '#3b4261', // action chips + the sheet grabber
+  chatMuted: '#787c99', // source line, tool status, chart axis, footnote
+  chatCardBorder: tint(ACCENT, 0.12),
+  // Under-budget delta green. Not C.good, which is the app's cyan.
+  chatUnder: '#9ece6a',
+  askRing: tint('#c0caf5', 0.08),
+  askShadow: '#000000',
+
   // Hero card gradient (Tokyo Night): accent-blue → indigo → purple, 150°.
   // The gradient starts on the accent by design, so it derives rather than copying the hex.
   heroGradFrom: ACCENT,

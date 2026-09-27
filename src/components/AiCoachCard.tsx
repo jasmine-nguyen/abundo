@@ -4,6 +4,7 @@ import { C, FONT, tint, agoLabel } from '../theme';
 import { Glyph } from '../icons';
 import { useAppContext, aiGoalSignal } from '../context';
 import { useGoalScreenData } from '../queries';
+import { useChat } from '../chat/ChatContext';
 
 // The Insights "coach" card (WHIT-104), extracted from the Insights screen (WHIT-68) so the
 // screen can gate it behind `{cycle === 0 && <AiCoachCard />}` in one line and its AI-state
@@ -16,6 +17,7 @@ export function AiCoachCard() {
   const s = useAppContext(); // aiInsights / aiInsightsLoading / aiInsightsError / generate
   // WHIT-203: the goal signal's inputs (loan facts + live balance) come off the query layer.
   const { loanFacts, homeLoan } = useGoalScreenData();
+  const { openChat } = useChat();
 
   const ai = s.aiInsights;
   const hasAi = !!(ai && (ai.summary || ai.suggestions.length > 0));
@@ -120,6 +122,21 @@ export function AiCoachCard() {
           populated. Anthropic is named in both, and the loan figures are named only when a
           goal is actually attached (WHIT-134). */}
       <Text style={styles.aiNote}>{noteText}</Text>
+
+      {/* Card 609: carry on from this summary in the Ask Abundo chat — a fresh thread that opens
+          with the summary as its first answer, keyboard up. */}
+      {hasAi && (
+        <View style={styles.aiFooter}>
+          <Pressable
+            testID="ai-ask-follow-up"
+            onPress={() => openChat({ seed: ai!.summary || ai!.suggestions.join('\n') })}
+            accessibilityRole="button"
+            hitSlop={8}
+          >
+            <Text style={styles.aiFollowUp}>Ask a follow-up →</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -147,4 +164,6 @@ const styles = StyleSheet.create({
   aiBtnBusy: { opacity: 0.7 },
   aiBtnText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '700', color: C.heroInk },
   aiNote: { fontFamily: FONT.body, fontSize: 11.5, color: C.textFaint, lineHeight: 16, marginTop: 10 },
+  aiFooter: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 },
+  aiFollowUp: { fontFamily: FONT.body, fontSize: 13, fontWeight: '600', color: C.purple },
 });
