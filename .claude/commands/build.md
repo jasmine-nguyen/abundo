@@ -4,7 +4,7 @@ description: Run the build graph for a card or request
 
 Run the build pipeline using `build_graph.py`.
 
-Board data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
+Read `project-context.md` for the board data source ID.
 
 ## Resuming a stopped build
 
@@ -54,6 +54,11 @@ Then continue from step 3 below.
 
 4. Based on the user's choice, run the resume command shown in the output
    (e.g. `python3 build_graph.py --thread <id> --resume "go"`)
+
+   While the resumed script runs, relay progress the same way as step 2:
+   one short status line per node ("Implementer is coding...",
+   "Code review in progress...", etc.). Don't go silent — the user needs
+   to see the build is alive and which stage it's at.
 
 5. Repeat steps 3-4 until the script prints "Done."
 
