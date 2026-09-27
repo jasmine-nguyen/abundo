@@ -13,6 +13,7 @@ const mockToast = jest.fn();
 let mockTx: ReturnType<typeof txData>;
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
+  useTransactionDetailScreenData: () => mockTx,
   // The detail screen resolves the row via the shared resolver; back it with the same fixture list.
   useTransactionResolver: () => ({
     transactions: mockTx.transactions,

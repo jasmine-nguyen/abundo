@@ -8,6 +8,9 @@
 //        budget-cache reactivity, guarding the categoryTransactionsKey[0] arm of the subscription.
 //   [R4] a category cache whose data is undefined/empty contributes NO phantom and never throws.
 //   [R5] correctness holds across MANY scoped caches (the findTx scan spans them all).
+//   [R6] WHIT-614: a switched-off search query mounted beside the resolver (the detail screen's old
+//        shape) doesn't loop — watcher events never move the version, only data changes do.
+//   [R7] WHIT-614: seeding a search, budget or category cache after mount still resolves the row.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
@@ -30,7 +33,7 @@ jest.mock('../api', () => ({
   fetchAccountBalances: () => mockBalances(),
 }));
 
-import { useTransactionResolver, budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey } from '../queries';
+import { useTransactionResolver, useTransactionsSearchQuery, budgetTransactionsKey, categoryTransactionsKey, transactionsKey, transactionsRecentKey, transactionsSearchKey } from '../queries';
 
 const tx = (id: string, over: Partial<Transaction> = {}): Transaction => ({
   transaction_id: id, date: '2026-07-01', authorized_date: '2026-07-01',
@@ -132,5 +135,46 @@ describe('[R] useTransactionResolver — cross-scoped-cache merge edges', () => 
     await waitFor(() => expect(result.current.findTx('target')).toBeDefined());
     expect(result.current.findTx('target')!.description).toBe('FOUND');
     expect(ids(result.current.transactions).filter((id) => id === 'target')).toHaveLength(1);
+  });
+
+  // [R6] Mounting a query on a watched key re-applies its options on every redraw. Counting those
+  // watcher events bumped the version → redraw → options re-applied → bump: an endless loop that
+  // crashed the detail screen. FAIL-ON-REVERT: dropping the event-type filter loops (render count
+  // explodes) and hands back a new `transactions` list on every redraw.
+  it('[R6] a switched-off search query beside the resolver never loops or moves the version', async () => {
+    const client = makeClient();
+    client.setQueryData(transactionsKey, { pages: [{ transactions: [tx('a')], nextCursor: null }], pageParams: [undefined] });
+    client.setQueryData(transactionsRecentKey, []);
+    let renders = 0;
+    const { result, rerender } = renderHook(() => {
+      renders += 1;
+      useTransactionsSearchQuery('all', '', false);
+      return useTransactionResolver();
+    }, { wrapper: wrapper(client) });
+
+    await waitFor(() => expect(result.current.findTx('a')).toBeDefined());
+    const before = result.current.transactions;
+    rerender({});
+    rerender({});
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.transactions).toBe(before);
+    expect(renders).toBeLessThan(10);
+  });
+
+  // [R7] The filter keeps real data changes: setQueryData fires 'updated', so a row seeded into any
+  // watched cache after mount still resolves. FAIL-ON-REVERT: filtering out 'updated' freezes these.
+  it('[R7] seeding a search, budget or category cache after mount still resolves the new row', async () => {
+    const client = makeClient();
+    client.setQueryData(transactionsKey, { pages: [{ transactions: [], nextCursor: null }], pageParams: [undefined] });
+    client.setQueryData(transactionsRecentKey, []);
+    const { result } = renderHook(() => useTransactionResolver(), { wrapper: wrapper(client) });
+    expect(result.current.transactions).toHaveLength(0);
+
+    act(() => { client.setQueryData([...transactionsSearchKey, 'all', 'deep'], { transactions: [tx('searched')], truncated: false }); });
+    await waitFor(() => expect(result.current.findTx('searched')).toBeDefined());
+    act(() => { client.setQueryData([...budgetTransactionsKey, 'rent'], [tx('budgeted')]); });
+    await waitFor(() => expect(result.current.findTx('budgeted')).toBeDefined());
+    act(() => { client.setQueryData([...categoryTransactionsKey, 'coffee', 0], [tx('drilled')]); });
+    await waitFor(() => expect(result.current.findTx('drilled')).toBeDefined());
   });
 });

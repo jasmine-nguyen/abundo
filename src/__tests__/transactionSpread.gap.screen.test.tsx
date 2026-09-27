@@ -13,6 +13,7 @@ let mockTx: ReturnType<typeof txData>;
 let mockBudgets: Budget[] = [];
 jest.mock('../queries', () => ({
   useTransactionsScreenData: () => mockTx,
+  useTransactionDetailScreenData: () => mockTx,
   useTransactionResolver: () => ({
     transactions: mockTx.transactions,
     findTx: (id: string) => (mockTx.transactions as { transaction_id: string }[]).find((t) => t.transaction_id === id),

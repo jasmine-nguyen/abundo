@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C, FONT, tint } from '../../src/theme';
 import { transactionView, useAppContext, contributesToBudget, budgetSpreadEligibility, ruleFiledLabel, RULE_FILED_FALLBACK, Transaction } from '../../src/context';
 import { formatDayMonthYear } from '../../src/dateutil';
-import { useTransactionsScreenData, useTransactionResolver, useBudgetsScreenData, useRulesScreenData } from '../../src/queries';
+import { useTransactionDetailScreenData, useTransactionResolver, useBudgetsScreenData, useRulesScreenData } from '../../src/queries';
 import { Header } from '../../src/components/Header';
 import { Icon, Glyph } from '../../src/icons';
 import { DetailStates } from '../../src/components/DetailStates';
@@ -27,7 +27,7 @@ export default function TransactionDetail() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { openPicker } = useAppContext();
-  const { category, isLoading, isError, refetch } = useTransactionsScreenData();
+  const { category, isLoading, isError, refetch } = useTransactionDetailScreenData();
   // Budgets feed the "Spread this bill" prompt below; cached + deduped by query key, so this adds
   // no real cost. On a cold open `budgets` is [] → eligibility 'hidden' → the button just waits.
   const { budgets } = useBudgetsScreenData();
