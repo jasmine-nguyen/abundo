@@ -51,6 +51,7 @@ class BuildState(TypedDict):
 
 # --- helpers ---
 
+DEFAULT_MODEL = "claude-opus-5"
 PROJECT_CONTEXT = open("project-context.md").read()
 
 
@@ -78,6 +79,7 @@ async def designer(state: BuildState):
         prompt += f"\nPrevious plan was rejected. Feedback: {feedback}"
 
     options = ClaudeAgentOptions(
+        model=DEFAULT_MODEL,
         system_prompt=agent_prompt("solution-designer.md"),
         allowed_tools=["Read", "Grep", "Glob", "Bash"],
     )
@@ -97,6 +99,7 @@ async def plan_critic(state: BuildState):
     prompt = f"Card: {state.get('card_number')}\n\nProposed plan:\n{plan}"
 
     options = ClaudeAgentOptions(
+        model=DEFAULT_MODEL,
         system_prompt=agent_prompt("solution-critic.md"),
         allowed_tools=["Read", "Grep", "Glob", "Bash"],
     )
@@ -136,6 +139,7 @@ async def implementer(state: BuildState):
         prompt += f"\n\nYou previously escalated a decision. The answer: {escalation_answer}"
 
     options = ClaudeAgentOptions(
+        model=DEFAULT_MODEL,
         system_prompt=agent_prompt("implementer.md"),
         allowed_tools=["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
     )
@@ -163,6 +167,7 @@ async def code_critic(state: BuildState):
     )
 
     options = ClaudeAgentOptions(
+        model=DEFAULT_MODEL,
         system_prompt=agent_prompt("code-critic.md"),
         allowed_tools=["Read", "Grep", "Glob", "Bash"],
     )
@@ -184,6 +189,7 @@ async def qa(state: BuildState):
     )
 
     options = ClaudeAgentOptions(
+        model=DEFAULT_MODEL,
         system_prompt=agent_prompt("qa.md"),
         allowed_tools=["Read", "Grep", "Glob", "Bash"],
     )
