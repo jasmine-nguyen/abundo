@@ -59,6 +59,26 @@ def agent_prompt(agent_file: str) -> str:
     return open(f".claude/agents/{agent_file}").read() + "\n\n" + PROJECT_CONTEXT
 
 
+NODE_LABELS = {
+    "designer": "Designer",
+    "plan_critic": "Plan Critic",
+    "sign_off": "Sign-off",
+    "implementer": "Implementer",
+    "code_critic": "Code Review",
+    "qa": "QA",
+    "escalation": "Escalation",
+    "fix_or_ship": "Fix or Ship",
+}
+
+
+def node_start(name: str):
+    print(f"\n▶ {NODE_LABELS.get(name, name)}...", flush=True)
+
+
+def node_done(name: str):
+    print(f"✅ {NODE_LABELS.get(name, name)} done", flush=True)
+
+
 def print_progress(message):
     if isinstance(message, AssistantMessage):
         for block in message.content:
@@ -66,11 +86,27 @@ def print_progress(message):
                 print(f"  → {block.name}", flush=True)
 
 
+def print_resume_recap(state: dict):
+    stages = [
+        ("designer", "plan"),
+        ("plan_critic", "plan_verdict"),
+        ("sign_off", "plan_decision"),
+        ("implementer", "implementation"),
+        ("code_critic", "code_verdict"),
+        ("qa", "qa_verdict"),
+    ]
+    print("Resuming — completed stages:")
+    for node, key in stages:
+        if state.get(key):
+            print(f"  ✅ {NODE_LABELS[node]}")
+    print()
+
+
 # --- nodes ---
 
 
 async def designer(state: BuildState):
-    print("designer running")
+    node_start("designer")
     prompt = (
         f"Card: {state.get('card_number')}, Details: {state.get('card_details', '')}"
     )
@@ -87,6 +123,7 @@ async def designer(state: BuildState):
     async for message in query(prompt=prompt, options=options):
         print_progress(message)
         if isinstance(message, ResultMessage):
+            node_done("designer")
             return {
                 "plan": message.result,
                 "plan_attempts": state.get("plan_attempts", 0) + 1,
@@ -94,7 +131,7 @@ async def designer(state: BuildState):
 
 
 async def plan_critic(state: BuildState):
-    print("plan_critic running")
+    node_start("plan_critic")
     plan = state.get("plan", "")
     prompt = f"Card: {state.get('card_number')}\n\nProposed plan:\n{plan}"
 
@@ -108,13 +145,14 @@ async def plan_critic(state: BuildState):
         print_progress(message)
         if isinstance(message, ResultMessage):
             verdict = message.result
+            node_done("plan_critic")
             if "NEEDS REWORK" in verdict:
                 return {"plan_verdict": "NEEDS REWORK"}
             return {"plan_verdict": "APPROVED"}
 
 
 def sign_off(state: BuildState):
-    print("sign_off running")
+    node_start("sign_off")
     answer = interrupt(
         f"Plan: {state.get('plan')}, Verdict: {state.get('plan_verdict')}, "
         f"Attempts: {state.get('plan_attempts', 0)}. Approve?"
@@ -130,7 +168,7 @@ def sign_off(state: BuildState):
 
 
 async def implementer(state: BuildState):
-    print("implementer running")
+    node_start("implementer")
     plan = state.get("plan", "")
     prompt = f"Card: {state.get('card_number')}\n\nApproved plan:\n{plan}"
 
@@ -147,6 +185,7 @@ async def implementer(state: BuildState):
     async for message in query(prompt=prompt, options=options):
         print_progress(message)
         if isinstance(message, ResultMessage):
+            node_done("implementer")
             if "ESCALATION:" in message.result:
                 return {
                     "escalation": message.result,
@@ -160,7 +199,7 @@ async def implementer(state: BuildState):
 
 
 async def code_critic(state: BuildState):
-    print("code_critic running")
+    node_start("code_critic")
     prompt = (
         f"Card: {state.get('card_number')}\n\n"
         f"Review the implementation changes."
@@ -175,13 +214,14 @@ async def code_critic(state: BuildState):
     async for message in query(prompt=prompt, options=options):
         print_progress(message)
         if isinstance(message, ResultMessage):
+            node_done("code_critic")
             if "DO NOT SHIP" in message.result:
                 return {"code_verdict": "NEEDS REWORK"}
             return {"code_verdict": "APPROVED"}
 
 
 async def qa(state: BuildState):
-    print("qa running")
+    node_start("qa")
     prompt = (
         f"Card: {state.get('card_number')}\n\n"
         f"Plan:\n{state.get('plan', '')}\n\n"
@@ -197,19 +237,21 @@ async def qa(state: BuildState):
     async for message in query(prompt=prompt, options=options):
         print_progress(message)
         if isinstance(message, ResultMessage):
+            node_done("qa")
             if "real bug" in message.result.lower():
                 return {"qa_verdict": "NEEDS REWORK"}
             return {"qa_verdict": "APPROVED"}
 
 
 def escalation(state: BuildState):
-    print("escalation running")
+    node_start("escalation")
     answer = interrupt(state.get("escalation", ""))
     return {"escalation_answer": answer, "escalation": ""}
 
 
 def fix_or_ship(state: BuildState):
-    print("fix_or_ship running")
+    node_start("fix_or_ship")
+    node_done("fix_or_ship")
     return {}
 
 
@@ -355,6 +397,9 @@ async def main():
             return
 
         if args.resume is not None:
+            prior = await graph.aget_state(config)
+            if prior and prior.values:
+                print_resume_recap(prior.values)
             result = await graph.ainvoke(Command(resume=args.resume), config)
         else:
             await saver.adelete_thread(thread_id)
