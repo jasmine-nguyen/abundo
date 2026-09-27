@@ -43,7 +43,9 @@ class BuildState(TypedDict):
     implementation_attempts: NotRequired[int]
     implementation: NotRequired[str]
     code_verdict: NotRequired[str]
+    code_feedback: NotRequired[str]
     qa_verdict: NotRequired[str]
+    qa_feedback: NotRequired[str]
     escalation: NotRequired[str]
     escalation_source: NotRequired[str]
     escalation_answer: NotRequired[str]
@@ -172,6 +174,15 @@ async def implementer(state: BuildState):
     plan = state.get("plan", "")
     prompt = f"Card: {state.get('card_number')}\n\nApproved plan:\n{plan}"
 
+    code_feedback = state.get("code_feedback", "")
+    qa_feedback = state.get("qa_feedback", "")
+    if code_feedback or qa_feedback:
+        prompt += "\n\n--- FIX ROUND ---\nYour previous implementation was reviewed. Fix these issues:\n"
+        if code_feedback:
+            prompt += f"\n## Code review findings:\n{code_feedback}\n"
+        if qa_feedback:
+            prompt += f"\n## QA findings:\n{qa_feedback}\n"
+
     escalation_answer = state.get("escalation_answer", "")
     if escalation_answer:
         prompt += f"\n\nYou previously escalated a decision. The answer: {escalation_answer}"
@@ -195,6 +206,8 @@ async def implementer(state: BuildState):
                 "implementation": message.result,
                 "implementation_attempts": state.get("implementation_attempts", 0) + 1,
                 "escalation_answer": "",
+                "code_feedback": "",
+                "qa_feedback": "",
             }
 
 
@@ -216,8 +229,8 @@ async def code_critic(state: BuildState):
         if isinstance(message, ResultMessage):
             node_done("code_critic")
             if "DO NOT SHIP" in message.result:
-                return {"code_verdict": "NEEDS REWORK"}
-            return {"code_verdict": "APPROVED"}
+                return {"code_verdict": "NEEDS REWORK", "code_feedback": message.result}
+            return {"code_verdict": "APPROVED", "code_feedback": ""}
 
 
 async def qa(state: BuildState):
@@ -239,8 +252,8 @@ async def qa(state: BuildState):
         if isinstance(message, ResultMessage):
             node_done("qa")
             if "real bug" in message.result.lower():
-                return {"qa_verdict": "NEEDS REWORK"}
-            return {"qa_verdict": "APPROVED"}
+                return {"qa_verdict": "NEEDS REWORK", "qa_feedback": message.result}
+            return {"qa_verdict": "APPROVED", "qa_feedback": ""}
 
 
 def escalation(state: BuildState):
