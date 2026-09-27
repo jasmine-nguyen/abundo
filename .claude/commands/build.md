@@ -5,7 +5,8 @@ description: Run the build graph for a card or request
 Run the build pipeline using `build_graph.py`.
 
 Read `project-context.md` first. It contains the board data source ID,
-card prefix, default card type, and any skip patterns.
+card prefix, default card type, and card picking rules (sort field,
+blocker relation, skip patterns).
 
 ## Resuming a stopped build
 
@@ -18,22 +19,52 @@ Then continue from step 3 below.
 ## Starting a new build
 
 1. Figure out what to build:
-   - If `$ARGUMENTS` looks like a card number (matches the card prefix from
-     project-context.md, e.g. CAD-38, WHIT-123), fetch the card's title and
-     description from Notion first.
-   - If `$ARGUMENTS` is a plain-text request (not a card number), create a
-     new card on the board first: use `notion-create-pages` with the board
-     data source, set Type to the default card type from project-context.md,
-     Status = 'To Do', and a clear title. Once created, fetch the card to
-     get its assigned number.
-   - If `$ARGUMENTS` is empty, pick the next actionable card from the board:
-     query the data source for Status IN ('To Do', 'In Progress'), ordered
-     by priority using:
-     `CASE "Priority" WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ASC`
-     If project-context.md lists skip patterns, add a WHERE clause to
-     exclude cards whose title contains those patterns. Take the first row.
-     Fetch it.
-   - Echo which card you're building and why before continuing.
+
+   **a) Card number given** — `$ARGUMENTS` looks like a card number
+   (matches the card prefix from project-context.md, e.g. CAD-92, WHIT-42)
+   or a bare number (e.g. 92). Look the card up by "Card ID". Fetch its
+   title and description.
+
+   If project-context.md has a blocker relation, check whether all
+   blockers have Status = 'Done'. If not, warn the user, list the
+   unfinished blockers, and ask whether to continue anyway.
+
+   **b) Plain-text request** — `$ARGUMENTS` is not a card number. Create
+   a new card on the board: use `notion-create-pages` with the board data
+   source, set Type to the default card type from project-context.md,
+   Status = 'To Do', and a clear title. Leave the sort field empty. Tell
+   the user to set the sort field and blockers on the board later. Fetch
+   the card to get its assigned number.
+
+   **c) Empty** — `$ARGUMENTS` is empty. Pick the next actionable card:
+
+   If project-context.md has a **sort field** and **blocker relation**:
+   1. Query cards with Status = 'To Do' and a non-empty sort field,
+      sorted by the sort field ascending. Include url, Card ID, Name,
+      the sort field, and the blocker relation.
+   2. Walk that list in order. For each card:
+      - If project-context.md has skip patterns, skip cards whose Name
+        contains any pattern.
+      - Read the blocker relation. For each blocker URL, check its
+        Status. A card is ready only when every blocker is Done.
+        (No blockers = ready.)
+   3. Pick the first ready card.
+   4. If any card has Status = 'In Progress', mention it and ask
+      whether to resume that instead.
+   5. Echo the chosen card, its sort value, and a one-line note for
+      any lower-order cards that were skipped — include which blocker
+      is holding each one up.
+   6. If no card is ready, say so and list the blocked cards with
+      their blockers. Don't pick anything.
+
+   If project-context.md does **not** have a sort field (fallback):
+   1. Query cards with Status IN ('To Do', 'In Progress'), ordered by:
+      `CASE "Priority" WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END ASC`
+   2. If project-context.md has skip patterns, exclude cards whose Name
+      contains those patterns.
+   3. Take the first row. Fetch it.
+
+   Echo which card you're building and why before continuing.
 
 2. Run the script:
    `python3 build_graph.py --card <number> --details "<title and description>"`
