@@ -3,6 +3,28 @@ import { View, Text, Pressable, StyleSheet, ViewStyle, TextStyle, StyleProp } fr
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { C, FONT } from '../theme';
 
+// WHIT-615 — a full-bleed gradient layer. iOS react-native-svg saves a shape's `%` sizes from
+// its first draw and never updates them on resize, so the Rect is sized in a 0-1 viewBox that
+// is stretched to the current size on every draw. Corners come from the wrapper View, never `rx`.
+// The Svg needs its absoluteFill style and no width/height: without them the library quietly
+// falls back to width="100%".
+export function GradientFill({ id, stops, x2, y2, borderRadius }: {
+  id: string; stops: [offset: number, color: string][]; x2: number; y2: number; borderRadius?: number;
+}) {
+  return (
+    <View style={[StyleSheet.absoluteFill, { borderRadius, overflow: 'hidden' }]} pointerEvents="none">
+      <Svg style={StyleSheet.absoluteFill} viewBox="0 0 1 1" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id={id} x1="0" y1="0" x2={x2} y2={y2}>
+            {stops.map(([offset, color]) => <Stop key={offset} offset={offset} stopColor={color} />)}
+          </LinearGradient>
+        </Defs>
+        <Rect width={1} height={1} fill={`url(#${id})`} />
+      </Svg>
+    </View>
+  );
+}
+
 // Full-bleed 150° accent→purple gradient fill for hero cards (Tokyo Night). Renders as an
 // absolutely-positioned layer, so drop it as the FIRST child of a position:relative,
 // overflow:hidden hero card — it sits behind the decorative blobs and the content, which
@@ -10,18 +32,10 @@ import { C, FONT } from '../theme';
 // heroGradFrom → heroGradMid → heroGradTo theme tokens.
 export function HeroGradientFill() {
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Svg width="100%" height="100%">
-        <Defs>
-          <LinearGradient id="heroGrad" x1="0" y1="0" x2="0.5" y2="1">
-            <Stop offset="0" stopColor={C.heroGradFrom} />
-            <Stop offset="0.55" stopColor={C.heroGradMid} />
-            <Stop offset="1" stopColor={C.heroGradTo} />
-          </LinearGradient>
-        </Defs>
-        <Rect width="100%" height="100%" fill="url(#heroGrad)" />
-      </Svg>
-    </View>
+    <GradientFill
+      id="heroGrad" x2={0.5} y2={1}
+      stops={[[0, C.heroGradFrom], [0.55, C.heroGradMid], [1, C.heroGradTo]]}
+    />
   );
 }
 
