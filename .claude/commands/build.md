@@ -6,6 +6,16 @@ Run the build pipeline using `build_graph.py`.
 
 Board data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
 
+## Resuming a stopped build
+
+If the user says "resume" or "continue the build" (and `$ARGUMENTS` is
+empty or says "resume"), check the conversation for the last paused build.
+You'll have the thread ID and card number from the earlier run. Resume with:
+`python3 build_graph.py --thread <id> --resume "go"`
+Then continue from step 3 below.
+
+## Starting a new build
+
 1. Figure out what to build:
    - If `$ARGUMENTS` looks like a card number (e.g. WHIT-123), fetch the
      card's title and description from Notion first.
