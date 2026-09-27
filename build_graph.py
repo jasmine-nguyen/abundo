@@ -51,7 +51,7 @@ class BuildState(TypedDict):
 
 # --- helpers ---
 
-DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL = "claude-opus-5-5"
 PROJECT_CONTEXT = open("project-context.md").read()
 
 
