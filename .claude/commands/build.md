@@ -22,10 +22,13 @@ Board data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
    `python3 build_graph.py --card <number> --details "<title and description>"`
 
 3. If the script pauses (prints "Paused. Resume with:"), present the
-   interrupt message to the user and ask for their decision.
+   interrupt message to the user using AskUserQuestion with these options:
+   - "Approve" — resume with "go"
+   - "Rework" — ask for feedback, then resume with that feedback
+   - "Stop" — end the build, don't resume
 
-4. Once the user responds, run the resume command shown in the output
-   (e.g. `python3 build_graph.py --thread <id> --resume "<answer>"`)
+4. Based on the user's choice, run the resume command shown in the output
+   (e.g. `python3 build_graph.py --thread <id> --resume "go"`)
 
 5. Repeat steps 3-4 until the script prints "Done."
 
