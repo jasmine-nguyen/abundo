@@ -1,1 +1,4 @@
-../prompt-engineering/requirements.txt
+langgraph
+langgraph-checkpoint-sqlite
+aiosqlite
+claude-agent-sdk
