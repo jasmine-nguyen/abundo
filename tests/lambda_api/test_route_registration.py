@@ -16,12 +16,12 @@ import re
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _HANDLER = _REPO_ROOT / "lambda_api" / "handler.py"
-_CONSTANTS = _REPO_ROOT / "lambda_api" / "constants.py"
+_CONSTANTS = _REPO_ROOT / "lambda_api" / "api_constants.py"
 _APIGATEWAY = _REPO_ROOT / "terraform" / "apigateway.tf"
 
 # `if path == NAME and method == "VERB":` — the exact-match dispatch shape.
 _DISPATCH = re.compile(r'path == ([A-Z][A-Z0-9_]*) and method == "([A-Z]+)"')
-# `NAME = "/some/path"` in constants.py.
+# `NAME = "/some/path"` in api_constants.py.
 _PATH_CONSTANT = re.compile(r'^([A-Z][A-Z0-9_]*)\s*=\s*"(/[^"]*)"', re.MULTILINE)
 # One quoted route key inside the app_route_keys list.
 _ROUTE_KEY = re.compile(r'"([A-Z]+ /[^"]*)"')

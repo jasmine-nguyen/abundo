@@ -1,12 +1,8 @@
-from constants import (
+from api_constants import (
     APPLY_RULES_MAX_WRITES,
     APPLY_RULES_TIME_BUDGET_SECONDS,
     ACCOUNT_BALANCES_PATH,
     ACCOUNT_BALANCES_REFRESH_PATH,
-    ACCOUNT_ID_MAP,
-    BALANCE_SOURCES,
-    BANKSYNC_API_KEY_PATH,
-    BANKSYNC_BASE_URL,
     BANKSYNC_USER_AGENT,
     REFRESH_FETCH_TIMEOUT_SECONDS,
     REFRESH_THROTTLE_SECONDS,
@@ -25,9 +21,7 @@ from constants import (
     RULES_PATH,
     EXPO_TOKEN_MAX_LEN,
     FEED_PAGE_SIZE,
-    FEED_WINDOW_DAYS,
     GOALS_PATH,
-    HOMELOAN_ACCOUNT_ID,
     HOMELOAN_PATH,
     INCOME_BUCKET,
     INSIGHTS_AI_PATH,
@@ -35,7 +29,6 @@ from constants import (
     INTEREST_CATEGORY,
     LOANFACTS_FIELD_MAX,
     LOANFACTS_PATH,
-    MAX_PAGE_SIZE,
     MILESTONES_PATH,
     PAYCYCLE_LENGTHS,
     PAYCYCLE_PATH,
@@ -47,8 +40,6 @@ from constants import (
     RULE_DIRECTIONS,
     SAVINGS_BUCKET,
     SPEND_BUCKETS,
-    SPREAD_MAX_CYCLES,
-    SPREAD_MIN_CYCLES,
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
     TRANSACTIONS_FEED_PATH,
@@ -60,6 +51,17 @@ from constants import (
     UNCATEGORIZED_MERCHANTS_PATH,
     FILING_SUGGESTIONS_PATH,
     TRANSACTIONS_SEARCH_PATH,
+)
+from constants import (
+    ACCOUNT_ID_MAP,
+    BALANCE_SOURCES,
+    BANKSYNC_API_KEY_PATH,
+    BANKSYNC_BASE_URL,
+    FEED_WINDOW_DAYS,
+    HOMELOAN_ACCOUNT_ID,
+    MAX_PAGE_SIZE,
+    SPREAD_MAX_CYCLES,
+    SPREAD_MIN_CYCLES,
 )
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
@@ -512,10 +514,7 @@ def register_device(event: dict, repo: DeviceRepository) -> dict:
     return _json_response(200, {"token": token})
 
 
-# Free-text note/tag caps (WHIT-275). Kept as literals HERE, not in constants.py:
-# a shared constant imported by a repository_* module at load must be mirrored in
-# lambda_api/constants.py or the deployed API 500s on import (the constants-shadow
-# landmine). These are used only by this handler, so literals sidestep it entirely.
+# Free-text note/tag caps (WHIT-275). Used only by this handler.
 NOTE_MAX_LEN = 500
 TAG_MAX_COUNT = 20
 TAG_MAX_LEN = 50
@@ -3404,8 +3403,7 @@ def set_loanfacts(event: dict, repo: LoanFactsRepository) -> dict:
     return _json_response(200, saved)
 
 
-# Milestone plan limits (WHIT-375). Handler literals — not shared constants — so they
-# never cross the lambda_api constants shadow (WHIT-136).
+# Milestone plan limits (WHIT-375). Used only by this handler.
 _MILESTONE_MAX_COUNT = 50
 _MILESTONE_LABEL_MAX_LEN = 100
 _MILESTONE_BALANCE_MAX = 1_000_000_000

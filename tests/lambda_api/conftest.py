@@ -11,8 +11,8 @@ Two things make importing ``lambda_api/handler.py`` in a test non-trivial:
    exercised — they only satisfy the import chain (same approach the
    sync_trigger suite uses to avoid a real ssm/boto3 dependency).
 
-2. ``lambda_api`` and ``lambda_sync_trigger`` BOTH have top-level ``handler.py``
-   and ``constants.py``. Running both suites in one pytest process means a bare
+2. ``lambda_api`` and ``lambda_sync_trigger`` BOTH have a top-level ``handler.py``.
+   Running both suites in one pytest process means a bare
    ``import handler`` could return whichever the sibling suite cached first. The
    ``handler`` fixture below sheds those names from sys.modules and pins this
    package's dirs to the front of sys.path before importing, then restores the
@@ -38,7 +38,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Modules re-imported fresh per test: names that collide with the sibling
 # sync_trigger suite.
 _COLLIDING = (
-    "handler", "constants", "models", "encoders", "repository",
+    "handler", "constants", "api_constants", "models", "encoders", "repository",
     "insights_ai", "anthropic_client", "rule_engine",
     "merchant_groups", "filing_habits", "apply_rules_worker", "repository_job",
     "spend", "repayment_rules", "api_key", "recurring_bills", "transaction_search",
@@ -49,8 +49,8 @@ _COLLIDING = (
 def _isolated_import(module_name):
     """Import one lambda_api (or shared) module fresh for a test, then restore sys.modules.
 
-    lambda_api's dir goes first on sys.path so its constants/models/handler win (mirrors prod,
-    where the function root precedes the shared layer); repository resolves in shared."""
+    lambda_api's dir goes first on sys.path (mirrors prod, where the function root precedes the
+    shared layer); constants and repository resolve in shared."""
     for d in (_SHARED_DIR, _LAMBDA_API_DIR):
         while d in sys.path:
             sys.path.remove(d)

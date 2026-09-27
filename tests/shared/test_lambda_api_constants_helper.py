@@ -9,9 +9,9 @@ nobody deploys. These pin the three properties the rest of the consolidation lea
   [B2] a name that does NOT exist fails loudly (never None, which would silently poison the
        parametrize tables in test_loanfacts_edges.py);
   [B3] it re-reads the file every call — no caching, no .pyc, no sys.modules;
-  [B4] it does not register `constants` in sys.modules (the docstring's whole reason for
-       exec'ing instead of importing — `constants` is in the _COLLIDING list of the
-       lambda_api conftest, and importing it here would poison the sibling suites);
+  [B4] it does not register `api_constants` / `constants` in sys.modules (the docstring's
+       whole reason for exec'ing instead of importing — both are in the _COLLIDING list of
+       the lambda_api conftest, and importing one here would poison the sibling suites);
   [B5] the namespace is fresh per call, so a name deleted from the file stops resolving.
 """
 
@@ -54,15 +54,17 @@ def test_reads_the_file_on_every_call_rather_than_caching(tmp_path, monkeypatch)
 
 
 def test_does_not_register_constants_in_sys_modules(monkeypatch):
-    """[B4] Reading must not leave a `constants` module behind — that name collides with
-    the lambda_api / sync_trigger / shared suites, and whichever one cached it first would
-    win for the rest of the pytest process."""
+    """[B4] Reading must not leave an `api_constants` / `constants` module behind — the
+    lambda_api conftest re-imports those fresh per test, and a cached copy would win for
+    the rest of the pytest process."""
+    monkeypatch.delitem(sys.modules, "api_constants", raising=False)
     monkeypatch.delitem(sys.modules, "constants", raising=False)
     api_constant("LOANFACTS_FIELD_MAX")
-    assert "constants" not in sys.modules, (
-        "api_constant registered a `constants` module — it must exec the file into a "
-        "fresh namespace, not import it (see the helper's docstring)"
-    )
+    for name in ("api_constants", "constants"):
+        assert name not in sys.modules, (
+            f"api_constant registered a `{name}` module — it must exec the file into a "
+            "fresh namespace, not import it (see the helper's docstring)"
+        )
 
 
 def test_the_namespace_is_not_shared_between_calls(tmp_path, monkeypatch):

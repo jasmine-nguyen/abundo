@@ -3,7 +3,7 @@
 ## Stack
 
 - **Client:** React Native (Expo v56), TypeScript
-- **Server:** Python Lambdas on AWS, shared layer staged with `cp shared/*.py`
+- **Server:** Python Lambdas on AWS, shared layer staged recursively from `shared/`
 - **Tests:** Jest (client — `npm test` for fast logic, `npm run test:all` for full),
   pytest (server — `python -m pytest`)
 - **Typecheck:** `npx tsc --noEmit`
@@ -12,10 +12,8 @@
 
 Check these before changing the touched area:
 
-- **`lambda_api/constants.py` shadows the shared layer** at runtime. Any constant a
-  shared `repository_*` module imports at load MUST also exist (with an equal value)
-  in `lambda_api/constants.py`, or the deployed API 500s on import. Run the
-  constants-sync test after touching `shared/constants.py`.
+- **Each constant has one home** — API-only → `lambda_api/api_constants.py`; everything
+  else → `shared/constants.py`; never both. Guarded by `test_no_shared_name_shadowing.py`.
 - **The webhook repository subclasses the shared one** —
   `lambda/repository.py`'s `TransactionRepository` extends
   `shared/repository_transaction.py` and imports `handle_database_error` from
@@ -27,8 +25,6 @@ Check these before changing the touched area:
 - **`lambda_api/` files ship from an allow-list** — a new `lambda_api/*.py` must be
   listed in BOTH `LAMBDA_API_SOURCES` (`scripts/build_terraform_artifacts.sh`) and
   `.gitignore`'s `!lambda_api/…` lines, or it is never committed or never deployed.
-- **The shared layer is staged with a non-recursive `cp shared/*.py`** — a new
-  shared package directory (not a flat top-level module) is silently dropped.
 
 ## Coding standards
 

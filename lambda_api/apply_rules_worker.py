@@ -14,7 +14,7 @@ and the worker can never drift on WHAT gets filed; only the cap differs (a call-
 
 import logging
 
-from constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
+from api_constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
 from handler import (
     _apply_rules_write_phase,
     _as_leaf_rule,

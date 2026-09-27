@@ -188,13 +188,11 @@ def test_delete_calls_delete_item_with_key_only(rule_repo):
     assert seen["kwargs"] == {}
 
 
-# --- the constants-free landmine ----------------------------------------------
+# --- kept constants-free ------------------------------------------------------
 
 
 def test_repository_rule_imports_no_constants():
-    # The shared layer is shadowed by lambda_api/constants.py at runtime, so a
-    # `from constants import` here would 500 the deployed API. test_constants_sync guards the
-    # whole layer; this pins the new module explicitly (fail-on-revert for the landmine).
+    # The module is kept pure and constants-free (its one tunable is local); this pins it.
     source = (pathlib.Path(__file__).resolve().parents[2] / "shared" / "repository_rule.py").read_text()
     assert "from constants import" not in source
     assert "import constants" not in source

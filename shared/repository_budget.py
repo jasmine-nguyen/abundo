@@ -14,15 +14,14 @@ from repository_errors import VersionConflictError
 _BUDGETS_KEY = {"pk": "BUDGETS", "sk": "BUDGETS"}
 
 # The rollover-only fields on a budget entry (everything but `target`). Cleared when a
-# category is reclassified out of a spend bucket (rollover is spend-only). Kept local —
-# NOT imported from shared/constants.py — so the WHIT-136 constants-sync guard is untouched.
+# category is reclassified out of a spend bucket (rollover is spend-only). Kept local.
 _ROLLOVER_FIELDS = ("rollover", "carryover", "carryover_from", "carryover_len", "carryover_paydate")
 
 # The bill-spread fields on a budget entry (WHIT-504): the bill amount, how many cycles it
 # is paid back over, and the anchor cycle it was created in (`spread_from`) plus the pay
 # cycle that anchor was captured under (`spread_len`/`spread_paydate`, so a cycle-config
 # change can be detected — the same pattern as the rollover anchor). Spend-only, like
-# rollover, and cleared on a reclassify out of spend. Kept local for the same WHIT-136 reason.
+# rollover, and cleared on a reclassify out of spend. Kept local.
 _SPREAD_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
 
 class BudgetRepository:

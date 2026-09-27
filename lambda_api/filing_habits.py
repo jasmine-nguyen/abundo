@@ -32,7 +32,7 @@ from rule_engine import (
 
 # How many DISTINCT days a merchant must be hand-filed to the SAME category before a rule is
 # suggested (WHIT-542). Below this it is a one-off, not a habit, and a nudge on a single filing is
-# noise. Local, not a constants.py value — merchant_groups keeps its own floors the same way, and it
+# noise. Local, not an api_constants.py value — merchant_groups keeps its own floors the same way, and it
 # keeps this module constants-free.
 MIN_FILING_HABIT_DAYS = 4
 

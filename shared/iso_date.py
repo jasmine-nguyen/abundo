@@ -8,10 +8,7 @@ guard can't drift looser than the write guard again. Bare date.fromisoformat als
 as a date, and the server's review maths would read "2030-W01-1" as a different day than the
 screen shows.
 
-Flat top-level module on purpose: the Lambda layer stages shared/ with a NON-RECURSIVE
-`cp shared/*.py` (terraform/layers.tf), so a package directory here would be silently dropped.
-Imports only re and datetime.date — no shared constant — so it never touches the
-lambda_api/constants.py shadow (WHIT-136).
+Imports only re and datetime.date — no shared constant.
 """
 
 import re

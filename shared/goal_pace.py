@@ -3,8 +3,7 @@
 Ports two pure functions from ``src/context.tsx`` — ``paydaysUntil`` and the
 remaining/``pacePerPayday`` slice of ``balanceGoalView`` — so the nudge computes pace
 identically to the app. Pure over its inputs: the nudge job (``goal_nudge``) supplies the
-live balance and "today". Kept dependency-free (no ``constants`` import) so it never trips
-the WHIT-136 constants-sync guard.
+live balance and "today". Kept dependency-free (no ``constants`` import).
 """
 
 from datetime import date

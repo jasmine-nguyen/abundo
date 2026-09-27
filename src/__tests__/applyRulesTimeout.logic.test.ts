@@ -19,7 +19,7 @@ const readSource = (repoRelative: string): string =>
 describe('the apply-rules request budget outlasts the server budget', () => {
   it('gives the server its full time budget plus headroom before the client aborts', () => {
     const client = readSource('src/api.ts').match(/^const APPLY_RULES_TIMEOUT_MS = ([\d_]+);/m);
-    const server = readSource('lambda_api/constants.py')
+    const server = readSource('lambda_api/api_constants.py')
       .match(/^APPLY_RULES_TIME_BUDGET_SECONDS\s*=\s*(\d+)/m);
 
     // A throw here means one of the two constants was renamed or moved. Fix the mirror — do not

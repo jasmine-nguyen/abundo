@@ -4,12 +4,6 @@ Import sites keep using `from repository import X` unchanged; the implementation
 live in repository_transaction / repository_category / repository_budget /
 repository_paycycle, with shared plumbing in repository_base and the exceptions in
 repository_errors.
-
-Deliberately a flat set of top-level modules, NOT a `repository/` package: the
-shared Lambda layer is staged with a non-recursive `cp shared/*.py`
-(terraform/layers.tf), which would silently drop a package directory from the
-layer and 500 every route at import — the exact outage class this service has
-been bitten by before.
 """
 
 from repository_base import handle_database_error

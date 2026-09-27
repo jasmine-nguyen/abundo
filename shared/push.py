@@ -9,9 +9,7 @@ The Expo project has Enhanced Security enabled, so every send carries
 ``Authorization: Bearer <access token>``, read from SSM (cached per container).
 
 The Expo constants below are defined locally (not in the shared ``constants``
-module) because they're used only here — which also keeps this module free of the
-``constants`` shadow trap the BankSync values in ``lambda_api/constants.py``
-document, so it stays importable from any lambda.
+module) because they're used only here.
 """
 
 import json

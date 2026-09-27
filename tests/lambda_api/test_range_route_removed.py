@@ -73,14 +73,16 @@ def test_range_handler_symbols_are_gone(handler):
 
 
 def test_transactions_range_path_removed_from_both_constants_modules():
-    api = constants_namespace(_ROOT / "lambda_api" / "constants.py")
+    api = constants_namespace(_ROOT / "lambda_api" / "api_constants.py")
     shared = constants_namespace(_ROOT / "shared" / "constants.py")
 
-    # The dead constant is gone from BOTH copies (the shadow pair)...
-    assert "TRANSACTIONS_RANGE_PATH" not in api, "lambda_api/constants.py still defines TRANSACTIONS_RANGE_PATH"
+    # The dead constant is gone from BOTH files...
+    assert "TRANSACTIONS_RANGE_PATH" not in api, "lambda_api/api_constants.py still defines TRANSACTIONS_RANGE_PATH"
     assert "TRANSACTIONS_RANGE_PATH" not in shared, "shared/constants.py still defines TRANSACTIONS_RANGE_PATH"
 
     # ...both files still exec cleanly (removal didn't break import), and the LIVE
-    # feed + recent paths survive, still equal across the pair (WHIT-136 invariant).
-    assert api["TRANSACTIONS_FEED_PATH"] == shared["TRANSACTIONS_FEED_PATH"] == "/transactions/feed"
-    assert api["TRANSACTION_PATH"] == shared["TRANSACTION_PATH"] == "/transactions"
+    # feed + recent paths survive, API-only (WHIT-581 moved them out of shared).
+    assert api["TRANSACTIONS_FEED_PATH"] == "/transactions/feed"
+    assert api["TRANSACTION_PATH"] == "/transactions"
+    assert "TRANSACTIONS_FEED_PATH" not in shared
+    assert "TRANSACTION_PATH" not in shared

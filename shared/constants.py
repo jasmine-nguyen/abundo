@@ -24,15 +24,12 @@ assert HOMELOAN_ACCOUNT_ID in ACCOUNT_ID_MAP.values(), (
 # transfer (positive amount) — the same identity the read API's get_repayment uses
 # (WHIT-115). The webhook's repayment-push detector (WHIT-15) anchors on the account
 # + this type, so it can't drift from the budget rule or the description ("Transfer
-# from Spending" varies). Mirrors lambda_api/constants.py (which shadows this layer at
-# /var/task); kept equal here so the webhook lambda — which has no shadow — can import
-# it. (WHIT-136 sync guard.)
+# from Spending" varies).
 REPAYMENT_INCOMING_TYPE = "TRANSFER_INCOMING"
 
 # Minimum home-loan repayment amount (dollars) that fires a push (WHIT-15). The real
 # Up feed carries tiny "OHA test" repayments ($1/$2/$5); this floor skips them. A
-# plain int (not Decimal) so the WHIT-136 mirror in lambda_api/constants.py needs no
-# Decimal import; `Decimal(amount) >= 10` compares cleanly.
+# plain int; `Decimal(amount) >= 10` compares cleanly.
 MIN_REPAYMENT_NOTIFY = 10
 
 # Raw BankSync categories that are transfers/loan movements between the user's OWN
@@ -55,9 +52,7 @@ FEED_WINDOW_DAYS = 7
 # ghost that will never settle (WHIT-79). Measured from the bank `date` (the only age
 # signal on a stored row — there is no ingest timestamp). Set safely PAST FEED_WINDOW_DAYS
 # (7): BankSync stops re-sending a transaction after that window, so a pending older than
-# 10 days can no longer receive a settlement push — it is genuinely frozen. Used only by
-# lambda/age_out.py (a webhook-lambda module, not a shared repository_* module), so the
-# WHIT-136 sync guard does not require a lambda_api/constants.py mirror.
+# 10 days can no longer receive a settlement push — it is genuinely frozen.
 PENDING_AGE_OUT_DAYS = 10
 
 # Maximum number of items requested per DynamoDB query page.
@@ -66,9 +61,7 @@ MAX_PAGE_SIZE = 100
 # Status value marking a transaction as not yet posted.
 PENDING_STATUS = "pending"
 
-# Status value marking a settled transaction. Kept in the shared layer (as well as
-# the lambda_api shadow) so the shared spend summariser + budget-alert detection —
-# which the webhook lambda loads — can import it. (WHIT-136 sync guard.)
+# Status value marking a settled transaction.
 POSTED_STATUS = "posted"
 
 # Retention window for a budget-alert debounce marker (WHIT-22). Written as a
@@ -84,8 +77,7 @@ NOTIFY_TTL_SECONDS = 60 * 24 * 60 * 60
 # (well below a monthly repayment, above fee/rounding noise). REPAYMENT_MISS_LOOKBACK_DAYS
 # — how recent the last push must be to count as healthy; sits between the max bank-feed
 # lag (a few days) and the ~monthly repayment gap. Used only by
-# lambda_balance_poller/handler.py (not a shared repository_* module), so the WHIT-136
-# lambda_api/constants.py mirror is not required.
+# lambda_balance_poller/handler.py.
 REPAYMENT_DROP_THRESHOLD = Decimal("3000")
 REPAYMENT_MISS_LOOKBACK_DAYS = 7
 
@@ -103,16 +95,12 @@ TIP_HEADROOM = Decimal("0.25")
 # swiped before 10:00 local falls on the PREVIOUS day in UTC and the two dates disagree by
 # exactly one — always in that direction, never the reverse. The reconciler's exact and tip
 # tiers both key on an equal authorized_date, so without a skew-tolerant tier the twins
-# never match and the purchase is counted twice. Used only by lambda/repository.py (a
-# webhook-lambda module, not a shared repository_* module), so the WHIT-136 sync guard does
-# not require a lambda_api/constants.py mirror.
+# never match and the purchase is counted twice. Used only by lambda/repository.py.
 AUTH_DATE_SKEW_DAYS = 1
 
 # Seed pay cycle used by PayCycleRepository until the user sets their real payday:
 # a fixed past date (a Wednesday, the app's original default last_pay_date) + a
-# fortnightly length. Mirrored in lambda_api/constants.py, which shadows this at
-# /var/task; kept here too so repository.py imports cleanly under the sync lambda
-# (which has no shadowing constants.py), not only under the API lambda.
+# fortnightly length.
 DEFAULT_PAYCYCLE = {"length": 14, "last_pay_date": "2024-01-03"}
 
 # BankSync feeds triggered on every scheduled sync run, keyed by feed id -> label.
@@ -145,8 +133,7 @@ HOMELOAN_BALANCE_TIMEOUT_SECONDS = 30
 # transactions carry (that's how the app joins a balance to a card); `bid` is its Fiskil
 # bank id. The home loan appears here too — polled for its SIGNED per-account balance —
 # and, separately, via HOMELOAN_BALANCE_SOURCE above for the Goal screen's ABS
-# outstanding-principal row. Poller-only (no shared repository_* imports it), so the
-# WHIT-136 sync guard needs no lambda_api/constants.py mirror.
+# outstanding-principal row. Also enumerated by the API's live balance refresh.
 BALANCE_SOURCES = [
     {"bid": "fiskil_3", "aid": "3zVQJ8Btz_IRmqp78VrQnQ"},                       # up-spending
     {"bid": "fiskil_3", "aid": "T6d8ppsYssBDFCwl1qEb0w"},                       # up-homeloan
@@ -165,7 +152,6 @@ assert all(s["aid"] in ACCOUNT_ID_MAP for s in BALANCE_SOURCES), (
 # transaction has arrived for FEED_STALL_DAYS (22-25 Sept 2026: BankSync went quiet for 3
 # days while the Westpac balance kept moving, and nobody noticed). The home loan is NOT
 # watched: interest moves its balance with no transaction, so it would false-alarm.
-# Poller-only (no shared repository_* imports these), so no lambda_api/constants.py mirror.
 FEED_STALL_ACCOUNT_IDS = ("up-spending", "westpac-altitude-qantas-black", "anz-rewards-black-visa")
 FEED_STALL_DAYS = 3
 # How far back (by bank date) the poller reads transaction ids to spot a new one. Past
@@ -193,17 +179,10 @@ ROLLOVER_MAX_LOOKBACK_CYCLES = 12
 
 # How many pay cycles a bill spread may be paid back over (WHIT-504). 1 = the whole bill next
 # cycle; 24 ≈ a year of fortnights. Shared (WHIT-559) so a rule auto-spreading a bill can convert a
-# cadence to a cycles count on BOTH the webhook and the sweep; mirrored in lambda_api/constants.py
-# (the PUT /budgets/{category}/spread validation), kept equal by the WHIT-136 constants-sync guard.
+# cadence to a cycles count on BOTH the webhook and the sweep, and by the API's PUT
+# /budgets/{category}/spread validation.
 SPREAD_MIN_CYCLES = 1
 SPREAD_MAX_CYCLES = 24
-
-# API Gateway route path for the read API that the abundo app calls.
-TRANSACTION_PATH = "/transactions"
-# All-accounts transactions feed route (Load More over full history). Consumed only by
-# lambda_api/handler.py (which imports the shadowing lambda_api/constants.py at runtime);
-# mirrored here for parity with that copy. See lambda_api/constants.py.
-TRANSACTIONS_FEED_PATH = "/transactions/feed"
 
 # Retention window for FAILED# dead-letter items (WHIT-54). Written as a DynamoDB
 # TTL (epoch-seconds `expires_at`), so a stuck row auto-expires instead of

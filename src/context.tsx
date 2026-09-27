@@ -171,13 +171,13 @@ export type Sheet =
 export const BUCKETS: Bucket[] = ['Living', 'Lifestyle', 'Income', 'Savings'];
 
 // Max charges per batch category write. Mirrors the server's TRANSACTION_BATCH_MAX
-// (lambda_api/constants.py) — the "All from this merchant" sweep splits into chunks
+// (lambda_api/api_constants.py) — the "All from this merchant" sweep splits into chunks
 // of this size so a large merchant spans multiple requests instead of tripping the
 // server's per-request cap. Keep the two equal.
 const CATEGORY_BATCH_LIMIT = 100;
 
 // Max charges ONE apply-rules request writes. Mirrors the server's APPLY_RULES_MAX_WRITES
-// (lambda_api/constants.py) — the parity is asserted by applyRulesCap.logic.test.ts, since a
+// (lambda_api/api_constants.py) — the parity is asserted by applyRulesCap.logic.test.ts, since a
 // comment alone drifts. With ~639 unfiled charges the FIRST run is expected to be partial, so
 // the preview says so UP FRONT instead of promising a number one tap can't deliver. The server
 // can stop even earlier (a wall-clock budget), hence "up to" in the copy. Keep the two equal.
@@ -760,7 +760,7 @@ export function toBudget(id: string, rollup: BudgetRollup): Budget {
 }
 
 // Bill-spread cycle bounds the app offers, mirroring the server (SPREAD_MIN/MAX_CYCLES,
-// lambda_api/constants.py). Advisory only — the server re-validates and 400s a bad value —
+// lambda_api/api_constants.py). Advisory only — the server re-validates and 400s a bad value —
 // so a bound change server-side just needs these kept in step; the stepper clamps to them.
 export const SPREAD_MIN_CYCLES = 1;
 export const SPREAD_MAX_CYCLES = 24;
@@ -3033,25 +3033,25 @@ export function eligibleChildren(
 
 // The sentinel category id the /breakdown endpoint uses for spend that counts to
 // budget but has no home in the taxonomy (a raw BankSync enum, a deleted category,
-// or null). Mirrors UNCATEGORIZED_KEY in lambda_api/constants.py.
+// or null). Mirrors UNCATEGORIZED_KEY in lambda_api/api_constants.py.
 export const UNCATEGORIZED_KEY = '__uncategorized__';
 
 // The sentinel key the /breakdown endpoint uses for the total EARNED this cycle (all
 // Income-bucket categories) — read by the Insights Earned-vs-Spent chart, never a spend
-// row. Mirrors EARNED_KEY in lambda_api/constants.py.
+// row. Mirrors EARNED_KEY in lambda_api/api_constants.py.
 export const EARNED_KEY = '__earned__';
 
 // The sentinel key the /breakdown endpoint uses for the PER-SOURCE income breakdown (WHIT-366):
 // {income_category_id: CategorySpend} for each Income-bucket category that earned this cycle.
 // Rides in the same map as the per-category spend (same CategorySpend shape) but is income, not
 // a spend row — read via `readIncomeSources`, and skipped in `categoryBreakdown` so it never
-// counts as spend. Mirrors INCOME_KEY in lambda_api/constants.py.
+// counts as spend. Mirrors INCOME_KEY in lambda_api/api_constants.py.
 export const INCOME_KEY = '__income__';
 
 // The sentinel key the /breakdown endpoint uses for the server-owned parent roll-up (WHIT-349):
 // netted parent totals + refund detail. It rides in the same map as the per-category spend but
 // has a different shape, so it's read via `readRollup`, not the index type. Mirrors ROLLUP_KEY
-// in lambda_api/constants.py. Defined here (not imported from ./api) so mocking ./api in a
+// in lambda_api/api_constants.py. Defined here (not imported from ./api) so mocking ./api in a
 // screen test doesn't have to stub it — same as the two sentinels above.
 export const ROLLUP_KEY = '__rollup__';
 

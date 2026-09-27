@@ -3,11 +3,10 @@ with the server's LOANFACTS_FIELD_MAX.
 
 The client (`src/loanLimits.ts`, used by the loan form) hand-mirrors the server's
 field ceiling so it can block a too-large amount with a friendly message before any
-round-trip. The authoritative value lives in `lambda_api/constants.py`
+round-trip. The authoritative value lives in `lambda_api/api_constants.py`
 (LOANFACTS_FIELD_MAX); the client copy is a plain `const` in a TypeScript file.
-Nothing proved the two agree — the WHIT-136 sync test only covers names the shared
-layer imports, and this constant lives only in lambda_api, so a one-sided change
-would drift silently (client wrongly blocks valid amounts, or wrongly allows
+Nothing proved the two agree — this constant lives only in lambda_api, so a
+one-sided change would drift silently (client wrongly blocks valid amounts, or wrongly allows
 too-large ones).
 
 This reads BOTH values and asserts they match, so editing one side without the
@@ -16,7 +15,7 @@ the pytest suite) via the shared `const NAME = <number>` reader in
 tests/shared/_ts_const.py — the same reader the milestone-cap guard uses.
 
 WHIT-393 added one more assertion here: a pin on the ceiling's actual VALUE.
-Every test mirror now derives from lambda_api/constants.py, so without the pin
+Every test mirror now derives from lambda_api/api_constants.py, so without the pin
 a typo in that file would ship green.
 """
 
@@ -34,7 +33,7 @@ _CLIENT_LIMITS = _ROOT / "src" / "loanLimits.ts"
 
 
 def _server_ceiling() -> int:
-    """LOANFACTS_FIELD_MAX from lambda_api/constants.py. The read lives in
+    """LOANFACTS_FIELD_MAX from lambda_api/api_constants.py. The read lives in
     tests/shared/_lambda_api_constants.py (WHIT-393) so this guard and the
     loan-facts edges suite share one reader."""
     return api_constant("LOANFACTS_FIELD_MAX")
@@ -62,7 +61,7 @@ def test_exactly_one_client_ceiling_declaration():
 
 
 def test_the_loanfacts_ceiling_value_is_pinned():
-    """WHIT-393 made every test mirror derive from lambda_api/constants.py, so nothing
+    """WHIT-393 made every test mirror derive from lambda_api/api_constants.py, so nothing
     else asserts the ceiling's actual VALUE any more — a typo there (1_000_000 for
     1_000_000_000) would leave the whole suite green while the app silently rejected
     normal loan amounts. This is the one deliberate pin: changing the ceiling should
@@ -87,6 +86,6 @@ def test_client_and_server_loanfacts_ceilings_agree():
     server = _server_ceiling()
     assert client == server, (
         f"loan-facts ceiling drift: src/loanLimits.ts has {client} but "
-        f"lambda_api/constants.py LOANFACTS_FIELD_MAX is {server} — "
+        f"lambda_api/api_constants.py LOANFACTS_FIELD_MAX is {server} — "
         "update both to the same value"
     )

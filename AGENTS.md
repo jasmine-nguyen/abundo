@@ -92,10 +92,8 @@ the title. Icons: 🧪 test · 🚀 feature · 🐞 bug · 🏗️ tech debt · 
 
 Recurring traps — check these before changing the touched area:
 
-- **`lambda_api/constants.py` shadows the shared layer** at runtime. Any constant a
-  shared `repository_*` module imports at load MUST also exist (with an equal value)
-  in `lambda_api/constants.py`, or the deployed API 500s on import. Guarded by the
-  WHIT-136 constants-sync test — run it after touching `shared/constants.py`.
+- **Each constant has one home** — API-only → `lambda_api/api_constants.py`; everything
+  else → `shared/constants.py`; never both. Guarded by `test_no_shared_name_shadowing.py`.
 - **The webhook repository subclasses the shared one** — `lambda/repository.py`'s
   `TransactionRepository` extends `shared/repository_transaction.py` and imports
   `handle_database_error` from `shared/repository_base.py` (WHIT-454 removed the old
@@ -110,5 +108,3 @@ Recurring traps — check these before changing the touched area:
   `LAMBDA_API_SOURCES` (`scripts/build_terraform_artifacts.sh`) and `.gitignore`'s `!lambda_api/…`
   lines, or it is never committed or never deployed and the API 500s on import. Guarded by
   `scripts/tests/build_artifacts_test.sh` and `test_lambda_api_bundle_completeness.py`.
-- **The shared layer is staged with a non-recursive `cp shared/*.py`** — a new
-  shared _package directory_ (not a flat top-level module) is silently dropped.
