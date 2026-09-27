@@ -21,6 +21,16 @@ Board data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
 2. Run the script:
    `python3 build_graph.py --card <number> --details "<title and description>"`
 
+   While it runs, give the user short status updates based on the output.
+   The script prints which node is running and what tools it's using. Relay
+   the key milestones:
+   - "Designer is planning..." (when you see `designer running`)
+   - "Plan critic is reviewing..." (when you see `plan_critic running`)
+   - "Implementer is coding..." (when you see `implementer running`)
+   - "Code review in progress..." (when you see `code_critic running`)
+   - "QA testing..." (when you see `qa running`)
+   Don't flood — one line per node is enough.
+
 3. If the script pauses (prints "Paused. Resume with:"), summarise the
    plan for the user before asking. Show:
    - **Task:** what we're building (1-2 sentences, plain english)
