@@ -221,6 +221,8 @@ resource "aws_lambda_function" "app_api" {
       # WHIT-537: the async apply-rules POST invokes this worker (InvocationType=Event). The name
       # is passed in (not hard-coded) so the handler asks the environment which function to invoke.
       APPLY_RULES_WORKER_FUNCTION = aws_lambda_function.apply_rules_worker.function_name
+      # Card 609: POST /ai/chat invokes the chat worker the same way.
+      AI_CHAT_WORKER_FUNCTION = aws_lambda_function.ai_chat_worker.function_name
     }
   }
 
@@ -257,6 +259,44 @@ resource "aws_lambda_function" "apply_rules_worker" {
     log_format = "Text"
     log_group  = aws_cloudwatch_log_group.apply_rules_worker.name
   }
+}
+
+# Card 609: the Ask Abundo chat worker. Runs the model's tool loop for one message outside the 30s
+# gateway window and writes the answer to the job row the app polls. Reuses the app_api zip (it is
+# lambda_api code: ai_chat.py + chat_tools.py + handler helpers). 210s = 6 model rounds at up to
+# 30s each (ANTHROPIC_CHAT_TIMEOUT_SECONDS), plus the reads — so the worker always finishes or
+# marks the job failed before AWS stops it. The app waits longer still (CHAT_MAX_WAIT_MS).
+# AI_CHAT_DEBUG_LOG is deliberately NOT set here — set it by hand on a dev worker only, to check
+# what reaches the model.
+resource "aws_lambda_function" "ai_chat_worker" {
+  function_name    = "${var.project_name}-ai-chat-worker"
+  role             = aws_iam_role.ai_chat_worker_exec.arn
+  handler          = "ai_chat.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 210
+  memory_size      = 512
+  filename         = data.archive_file.lambda_api_zip.output_path
+  source_code_hash = data.archive_file.lambda_api_zip.output_base64sha256
+  layers           = [aws_lambda_layer_version.shared.arn]
+
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.dynamodb_table.name
+    }
+  }
+
+  logging_config {
+    log_format = "Text"
+    log_group  = aws_cloudwatch_log_group.ai_chat_worker.name
+  }
+}
+
+# AWS retries a failed or timed-out async invoke twice by default. For the chat that means paying
+# for the same model run up to three times, and the job row already reports the failure — so no
+# retries.
+resource "aws_lambda_function_event_invoke_config" "ai_chat_worker" {
+  function_name          = aws_lambda_function.ai_chat_worker.function_name
+  maximum_retry_attempts = 0
 }
 
 # Triggered on a schedule by EventBridge Scheduler (see scheduler.tf) to kick off
@@ -422,6 +462,11 @@ resource "aws_cloudwatch_log_group" "app_api" {
 
 resource "aws_cloudwatch_log_group" "apply_rules_worker" {
   name              = "/aws/lambda/${var.project_name}-apply-rules-worker"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "ai_chat_worker" {
+  name              = "/aws/lambda/${var.project_name}-ai-chat-worker"
   retention_in_days = 30
 }
 

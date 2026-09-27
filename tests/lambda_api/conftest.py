@@ -42,6 +42,7 @@ _COLLIDING = (
     "insights_ai", "anthropic_client", "rule_engine",
     "merchant_groups", "filing_habits", "apply_rules_worker", "repository_job",
     "spend", "repayment_rules", "api_key", "recurring_bills", "transaction_search",
+    "chat_tools", "ai_chat",
 )
 
 
@@ -131,4 +132,20 @@ def anthropic_client():
 
         api_key._cache.clear()  # never leak a cached key across tests
         api_key.get_param = lambda path: "test-anthropic-key"
+        yield module
+
+
+@pytest.fixture
+def chat_tools():
+    """Import lambda_api/chat_tools.py in isolation — the Ask Abundo data tools (card 609), pure
+    maths over an in-memory ChatData."""
+    with _isolated_import("chat_tools") as module:
+        yield module
+
+
+@pytest.fixture
+def ai_chat():
+    """Import lambda_api/ai_chat.py in isolation — the chat worker (card 609). It imports the
+    handler for the windowed read and /budgets, so this sheds the same colliding names first."""
+    with _isolated_import("ai_chat") as module:
         yield module

@@ -95,6 +95,18 @@ def test_post_url_error_is_none_status(anthropic_client, monkeypatch):
     assert ei.value.upstream_status is None
 
 
+def test_a_timeout_waiting_for_the_reply_is_an_anthropic_error(anthropic_client, monkeypatch):
+    # urllib wraps connect errors in URLError, but a timeout while WAITING for the reply is a bare
+    # TimeoutError. It must still map to AnthropicError, or callers that catch only that 500.
+    def slow(req, timeout=None):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", slow)
+    with pytest.raises(anthropic_client.AnthropicError) as ei:
+        anthropic_client.post("s", "p", {})
+    assert ei.value.upstream_status is None
+
+
 def test_post_non_json_envelope_is_none_status(anthropic_client, monkeypatch):
     # A 2xx body that isn't JSON -> json.loads raises ValueError -> AnthropicError(None),
     # never an uncaught 500.
@@ -261,3 +273,43 @@ def test_handler_shares_the_shared_anthropic_error(handler):
     assert handler.AnthropicError is ac.AnthropicError
     # The caller doesn't re-declare its own copy (it delegates to the shared one).
     assert getattr(insights_ai, "AnthropicError", ac.AnthropicError) is ac.AnthropicError
+
+
+# --- post_messages: the chat's tool-calling request (card 609) --------------------------------
+
+
+def test_post_messages_sends_tools_and_returns_the_whole_reply(anthropic_client, monkeypatch):
+    captured = {}
+    envelope = {"content": [{"type": "tool_use", "id": "c1", "name": "respond", "input": {"text": "hi"}}],
+                "stop_reason": "tool_use"}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode())
+        captured["timeout"] = timeout
+        captured["headers"] = req.headers
+        return FakeResponse(envelope)
+
+    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", fake_urlopen)
+    tools = [{"name": "respond", "input_schema": {"type": "object"}}]
+    messages = [{"role": "user", "content": "q"}]
+
+    reply = anthropic_client.post_messages("SYS", messages, tools, {"type": "any"}, 1500, 60)
+
+    assert reply == envelope
+    assert captured["body"]["messages"] == messages
+    assert captured["body"]["tools"] == tools
+    assert captured["body"]["tool_choice"] == {"type": "any"}
+    assert captured["body"]["max_tokens"] == 1500
+    # A forced tool_choice isn't accepted with thinking on, so it must stay disabled.
+    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert captured["timeout"] == 60
+    assert captured["headers"]["User-agent"] == "abundo-app-api"
+
+
+def test_post_messages_maps_http_errors_like_post(anthropic_client, monkeypatch):
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError("u", 529, "overloaded", None, io.BytesIO(b""))
+    monkeypatch.setattr(anthropic_client.urllib.request, "urlopen", boom)
+    with pytest.raises(anthropic_client.AnthropicError) as err:
+        anthropic_client.post_messages("s", [], [], {"type": "any"}, 10, 5)
+    assert err.value.upstream_status == 529

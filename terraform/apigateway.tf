@@ -80,6 +80,10 @@ locals {
     "POST /devices",
     "GET /insights/ai",
     "POST /insights/ai",
+    # Card 609: Ask Abundo chat — start a background chat job (POST) + poll it (GET {id}). Same
+    # shared integration + authorizer, like the apply-rules job routes.
+    "POST /ai/chat",
+    "GET /ai/chat/jobs/{id}",
   ])
 }
 

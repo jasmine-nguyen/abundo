@@ -208,8 +208,8 @@ resource "aws_iam_role_policy" "app_api_ssm" {
   })
 }
 
-# WHIT-537: app_api async-invokes the apply-rules worker for the background sweep. Scoped to that
-# one function ARN — this is the only lambda the API is allowed to invoke.
+# WHIT-537: app_api async-invokes the apply-rules worker for the background sweep, and (card 609)
+# the chat worker. Scoped to those two function ARNs — the only lambdas the API may invoke.
 resource "aws_iam_role_policy" "app_api_invoke_worker" {
   name = "${var.project_name}-app-api-invoke-worker"
   role = aws_iam_role.app_api_exec.id
@@ -217,9 +217,12 @@ resource "aws_iam_role_policy" "app_api_invoke_worker" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["lambda:InvokeFunction"]
-      Resource = [aws_lambda_function.apply_rules_worker.arn]
+      Effect = "Allow"
+      Action = ["lambda:InvokeFunction"]
+      Resource = [
+        aws_lambda_function.apply_rules_worker.arn,
+        aws_lambda_function.ai_chat_worker.arn,
+      ]
     }]
   })
 }
@@ -593,6 +596,81 @@ resource "aws_iam_role_policy" "apply_rules_worker_logs" {
       ]
       Resource = [
         "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-apply-rules-worker:*"
+      ]
+    }]
+  })
+}
+
+# Card 609: Ask Abundo chat worker execution role. Its own tightly-scoped role, like the apply-rules
+# worker, so its grants are auditable.
+resource "aws_iam_role" "ai_chat_worker_exec" {
+  name = "${var.project_name}-ai-chat-worker-exec"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Chat worker: reads transactions (Query on the date-index GSI), categories, budgets and the pay
+# cycle (GetItem/Query); PutItem covers the pay-cycle/category first-read seeding; UpdateItem covers
+# its own job row and the /budgets read's best-effort rollover/spread settle writes. No DeleteItem.
+resource "aws_iam_role_policy" "ai_chat_worker_dynamodb" {
+  name = "${var.project_name}-ai-chat-worker-dynamodb"
+  role = aws_iam_role.ai_chat_worker_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Query"
+      ]
+      Resource = [
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table",
+        "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${var.project_name}-dynamodb-table/index/*"
+      ]
+    }]
+  })
+}
+
+# Chat worker: the Anthropic API key only.
+resource "aws_iam_role_policy" "ai_chat_worker_ssm" {
+  name = "${var.project_name}-ai-chat-worker-ssm"
+  role = aws_iam_role.ai_chat_worker_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = [aws_ssm_parameter.anthropic_api_key.arn]
+    }]
+  })
+}
+
+# Chat worker: write to its own CloudWatch log group.
+resource "aws_iam_role_policy" "ai_chat_worker_logs" {
+  name = "${var.project_name}-ai-chat-worker-logs"
+  role = aws_iam_role.ai_chat_worker_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Resource = [
+        "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-ai-chat-worker:*"
       ]
     }]
   })

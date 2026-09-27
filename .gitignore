@@ -76,6 +76,8 @@ lambda_api/*
 !lambda_api/apply_rules_worker.py
 !lambda_api/recurring_bills.py
 !lambda_api/transaction_search.py
+!lambda_api/chat_tools.py
+!lambda_api/ai_chat.py
 
 # terraform
 terraform/artifacts/*

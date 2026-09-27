@@ -441,3 +441,110 @@ def test_non_integer_cycle_returns_400(handler):
         _event("coffee", cycle="abc"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
         _FakeCategoryRepo(CATS_SINGLE))
     assert resp["statusCode"] == 400
+
+
+# ======================================================================================
+# Date-range mode (card 609): ?from=&to= — the Ask Abundo chat's deep link.
+# ======================================================================================
+
+
+def _range_event(category_id="coffee", date_from="2026-06-01", date_to="2026-07-20", cycle=None):
+    event = _event(category_id)
+    event["queryStringParameters"] = {"from": date_from, "to": date_to}
+    if cycle is not None:
+        event["queryStringParameters"]["cycle"] = cycle
+    return event
+
+
+def test_range_mode_includes_subcategories_so_it_matches_the_chat_figure(handler, monkeypatch):
+    # FAIL-ON-REVERT: the exact match cycle mode uses would drop 'beans' and the list would no
+    # longer add up to the chat's folded figure.
+    _pin_today(monkeypatch)
+    txns = [
+        _txn("c1", "coffee", -11, "2026-07-21"),              # after `to` -> out
+        _txn("c2", "coffee", -17, "2026-07-08"),
+        _txn("beans", "coffee-beans", -9, "2026-06-09"),       # sub-category -> in
+        _txn("old", "coffee", -5, "2026-05-31"),               # before `from` -> out
+    ]
+    repo = _DateFilteringTransactionRepo(txns)
+    resp = handler.get_category_transactions(
+        _range_event(), repo, _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
+
+    assert resp["statusCode"] == 200
+    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["c2", "beans"]
+    assert repo.calls[0][1:3] == ("2026-06-01", "2026-07-20")
+
+
+def test_range_mode_uncategorized_uses_the_unfiled_rule(handler, monkeypatch):
+    _pin_today(monkeypatch)
+    txns = [_txn("u1", None, -30, "2026-07-10"), _txn("mapped", "coffee", -20, "2026-07-10")]
+    resp = handler.get_category_transactions(
+        _range_event("__uncategorized__"), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(),
+        _FakeCategoryRepo(CATS))
+    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["u1"]
+
+
+@pytest.mark.parametrize("date_from, date_to", [
+    ("2026-07-01", None),               # only one end
+    ("2026-7-1", "2026-07-20"),         # not ISO
+    ("2026-02-30", "2026-07-20"),       # not a real day
+    ("2026-07-20", "2026-07-01"),       # out of order
+    ("2026-07-01", "2026-07-26"),       # after today (2026-07-25)
+    ("2025-05-31", "2026-07-20"),       # before the lookback floor + one period of grace (2025-06-01)
+])
+def test_range_mode_rejects_bad_or_out_of_bounds_dates(handler, monkeypatch, date_from, date_to):
+    _pin_today(monkeypatch)
+    event = _event("coffee")
+    event["queryStringParameters"] = {"from": date_from, "to": date_to}
+    repo = _DateFilteringTransactionRepo([])
+    resp = handler.get_category_transactions(event, repo, _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
+    assert resp["statusCode"] == 400
+    assert repo.calls == []
+
+
+def test_range_mode_accepts_the_lookback_floor_itself(handler, monkeypatch):
+    # The chat's floor is 2025-07-01; the drill-in reaches one period further (2025-06-01).
+    _pin_today(monkeypatch)
+    resp = handler.get_category_transactions(
+        _range_event(date_from="2025-06-01", date_to="2026-07-25"), _DateFilteringTransactionRepo([]),
+        _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
+    assert resp["statusCode"] == 200
+
+
+def test_a_full_year_link_still_opens_after_the_floor_moves(handler, monkeypatch):
+    # A "last 12 months" answer written on 25 Jul links from the chat's floor, 2025-07-01. On
+    # 1 Aug the chat's floor moves to 2025-08-01; the link must still open, not 400.
+    _pin_today(monkeypatch, day=date(2026, 8, 1))
+    resp = handler.get_category_transactions(
+        _range_event(date_from="2025-07-01", date_to="2026-07-25"), _DateFilteringTransactionRepo([]),
+        _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
+    assert resp["statusCode"] == 200
+
+
+def test_range_and_cycle_together_is_a_400(handler, monkeypatch):
+    _pin_today(monkeypatch)
+    resp = handler.get_category_transactions(
+        _range_event(cycle="1"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
+        _FakeCategoryRepo(CATS))
+    assert resp["statusCode"] == 400
+
+
+def test_range_mode_leaves_out_a_cross_bucket_subcategory(handler, monkeypatch):
+    # [A12] The subtree is SAME-bucket only (subtree_ids with the bucket map), like /budgets and
+    # the chat figure. An Income sub filed under a spend parent must not land in the list.
+    _pin_today(monkeypatch)
+    cats = CATS + [{"id": "coffee-cashback", "bucket": "Income", "parent": "coffee"}]
+    txns = [_txn("c1", "coffee", -17, "2026-07-08"),
+            _txn("cb", "coffee-cashback", 5, "2026-07-09")]
+    resp = handler.get_category_transactions(
+        _range_event(), _DateFilteringTransactionRepo(txns), _FakePayCycleRepo(), _FakeCategoryRepo(cats))
+    assert [r["transaction_id"] for r in json.loads(resp["body"])] == ["c1"]
+
+
+def test_an_empty_cycle_beside_a_range_is_not_both(handler, monkeypatch):  # QA [A20]
+    # "?cycle=&from=…&to=…" (an empty cycle) is range mode, not "cycle AND range" — no 400.
+    _pin_today(monkeypatch)
+    resp = handler.get_category_transactions(
+        _range_event(date_from="2026-07-01", date_to="2026-07-20", cycle=""),
+        _DateFilteringTransactionRepo([]), _FakePayCycleRepo(), _FakeCategoryRepo(CATS))
+    assert resp["statusCode"] == 200

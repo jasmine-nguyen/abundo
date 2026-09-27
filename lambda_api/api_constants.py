@@ -103,6 +103,34 @@ ANTHROPIC_TIMEOUT_SECONDS = 30
 # How many PRIOR pay cycles of category spend to include for trend context.
 INSIGHTS_PRIOR_CYCLES = 1
 
+# --- Ask Abundo spending chat (card 609) -----------------------------------
+# POST starts a chat job (202 + jobId) and async-invokes the chat worker; GET .../jobs/{id}
+# is polled by the app. The GET is matched by prefix (the id is a path parameter).
+AI_CHAT_PATH = "/ai/chat"
+AI_CHAT_JOBS_PATH = "/ai/chat/jobs"
+# One chat model call writes tool calls AND the final reply, so it needs more room than
+# the one-shot insights call (ANTHROPIC_MAX_TOKENS).
+ANTHROPIC_CHAT_MAX_TOKENS = 1500
+# Per model call, capped so CHAT_MAX_TOOL_ROUNDS of these fit inside the worker's 210s Lambda
+# timeout (terraform/lambda.tf) — otherwise AWS kills it mid-loop and the job is never marked failed.
+ANTHROPIC_CHAT_TIMEOUT_SECONDS = 30
+# Tool rounds per user message; the last round forces the answer, so a loop fails fast.
+CHAT_MAX_TOOL_ROUNDS = 6
+# Only the most recent messages are sent to the model as context.
+CHAT_MAX_MESSAGES = 20
+CHAT_MESSAGE_MAX_LEN = 2000
+# How far back the chat (and the drill-in date range it links to) may look: the EARLIER of
+# this many completed pay cycles and this many completed calendar months.
+CHAT_MAX_LOOKBACK_CYCLES = 12
+CHAT_MAX_LOOKBACK_MONTHS = 12
+# The drill-in date range a chat answer links to reaches this many periods further back than the
+# chat itself: the lookback floor moves forward on the 1st of the month and on payday, and without
+# the slack a full-year answer's link would 400 once either boundary passed after it was written.
+CHAT_LINK_GRACE_PERIODS = 1
+# Rows returned by a "list" query: the default, and the most the model may ask for.
+CHAT_LIST_DEFAULT = 20
+CHAT_LIST_MAX = 200
+
 # WHIT-68: the furthest-back cycle /breakdown will answer for (0 = current, up to N
 # cycles prior). A safety bound on how far into the past a single request may reach —
 # each request scans exactly ONE length-day window regardless of `cycle`, so the read

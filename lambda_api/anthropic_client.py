@@ -69,6 +69,39 @@ def post(system: str, user_prefix: str, model_input: dict) -> str:
             }
         ],
     }
+    payload = _send(body, ANTHROPIC_TIMEOUT_SECONDS)
+
+    # Messages API: {"content": [{"type": "text", "text": "..."}], ...}. Pull the
+    # first text block; anything unexpected degrades via the caller's parser.
+    content = payload.get("content") or []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            return block.get("text", "")
+    return ""
+
+
+def post_messages(system: str, messages: list, tools: list, tool_choice: dict,
+                  max_tokens: int, timeout: int) -> dict:
+    """POST a multi-turn, tool-calling request and return the whole reply envelope
+    (`content` blocks + `stop_reason`), for the chat worker's tool loop.
+
+    Thinking stays disabled: a forced `tool_choice` ("any" or a named tool) is not
+    accepted with thinking on. Raises AnthropicError exactly as `post` does.
+    """
+    body = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": max_tokens,
+        "thinking": ANTHROPIC_THINKING,
+        "system": system,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": tool_choice,
+    }
+    return _send(body, timeout)
+
+
+def _send(body: dict, timeout: int) -> dict:
+    """The one urllib POST to the Messages API: headers, error mapping, JSON parse."""
     try:
         # get_api_key() reads SSM; a missing/denied param raises ValueError. Keep it
         # inside the try so that too becomes an AnthropicError (-> 502), never an
@@ -84,22 +117,18 @@ def post(system: str, user_prefix: str, model_input: dict) -> str:
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=ANTHROPIC_TIMEOUT_SECONDS) as resp:
-            payload = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         raise AnthropicError(e.code, f"Anthropic messages -> {e.code}") from e
     except urllib.error.URLError as e:
         raise AnthropicError(None, "Anthropic unreachable") from e
+    except OSError as e:
+        # urllib wraps only connect errors in URLError; a timeout WAITING for the reply surfaces as
+        # a bare TimeoutError (an OSError), which callers must still see as an Anthropic failure.
+        raise AnthropicError(None, "Anthropic timed out or dropped the connection") from e
     except (ValueError, TypeError) as e:
         raise AnthropicError(None, "Anthropic key unavailable or non-JSON envelope") from e
-
-    # Messages API: {"content": [{"type": "text", "text": "..."}], ...}. Pull the
-    # first text block; anything unexpected degrades via the caller's parser.
-    content = payload.get("content") or []
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == "text":
-            return block.get("text", "")
-    return ""
 
 
 def extract_first_json(text: str) -> dict | None:
