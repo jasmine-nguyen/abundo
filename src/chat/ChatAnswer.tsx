@@ -23,6 +23,25 @@ export function BoldText({ text, style }: { text: string; style: object }) {
   );
 }
 
+// WHIT-615/617 — iOS keeps a shape's `%` lengths from its first draw, so the line stops short
+// when the plot grows. Measure the row and draw with plain numbers instead.
+function DashedLine() {
+  const [width, setWidth] = React.useState(0);
+  return (
+    <View
+      testID="chat-card-budget-line"
+      style={styles.dashRow}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+    >
+      {width > 0 && (
+        <Svg width={width} height={2}>
+          <Line x1={0} y1={1} x2={width} y2={1} stroke={C.text} strokeOpacity={0.7} strokeWidth={1.5} strokeDasharray="5 4" />
+        </Svg>
+      )}
+    </View>
+  );
+}
+
 function AnswerCard({ card }: { card: ChatCard }) {
   const { category } = useCategories();
   const cardCategory = category(card.categoryId ?? null);
@@ -64,9 +83,7 @@ function AnswerCard({ card }: { card: ChatCard }) {
             {budgetY != null && (
               <View pointerEvents="none" style={[styles.budgetLine, { top: budgetY - 14 }]}>
                 <Text style={styles.budgetLabel}>{fmt(card.budgetLine!)} budget</Text>
-                <Svg height={2} width="100%">
-                  <Line x1="0" y1="1" x2="100%" y2="1" stroke={C.text} strokeOpacity={0.7} strokeWidth={1.5} strokeDasharray="5 4" />
-                </Svg>
+                <DashedLine />
               </View>
             )}
           </View>
@@ -127,6 +144,7 @@ const styles = StyleSheet.create({
   barValue: { fontFamily: FONT.body, fontSize: 12, fontWeight: '700', color: C.accentInk, marginBottom: 6, fontVariant: ['tabular-nums'] },
   budgetLine: { position: 'absolute', left: 0, right: 0 },
   budgetLabel: { alignSelf: 'flex-end', fontFamily: FONT.body, fontSize: 10.5, color: C.textMid, marginBottom: 1 },
+  dashRow: { height: 2 },
   axis: { flexDirection: 'row', gap: 18, marginTop: 6 },
   axisLabel: { flex: 1, textAlign: 'center', fontFamily: FONT.body, fontSize: 11.5, color: C.chatMuted },
   source: { fontFamily: FONT.body, fontSize: 11.5, color: C.chatMuted },
