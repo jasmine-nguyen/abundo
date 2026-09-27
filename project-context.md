@@ -1,5 +1,9 @@
 # Project Context — Abundo
 
+## Board
+
+Notion data source: `collection://d6aa9744-6cc4-4fb3-9d5d-164d82c88a0d`
+
 ## Stack
 
 - **Client:** React Native (Expo v56), TypeScript
