@@ -79,11 +79,16 @@ Then continue from step 3 below.
    - "QA testing..." (when you see `▶ QA`)
    Don't flood — one line per node is enough.
 
-3. If the script pauses (prints "Paused. Resume with:"), summarise the
-   plan for the user before asking. Show:
+3. If the script pauses (prints "PLAN FOR REVIEW" between === lines),
+   you MUST show the full plan to the user BEFORE the approval prompt.
+   Format it as:
    - **Task:** what we're building (1-2 sentences, plain english)
    - **Plan:** the approach (bullet points, plain english, no jargon)
    - **Risks:** anything to watch out for (or "None" if clean)
+
+   The plan is printed by the script between the === lines — read it
+   and present it clearly. Do NOT skip this or collapse it into one
+   sentence. The user needs to review the plan before deciding.
 
    Then present options using AskUserQuestion:
    - "Approve" — resume with "go"

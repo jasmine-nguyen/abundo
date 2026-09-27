@@ -156,10 +156,16 @@ async def plan_critic(state: BuildState):
 
 def sign_off(state: BuildState):
     node_start("sign_off")
-    answer = interrupt(
-        f"Plan: {state.get('plan')}, Verdict: {state.get('plan_verdict')}, "
-        f"Attempts: {state.get('plan_attempts', 0)}. Approve?"
-    )
+    plan = state.get("plan", "")
+    verdict = state.get("plan_verdict", "")
+    attempts = state.get("plan_attempts", 0)
+    print(f"\n{'=' * 60}", flush=True)
+    print("PLAN FOR REVIEW", flush=True)
+    print(f"Critic verdict: {verdict} (attempt {attempts})", flush=True)
+    print(f"{'=' * 60}", flush=True)
+    print(plan, flush=True)
+    print(f"{'=' * 60}\n", flush=True)
+    answer = interrupt("Approve the plan above?")
     if answer == "go":
         return {"plan_decision": "APPROVED", "plan_feedback": ""}
     else:
