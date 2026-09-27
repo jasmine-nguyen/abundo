@@ -31,6 +31,15 @@ Check these before changing the touched area:
 - **`lambda_api/` files ship from an allow-list** — a new `lambda_api/*.py` must be
   listed in BOTH `LAMBDA_API_SOURCES` (`scripts/build_terraform_artifacts.sh`) and
   `.gitignore`'s `!lambda_api/…` lines, or it is never committed or never deployed.
+- **The chat's time limits are a chain** (WHIT-609) — `ANTHROPIC_CHAT_TIMEOUT_SECONDS ×
+  CHAT_MAX_TOOL_ROUNDS` < the `ai_chat_worker` timeout in `terraform/lambda.tf` < the app's
+  `CHAT_MAX_WAIT_MS` (`src/chat/ChatContext.tsx`). `CHAT_MESSAGE_MAX_LEN` and the 20-message
+  history are copied by hand into `ChatContext.tsx`. Change them together. Guarded by
+  `test_every_model_round_fits_inside_the_worker_timeout` and `chatLimitsSync.logic.test.ts`.
+- **An answer-first chat history means "insights seed"** (WHIT-609) — `ai_chat.to_model_messages`
+  puts a fixed "here's the summary" user turn in front of a history that starts with an answer.
+  Any trim or filter of the history (client `chatHistory`, server `_validate_chat_messages`) must
+  never leave an answer at the front.
 
 ## Coding standards
 

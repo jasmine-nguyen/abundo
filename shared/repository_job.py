@@ -111,6 +111,18 @@ class JobRepository:
         fields["completed_at"] = _now()
         self._set_fields(job_id, fields)
 
+    def set_tool_status(self, job_id: str, text: str) -> None:
+        """The chat worker's one-line "what I'm looking at" status, shown while the app polls."""
+        self._set_fields(job_id, {"toolStatus": text})
+
+    def finish_chat_job(self, job_id: str, status: str, reply_json: Optional[str] = None,
+                        error: Optional[str] = None) -> None:
+        """Mark a chat job terminal. The reply is stored as JSON TEXT: it carries float
+        amounts, which boto3 refuses to write as DynamoDB numbers."""
+        self._set_fields(job_id, {
+            "status": status, "reply": reply_json, "error": error, "completed_at": _now(),
+        })
+
     def _set_fields(self, job_id: str, fields: dict) -> None:
         """UpdateItem SET for the given attributes plus updated_at. Every name goes through an
         alias because several (``status``, ``error``) are DynamoDB reserved words."""

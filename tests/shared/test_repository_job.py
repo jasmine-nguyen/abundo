@@ -94,3 +94,30 @@ def test_a_db_fault_on_create_raises_database_error(job_repo, client_error, data
     job_repo._table.put_item = boom
     with pytest.raises(database_error):
         job_repo.create_job("job1")
+
+
+def test_set_tool_status_writes_the_status_line_and_keeps_running(job_repo):
+    job_repo.create_job("chat1", kind="ai_chat")
+    job_repo.set_tool_status("chat1", "Looking at Eating Out, last 3 cycles…")
+    row = job_repo.get_job("chat1")
+    assert row["toolStatus"] == "Looking at Eating Out, last 3 cycles…"
+    assert row["status"] == "running" and row["completed_at"] is None
+
+
+def test_finish_chat_job_stores_the_reply_as_json_text(job_repo):
+    # boto3 refuses Python floats, and the reply carries float amounts — so it is stored as a
+    # JSON string. FAIL-ON-REVERT: storing the dict would put floats into DynamoDB.
+    job_repo.create_job("chat1", kind="ai_chat")
+    job_repo.finish_chat_job("chat1", "succeeded", '{"text": "You spent **$31.11**.", "card": {"value": 31.11}}')
+    row = job_repo.get_job("chat1")
+    assert row["status"] == "succeeded"
+    assert isinstance(row["reply"], str) and '"value": 31.11' in row["reply"]
+    assert row["error"] is None and row["completed_at"] is not None
+
+
+def test_finish_chat_job_failed_carries_the_error_and_no_reply(job_repo):
+    job_repo.create_job("chat1", kind="ai_chat")
+    job_repo.finish_chat_job("chat1", "failed", error="assistant unavailable")
+    row = job_repo.get_job("chat1")
+    assert row["status"] == "failed" and row["error"] == "assistant unavailable"
+    assert row["reply"] is None

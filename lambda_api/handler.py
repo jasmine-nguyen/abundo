@@ -1,4 +1,6 @@
 from api_constants import (
+    AI_CHAT_JOBS_PATH,
+    AI_CHAT_PATH,
     APPLY_RULES_MAX_WRITES,
     APPLY_RULES_TIME_BUDGET_SECONDS,
     ACCOUNT_BALANCES_PATH,
@@ -11,6 +13,9 @@ from api_constants import (
     BUDGET_PATH,
     CATEGORY_BUCKETS,
     CATEGORY_PATH,
+    CHAT_LINK_GRACE_PERIODS,
+    CHAT_MAX_MESSAGES,
+    CHAT_MESSAGE_MAX_LEN,
     DEFAULT_CATEGORY_ICON,
     DEFAULT_RULE_FIELD,
     DEFAULT_RULE_OPERATOR,
@@ -120,6 +125,7 @@ from spend import (
     unified_available,
 )
 from anthropic_client import AnthropicError
+from chat_tools import lookback_floor
 from insights_ai import generate_suggestions
 from iso_date import ISO_DATE_RE, valid_iso_date
 from merchant_groups import (
@@ -314,6 +320,14 @@ def lambda_handler(event, context):
             return generate_ai_insights(
                 CategoryRepository(), BudgetRepository(), TransactionRepository(),
                 PayCycleRepository(), InsightRepository(), event)
+
+        # Ask Abundo chat (card 609). POST starts a background chat job (202 + jobId); the {id} GET
+        # is polled for the tool status and the answer. Same job pattern as apply-rules above.
+        if path == AI_CHAT_PATH and method == "POST":
+            return start_ai_chat_job(event, JobRepository())
+
+        if path.startswith(f"{AI_CHAT_JOBS_PATH}/") and method == "GET":
+            return get_ai_chat_job(event, JobRepository())
 
         if path == HOMELOAN_PATH and method == "GET":
             return _json_response(200, get_homeloan(HomeLoanBalanceRepository()))
@@ -2174,16 +2188,25 @@ def _get_lambda_client():
     return _lambda_client
 
 
-def _invoke_apply_rules_worker(payload: dict) -> None:
-    """Fire-and-return: async-invoke the worker (InvocationType="Event") so the POST returns the
-    job id well inside the 30s gateway window instead of waiting out the whole sweep. Raises on a
-    permission/throttle error at the invoke itself; a worker-runtime failure surfaces only via the
-    job record + CloudWatch (the whole reason the job row carries a status/error)."""
+def _invoke_worker(function_env_var: str, payload: dict) -> None:
+    """Fire-and-return: async-invoke a background worker (InvocationType="Event") so the POST
+    returns the job id well inside the 30s gateway window instead of waiting out the whole job.
+    The function name comes from `function_env_var`. Raises on a permission/throttle error at the
+    invoke itself; a worker-runtime failure surfaces only via the job record + CloudWatch (the
+    whole reason the job row carries a status/error)."""
     _get_lambda_client().invoke(
-        FunctionName=os.environ["APPLY_RULES_WORKER_FUNCTION"],
+        FunctionName=os.environ[function_env_var],
         InvocationType="Event",
         Payload=json.dumps(payload).encode("utf-8"),
     )
+
+
+def _invoke_apply_rules_worker(payload: dict) -> None:
+    _invoke_worker("APPLY_RULES_WORKER_FUNCTION", payload)
+
+
+def _invoke_ai_chat_worker(payload: dict) -> None:
+    _invoke_worker("AI_CHAT_WORKER_FUNCTION", payload)
 
 
 def _job_to_client(job: dict) -> dict:
@@ -2281,6 +2304,82 @@ def get_apply_rules_job(event: dict, job_repo: JobRepository) -> dict:
     if job is None:
         return _json_response(404, {"error": "no such job"})
     return _json_response(200, _job_to_client(job))
+
+
+def _validate_chat_messages(body: dict) -> tuple[list[dict], dict | None]:
+    """The chat history from a POST /ai/chat body: [{role: "user"|"assistant", text}], each text
+    1..CHAT_MESSAGE_MAX_LEN characters, trimmed to the last CHAT_MAX_MESSAGES (starting on a
+    question), ending with the user's new question. Returns (messages, None) or ([], <400 response>)."""
+    raw = body.get("messages")
+    if not isinstance(raw, list) or not raw:
+        return [], _json_response(400, {"error": "messages must be a non-empty list"})
+    messages = []
+    for item in raw:
+        if not isinstance(item, dict) or item.get("role") not in ("user", "assistant"):
+            return [], _json_response(400, {"error": "each message needs a role of user or assistant"})
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > CHAT_MESSAGE_MAX_LEN:
+            return [], _json_response(
+                400, {"error": f"each message needs text of 1..{CHAT_MESSAGE_MAX_LEN} characters"})
+        messages.append({"role": item["role"], "text": text})
+    if messages[-1]["role"] != "user":
+        return [], _json_response(400, {"error": "the last message must be from the user"})
+    if len(messages) > CHAT_MAX_MESSAGES:
+        # A trimmed history must start with a question: the worker reads an answer-first history
+        # as the insights summary seed, which is only ever the thread's very first message.
+        messages = messages[-CHAT_MAX_MESSAGES:]
+        while messages[0]["role"] == "assistant":
+            messages = messages[1:]
+    return messages, None
+
+
+def start_ai_chat_job(event: dict, job_repo: JobRepository) -> dict:
+    """POST /ai/chat — start a background chat job for the user's latest message and return its
+    id immediately (202). The worker answers it and writes the reply to the job row."""
+    body, error = _parse_json_body(event)
+    if error is not None:
+        return error
+    messages, error = _validate_chat_messages(body)
+    if error is not None:
+        return error
+
+    job_id = uuid.uuid4().hex
+    try:
+        job_repo.create_job(job_id, kind="ai_chat")
+    except DatabaseError:
+        return _json_response(500, {"error": "could not start the chat"})
+    try:
+        _invoke_ai_chat_worker({"jobId": job_id, "messages": messages})
+    except Exception as e:
+        logger.error("could not invoke chat worker for job %s: %s", job_id, e)
+        try:
+            job_repo.finish_chat_job(job_id, STATUS_FAILED, error="could not start the chat")
+        except DatabaseError:
+            pass
+        return _json_response(502, {"error": "could not start the chat"})
+    return _json_response(202, {"jobId": job_id, "status": STATUS_RUNNING})
+
+
+def get_ai_chat_job(event: dict, job_repo: JobRepository) -> dict:
+    """GET /ai/chat/jobs/{id} — the chat job's status, current tool status line, and (once
+    succeeded) the reply. 404 for an unknown or expired id, or a job that isn't a chat."""
+    job_id = (event.get("pathParameters") or {}).get("id")
+    if not job_id:
+        return _json_response(404, {"error": "no such chat"})
+    try:
+        job = job_repo.get_job(job_id)
+    except DatabaseError:
+        return _json_response(500, {"error": "could not read the chat"})
+    if job is None or job.get("kind") != "ai_chat":
+        return _json_response(404, {"error": "no such chat"})
+    reply = job.get("reply")
+    return _json_response(200, {
+        "jobId": job.get("id"),
+        "status": job.get("status"),
+        "toolStatus": job.get("toolStatus"),
+        "reply": json.loads(reply) if reply else None,
+        "error": job.get("error"),
+    })
 
 
 def _cycle_window_for_lookback(paycycle_repo: PayCycleRepository, cycle: int) -> tuple[str, str]:
@@ -2765,7 +2864,16 @@ def get_category_transactions(
         client recomputes the contributing total for the header).
       * UNCATEGORIZED_KEY: the summarise_uncategorized rule — contributes to budget, not
         income, and not in the taxonomy.
+
+    Date-range mode (card 609): ?from=&to= instead of ?cycle= — the Ask Abundo chat links here
+    with the exact dates it answered for. Both dates are required and must sit inside the chat's
+    lookback [lookback_floor, today]. A named category then takes its same-bucket SUBTREE, so the
+    list adds up to the chat's figure (which folds subcategories in). Cycle mode is unchanged.
     """
+    params = event.get("queryStringParameters") or {}
+    range_mode = params.get("from") is not None or params.get("to") is not None
+    if range_mode and params.get("cycle") not in (None, ""):
+        return _json_response(400, {"error": "send either cycle or from/to, not both"})
     cycle, cycle_error = _parse_breakdown_cycle(event)
     if cycle_error is not None:
         return cycle_error
@@ -2773,7 +2881,18 @@ def get_category_transactions(
     if not category_id:
         return _json_response(404, {"error": "category not found"})
 
-    start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
+    if range_mode:
+        start, end = params.get("from"), params.get("to")
+        if not (valid_iso_date(start) and valid_iso_date(end)):
+            return _json_response(400, {"error": "from and to must both be YYYY-MM-DD dates"})
+        pay_cycle = paycycle_repo.get_paycycle()
+        cycle_start, today = current_cycle_window(pay_cycle["last_pay_date"], pay_cycle["length"])
+        floor = lookback_floor(cycle_start, pay_cycle["length"], today, CHAT_LINK_GRACE_PERIODS)
+        if not floor <= start <= end <= today:
+            return _json_response(
+                400, {"error": f"from/to must be in order within [{floor}, {today}]"})
+    else:
+        start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
     transactions = _fetch_windowed_transactions(transaction_repo, start, end)
 
     if category_id == UNCATEGORIZED_KEY:
@@ -2782,6 +2901,13 @@ def get_category_transactions(
         def predicate(transaction: dict) -> bool:
             return (contributes_to_budget(transaction)
                     and _is_unmapped_category(transaction.get("category"), taxonomy_ids))
+    elif range_mode:
+        categories = category_repo.list_categories()
+        target_ids = subtree_ids(category_id, build_category_children(categories),
+                                 {category["id"]: category.get("bucket") for category in categories})
+
+        def predicate(transaction: dict) -> bool:
+            return transaction.get("category") in target_ids
     else:
         def predicate(transaction: dict) -> bool:
             return transaction.get("category") == category_id
