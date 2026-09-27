@@ -130,5 +130,8 @@ Rank findings worst-first; label each **real bug** vs **acceptable-for-scope**.
 2. The automated test files + run results and red-green proof.
 3. The ranked edge-case findings.
 4. Confirmation the worktree is clean and removed.
+5. Final verdict line — exactly one of:
+   `VERDICT: PASS` — no real bugs found.
+   `VERDICT: FAIL` — one or more real bugs found.
 
 Be concrete, cite code, don't pad.

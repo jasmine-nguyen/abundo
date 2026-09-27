@@ -46,6 +46,7 @@ class BuildState(TypedDict):
     code_feedback: NotRequired[str]
     qa_verdict: NotRequired[str]
     qa_feedback: NotRequired[str]
+    failed: NotRequired[bool]
     escalation: NotRequired[str]
     escalation_source: NotRequired[str]
     escalation_answer: NotRequired[str]
@@ -251,7 +252,7 @@ async def qa(state: BuildState):
         print_progress(message)
         if isinstance(message, ResultMessage):
             node_done("qa")
-            if "real bug" in message.result.lower():
+            if "VERDICT: FAIL" in message.result:
                 return {"qa_verdict": "NEEDS REWORK", "qa_feedback": message.result}
             return {"qa_verdict": "APPROVED", "qa_feedback": ""}
 
@@ -264,8 +265,16 @@ def escalation(state: BuildState):
 
 def fix_or_ship(state: BuildState):
     node_start("fix_or_ship")
+    still_failing = (
+        state.get("code_verdict") == "NEEDS REWORK"
+        or state.get("qa_verdict") == "NEEDS REWORK"
+    )
+    out_of_attempts = state.get("implementation_attempts", 0) >= 2
+    if still_failing and out_of_attempts:
+        node_done("fix_or_ship")
+        return {"failed": True}
     node_done("fix_or_ship")
-    return {}
+    return {"failed": False}
 
 
 # --- routing ---
@@ -429,6 +438,14 @@ async def main():
             print("=" * 60)
             print(f"\nPaused. Resume with:")
             print(f'  python3 build_graph.py --thread {thread_id} --resume "your answer"')
+        elif result.get("failed"):
+            print("\n" + "=" * 60)
+            print("BUILD FAILED — unresolved issues after max fix attempts:")
+            if result.get("code_feedback"):
+                print(f"\n## Code review:\n{result['code_feedback']}")
+            if result.get("qa_feedback"):
+                print(f"\n## QA:\n{result['qa_feedback']}")
+            print("=" * 60)
         else:
             print("\nDone.")
 
