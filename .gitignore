@@ -86,3 +86,6 @@ terraform/build/
 terraform/*.zip
 terraform/*.json
 .pytest_cache/
+
+# Python virtual environment (the cloud session hook creates it; older Pythons do not hide it themselves)
+.venv/
