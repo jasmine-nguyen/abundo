@@ -11,10 +11,10 @@
 # reproducer / test_writer ─→ escalation (pause)                no valid failing test
 # implementer ─┬→ escalation (pause) → implementer
 #              └→ checks ─┬→ implementer                        typecheck/lint/tests/pinned tests failed
-#                         └→ standards ∥ spec ∥ correctness ∥ qa → fix_or_ship
+#                         └→ code_critic ∥ qa → fix_or_ship
 # fix_or_ship ─┬→ implementer                                   findings, rounds left
 #              ├→ next_slice → test_writer                      more slices to build
-#              └→ ship → END                                    all four reviews passed
+#              └→ ship → END                                    both reviews passed
 #                 (END instead, with BUILD FAILED, when rounds run out)
 # ship ─→ implementer                                            final checks failed, rounds left
 import argparse
@@ -29,6 +29,7 @@ import subprocess
 import sys
 import traceback
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, NotRequired, TypedDict
 
@@ -100,15 +101,10 @@ class BuildState(TypedDict):
     escalation_next: NotRequired[str]
     escalation_answer: NotRequired[str]
     # review
-    standards_verdict: NotRequired[str]
-    standards_feedback: NotRequired[str]
-    standards_advisory: NotRequired[list[str]]
+    code_verdict: NotRequired[str]
+    code_feedback: NotRequired[str]
+    advisory: NotRequired[list[str]]
     tech_debt: NotRequired[list[dict]]
-    spec_verdict: NotRequired[str]
-    spec_feedback: NotRequired[str]
-    correctness_verdict: NotRequired[str]
-    correctness_feedback: NotRequired[str]
-    correctness_minor: NotRequired[list[str]]
     qa_verdict: NotRequired[str]
     qa_feedback: NotRequired[str]
     qa_patch: NotRequired[str]
@@ -128,6 +124,9 @@ DB_PATH = BUILD_DIR / "build_graph.db"
 PROJECT_CONTEXT_FILE = ROOT / "project-context.md"
 
 DEFAULT_MODEL = "claude-opus-5-5"
+# How hard each agent thinks. Claude Code's own default is higher; "high" is faster
+# and uses less of the plan.
+AGENT_EFFORT = "high"
 MAX_CLARIFY_ROUNDS = 2
 MAX_PLAN_ATTEMPTS = 2
 MAX_TEST_ATTEMPTS = 2
@@ -147,12 +146,10 @@ TYPE_TO_PREFIX = {
     "tech debt": "chore",
 }
 
-REVIEWERS = ["standards_critic", "spec_critic", "correctness_critic", "qa"]
+REVIEWERS = ["code_critic", "qa"]
 REVIEW_LABELS = {
-    "standards": "Standards review",
-    "spec": "Spec review",
-    "correctness": "Correctness review",
-    "qa": "QA",
+    "code": "Code review",
+    "qa": "QA"
 }
 
 NODE_LABELS = {
@@ -166,9 +163,7 @@ NODE_LABELS = {
     "implementer": "Implementer",
     "escalation": "Escalation",
     "checks": "Checks",
-    "standards_critic": "Standards Review",
-    "spec_critic": "Spec Review",
-    "correctness_critic": "Correctness Review",
+    "code_critic": "Code Review",
     "qa": "QA",
     "fix_or_ship": "Fix or Ship",
     "next_slice": "Next Slice",
@@ -196,9 +191,7 @@ AGENTS = {
     "reproducer": Agent("reproducer.md", WRITE, "writer", 120, 12.0),
     "test_writer": Agent("test-writer.md", WRITE, "writer", 80, 8.0),
     "implementer": Agent("implementer.md", WRITE, "writer", 200, 25.0),
-    "standards_critic": Agent("standards-critic.md", READ, "read_only", 50, 5.0),
-    "spec_critic": Agent("spec-critic.md", READ, "read_only", 50, 5.0),
-    "correctness_critic": Agent("correctness-critic.md", READ, "read_only", 60, 6.0),
+    "code_critic": Agent("code-critic.md", READ, "read_only", 80, 8.0),
     "qa": Agent("qa.md", WRITE, "qa", 150, 15.0),
 }
 
@@ -265,20 +258,17 @@ REPRODUCER_OUTPUT = _output(
 )
 TEST_WRITER_OUTPUT = _output(seams=TEXTS, test_files=TEXTS, command=TEXT, summary=TEXT)
 IMPLEMENTER_OUTPUT = _output(status=_one_of("DONE", "ESCALATE"), summary=TEXT, escalation=TEXT)
-STANDARDS_OUTPUT = _output(
-    blocking=TEXTS,
+CODE_CRITIC_OUTPUT = _output(
+    blocking_bugs=TEXTS,
+    standards_breaches=TEXTS,
+    decisions_to_escalate=TEXTS,
     advisory=TEXTS,
     tech_debt=_list_of(title=TEXT, problem=TEXT, fix=TEXT),
     report=TEXT,
 )
-SPEC_OUTPUT = _output(missing=TEXTS, wrong=TEXTS, scope_creep=TEXTS, report=TEXT)
-CORRECTNESS_OUTPUT = _output(
-    blocking_bugs=TEXTS,
-    minor_bugs=TEXTS,
-    decisions_to_escalate=TEXTS,
-    report=TEXT,
+QA_OUTPUT = _output(
+    spec_gaps=TEXTS, real_bugs=TEXTS, manual_checks=TEXTS, patch_written={"type": "boolean"}, report=TEXT
 )
-QA_OUTPUT = _output(real_bugs=TEXTS, manual_checks=TEXTS, patch_written={"type": "boolean"}, report=TEXT)
 
 
 
@@ -385,6 +375,7 @@ async def run_agent(name: str, prompt: str, output_format: dict, resume: str | N
         output_format=output_format,
         max_turns=agent.max_turns,
         max_budget_usd=agent.max_budget_usd,
+        effort=AGENT_EFFORT,
         cwd=str(ROOT),
         resume=resume,
         # The repo's own CLAUDE.md and settings, but not the user's global plugins,
@@ -458,10 +449,8 @@ def running_message(name: str, state: BuildState) -> str | None:
         "test_writer": "Writing the tests that define done",
         "implementer": f"Implementer is {verb} the code (round {round_number})",
         "checks": "Running typecheck and tests",
-        "standards_critic": "Standards review: checking the code against your standards",
-        "spec_critic": "Spec review: checking the code does what the card asked",
-        "correctness_critic": "Correctness review: hunting for bugs",
-        "qa": "QA: testing the edge cases",
+        "code_critic": "Code review: hunting for bugs and checking your standards",
+        "qa": "QA: checking it does what the card asked, then testing the edge cases",
         "ship": "Running the checks one last time, then opening the PR",
     }
     return messages.get(name)
@@ -508,7 +497,7 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
             return f"❌ Out of rounds, still unresolved: {', '.join(unhappy)}"
         if unhappy:
             return f"↩️ Sending the findings from {', '.join(unhappy)} back to the implementer"
-        return "✅ All four reviews passed"
+        return "✅ Both reviews passed"
     if name == "checks":
         if not update["checks_feedback"]:
             return "✅ Typecheck and tests pass, changes committed"
@@ -968,32 +957,32 @@ def section(title: str, items) -> list[str]:
     return ["", f"{title}:", *[f"  - {item}" for item in items]] if items else []
 
 
+def critic_summary(state: BuildState) -> str:
+    verdict = state.get("plan_verdict")
+    if verdict == "NEEDS REWORK":
+        return "critic still has concerns (below)"
+    tweaks = len(state.get("plan_tweaks", []))
+    if tweaks:
+        return f"critic approved, with {plural(tweaks, 'small change')} folded in"
+    return "critic approved" if verdict else "critic not run"
+
+
 def plan_brief(state: BuildState) -> str:
+    """Only what's needed to decide: the why/what/how summary and any open questions.
+    Files, tests, critic notes and risks stay in the plan file."""
     lines = [
-        (
-            f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} "
-            f"({state.get('card_type', '')}), attempt {state.get('plan_attempts', 0)}"
-            f" · critic: {state.get('plan_verdict', 'not run')}"
-        ),
+        f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} · {critic_summary(state)}",
         *section("Problem", state.get("problem", [])),
         *section("Task", state.get("task", [])),
         *section("Solution", state.get("solution", [])),
     ]
-    if state.get("slices"):
-        lines += ["", "Slices, built in this order:"]
-        lines += [f"  {n}. {s['title']} — {s['delivers']}" for n, s in enumerate(state["slices"], 1)]
-    lines += section("Files touched", state.get("files", []))
-    lines += section("Test points (confirm these)", state.get("seams", []))
-    lines += section("Critic findings", state.get("plan_findings", []))
-    lines += section("Critic tweaks (will be applied)", state.get("plan_tweaks", []))
-    lines += section("Risks", state.get("risks", []))
-    if state.get("door"):
-        lines += section("Merge danger", [DOORS[state["door"]], f"Blast radius: {state.get('blast_radius', '')}"])
+    if state.get("plan_verdict") == "NEEDS REWORK":
+        lines += section("The critic's unresolved concerns", state.get("plan_findings", []))
     if state.get("decisions"):
         lines += ["", "Decisions for you:", format_questions(state["decisions"])]
     lines += [
         "",
-        f"Full plan: {plan_file(state).relative_to(ROOT)} (edit it directly before replying if you like)",
+        f"Details (files, tests, critic notes, risks): {plan_file(state).relative_to(ROOT)}",
         "",
         (
             'Reply "go" to approve (recommended answers), "go: Q1 <answer>; Q2 <answer>" to approve '
@@ -1312,53 +1301,27 @@ def commit_message(state: BuildState) -> str:
 # --- review nodes (read-only, run in parallel) ---
 
 
-async def standards_critic(state: BuildState):
-    result = await run_agent("standards_critic", review_block(state), STANDARDS_OUTPUT)
+async def code_critic(state: BuildState):
+    result = await run_agent("code_critic", review_block(state), CODE_CRITIC_OUTPUT)
     out = result.output
-    blocking = out["blocking"]
-    return {
-        "standards_verdict": "NEEDS_REWORK" if blocking else "APPROVED",
-        "standards_feedback": bullets(blocking),
-        "standards_advisory": out["advisory"],
-        "tech_debt": out["tech_debt"],
-        "history": [mark(not blocking, f"standards: {len(blocking)} must-fix" if blocking else "standards: approved")],
-    }
-
-
-async def spec_critic(state: BuildState):
-    result = await run_agent("spec_critic", review_block(state), SPEC_OUTPUT)
-    out = result.output
-    findings = [
-        *(f"Missing: {item}" for item in out["missing"]),
-        *(f"Wrong: {item}" for item in out["wrong"]),
-        *(f"Not asked for: {item}" for item in out["scope_creep"]),
-    ]
-    return {
-        "spec_verdict": "NEEDS_REWORK" if findings else "APPROVED",
-        "spec_feedback": bullets(findings),
-        "history": [mark(not findings, f"spec: {first_line(findings[0])}" if findings else "spec: approved")],
-    }
-
-
-async def correctness_critic(state: BuildState):
-    result = await run_agent("correctness_critic", review_block(state), CORRECTNESS_OUTPUT)
-    out = result.output
-    bugs, decisions = out["blocking_bugs"], out["decisions_to_escalate"]
+    bugs, breaches, decisions = out["blocking_bugs"], out["standards_breaches"], out["decisions_to_escalate"]
     feedback = []
     if bugs:
-        feedback.append(bullets(bugs))
+        feedback.append(f"### Bugs\n{bullets(bugs)}")
+    if breaches:
+        feedback.append(f"### Standards breaches\n{bullets(breaches)}")
     if decisions:
         feedback.append(
-            "These decisions were made without sign-off. Don't change the code for them: "
-            f"reply with status ESCALATE and put them to the user:\n{bullets(decisions)}"
+            "### Decisions made without sign-off\nDon't change the code for these: reply with status "
+            f"ESCALATE and put them to the user:\n{bullets(decisions)}"
         )
-    rework = bool(bugs or decisions)
+    summary = f"code review: {len(bugs)} bug(s), {len(breaches)} standards breach(es), {len(decisions)} decision(s)"
     return {
-        "correctness_verdict": "NEEDS_REWORK" if rework else "APPROVED",
-        "correctness_feedback": "\n\n".join(feedback),
-        "correctness_minor": out["minor_bugs"],
-        "history": [mark(not rework, f"correctness: {len(bugs)} bug(s), {len(decisions)} unapproved decision(s)"
-                         if rework else "correctness: approved")],
+        "code_verdict": "NEEDS_REWORK" if feedback else "APPROVED",
+        "code_feedback": "\n\n".join(feedback),
+        "advisory": out["advisory"],
+        "tech_debt": out["tech_debt"],
+        "history": [mark(not feedback, summary if feedback else "code review: approved")],
     }
 
 
@@ -1372,13 +1335,14 @@ async def qa(state: BuildState):
     )
     result = await run_agent("qa", review_block(state, extra), QA_OUTPUT)
     out = result.output
-    bugs = out["real_bugs"]
+    gaps, bugs = out["spec_gaps"], out["real_bugs"]
+    sections = [f"### {title}\n{bullets(items)}" for title, items in (("Spec gaps", gaps), ("Real bugs", bugs)) if items]
     return {
-        "qa_verdict": "NEEDS_REWORK" if bugs else "APPROVED",
-        "qa_feedback": bullets(bugs),
+        "qa_verdict": "NEEDS_REWORK" if sections else "APPROVED",
+        "qa_feedback": "\n\n".join(sections),
         "qa_patch": str(patch) if patch.is_file() else "",
         "manual_checks": out["manual_checks"],
-        "history": [mark(not bugs, f"qa: {len(bugs)} real bug(s)" if bugs else "qa: passed")],
+        "history": [mark(not sections, f"qa: {len(gaps)} spec gap(s), {len(bugs)} real bug(s)" if sections else "qa: passed")],
     }
 
 
@@ -1441,7 +1405,7 @@ def pr_body(state: BuildState) -> str:
         ("Solution", bullets(state.get("solution", []))),
         ("Evidence", bullets([
             f"**Before:** {before}",
-            f"**After:** {checks} pass, and the standards, spec, correctness and QA reviews all approved.",
+            f"**After:** {checks} pass, and the code review and QA both approved.",
         ])),
         ("Merge danger", bullets([
             f"**Door:** {DOORS[door] if door else 'not assessed'}",
@@ -1453,8 +1417,7 @@ def pr_body(state: BuildState) -> str:
         sections.append(("Manual checks", "\n".join(f"- [ ] {check}" for check in state["manual_checks"])))
     follow_ups = [
         *(f"Tech debt: {t['title']}: {t['problem']}" for t in state.get("tech_debt", [])),
-        *state.get("standards_advisory", []),
-        *state.get("correctness_minor", []),
+        *state.get("advisory", []),
     ]
     if follow_ups:
         sections.append(("Follow-ups", bullets(follow_ups)))
@@ -1576,9 +1539,7 @@ for name, node in [
     ("reproducer", reproducer),
     ("test_writer", test_writer),
     ("implementer", implementer),
-    ("standards_critic", standards_critic),
-    ("spec_critic", spec_critic),
-    ("correctness_critic", correctness_critic),
+    ("code_critic", code_critic),
     ("qa", qa),
 ]:
     builder.add_node(name, announce(name, node), retry_policy=AGENT_RETRY)
@@ -1684,7 +1645,50 @@ def print_history(values: dict, last: int = 15):
         print()
 
 
-def print_status(thread: str, snapshot) -> int:
+WAITING_STEPS = {"sign_off", "clarify", "escalation"}
+
+
+def duration(seconds: float) -> str:
+    return f"{int(seconds // 60)}m {int(seconds % 60):02d}s"
+
+
+async def step_timings(graph, config) -> list[tuple[str, float, bool]]:
+    """(step, seconds, waiting for the user) for each step so far, oldest first.
+    A step that hasn't finished yet is timed up to now."""
+    history = [snapshot async for snapshot in graph.aget_state_history(config)]
+    history.reverse()
+    timings = []
+    for index, snapshot in enumerate(history):
+        nodes = [node for node in snapshot.next if not node.startswith("__")]
+        if not nodes:
+            continue
+        started = datetime.fromisoformat(snapshot.created_at)
+        if index + 1 < len(history):
+            ended = datetime.fromisoformat(history[index + 1].created_at)
+        else:
+            ended = datetime.now(timezone.utc)
+        label = " ∥ ".join(NODE_LABELS.get(node, node) for node in nodes)
+        timings.append((label, (ended - started).total_seconds(), any(node in WAITING_STEPS for node in nodes)))
+    return timings
+
+
+def print_timings(timings: list[tuple[str, float, bool]], unfinished: bool):
+    print("Step timings:")
+    last = len(timings) - 1
+    for index, (label, seconds, waiting) in enumerate(timings):
+        notes = []
+        if waiting:
+            notes.append("waiting for you")
+        if unfinished and index == last:
+            notes.append("so far")
+        suffix = f" ({', '.join(notes)})" if notes else ""
+        print(f"  {duration(seconds):>8}  {label}{suffix}")
+    machine = sum(seconds for _, seconds, waiting in timings if not waiting)
+    human = sum(seconds for _, seconds, waiting in timings if waiting)
+    print(f"  Machine time {duration(machine)} · waiting for you {duration(human)}\n")
+
+
+async def print_status(graph, config, thread: str, snapshot) -> int:
     values = snapshot.values
     if not values:
         print(f"No saved build for thread {thread}.")
@@ -1702,6 +1706,9 @@ def print_status(thread: str, snapshot) -> int:
         if values.get(key):
             print(f"{label}: {values[key]}")
     print()
+    timings = await step_timings(graph, config)
+    if timings:
+        print_timings(timings, unfinished=bool(snapshot.next))
     print_history(values)
     return 0
 
@@ -1868,7 +1875,7 @@ async def main(argv: list[str] | None = None) -> int:
         graph = builder.compile(checkpointer=saver)
         snapshot = await graph.aget_state(config)
         if args.status:
-            return print_status(args.thread, snapshot)
+            return await print_status(graph, config, args.thread, snapshot)
         try:
             if args.resume is not None:
                 result = await resume_build(graph, config, snapshot, args.resume)

@@ -1,4 +1,4 @@
-"""Budget-threshold alert detection (shared/budget_alerts.py), WHIT-22.
+"""Budget-threshold alert detection (lambda/budget_alerts.py), WHIT-22.
 
 Driven through the webhook `lam` fixture (so budget_alerts + the real webhook repo
 reconcile primitives are importable). `spend.melbourne_today` is pinned so the
@@ -80,31 +80,11 @@ class FakeCategoryRepo:
         return self._c
 
 
-def _real_inherit_swipe_date(merged, posted_txn, source_row):
-    """The production implementation, resolved lazily (the webhook modules are only
-    importable once the `lam` fixture has put the lambda dirs on sys.path)."""
-    import repository
-    return repository.TransactionRepository._inherit_swipe_date(merged, posted_txn, source_row)
-
-
 class NoTwinRepo:
-    """webhook_repo stand-in: no pending twins, carries no category."""
+    """webhook_repo stand-in: no pending twins."""
 
     def get_pending_transactions_for_account(self, account):
         return []
-
-    def _reconcile_matches(self, posted_txns, pools):
-        # WHIT-117: _simulate_after now drives the batch matcher; no twins here.
-        return [(txn, None) for txn in posted_txns]
-
-    @staticmethod
-    def _with_carried_category(txn, src):
-        return dict(txn)
-
-    # Delegated, never re-implemented: a hand-copied version silently goes stale (it
-    # missed the WHIT-331 skew branch entirely), so every alert test using this stand-in
-    # would assert against the copy instead of production.
-    _inherit_swipe_date = staticmethod(_real_inherit_swipe_date)
 
 
 def _run(alerts, monkeypatch, *, budgets, before, normalised, tokens=("ExpoPushToken[a]",),
@@ -596,7 +576,7 @@ def test_fire_failure_does_not_break_the_write(lam, monkeypatch):
 # the REAL webhook TransactionRepository, plus boundary / window / refund /
 # pagination gaps. The implementer's tests use NoTwinRepo (the reconcile path is
 # never exercised); these seed a real pending twin into a FakeTable so
-# _reconcile_matches / _with_carried_category run for real inside the Δ sim.
+# the reconcile planner runs for real inside the Δ sim.
 # Every assertion fails on a revert of the production behaviour it names.
 # ===========================================================================
 
@@ -1440,7 +1420,7 @@ def test_simulation_matches_the_real_write_when_a_posting_precedes_its_pending_r
            "pending_pools": {account: list(repo.get_pending_transactions_for_account(account))},
            "start": "2026-07-01", "end": "2026-07-14"}
 
-    simulated = alerts.budget_alerts._simulate_after(ctx, [posted, resend], repo)  # posted FIRST
+    simulated = alerts.budget_alerts._simulate_after(ctx, [posted, resend])  # posted FIRST
     repo.insert_or_reconcile([posted, resend])
 
     stored = list(repo._table.store.values())
@@ -1476,7 +1456,7 @@ def test_one_word_skew_simulation_matches_the_real_write(alerts, repo):
            "pending_pools": {account: list(repo.get_pending_transactions_for_account(account))},
            "start": "2026-07-01", "end": "2026-07-14"}
 
-    simulated = alerts.budget_alerts._simulate_after(ctx, [posted], repo)
+    simulated = alerts.budget_alerts._simulate_after(ctx, [posted])
     repo.insert_or_reconcile([posted])
 
     stored = list(repo._table.store.values())
@@ -1500,7 +1480,7 @@ def test_one_word_skew_across_the_cycle_boundary_counts_once_inside_the_window(a
     sent, notify, ctx = _run(alerts, monkeypatch,
                              budgets={"groceries": {"target": Decimal("100")}},
                              before=before, normalised=[posted], webhook_repo=repo)
-    rows = alerts.budget_alerts._simulate_after(ctx, [posted], repo)
+    rows = alerts.budget_alerts._simulate_after(ctx, [posted])
 
     assert [(r["transaction_id"], r["date"]) for r in rows] == [("POST", "2026-07-01")]
     assert sent == []

@@ -2787,7 +2787,7 @@ def test_corrupt_slots_on_top_of_a_pile_still_settle_level_and_stamp_once(handle
 def test_get_categories_mid_repaint_is_a_200_even_when_the_write_is_throttled(handler,
                                                                               monkeypatch):
     """WHIT-428 — [A15] the read routes, at the HTTP boundary. GET /categories is the shape
-    every other category read (and shared/budget_alerts.py fire_budget_alerts) shares: it must be
+    every other category read (and lambda/budget_alerts.py fire_budget_alerts) shares: it must be
     a 200 carrying id/name/bucket for every row, mid-repaint, with the migration write
     failing."""
     repository, repo = _repo_with_fake_table(handler)

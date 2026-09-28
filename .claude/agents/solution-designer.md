@@ -82,20 +82,43 @@ Return these fields:
 - `validity_evidence` — the `path:line` evidence for that verdict, one or two lines.
 - `clarifying_questions` — `question` + `recommendation`, only when the card is too
   thin to plan; otherwise empty.
-- `problem`, `task`, `solution` — the plan for a busy human, as short bullets in
-  plain English with no jargon (define a technical term in a few words if you
-  can't avoid it). The user reads these first and decides from them.
+- `problem`, `task`, `solution` — the summary the user approves the plan from. It's
+  all they see at sign-off, so write it for someone who knows the app but isn't
+  reading the code:
   - `problem`: why this card exists. What goes wrong today, and what happens if
     we leave it. Lead with the consequence, not the code.
   - `task`: what the card asks for, and what "done" means.
   - `solution`: how the plan fixes it, including any slices and the safety net
     (which tests prove it works).
 
-  Aim for about 12 bullets across the three, so the summary fits in 15 lines with
-  its headings. If the problem is genuinely complex, use more bullets rather than
-  leave out something critical: completeness beats the line count. If `validity`
-  isn't VALID, `problem` says what the card assumed and `solution` says what the
-  card should become instead; leave `task` empty.
+  Rules for these three:
+  - Plain English. No file paths, function names, config keys, test names or other
+    code identifiers: say what the thing does instead ("the list of server files to
+    deploy", not `LAMBDA_API_SOURCES`). The specifics go in `plan`, `files`, `seams`
+    and `risks`, which the user opens only if they want the detail.
+  - One line per bullet, about 20 words at most.
+  - Problem 2–4 bullets, Task 2–3, Solution 3–5: about 15 lines with the headings.
+    Go longer only if the problem is genuinely complex and a critical point would
+    otherwise be lost.
+  - If `validity` isn't VALID, `problem` says what the card assumed and `solution`
+    says what the card should become instead; leave `task` empty.
+
+  The style to aim for:
+
+  ```
+  problem:
+  - The budgets screen and the budget alerts each have their own copy of the "how much is left" maths.
+  - Change one copy and not the other, and an alert says "80% spent" while the screen shows a different number.
+  - The chat borrows the screen's code, so every chat message costs an extra database read, and even writes.
+  task:
+  - Work out every budget's numbers in one place, for the screen, the alerts and the chat.
+  - The screen's numbers stay exactly the same, and alerts still skip Income and Savings.
+  solution:
+  - Slice 1: one shared "read every page" helper replaces three copied loops.
+  - Slice 2: one new module takes budgets and transactions in and gives each budget's numbers out.
+  - The screen, the alerts and the chat all use it. Only the screen saves, so the chat just reads.
+  - Safety net: the existing screen tests must pass unchanged, plus new input → output tests.
+  ```
 - `files` — every file you'd add or edit, paths only.
 - `risks` — one line each: what could go wrong, and how the plan handles it.
 - `door` — `one-way` if the change is hard to undo once merged (a data migration,

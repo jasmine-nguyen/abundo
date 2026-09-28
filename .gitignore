@@ -55,7 +55,7 @@ __pycache__/
 .coverage
 .coverage.*
 
-# Lambda build dirs — ignore everything, allowlist only true source
+# Webhook lambda build dir (pip install --target) — ignore everything, allowlist only true source
 lambda/*
 !lambda/handler.py
 !lambda/up_webhook.py
@@ -63,21 +63,11 @@ lambda/*
 !lambda/merchant.py
 !lambda/reprocess.py
 !lambda/age_out.py
+!lambda/reconcile.py
+!lambda/budget_alerts.py
 !lambda/rule_ingest.py
 !lambda/requirements.txt
 
-lambda_api/*
-!lambda_api/handler.py
-!lambda_api/api_constants.py
-!lambda_api/insights_ai.py
-!lambda_api/anthropic_client.py
-!lambda_api/merchant_groups.py
-!lambda_api/filing_habits.py
-!lambda_api/apply_rules_worker.py
-!lambda_api/recurring_bills.py
-!lambda_api/transaction_search.py
-!lambda_api/chat_tools.py
-!lambda_api/ai_chat.py
 
 # terraform
 terraform/artifacts/*
@@ -86,3 +76,6 @@ terraform/build/
 terraform/*.zip
 terraform/*.json
 .pytest_cache/
+
+# Python virtual environment (the cloud session hook creates it; older Pythons do not hide it themselves)
+.venv/

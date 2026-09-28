@@ -16,13 +16,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# lambda_api true-source allowlist. Keep in sync with the !lambda_api/* allowlist
-# in .gitignore (git's own copy of the same set). An explicit list, not a glob:
-# only these files are copied into the deterministic build dir, so on-disk cruft
-# (a stray __pycache__, a leftover stale module) can never ship.
-# Keep this on ONE line — scripts/tests/build_artifacts_test.sh parses it literally.
-LAMBDA_API_SOURCES=(handler.py api_constants.py insights_ai.py anthropic_client.py merchant_groups.py filing_habits.py apply_rules_worker.py recurring_bills.py transaction_search.py chat_tools.py ai_chat.py)
-
 build_webhook() {
   # Install the webhook lambda's third-party deps into lambda/ (standardwebhooks).
   # --no-deps on purpose: its declared deps (httpx, wrapt's compiled .so) are unused
@@ -31,14 +24,18 @@ build_webhook() {
 }
 
 build_lambda_api() {
-  # Stage lambda_api from ONLY its true source into a clean dir, so a stale local
-  # copy can never ship.
+  # Stage lambda_api from ONLY its git-tracked *.py files into a clean dir: a new
+  # committed module ships automatically, and untracked cruft (a stray __pycache__,
+  # a leftover stale module) never does.
   rm -rf "$ROOT/terraform/build/lambda_api"
   mkdir -p "$ROOT/terraform/build/lambda_api"
+  local files
+  files=$(git -C "$ROOT" ls-files -- ':(glob)lambda_api/*.py') || { echo 'build_lambda_api: git ls-files failed' >&2; exit 1; }
+  [ -n "$files" ] || { echo 'build_lambda_api: no tracked lambda_api/*.py' >&2; exit 1; }
   local f
-  for f in "${LAMBDA_API_SOURCES[@]}"; do
-    cp "$ROOT/lambda_api/$f" "$ROOT/terraform/build/lambda_api/"
-  done
+  while IFS= read -r f; do
+    cp "$ROOT/$f" "$ROOT/terraform/build/lambda_api/"
+  done <<<"$files"
 }
 
 build_shared_layer() {

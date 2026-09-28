@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Offline guard for scripts/build_terraform_artifacts.sh (WHIT-503).
 # Proves, without network or terraform:
-#   [M1] the lambda_api allowlist in the script == the !lambda_api/* allowlist in .gitignore
-#   [M2] `lambda_api` stages EXACTLY the allowlist — no more, no less
-#   [M3] on-disk cruft (a stray .py) is NOT shipped by the lambda_api copy
+#   [M1] a NEW git-tracked lambda_api/*.py ships with no list edits (WHIT-626)
+#   [M2] `lambda_api` stages EXACTLY the git-tracked lambda_api/*.py — no more, no less
+#   [M3] on-disk cruft (an untracked stray .py) is NOT shipped by the lambda_api copy
 #   [M4] an unknown target exits non-zero (2)
 #   [M5] every top-level shared/*.py is staged into the layer
 #   [M6] shared subpackages are staged; __pycache__, tests/ and test_*.py are not
 #   [M7] a staged subpackage imports from the layer
 #   [M8] tzdata is pip-installed into the layer dir
-# M5-M8 run in a sandbox copy, so the real terraform/layer/python is never touched.
+# M1 tracks its new module in a THROWAWAY copy of the git index (GIT_INDEX_FILE), so the real
+# index is never touched. M5-M8 run in a sandbox copy, so the real terraform/layer/python is
+# never touched.
 # Run: bash scripts/tests/build_artifacts_test.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,42 +21,44 @@ fail() {
   exit 1
 }
 
-# --- [M1] allowlist parity: script vs .gitignore -----------------------------
-script_list=$(bash -c '
-  set -euo pipefail
-  eval "$(grep -E "^LAMBDA_API_SOURCES=" "'"$SCRIPT"'")"
-  printf "%s\n" "${LAMBDA_API_SOURCES[@]}"
-' | sort)
-gitignore_list=$(grep -E '^!lambda_api/' "$ROOT/.gitignore" | sed 's#^!lambda_api/##' | sort)
-[ "$script_list" = "$gitignore_list" ] || fail "[M1] allowlist drift:
-script:
-$script_list
-.gitignore:
-$gitignore_list"
-echo "PASS [M1] allowlist matches .gitignore"
-
-# --- [M3 setup] plant cruft that must NOT ship -------------------------------
+# --- [M1-M3 setup] a new tracked module that MUST ship, and cruft that must NOT ---------
+NEW_MODULE_NAME="zz_new_tracked_module_should_ship.py"
+NEW_MODULE="$ROOT/lambda_api/$NEW_MODULE_NAME"
 CRUFT="$ROOT/lambda_api/__cruft_should_not_ship__.py"
-echo "x = 1" >"$CRUFT"
 SANDBOX=$(mktemp -d)
-trap 'rm -f "$CRUFT"; rm -rf "$SANDBOX"' EXIT
+trap 'rm -f "$CRUFT" "$NEW_MODULE" "$ROOT/terraform/build/lambda_api/$NEW_MODULE_NAME"; rm -rf "$SANDBOX"' EXIT
+echo "x = 1" >"$NEW_MODULE"
+echo "x = 1" >"$CRUFT"
+export GIT_INDEX_FILE="$SANDBOX/index"
+cp "$(git -C "$ROOT" rev-parse --absolute-git-dir)/index" "$GIT_INDEX_FILE"
+git -C "$ROOT" add -f -- "lambda_api/$NEW_MODULE_NAME"
+
+expected=$(git -C "$ROOT" ls-files -- ':(glob)lambda_api/*.py' | sed 's#.*/##' | sort)
+[ -n "$expected" ] || fail "[M2] no tracked lambda_api/*.py"
+grep -qx "$NEW_MODULE_NAME" <<<"$expected" || fail "[M1] setup: $NEW_MODULE_NAME is not tracked"
 
 # --- run the staging target --------------------------------------------------
 bash "$SCRIPT" lambda_api
-
-# --- [M2] staged set == allowlist exactly ------------------------------------
+unset GIT_INDEX_FILE
 staged=$(ls -1 "$ROOT/terraform/build/lambda_api" | sort)
-[ "$staged" = "$script_list" ] || fail "[M2] staged set != allowlist:
+
+# --- [M1] a new tracked module ships automatically ---------------------------
+grep -qx "$NEW_MODULE_NAME" <<<"$staged" ||
+  fail "[M1] a newly tracked lambda_api/$NEW_MODULE_NAME was not staged — it still needs a list edit"
+echo "PASS [M1] new tracked lambda_api module staged with no list edits"
+
+# --- [M2] staged set == tracked lambda_api/*.py exactly ----------------------
+[ "$staged" = "$expected" ] || fail "[M2] staged set != tracked lambda_api/*.py:
 staged:
 $staged
-allowlist:
-$script_list"
-echo "PASS [M2] staged exactly the allowlist"
+tracked:
+$expected"
+echo "PASS [M2] staged exactly the tracked lambda_api/*.py"
 
 # --- [M3] cruft excluded -----------------------------------------------------
 [ ! -e "$ROOT/terraform/build/lambda_api/__cruft_should_not_ship__.py" ] ||
   fail "[M3] on-disk cruft leaked into the staged dir"
-echo "PASS [M3] stray lambda_api/*.py not shipped"
+echo "PASS [M3] untracked stray lambda_api/*.py not shipped"
 
 # --- [M4] unknown target errors ----------------------------------------------
 rc=0

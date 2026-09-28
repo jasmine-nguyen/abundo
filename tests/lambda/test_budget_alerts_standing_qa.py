@@ -61,18 +61,6 @@ class _NoTwins:
     def get_pending_transactions_for_account(self, account):
         return []
 
-    def _reconcile_matches(self, posted_txns, pools):
-        return [(txn, None) for txn in posted_txns]
-
-    @staticmethod
-    def _with_carried_category(txn, src):
-        return dict(txn)
-
-    @staticmethod
-    def _inherit_swipe_date(merged, posted_txn, source_row):
-        import repository
-        return repository.TransactionRepository._inherit_swipe_date(merged, posted_txn, source_row)
-
 
 def _fire(lam, monkeypatch, budgets, stored, new):
     import spend

@@ -105,18 +105,10 @@ the card number for card builds) and check where it is:
    their Claude plan. Never add `--allow-api-billing` yourself; only the user
    can decide to pay per token.
 
-   While it runs, give the user short status updates based on the output.
-   The script prints which step is running and what tools it's using.
-   Relay the key milestones, one line per step:
-   - "Designer is planning..." (`▶ Designer`)
-   - "Plan critic is reviewing..." (`▶ Plan Critic`)
-   - "Reproducing the bug..." (`▶ Reproducer`)
-   - "Writing the acceptance tests..." (`▶ Test Writer`)
-   - "Implementer is coding..." (`▶ Implementer`)
-   - "Running typecheck, lint and tests..." (`▶ Checks`)
-   - "Four reviewers are checking the change..." (`▶ Standards Review` etc.)
-   - "Opening the PR..." (`▶ Ship`)
-   Don't flood, and don't go silent.
+   While it runs, keep the user posted. The script prints one plain-English
+   line when each step starts (⌛) and one when it ends (✅ done, ❌ or ↩️ sent
+   back, ❓ or ⏸ waiting for them). Relay those lines as they come, as written.
+   Don't add commentary of your own, and don't go silent.
 
 3. When the script pauses, it prints a block between `===` lines and
    `Paused. Resume with: ...`. The first line of the block says why:
@@ -125,17 +117,16 @@ the card number for card builds) and check where it is:
    pause, show what the block says in your own message BEFORE you ask
    anything.
 
-   - **PLAN FOR REVIEW** — you MUST show the whole block in your message
-     before any question. Show it as printed, formatted as Markdown: each
-     section title in bold, its lines as bullets. Keep every section, every
-     line and the order. Don't summarise it, shorten it, or go straight to
-     the questions. The block runs in this order: Problem, Task, Solution
-     (why, what, how), then Slices, Files touched, Test points, Critic
-     findings, Critic tweaks, Risks, Decisions, and the plan file's path
-     (they can edit that file before approving).
+   - **PLAN FOR REVIEW** — before any question, show the summary in your
+     message exactly as printed, formatted as Markdown (section titles in
+     bold, lines as bullets): the header line, Problem, Task and Solution,
+     any unresolved critic concerns, and the details line. Don't add to it,
+     shorten it, or pull more in from the plan file. If the user asks for
+     the details, show them the parts they ask about.
 
-     Then ask the decisions with AskUserQuestion, recommended answer first
-     and marked "(Recommended)", and offer: Approve · Rework · Stop.
+     Then ask the decisions with AskUserQuestion instead of printing them a
+     second time, recommended answer first and marked "(Recommended)", and
+     offer: Approve · Rework · Stop.
    - **CARD LOOKS INVALID** — show the block (evidence, problem, and what
      the card should become), then ask: Close the card · Plan it anyway (ask
      why it's still needed) · Stop.
@@ -190,7 +181,7 @@ the card number for card builds) and check where it is:
      in the codebase (don't edit pinned test files; if one is wrong, ask the
      user), then run
      `python3 build_graph.py --thread <id> --recheck`
-     to re-run the checks and all four reviews on your fixes. Repeat until
+     to re-run the checks and both reviews (code review and QA) on your fixes. Repeat until
      it passes.
    - **BUILD STOPPED** — a step errored (an agent ran out of turns or
      budget, returned no verdict, or files changed that shouldn't have).
