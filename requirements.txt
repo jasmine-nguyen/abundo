@@ -1,4 +1,5 @@
 langgraph>=1.0
 langgraph-checkpoint-sqlite>=3.0
 aiosqlite
-claude-agent-sdk>=0.2.140
+# Pinned: the SDK ships its own Claude Code, so every machine runs the same one.
+claude-agent-sdk==0.2.160

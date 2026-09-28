@@ -389,6 +389,10 @@ async def run_agent(name: str, prompt: str, output_format: dict, resume: str | N
         max_turns=agent.max_turns,
         max_budget_usd=agent.max_budget_usd,
         effort=AGENT_EFFORT,
+        # Nobody is there to answer a permission prompt, so never ask: the tools above run and
+        # anything else is refused. Set here rather than inherited, so a build behaves the same
+        # on a laptop and in a cloud session, whatever mode that session is in.
+        permission_mode="dontAsk",
         cwd=str(ROOT),
         resume=resume,
         # The repo's own CLAUDE.md and settings, but not the user's global plugins,
