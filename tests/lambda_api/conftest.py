@@ -78,8 +78,8 @@ def handler():
 
 @pytest.fixture
 def apply_rules_worker():
-    """Import lambda_api/apply_rules_worker.py in isolation (WHIT-537). It imports the handler for
-    the shared write phase, so this sheds the same colliding names before importing."""
+    """Import lambda_api/apply_rules_worker.py in isolation (WHIT-537). It shares the handler's
+    imports (repository, api_constants, rule_engine), so this sheds the same colliding names first."""
     with _isolated_import("apply_rules_worker") as module:
         yield module
 

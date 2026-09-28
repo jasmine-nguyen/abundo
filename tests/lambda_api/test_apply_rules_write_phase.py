@@ -1,4 +1,4 @@
-"""Direct tests for handler._apply_rules_write_phase (WHIT-537 extraction).
+"""Direct tests for the apply-rules write phase — RuleBook.sweep (WHIT-537, moved by WHIT-623).
 
 The write loop + WHIT-540 reconcile sweep were extracted from apply_rules_to_uncategorized into
 this shared helper, with the cap and time budget as CALL-SITE parameters (the sync route passes
@@ -9,7 +9,8 @@ this shared helper, with the cap and time budget as CALL-SITE parameters (the sy
   * max_writes is a real ceiling on the reconcile sweep — 300 caps a 400-row orphan tail, leaving
     100 behind (exactly what the worker's max_writes=None overrides, the mirror of A-G3).
 
-These call the extracted helper against the promoted WritableFeedRepo, so what it writes is real.
+These call RuleBook.sweep (via the handler's import) against the promoted WritableFeedRepo, so what
+it writes is real.
 """
 
 import pytest
@@ -17,8 +18,9 @@ import pytest
 from _feed_fakes import SPENDING, _row, WritableFeedRepo
 
 
-def _is_unfiled(category, taxonomy=frozenset({"groceries"})):
-    return category != "income" and category not in taxonomy
+def _book(handler):
+    """A rule book over the {"groceries"} taxonomy with no stored rules — every stamp is an orphan."""
+    return handler.RuleBook({"groceries"}, [])
 
 
 # --- time-budget break (sync route's 30s-window guard) -----------------------
@@ -34,13 +36,12 @@ def test_time_budget_break_stops_the_file_loop_after_the_first_write(handler, mo
     # Clock jumps to 100s the moment it is read (after the first write, attempted becomes truthy).
     monkeypatch.setattr(handler.time, "monotonic", lambda: 100.0)
 
-    filed, vanished, failed, already, remaining = handler._apply_rules_write_phase(
-        repo, plan, [], {"r1": "groceries"}, {}, _is_unfiled,
-        inline_stamp=None, run_reconcile=False,
-        max_writes=None, time_budget=15.0, started=0.0,
+    filed, vanished, failed, already, remaining = _book(handler).sweep(
+        repo, [], plan, run_reconcile=False,
+        limit=handler.WriteLimit(None, 15.0, 0.0),
     )
 
-    # FAIL-ON-REVERT: drop the `time_budget` branch in over_budget() and all 5 rows file.
+    # FAIL-ON-REVERT: drop the `time_budget` branch in WriteLimit.reached() and all 5 rows file.
     assert len(filed) == 1 and len(repo.writes) == 1
     assert remaining == 4          # matched(5) - attempted(1)
 
@@ -53,10 +54,9 @@ def test_the_first_write_is_never_starved_even_when_already_over_budget(handler,
     plan = {"matched": [(dict(rows[0], category=None), "groceries", "r1")]}
     monkeypatch.setattr(handler.time, "monotonic", lambda: 10_000.0)
 
-    filed, *_ = handler._apply_rules_write_phase(
-        repo, plan, [], {"r1": "groceries"}, {}, _is_unfiled,
-        inline_stamp=None, run_reconcile=False,
-        max_writes=None, time_budget=1.0, started=0.0,
+    filed, *_ = _book(handler).sweep(
+        repo, [], plan, run_reconcile=False,
+        limit=handler.WriteLimit(None, 1.0, 0.0),
     )
     assert len(filed) == 1
 
@@ -73,10 +73,9 @@ def test_max_writes_caps_the_reconcile_tail_leaving_a_remainder(handler):
     transactions = [dict(r) for r in orphans]   # the "scanned" rows the reconcile sweep walks
     plan = {"matched": []}
 
-    handler._apply_rules_write_phase(
-        repo, plan, transactions, {}, {}, _is_unfiled,   # r_dead absent from rule_target_by_id -> clear
-        inline_stamp=None, run_reconcile=True,
-        max_writes=300, time_budget=None, started=None,
+    _book(handler).sweep(   # r_dead is not in the book -> clear
+        repo, transactions, plan, run_reconcile=True,
+        limit=handler.WriteLimit(300, None, None),
     )
 
     assert len(repo.writes) == 300
@@ -92,10 +91,9 @@ def test_no_cap_clears_the_whole_reconcile_tail(handler):
     transactions = [dict(r) for r in orphans]
     plan = {"matched": []}
 
-    handler._apply_rules_write_phase(
-        repo, plan, transactions, {}, {}, _is_unfiled,
-        inline_stamp=None, run_reconcile=True,
-        max_writes=None, time_budget=None, started=None,
+    _book(handler).sweep(
+        repo, transactions, plan, run_reconcile=True,
+        limit=handler.WriteLimit.none(),
     )
 
     left = [r for rows in repo._rows.values() for r in rows if r.get("filed_by_rule") == "r_dead"]

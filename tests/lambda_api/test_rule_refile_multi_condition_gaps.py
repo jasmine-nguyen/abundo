@@ -6,7 +6,7 @@ that id and the rule is PUT-edited. Probes:
   * in-place edit (same conditions, category change): id stable, conditions preserved on the row,
     owned charges re-filed to the new target.
   * conditions-changing edit on a DESCRIPTION-first multi rule: id moves (old row deleted, new
-    written) AND _refile_rule_touched re-evaluates via rule_matches -> a charge that no longer
+    written) AND RuleBook.refile_touched re-evaluates via rule_matches -> a charge that no longer
     matches the tightened conditions is CLEARED.
   * conditions-changing edit on a MERCHANT-first multi rule ALSO re-evaluates (WHIT-561 B1 fix):
     the safe-to-re-evaluate test is "does not match on `category`", NOT "first field is
@@ -103,7 +103,7 @@ def test_conditions_change_moves_the_id_and_deletes_the_old_row(handler):
 def test_conditions_change_on_a_description_multi_reevaluates_and_clears_a_non_match(handler):
     # [G-rf3] THE WHIT-540 re-evaluation for a multi rule. A $25 UBER charge was filed by
     # "description contains uber AND amount < 30". The rule is edited to amount < 10 (a DESCRIPTION-
-    # first multi whose id changed) -> _refile_rule_touched re-evaluates via rule_matches: $25 is not
+    # first multi whose id changed) -> RuleBook.refile_touched re-evaluates via rule_matches: $25 is not
     # < $10, so the charge is CLEARED (not blindly moved). FAIL-ON-REVERT: if rule_matches ignored the
     # amount condition, the charge would be wrongly re-filed instead of cleared.
     conditions = [{"field": "description", "operator": "contains", "value": "uber"},

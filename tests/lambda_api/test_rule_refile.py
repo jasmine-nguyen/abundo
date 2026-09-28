@@ -1,7 +1,7 @@
 """WHIT-540 — editing a rule re-files the charges it already filed; deleting a rule undoes them.
 
 Drives update_rule_route / delete_rule_route directly (like test_apply_rules drives its route), so
-the store->client mapping (rule_book.rule_from_row), the re-file helper (_refile_rule_touched) and the two
+the store->client mapping (rule_book.rule_from_row), the re-file helper (RuleBook.refile_touched) and the two
 stamp-conditioned repository writes are all exercised end to end against the realistic feed fake.
 
 Rule ids come from rule_engine.rule_id_for (the id IS the folded text). Rather than import that
@@ -117,7 +117,7 @@ def test_edit_category_rule_refiles_without_reevaluating(handler):
     # "groceries" when it filed it. Editing the rule's match value changes the id, which would
     # normally re-evaluate — but re-running "category equals SUPERMARKETS" against a charge now
     # storing "groceries" never matches, so it would WRONGLY clear a correctly-filed charge.
-    # FAIL-ON-REVERT: drop the `field != "category"` guard in _refile_rule_touched and "t1" is
+    # FAIL-ON-REVERT: drop the `field != "category"` guard in RuleBook.refile_touched and "t1" is
     # cleared instead of re-filed.
     rule_repo, old = _seed_rule("FOOD_AND_DRINK", "groceries", field="category", operator="equals")
     repo = WritableFeedRepo({SPENDING: [
