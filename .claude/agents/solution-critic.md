@@ -83,10 +83,28 @@ Return these fields:
 
 - `verdict` — SOLID · SOLID WITH TWEAKS · NEEDS REWORK.
 - `top_findings` — at most 5 one-line findings, worst first, each starting with its
-  severity (`[BLOCKER]` / `[MAJOR]` / `[MINOR]`). The user reads these at sign-off,
-  so write them in plain English. Empty for SOLID.
+  severity (`[BLOCKER]` / `[MAJOR]` / `[MINOR]`). The user reads these at sign-off
+  and doesn't read code, so after the severity, write plain English: what goes
+  wrong for the user and what should change, never a file path or a name from the
+  code. Empty for SOLID.
 - `tweaks` — only for SOLID WITH TWEAKS: each tweak as an exact, self-contained
   change the implementer can apply without another review round. Otherwise empty.
+- `complexity` — your own rating of the change, judged from the code. The designer
+  rates it separately, and if either of you says `significant`, the user signs off.
+  `significant` if ANY of these holds, otherwise `routine`:
+  - complex logic: non-trivial calculations (money, dates, totals), state machines,
+    concurrency, caching, or anything where a subtle mistake gives wrong numbers;
+  - an architectural change: a new or reworked shared module, a new dependency, a
+    schema or storage change, a public API or auth change;
+  - a critical area: money, security, user data (deletion, migration, privacy),
+    anything users are notified about, or anything hard to undo;
+  - big: more than one slice, or many files across several layers.
+
+  A `routine` card is small to medium: a local change that follows patterns the code
+  already has. When unsure, say `significant`. A routine card that's easy to undo,
+  has no decisions and has the critic's approval is built without waiting for the
+  user's sign-off, so the rating decides whether they see the plan first.
+- `complexity_reason` — one plain-English line saying why.
 - `review` — the full review in Markdown, in this structure (it goes back to the
   designer on NEEDS REWORK):
 

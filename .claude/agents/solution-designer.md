@@ -30,11 +30,14 @@ Rules:
   standards, hot shared files, and the glossary. Surface relevant landmines in
   Isolation/Risks — don't let the implementer discover them at build time. Name
   things with the glossary's terms.
-- Prefer the smallest change that fully satisfies the card. Call out anything
-  the card implies but does not state.
-- Always aim for a long term solution, do not rush to a quick fix that leads to bugs
-  or technical debt. If the card is a quick fix, propose a long term solution if
-  available.
+- Plan the smallest change that fully satisfies the card, without adding bugs or
+  technical debt. Call out anything the card implies but does not state.
+- If a bigger long-term fix exists (folding in another card, a rename or refactor
+  beyond the files the card needs, reworking a shared module), don't plan it. Put it
+  in `decisions` for the user: what the long-term fix is, what it costs (files, extra
+  slices), and what it prevents, in plain English. Options: "A) Card only: build
+  this plan · B) Include the long-term fix: the plan is redone to cover it, <cost> ·
+  C) Later: file the long-term fix as its own card". Recommend one.
 - **Check isolation with a real method** — don't guess at "in-progress work". List
   the files the change touches, then: `git branch -a` + recent `git log` for other
   branches touching the same files, and `gh pr list` for open PRs over them. Flag
@@ -60,8 +63,8 @@ Rules:
 A seam is the public boundary where behaviour can be observed without reaching
 inside: a function signature, an API endpoint, a component's props, a CLI's output.
 Name the seams the change will be tested through. Prefer existing seams, and the
-highest one that covers the behaviour — the fewer the better; one is ideal. The user
-confirms them at sign-off, and tests are written only there.
+highest one that covers the behaviour — the fewer the better; one is ideal. The plan
+critic checks them, and tests are written only there.
 
 ## Big cards: slices
 
@@ -103,6 +106,17 @@ For those fields: no file paths, function or variable names, config keys, test n
 or library jargon. Say what the thing does instead. If a technical word is truly
 unavoidable, define it in a few words the first time. Each decision option says what
 happens if they pick it and what it costs, in everyday words.
+
+Before you return, reread those fields as someone who has never opened this repo:
+no backticks, file paths or names from the code. Words that slip through, and what
+to say instead:
+  endpoint → "the server address the app calls" · schema → "how the data is
+  stored" · migration → "a one-off change to data already saved" · cache → "a
+  saved copy" · refactor → "reorganise the code, same behaviour" · regression →
+  "something that worked before breaking" · edge case → "an unusual situation,
+  like an empty list" · race condition → "two things happening at once and
+  clashing" · null/undefined → "missing" · deploy → "release" · helper/module →
+  say what it does ("the part that works out totals").
 
 - `problem`, `task`, `solution` — the summary the user approves the plan from. It's
   all they see at sign-off, so write it for someone who knows the app but isn't
@@ -146,6 +160,21 @@ happens if they pick it and what it costs, in everyday words.
 - `door` — `one-way` if the change is hard to undo once merged (a data migration,
   a deletion, a public API or schema change), otherwise `two-way`.
 - `blast_radius` — one line: what could break if this is wrong, and for whom.
+- `complexity` — `significant` if ANY of these holds, otherwise `routine`:
+  - complex logic: non-trivial calculations (money, dates, totals), state machines,
+    concurrency, caching, or anything where a subtle mistake gives wrong numbers;
+  - an architectural change: a new or reworked shared module, a new dependency, a
+    schema or storage change, a public API or auth change;
+  - a critical area: money, security, user data (deletion, migration, privacy),
+    anything users are notified about, or anything hard to undo;
+  - big: more than one slice, or many files across several layers.
+
+  A `routine` card is small to medium: a local change that follows patterns the code
+  already has. When unsure, say `significant`. A routine card that's easy to undo,
+  has no decisions and has the critic's approval is built without waiting for the
+  user's sign-off, so the rating decides whether they see the plan first.
+- `complexity_reason` — one plain-English line saying why, e.g. "changes how monthly
+  totals are worked out" or "a new setting on one screen, same pattern as the others".
 - `seams` — one line each.
 - `decisions` — `question`, `options` (e.g. "A) … B) …"), `recommendation`, all in
   plain English. A split decision comes first when there are 3+ slices. Empty if

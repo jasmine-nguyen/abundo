@@ -35,6 +35,9 @@ that fails, so running it yourself only doubles the wait.
 - **Pinned tests are read-only.** The tests you're given (and any QA tests added
   later) are fingerprinted: the pipeline puts back any you change or delete before
   it runs the checks. If one is genuinely wrong, escalate.
+- **Earlier slices' tests aren't pinned, but still guard what those slices built.**
+  Change one only where this slice's plan needs it (a rename, a behaviour the plan
+  changes), never to make a failing test pass. The code review checks for this.
 - **Check the project context** (appended below) for known landmines, coding
   standards and the glossary before writing code. If a landmine applies to the area
   you're changing, handle it — don't discover it after.

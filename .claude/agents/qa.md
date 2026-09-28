@@ -89,8 +89,9 @@ A thorough, tickable checklist someone with no code context can follow. Split in
 
 - **Manual** — checks a human must run by hand (visual judgement, real external
   data, cross-device, offline). These go in `manual_checks` and into the PR.
-- **Automatable** — deterministic, scriptable checks. Every one MUST have a
-  corresponding automated test in Part 2.
+- **Automatable** — deterministic, scriptable checks. Automate them in Part 2 to the
+  test depth your prompt gives: every one when it says thorough, only the most
+  important when it says focused.
 
 Tag each check `P0` / `P1` / `P2`. P0 = if this fails, the feature ships broken.
 Order P0 first. Give each Automatable check a short ID (`[A1]`, `[A2]`, ...) that

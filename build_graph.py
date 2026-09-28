@@ -19,6 +19,7 @@
 # next_slice / ship ─→ implementer                               QA's new tests fail the checks, rounds left
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import inspect
 import operator
@@ -29,6 +30,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -51,8 +53,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, RetryPolicy, interrupt
 
 
-def merge_unique(old: list, new: list) -> list:
-    """Keep notes from every slice and round, without repeats."""
+def merge_unique(old: list, new: list | None) -> list:
+    """Keep notes from every slice and round, without repeats. None empties the list (a replan)."""
+    if new is None:
+        return []
     return old + [item for item in new if item not in old]
 
 
@@ -63,6 +67,7 @@ class BuildState(TypedDict):
     card_type: NotRequired[str]
     untracked_at_start: NotRequired[list[str]]
     requested_branch: NotRequired[str]
+    always_sign_off: NotRequired[bool]
     history: Annotated[list[str], operator.add]
     # planning
     validity: NotRequired[str]
@@ -79,6 +84,8 @@ class BuildState(TypedDict):
     files: NotRequired[list[str]]
     risks: NotRequired[list[str]]
     door: NotRequired[str]
+    complexity: NotRequired[str]
+    complexity_reason: NotRequired[str]
     blast_radius: NotRequired[str]
     seams: NotRequired[list[str]]
     decisions: NotRequired[list[dict]]
@@ -92,6 +99,7 @@ class BuildState(TypedDict):
     # branch and slices
     base_branch: NotRequired[str]
     branch: NotRequired[str]
+    build_base: NotRequired[str]
     slice_base: NotRequired[str]
     current_slice: NotRequired[int]
     # tests
@@ -239,6 +247,12 @@ def _output(**properties) -> dict:
     return {"type": "json_schema", "schema": _object(**properties)}
 
 
+VALIDITY_WORDS = {
+    "ALREADY DONE": "it looks already done",
+    "DEAD CODE": "the part of the app it's about isn't used anywhere",
+    "WRONG PREMISE": "what it describes isn't how the app works today",
+    "ALREADY COVERED": "the existing tests already cover it",
+}
 DESIGNER_OUTPUT = _output(
     validity=_one_of("VALID", "ALREADY DONE", "DEAD CODE", "WRONG PREMISE", "ALREADY COVERED"),
     validity_evidence=TEXT,
@@ -249,6 +263,8 @@ DESIGNER_OUTPUT = _output(
     files=TEXTS,
     risks=TEXTS,
     door=_one_of("one-way", "two-way"),
+    complexity=_one_of("routine", "significant"),
+    complexity_reason=TEXT,
     blast_radius=TEXT,
     seams=TEXTS,
     decisions=_list_of(question=TEXT, options=TEXT, recommendation=TEXT),
@@ -259,6 +275,8 @@ CRITIC_OUTPUT = _output(
     verdict=_one_of("SOLID", "SOLID WITH TWEAKS", "NEEDS REWORK"),
     top_findings=TEXTS,
     tweaks=TEXTS,
+    complexity=_one_of("routine", "significant"),
+    complexity_reason=TEXT,
     review=TEXT,
 )
 REPRODUCER_OUTPUT = _output(
@@ -516,7 +534,7 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
         if update["clarify_questions"]:
             return f"❓ Designer has {plural(len(update['clarify_questions']), 'question')} before planning"
         if update["validity"] != "VALID":
-            return f"❌ Designer thinks the card isn't needed ({update['validity'].lower()})"
+            return f"❌ Designer thinks the card isn't needed: {VALIDITY_WORDS.get(update['validity'], update['validity'])}"
         details = [
             plural(len(update[key]), word) for key, word in (("decisions", "decision"), ("slices", "slice")) if update[key]
         ]
@@ -565,6 +583,8 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
         if update.get("repro"):
             return "✅ Bug reproduced with a failing test"
         return "❌ Couldn't reproduce the bug"
+    if name == "sign_off" and update.get("plan_decision") == "AUTO_APPROVED":
+        return auto_approved_brief(state)
     if name == "next_slice":
         index, slices = update["current_slice"], state["slices"]
         return f"✅ Slice {index} done, starting slice {index + 1} of {len(slices)}: {slices[index]['title']}"
@@ -1076,7 +1096,10 @@ async def designer(state: BuildState):
         "validity_evidence": out["validity_evidence"],
         "clarify_questions": [],
         "plan": out["plan"],
-        **{key: out[key] for key in ("problem", "task", "solution", "files", "risks", "door", "blast_radius")},
+        **{
+            key: out[key]
+            for key in ("problem", "task", "solution", "files", "risks", "door", "blast_radius", "complexity", "complexity_reason")
+        },
         "seams": out["seams"],
         "decisions": out["decisions"],
         "slices": slices,
@@ -1123,8 +1146,11 @@ async def plan_critic(state: BuildState):
     out = result.output
     rework = out["verdict"] == "NEEDS REWORK"
     worst = f" — {out['top_findings'][0]}" if rework and out["top_findings"] else ""
+    # Either planner rating the change significant is enough to ask the user.
+    raised = out["complexity"] == "significant" and state.get("complexity") != "significant"
     return {
         "critic_session": result.session_id,
+        **({"complexity": "significant", "complexity_reason": out["complexity_reason"]} if raised else {}),
         "plan_verdict": out["verdict"],
         "plan_findings": out["top_findings"],
         "plan_tweaks": out["tweaks"] if out["verdict"] == "SOLID WITH TWEAKS" else [],
@@ -1133,6 +1159,10 @@ async def plan_critic(state: BuildState):
     }
 
 
+PLAN_APPROVALS = {
+    "APPROVED": "approved by you",
+    "AUTO_APPROVED": "approved automatically: a routine change, easy to undo, nothing to decide",
+}
 DOORS = {
     "one-way": "One-way door: hard to undo once merged",
     "two-way": "Two-way door: easy to roll back",
@@ -1141,6 +1171,16 @@ DOORS = {
 
 def section(title: str, items) -> list[str]:
     return ["", f"{title}:", *[f"  - {item}" for item in items]] if items else []
+
+
+SEVERITY_WORDS = {"[BLOCKER]": "Must fix:", "[MAJOR]": "Should fix:", "[MINOR]": "Small:"}
+
+
+def plain_finding(finding: str) -> str:
+    for tag, words in SEVERITY_WORDS.items():
+        if finding.startswith(tag):
+            return f"{words}{finding.removeprefix(tag)}"
+    return finding
 
 
 def critic_summary(state: BuildState) -> str:
@@ -1153,22 +1193,30 @@ def critic_summary(state: BuildState) -> str:
     return "critic approved" if verdict else "critic not run"
 
 
+def plan_summary(state: BuildState) -> list[str]:
+    return [
+        *section("Problem", state.get("problem", [])),
+        *section("Task", state.get("task", [])),
+        *section("Solution", state.get("solution", [])),
+    ]
+
+
 def plan_brief(state: BuildState) -> str:
     """Only what's needed to decide: the why/what/how summary and any open questions.
     Files, tests, critic notes and risks stay in the plan file."""
     lines = [
         f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} · {critic_summary(state)}",
-        *section("Problem", state.get("problem", [])),
-        *section("Task", state.get("task", [])),
-        *section("Solution", state.get("solution", [])),
+        *plan_summary(state),
     ]
+    if state.get("complexity") == "significant" and state.get("complexity_reason"):
+        lines += ["", f"Why this needs your sign-off: {state['complexity_reason']}"]
     if state.get("plan_verdict") == "NEEDS REWORK":
-        lines += section("The critic's unresolved concerns", state.get("plan_findings", []))
+        lines += section("The critic's unresolved concerns", [plain_finding(f) for f in state.get("plan_findings", [])])
     if state.get("decisions"):
         lines += ["", "Decisions for you:", format_questions(state["decisions"])]
     lines += [
         "",
-        f"Details (files, tests, critic notes, risks): {plan_file(state).relative_to(ROOT)}",
+        f"The technical details (files, tests, risks), if you want them: {plan_file(state).relative_to(ROOT)}",
         "",
         (
             'Reply "go" to approve (recommended answers), "go: Q1 <answer>; Q2 <answer>" to approve '
@@ -1178,11 +1226,23 @@ def plan_brief(state: BuildState) -> str:
     return "\n".join(lines)
 
 
+def auto_approved_brief(state: BuildState) -> str:
+    """Printed before any building starts, so the user sees what's coming and can step in."""
+    reason = f": {state['complexity_reason']}" if state.get("complexity_reason") else ""
+    return "\n".join([
+        "=" * 60,
+        f"PLAN APPROVED AUTOMATICALLY — {state.get('card_number') or 'ad-hoc request'} · a routine change{reason}",
+        *plan_summary(state),
+        "",
+        'Building now. To change the plan, tell Claude "stop, <what to change>".',
+        "=" * 60,
+    ])
+
+
 def invalid_brief(state: BuildState) -> str:
     lines = [
-        f"CARD LOOKS INVALID — {state.get('card_number') or 'ad-hoc request'}: {state['validity']}",
-        "",
-        f"Evidence: {state.get('validity_evidence', '')}",
+        f"CARD LOOKS INVALID — {state.get('card_number') or 'ad-hoc request'}: "
+        f"{VALIDITY_WORDS.get(state['validity'], state['validity'])}",
         *section("Problem", state.get("problem", [])),
         *section("What the card should become", state.get("solution", [])),
         "",
@@ -1201,6 +1261,7 @@ def _sent_back(state: BuildState, feedback: str) -> dict:
         "plan_decision": "REJECTED",
         "plan_feedback": feedback,
         "plan_attempts": 0,
+        "always_sign_off": True,  # the user wants to see the next draft
         "history": [f"✗ sign_off: sent back — {first_line(feedback)}"],
     }
 
@@ -1219,28 +1280,48 @@ def sign_off(state: BuildState):
             }
         return _sent_back(state, rest if word == "rework" else reply)
 
+    if auto_approvable(state):
+        return approve(state, "", "AUTO_APPROVED")
     reply = interrupt(plan_brief(state))
     word, rest = split_reply(reply)
     if word in STOPS:
         return {"plan_decision": "STOPPED", **stopped("sign_off")}
     if word not in APPROVALS:
         return _sent_back(state, rest if word == "rework" else reply)
+    return approve(state, rest, "APPROVED")
 
+
+def auto_approvable(state: BuildState) -> bool:
+    """Small and medium cards skip sign-off: both planners rated the change routine (no complex
+    logic, architectural change or critical area), it's easy to undo, it fits one slice, the
+    critic is happy, and nothing is left for the user to decide."""
+    return (
+        not state.get("always_sign_off")
+        and state.get("complexity") == "routine"
+        and state.get("door") == "two-way"
+        and not state.get("decisions")
+        and not state.get("slices")
+        and state.get("plan_verdict") in ("SOLID", "SOLID WITH TWEAKS")
+    )
+
+
+def approve(state: BuildState, answers: str, decision: str) -> dict:
     # Re-read the plan file so direct edits made during the pause count.
     sections = [read_text(plan_file(state)) or state["plan"]]
     if state.get("plan_tweaks"):
         sections.append(f"## Critic tweaks (apply these)\n{bullets(state['plan_tweaks'])}")
-    if rest:
-        sections.append(f"## Sign-off answers\n{rest}")
+    if answers:
+        sections.append(f"## Sign-off answers\n{answers}")
     elif state.get("decisions"):
         sections.append("## Sign-off answers\nUse the recommended answer for every decision.")
     approved = "\n\n".join(sections)
     write_text(work_dir(state) / "approved-plan.md", approved)
+    how = "approved automatically (routine)" if decision == "AUTO_APPROVED" else "approved"
     return {
-        "plan_decision": "APPROVED",
+        "plan_decision": decision,
         "plan": approved,
         "plan_feedback": "",
-        "history": [f"✓ sign_off: approved{' with answers' if rest else ''}"],
+        "history": [f"✓ sign_off: {how}{' with answers' if answers else ''}"],
     }
 
 
@@ -1267,6 +1348,7 @@ def prepare_branch(state: BuildState):
     return {
         "base_branch": base,
         "branch": branch,
+        "build_base": head,
         "slice_base": head,
         "current_slice": 0,
         "history": [f"• branch: {branch}"],
@@ -1512,6 +1594,24 @@ async def code_critic(state: BuildState):
     }
 
 
+def thorough_qa(state: BuildState) -> bool:
+    """Full QA for significant or hard-to-undo changes; a focused pass for routine ones."""
+    return state.get("complexity") != "routine" or state.get("door") == "one-way"
+
+
+def qa_depth_block(state: BuildState) -> str:
+    if thorough_qa(state):
+        return (
+            "## Test depth: thorough\nThis change is significant or hard to undo. Automate every "
+            "Automatable check, P0 first."
+        )
+    return (
+        "## Test depth: focused\nThis is a routine change. Automate the P0 checks and the P1 checks "
+        "most likely to break, at most 5 tests in all. If a check you didn't automate could plausibly "
+        "break for users, add it to `manual_checks`."
+    )
+
+
 def qa_passed_last_round(state: BuildState) -> bool:
     """QA re-runs on a fix round only if it asked for changes. Its tests are pinned and run
     in every check, and the code critic reviews the fixes."""
@@ -1537,7 +1637,8 @@ async def qa(state: BuildState):
         f"checkout's installed packages linked in. Work only there; never touch the main checkout at "
         f"`{ROOT}`. The pipeline removes the worktree when you finish.\n\n"
         f"## Where your tests go\nSave your test changes as a patch at `{patch}` "
-        "(see 'Hand back your tests'). The pipeline applies it to the branch."
+        "(see 'Hand back your tests'). The pipeline applies it to the branch.\n\n"
+        f"{qa_depth_block(state)}"
     )
     try:
         result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT, cwd=worktree)
@@ -1634,6 +1735,10 @@ def next_slice(state: BuildState):
         "implementer_session": "",
         "implementer_resumes": 0,
         "implementation_attempts": 0,
+        # This slice's tests passed and were reviewed, so a later slice may change them (a rename,
+        # a behaviour the plan changes). They still run in every check, and the code review
+        # flags any change that weakens them.
+        "pinned": {},
         "tests": "",
         "test_attempts": 0,
         "test_feedback": "",
@@ -1664,6 +1769,7 @@ def pr_body(state: BuildState) -> str:
             f"**After:** {checks} pass, and the code review and QA both approved.",
         ])),
         ("Merge danger", bullets([
+            f"**Plan:** {PLAN_APPROVALS.get(state.get('plan_decision'), 'approved')}",
             f"**Door:** {DOORS[door] if door else 'not assessed'}",
             f"**Blast radius:** {state.get('blast_radius') or 'not assessed'}",
             *state.get("risks", []),
@@ -1727,7 +1833,7 @@ def after_critic(state: BuildState):
 
 
 def after_sign_off(state: BuildState):
-    return {"APPROVED": "prepare_branch", "CLOSED": END, "STOPPED": END}.get(
+    return {"APPROVED": "prepare_branch", "AUTO_APPROVED": "prepare_branch", "CLOSED": END, "STOPPED": END}.get(
         state.get("plan_decision"), "designer"
     )
 
@@ -1842,8 +1948,11 @@ builder.add_conditional_edges("ship", after_ship)
 #   python3 build_graph.py --thread WHIT-123 --status                              → where is it?
 #   python3 build_graph.py --thread WHIT-123 --retry                               → re-run a step that errored
 #   python3 build_graph.py --thread WHIT-123 --recheck                             → after fixing a failed build by hand
+#   python3 build_graph.py --thread WHIT-123 --replan "<what to change>"           → stop it, even mid-run, and replan
+#   python3 build_graph.py --thread WHIT-123 --cancel                              → stop it, even mid-run, and end it
 #   add --restart to a new build to discard saved progress for that card
 #   add --branch <name> to build on a given branch; a cloud session must pass its own
+#   add --review-plan to pause for sign-off even when the card is routine
 #
 # Use .venv/bin/python instead of python3 when the repo has a .venv.
 #
@@ -1862,11 +1971,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--thread", help="build thread ID (defaults to the card number)")
     parser.add_argument("--branch", help="branch to build and push on; in a cloud session, the session's own branch")
     parser.add_argument("--restart", action="store_true", help="discard saved progress and start over")
+    parser.add_argument(
+        "--review-plan", action="store_true", help="always pause for sign-off, even on a routine card"
+    )
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--resume", metavar="REPLY", help="answer the question a paused build is waiting on")
     action.add_argument("--status", action="store_true", help="show where a build is")
     action.add_argument("--retry", action="store_true", help="re-run the step that stopped with an error")
     action.add_argument("--recheck", action="store_true", help="re-run checks and reviews after fixing a failed build")
+    action.add_argument(
+        "--replan", metavar="FEEDBACK",
+        help="stop the build (even while it runs), throw away its unfinished work and send the plan back",
+    )
+    action.add_argument("--cancel", action="store_true", help="stop the build (even while it runs) and end it")
     parser.add_argument(
         "--allow-api-billing", action="store_true",
         help="run even though an API key is set, so every token is billed (the user's call only)",
@@ -1875,13 +1992,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if args.details_file:
         args.details = sys.stdin.read() if args.details_file == "-" else Path(args.details_file).read_text()
-    continuing = args.resume is not None or args.status or args.retry or args.recheck
+    continuing = (
+        args.resume is not None or args.replan is not None or args.cancel or args.status or args.retry or args.recheck
+    )
     if args.request and not args.card and not continuing:
         args.thread = args.thread or hashlib.sha256(args.request.encode()).hexdigest()[:8]
     args.thread = args.thread or args.card
     if continuing:
         if not args.thread:
-            parser.error("--resume, --status, --retry and --recheck need --thread (or --card)")
+            parser.error("--resume, --replan, --cancel, --status, --retry and --recheck need --thread (or --card)")
     elif args.card and not (args.details or "").strip():
         parser.error(f"--card {args.card} requires --details or --details-file (fetch the card first)")
     elif not args.card and not args.request:
@@ -2056,6 +2175,7 @@ async def start_build(graph, saver, config, snapshot, args):
             "card_type": args.type,
             "untracked_at_start": [path for status, path in git_status() if status == "??"],
             "requested_branch": args.branch or "",
+            "always_sign_off": args.review_plan,
             "history": [],
         },
         config,
@@ -2112,6 +2232,139 @@ async def recheck_build(graph, config, snapshot):
     return await graph.ainvoke(None, config)
 
 
+# --- stopping a running build ---
+
+
+def pid_file(thread: str) -> Path:
+    return BUILD_DIR / f"{thread}.pid"
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    code, stat = run(["ps", "-o", "stat=", "-p", str(pid)])
+    return code == 0 and not stat.strip().startswith("Z")
+
+
+def running_pid(thread: str) -> int | None:
+    """The process ID of a build of this thread that's still running, if there is one."""
+    text = read_text(pid_file(thread)).strip()
+    pid = int(text) if text.isdigit() else None
+    return pid if pid and pid != os.getpid() and alive(pid) else None
+
+
+def descendants(pid: int) -> list[int]:
+    code, out = run(["pgrep", "-P", str(pid)])
+    children = [int(child) for child in out.split()] if code == 0 else []
+    return [found for child in children for found in (child, *descendants(child))]
+
+
+def stop_process_tree(pid: int) -> None:
+    """Stop the build and everything it started (agents, test runs), so nothing keeps
+    editing files after its work is thrown away."""
+    targets = [pid, *descendants(pid)]
+    for target in targets:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(target, signal.SIGTERM)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and any(alive(target) for target in targets):
+        time.sleep(0.2)
+    for target in targets:
+        with contextlib.suppress(ProcessLookupError):
+            if alive(target):
+                os.kill(target, signal.SIGKILL)
+
+
+def discard_build_work(state: BuildState, to: str) -> None:
+    """Reset the branch to `to` and delete the files the build created but didn't commit."""
+    for line in git("worktree", "list", "--porcelain").splitlines():
+        path = line.removeprefix("worktree ")
+        if line.startswith("worktree ") and "build-qa-" in path:
+            remove_worktree(Path(path))
+    lock = Path(git("rev-parse", "--git-path", "index.lock"))
+    (lock if lock.is_absolute() else ROOT / lock).unlink(missing_ok=True)  # left by a killed commit
+    git("reset", "--hard", to)
+    for path in stray_changes(state):
+        (ROOT / path).unlink(missing_ok=True)
+
+
+def stop_running_build(values: dict, pid: int | None) -> bool:
+    """Stop the build of this thread running as `pid`, if any. False if it can't be stopped any more."""
+    if not values:
+        print("No saved build for this thread.")
+        return False
+    if values.get("outcome") in ("shipped", "closed", "stopped"):
+        print("This build already finished. Open a new card for the change, or change the PR directly.")
+        return False
+    branch = values.get("branch")
+    if branch and run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch], timeout=30)[0] == 0:
+        print(f"Branch {branch} is already pushed, so its work can't be thrown away. Change the PR directly.")
+        return False
+    if pid:
+        print("⏹ Stopping the running build…", flush=True)
+        stop_process_tree(pid)
+    return True
+
+
+async def cancel_build(graph, config, snapshot, pid: int | None):
+    values = snapshot.values
+    if not stop_running_build(values, pid):
+        return None
+    if values.get("build_base"):
+        discard_build_work(values, "HEAD")  # keep what was committed, drop what was half-written
+    await graph.aupdate_state(config, stopped("cancel"), as_node="clarify")  # clarify ends a stopped build
+    return (await graph.aget_state(config)).values
+
+
+async def replan_build(graph, config, snapshot, feedback: str, pid: int | None):
+    values = snapshot.values
+    if not stop_running_build(values, pid):
+        return None
+    if values.get("build_base"):
+        discard_build_work(values, values["build_base"])
+        print("🗑 Threw away the unfinished work", flush=True)
+    await graph.aupdate_state(
+        config,
+        {
+            **cleared_reviews(),
+            "plan_decision": "REJECTED",
+            "plan_feedback": feedback,
+            "plan_attempts": 0,
+            "always_sign_off": True,
+            "clarify_questions": [],
+            "escalation": "",
+            "escalation_answer": "",
+            "escalation_next": "",
+            "pinned": {},
+            "repro": "",
+            "tests": "",
+            "test_attempts": 0,
+            "test_feedback": "",
+            "implementer_session": "",
+            "implementer_resumes": 0,
+            "implementation_attempts": 0,
+            "implementation": "",
+            "last_review": {},
+            "current_slice": 0,
+            "qa_patch": "",
+            "qa_test_command": "",
+            "failed": False,
+            "outcome": "",
+            "advisory": None,
+            "tech_debt": None,
+            "manual_checks": None,
+            "history": [f"↩️ replan: {first_line(feedback)}"],
+        },
+        as_node="sign_off",
+    )
+    print("↩️ Sending the plan back to the designer with your changes", flush=True)
+    return await graph.ainvoke(None, config)
+
+
 async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     paid = paid_auth_var()
@@ -2136,8 +2389,17 @@ async def main(argv: list[str] | None = None) -> int:
         snapshot = await graph.aget_state(config)
         if args.status:
             return await print_status(graph, config, args.thread, snapshot)
+        running = running_pid(args.thread)  # read before this run takes the lock
+        if running and args.replan is None and not args.cancel:
+            print(f"A build of {args.thread} is already running. Wait for it, or stop it with --replan or --cancel.")
+            return 1
+        write_text(pid_file(args.thread), str(os.getpid()))
         try:
-            if args.resume is not None:
+            if args.replan is not None:
+                result = await replan_build(graph, config, snapshot, args.replan, running)
+            elif args.cancel:
+                result = await cancel_build(graph, config, snapshot, running)
+            elif args.resume is not None:
                 result = await resume_build(graph, config, snapshot, args.resume)
             elif args.retry:
                 result = await retry_build(graph, config, snapshot)
@@ -2154,6 +2416,9 @@ async def main(argv: list[str] | None = None) -> int:
             print("=" * 60)
             print(f"\nFix the cause, then run:\n  {rerun()} --thread {args.thread} --retry")
             return 1
+        finally:
+            if read_text(pid_file(args.thread)).strip() == str(os.getpid()):
+                pid_file(args.thread).unlink()
         if result is None:
             return 1
         return report(args.thread, result)

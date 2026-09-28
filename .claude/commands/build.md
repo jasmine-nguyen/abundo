@@ -35,6 +35,14 @@ taking a moment to write it clearly.
   meaning. Only the wording changes.
 - If the user answers with a question ("what does this mean?"), the wording failed.
   Explain it more simply, with a concrete example, and ask again.
+- Words that slip through, and what to say instead:
+  endpoint → "the server address the app calls" · schema → "how the data is
+  stored" · migration → "a one-off change to data already saved" · cache → "a
+  saved copy" · refactor → "reorganise the code, same behaviour" · regression →
+  "something that worked before breaking" · edge case → "an unusual situation,
+  like an empty list" · race condition → "two things happening at once and
+  clashing" · null/undefined → "missing" · deploy → "release" · helper/module →
+  say what it does ("the part that works out totals").
 
 Read `project-context.md` first. It contains the board data source ID,
 card prefix, default card type, card picking rules (sort field,
@@ -123,6 +131,10 @@ the card number for card builds) and check where it is:
    Anything else falls back to `feat`. Bug and Defect cards also take the
    bug path: the bug is reproduced with a failing test before it's fixed.
 
+   Routine cards (small to medium, easy to undo, nothing to decide) skip plan
+   sign-off. If the user asks to see the plan before anything is built, add
+   `--review-plan`.
+
    The script refuses to start if tracked files have uncommitted changes,
    if `project-context.md` has no ```checks block (it must be able to run
    the tests), or if a build for this card already exists. Relay the message; only add
@@ -138,6 +150,36 @@ the card number for card builds) and check where it is:
    back, ❓ or ⏸ waiting for them). Relay those lines as they come, as written.
    Don't add commentary of your own, and don't go silent.
 
+   **PLAN APPROVED AUTOMATICALLY** — the planners rated the card routine, so
+   the build goes on without a sign-off. The script prints this block between
+   `===` lines before any building starts. The moment you see it, before you
+   relay anything else:
+   1. Show the block in your own message, formatted as Markdown (section titles
+      in bold, lines as bullets): the header line, Problem, Task, Solution, and
+      the last line on how to change the plan. As with PLAN FOR REVIEW, rewrite
+      any line that isn't plain English, and change nothing else.
+   2. Send a push notification (the PushNotification tool, if you have it),
+      since the user may have walked away: the card, "plan approved
+      automatically", and the Task in one plain line, e.g. "WHIT-42: plan
+      approved automatically. Building: a total at the bottom of the spending
+      list".
+
+   Don't ask anything: the build is already running.
+
+   **The user jumps in.** At a pause, use that pause's own replies (step 4):
+   `stop` ends the build, and at a plan review `rework: <feedback>` changes
+   the plan. Once building has started (while it runs, or at a DECISION
+   NEEDED pause), if the user wants to change the plan ("stop, make it a
+   weekly total instead"), run in the background:
+   `python3 build_graph.py --thread <id> --replan "<what they want changed>"`
+   It stops the running build itself (so the build's own background task
+   ending is expected, not an error), throws away the unfinished code, and
+   sends the plan back to the designer with their feedback. They then get a
+   PLAN FOR REVIEW (step 3) before anything is built again. If they want to
+   end a running build instead, run `python3 build_graph.py --thread <id>
+   --cancel` (step 5, BUILD CANCELLED); if it's unclear which they want, ask.
+   Once the PR is open, both refuse: change the PR instead.
+
 3. When the script pauses, it prints a block between `===` lines and
    `Paused. Resume with: ...`. The first line of the block says why:
 
@@ -145,10 +187,17 @@ the card number for card builds) and check where it is:
    pause, show what the block says in your own message BEFORE you ask
    anything.
 
+   The user may have walked away while the build ran. So at every pause, first
+   send them a push notification (the PushNotification tool, if you have it):
+   one plain line saying the card and what it's waiting for, e.g. "WHIT-42:
+   the plan is ready for your sign-off". Do the same when the build ends (PR
+   opened, failed or stopped).
+
    - **PLAN FOR REVIEW** — before any question, show the summary in your
      message exactly as printed, formatted as Markdown (section titles in
      bold, lines as bullets): the header line, Problem, Task and Solution,
-     any unresolved critic concerns, and the details line. Don't add to it,
+     the "Why this needs your sign-off" line, any unresolved critic concerns,
+     and the details line. Don't add to it,
      shorten it, or pull more in from the plan file. The one exception is a
      line that isn't plain English: rewrite that line (see "Plain English is
      critical"). If the user asks for the details, show them the parts they
@@ -168,8 +217,18 @@ the card number for card builds) and check where it is:
         slices are now their own cards: <new card IDs>.` The designer replans
         just slice 1, and you'll get a new PLAN FOR REVIEW.
      3. Tell the user which cards you filed.
-   - **CARD LOOKS INVALID** — show the block (evidence, problem, and what
-     the card should become), then ask: Close the card · Plan it anyway (ask
+
+     If the user answers a **long-term fix** decision (the designer offers one
+     when a bigger fix exists than the card needs):
+     - **Card only** — approve as usual (`go: Q<n> A; …`).
+     - **Include the long-term fix** — the plan doesn't cover it yet, so don't
+       approve. Resume with `rework: Include the long-term fix: <what it is>.`
+       and you'll get a new PLAN FOR REVIEW.
+     - **Later** — create a card for the long-term fix on the board the same
+       way as step 1b, then approve (`go: Q<n> C; …`) and tell the user which
+       card you filed.
+   - **CARD LOOKS INVALID** — show the block (why it looks unneeded, the
+     problem, and what the card should become), then ask: Close the card · Plan it anyway (ask
      why it's still needed) · Stop.
    - **QUESTIONS BEFORE PLANNING** — the card was too thin to plan. Ask the
      questions with AskUserQuestion, recommended answer first.
