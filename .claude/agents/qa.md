@@ -75,7 +75,7 @@ Rules:
 - **Restore with git, never from a snapshot.** `git checkout -- <path>` is
   authoritative.
 - **Leave the worktree clean between mutations.** After every red-green break:
-  restore, then re-run to confirm green before the next one.
+  restore, then re-run that test file to confirm green before the next one.
 - **Before you finish**, hand back your tests (below), then remove the worktree.
 
 ---
@@ -116,11 +116,14 @@ Every test you write MUST:
 - Reuse existing fixtures/helpers and established mock patterns.
 - Reference the checklist ID it covers (`# [A3]`).
 
-**Then run them:**
-1. Run the suite → confirm your new tests pass green.
-2. Red-green proof: break the production value the test depends on → re-run →
-   confirm the test FAILS → `git checkout -- <path>` and re-run to confirm green.
-   One mutation at a time, each restored before the next.
+**Then run them — only your new test files, never the whole suite.** The pipeline
+runs the full suite itself once your tests are on the branch, so re-running it here
+only costs time. Point the test runner at your files, e.g. `npx jest path/to/new.test.ts`
+or `python -m pytest path/to/test_new.py`.
+1. Run your new test files → confirm they pass green.
+2. Red-green proof: break the production value the test depends on → re-run just
+   that test file → confirm the test FAILS → `git checkout -- <path>` and re-run it
+   to confirm green. One mutation at a time, each restored before the next.
 
 For each **real bug** you find, write a test that fails now and will pass once the
 bug is fixed. Those failing tests are how the implementer knows it's fixed.

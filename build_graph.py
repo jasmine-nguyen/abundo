@@ -29,6 +29,7 @@ import subprocess
 import sys
 import traceback
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, NotRequired, TypedDict
 
@@ -123,6 +124,9 @@ DB_PATH = BUILD_DIR / "build_graph.db"
 PROJECT_CONTEXT_FILE = ROOT / "project-context.md"
 
 DEFAULT_MODEL = "claude-opus-5-5"
+# How hard each agent thinks. Claude Code's own default is higher; "high" is faster
+# and uses less of the plan.
+AGENT_EFFORT = "high"
 MAX_CLARIFY_ROUNDS = 2
 MAX_PLAN_ATTEMPTS = 2
 MAX_TEST_ATTEMPTS = 2
@@ -371,6 +375,7 @@ async def run_agent(name: str, prompt: str, output_format: dict, resume: str | N
         output_format=output_format,
         max_turns=agent.max_turns,
         max_budget_usd=agent.max_budget_usd,
+        effort=AGENT_EFFORT,
         cwd=str(ROOT),
         resume=resume,
         # The repo's own CLAUDE.md and settings, but not the user's global plugins,
@@ -1640,7 +1645,50 @@ def print_history(values: dict, last: int = 15):
         print()
 
 
-def print_status(thread: str, snapshot) -> int:
+WAITING_STEPS = {"sign_off", "clarify", "escalation"}
+
+
+def duration(seconds: float) -> str:
+    return f"{int(seconds // 60)}m {int(seconds % 60):02d}s"
+
+
+async def step_timings(graph, config) -> list[tuple[str, float, bool]]:
+    """(step, seconds, waiting for the user) for each step so far, oldest first.
+    A step that hasn't finished yet is timed up to now."""
+    history = [snapshot async for snapshot in graph.aget_state_history(config)]
+    history.reverse()
+    timings = []
+    for index, snapshot in enumerate(history):
+        nodes = [node for node in snapshot.next if not node.startswith("__")]
+        if not nodes:
+            continue
+        started = datetime.fromisoformat(snapshot.created_at)
+        if index + 1 < len(history):
+            ended = datetime.fromisoformat(history[index + 1].created_at)
+        else:
+            ended = datetime.now(timezone.utc)
+        label = " ∥ ".join(NODE_LABELS.get(node, node) for node in nodes)
+        timings.append((label, (ended - started).total_seconds(), any(node in WAITING_STEPS for node in nodes)))
+    return timings
+
+
+def print_timings(timings: list[tuple[str, float, bool]], unfinished: bool):
+    print("Step timings:")
+    last = len(timings) - 1
+    for index, (label, seconds, waiting) in enumerate(timings):
+        notes = []
+        if waiting:
+            notes.append("waiting for you")
+        if unfinished and index == last:
+            notes.append("so far")
+        suffix = f" ({', '.join(notes)})" if notes else ""
+        print(f"  {duration(seconds):>8}  {label}{suffix}")
+    machine = sum(seconds for _, seconds, waiting in timings if not waiting)
+    human = sum(seconds for _, seconds, waiting in timings if waiting)
+    print(f"  Machine time {duration(machine)} · waiting for you {duration(human)}\n")
+
+
+async def print_status(graph, config, thread: str, snapshot) -> int:
     values = snapshot.values
     if not values:
         print(f"No saved build for thread {thread}.")
@@ -1658,6 +1706,9 @@ def print_status(thread: str, snapshot) -> int:
         if values.get(key):
             print(f"{label}: {values[key]}")
     print()
+    timings = await step_timings(graph, config)
+    if timings:
+        print_timings(timings, unfinished=bool(snapshot.next))
     print_history(values)
     return 0
 
@@ -1824,7 +1875,7 @@ async def main(argv: list[str] | None = None) -> int:
         graph = builder.compile(checkpointer=saver)
         snapshot = await graph.aget_state(config)
         if args.status:
-            return print_status(args.thread, snapshot)
+            return await print_status(graph, config, args.thread, snapshot)
         try:
             if args.resume is not None:
                 result = await resume_build(graph, config, snapshot, args.resume)
