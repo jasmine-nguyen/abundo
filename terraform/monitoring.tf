@@ -242,12 +242,13 @@ resource "aws_cloudwatch_metric_alarm" "goal_nudge_errors" {
 # --- Up-webhook health alarms (WHIT-316) ------------------------------------
 # WHIT-313 made the direct Up webhook the SOLE home-loan repayment notifier (the slow
 # BankSync-path push was removed), so a silent stop = a missed alert with no safety net.
-# These two alarms restore observability.
+# These alarms restore observability: (1) any processing failure, (2) a missed repayment
+# push, and (WHIT-616) a rejected Up token and a qualifying repayment with no phone to push to.
 
 # (1) Loud failures. One datapoint each time a validly-signed Up delivery fails to
 # fetch/push — the handler catches it, logs "up webhook: processing failed", and returns a
-# 500 dict (so AWS's built-in Lambda Errors metric never fires). Likely cause: a rotated Up
-# token. Quoted → exact-substring match (the line has spaces + a colon); keep this pattern
+# 500 dict (so AWS's built-in Lambda Errors metric never fires). A rejected Up token also
+# lands here but has its own alarm below. Quoted → exact-substring match (the line has spaces + a colon); keep this pattern
 # and up_webhook.py's log line in lockstep so this silent-failure monitor can't itself
 # silently never match. The 401 (rotated signing secret) path is deliberately NOT alarmed:
 # the route is public, so scanners make 401 noise — alarm (2) catches that case instead.
@@ -274,7 +275,65 @@ resource "aws_cloudwatch_metric_alarm" "up_webhook_errors" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_description   = "A validly-signed Up webhook delivery failed to fetch/push in the last hour (likely a rotated Up token) — the instant repayment push may be down. Up retries and SNS de-dupes, so a self-healing blip can page once."
+  alarm_description   = "A validly-signed Up webhook delivery failed to fetch/push in the last hour — the instant repayment push may be down. Up retries and SNS de-dupes, so a self-healing blip can page once."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+# (WHIT-616) A dead Up token. fetch_transaction logs UP_WEBHOOK_TOKEN_REJECTED as a bare word
+# when Up answers 401/403. Keep this pattern and up_webhook.py in lockstep.
+resource "aws_cloudwatch_log_metric_filter" "up_webhook_token_rejected" {
+  name           = "${var.project_name}-up-webhook-token-rejected"
+  log_group_name = aws_cloudwatch_log_group.up_webhook.name
+  pattern        = "UP_WEBHOOK_TOKEN_REJECTED"
+
+  metric_transformation {
+    name          = "UpWebhookTokenRejected"
+    namespace     = "${var.project_name}/UpWebhook"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "up_webhook_token_rejected" {
+  alarm_name          = "${var.project_name}-up-webhook-token-rejected"
+  namespace           = "${var.project_name}/UpWebhook"
+  metric_name         = "UpWebhookTokenRejected"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Up rejected our personal access token (401/403) — the instant mortgage-repayment push is down. Replace /abundo/up-personal-access-token in SSM and verify Up returns 404 (not 401) for a fake transaction id."
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+# (WHIT-616) A qualifying repayment arrived but no phone is registered for push. notify logs
+# UP_WEBHOOK_NO_DEVICE_TOKENS as a bare word. Keep this pattern and up_webhook.py in lockstep.
+resource "aws_cloudwatch_log_metric_filter" "up_webhook_no_device_tokens" {
+  name           = "${var.project_name}-up-webhook-no-device-tokens"
+  log_group_name = aws_cloudwatch_log_group.up_webhook.name
+  pattern        = "UP_WEBHOOK_NO_DEVICE_TOKENS"
+
+  metric_transformation {
+    name          = "UpWebhookNoDeviceTokens"
+    namespace     = "${var.project_name}/UpWebhook"
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "up_webhook_no_device_tokens" {
+  alarm_name          = "${var.project_name}-up-webhook-no-device-tokens"
+  namespace           = "${var.project_name}/UpWebhook"
+  metric_name         = "UpWebhookNoDeviceTokens"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "A qualifying home-loan repayment arrived but no phone is registered for push — the repayment alert could not be sent."
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 

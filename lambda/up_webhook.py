@@ -17,8 +17,10 @@ module uses them — same reasoning as push.py's Expo constants.
 import base64
 import hashlib
 import hmac
+import http.client
 import json
 import logging
+import urllib.error
 import urllib.request
 from decimal import Decimal
 
@@ -47,6 +49,9 @@ UP_HOMELOAN_ACCOUNT_ID = "fbef6cbc-09b3-4b6f-826c-6a178707a178"
 UP_TRANSACTION_ENDPOINT = "https://api.up.com.au/api/v1/transactions/"
 UP_PERSONAL_ACCESS_TOKEN_PATH = "/abundo/up-personal-access-token"
 UP_WEBHOOK_SIGNING_SECRET_PATH = "/abundo/up-webhook-signing-secret"
+# API Gateway gives up at 30s, so a hung Up call must fail well inside that.
+UP_FETCH_TIMEOUT_SECONDS = 10
+UP_TOKEN_REJECTED_STATUSES = (401, 403)
 
 OK_RESPONSE = {"statusCode": 200, "body": "ok"}
 UNAUTHORISED_RESPONSE = {"statusCode": 401, "body": "unauthorised event"}
@@ -73,6 +78,11 @@ def get_personal_access_token() -> str:
     return _personal_access_token
 
 
+def clear_personal_access_token() -> None:
+    global _personal_access_token
+    _personal_access_token = None
+
+
 def extract_raw_body(event: dict) -> bytes:
     """The exact bytes Up signed — base64-decoded when API Gateway flagged the body
     as binary, otherwise the UTF-8 body. The signature is over these raw bytes, so
@@ -93,8 +103,26 @@ def fetch_transaction(transaction_id: str) -> dict:
     """Fetch the full transaction from Up — the webhook event carries only its id."""
     request = urllib.request.Request(f"{UP_TRANSACTION_ENDPOINT}{transaction_id}")
     request.add_header("Authorization", f"Bearer {get_personal_access_token()}")
-    with urllib.request.urlopen(request) as response:
-        body = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=UP_FETCH_TIMEOUT_SECONDS) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        # HTTPError subclasses URLError, so it must be caught first.
+        if error.code in UP_TOKEN_REJECTED_STATUSES:
+            # Drop the cached token so Up's retry re-reads SSM — a replaced token then
+            # takes effect on a warm container without a redeploy.
+            clear_personal_access_token()
+            logger.error("UP_WEBHOOK_TOKEN_REJECTED Up answered %s for transaction %s — "
+                         "the Up personal access token (%s) is revoked or invalid",
+                         error.code, transaction_id, UP_PERSONAL_ACCESS_TOKEN_PATH)
+            raise
+        logger.error("UP_WEBHOOK_FETCH_FAILED Up answered %s for transaction %s",
+                     error.code, transaction_id)
+        raise
+    except (OSError, http.client.HTTPException) as error:
+        logger.error("UP_WEBHOOK_FETCH_FAILED could not reach Up for transaction %s: %s",
+                     transaction_id, error)
+        raise
     return body["data"]
 
 
@@ -102,14 +130,19 @@ def get_transaction_id(payload: dict) -> str:
     return payload["data"]["relationships"]["transaction"]["data"]["id"]
 
 
-def is_qualifying_repayment(transaction: dict) -> bool:
-    """True for a positive home-loan credit worth notifying: the Up home-loan account
-    AND at least the $10 floor (compared in cents). Interest debits are negative, so
-    they fall below the floor and are excluded. Any positive credit >= $10 on the loan
-    fires — a redraw reversal or interest refund would too (accepted for scope)."""
+def repayment_skip_reason(transaction: dict) -> str | None:
+    """Why this transaction gets no push, or None for a positive home-loan credit worth
+    notifying: the Up home-loan account AND at least the $10 floor (compared in cents).
+    Interest debits are negative, so they fall below the floor and are excluded. Any
+    positive credit >= $10 on the loan fires — a redraw reversal or interest refund would
+    too (accepted for scope)."""
     account_id = transaction["relationships"]["account"]["data"]["id"]
     value_in_base_units = int(transaction["attributes"]["amount"]["valueInBaseUnits"])
-    return account_id == UP_HOMELOAN_ACCOUNT_ID and value_in_base_units >= MIN_REPAYMENT_NOTIFY * 100
+    if account_id != UP_HOMELOAN_ACCOUNT_ID:
+        return "not_homeloan_account"
+    if value_in_base_units < MIN_REPAYMENT_NOTIFY * 100:
+        return "below_floor"
+    return None
 
 
 def notify(transaction: dict) -> None:
@@ -121,13 +154,17 @@ def notify(transaction: dict) -> None:
     transaction_id = transaction["id"]
     notify_repo = NotifyRepository()
     if transaction_id in notify_repo.fired_repayments():
-        return
-
-    tokens = DeviceRepository().list_tokens()
-    if not tokens:
+        logger.info("UP_WEBHOOK_SKIP reason=already_notified transaction=%s", transaction_id)
         return
 
     value_in_base_units = int(transaction["attributes"]["amount"]["valueInBaseUnits"])
+    tokens = DeviceRepository().list_tokens()
+    if not tokens:
+        logger.error("UP_WEBHOOK_NO_DEVICE_TOKENS reason=no_device_tokens transaction=%s "
+                     "amount_cents=%s — a qualifying repayment arrived but no phone is "
+                     "registered for pushes", transaction_id, value_in_base_units)
+        return
+
     amount = Decimal(value_in_base_units) / 100
     title, body = build_repayment_push(amount)
     # data lets the app deep-link a tap straight to the mortgage screen (WHIT-321). The
@@ -137,6 +174,8 @@ def notify(transaction: dict) -> None:
         # Record the push (amount in cents, already what Up gives us) so the balance
         # poller's precise miss-detector (WHIT-317) can match this repayment to its alert.
         notify_repo.mark_repayment_push(value_in_base_units, transaction_id)
+        logger.info("UP_WEBHOOK_PUSH_SENT transaction=%s amount_cents=%s",
+                    transaction_id, value_in_base_units)
         return
     raise RuntimeError(f"push not accepted by Expo for repayment {transaction_id}")
 
@@ -167,10 +206,17 @@ def lambda_handler(event, context) -> dict:
         event_type = payload["data"]["attributes"]["eventType"]
         if event_type != TRANSACTION_CREATED:
             # PING (sent by Up at registration) and any other event: acknowledge only.
+            logger.info("UP_WEBHOOK_SKIP reason=not_transaction_created event_type=%s", event_type)
             return OK_RESPONSE
         transaction = fetch_transaction(get_transaction_id(payload))
-        if is_qualifying_repayment(transaction):
-            notify(transaction)
+        skip_reason = repayment_skip_reason(transaction)
+        if skip_reason:
+            logger.info("UP_WEBHOOK_SKIP reason=%s transaction=%s account=%s amount_cents=%s",
+                        skip_reason, transaction["id"],
+                        transaction["relationships"]["account"]["data"]["id"],
+                        transaction["attributes"]["amount"]["valueInBaseUnits"])
+            return OK_RESPONSE
+        notify(transaction)
     except Exception:
         logger.exception("up webhook: processing failed")
         return ERROR_RESPONSE
