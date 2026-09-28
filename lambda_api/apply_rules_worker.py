@@ -18,9 +18,7 @@ from api_constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
 from handler import (
     _apply_rules_write_phase,
     _as_leaf_rule,
-    _build_rule_spread_map,
     _fetch_windowed_transactions,
-    _rule_to_client,
 )
 from repository import (
     BudgetRepository,
@@ -32,6 +30,7 @@ from repository import (
     RuleRepository,
     TransactionRepository,
 )
+from rule_book import rule_from_row, rule_reply
 from rule_spreading import SpreadSeeder
 from repository_job import STATUS_FAILED, STATUS_SUCCEEDED
 from rule_engine import is_unfiled_category, plan_rule_application
@@ -73,15 +72,15 @@ def lambda_handler(event: dict, context=None) -> dict:
             return is_unfiled_category(category, taxonomy_ids)
 
         raw_rules = rule_repo.list_rules()
-        rules = [_rule_to_client(row) for row in raw_rules]
+        rules = [rule_from_row(row) for row in raw_rules]
         # Captured BEFORE the inline path narrows `rules`: the reconcile sweep needs the WHOLE
         # store to tell an orphaned stamp (rule gone) from a drifted one (rule still here), and the
         # plain sweep reads each winning rule's "keep out of budget" action from here (WHIT-558).
         rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
         rule_excluded_by_id = {
             rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
-        # The spread context (WHIT-559) — from the raw rows, since it needs spread_seeded.
-        rule_spread_by_id = _build_rule_spread_map(raw_rules)
+        # The spread context (WHIT-559).
+        rule_spread_by_id = {rule["id"]: rule for rule in rules if rule["spread"] and rule["id"]}
 
         if inline_rule is not None:
             # File ONLY this shop: mint the rule (idempotent, WHIT-497) then sweep with just it.
@@ -91,7 +90,7 @@ def lambda_handler(event: dict, context=None) -> dict:
                 inline_rule["value"], inline_rule["categoryId"],
                 budget_excluded=inline_rule["budgetExcluded"],
             )
-            created_rule = _rule_to_client(row)
+            created_rule = rule_reply(rule_from_row(row))
             rules = [_as_leaf_rule(inline_rule)]
 
         if not rules:

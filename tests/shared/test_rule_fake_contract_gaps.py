@@ -20,7 +20,7 @@ import pytest
 from _rule_fakes import FakeRuleRepo
 
 
-# Handler-relevant projection: the exact keys _rule_to_client reads. The real repo's row also
+# Handler-relevant projection: the exact keys rule_book.rule_from_row reads. The real repo's row also
 # carries pk/sk/source/created_at/updated_at, which the handler never maps — so the contract is
 # equality on THIS slice, not the whole row.
 _KEYS = ("id", "field", "operator", "value", "category_id", "budget_excluded")

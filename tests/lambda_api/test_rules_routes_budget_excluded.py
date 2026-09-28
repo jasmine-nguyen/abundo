@@ -4,7 +4,7 @@ The implementer pinned the flag at the repo layer (test_repository_rule_budget_e
 apply paths. This suite covers the ROUTE seams they didn't: a same-text/same-category create that
 disagrees ONLY on the flag must 409 through the route and surface the existing rule's flag in the
 body; the create/update round-trips carry it; and a legacy row written before the field reads back
-budgetExcluded:false (never KeyErrors) through _rule_to_client.
+budgetExcluded:false (never KeyErrors) through rule_book.rule_from_row.
 
 Driven through lambda_handler with a FakeRuleRepo injected, exactly like test_rules_routes.py.
 """
@@ -81,9 +81,9 @@ def test_update_rule_toggles_the_flag_in_place_and_returns_it(handler, monkeypat
 
 
 def test_legacy_row_without_the_field_reads_back_budget_excluded_false(handler, monkeypatch):
-    # A rule written before WHIT-558 has no budget_excluded key. _rule_to_client must default it via
+    # A rule written before WHIT-558 has no budget_excluded key. rule_book.rule_from_row must default it via
     # .get, never KeyError. FAIL-ON-REVERT: change bool(row.get("budget_excluded")) to
-    # bool(row["budget_excluded"]) in _rule_to_client and the GET 500s on the legacy row.
+    # bool(row["budget_excluded"]) in rule_book.rule_from_row and the GET 500s on the legacy row.
     legacy = {"id": "r-legacy", "field": "description", "operator": "contains",
               "value": "OLDRULE", "category_id": "groceries", "source": "app"}
     repo = FakeRuleRepo(rules=[])

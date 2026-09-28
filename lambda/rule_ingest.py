@@ -14,7 +14,7 @@ rules leave the charge unfiled, and a rule to a deleted category is skipped.
 
 Not a method on the transaction store — a plain function taking the stores as arguments (the same
 shape as budget_alerts.capture_pre_write), so the WHIT-454 subclass wiring stays untouched. Imports
-no shared `constants`; rule_engine is constants-free.
+no shared `constants`; rule_engine and rule_book are constants-free.
 """
 
 import logging
@@ -22,32 +22,9 @@ from typing import Callable, Optional
 
 from banksync import counts_to_budget
 import rule_engine
+from rule_book import rule_from_row
 
 logger = logging.getLogger(__name__)
-
-
-def _to_engine_rule(row: dict) -> dict:
-    """Map a stored rule row (repository_rule, snake_case `category_id`) to the engine's Rule
-    shape (`categoryId`). Mirrors lambda_api/handler._rule_to_client so the webhook and the API
-    decide identically."""
-    return {
-        "id": row.get("id"),
-        "field": row.get("field"),
-        "operator": row.get("operator"),
-        "value": row.get("value"),
-        "categoryId": row.get("category_id"),
-        "budgetExcluded": bool(row.get("budget_excluded")),
-        # WHIT-559: the spread action + the bill it captured, carried so file_charge can auto-create
-        # the category's spread plan on a match. A non-spread rule has spread False and no amount/gap.
-        "spread": bool(row.get("spread")),
-        "spreadSeeded": bool(row.get("spread_seeded")),
-        "spreadAmount": row.get("spread_amount"),
-        "spreadGapDays": row.get("spread_gap_days"),
-        # WHIT-541: a multi-condition rule carries these; the engine reads them, else falls back to
-        # the flat field/operator/value. None for a single-condition rule.
-        "conditions": row.get("conditions"),
-        "logic": row.get("logic"),
-    }
 
 
 def load_rules(rule_repo, category_repo):
@@ -60,7 +37,7 @@ def load_rules(rule_repo, category_repo):
     rules — so `decide` can read each one's categoryId directly."""
     try:
         taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-        rules = [_to_engine_rule(row) for row in rule_repo.list_rules()]
+        rules = [rule_from_row(row) for row in rule_repo.list_rules()]
     except Exception:
         logger.exception("rule ingest: could not read rules/taxonomy; charges land unfiled")
         return None

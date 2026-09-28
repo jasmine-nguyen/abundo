@@ -4,7 +4,7 @@ A spread rule captures the recurring bill it will spread at CREATE time, grounde
 rule itself matches (via the WHIT-568 detector). This suite covers the route seams: a spread create
 captures the detected amount + cadence; a rule that matches no single recurring bill is a 422; a
 second spreading rule on a category is a 409; and the flag/captured fields round-trip through
-_rule_to_client. The repo-layer threading is pinned in tests/shared/test_repository_rule.py.
+rule_book.rule_from_row. The repo-layer threading is pinned in tests/shared/test_repository_rule.py.
 
 Driven through lambda_handler with a FakeRuleRepo + a seeded transaction repo injected.
 """

@@ -7,7 +7,7 @@ those suites drive this in-memory stand-in instead — passed in as the handler'
 
 It models RuleRepository FAITHFULLY, in the store's own SNAKE_CASE row shape (`category_id`, not
 `categoryId`): the handler maps store rows to the client shape at its boundary, and a camelCase
-fake would hide a bug in that mapper. Ids come from rule_engine.rule_id_for so they match
+fake would hide a bug in that mapper. Ids come from rule_engine.rule_identity so they match
 production, and create_rule reproduces the real dedup/clash contract.
 
 Imports the shared layer LAZILY (inside the methods), never at module scope: the fakes-invariants
@@ -15,14 +15,6 @@ Imports the shared layer LAZILY (inside the methods), never at module scope: the
 no shared/ dir on the path (same pattern as _feed_fakes.WritableFeedRepo's deferred import).
 Registered in the `rule` domain of test_fakes_invariants.py.
 """
-
-
-def _identity(rule_engine, field, operator, value, conditions, logic):
-    """The rule id — mirrors repository_rule.rule_identity: the canonical multi-condition hash when
-    `conditions` is present (a 1-condition list collapses to the legacy id), else the legacy hash."""
-    if conditions:
-        return rule_engine.rule_id_for_conditions(conditions, logic)
-    return rule_engine.rule_id_for(field, operator, value)
 
 
 def _apply_spread(row, spread, spread_amount, spread_gap_days, *, was_spread):
@@ -79,7 +71,7 @@ class FakeRuleRepo:
             from repository import DatabaseError
             raise DatabaseError("rule write failed")
         import rule_engine
-        rule_id = _identity(rule_engine, field, operator, value, conditions, logic)
+        rule_id = rule_engine.rule_identity(field, operator, value, conditions, logic)
         existing = self._rows.get(rule_id)
         if existing is not None:
             # Same identity: idempotent on same category + same budget_excluded + same spread flag
@@ -123,7 +115,7 @@ class FakeRuleRepo:
             raise RuleNotFoundError(rule_id)
 
         was_spread = bool(existing.get("spread"))
-        new_id = _identity(rule_engine, field, operator, value, conditions, logic)
+        new_id = rule_engine.rule_identity(field, operator, value, conditions, logic)
         if new_id == rule_id:
             existing["value"] = value
             existing["category_id"] = category_id

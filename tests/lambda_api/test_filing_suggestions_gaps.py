@@ -10,7 +10,7 @@ Covers, one per candidate gap:
        its own unfiled charge is not mis-disclosed as an also-catches sweep.
 
 Reuses the same fakes + _suggest helper style as test_filing_suggestions.py so suppression runs
-through the real _rule_to_client mapping.
+through the real rule_book.rule_from_row mapping.
 """
 
 import json

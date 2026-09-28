@@ -66,7 +66,7 @@ def _sweep(handler, repo, rule_repo, *, budget=None, paycycle=None,
 
 def test_a_prior_seed_marked_in_the_store_blocks_the_sweep(handler):
     # [A20] The webhook's SpreadSeeder ends by calling rule_repo.mark_spread_seeded(id) — the SAME store
-    # method, on the SAME row, that the sweep reads back through _build_rule_spread_map. Simulate that
+    # method, on the SAME row, that the sweep reads back through the spread lookup (rule_book.rule_from_row). Simulate that
     # prior seed, then run the sweep over a fresh matching charge -> it sees spread_seeded True and
     # does NOT re-seed. FAIL-ON-REVERT: build the spread map off the client shape (no spread_seeded)
     # or hardcode False and the sweep re-seeds every run, double-creating the plan the user dismissed.
@@ -131,7 +131,7 @@ def test_a_none_create_stays_unseeded_and_a_later_run_retries(handler):
 # --- a multi-condition (WHIT-541) spread rule carries spread through the apply path ---------------
 
 def test_a_multi_condition_spread_rule_still_seeds(handler):
-    # [A24] A spread rule with conditions must still seed: _build_rule_spread_map keys off the raw
+    # [A24] A spread rule with conditions must still seed: the spread lookup keys off the
     # row id, the same id the plan's matched charge carries, so the spread context is found.
     conditions = [{"field": "description", "operator": "contains", "value": "ORIGIN"},
                   {"field": "amount", "operator": "less_than", "value": "100"}]

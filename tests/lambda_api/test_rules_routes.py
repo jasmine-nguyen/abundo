@@ -2,7 +2,7 @@
 
 These routes back the app's Rules screen with our OWN store (RuleRepository). Everything is
 driven through lambda_handler with a FakeRuleRepo injected as handler.RuleRepository, so the
-dispatch, the store->client mapping (_rule_to_client), and the two write guards this route adds
+dispatch, the store->client mapping (rule_book.rule_from_row), and the two write guards this route adds
 (the value floor and the category check) are all exercised end to end.
 
 The fake-vs-real faithfulness of FakeRuleRepo lives in tests/shared/test_rule_fake_contract_gaps.py;

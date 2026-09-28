@@ -10,7 +10,7 @@ covers the merchant; and — like the merchant screen — it discloses what else
 out of the still-unfiled charges.
 
 Reuses FakeFeedRepo (deep-page paging) and FakeRuleRepo (faithful snake_case store rows) so the
-suppression path is exercised through the real _rule_to_client mapping.
+suppression path is exercised through the real rule_book.rule_from_row mapping.
 """
 
 import json

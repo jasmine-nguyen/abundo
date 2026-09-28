@@ -136,6 +136,21 @@ def test_worker_with_an_inline_rule_mints_it_and_records_created_rule(apply_rule
     assert job["createdRule"] is not None and job["createdRule"]["categoryId"] == "groceries"
 
 
+def test_worker_saves_created_rule_in_the_app_shape_without_spread_seeded(apply_rules_worker, monkeypatch):
+    # WHIT-623: the job row's createdRule is what the app reads, so it keeps the reply shape — the
+    # internal spreadSeeded flag the matcher's shape carries must not leak into it.
+    worker = apply_rules_worker
+    rows = [_row(SPENDING, "2026-07-01", "t1", description="COLES", category=None)]
+    _, job_repo = _wire(worker, monkeypatch, transactions={SPENDING: rows}, rules=[])
+
+    worker.lambda_handler(
+        {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries", "budgetExcluded": False}})
+
+    assert set(job_repo.jobs["job1"]["createdRule"]) == {
+        "id", "field", "operator", "value", "categoryId", "budgetExcluded",
+        "spread", "spreadAmount", "spreadGapDays", "conditions", "logic"}
+
+
 def test_worker_succeeds_with_no_rules(apply_rules_worker, monkeypatch):
     worker = apply_rules_worker
     _, job_repo = _wire(worker, monkeypatch,

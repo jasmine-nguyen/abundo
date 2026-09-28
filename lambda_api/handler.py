@@ -94,9 +94,10 @@ from repository import (
     VersionConflictError,
 )
 from repository_job import STATUS_RUNNING, STATUS_FAILED
-from repository_rule import rule_identity
+from rule_engine import rule_identity
 from repository_transaction import read_window
 from budget_standing import budget_standing, standing_window
+from rule_book import rule_from_row, rule_reply
 from rule_spreading import SpreadSeeder
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
@@ -1216,7 +1217,7 @@ def list_rules_route(rule_repo: RuleRepository) -> dict:
         rules = rule_repo.list_rules()
     except DatabaseError:
         return _json_response(500, {"error": "could not read your rules"})
-    return _json_response(200, [_rule_to_client(row) for row in rules])
+    return _json_response(200, [rule_reply(rule_from_row(row)) for row in rules])
 
 
 def _spread_rule_on_category(rules: list[dict], category_id: str, exclude_id: str | None) -> bool:
@@ -1321,11 +1322,11 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
             conditions=parsed["conditions"], logic=parsed["logic"],
             spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
     except RuleClashError as e:
-        return _rule_clash_response(_rule_to_client(e.existing))
+        return _rule_clash_response(rule_from_row(e.existing))
     except DatabaseError:
         return _json_response(500, {"error": "could not save your rule"})
 
-    return _json_response(201, _rule_to_client(rule))
+    return _json_response(201, rule_reply(rule_from_row(rule)))
 
 
 def _refile_rule_touched(
@@ -1446,13 +1447,13 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
-        return _rule_clash_response(_rule_to_client(e.existing))
+        return _rule_clash_response(rule_from_row(e.existing))
     except DatabaseError:
         return _json_response(500, {"error": "could not save your rule"})
 
-    edited = _rule_to_client(rule)
+    edited = rule_from_row(rule)
     remaining = _refile_rule_touched(rule_id, edited, transaction_repo, started)
-    return _json_response(200, {**edited, "remaining": remaining})
+    return _json_response(200, {**rule_reply(edited), "remaining": remaining})
 
 
 def delete_rule_route(event: dict, rule_repo: RuleRepository,
@@ -1615,7 +1616,7 @@ def get_filing_suggestions(
     decides nothing and writes nothing; accepting a suggestion is a separate, explicit mint request.
     """
     taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-    rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+    rules = [rule_from_row(row) for row in rule_repo.list_rules()]
     transactions = _fetch_windowed_transactions(transaction_repo, None, None)
     body = suggest_rules_from_filing_habits(transactions, rules, taxonomy_ids)
     return _json_response(200, body)
@@ -1668,39 +1669,12 @@ def _as_leaf_rule(inline_rule: dict) -> dict:
     }
 
 
-def _rule_to_client(row: dict) -> dict:
-    """Map a stored rule row (repository_rule, snake_case) to the client/engine Rule shape.
-
-    Our store speaks `category_id`; rule_engine and the apply-rules responses read `categoryId`.
-    This is the single point translating between the two.
-    """
-    return {
-        "id": row.get("id"),
-        "field": row.get("field"),
-        "operator": row.get("operator"),
-        "value": row.get("value"),
-        "categoryId": row.get("category_id"),
-        "budgetExcluded": bool(row.get("budget_excluded")),
-        # The spread action (WHIT-559) + the recurring bill it captured at create time. A non-spread
-        # rule has spread False and no amount/gap. The apply path reads these to auto-create a
-        # category spread plan on a matching charge.
-        "spread": bool(row.get("spread")),
-        "spreadAmount": row.get("spread_amount"),
-        "spreadGapDays": row.get("spread_gap_days"),
-        # Multi-condition rules (WHIT-541) carry these; a single-condition rule has None, and the
-        # engine's _conditions_of falls back to the flat field/operator/value. This output is ALSO
-        # the engine input on the sweep, so it must carry conditions for a multi rule to match.
-        "conditions": row.get("conditions"),
-        "logic": row.get("logic"),
-    }
-
-
 def _rule_clash_response(existing: dict) -> dict:
-    """The 409 for an inline rule that would fight an existing one. `existing` is a client-shaped
+    """The 409 for an inline rule that would fight an existing one. `existing` is an engine-shaped
     rule. One definition so the pre-scan clash and the mint-time race clash can't drift apart."""
     return _json_response(409, {
         "error": f"you already have a rule for that filing to '{existing['categoryId']}'",
-        "existingRule": existing,
+        "existingRule": rule_reply(existing),
     })
 
 
@@ -1848,22 +1822,6 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
         "remaining": remaining,
         "createdRule": created_rule,
     })
-
-
-def _build_rule_spread_map(rows: list[dict]) -> dict:
-    """id -> engine-shaped spread context {id, categoryId, spread, spreadSeeded, spreadAmount,
-    spreadGapDays} for every SPREAD rule (WHIT-559). Built from the RAW store rows, not
-    `_rule_to_client`, because the apply seed needs `spread_seeded` — which the client shape omits.
-    Only spread rows are kept, so a store with no spread rules yields an empty map (zero apply cost).
-    """
-    return {
-        row["id"]: {
-            "id": row["id"], "categoryId": row.get("category_id"),
-            "spread": True, "spreadSeeded": bool(row.get("spread_seeded")),
-            "spreadAmount": row.get("spread_amount"), "spreadGapDays": row.get("spread_gap_days"),
-        }
-        for row in rows if row.get("spread") and row.get("id")
-    }
 
 
 def _apply_rules_write_phase(
@@ -2050,10 +2008,9 @@ def apply_rules_to_uncategorized(
         # A read failure is OUR database, not an upstream — 500, and returning here (before the
         # whole-history scan and the write loop) guarantees nothing is written.
         return _json_response(500, {"error": "could not read your rules"})
-    rules = [_rule_to_client(row) for row in raw_rules]
-    # The spread context (WHIT-559) needs `spread_seeded`, absent from the client shape — build it
-    # from the raw rows, against the WHOLE store before the inline path narrows `rules`.
-    rule_spread_by_id = _build_rule_spread_map(raw_rules)
+    rules = [rule_from_row(row) for row in raw_rules]
+    # The spread context (WHIT-559), against the WHOLE store before the inline path narrows `rules`.
+    rule_spread_by_id = {rule["id"]: rule for rule in rules if rule["spread"] and rule["id"]}
 
     # WHIT-540: each live rule's id -> its current target, captured BEFORE the inline path narrows
     # `rules` to the single minted rule below — the reconcile sweep needs the WHOLE store to tell an
@@ -2109,10 +2066,10 @@ def apply_rules_to_uncategorized(
             # WHIT-558) appeared between the pre-scan clash checks and here (a race). create_rule is
             # safe to run twice, so same-text + same-category + same-flag returns the existing rule
             # (created=False) rather than raising.
-            return _rule_clash_response(_rule_to_client(e.existing))
+            return _rule_clash_response(rule_from_row(e.existing))
         except DatabaseError:
             return _json_response(500, {"error": "could not save your rule"})
-        created_rule = _rule_to_client(row)
+        created_rule = rule_reply(rule_from_row(row))
 
     filed, vanished, failed, already_filed, matched_remaining = _apply_rules_write_phase(
         transaction_repo, plan, transactions, rule_target_by_id, rule_excluded_by_id, is_unfiled,
@@ -2218,7 +2175,7 @@ def start_apply_rules_job(
     # as the sync route does, rather than minting a permanent contradiction inside the worker.
     if inline_rule is not None:
         try:
-            rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+            rules = [rule_from_row(row) for row in rule_repo.list_rules()]
         except DatabaseError:
             return _json_response(500, {"error": "could not read your rules"})
         clash = (_rule_that_would_fight(rules, inline_rule)

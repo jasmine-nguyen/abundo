@@ -1,13 +1,13 @@
 """WHIT-535 — "no data migration" safety: a rule row written BEFORE the import-ledger deletion
 still carries banksync_enrichment_ids / imported_at / source (and maybe a stray conditionCount).
-_rule_to_client and GET /rules must read it back WITHOUT error and map it to the clean client
+rule_book.rule_from_row and GET /rules must read it back WITHOUT error and map it to the clean client
 shape, dropping the retired fields — so no rewrite of existing DynamoDB rows is needed.
 
 Sibling to test_rules_routes.py / _gaps.py; reuses their handler fixture + FakeRuleRepo (which
 preserves arbitrary seeded keys via dict(rule), so a legacy row survives the round trip faithfully).
 
-The DIRECT _rule_to_client projection is already pinned by
-test_apply_rules_repoint_gaps.py::test_rule_to_client_maps_a_full_store_row_to_exactly_the_client_shape
+The DIRECT rule_book.rule_from_row projection is already pinned by
+test_apply_rules_repoint_gaps.py::test_rule_reply_maps_a_full_store_row_to_exactly_the_client_shape
 (exact-dict ==, so any leaked key reddens it); this file adds only the END-TO-END GET /rules
 round trip over a legacy row.
 """

@@ -1,7 +1,7 @@
 """WHIT-540 — editing a rule re-files the charges it already filed; deleting a rule undoes them.
 
 Drives update_rule_route / delete_rule_route directly (like test_apply_rules drives its route), so
-the store->client mapping (_rule_to_client), the re-file helper (_refile_rule_touched) and the two
+the store->client mapping (rule_book.rule_from_row), the re-file helper (_refile_rule_touched) and the two
 stamp-conditioned repository writes are all exercised end to end against the realistic feed fake.
 
 Rule ids come from rule_engine.rule_id_for (the id IS the folded text). Rather than import that
