@@ -14,6 +14,7 @@ can't see:
 import json
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _job_fakes import real_job_repo
 
 
 _CATEGORIES = frozenset({"groceries", "petrol"})
@@ -83,21 +84,9 @@ def test_delete_route_time_budget_reads_the_handlers_clock(handler, monkeypatch)
 # --- [A3]-[A5] the worker's wiring ---------------------------------------------------------------
 
 
-class _JobRepo:
-    def __init__(self):
-        self.jobs = {}
-
-    def update_progress(self, job_id, counts):
-        self.jobs.setdefault(job_id, {}).update(counts)
-
-    def finish_job(self, job_id, status, counts, created_rule=None, error=None):
-        self.jobs.setdefault(job_id, {}).update(
-            {"status": status, "error": error, "createdRule": created_rule, **counts})
-
-
 def _wire_worker(worker, monkeypatch, *, rows, rules):
     table, txn_repo, rule_repo = real_repos({SPENDING: rows}, rules=rules)
-    job_repo = _JobRepo()
+    job_repo = real_job_repo()
     monkeypatch.setattr(worker, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(_CATEGORIES))
     monkeypatch.setattr(worker, "RuleRepository", lambda: rule_repo)
@@ -116,7 +105,7 @@ def test_worker_plain_sweep_keeps_an_excluding_rules_charge_out_of_the_budget(
 
     apply_rules_worker.lambda_handler({"jobId": "job1"})
 
-    assert job_repo.jobs["job1"]["status"] == "succeeded"
+    assert job_repo.get_job("job1")["status"] == "succeeded"
     assert stored(table, "t1")["category"] == "groceries"
     assert stored(table, "t1")["budget_excluded"] is True
 
@@ -135,7 +124,7 @@ def test_worker_inline_run_files_only_that_shop_stamped_with_the_minted_rule(
         {"jobId": "job1", "rule": {"value": "COLES", "categoryId": "groceries",
                                    "budgetExcluded": False}})
 
-    job = job_repo.jobs["job1"]
+    job = job_repo.get_job("job1")
     assert job["status"] == "succeeded" and job["filed"] == 1
     assert stored(table, "t1")["filed_by_rule"] == job["createdRule"]["id"]
     assert stored(table, "t2").get("category") is None

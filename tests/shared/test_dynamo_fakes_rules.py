@@ -154,3 +154,23 @@ def test_an_unknown_index_or_query_argument_fails_loudly():
         table.query(IndexName="category-index", KeyConditionExpression=_Field("pk").eq("A"))
     with pytest.raises(AssertionError):
         table.query(KeyConditionExpression=_Field("pk").eq("A"), Select="COUNT")
+
+
+def test_page_size_cuts_the_key_matched_rows_before_the_filter_runs():
+    # DynamoDB reads up to 1MB of key-matched rows, THEN filters that page: a row the filter keeps
+    # can sit on a later page behind a page the filter empties.
+    table = FakeTable()
+    table.seed(
+        {"pk": "P", "sk": "a", "status": "POSTED"},
+        {"pk": "P", "sk": "b", "status": "POSTED"},
+        {"pk": "P", "sk": "c", "status": "PENDING"},
+    )
+    table.page_size = 2
+    pending = {"KeyConditionExpression": _Field("pk").eq("P"),
+               "FilterExpression": _Field("status").eq("PENDING")}
+
+    first = table.query(**pending)
+    second = table.query(**pending, ExclusiveStartKey=first["LastEvaluatedKey"])
+
+    assert first == {"Items": [], "LastEvaluatedKey": {"pk": "P", "sk": "b"}}
+    assert second == {"Items": [{"pk": "P", "sk": "c", "status": "PENDING"}]}

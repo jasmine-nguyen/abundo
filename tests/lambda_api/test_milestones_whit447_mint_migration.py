@@ -27,68 +27,8 @@ from decimal import Decimal
 
 import pytest
 
-
-class FakeConfigTable:
-    """The single-config-item slice DynamoDB MilestoneRepository uses; injected as repo._table so
-    the real set_milestones / _read_milestones / _resolve_plan run unmodified."""
-
-    def __init__(self):
-        self.store = {}
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def put_item(self, Item, ConditionExpression=None):
-        self.store[(Item["pk"], Item["sk"])] = dict(Item)
-
-
-class FakeNotifyTable:
-    """The milestone-marker item slice DynamoDB NotifyRepository uses; injected as notify._table so
-    the real fired_milestones / mark_milestone_fired / remove_milestone_markers /
-    migrate_milestone_markers all run unmodified. Models ADD/DELETE on the `fired` String Set."""
-
-    def __init__(self):
-        self.store = {}
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
-        assert UpdateExpression in ("ADD #f :m", "DELETE #f :m"), UpdateExpression
-        member = ExpressionAttributeValues[":m"]
-        assert isinstance(member, set), "String-Set update must pass a set"
-        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
-        current = set(item.get("fired", set()))
-        if UpdateExpression == "ADD #f :m":
-            item["fired"] = current | member
-            return
-        remaining = current - member
-        if remaining:
-            item["fired"] = remaining
-        else:
-            item.pop("fired", None)
-
-
-class RecordingNotifyRepo:
-    """Handler-level stand-in that records every migrate call (its migrations and scope) and
-    applies the same only-if-celebrated rename the real repo does. Lets a handler test assert
-    WHAT set_milestones migrates without standing up a table."""
-
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.migrate_calls = []
-
-    def fired_milestones(self, scope=None):
-        return set(self.fired)
-
-    def migrate_milestone_markers(self, migrations, scope=None):
-        self.migrate_calls.append({"migrations": list(migrations), "scope": scope})
-        for old, new in migrations:
-            if old in self.fired:
-                self.fired.add(new)
-                self.fired.discard(old)
+from _dynamo_fakes import FakeTable
+from _milestone_fakes import recording_notify_repo, stored_markers
 
 
 class RaisingNotifyRepo:
@@ -126,7 +66,7 @@ def _put_event(rows):
 def test_supplied_id_row_is_not_migrated(handler):
     # A row that already carries an id was not minted, so there is nothing to migrate — the
     # notify store must not be touched at all.
-    notify = RecordingNotifyRepo(fired={"bal:400000.00"})
+    notify = recording_notify_repo({"bal:400000.00"})
     row = {"id": "keep-me", "label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}
     resp = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 200, resp["body"]
@@ -136,7 +76,7 @@ def test_supplied_id_row_is_not_migrated(handler):
 def test_a_minted_legacy_row_migrates_at_the_notify_shared_scope_none(handler):
     # The notify store's shared tenant is None → sk="FIRED"; the plan store's is "SHARED". The
     # save path must migrate at None (what the poller reads), NOT "SHARED" — else the fix is inert.
-    notify = RecordingNotifyRepo(fired={"bal:400000.00"})
+    notify = recording_notify_repo({"bal:400000.00"})
     row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
     resp = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 200, resp["body"]
@@ -147,11 +87,11 @@ def test_a_minted_legacy_row_migrates_at_the_notify_shared_scope_none(handler):
 def test_a_minted_legacy_rows_marker_is_migrated_onto_its_new_id(handler):
     # The handler builds the (legacy, id'd) pair off the row's stored amount + minted id, so the
     # migrated marker matches what the poller will later key the saved row to.
-    notify = RecordingNotifyRepo(fired={"bal:400000.00"})
+    notify = recording_notify_repo({"bal:400000.00"})
     row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
     resp = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
     minted_id = json.loads(resp["body"])[0]["id"]
-    assert notify.fired == {f"id:{minted_id}:bal:400000.00"}
+    assert stored_markers(notify) == {f"id:{minted_id}:bal:400000.00"}
 
 
 # --- end to end: mint + re-cross sends no second celebration (the done-definition) ---------
@@ -160,17 +100,17 @@ def test_a_minted_legacy_rows_marker_is_migrated_onto_its_new_id(handler):
 @pytest.fixture
 def milestone_repo(handler, monkeypatch):
     repo = handler.MilestoneRepository()
-    repo._table = FakeConfigTable()
+    repo._table = FakeTable()
     monkeypatch.setattr(handler, "MilestoneRepository", lambda: repo)
     return repo
 
 
 @pytest.fixture
 def notify_repo(handler, monkeypatch):
-    # The REAL NotifyRepository over a fake table, wired into BOTH the PUT handler and the poll
+    # The REAL NotifyRepository over a FakeTable, wired into BOTH the PUT handler and the poll
     # below, so the mint-migration and the poller sweep operate on ONE shared marker store.
     repo = handler.NotifyRepository()
-    repo._table = FakeNotifyTable()
+    repo._table = FakeTable()
     monkeypatch.setattr(handler, "NotifyRepository", lambda: repo)
     return repo
 
@@ -228,7 +168,7 @@ def test_minting_an_id_then_re_crossing_sends_no_second_celebration(
 #
 # The batch / mixed / failure / idempotency / scope-bridge edges the handler-level tests above
 # leave open — every one a way the write path could migrate the WRONG rows, migrate on a rejected
-# save, 500 a PUT, or key at the wrong tenant. All handler-level (RecordingNotifyRepo/RaisingNotifyRepo).
+# save, 500 a PUT, or key at the wrong tenant. All handler-level (recording_notify_repo/RaisingNotifyRepo).
 
 
 # --- multiple legacy rows minted in ONE save migrate independently (no cross-talk) ----------
@@ -237,7 +177,7 @@ def test_two_minted_legacy_rows_each_migrate_their_own_marker(handler):
     # hunt#1: two id-less rows in one save mint two ids; each row's OWN bare marker must move onto
     # its OWN id. A shared/looped bug (same id for both, or one amount's marker on the other's id)
     # shows up here as a wrong or missing idd marker.
-    notify = RecordingNotifyRepo(fired={"bal:400000.00", "bal:300000.00"})
+    notify = recording_notify_repo({"bal:400000.00", "bal:300000.00"})
     rows = [
         {"label": "First", "targetBalance": 400000, "targetDate": "2030-01-01"},   # no id
         {"label": "Second", "targetBalance": 300000, "targetDate": "2031-01-01"},  # no id
@@ -246,7 +186,7 @@ def test_two_minted_legacy_rows_each_migrate_their_own_marker(handler):
     assert resp["statusCode"] == 200, resp["body"]
     id1, id2 = (row["id"] for row in json.loads(resp["body"]))
     assert id1 != id2
-    assert notify.fired == {f"id:{id1}:bal:400000.00", f"id:{id2}:bal:300000.00"}
+    assert stored_markers(notify) == {f"id:{id1}:bal:400000.00", f"id:{id2}:bal:300000.00"}
 
 
 # --- a save mixing a minted legacy row AND a supplied-id row: only the minted one migrates ---
@@ -254,7 +194,7 @@ def test_two_minted_legacy_rows_each_migrate_their_own_marker(handler):
 def test_only_the_minted_row_migrates_when_a_supplied_id_row_shares_the_save(handler):
     # hunt#2: a supplied-id row was NOT minted, so it must not appear in the migration batch and its
     # bare marker must be left untouched; only the id-less row's marker moves.
-    notify = RecordingNotifyRepo(fired={"bal:400000.00", "bal:300000.00"})
+    notify = recording_notify_repo({"bal:400000.00", "bal:300000.00"})
     rows = [
         {"id": "keep-me", "label": "Kept", "targetBalance": 400000, "targetDate": "2030-01-01"},
         {"label": "Minted", "targetBalance": 300000, "targetDate": "2031-01-01"},  # no id
@@ -266,7 +206,7 @@ def test_only_the_minted_row_migrates_when_a_supplied_id_row_shares_the_save(han
     pairs = notify.migrate_calls[0]["migrations"]
     assert pairs == [("bal:300000.00", f"id:{minted_id}:bal:300000.00")]  # exactly one, the minted
     # the supplied-id row's bare marker is never migrated (would be a wrong rename)
-    assert notify.fired == {"bal:400000.00", f"id:{minted_id}:bal:300000.00"}
+    assert stored_markers(notify) == {"bal:400000.00", f"id:{minted_id}:bal:300000.00"}
 
 
 # --- a save that FAILS validation must NOT migrate (the 400 returns before the save) --------
@@ -275,7 +215,7 @@ def test_a_validation_failure_after_minting_never_migrates(handler):
     # hunt#4: both rows are id-less (so `minted` is populated as the loop runs) but the plan is NOT
     # strictly paid-down, so the 400 returns BEFORE repo.set_milestones and before the migration. A
     # migrate on a rejected save would move markers for a plan that was never stored.
-    notify = RecordingNotifyRepo(fired={"bal:400000.00", "bal:500000.00"})
+    notify = recording_notify_repo({"bal:400000.00", "bal:500000.00"})
     rows = [
         {"label": "First", "targetBalance": 400000, "targetDate": "2030-01-01"},   # no id
         {"label": "Higher", "targetBalance": 500000, "targetDate": "2031-01-01"},  # no id, NOT decreasing
@@ -283,13 +223,13 @@ def test_a_validation_failure_after_minting_never_migrates(handler):
     resp = handler.set_milestones(_put_event(rows), FakeMilestoneRepo(), notify)
     assert resp["statusCode"] == 400, resp["body"]
     assert notify.migrate_calls == []
-    assert notify.fired == {"bal:400000.00", "bal:500000.00"}  # markers untouched
+    assert stored_markers(notify) == {"bal:400000.00", "bal:500000.00"}  # markers untouched
 
 
 def test_a_bad_row_field_returns_400_before_any_migration(handler):
     # hunt#4 (second shape): a per-row rejection (out-of-range targetBalance on the second row) also
     # short-circuits before the migration, even though the first row minted.
-    notify = RecordingNotifyRepo(fired={"bal:400000.00"})
+    notify = recording_notify_repo({"bal:400000.00"})
     rows = [
         {"label": "First", "targetBalance": 400000, "targetDate": "2030-01-01"},   # no id → mints
         {"label": "Bad", "targetBalance": -1, "targetDate": "2031-01-01"},         # invalid
@@ -317,19 +257,19 @@ def test_re_putting_the_same_plan_mints_and_migrates_only_once(handler):
     # hunt#5: first save mints an id and migrates the marker; the SECOND save re-sends that id, so
     # nothing is minted and migrate is not called again — and the first migration is NOT undone (the
     # idd marker stays; the bare marker does not come back).
-    notify = RecordingNotifyRepo(fired={"bal:400000.00"})
+    notify = recording_notify_repo({"bal:400000.00"})
     row = {"label": "Target", "targetBalance": 400000, "targetDate": "2030-01-01"}  # no id
     first = handler.set_milestones(_put_event([row]), FakeMilestoneRepo(), notify)
     minted_id = json.loads(first["body"])[0]["id"]
     assert len(notify.migrate_calls) == 1
-    assert notify.fired == {f"id:{minted_id}:bal:400000.00"}
+    assert stored_markers(notify) == {f"id:{minted_id}:bal:400000.00"}
 
     # Re-PUT with the id now present (what a client round-trips after the first save).
     row_with_id = {**row, "id": minted_id}
     second = handler.set_milestones(_put_event([row_with_id]), FakeMilestoneRepo(), notify)
     assert second["statusCode"] == 200, second["body"]
     assert len(notify.migrate_calls) == 1, "second save minted nothing → no second migrate"
-    assert notify.fired == {f"id:{minted_id}:bal:400000.00"}  # first migration intact
+    assert stored_markers(notify) == {f"id:{minted_id}:bal:400000.00"}  # first migration intact
 
 
 # --- the SHARED→None scope bridge, and its pass-through for a real per-user scope -----------

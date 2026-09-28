@@ -1,11 +1,11 @@
 """Tests for the budget-target endpoints (GET /budgets, PUT /budgets/{category})
 and BudgetRepository.
 
-Handler-level tests inject a FakeBudgetRepo directly (no patching). Repository
-tests inject a tiny in-memory fake DynamoDB table into BudgetRepository. The
-budget write is an idempotent UPSERT (`SET #items.#id = :val`, no exists guard),
-so the fake table's update branch differs from the category one — setting the
-same category's target twice must overwrite, never raise.
+Handler-level tests inject the REAL BudgetRepository over a FakeTable with a spy on its
+calls (_budget_fakes.recording_budget_repo). Repository tests run it over the shared
+FakeTable directly (WHIT-625). The budget write is an idempotent UPSERT
+(`SET #items.#id = :val`) — setting the same category's target twice must overwrite,
+never raise.
 
 The `handler` fixture (conftest.py) makes lambda_api importable in isolation and
 puts `shared/` on the path, so `import repository` inside a test resolves to
@@ -13,53 +13,13 @@ shared/repository.py with boto3/botocore already faked.
 """
 
 import base64
-import copy
 import json
 from decimal import Decimal
 
 import pytest
-from botocore.exceptions import ClientError
 
-
-# --- handler-level fake ------------------------------------------------------
-
-
-class FakeBudgetRepo:
-    """Handler-level stand-in for BudgetRepository (records calls)."""
-
-    def __init__(self, budgets=None, conflict_exc=None):
-        # budgets: {id: {"target": Decimal}} (the stored/nested shape).
-        self._budgets = budgets or {}
-        self._conflict_exc = conflict_exc
-        self.set_calls = []
-        self.delete_calls = []
-        self.list_calls = 0
-
-    def list_budgets(self):
-        self.list_calls += 1
-        return {k: dict(v) for k, v in self._budgets.items()}
-
-    def set_budget(self, cat_id, target, rollover=None, anchor=None):
-        self.set_calls.append((cat_id, target))
-        self.set_kwargs = {"rollover": rollover, "anchor": anchor}
-        if self._conflict_exc is not None:
-            raise self._conflict_exc("boom")
-        return {"id": cat_id, "target": target}
-
-    def settle_carryover(self, cat_id, carryover, carryover_from, carryover_len, carryover_paydate):
-        # Rollover seal write-on-read (best-effort). Records the sealed balance/anchor.
-        self._budgets.setdefault(cat_id, {}).update({
-            "carryover": carryover, "carryover_from": carryover_from,
-            "carryover_len": carryover_len, "carryover_paydate": carryover_paydate,
-        })
-        return {"id": cat_id}
-
-    def delete_budget(self, cat_id):
-        self.delete_calls.append(cat_id)
-        if self._conflict_exc is not None:
-            raise self._conflict_exc("boom")
-        # Mirror the real repo's idempotent no-op: drop the target if present.
-        self._budgets.pop(cat_id, None)
+from _budget_fakes import recording_budget_repo
+from _dynamo_fakes import FakeTable
 
 
 def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
@@ -76,7 +36,7 @@ def _put_budget_event(category="coffee", body='{"target": 58}', is_b64=False):
 
 
 def test_set_budget_success(handler):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.set_budget(_put_budget_event(), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
@@ -86,7 +46,7 @@ def test_set_budget_success(handler):
 
 
 def test_set_budget_zero_accepted(handler):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
@@ -96,7 +56,7 @@ def test_set_budget_zero_accepted(handler):
 
 def test_set_budget_decimal_precision(handler):
     # Decimal(str(12.34)) stores exactly, never binary-float drift.
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.set_budget(_put_budget_event(body='{"target": 12.34}'), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
@@ -106,7 +66,7 @@ def test_set_budget_decimal_precision(handler):
 
 def test_set_budget_unknown_category_accepted(handler):
     # Unknown ids are accepted (stored as an orphan the client ignores).
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.set_budget(_put_budget_event(category="doesnotexist"), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
@@ -130,7 +90,7 @@ def test_set_budget_unknown_category_accepted(handler):
     pytest.param('{"target": 1e40}',     id="too_large"),
 ])
 def test_set_budget_bad_target_400(handler, body):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.set_budget(_put_budget_event(body=body), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
@@ -152,10 +112,10 @@ def test_the_budget_target_cap_is_pinned_and_its_boundary_holds(handler):
     )
 
     at_cap = handler.set_budget(
-        _put_budget_event(body=json.dumps({"target": cap})), FakeBudgetRepo(), FakeCategoryRepo(), FakePayCycleRepo())
+        _put_budget_event(body=json.dumps({"target": cap})), recording_budget_repo(), FakeCategoryRepo(), FakePayCycleRepo())
     assert at_cap["statusCode"] == 200, "the cap itself must be accepted (the guard is strict >)"
 
-    over_repo = FakeBudgetRepo()
+    over_repo = recording_budget_repo()
     over = handler.set_budget(
         _put_budget_event(body=json.dumps({"target": cap + 1})), over_repo, FakeCategoryRepo(), FakePayCycleRepo())
     assert over["statusCode"] == 400
@@ -163,7 +123,7 @@ def test_the_budget_target_cap_is_pinned_and_its_boundary_holds(handler):
 
 
 def test_set_budget_missing_path_param_404(handler):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     event = _put_budget_event()
     event["pathParameters"] = {}
 
@@ -174,7 +134,7 @@ def test_set_budget_missing_path_param_404(handler):
 
 
 def test_set_budget_invalid_json_400(handler):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.set_budget(_put_budget_event(body="not json"), repo, FakeCategoryRepo(), FakePayCycleRepo())
 
@@ -183,7 +143,7 @@ def test_set_budget_invalid_json_400(handler):
 
 
 def test_set_budget_base64_body(handler):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     encoded = base64.b64encode(b'{"target": 58}').decode()
 
     resp = handler.set_budget(_put_budget_event(body=encoded, is_b64=True), repo, FakeCategoryRepo(), FakePayCycleRepo())
@@ -196,7 +156,7 @@ def test_set_budget_savings_category_rejected_400(handler):
     # WHIT-202: a Savings-bucket category can't carry a target — the client refuses to
     # render it, so a stored one is an invisible phantom. Reject at write time; the budget
     # repo is never touched.
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
     resp = handler.set_budget(_put_budget_event(), repo, category_repo, FakePayCycleRepo())
@@ -209,7 +169,7 @@ def test_set_budget_savings_category_rejected_400(handler):
 def test_set_budget_non_savings_category_accepted(handler):
     # A KNOWN non-Savings (Living/Lifestyle) category still writes — only Savings is blocked,
     # so the guard can't over-reach and break normal budgeting.
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
 
     resp = handler.set_budget(_put_budget_event(), repo, category_repo, FakePayCycleRepo())
@@ -221,7 +181,7 @@ def test_set_budget_non_savings_category_accepted(handler):
 def test_set_budget_savings_guard_runs_after_numeric_validation(handler):
     # A malformed target 400s WITHOUT reading the taxonomy — the cheap numeric checks
     # short-circuit before the category read, even for a Savings id. Locks the ordering.
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
     resp = handler.set_budget(_put_budget_event(body='{"target": -5}'), repo, category_repo, FakePayCycleRepo())
@@ -234,7 +194,7 @@ def test_set_budget_zero_target_savings_still_rejected(handler):
     # target=0 passes every numeric check (>= 0), so the Savings guard must still fire on
     # it — a $0 phantom on a Savings category is as un-renderable as any other. Fail-on-
     # revert: without the guard a 0 target writes (200).
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Savings"}])
 
     resp = handler.set_budget(_put_budget_event(body='{"target": 0}'), repo, category_repo, FakePayCycleRepo())
@@ -249,7 +209,7 @@ def test_put_budget_dispatch_rejects_savings(handler, monkeypatch):
     # cold-cache client relies on this 400). Fail-on-revert: reverting the router to a
     # 2-arg set_budget call raises TypeError (missing category_repo), so this errors
     # instead of returning 400.
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
     monkeypatch.setattr(
         handler, "CategoryRepository",
@@ -309,7 +269,7 @@ class FakeCategoryRepo:
 
 
 def test_list_budgets_rollup_shape(handler):
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "coffee": {"target": Decimal("58")},
         "groceries": {"target": Decimal("320")},
     })
@@ -330,7 +290,7 @@ def test_list_budgets_rollup_shape(handler):
 
 
 def test_list_budgets_no_spend_is_zero(handler):
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
 
     result = handler.list_budgets(budget_repo, FakeTransactionRepo(transactions=[]), FakePayCycleRepo(), FakeCategoryRepo())
 
@@ -338,7 +298,7 @@ def test_list_budgets_no_spend_is_zero(handler):
 
 
 def test_list_budgets_empty_skips_txn_scan(handler):
-    budget_repo = FakeBudgetRepo()  # no targets
+    budget_repo = recording_budget_repo()  # no targets
     txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50)])
     paycycle_repo = FakePayCycleRepo()
     category_repo = FakeCategoryRepo(categories=[{"id": "coffee", "bucket": "Lifestyle"}])
@@ -353,7 +313,7 @@ def test_list_budgets_empty_skips_txn_scan(handler):
 
 def test_list_budgets_paginates(handler):
     # A >1-page window must sum across ALL pages, not stop at the first.
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
     txn_repo = FakeTransactionRepo(pages=[
         ([_transaction("coffee", -40, "posted")], {"cursor": 1}),  # page 1, more to come
         ([_transaction("coffee", -25, "posted")], None),           # page 2, done
@@ -371,7 +331,7 @@ def test_list_budgets_income_target_rolls_up_positive_earnings(handler):
     # An Income-bucket target sums POSITIVE earnings (a floor), while a spend target
     # in the same call still sums spend from the NEGATIVE amounts. Both come back in
     # the same shape.
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "salary": {"target": Decimal("5000")},
         "coffee": {"target": Decimal("58")},
     })
@@ -395,7 +355,7 @@ def test_list_budgets_income_target_rolls_up_positive_earnings(handler):
 
 def test_list_budgets_income_target_no_earnings_is_zero(handler):
     # An income target with no income yet this cycle shows 0 earned (not omitted).
-    budget_repo = FakeBudgetRepo(budgets={"salary": {"target": Decimal("5000")}})
+    budget_repo = recording_budget_repo({"salary": {"target": Decimal("5000")}})
     txn_repo = FakeTransactionRepo(transactions=[])
     category_repo = FakeCategoryRepo(categories=[{"id": "salary", "bucket": "Income"}])
 
@@ -407,7 +367,7 @@ def test_list_budgets_income_target_no_earnings_is_zero(handler):
 def test_list_budgets_income_clawback_clamps_to_zero(handler):
     # A reversal/clawback (negative amount) in an income category reduces earnings and
     # clamps at 0 — never a negative earnings bar.
-    budget_repo = FakeBudgetRepo(budgets={"salary": {"target": Decimal("5000")}})
+    budget_repo = recording_budget_repo({"salary": {"target": Decimal("5000")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("salary", 3000, "posted"),
         _transaction("salary", -4000, "posted"),  # clawback bigger than earnings
@@ -423,7 +383,7 @@ def test_list_budgets_income_id_named_income_still_counts(handler):
     # A user income category whose id slugs to the literal "income" (same string the
     # spend summariser skips as a sentinel) is a real earn-target and MUST count —
     # summarise_income gates on income_ids membership, not the sentinel skip.
-    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("5000")}})
+    budget_repo = recording_budget_repo({"income": {"target": Decimal("5000")}})
     txn_repo = FakeTransactionRepo(transactions=[_transaction("income", 3000, "posted")])
     category_repo = FakeCategoryRepo(categories=[{"id": "income", "bucket": "Income"}])
 
@@ -436,7 +396,7 @@ def test_list_budgets_savings_bucket_target_treated_as_spend(handler):
     # WHIT-69 is Income-only: a Savings-bucket target is NOT an earn-target. It falls
     # to the spend/ceiling default (positive savings amounts clamp to 0 spend), so its
     # rollup stays 0 rather than showing earnings.
-    budget_repo = FakeBudgetRepo(budgets={"nest_egg": {"target": Decimal("1000")}})
+    budget_repo = recording_budget_repo({"nest_egg": {"target": Decimal("1000")}})
     txn_repo = FakeTransactionRepo(transactions=[_transaction("nest_egg", 800, "posted")])
     category_repo = FakeCategoryRepo(categories=[{"id": "nest_egg", "bucket": "Savings"}])
 
@@ -448,7 +408,7 @@ def test_list_budgets_savings_bucket_target_treated_as_spend(handler):
 def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
     # A target whose category no longer exists (unknown bucket) can't be inferred as
     # income -> it defaults to the spend ceiling, the existing safe behaviour.
-    budget_repo = FakeBudgetRepo(budgets={"ghost": {"target": Decimal("5000")}})
+    budget_repo = recording_budget_repo({"ghost": {"target": Decimal("5000")}})
     txn_repo = FakeTransactionRepo(transactions=[_transaction("ghost", 3000, "posted")])
     category_repo = FakeCategoryRepo(categories=[])  # ghost not in taxonomy
 
@@ -468,7 +428,7 @@ def test_list_budgets_orphan_income_target_defaults_to_spend(handler):
 def test_list_budgets_parent_rolls_up_leaf_children(handler):
     # Car (parent) + its two leaf children all budgeted. Car's posted/pending = the
     # sum over parking + other; each child also keeps its own correct row.
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "car": {"target": Decimal("200")},
         "parking": {"target": Decimal("50")},
         "other": {"target": Decimal("80")},
@@ -496,7 +456,7 @@ def test_list_budgets_parent_rolls_up_leaf_children(handler):
 def test_list_budgets_untargeted_leaf_still_rolls_into_parent(handler):
     # Only the parent carries a target; its child leaf has none. The child's spend
     # must still fold into the parent, and NO phantom row appears for the child.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -30, "posted"),
         _transaction("other", -45, "posted"),
@@ -515,7 +475,7 @@ def test_list_budgets_untargeted_leaf_still_rolls_into_parent(handler):
 def test_list_budgets_multilevel_grandchild_rolls_up(handler):
     # car -> daily -> {petrol, tolls}; only car is budgeted. The grandchild leaves'
     # spend must reach car through the two-level walk.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("petrol", -60, "posted"),
         _transaction("tolls", -15, "pending"),
@@ -535,7 +495,7 @@ def test_list_budgets_multilevel_grandchild_rolls_up(handler):
 def test_list_budgets_income_parent_rolls_up_income_leaves(handler):
     # An Income parent whose leaves are Income rolls up POSITIVE earnings (floor,
     # over-is-good) via summarise_income, same as a flat income target.
-    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    budget_repo = recording_budget_repo({"income": {"target": Decimal("6000")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("salary", 4000, "posted"),
         _transaction("refund", 250, "pending"),
@@ -555,7 +515,7 @@ def test_list_budgets_parent_and_child_both_budgeted_are_independent(handler):
     # With a parent AND its own leaf both budgeted, the same underlying transaction
     # correctly appears in BOTH rows (parent = sum of leaves; leaf = itself). Each row
     # is individually correct; the hero-total de-dup is a client concern (WHIT-221).
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "car": {"target": Decimal("200")},
         "parking": {"target": Decimal("50")},
     })
@@ -574,7 +534,7 @@ def test_list_budgets_parent_and_child_both_budgeted_are_independent(handler):
 def test_list_budgets_flat_leaf_rolls_up_only_itself(handler):
     # Regression anchor: a budgeted top-level category with NO children maps to the
     # singleton {itself}, so its rollup is byte-identical to the pre-WHIT-220 path.
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("coffee", -50, "posted"),
         _transaction("groceries", -30, "posted"),  # a different category, must NOT leak in
@@ -600,7 +560,7 @@ def test_list_budgets_flat_leaf_rolls_up_only_itself(handler):
 def test_list_budgets_parent_direct_spend_counts_with_children(handler):
     # A txn filed straight onto "car" (the budgeted parent) plus a child leaf txn: the
     # parent bar sums BOTH (40 direct + 60 on parking). Pre-WHIT-228 the 40 was dropped.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("car", -40, "posted"),       # tagged directly onto the parent
         _transaction("parking", -60, "posted"),
@@ -619,7 +579,7 @@ def test_list_budgets_mid_level_direct_spend_counts(handler):
     # car -> daily -> petrol; a txn tagged directly onto the INTERMEDIATE `daily` must
     # roll into car alongside the leaf petrol spend. This is the depth >= 3 case a
     # leaves-only walk dropped (a mid node is neither the root nor a leaf).
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("daily", -25, "posted"),     # tagged directly onto the mid-level parent
         _transaction("petrol", -60, "pending"),
@@ -638,7 +598,7 @@ def test_list_budgets_mid_level_direct_spend_counts(handler):
 def test_list_budgets_income_parent_direct_earnings_count(handler):
     # An Income parent with earnings tagged directly onto it rolls up POSITIVE via
     # summarise_income (bucketed by the parent's OWN Income bucket), same as its leaves.
-    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    budget_repo = recording_budget_repo({"income": {"target": Decimal("6000")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("income", 500, "posted"),    # tagged directly onto the parent
         _transaction("salary", 4000, "posted"),
@@ -657,7 +617,7 @@ def test_list_budgets_income_parent_direct_earnings_count(handler):
 
 
 def test_get_budgets_dispatch(handler, monkeypatch):
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
     txn_repo = FakeTransactionRepo(transactions=[_transaction("coffee", -50, "posted")])
     monkeypatch.setattr(handler, "BudgetRepository", lambda: budget_repo)
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
@@ -676,7 +636,7 @@ def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
     # it (the window is last_pay_date-derived), so the request still 200s and the window
     # start is the stored cycle's cycle_start, NOT today-days.
     monkeypatch.setattr(handler, "BudgetRepository",
-                        lambda: FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}}))
+                        lambda: recording_budget_repo({"coffee": {"target": Decimal("58")}}))
     txn_repo = FakeTransactionRepo(transactions=[])
     monkeypatch.setattr(handler, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(handler, "PayCycleRepository",
@@ -695,7 +655,7 @@ def test_get_budgets_dispatch_ignores_days_param(handler, monkeypatch):
 
 
 def test_put_budget_dispatch(handler, monkeypatch):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
 
@@ -708,7 +668,7 @@ def test_put_budget_dispatch(handler, monkeypatch):
 def test_unknown_budget_method_falls_through_404(handler, monkeypatch):
     # Only GET/PUT/DELETE are routed on /budgets/{category}; an unsupported method
     # (PATCH) hits the catch-all 404.
-    monkeypatch.setattr(handler, "BudgetRepository", lambda: FakeBudgetRepo())
+    monkeypatch.setattr(handler, "BudgetRepository", lambda: recording_budget_repo())
 
     resp = handler.lambda_handler({
         "rawPath": "/budgets/coffee",
@@ -731,7 +691,7 @@ def _delete_budget_event(category="coffee"):
 
 
 def test_delete_budget_success(handler):
-    repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
 
     resp = handler.delete_budget(_delete_budget_event(), repo)
 
@@ -743,7 +703,7 @@ def test_delete_budget_success(handler):
 def test_delete_budget_unknown_id_is_idempotent_200(handler):
     # No stored target for this id -> the repo no-ops, the handler still returns 200
     # (mirrors delete_goal).
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.delete_budget(_delete_budget_event(category="never_budgeted"), repo)
 
@@ -753,7 +713,7 @@ def test_delete_budget_unknown_id_is_idempotent_200(handler):
 
 
 def test_delete_budget_missing_category_returns_404(handler):
-    repo = FakeBudgetRepo()
+    repo = recording_budget_repo()
 
     resp = handler.delete_budget({"pathParameters": {}}, repo)
 
@@ -762,7 +722,7 @@ def test_delete_budget_missing_category_returns_404(handler):
 
 
 def test_delete_budget_routes_via_lambda_handler(handler, monkeypatch):
-    repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("58")}})
+    repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
 
     resp = handler.lambda_handler(_delete_budget_event(), None)
@@ -771,10 +731,18 @@ def test_delete_budget_routes_via_lambda_handler(handler, monkeypatch):
     assert repo.delete_calls == [("coffee")]
 
 
+def _conflicting_budget_repo():
+    """The real repository whose every locked write loses the version race, so it exhausts its
+    retry budget and raises VersionConflictError."""
+    repo = recording_budget_repo({"coffee": {"target": Decimal("58")}})
+    repo._table.always_race()
+    return repo
+
+
 def test_delete_budget_conflict_returns_409(handler, monkeypatch):
     # A repo that exhausts its retry budget raises VersionConflictError; the shared
     # dispatch wrapper maps it to 409 (same as the PUT path).
-    repo = FakeBudgetRepo(conflict_exc=handler.VersionConflictError)
+    repo = _conflicting_budget_repo()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
 
     resp = handler.lambda_handler(_delete_budget_event(), None)
@@ -785,7 +753,7 @@ def test_delete_budget_conflict_returns_409(handler, monkeypatch):
 def test_set_budget_conflict_returns_409(handler, monkeypatch):
     # A repo that exhausts its retry budget raises VersionConflictError; the shared
     # dispatch wrapper maps it to 409.
-    repo = FakeBudgetRepo(conflict_exc=handler.VersionConflictError)
+    repo = _conflicting_budget_repo()
     monkeypatch.setattr(handler, "BudgetRepository", lambda: repo)
     monkeypatch.setattr(handler, "CategoryRepository", lambda: FakeCategoryRepo())
 
@@ -797,53 +765,10 @@ def test_set_budget_conflict_returns_409(handler, monkeypatch):
 # --- repository-level: storage logic via an in-memory fake table -------------
 
 
-def _ccfe():
-    err = ClientError()
-    err.response = {"Error": {"Code": "ConditionalCheckFailedException"}}
-    return err
-
-
-class FakeBudgetTable:
-    """In-memory table emulating the calls BudgetRepository makes: get_item,
-    conditional put_item, and the nested UPSERT update_item (no exists guard)."""
-
-    def __init__(self):
-        self.store = {}  # (pk, sk) -> item
-        # Queue of callables(item) run just before each update_item evaluation,
-        # to simulate a concurrent writer mutating the row between read and write.
-        self.before_update = []
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": copy.deepcopy(item)} if item is not None else {}
-
-    def put_item(self, Item, ConditionExpression=None):
-        k = (Item["pk"], Item["sk"])
-        if ConditionExpression == "attribute_not_exists(pk)" and k in self.store:
-            raise _ccfe()
-        self.store[k] = copy.deepcopy(Item)
-
-    def update_item(self, Key, UpdateExpression, ConditionExpression,
-                    ExpressionAttributeNames, ExpressionAttributeValues):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        if self.before_update and item is not None:
-            self.before_update.pop(0)(item)  # simulate a concurrent writer
-        values = ExpressionAttributeValues
-
-        # attribute_exists(pk) AND #v = :expected — the optimistic-lock guard.
-        if item is None or item["version"] != values[":expected"]:
-            raise _ccfe()
-
-        # Budget upsert: SET #items.#id = :val, set whether or not the id existed.
-        cat_id = ExpressionAttributeNames["#id"]
-        item["items"][cat_id] = copy.deepcopy(values[":val"])
-        item["version"] = values[":next"]
-
-
 def _repo_with_fake_table(handler):
     import repository
     repo = repository.BudgetRepository()
-    repo._table = FakeBudgetTable()
+    repo._table = FakeTable()
     return repository, repo
 
 
@@ -893,13 +818,10 @@ def test_repo_set_budget_preserves_other_keys(handler):
                      "groceries": {"target": Decimal("320")}}
 
 
-def _bump_version(item):
-    item["version"] = item["version"] + 1  # Decimal + int -> Decimal
-
-
 def test_repo_set_budget_retries_after_version_race(handler):
     repository, repo = _repo_with_fake_table(handler)
-    repo._table.before_update.append(_bump_version)
+    repo.list_budgets()  # seed the config item, so the race below has a row to bump
+    repo._table.race_next_update()
 
     repo.set_budget("coffee", Decimal("58"))
 
@@ -911,7 +833,8 @@ def test_repo_set_budget_retries_after_version_race(handler):
 def test_repo_set_budget_raises_under_sustained_contention(handler):
     # Every attempt sees a fresh version bump -> never converges -> 409.
     repository, repo = _repo_with_fake_table(handler)
-    repo._table.before_update.extend([_bump_version, _bump_version])
+    repo.list_budgets()  # seed the config item, so the races below have a row to bump
+    repo._table.always_race()
 
     try:
         repo.set_budget("coffee", Decimal("58"))
@@ -1158,7 +1081,7 @@ def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monk
     from datetime import date
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-16"},  # today       -> IN
@@ -1178,7 +1101,7 @@ def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatc
     from datetime import date
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-02"},  # day before cycle_start -> OUT
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start            -> IN
@@ -1196,7 +1119,7 @@ def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatc
     from datetime import date
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "pending"), "date": "2024-01-16"},  # today    -> IN
         {**_transaction("coffee", -10, "pending"), "date": "2024-01-17"},  # tomorrow -> OUT
@@ -1213,7 +1136,7 @@ def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
     from datetime import date
     import spend
     monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 2, 1))  # 29 days on -> cycle_start 2024-01-03
-    budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
+    budget_repo = recording_budget_repo({"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
         {**_transaction("coffee", -10, "posted"), "date": "2024-02-01"},  # today       -> IN
@@ -1274,7 +1197,7 @@ def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypa
 
 def test_noncounting_leaf_txn_excluded_from_parent(handler):
     # [A20] a counts_to_budget=False txn on a leaf must NOT roll up into the parent.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -30, "posted", counts=True),
         _transaction("parking", -999, "posted", counts=False),  # excluded
@@ -1293,7 +1216,7 @@ def test_noncounting_leaf_txn_excluded_from_parent(handler):
 
 def test_pending_posted_mix_folds_across_leaves(handler):
     # [A21] pending vs posted fold into separate parent totals across DIFFERENT leaves.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -30, "posted"),
         _transaction("parking", -5, "pending"),
@@ -1317,7 +1240,7 @@ def test_income_clawback_on_one_leaf_nets_into_parent(handler):
     # so the earn-target reads the TRUE net earned — matching the /budgets screen. salary
     # 4000 + side (250 - 1000 = -750) = 3250 -> clamp once -> 3250 (still never negative).
     # Fail-on-revert (per-id clamp): side floors to 0 -> 4000.
-    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    budget_repo = recording_budget_repo({"income": {"target": Decimal("6000")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("salary", 4000, "posted"),
         _transaction("side", 250, "posted"),
@@ -1337,7 +1260,7 @@ def test_income_clawback_on_one_leaf_nets_into_parent(handler):
 
 def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
     # [A23] a parent's subtree and an unrelated top-level sibling category don't leak.
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "car": {"target": Decimal("200")},
         "coffee": {"target": Decimal("60")},
     })
@@ -1361,7 +1284,7 @@ def test_no_leakage_between_parent_subtree_and_sibling_toplevel(handler):
 
 def test_two_disjoint_parents_do_not_cross_contaminate(handler):
     # [A24] two budgeted parents with disjoint leaf sets roll up independently.
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "car": {"target": Decimal("200")},
         "food": {"target": Decimal("400")},
     })
@@ -1390,7 +1313,7 @@ def test_two_disjoint_parents_do_not_cross_contaminate(handler):
 
 def test_five_level_chain_rolls_to_top(handler):
     # [A25] a 5-level chain rolls the bottom leaf all the way to the top target.
-    budget_repo = FakeBudgetRepo(budgets={"l1": {"target": Decimal("500")}})
+    budget_repo = recording_budget_repo({"l1": {"target": Decimal("500")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("l5", -60, "posted"),
         _transaction("l5", -10, "pending"),
@@ -1411,7 +1334,7 @@ def test_five_level_chain_rolls_to_top(handler):
 def test_midlevel_and_ancestor_both_budgeted_double_count(handler):
     # [A26] a mid node budgeted AND under another budgeted parent: the shared bottom
     # leaf counts in BOTH rows, each independently correct.
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "car": {"target": Decimal("300")},
         "daily": {"target": Decimal("150")},
     })
@@ -1438,7 +1361,7 @@ def test_corrupt_cross_bucket_income_child_excluded_from_spend_parent(handler):
     # parent's posted — the same-bucket guard drops it from the subtree before it can reach
     # income_ids/summarise_income. So Car = its Living leaf only (30), never 30 + 500.
     # Fail-on-revert (drop bucket_by_id): the income bonus folds back in -> 530.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -30, "posted"),
         _transaction("bonus", 500, "posted"),
@@ -1469,7 +1392,7 @@ def test_list_budgets_parent_direct_refund_reduces_whole_budget(handler):
     # parking -60 (leaf, +60) + car +100 refund (direct, -100): fold = 60 + (-100) = -40 ->
     # clamp once -> 0. Fail-on-revert (per-id clamp restored): car clamps to 0 pre-fold ->
     # 60 + 0 = 60, so this asserts 0 only under aggregate-then-clamp.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -60, "posted"),
         _transaction("car", 100, "posted"),      # refund straight onto the parent
@@ -1490,7 +1413,7 @@ def test_list_budgets_net_positive_subtree_header_matches_signed_rows(handler):
     # transaction list (signed) summed 30 -> the header read HIGHER than its own rows.
     # Aggregate-then-clamp folds 50 + (-20) = 30, clamped once -> 30 = the signed row sum.
     # Fail-on-revert (per-id clamp): fuel's refund floors to 0 -> header 50 != 30.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("200")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("200")}})
     txns = [
         _transaction("parking", -50, "posted"),   # a $50 charge
         _transaction("fuel", 20, "posted"),        # a $20 refund on a sibling leaf
@@ -1528,7 +1451,7 @@ def test_budget_rollup_agrees_across_screen_and_ai_paths(handler):
     ]
 
     screen = handler.list_budgets(
-        FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}}),
+        recording_budget_repo({"car": {"target": Decimal("300")}}),
         FakeTransactionRepo(transactions=txns), FakePayCycleRepo(),
         FakeCategoryRepo(categories=categories),
     )["car"]
@@ -1546,7 +1469,7 @@ def test_list_budgets_parent_direct_mixed_posted_and_pending_no_leaf_spend(handl
     # Both a posted AND a pending write tagged straight onto the parent, with ZERO leaf
     # spend: each bucket routes through the parent id. Pre-228 (leaves-only) `car` is not
     # a leaf -> both dropped -> {0,0}. Fail-on-revert (leaves-only): posted 0 / pending 0.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("car", -40, "posted"),
         _transaction("car", -25, "pending"),
@@ -1566,7 +1489,7 @@ def test_list_budgets_cross_bucket_child_excluded_by_server_guard(handler):
     # NOT fold into the Living parent — the same-bucket guard drops it from the subtree, so
     # Car has no same-bucket spend and reads 0 (matching the /breakdown client's guard).
     # Fail-on-revert (drop bucket_by_id): the Lifestyle child folds back in -> 50.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("misfiled", -50, "posted"),   # Lifestyle child under a Living parent
     ])
@@ -1588,7 +1511,7 @@ def test_list_budgets_same_bucket_grandchild_under_cross_bucket_child_still_fold
     # matching the client, which reattaches fuel to its nearest same-bucket ancestor (Car).
     # The Lifestyle `oddball` is excluded. Fail-on-revert (prune-the-walk instead of filter-
     # the-result): descent would stop at oddball and fuel is silently dropped -> Car reads 0.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("oddball", -20, "posted"),   # Lifestyle intermediate — excluded
         _transaction("fuel", -70, "posted"),       # Living grandchild — folds into Car
@@ -1610,7 +1533,7 @@ def test_list_budgets_cross_bucket_child_that_is_itself_budgeted_still_correct(h
     # EXCLUDES the cross-bucket child from its bar (Car = 0), and (b) the child's own budget
     # row is still summed correctly on itself (root = itself, its own same-bucket subtree ->
     # 40). Fail-on-revert (drop bucket_by_id): the child folds into Car -> Car reads 40.
-    budget_repo = FakeBudgetRepo(budgets={
+    budget_repo = recording_budget_repo({
         "car": {"target": Decimal("300")},
         "oddball": {"target": Decimal("100")},
     })
@@ -1633,7 +1556,7 @@ def test_list_budgets_income_parent_excludes_mis_parented_spend_child(handler):
     # so its earnings floor reads its Income leaf alone (4000), never 4000 + a spend id's 200.
     # Fail-on-revert (drop bucket_by_id): groceries lands in the income parent's subtree, its
     # -200 spend is summed (via summarise_transactions -> spend_ids) into the parent -> 4200.
-    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    budget_repo = recording_budget_repo({"income": {"target": Decimal("6000")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("salary", 4000, "posted"),      # Income leaf -> earnings
         _transaction("groceries", -200, "posted"),   # spend child mis-parented under income
@@ -1664,7 +1587,7 @@ def test_wh343_gap_posted_negative_pending_positive_independent_bucket_clamp(han
     # positive (garage +40). Aggregate-then-clamp floors each BUCKET once & independently:
     # posted -> 0, pending -> 40. Fail-on-revert (per-id clamp): fuel's -80 floors at its
     # own id -> posted 50, so posted==0 only holds under aggregate-then-clamp.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txns = [
         _transaction("parking", -50, "posted"),   # +50 posted spend
         _transaction("fuel", 80, "posted"),         # +80 refund on a sibling -> posted nets -30
@@ -1696,7 +1619,7 @@ def test_wh343_gap_grandchild_net_negative_nets_across_deep_subtree(handler):
     # leaf (tolls) nets NEGATIVE from a refund and must net against the rest across the
     # two-level fold. petrol 90 + daily-direct 20 + tolls (net -100) = 10. Fail-on-revert
     # (per-id clamp): tolls floors to 0 -> 90 + 20 + 0 = 110.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("petrol", -90, "posted"),
         _transaction("daily", -20, "posted"),      # spend tagged on the intermediate node
@@ -1720,7 +1643,7 @@ def test_wh343_gap_cross_bucket_net_negative_sibling_not_netted_into_parent(hand
     # split keeps it out of the spend fold entirely. parking 60; a +90 refund on a Lifestyle
     # sibling would net car to -30 -> 0 IF it leaked. Correct: it's excluded -> car 60.
     # Fail-on-revert (drop the bucket guard so the refund folds in): car -> 0.
-    budget_repo = FakeBudgetRepo(budgets={"car": {"target": Decimal("300")}})
+    budget_repo = recording_budget_repo({"car": {"target": Decimal("300")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("parking", -60, "posted"),
         _transaction("stray", 90, "posted"),         # refund on a cross-bucket child
@@ -1741,7 +1664,7 @@ def test_wh343_gap_income_whole_subtree_net_negative_floors_to_zero(handler):
     # net-negative floor: a clawback bigger than the WHOLE subtree's earnings must still
     # floor the earn-target at 0 (never negative). salary 250 + side (-1000) = -750 -> 0.
     # Fail-on-revert (per-id clamp): salary 250 survives, side floors -> 250, not 0.
-    budget_repo = FakeBudgetRepo(budgets={"income": {"target": Decimal("6000")}})
+    budget_repo = recording_budget_repo({"income": {"target": Decimal("6000")}})
     txn_repo = FakeTransactionRepo(transactions=[
         _transaction("salary", 250, "posted"),
         _transaction("side", -1000, "posted"),   # clawback > the whole subtree's earnings

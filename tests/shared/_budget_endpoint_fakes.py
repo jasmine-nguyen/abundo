@@ -5,8 +5,8 @@ single copy both import (WHIT-362). Kept data-free — each test supplies its ow
 categories/transactions locally.
 
 On the pytest path via `pythonpath = tests/shared` (pytest.ini), same as
-_goal_nudge_fakes.py. NOTE: test_budgets.py keeps its own older FakeBudgetRepo /
-_transaction ecosystem and is intentionally not migrated here.
+_goal_nudge_fakes.py. The suites that WRITE budgets use the real repository instead
+(_budget_fakes.recording_budget_repo); ``_FakeBudgetRepo`` here is a read-only stub.
 """
 
 from decimal import Decimal

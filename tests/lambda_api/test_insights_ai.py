@@ -18,6 +18,8 @@ import pytest
 
 from _anthropic_fakes import FakeResponse, text_payload
 
+from _insight_fakes import insight_puts, insight_repo
+
 
 # --- Anthropic client (insights_ai) -----------------------------------------
 
@@ -149,30 +151,6 @@ def test_generate_suggestions_ssm_failure_degrades_to_anthropic_error(insights_a
 # --- handler endpoints -------------------------------------------------------
 
 
-class _FakeInsightRepo:
-    def __init__(self, existing=None):
-        self._existing = existing
-        self.put_calls = []
-
-    def get_insight(self, cycle_start):
-        return self._existing
-
-    def put_insight(self, cycle_start, summary, suggestions, generated_at, input_hash):
-        self.put_calls.append({
-            "cycle_start": cycle_start, "summary": summary, "suggestions": suggestions,
-            "generated_at": generated_at, "input_hash": input_hash,
-        })
-        # Model a real store: a later get_insight returns what was just written, so a
-        # second generate call actually sees the cached row. This lets the empty-result
-        # retap test prove a re-tap is a genuine cache miss (nothing stored) rather than
-        # a no-op — on the un-fixed code an empty row WOULD be stored and the second tap
-        # would hit it, so the retap test's call counter fails-on-revert.
-        self._existing = {
-            "summary": summary, "suggestions": suggestions,
-            "generated_at": generated_at, "input_hash": input_hash,
-        }
-
-
 class _FakePayCycleRepo:
     def get_paycycle(self):
         # A far-past payday + fortnightly length -> current_cycle_window yields a
@@ -194,7 +172,7 @@ def test_generate_cache_hit_skips_the_paid_call(handler, monkeypatch):
         raise AssertionError("generate_suggestions must not run on a cache hit")
 
     monkeypatch.setattr(handler, "generate_suggestions", must_not_call)
-    repo = _FakeInsightRepo(existing={
+    repo = insight_repo(existing={
         "summary": "cached", "suggestions": ["x"], "generated_at": "t", "input_hash": _hash(model_input)})
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
@@ -202,7 +180,7 @@ def test_generate_cache_hit_skips_the_paid_call(handler, monkeypatch):
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
     assert body["cached"] is True and body["summary"] == "cached"
-    assert repo.put_calls == []  # nothing re-stored
+    assert insight_puts(repo) == []  # nothing re-stored
 
 
 def test_generate_cache_miss_calls_and_stores(handler, monkeypatch):
@@ -211,7 +189,7 @@ def test_generate_cache_miss_calls_and_stores(handler, monkeypatch):
                         lambda *a: (model_input, "2026-06-25"))
     monkeypatch.setattr(handler, "generate_suggestions",
                         lambda _input: {"summary": "fresh", "suggestions": ["cut coffee"]})
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
 
@@ -219,9 +197,9 @@ def test_generate_cache_miss_calls_and_stores(handler, monkeypatch):
     body = json.loads(resp["body"])
     assert body["cached"] is False and body["summary"] == "fresh"
     # Stored under the cycle key with the input hash so a later unchanged run is free.
-    assert len(repo.put_calls) == 1
-    assert repo.put_calls[0]["cycle_start"] == "2026-06-25"
-    assert repo.put_calls[0]["input_hash"] == _hash(model_input)
+    assert len(insight_puts(repo)) == 1
+    assert insight_puts(repo)[0]["cycle_start"] == "2026-06-25"
+    assert insight_puts(repo)[0]["input_hash"] == _hash(model_input)
 
 
 def test_generate_stale_cache_regenerates(handler, monkeypatch):
@@ -231,13 +209,13 @@ def test_generate_stale_cache_regenerates(handler, monkeypatch):
     monkeypatch.setattr(handler, "generate_suggestions",
                         lambda _input: {"summary": "new", "suggestions": []})
     # A cached row whose hash no longer matches the current input -> regenerate.
-    repo = _FakeInsightRepo(existing={
+    repo = insight_repo(existing={
         "summary": "old", "suggestions": [], "generated_at": "t", "input_hash": "STALE"})
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
 
     assert json.loads(resp["body"])["summary"] == "new"
-    assert len(repo.put_calls) == 1
+    assert len(insight_puts(repo)) == 1
 
 
 def test_generate_anthropic_error_returns_502(handler, monkeypatch):
@@ -247,12 +225,12 @@ def test_generate_anthropic_error_returns_502(handler, monkeypatch):
         raise handler.AnthropicError(500, "upstream")
 
     monkeypatch.setattr(handler, "generate_suggestions", boom)
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
 
     assert resp["statusCode"] == 502
-    assert repo.put_calls == []  # nothing cached on failure
+    assert insight_puts(repo) == []  # nothing cached on failure
 
 
 def test_generate_empty_result_not_cached_and_soft_fails(handler, monkeypatch):
@@ -264,13 +242,13 @@ def test_generate_empty_result_not_cached_and_soft_fails(handler, monkeypatch):
                         lambda *a: (model_input, "2026-06-25"))
     monkeypatch.setattr(handler, "generate_suggestions",
                         lambda _input: {"summary": None, "suggestions": []})
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
 
     assert resp["statusCode"] == 502
     assert json.loads(resp["body"])["error"]  # an error message is surfaced
-    assert repo.put_calls == []  # the empty result is never stored
+    assert insight_puts(repo) == []  # the empty result is never stored
 
 
 def test_generate_empty_result_retap_regenerates(handler, monkeypatch):
@@ -286,7 +264,7 @@ def test_generate_empty_result_retap_regenerates(handler, monkeypatch):
         return {"summary": None, "suggestions": []}
 
     monkeypatch.setattr(handler, "generate_suggestions", empty_reply)
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
 
     first = handler.generate_ai_insights(None, None, None, None, repo)
     second = handler.generate_ai_insights(None, None, None, None, repo)
@@ -296,7 +274,7 @@ def test_generate_empty_result_retap_regenerates(handler, monkeypatch):
     # before the fix) the second tap would hit that row and generate_suggestions would
     # run only once. n == 2 proves nothing was cached and the re-tap truly regenerated.
     assert calls["n"] == 2
-    assert repo.put_calls == []
+    assert insight_puts(repo) == []
 
 
 @pytest.mark.parametrize("stale_summary", [
@@ -314,7 +292,7 @@ def test_generate_empty_cached_row_is_treated_as_miss(handler, monkeypatch, stal
                         lambda *a: (model_input, "2026-06-25"))
     monkeypatch.setattr(handler, "generate_suggestions",
                         lambda _input: {"summary": "fresh", "suggestions": ["cut coffee"]})
-    repo = _FakeInsightRepo(existing={
+    repo = insight_repo(existing={
         "summary": stale_summary, "suggestions": [], "generated_at": "t",
         "input_hash": _hash(model_input)})
 
@@ -323,7 +301,7 @@ def test_generate_empty_cached_row_is_treated_as_miss(handler, monkeypatch, stal
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
     assert body["cached"] is False and body["summary"] == "fresh"
-    assert len(repo.put_calls) == 1
+    assert len(insight_puts(repo)) == 1
 
 
 @pytest.mark.parametrize("result", [
@@ -337,24 +315,27 @@ def test_generate_partial_result_still_caches(handler, monkeypatch, result):
     monkeypatch.setattr(handler, "assemble_insight_input",
                         lambda *a: (model_input, "2026-06-25"))
     monkeypatch.setattr(handler, "generate_suggestions", lambda _input: result)
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])["cached"] is False
-    assert len(repo.put_calls) == 1
+    assert len(insight_puts(repo)) == 1
 
 
 def test_get_ai_insights_returns_cached(handler):
-    repo = _FakeInsightRepo(existing={
-        "summary": "hi", "suggestions": ["a"], "generated_at": "t", "input_hash": "h"})
+    cycle = _FakePayCycleRepo().get_paycycle()
+    cycle_start, _ = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
+    repo = insight_repo(existing={
+        "summary": "hi", "suggestions": ["a"], "generated_at": "t", "input_hash": "h"},
+        cycle_start=cycle_start)
     out = handler.get_ai_insights(repo, _FakePayCycleRepo())
     assert out["cached"] is True and out["summary"] == "hi" and out["suggestions"] == ["a"]
 
 
 def test_get_ai_insights_null_sentinel_when_absent(handler):
-    out = handler.get_ai_insights(_FakeInsightRepo(existing=None), _FakePayCycleRepo())
+    out = handler.get_ai_insights(insight_repo(existing=None), _FakePayCycleRepo())
     assert out["summary"] is None and out["suggestions"] == [] and out["cached"] is False
     assert out["cycle_start"]  # a real cycle key is still returned
 
@@ -625,7 +606,7 @@ def test_generate_threads_goal_into_model_input_and_hash(handler, monkeypatch):
         return {"summary": "s", "suggestions": []}
 
     monkeypatch.setattr(handler, "generate_suggestions", _capture)
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
     event = {"body": json.dumps({"goal": dict(_VALID_GOAL)})}
 
     resp = handler.generate_ai_insights(
@@ -635,7 +616,7 @@ def test_generate_threads_goal_into_model_input_and_hash(handler, monkeypatch):
     # The sanitised goal reached the model...
     assert captured["mi"]["goal"]["payoff_mode"] == "ahead"
     # ...and is part of the stored cache hash, so a later goal change misses the cache.
-    assert repo.put_calls[0]["input_hash"] == _hash(captured["mi"])
+    assert insight_puts(repo)[0]["input_hash"] == _hash(captured["mi"])
 
 
 def test_generate_goal_busts_an_otherwise_matching_spend_only_cache(handler, monkeypatch):
@@ -644,11 +625,11 @@ def test_generate_goal_busts_an_otherwise_matching_spend_only_cache(handler, mon
     cycle = _FakePayCycleRepo().get_paycycle()
     start, end = handler.current_cycle_window(cycle["last_pay_date"], cycle["length"])
     window = {(start, end): [_txn("groceries", -50)]}
-    spend_only, _ = handler.assemble_insight_input(
+    spend_only, cycle_start = handler.assemble_insight_input(
         _FakeCategoryRepo(), _FakeBudgetRepo(), _FakeTxnRepo(dict(window)), _FakePayCycleRepo())
-    repo = _FakeInsightRepo(existing={
+    repo = insight_repo(existing={
         "summary": "spend-only cached", "suggestions": [], "generated_at": "t",
-        "input_hash": _hash(spend_only)})
+        "input_hash": _hash(spend_only)}, cycle_start=cycle_start)
     monkeypatch.setattr(handler, "generate_suggestions",
                         lambda mi: {"summary": "regenerated with goal", "suggestions": []})
     event = {"body": json.dumps({"goal": dict(_VALID_GOAL)})}
@@ -660,7 +641,7 @@ def test_generate_goal_busts_an_otherwise_matching_spend_only_cache(handler, mon
     body = json.loads(resp["body"])
     assert body["cached"] is False
     assert body["summary"] == "regenerated with goal"   # not the stale spend-only row
-    assert len(repo.put_calls) == 1
+    assert len(insight_puts(repo)) == 1
 
 
 def test_sanitise_goal_strips_unknown_and_hostile_fields(handler):
@@ -747,7 +728,7 @@ def test_generate_without_a_goal_body_stays_spend_only(handler, monkeypatch):
         return {"summary": "s", "suggestions": []}
 
     monkeypatch.setattr(handler, "generate_suggestions", _capture)
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
 
     resp = handler.generate_ai_insights(
         _FakeCategoryRepo(), _FakeBudgetRepo(), txn_repo, _FakePayCycleRepo(), repo, {"body": ""})
@@ -771,13 +752,13 @@ def test_generate_empty_dict_result_soft_fails(handler, monkeypatch):
     monkeypatch.setattr(handler, "assemble_insight_input",
                         lambda *a: (model_input, "2026-06-25"))
     monkeypatch.setattr(handler, "generate_suggestions", lambda _input: {})
-    repo = _FakeInsightRepo(existing=None)
+    repo = insight_repo(existing=None)
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
 
     assert resp["statusCode"] == 502
     assert json.loads(resp["body"])["error"]
-    assert repo.put_calls == []
+    assert insight_puts(repo) == []
 
 
 @pytest.mark.parametrize("cached_row", [
@@ -797,7 +778,7 @@ def test_generate_partial_cached_row_is_a_hit(handler, monkeypatch, cached_row):
         raise AssertionError("a partial cached row must be a HIT, not a regenerate")
 
     monkeypatch.setattr(handler, "generate_suggestions", must_not_call)
-    repo = _FakeInsightRepo(existing={
+    repo = insight_repo(existing={
         **cached_row, "generated_at": "t", "input_hash": _hash(model_input)})
 
     resp = handler.generate_ai_insights(None, None, None, None, repo)
@@ -807,7 +788,7 @@ def test_generate_partial_cached_row_is_a_hit(handler, monkeypatch, cached_row):
     assert body["cached"] is True
     assert body["summary"] == cached_row["summary"]
     assert body["suggestions"] == cached_row["suggestions"]
-    assert repo.put_calls == []  # a hit re-stores nothing
+    assert insight_puts(repo) == []  # a hit re-stores nothing
 
 
 def test_generate_empty_cached_row_then_empty_regen_stays_soft_failed(handler, monkeypatch):
@@ -820,7 +801,7 @@ def test_generate_empty_cached_row_then_empty_regen_stays_soft_failed(handler, m
                         lambda *a: (model_input, "2026-06-25"))
     monkeypatch.setattr(handler, "generate_suggestions",
                         lambda _input: {"summary": None, "suggestions": []})
-    repo = _FakeInsightRepo(existing={
+    repo = insight_repo(existing={
         "summary": None, "suggestions": [], "generated_at": "t",
         "input_hash": _hash(model_input)})
 
@@ -828,7 +809,7 @@ def test_generate_empty_cached_row_then_empty_regen_stays_soft_failed(handler, m
 
     assert resp["statusCode"] == 502
     assert json.loads(resp["body"])["error"]
-    assert repo.put_calls == []
+    assert insight_puts(repo) == []
 
 
 # --- sub-categories: budgeted-parent rollup in the AI model input (WHIT-225) ---

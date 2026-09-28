@@ -8,7 +8,8 @@ instead of matching whitelisted strings, so the REAL repositories run over it un
 - ConditionExpression: ``attribute_exists(path)``, ``attribute_not_exists(path)``,
   ``path = :v``, ``path <> :v``, ``contains(path, :v)``, ``NOT``, ``AND``, ``OR``, parentheses.
 - query: KeyConditionExpression / FilterExpression are the ``_Predicate``s the fake boto3
-  ``Key``/``Attr`` build (see ``_boto_stubs``), newest-first ordering, Limit and cursors.
+  ``Key``/``Attr`` build (see ``_boto_stubs``), newest-first ordering, Limit and cursors, and
+  ``page_size`` for DynamoDB's 1MB page (cut before the filter runs).
 
 Anything outside that grammar raises AssertionError: a drifted expression must fail loudly, never
 pass with its guard dead.
@@ -306,6 +307,10 @@ class FakeTable:
         self._before_write: list = []
         self._next_writes: list = []
         self._stale: dict = {}
+        # None → one page per query. An int emulates DynamoDB's 1MB page: the key-matched rows are
+        # cut into pages of this size BEFORE FilterExpression runs, so a row the filter keeps can
+        # sit behind a page the filter empties.
+        self.page_size = None
 
     # --- setup and hooks -------------------------------------------------------------------
 
@@ -457,9 +462,9 @@ class FakeTable:
         if index_name is not None:
             for item in items:
                 item.update(copy.deepcopy(self._stale.get(_store_key(item), {})))
-        for predicate in (kwargs.get("KeyConditionExpression"), kwargs.get("FilterExpression")):
-            if predicate is not None:
-                items = [item for item in items if predicate.evaluate(item)]
+        key_condition = kwargs.get("KeyConditionExpression")
+        if key_condition is not None:
+            items = [item for item in items if key_condition.evaluate(item)]
 
         # date-index reads sort by date; ScanIndexForward=False → newest first.
         items.sort(
@@ -475,13 +480,23 @@ class FakeTable:
                     items = items[position + 1:]
                     break
 
-        limit = kwargs.get("Limit")
-        if limit is None or len(items) <= limit:
-            return {"Items": items}
-        page = items[:limit]
-        last = page[-1]
         cursor_fields = _INDEX_KEYS.get(index_name, ()) + ("pk", "sk")
-        return {"Items": page, "LastEvaluatedKey": {name: last[name] for name in cursor_fields}}
+        page_cursor = None
+        if self.page_size is not None and len(items) > self.page_size:
+            items = items[:self.page_size]
+            page_cursor = {name: items[-1][name] for name in cursor_fields}
+
+        filter_condition = kwargs.get("FilterExpression")
+        if filter_condition is not None:
+            items = [item for item in items if filter_condition.evaluate(item)]
+
+        limit = kwargs.get("Limit")
+        if limit is not None and len(items) > limit:
+            items = items[:limit]
+            page_cursor = {name: items[-1][name] for name in cursor_fields}
+        if page_cursor is None:
+            return {"Items": items}
+        return {"Items": items, "LastEvaluatedKey": page_cursor}
 
     def _holds(self, key, expression, names, values):
         item = self.store.get(key, {})

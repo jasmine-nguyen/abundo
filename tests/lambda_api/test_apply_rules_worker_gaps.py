@@ -12,9 +12,9 @@ progress-every-50, failure, idempotency, inline mint and no-rules. These add the
     so every outcome bucket (filed/vanished/failed/alreadyFiled) the job reports is real.
 
 Runs the real TransactionRepository and RuleRepository over one FakeTable (_feed_fakes.real_repos)
-via the lambda_api conftest's `apply_rules_worker` fixture. FakeJobRepo is a per-file recorder (as
-in the impl suite): the cadence assertions need the ORDERED list of progress writes, which the real
-repo would overwrite.
+via the lambda_api conftest's `apply_rules_worker` fixture, and the real JobRepository over its own
+FakeTable (_job_fakes). The cadence assertions read the ORDERED progress writes off the table's
+update log (progress_writes), since the stored row only keeps the last one.
 """
 
 import pytest
@@ -22,6 +22,7 @@ import pytest
 from _feed_fakes import (
     SPENDING, FakeCategoryRepo, fail_writes, real_repos, _row, stored, vanish_on_write,
 )
+from _job_fakes import progress_writes, real_job_repo
 
 
 def _rule(value, category_id="groceries"):
@@ -30,32 +31,9 @@ def _rule(value, category_id="groceries"):
             "category_id": category_id}
 
 
-class FakeJobRepo:
-    """In-memory job store that RECORDS every progress write in order (cadence needs the sequence)."""
-
-    def __init__(self):
-        self.jobs = {}
-        self.progress_calls = []
-
-    def create_job(self, job_id, kind="apply_rules"):
-        self.jobs[job_id] = {"id": job_id, "status": "running"}
-        return self.jobs[job_id]
-
-    def get_job(self, job_id):
-        return self.jobs.get(job_id)
-
-    def update_progress(self, job_id, counts):
-        self.progress_calls.append(dict(counts))
-        self.jobs.setdefault(job_id, {"id": job_id}).update(counts)
-
-    def finish_job(self, job_id, status, counts, created_rule=None, error=None):
-        self.jobs.setdefault(job_id, {"id": job_id}).update(
-            {"status": status, "error": error, "createdRule": created_rule, **counts})
-
-
 def _wire(worker, monkeypatch, *, transactions, rules, categories=frozenset({"groceries"})):
     table, txn_repo, rule_repo = real_repos(transactions, rules=rules)
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     job_repo.create_job("job1")
     monkeypatch.setattr(worker, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(categories))
@@ -77,12 +55,12 @@ def test_progress_writes_exactly_every_50_over_900_rows(apply_rules_worker, monk
     worker.lambda_handler({"jobId": "job1"})
 
     # The initial write carries matched=900, filed=0; mid-run writes carry a positive `filed`.
-    mid = [c for c in job_repo.progress_calls if c.get("filed", 0) > 0]
+    mid = [c for c in progress_writes(job_repo) if c.get("filed", 0) > 0]
     assert [c["filed"] for c in mid] == list(range(50, 901, 50))   # exactly 18, exact cadence
     # remaining tracks matched - filed on every mid-run write (never negative, never overshoots).
     assert all(c["remaining"] == 900 - c["filed"] for c in mid)
     # The one initial write, before any filing.
-    initial = [c for c in job_repo.progress_calls if c.get("filed", 0) == 0]
+    initial = [c for c in progress_writes(job_repo) if c.get("filed", 0) == 0]
     assert len(initial) == 1 and initial[0]["matched"] == 900 and initial[0]["remaining"] == 900
 
 
@@ -97,11 +75,11 @@ def test_a_run_under_50_writes_only_the_initial_progress_no_mid_writes(apply_rul
     worker.lambda_handler({"jobId": "job1"})
 
     # Exactly ONE progress write (the initial matched=30), and no mid-run write fired.
-    assert len(job_repo.progress_calls) == 1
-    assert job_repo.progress_calls[0]["matched"] == 30 and job_repo.progress_calls[0]["filed"] == 0
+    assert len(progress_writes(job_repo)) == 1
+    assert progress_writes(job_repo)[0]["matched"] == 30 and progress_writes(job_repo)[0]["filed"] == 0
     # But everything was still filed and the finished counts are complete.
     assert len(table.update_calls) == 30
-    assert job_repo.jobs["job1"]["filed"] == 30 and job_repo.jobs["job1"]["remaining"] == 0
+    assert job_repo.get_job("job1")["filed"] == 30 and job_repo.get_job("job1")["remaining"] == 0
 
 
 # --- reconcile sweep runs UNCAPPED in the worker -----------------------------
@@ -128,8 +106,8 @@ def test_worker_clears_a_500_row_reconcile_tail_the_300_cap_would_leave(apply_ru
     remaining_stamps = [r for r in table.store.values() if r.get("filed_by_rule") == "r_dead"]
     assert remaining_stamps == []          # every orphan stamp cleared, none left behind
     # The reconcile clears are NOT counted as `filed` (they climb `attempted` only, not the bar).
-    assert job_repo.jobs["job1"]["filed"] == 0
-    assert job_repo.jobs["job1"]["matched"] == 0
+    assert job_repo.get_job("job1")["filed"] == 0
+    assert job_repo.get_job("job1")["matched"] == 0
 
 
 # --- every outcome bucket exercised ------------------------------------------
@@ -165,7 +143,7 @@ def test_worker_counts_filed_vanished_failed_and_alreadyfiled_in_one_sweep(apply
     result = worker.lambda_handler({"jobId": "job1"})
 
     assert result["status"] == "succeeded"
-    job = job_repo.jobs["job1"]
+    job = job_repo.get_job("job1")
     assert job["matched"] == 6
     assert job["filed"] == 2
     assert job["vanished"] == 1

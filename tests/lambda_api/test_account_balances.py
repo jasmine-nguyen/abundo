@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from _balance_fakes import balance_repo, marker_writes, upserted
+
 
 class FakeAccountBalanceRepo:
     """Handler-level stand-in for AccountBalanceRepository."""
@@ -88,31 +90,6 @@ def test_route_empty_list_before_any_poll(handler, monkeypatch):
 # --- POST /accounts/balances/refresh (on-demand live refresh) ----------------
 
 
-class FakeRefreshRepo:
-    """Handler-level stand-in supporting the refresh endpoint's throttle + upserts."""
-
-    def __init__(self, rows=None, last=None):
-        self._rows = rows or []
-        self._last = last
-        self.upserts = []
-        self.set_calls = []
-        self.list_calls = 0
-
-    def get_last_refresh_at(self):
-        return self._last
-
-    def set_last_refresh_at(self, now):
-        self.set_calls.append(now)
-        self._last = now
-
-    def upsert_balance(self, account_id, amount, available_balance, currency, as_of, account_type):
-        self.upserts.append((account_id, amount, available_balance, currency, as_of, account_type))
-
-    def list_balances(self, account_ids):
-        self.list_calls += 1
-        return self._rows
-
-
 def _ok_payload(amount, account_type):
     return {"success": True, "data": {"amount": amount, "date": "2026-08-11T00:00:00Z",
                                       "currency": "AUD", "accountType": account_type}}
@@ -141,7 +118,7 @@ def _stub_bank(handler, monkeypatch, fetch):
 def test_refresh_throttled_returns_stored_without_bank_call(handler, monkeypatch):
     rows = [{"account_id": "up-spending", "amount": Decimal("96270.59"),
              "available_balance": None, "currency": "AUD", "as_of": "d", "account_type": "checking"}]
-    repo = FakeRefreshRepo(rows=rows, last=970)  # 30s ago at now=1000 -> within the 60s window
+    repo = balance_repo(rows=rows, last=970)  # 30s ago at now=1000 -> within the 60s window
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     calls = []
@@ -155,14 +132,14 @@ def test_refresh_throttled_returns_stored_without_bank_call(handler, monkeypatch
          "currency": "AUD", "as_of": "d", "account_type": "checking"},
     ]
     assert calls == []            # no bank call while throttled
-    assert repo.set_calls == []   # and no marker write
+    assert marker_writes(repo) == []   # and no marker write
 
 
 def test_refresh_live_fetches_upserts_and_arms_marker(handler, monkeypatch):
     rows = [{"account_id": "up-spending", "amount": Decimal("96270.59"),
              "available_balance": None, "currency": "AUD", "as_of": "2026-08-11T00:00:00Z",
              "account_type": "checking"}]
-    repo = FakeRefreshRepo(rows=rows, last=None)  # never refreshed -> live
+    repo = balance_repo(rows=rows, last=None)  # never refreshed -> live
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     _stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
@@ -171,18 +148,17 @@ def test_refresh_live_fetches_upserts_and_arms_marker(handler, monkeypatch):
 
     assert resp["statusCode"] == 200
     # Every account was fetched + upserted, under its internal id, with signed amounts.
-    upserted = {u[0]: u[1] for u in repo.upserts}
-    assert upserted == {
+    assert upserted(repo) == {
         "up-spending": Decimal("96270.59"),
         "up-homeloan": Decimal("-596642.43"),
         "anz-rewards-black-visa": Decimal("-6492.26"),
         "westpac-altitude-qantas-black": Decimal("-230"),
     }
-    assert repo.set_calls == [1000]  # marker armed at now
+    assert marker_writes(repo) == [1000]  # marker armed at now
 
 
 def test_refresh_partial_failure_upserts_successes_and_returns_200(handler, monkeypatch):
-    repo = FakeRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
 
@@ -196,13 +172,13 @@ def test_refresh_partial_failure_upserts_successes_and_returns_200(handler, monk
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200  # one account down, the others still refresh
-    assert {u[0] for u in repo.upserts} == {"up-spending", "up-homeloan",
+    assert set(upserted(repo)) == {"up-spending", "up-homeloan",
                                             "westpac-altitude-qantas-black"}
-    assert repo.set_calls == [1000]   # marker armed despite the partial failure
+    assert marker_writes(repo) == [1000]   # marker armed despite the partial failure
 
 
 def test_refresh_all_failed_returns_502_without_leaking_details(handler, monkeypatch):
-    repo = FakeRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     _stub_bank(handler, monkeypatch, lambda *a, **k: (_ for _ in ()).throw(OSError("secret-key leaked?")))
@@ -211,14 +187,14 @@ def test_refresh_all_failed_returns_502_without_leaking_details(handler, monkeyp
 
     assert resp["statusCode"] == 502
     assert json.loads(resp["body"]) == {"error": "could not refresh balances"}
-    assert repo.upserts == []
-    assert repo.set_calls == [1000]  # marker armed so pull-spam during an outage backs off
+    assert upserted(repo) == {}
+    assert marker_writes(repo) == [1000]  # marker armed so pull-spam during an outage backs off
 
 
 def test_refresh_normalise_failure_counts_as_a_failed_account(handler, monkeypatch):
     # A getBalance that returns success:false must not upsert that account (BalanceError),
     # but the other accounts still refresh -> 200.
-    repo = FakeRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
 
@@ -232,13 +208,13 @@ def test_refresh_normalise_failure_counts_as_a_failed_account(handler, monkeypat
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
-    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa",
+    assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
                                             "westpac-altitude-qantas-black"}
 
 
 def test_refresh_accepts_post_with_no_body(handler, monkeypatch):
     # The route takes no request body — a bodyless POST must not 400.
-    repo = FakeRefreshRepo(rows=[], last=990)  # throttled path, keeps it bank-free
+    repo = balance_repo(rows=[], last=990)  # throttled path, keeps it bank-free
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     _stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("should not fetch while throttled"))

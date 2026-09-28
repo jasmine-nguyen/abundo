@@ -7,13 +7,14 @@ route), the seed firing even when the write no-ops, the None-create retry, a mul
 rule, a spread rule matching nothing, and a budget_excluded regression with the spread wiring live.
 
 Runs the real TransactionRepository and RuleRepository over one FakeTable; local
-FakeBudget/FakePaycycle record the seed and a local FakeJobRepo drives the worker (as
-test_apply_rules_worker.py does)."""
+FakeBudget/FakePaycycle record the seed and the real JobRepository (_job_fakes) drives the worker
+(as test_apply_rules_worker.py does)."""
 
 import json
 from decimal import Decimal
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, real_repos, _row, stored
+from _job_fakes import real_job_repo
 
 
 def _spread_rule(value="ORIGIN", category_id="insurance", *, spread=True, budget_excluded=False):
@@ -186,29 +187,10 @@ def test_a_budget_excluded_non_spread_rule_still_files_and_excludes(handler):
 
 # --- the async worker route (impl suite tested only the sync route) -------------------------------
 
-class FakeJobRepo:
-    def __init__(self):
-        self.jobs = {}
-
-    def create_job(self, job_id, kind="apply_rules"):
-        self.jobs[job_id] = {"id": job_id, "status": "running"}
-        return self.jobs[job_id]
-
-    def get_job(self, job_id):
-        return self.jobs.get(job_id)
-
-    def update_progress(self, job_id, counts):
-        self.jobs.setdefault(job_id, {"id": job_id}).update(counts)
-
-    def finish_job(self, job_id, status, counts, created_rule=None, error=None):
-        self.jobs.setdefault(job_id, {"id": job_id}).update(
-            {"status": status, "error": error, "createdRule": created_rule, **counts})
-
-
 def _wire_worker(worker, monkeypatch, *, transactions, rules, budget, paycycle,
                  categories=frozenset({"insurance", "coffee"})):
     table, txn_repo, rule_repo = real_repos(transactions, rules=rules)
-    job_repo = FakeJobRepo()
+    job_repo = real_job_repo()
     job_repo.create_job("job1")
     monkeypatch.setattr(worker, "TransactionRepository", lambda: txn_repo)
     monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(categories))
@@ -235,7 +217,7 @@ def test_worker_seeds_a_spread_rules_plan_once_and_marks_it(apply_rules_worker, 
     assert result["status"] == "succeeded"
     assert len(budget.calls) == 1 and paycycle.reads == 1
     assert _seeded(rule_repo) is True and _seed_marks(table) == 1
-    assert job_repo.jobs["job1"]["filed"] == 3
+    assert job_repo.get_job("job1")["filed"] == 3
 
 
 def test_worker_with_a_non_spread_rule_touches_no_budget(apply_rules_worker, monkeypatch):

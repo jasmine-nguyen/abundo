@@ -6,6 +6,8 @@ The milestone suites (test_milestones*, test_milestone_rows*) share these in ONE
     String-Set ADD/DELETE and the per-owner keys run as production wrote them. The views
     (``stored_markers``, ``removed_markers``, ``scopes_read``, ...) read the table and its
     recorders, not a copied rule;
+  * ``goal_checkpoint_repo`` / ``checkpoints_marked`` do the same for the goal-checkpoint
+    markers (test_goal_checkpoints*);
   * FakeDeviceRepo, FakeLoanFactsRepo and FakeMilestoneRepo are read-only canned stubs.
 
 The per-suite `_notify` / `_run` harness helpers stay local to each file — they call the real
@@ -25,6 +27,7 @@ from _dynamo_fakes import FakeTable
 
 # The partition key of the milestone marker items, one per owner (shared/repository_notify.py).
 _MARKERS_PK = "NOTIFY#MILESTONE"
+_GOALCHECKPOINT_PK = "NOTIFY#GOALCHECKPOINT"
 
 # The loanfacts figures the crossing maths reads. One shape, shared by every plan-family suite.
 FACTS = {"original": 600000.0, "homeValue": 770000.0, "lvr": 0.8,
@@ -73,10 +76,46 @@ def notify_repo(fired=None, scope=None):
     return repo
 
 
-def _marker_writes(repo, verb):
+def recording_notify_repo(fired=()):
+    """``notify_repo(fired)`` plus a spy that records every migrate call (its migrations and scope)
+    before the real rename runs, so a handler test can assert WHAT set_milestones migrates."""
+    notify = notify_repo(fired)
+    notify.migrate_calls = []
+    migrate = notify.migrate_milestone_markers
+
+    def spy(migrations, scope=None):
+        notify.migrate_calls.append({"migrations": list(migrations), "scope": scope})
+        return migrate(migrations, scope=scope)
+
+    notify.migrate_milestone_markers = spy
+    return notify
+
+
+def goal_checkpoint_repo(fired=()):
+    """The REAL NotifyRepository over its own FakeTable, with ``fired`` goal-checkpoint markers
+    already set through the real ``mark_goal_checkpoint_fired``. The write log is cleared after
+    that setup, like ``notify_repo``."""
+    from repository_notify import NotifyRepository
+
+    repo = NotifyRepository()
+    repo._table = FakeTable()
+    for marker in fired:
+        repo.mark_goal_checkpoint_fired(marker)
+    repo._table.update_calls.clear()
+    repo._table.update_keys.clear()
+    return repo
+
+
+def _marker_writes(repo, verb, pk=_MARKERS_PK):
     return [(key, values) for key, (expression, _names, values)
             in zip(repo._table.update_keys, repo._table.update_calls)
-            if key["pk"] == _MARKERS_PK and expression.startswith(verb)]
+            if key["pk"] == pk and expression.startswith(verb)]
+
+
+def checkpoints_marked(repo):
+    """Each goal-checkpoint marker the code set (ADD), in write order."""
+    return [marker for _key, values in _marker_writes(repo, "ADD", _GOALCHECKPOINT_PK)
+            for marker in sorted(values[":m"])]
 
 
 def stored_markers(repo):

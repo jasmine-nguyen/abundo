@@ -8,6 +8,7 @@ from decimal import Decimal
 
 import pytest
 
+from _dynamo_fakes import FakeTable
 # The milestone fakes + FACTS + the send_push recorder live in tests/shared/_milestone_fakes.py
 # so the whole milestone family shares ONE definition of each (WHIT-445).
 from _milestone_fakes import (
@@ -561,23 +562,9 @@ def test_plan_marker_missing_and_explicit_none_id_both_fall_back_to_amount(share
 # --- folded from test_milestone_marker_migration_whit369.py (WHIT-471) ---
 # ==========================================================================
 
-class _FakeTable:
-    def __init__(self):
-        self.store = {}
-
-    def get_item(self, Key):
-        item = self.store.get((Key["pk"], Key["sk"]))
-        return {"Item": dict(item)} if item is not None else {}
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues):
-        item = self.store.setdefault((Key["pk"], Key["sk"]), {"pk": Key["pk"], "sk": Key["sk"]})
-        f = ExpressionAttributeNames["#f"]
-        item[f] = set(item.get(f, set())) | ExpressionAttributeValues[":m"]
-
-
 def _repo(shared):
     r = shared.notify.NotifyRepository()
-    r._table = _FakeTable()
+    r._table = FakeTable()
     return r
 
 

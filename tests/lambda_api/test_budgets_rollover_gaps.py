@@ -21,34 +21,13 @@ import json
 
 import pytest
 
+from _budget_fakes import recording_budget_repo
+
 LENGTH = 30
 PAYDATE = "2026-01-01"
 
 
 # --- fakes (module-local, mirroring the sibling suites' pattern) --------------
-
-
-class FakeBudgetRepo:
-    def __init__(self, budgets):
-        self._budgets = budgets
-        self.settle_calls = []
-        self.set_calls = []
-        self.set_kwargs = None
-
-    def list_budgets(self):
-        return {k: dict(v) for k, v in self._budgets.items()}
-
-    def set_budget(self, cat_id, target, rollover=None, anchor=None):
-        self.set_calls.append((cat_id, target))
-        self.set_kwargs = {"rollover": rollover, "anchor": anchor}
-        return {"id": cat_id, "target": target}
-
-    def settle_carryover(self, cat_id, carryover, carryover_from, carryover_len, carryover_paydate):
-        self.settle_calls.append((cat_id, carryover, carryover_from, carryover_len, carryover_paydate))
-        self._budgets.setdefault(cat_id, {}).update({
-            "carryover": carryover, "carryover_from": carryover_from,
-            "carryover_len": Decimal(carryover_len), "carryover_paydate": carryover_paydate,
-        })
 
 
 class FakeTransactionRepo:
@@ -109,7 +88,7 @@ def test_a_cycle_ending_exactly_on_the_lag_cutoff_is_not_sealed(handler, monkeyp
     # strict `<`, so end==cutoff stays LIVE (recomputed each read), nothing sealed. Fail-on-
     # revert: relaxing `<` to `<=` would seal it here and populate settle_calls.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-15")
-    budget_repo = FakeBudgetRepo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
     result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(),
                                   FakeCategoryRepo([_spend_cat()]))
 
@@ -122,7 +101,7 @@ def test_a_cycle_ending_one_day_before_the_cutoff_seals(handler, monkeypatch):
     # cycle (ends 2026-08-05) is now strictly before the cutoff and DOES seal, advancing the
     # anchor to the next cycle start (2026-08-06). Pins that the boundary is exactly one day wide.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-16")
-    budget_repo = FakeBudgetRepo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-07-07")})
     result = handler.list_budgets(budget_repo, FakeTransactionRepo(), FakePayCycleRepo(),
                                   FakeCategoryRepo([_spend_cat()]))
 
@@ -139,7 +118,7 @@ def test_a_parents_sealed_leftover_folds_child_spend_across_the_subtree(handler,
     # not 100 — _seal_rollover has to fold the whole subtree per cycle, exactly as the current
     # window does. Fail-on-revert: sealing on {parent} only would read 100 sealed / carryover 200.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
-    budget_repo = FakeBudgetRepo({"food": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
+    budget_repo = recording_budget_repo({"food": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
     cats = FakeCategoryRepo([_spend_cat("food"), _spend_cat("dining", parent="food")])
     # dining spend lands in the sealed cycle [2026-06-07, 2026-07-06]; the live cycle is empty.
     txns = FakeTransactionRepo([_txn("dining", -30, "2026-06-20")])
@@ -159,7 +138,7 @@ def test_a_refund_in_a_sealed_cycle_cannot_push_leftover_above_target(handler, m
     # per-cycle spend at >= 0, so the sealed leftover caps at the target (100), never 150. Pins
     # the aggregate-then-clamp rule for sealing. (A user-visible surprise — see the critique.)
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
-    budget_repo = FakeBudgetRepo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
     # +50 amount with the default spend sign is a refund (negative contribution) in the sealed cycle.
     txns = FakeTransactionRepo([_txn("sink", 50, "2026-06-20")])
     result = handler.list_budgets(budget_repo, txns, FakePayCycleRepo(), FakeCategoryRepo([_spend_cat()]))
@@ -178,7 +157,7 @@ def test_a_transaction_dated_exactly_on_cycle_start_is_current_not_sealed(handle
     # revert: an off-by-one that bucketed 08-06 into the live cycle would drop posted to 0 and
     # shrink that cycle's leftover.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-10")   # cutoff 2026-07-31
-    budget_repo = FakeBudgetRepo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
+    budget_repo = recording_budget_repo({"sink": _entry(100, carryover=Decimal(0), carryover_from="2026-06-07")})
     # A spend in a PAST sealed cycle (25) + a spend dated exactly cycle_start (40). Only the
     # cycle_start one is this cycle's posted spend; the past one belongs to the sealed cycle,
     # so it must NOT inflate `posted`. Without the current-cycle slice, posted would read 65.
@@ -212,7 +191,7 @@ def test_turning_rollover_on_for_an_existing_budget_re_anchors_to_the_current_cy
     # carrying the CURRENT cycle_start + the live pay-cycle length/payday. Fail-on-revert:
     # dropping the anchor build leaves anchor=None and the buffer would seal the off-period.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-10")
-    repo = FakeBudgetRepo({"coffee": {"target": Decimal(50)}})   # exists, rollover OFF/unset
+    repo = recording_budget_repo({"coffee": {"target": Decimal(50)}})   # exists, rollover OFF/unset
     resp = handler.set_budget(_put_budget_event(body='{"target": 60, "rollover": true}'),
                               repo, FakeCategoryRepo([_spend_cat("coffee")]), FakePayCycleRepo())
 
@@ -228,7 +207,7 @@ def test_an_amount_edit_while_rollover_already_on_does_not_re_anchor(handler, mo
     # (re-anchoring would drop a not-yet-sealed cycle). Fail-on-revert: if the OFF->ON guard were
     # removed, every amount edit would re-anchor and silently reset the settle window.
     _pin_window(handler, monkeypatch, "2026-08-06", "2026-08-10")
-    repo = FakeBudgetRepo({"coffee": {"target": Decimal(50), "rollover": True}})
+    repo = recording_budget_repo({"coffee": {"target": Decimal(50), "rollover": True}})
     resp = handler.set_budget(_put_budget_event(body='{"target": 75, "rollover": true}'),
                               repo, FakeCategoryRepo([_spend_cat("coffee")]), FakePayCycleRepo())
 
@@ -239,7 +218,7 @@ def test_an_amount_edit_while_rollover_already_on_does_not_re_anchor(handler, mo
 
 def test_rollover_true_on_an_income_category_is_rejected_400(handler):
     # Rollover is spend-only: rollover:true on an Income earn-target is a 400 and is never written.
-    repo = FakeBudgetRepo({})
+    repo = recording_budget_repo({})
     resp = handler.set_budget(_put_budget_event(body='{"target": 60, "rollover": true}'),
                               repo, FakeCategoryRepo([_spend_cat("coffee", bucket="Income")]), FakePayCycleRepo())
 
@@ -251,7 +230,7 @@ def test_rollover_true_on_an_income_category_is_rejected_400(handler):
 def test_a_non_boolean_rollover_is_rejected_before_any_taxonomy_read(handler):
     # rollover must be a real bool — a truthy string like "yes" must 400, not be stored as-is.
     # The type check runs before the bucket read, so the taxonomy is never fetched.
-    repo = FakeBudgetRepo({})
+    repo = recording_budget_repo({})
     cats = FakeCategoryRepo([_spend_cat("coffee")])
     resp = handler.set_budget(_put_budget_event(body='{"target": 60, "rollover": "yes"}'),
                               repo, cats, FakePayCycleRepo())
@@ -264,7 +243,7 @@ def test_explicit_rollover_false_is_forwarded_and_freezes_without_an_anchor(hand
     # Turning rollover OFF forwards rollover=False (freezing the stored buffer) and never builds
     # an anchor. Fail-on-revert: if false were omitted instead of forwarded, the stored flag
     # wouldn't flip off.
-    repo = FakeBudgetRepo({"coffee": {"target": Decimal(50), "rollover": True, "carryover": Decimal(40)}})
+    repo = recording_budget_repo({"coffee": {"target": Decimal(50), "rollover": True, "carryover": Decimal(40)}})
     resp = handler.set_budget(_put_budget_event(body='{"target": 50, "rollover": false}'),
                               repo, FakeCategoryRepo([_spend_cat("coffee")]), FakePayCycleRepo())
 

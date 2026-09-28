@@ -18,6 +18,7 @@ from decimal import Decimal
 import pytest
 
 from _feed_fakes import SPENDING, FakeCategoryRepo, Repos, _row
+from _job_fakes import created_jobs, real_job_repo
 
 _CATEGORIES = ("groceries", "petrol", "insurance")
 _REPLY_KEYS = {"id", "field", "operator", "value", "categoryId", "budgetExcluded",
@@ -174,20 +175,11 @@ def test_apply_inline_created_rule_has_no_spread_seeded(handler):
 # --- the async job start route ----------------------------------------------------------------
 
 
-class _JobRepo:
-    def __init__(self):
-        self.created = []
-
-    def create_job(self, job_id, kind="apply_rules"):
-        self.created.append(job_id)
-        return {"id": job_id}
-
-
 def test_job_start_clash_409_existing_rule_has_no_spread_seeded(handler, monkeypatch):
     # [A8]
     monkeypatch.setenv("APPLY_RULES_WORKER_FUNCTION", "abundo-apply-rules-worker")
     monkeypatch.setattr(handler, "_get_lambda_client", lambda: pytest.fail("must not invoke"))
-    job_repo = _JobRepo()
+    job_repo = real_job_repo()
 
     resp = handler.start_apply_rules_job(
         _event("POST", "/transactions/uncategorized/apply-rules/jobs",
@@ -197,7 +189,7 @@ def test_job_start_clash_409_existing_rule_has_no_spread_seeded(handler, monkeyp
 
     assert resp["statusCode"] == 409
     assert set(body["existingRule"]) == _REPLY_KEYS
-    assert job_repo.created == []
+    assert created_jobs(job_repo) == []
 
 
 # --- the worker's spread lookup (now the full engine rule, not the old hand-built map) ---------
@@ -221,21 +213,6 @@ class _Paycycle:
         return {"length": 14, "last_pay_date": "2026-01-07"}
 
 
-class _WorkerJobRepo:
-    def __init__(self):
-        self.jobs = {"job1": {"id": "job1", "status": "running"}}
-
-    def get_job(self, job_id):
-        return self.jobs.get(job_id)
-
-    def update_progress(self, job_id, counts):
-        self.jobs[job_id].update(counts)
-
-    def finish_job(self, job_id, status, counts, created_rule=None, error=None):
-        self.jobs[job_id].update(
-            {"status": status, "error": error, "createdRule": created_rule, **counts})
-
-
 def test_worker_does_not_reseed_a_rule_already_seeded_in_the_store(apply_rules_worker, monkeypatch):
     # [A9] The sync route's twin is pinned in test_apply_rules_spread_gaps.py [A20]; the worker had
     # no such guard. FAIL-ON-REVERT: drop spreadSeeded from rule_from_row (or build the worker's
@@ -243,7 +220,8 @@ def test_worker_does_not_reseed_a_rule_already_seeded_in_the_store(apply_rules_w
     worker = apply_rules_worker
     budget, paycycle = _Budget(), _Paycycle()
     store = _seeded_store(transactions={SPENDING: [_origin("t1"), _origin("t2", "2026-07-02")]})
-    job_repo = _WorkerJobRepo()
+    job_repo = real_job_repo()
+    job_repo.create_job("job1")
     monkeypatch.setattr(worker, "TransactionRepository", lambda: store.transaction_repo)
     monkeypatch.setattr(worker, "CategoryRepository", lambda: FakeCategoryRepo(_CATEGORIES))
     monkeypatch.setattr(worker, "RuleRepository", lambda: store.rule_repo)
@@ -254,6 +232,6 @@ def test_worker_does_not_reseed_a_rule_already_seeded_in_the_store(apply_rules_w
     result = worker.lambda_handler({"jobId": "job1"})
 
     assert result["status"] == "succeeded"
-    assert job_repo.jobs["job1"]["filed"] == 2          # the rule still files
+    assert job_repo.get_job("job1")["filed"] == 2          # the rule still files
     assert budget.calls == [] and paycycle.reads == 0   # ...but never re-seeds
     assert _seed_marks(store.table) == 1                # only the setup's mark — never re-marked

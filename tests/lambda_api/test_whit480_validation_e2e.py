@@ -12,6 +12,8 @@ its own; nothing importable lives in conftest).
 
 import json
 
+from _milestone_fakes import recording_notify_repo, stored_markers
+
 
 # --- fakes (mirror test_milestones_api.py / test_goals.py) -------------------
 
@@ -26,22 +28,6 @@ class FakeMilestoneRepo:
     def set_milestones(self, milestones, scope="SHARED"):
         self.set_calls.append({"milestones": milestones, "scope": scope})
         return [{**m, "targetBalance": float(m["targetBalance"])} for m in milestones]
-
-
-class RecordingNotifyRepo:
-    def __init__(self, fired=None):
-        self.fired = set(fired or set())
-        self.migrate_calls = []
-
-    def fired_milestones(self, scope=None):
-        return set(self.fired)
-
-    def migrate_milestone_markers(self, migrations, scope=None):
-        self.migrate_calls.append({"migrations": list(migrations), "scope": scope})
-        for old, new in migrations:
-            if old in self.fired:
-                self.fired.add(new)
-                self.fired.discard(old)
 
 
 class FakeGoalsRepo:
@@ -71,7 +57,7 @@ def _ms_event(rows):
 
 def _put_milestones(handler, rows, repo=None, notify=None):
     repo = repo or FakeMilestoneRepo()
-    notify = notify or RecordingNotifyRepo()
+    notify = notify or recording_notify_repo()
     resp = handler.set_milestones(_ms_event(rows), repo, notify)
     return resp, repo, notify
 
@@ -192,7 +178,7 @@ def test_checkpoint_empty_label_keeps_checkpoint_noun(handler):
 def test_mint_then_blank_id_failure_persists_nothing_and_migrates_nothing(handler):
     # WHIT-480 — [E9] row0 id-less -> mints & lands in `minted`; row1 blank id -> _validate_id
     # returns the 400. Must short-circuit before repo.set_milestones AND before migration.
-    notify = RecordingNotifyRepo(fired={"bal:544000.00", "bal:100000.00"})
+    notify = recording_notify_repo({"bal:544000.00", "bal:100000.00"})
     rows = [
         {"label": "First", "targetBalance": 544000, "targetDate": "2026-06-18"},      # no id -> mints
         {"label": "Second", "targetBalance": 100000, "targetDate": "2027-06-18", "id": "  "},
@@ -202,13 +188,13 @@ def test_mint_then_blank_id_failure_persists_nothing_and_migrates_nothing(handle
     assert _err(resp) == "milestone id must be a non-empty string"
     assert repo.set_calls == []                        # nothing persisted
     assert notify.migrate_calls == []                  # no marker moved for an unsaved plan
-    assert notify.fired == {"bal:544000.00", "bal:100000.00"}   # markers untouched
+    assert stored_markers(notify) == {"bal:544000.00", "bal:100000.00"}   # markers untouched
 
 
 def test_mint_then_duplicate_id_failure_persists_and_migrates_nothing(handler):
     # WHIT-480 — [E10] row0 explicit "keep"; row1 id-less -> mints; row2 duplicates "keep".
     # The duplicate check in _validate_id fires AFTER a mint already ran on row1.
-    notify = RecordingNotifyRepo(fired={"bal:100000.00"})
+    notify = recording_notify_repo({"bal:100000.00"})
     rows = [
         {"label": "Keep", "targetBalance": 544000, "targetDate": "2026-06-18", "id": "keep"},
         {"label": "Minted", "targetBalance": 300000, "targetDate": "2027-06-18"},     # no id -> mints

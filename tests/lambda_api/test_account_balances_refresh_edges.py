@@ -12,35 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from _balance_fakes import balance_repo, balance_writes, marker_writes, upserted
+
 
 # --- fakes / stubs (mirror test_account_balances.py) -------------------------
-
-
-class OrderedRefreshRepo:
-    """Records the ORDER of set_last_refresh_at vs upsert_balance so ordering is
-    assertable, on top of the throttle/list plumbing FakeRefreshRepo provides."""
-
-    def __init__(self, rows=None, last=None):
-        self._rows = rows or []
-        self._last = last
-        self.events = []          # ordered log: ("set", now) / ("upsert", aid)
-        self.upserts = []
-        self.set_calls = []
-
-    def get_last_refresh_at(self):
-        return self._last
-
-    def set_last_refresh_at(self, now):
-        self.events.append(("set", now))
-        self.set_calls.append(now)
-        self._last = now
-
-    def upsert_balance(self, account_id, amount, available_balance, currency, as_of, account_type):
-        self.events.append(("upsert", account_id))
-        self.upserts.append((account_id, amount, available_balance, currency, as_of, account_type))
-
-    def list_balances(self, account_ids):
-        return self._rows
 
 
 def _ok_payload(amount, account_type="checking"):
@@ -76,7 +51,7 @@ def test_refresh_at_exactly_throttle_window_does_a_live_fetch(handler, monkeypat
     # now-last == REFRESH_THROTTLE_SECONDS is NOT throttled: the guard is
     # `< REFRESH_THROTTLE_SECONDS`, so a call exactly on the boundary refreshes.
     window = handler.REFRESH_THROTTLE_SECONDS
-    repo = OrderedRefreshRepo(rows=[], last=1000)
+    repo = balance_repo(rows=[], last=1000)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000 + window)  # exactly `window` seconds later
     calls = []
@@ -86,14 +61,14 @@ def test_refresh_at_exactly_throttle_window_does_a_live_fetch(handler, monkeypat
 
     assert resp["statusCode"] == 200
     assert set(calls) == _ALL_AIDS       # it fetched — not throttled
-    assert repo.set_calls == [1000 + window]
+    assert marker_writes(repo) == [1000 + window]
 
 
 def test_refresh_one_second_inside_window_is_throttled(handler, monkeypatch):
     # The neighbouring point: now-last == window-1 IS throttled (no bank call, no marker
     # write). Pins the boundary at exactly `window`, not off by one.
     window = handler.REFRESH_THROTTLE_SECONDS
-    repo = OrderedRefreshRepo(rows=[], last=1000)
+    repo = balance_repo(rows=[], last=1000)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000 + window - 1)
     _stub_bank(handler, monkeypatch, lambda *a, **k: pytest.fail("must not fetch while throttled"))
@@ -101,7 +76,7 @@ def test_refresh_one_second_inside_window_is_throttled(handler, monkeypatch):
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
-    assert repo.set_calls == []          # throttled: marker untouched
+    assert marker_writes(repo) == []          # throttled: marker untouched
 
 
 # --- concurrent fan-out hits EVERY source (no dedupe / short-circuit) ---------
@@ -111,7 +86,7 @@ def test_fan_out_fetches_all_configured_sources(handler, monkeypatch):
     # The endpoint must fetch each configured account exactly once — a dedupe or early-exit
     # bug would silently stop refreshing some accounts. Assert against the real
     # BALANCE_SOURCES so adding/removing a source keeps this honest.
-    repo = OrderedRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     fetched = []
@@ -151,17 +126,17 @@ def test_marker_is_armed_before_any_upsert(handler, monkeypatch):
     # The throttle marker must be set BEFORE the upsert loop: if an upsert partially
     # fails/raises, the throttle is already armed so pull-spam still backs off, and a crash
     # mid-upsert can't leave the throttle un-armed. Lock the observed order.
-    repo = OrderedRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     _stub_bank(handler, monkeypatch, lambda bid, aid, key, **kw: _LIVE_PAYLOADS[aid])
 
     handler.lambda_handler(_REFRESH_EVENT, None)
 
-    kinds = [e[0] for e in repo.events]
+    kinds = [e[0] for e in balance_writes(repo)]
     assert kinds[0] == "set"                       # marker first
     assert set(kinds[1:]) == {"upsert"}            # then only upserts
-    assert repo.events[0] == ("set", 1000)
+    assert balance_writes(repo)[0] == ("set", 1000)
 
 
 # --- a timed-out worker is a failed account, not a crashed request -----------
@@ -170,7 +145,7 @@ def test_marker_is_armed_before_any_upsert(handler, monkeypatch):
 def test_timeout_worker_is_treated_as_a_failed_account(handler, monkeypatch):
     # A socket/TimeoutError (an OSError subclass) from one slow account must be swallowed as
     # a per-account failure; the others still refresh -> 200.
-    repo = OrderedRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
 
@@ -184,14 +159,14 @@ def test_timeout_worker_is_treated_as_a_failed_account(handler, monkeypatch):
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
-    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa",
+    assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
                                             "westpac-altitude-qantas-black"}
-    assert repo.set_calls == [1000]
+    assert marker_writes(repo) == [1000]
 
 
 def test_all_timeout_returns_502(handler, monkeypatch):
     # Every account timing out -> 502 (all failed), marker still armed.
-    repo = OrderedRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
     _stub_bank(handler, monkeypatch,
@@ -200,8 +175,8 @@ def test_all_timeout_returns_502(handler, monkeypatch):
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 502
-    assert repo.upserts == []
-    assert repo.set_calls == [1000]
+    assert upserted(repo) == {}
+    assert marker_writes(repo) == [1000]
 
 
 # --- a non-object getBalance payload is a per-account failure, not a crash ----
@@ -212,7 +187,7 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
     # treated like any other failed account: the others still upsert, the response is 200,
     # and the marker is armed. (Regression guard for the isinstance(payload, dict) guard in
     # shared/balance_fetch.py — without it this raises AttributeError and 500s the request.)
-    repo = OrderedRefreshRepo(rows=[], last=None)
+    repo = balance_repo(rows=[], last=None)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: repo)
     _freeze_time(handler, monkeypatch, 1000)
 
@@ -226,6 +201,6 @@ def test_non_dict_payload_is_a_per_account_failure_not_a_total_crash(handler, mo
     resp = handler.lambda_handler(_REFRESH_EVENT, None)
 
     assert resp["statusCode"] == 200
-    assert {u[0] for u in repo.upserts} == {"up-spending", "anz-rewards-black-visa",
+    assert set(upserted(repo)) == {"up-spending", "anz-rewards-black-visa",
                                             "westpac-altitude-qantas-black"}
-    assert repo.set_calls == [1000]
+    assert marker_writes(repo) == [1000]

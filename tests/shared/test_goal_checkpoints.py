@@ -9,6 +9,8 @@ from decimal import Decimal
 
 import pytest
 
+from _milestone_fakes import checkpoints_marked, goal_checkpoint_repo
+
 
 @pytest.fixture
 def gc(shared):
@@ -107,19 +109,6 @@ def test_marker_rearms_when_the_amount_is_re_pointed_but_not_on_rename(gc):
 # --- notify_goal_checkpoint_crossing (with fakes) --------------------------------------------
 
 
-class _FakeNotify:
-    def __init__(self, fired=None):
-        self._fired = set(fired or [])
-        self.marked = []
-
-    def fired_goal_checkpoints(self, scope=None):
-        return set(self._fired)
-
-    def mark_goal_checkpoint_fired(self, key, scope=None):
-        self.marked.append(key)
-        self._fired.add(key)
-
-
 class _FakeDevice:
     def __init__(self, tokens=("ExpoTok",)):
         self._tokens = list(tokens)
@@ -131,7 +120,7 @@ class _FakeDevice:
 def _notify(gc, monkeypatch, goal, old, new, *, synced=True, fired=None, tokens=("ExpoTok",)):
     sent = []
     monkeypatch.setattr(gc, "send_push", lambda title, body, toks, data=None: sent.append((title, body, toks, data)) or {"ok": len(toks)})
-    notify = _FakeNotify(fired)
+    notify = goal_checkpoint_repo(fired or ())
     device = _FakeDevice(tokens)
     n = gc.notify_goal_checkpoint_crossing(old, new, goal=goal, goal_id="g1", synced=synced, device_repo=device, notify_repo=notify)
     return n, sent, notify
@@ -145,7 +134,7 @@ def test_notify_sends_one_push_and_marks_the_crossed_rung(gc, monkeypatch):
     title, body, _toks, data = sent[0]
     assert "Halfway" in title
     assert data == {"type": "goalcheckpoint", "goalId": "g1"}
-    assert notify.marked == ["g:g1:cp:cp1:bal:4000.00"]
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp1:bal:4000.00"]
 
 
 def test_notify_multi_rung_jump_sends_one_push_for_the_furthest_marks_all(gc, monkeypatch):
@@ -153,7 +142,7 @@ def test_notify_multi_rung_jump_sends_one_push_for_the_furthest_marks_all(gc, mo
     n, sent, notify = _notify(gc, monkeypatch, goal, Decimal("1000"), Decimal("7000"))
     assert n == 1
     assert "C" in sent[0][0]  # the furthest-along rung names the push
-    assert set(notify.marked) == {
+    assert set(checkpoints_marked(notify)) == {
         "g:g1:cp:cp1:bal:2000.00", "g:g1:cp:cp2:bal:4000.00", "g:g1:cp:cp3:bal:6000.00",
     }
 
@@ -169,7 +158,7 @@ def test_notify_no_crossing_does_no_io(gc, monkeypatch):
     goal = _goal("grow", [_cp("cp1", "Halfway", 4000)])
     n, sent, notify = _notify(gc, monkeypatch, goal, Decimal("5000"), Decimal("6000"))  # both already past
     assert n == 0
-    assert sent == [] and notify.marked == []
+    assert sent == [] and checkpoints_marked(notify) == []
 
 
 def test_notify_no_devices_does_not_send_and_does_not_mark(gc, monkeypatch):
@@ -177,7 +166,7 @@ def test_notify_no_devices_does_not_send_and_does_not_mark(gc, monkeypatch):
     n, sent, notify = _notify(gc, monkeypatch, goal, Decimal("1000"), Decimal("5000"), tokens=())
     assert n == 0
     assert sent == []
-    assert notify.marked == []  # no push, nothing marked → only re-fires on a genuinely NEW crossing
+    assert checkpoints_marked(notify) == []  # no push, nothing marked → only re-fires on a genuinely NEW crossing
 
 
 def test_notify_synced_paydown_uses_owed_magnitude(gc, monkeypatch):
@@ -185,4 +174,4 @@ def test_notify_synced_paydown_uses_owed_magnitude(gc, monkeypatch):
     goal = _goal("paydown", [_cp("cp1", "Under 4k", 4000)])
     n, sent, notify = _notify(gc, monkeypatch, goal, Decimal("-5000"), Decimal("-3000"), synced=True)
     assert n == 1
-    assert notify.marked == ["g:g1:cp:cp1:bal:4000.00"]
+    assert checkpoints_marked(notify) == ["g:g1:cp:cp1:bal:4000.00"]
