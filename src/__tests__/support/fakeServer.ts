@@ -176,6 +176,16 @@ function response({ status, body }: Reply) {
   } as Response;
 }
 
+function untilReleasedOrAborted(held: Promise<void>, signal?: AbortSignal | null) {
+  if (!signal) return held;
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => reject(new DOMException('Aborted', 'AbortError'));
+    if (signal.aborted) return abort();
+    signal.addEventListener('abort', abort, { once: true });
+    held.then(resolve);
+  });
+}
+
 export function installFakeServer() {
   let store: Store = new Map();
   let failures = new Map<string, Reply>();
@@ -195,7 +205,8 @@ export function installFakeServer() {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     log.push({ method, path: fullPath, body });
 
-    await holds.get(path);
+    const held = holds.get(path);
+    if (held) await untilReleasedOrAborted(held, init?.signal);
 
     const failure = failures.get(path);
     if (failure) return response(failure);
