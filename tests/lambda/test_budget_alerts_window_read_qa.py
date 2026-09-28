@@ -78,7 +78,7 @@ class _NoTwins:
 
 def _fire(lam, monkeypatch, budget, stored, new):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: _TODAY)
+    monkeypatch.setattr(spend, "melbourne_today", lambda: _TODAY)
     ba = lam.budget_alerts
     sent = []
     monkeypatch.setattr(ba, "send_push", lambda title, body, toks, data=None: (

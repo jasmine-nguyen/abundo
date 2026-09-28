@@ -25,11 +25,6 @@ _MELBOURNE = None  # ZoneInfo("Australia/Melbourne"), built lazily on first use.
 
 
 def melbourne_today() -> date:
-    # Resolves _melbourne_today at call time, so a test pinning either name pins the clock.
-    return _melbourne_today()
-
-
-def _melbourne_today() -> date:
     """Today's date in the user's timezone (Australia/Melbourne), so the budget
     window resets at LOCAL midnight on payday, not UTC midnight.
 
