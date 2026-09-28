@@ -95,6 +95,7 @@ from repository import (
 )
 from repository_job import STATUS_RUNNING, STATUS_FAILED
 from repository_rule import rule_identity
+from repository_transaction import read_window
 from rule_spreading import SpreadSeeder
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
@@ -1486,43 +1487,10 @@ def delete_rule_route(event: dict, rule_repo: RuleRepository,
     return _json_response(200, {"id": rule_id, "remaining": remaining})
 
 
-# Safety ceiling on cursor-follow iterations per account. A bounded date-range
-# query terminates on its own (LastEvaluatedKey eventually None), so reaching this
-# many pages for a single account means the cursor is not advancing — a repo/
-# contract bug. Fail loudly instead of spinning to the Lambda timeout. 1000 pages ×
-# MAX_PAGE_SIZE is far beyond any real window, so a legitimate feed never hits it.
-_MAX_PAGES_PER_ACCOUNT = 1000
-
-
 def _fetch_windowed_transactions(repo: TransactionRepository, start: str | None, end: str | None) -> list[dict]:
-    """Every transaction across all accounts within [start, end], following the
-    date-index pagination to completion. `start`/`end` may be None for no floor/ceiling
-    (whole history) — get_transactions_by_date_range treats no dates as the whole partition.
-
-    Its callers need every row in the window (the budget rollup, the drill-in lists, and
-    the whole-history uncategorized count), so this loops on the returned cursor until each
-    account is exhausted rather than stopping at the first page. The loop is bounded
-    (_MAX_PAGES_PER_ACCOUNT): a cursor that never terminates raises rather than hanging.
-    """
-    transactions: list[dict] = []
-    for account_id in ACCOUNT_ID_MAP.values():
-        cursor = None
-        pages = 0
-        while True:
-            page, cursor = repo.get_transactions_by_date_range(
-                account_id, start, end, limit=MAX_PAGE_SIZE, cursor=cursor
-            )
-            transactions.extend(page)
-            pages += 1
-            if not cursor:
-                break
-            if pages >= _MAX_PAGES_PER_ACCOUNT:
-                raise RuntimeError(
-                    f"pagination for account {account_id} did not terminate after "
-                    f"{_MAX_PAGES_PER_ACCOUNT} pages ({start}..{end}); aborting to "
-                    f"avoid an unbounded read"
-                )
-    return transactions
+    """Every transaction across all accounts within [start, end], every page (bounded).
+    `start`/`end` may be None for no floor/ceiling (whole history)."""
+    return read_window(repo, start, end)
 
 
 # The unfiled-category predicate now lives in the shared rule engine (WHIT-527), so the

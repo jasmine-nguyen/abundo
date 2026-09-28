@@ -730,11 +730,13 @@ def test_fetch_windowed_transactions_aborts_on_nonterminating_cursor(handler):
 
     repo = _NeverEndingRepo()
 
-    with pytest.raises(RuntimeError, match="did not terminate"):
+    with pytest.raises(RuntimeError, match="did not finish"):
         handler._fetch_windowed_transactions(repo, "2026-06-26", "2026-07-04")
 
     # Stopped exactly at the ceiling (the first account trips it), not later.
-    assert repo.calls == handler._MAX_PAGES_PER_ACCOUNT
+    import constants
+
+    assert repo.calls == constants.DATE_RANGE_MAX_PAGES
 
 
 def test_fetch_windowed_transactions_terminates_normally_within_the_cap(handler):

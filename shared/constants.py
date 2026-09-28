@@ -58,6 +58,10 @@ PENDING_AGE_OUT_DAYS = 10
 # Maximum number of items requested per DynamoDB query page.
 MAX_PAGE_SIZE = 100
 
+# Page ceiling for one account's date-range read. 1000 × MAX_PAGE_SIZE is far beyond any
+# real window, so hitting it means the cursor isn't advancing.
+DATE_RANGE_MAX_PAGES = 1000
+
 # Status value marking a transaction as not yet posted.
 PENDING_STATUS = "pending"
 

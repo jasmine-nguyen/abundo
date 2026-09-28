@@ -10,7 +10,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from constants import DEAD_LETTER_TTL_SECONDS, MAX_PAGE_SIZE
+from constants import ACCOUNT_ID_MAP, DATE_RANGE_MAX_PAGES, DEAD_LETTER_TTL_SECONDS, MAX_PAGE_SIZE
 from models import Transaction
 from repository_base import REGION_NAME, TABLE_NAME, handle_database_error, logger
 
@@ -23,6 +23,36 @@ _UNSET = object()
 def sanitise_transaction(txn: Transaction) -> dict[str, Any]:
     """Strips out unassigned None properties to keep DynamoDB documents sparse."""
     return {k: v for k, v in txn.items() if v is not None}
+
+
+def read_date_range_pages(
+    repo: Any,
+    account_id: str,
+    start: Optional[str],
+    end: Optional[str],
+    max_pages: int = DATE_RANGE_MAX_PAGES,
+) -> list[dict[str, Any]]:
+    """Every row for `account_id` in [start, end], following the date-index cursor to
+    the last page. A cursor still going after `max_pages` means it isn't advancing, so
+    raise rather than loop until the Lambda times out."""
+    rows: list[dict[str, Any]] = []
+    cursor = None
+    for _ in range(max_pages):
+        page, cursor = repo.get_transactions_by_date_range(account_id, start, end, MAX_PAGE_SIZE, cursor)
+        rows.extend(page)
+        if not cursor:
+            return rows
+    raise RuntimeError(
+        f"date-range read for {account_id} did not finish after {max_pages} pages ({start}..{end})"
+    )
+
+
+def read_window(repo: Any, start: Optional[str], end: Optional[str]) -> list[dict[str, Any]]:
+    """Every row in [start, end] across all the mapped accounts."""
+    rows: list[dict[str, Any]] = []
+    for account_id in ACCOUNT_ID_MAP.values():
+        rows.extend(read_date_range_pages(repo, account_id, start, end))
+    return rows
 
 
 def _build_pk(account_id: str) -> str:

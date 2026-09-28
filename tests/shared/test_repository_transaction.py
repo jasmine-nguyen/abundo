@@ -1134,3 +1134,64 @@ def test_update_fields_falsy_category_with_valid_tags_clear_still_refused(repo, 
     row = repo._table.store[key]
     assert row["category"] == "GROCERIES"
     assert row["tags"] == ["keep"]
+
+
+# --------------------------------------------------------------------------- #
+# WHIT-607 — read_date_range_pages / read_window: the one "read every page"   #
+# date-range read, bounded by a page limit                                    #
+# --------------------------------------------------------------------------- #
+
+def _seed_rows(repo, account_id, count, date="2026-01-10"):
+    """Seed `count` rows on one account, all on the same date (unique ids)."""
+    for i in range(count):
+        tid = f"{account_id}-{i:04d}"
+        repo._table.store[("ACCOUNT#" + account_id, "TXN#" + tid)] = {
+            "pk": "ACCOUNT#" + account_id, "sk": "TXN#" + tid,
+            "account_id": account_id, "transaction_id": tid, "date": date,
+        }
+
+
+def test_read_date_range_pages_follows_the_cursor_to_the_last_page(repo, shared):
+    # 250 rows > MAX_PAGE_SIZE (100) → three pages, every row returned once.
+    _seed_rows(repo, "up-spending", 250)
+    rows = shared.repository.read_date_range_pages(
+        repo, "up-spending", "2026-01-01", "2026-01-31"
+    )
+    ids = [r["transaction_id"] for r in rows]
+    assert len(ids) == 250
+    assert len(set(ids)) == 250
+    assert repo._table.query_calls == 3
+
+
+def test_read_date_range_pages_raises_loudly_at_the_page_limit(shared):
+    # A cursor that never runs out must stop at max_pages with a clear error,
+    # not spin until the server function times out.
+    class _EndlessRepo:
+        calls = 0
+
+        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
+            self.calls += 1
+            return [{"transaction_id": f"t{self.calls}"}], {"next": self.calls}
+
+    endless = _EndlessRepo()
+    with pytest.raises(RuntimeError, match="did not finish after 3 pages"):
+        shared.repository.read_date_range_pages(
+            endless, "up-spending", "2026-01-01", None, max_pages=3
+        )
+    assert endless.calls == 3
+
+
+def test_read_window_merges_every_mapped_account_within_the_range(repo, shared):
+    import constants
+
+    assert constants.DATE_RANGE_MAX_PAGES == 1000
+    _seed_rows(repo, "up-spending", 120, date="2026-01-10")
+    _seed_rows(repo, "anz-rewards-black-visa", 2, date="2026-01-12")
+    _seed_rows(repo, "westpac-altitude-qantas-black", 1, date="2026-02-20")  # out of range
+    _seed_rows(repo, "not-a-mapped-account", 1, date="2026-01-10")  # never read
+
+    rows = shared.repository.read_window(repo, "2026-01-01", "2026-01-31")
+    by_account = {}
+    for r in rows:
+        by_account[r["account_id"]] = by_account.get(r["account_id"], 0) + 1
+    assert by_account == {"up-spending": 120, "anz-rewards-black-visa": 2}

@@ -848,7 +848,7 @@ def test_budgeted_category_with_no_spend_is_not_a_crossing(alerts, monkeypatch):
 
 class _CursorWindowRepo:
     """A date-range read that returns ONE row per page and follows an integer cursor
-    to completion — so a crossing is only detectable if _window_rows accumulates
+    to completion — so a crossing is only detectable if the window read accumulates
     every page, not just the first."""
 
     def __init__(self, rows):
@@ -892,7 +892,7 @@ def test_window_read_backstop_raises_on_a_nonterminating_cursor(alerts):
         def get_transactions_by_date_range(self, account_id, start, end, limit=100, cursor=None):
             return ([], "always-more")  # a cursor that never clears
 
-    with pytest.raises(RuntimeError, match="did not terminate"):
+    with pytest.raises(RuntimeError, match="did not finish"):
         ba.capture_pre_write(
             [_txn("n", "groceries", -1, "posted")], device_repo=FakeDeviceRepo(),
             budget_repo=FakeBudgetRepo({"groceries": {"target": Decimal("100")}}),

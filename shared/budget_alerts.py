@@ -42,8 +42,9 @@ import logging
 from decimal import Decimal
 
 import rule_engine
-from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
+from constants import PENDING_STATUS
 from push import send_push
+from repository_transaction import read_window
 from spend import (
     _spread_state,
     build_category_children,
@@ -62,37 +63,11 @@ logger = logging.getLogger(__name__)
 # reached threshold is still marked fired.
 _THRESHOLDS = ((Decimal("1.0"), 100), (Decimal("0.8"), 80))
 
-# Bounded pagination backstop per account (mirrors _fetch_windowed_transactions).
-_MAX_PAGES_PER_ACCOUNT = 1000
-
 # Push copy per threshold pct. {name} = the category's display name.
 _COPY = {
     80: ("Heads up \U0001f440", "{name} is at 80% of its budget this cycle."),
     100: ("Budget hit", "You've spent your whole {name} budget for this cycle."),
 }
-
-
-def _window_rows(window_repo, start: str, end: str) -> list[dict]:
-    """Every transaction in [start, end] across the mapped accounts, following the
-    date-index cursor to completion (bounded)."""
-    rows: list[dict] = []
-    for account_id in ACCOUNT_ID_MAP.values():
-        cursor = None
-        pages = 0
-        while True:
-            page, cursor = window_repo.get_transactions_by_date_range(
-                account_id, start, end, limit=MAX_PAGE_SIZE, cursor=cursor
-            )
-            rows.extend(page)
-            pages += 1
-            if not cursor:
-                break
-            if pages >= _MAX_PAGES_PER_ACCOUNT:
-                raise RuntimeError(
-                    f"budget-alert window read for {account_id} did not terminate "
-                    f"after {_MAX_PAGES_PER_ACCOUNT} pages ({start}..{end})"
-                )
-    return rows
 
 
 def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, window_repo, webhook_repo):
@@ -126,7 +101,7 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
         if windows:
             fetch_start = min(fetch_start, windows[0][0])
 
-    all_rows = _window_rows(window_repo, fetch_start, end)
+    all_rows = read_window(window_repo, fetch_start, end)
     before_rows = (all_rows if fetch_start == start
                    else transactions_in_window(all_rows, start, end))
 

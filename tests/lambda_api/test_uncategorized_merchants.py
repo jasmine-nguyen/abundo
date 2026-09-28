@@ -481,5 +481,5 @@ def test_unbounded_pagination_raises(handler):
         def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
             return [_charge(account_id, "2026-01-01", "x", "ALDI", "ALDI 771")], {"pk": "p", "sk": "s"}
 
-    with pytest.raises(RuntimeError, match="did not terminate"):
+    with pytest.raises(RuntimeError, match="did not finish"):
         handler.get_uncategorized_merchants(_NeverEndsRepo(), FakeCategoryRepo(set()))
