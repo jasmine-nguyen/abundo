@@ -7,38 +7,32 @@
 // (transactionsQuery / budgetsQuery / settingsQuery / goalScreenData / rulesScreenData).
 import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import React from 'react';
-import { renderHook } from '@testing-library/react-native';
+import { renderHook, act } from '@testing-library/react-native';
 import { AppProvider, useAppContext } from '../context';
 import { queryClient } from '../queryClient';
 
-jest.mock('../api');
 // Pin 'authed' so a (hypothetical, reverted) auth-reload effect would fire if it still
 // existed — making this a real fail-on-revert guard, not one masked by a signed-out gate.
-jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {} }));
-import * as api from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+jest.mock('../auth', () => ({ getStatus: () => 'authed', subscribe: () => () => {}, getAuthToken: async () => 'test-id-token' }));
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 beforeEach(() => { queryClient.clear(); });
 afterEach(() => { queryClient.clear(); });
 
-it('does not eager-fetch any server data on mount (the query layer loads on demand)', () => {
+it('does not eager-fetch any server data on mount (the query layer loads on demand)', async () => {
   const { result } = renderHook(() => useAppContext(), { wrapper });
+  // A real request reaches the server a few async steps after it starts (sign-in token → fetch).
+  await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
 
   // The provider mounted (its actions are live)…
   expect(result.current.saveLoanFacts).toBeDefined();
 
   // …but not one server read fired — there's no eager store to fill.
-  expect(mockApi.fetchTransactions).not.toHaveBeenCalled();
-  expect(mockApi.fetchCategories).not.toHaveBeenCalled();
-  expect(mockApi.fetchBudgets).not.toHaveBeenCalled();
-  expect(mockApi.fetchPayCycle).not.toHaveBeenCalled();
-  expect(mockApi.fetchBreakdown).not.toHaveBeenCalled();
-  expect(mockApi.fetchHomeLoan).not.toHaveBeenCalled();
-  expect(mockApi.fetchLoanFacts).not.toHaveBeenCalled();
-  expect(mockApi.fetchRepayment).not.toHaveBeenCalled();
-  expect(mockApi.listRules).not.toHaveBeenCalled();
+  expect(server.requests()).toEqual([]);
 
   // …and the provider populated no server-data cache of its own.
   expect(queryClient.getQueryData(['transactions'])).toBeUndefined();

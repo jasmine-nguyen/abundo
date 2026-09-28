@@ -17,19 +17,24 @@ const mockSetStatus = (status: typeof mockStatus) => {
   mockStatus = status;
   mockListeners.forEach((listener) => listener());
 };
-jest.mock('../api');
 jest.mock('../auth', () => ({
   getStatus: () => mockStatus,
   subscribe: (listener: () => void) => { mockListeners.add(listener); return () => mockListeners.delete(listener); },
+  getAuthToken: async () => 'test-id-token',
 }));
-import * as api from '../api';
 import type { CreatedRule } from '../api';
-const mockApi = api as jest.Mocked<typeof api>;
+import { installFakeServer } from './support/fakeServer';
+
+const server = installFakeServer();
+const JOBS = '/transactions/uncategorized/apply-rules/jobs';
+const jobPath = (jobId: string) => `${JOBS}/${jobId}`;
+// How many times the app has checked on a job (any job) so far.
+const polls = () => server.requests().filter((r) => r.method === 'GET' && r.path.startsWith(`${JOBS}/`)).length;
 
 const wrapper = ({ children }: { children: React.ReactNode }) => <AppProvider>{children}</AppProvider>;
 
 const job = (over: Partial<ApplyRulesJob> = {}): ApplyRulesJob => ({
-  jobId: 'j1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
+  jobId: 'job-1', status: 'running', matched: 0, attempted: 0, filed: 0, vanished: 0,
   failed: 0, alreadyFiled: 0, remaining: 0, createdRule: null, error: null,
   createdAt: 't0', updatedAt: 't0', completedAt: null, ...over,
 });
@@ -47,70 +52,57 @@ async function tick(times = 1) {
   }
 }
 
-/** A promise the test resolves itself, so the start POST can be left in flight while the app locks. */
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
-}
-
-beforeEach(() => { queryClient.clear(); jest.clearAllMocks(); jest.useFakeTimers(); mockStatus = 'authed'; });
+beforeEach(() => { queryClient.clear(); jest.useFakeTimers(); mockStatus = 'authed'; });
 afterEach(() => { jest.useRealTimers(); queryClient.clear(); });
 
-// [G1] no overlap: one GET per delay even when a GET outlasts the delay (deferred that never
-// resolves during the window). The loop arms the next poll ONLY after the current settles, so
+// [G1] no overlap: one GET per delay even when a GET outlasts the delay (a held reply that never
+// arrives during the window). The loop arms the next poll ONLY after the current settles, so
 // advancing several delays while a GET is in flight must NOT fan out extra GETs.
 it('[G1] fires exactly one GET per delay even when a GET outlasts the delay', async () => {
-  let resolveGet: (j: ApplyRulesJob) => void = () => {};
-  mockApi.startApplyRulesJob.mockResolvedValue(job({ status: 'running' }));
-  mockApi.getApplyRulesJob.mockImplementation(() => new Promise<ApplyRulesJob>((res) => { resolveGet = res; }));
-
   const r = mount().result;
   await act(async () => { await r.current.startApplyRulesSweep(); });
+  const held = server.hold(jobPath('job-1'));
 
   await tick();                                             // first poll fires → GET pending
-  expect(mockApi.getApplyRulesJob).toHaveBeenCalledTimes(1);
+  expect(polls()).toBe(1);
 
   await tick(3);                                            // GET still pending — no fan-out
-  expect(mockApi.getApplyRulesJob).toHaveBeenCalledTimes(1);
+  expect(polls()).toBe(1);
 
-  await act(async () => { resolveGet(job({ status: 'running', matched: 10, filed: 1 })); });
+  server.seed(jobPath('job-1'), job({ status: 'running', matched: 10, filed: 1 }));
+  await act(async () => { held.release(); });
   await tick();                                             // resolved → next poll armed → fires
-  expect(mockApi.getApplyRulesJob).toHaveBeenCalledTimes(2);
+  expect(polls()).toBe(2);
 });
 
 // [G2] unmount mid-poll clears the timer — no GET fires after the provider unmounts.
 it('[G2] clears the poll timer on unmount (no zombie GET)', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
-
   const h = mount();
   await act(async () => { await h.result.current.startApplyRulesSweep(); });
+  server.seed(jobPath('job-1'), job({ status: 'running', matched: 900, filed: 100 }));
   await tick();
-  const before = mockApi.getApplyRulesJob.mock.calls.length;
+  const before = polls();
 
   h.unmount();
   await tick(3);
-  expect(mockApi.getApplyRulesJob.mock.calls.length).toBe(before);
+  expect(polls()).toBe(before);
 });
 
 // [G3] a Face-ID lock (getStatus() !== 'authed', NOT sign-out) stops the poll and drops the job.
 // Distinct from the sign-out test: the session epoch is untouched, so a fresh sweep can start after
 // unlock (the lock was released).
 it('[G3] a Face-ID lock stops polling, drops the job, and releases the lock', async () => {
-  mockApi.startApplyRulesJob.mockResolvedValue(job());
-  mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
-
   const r = mount().result;
   await act(async () => { await r.current.startApplyRulesSweep(); });
+  server.seed(jobPath('job-1'), job({ status: 'running', matched: 900, filed: 100 }));
   await tick();
-  const before = mockApi.getApplyRulesJob.mock.calls.length;
+  const before = polls();
 
   await act(async () => { mockSetStatus('locked'); });
   expect(r.current.applyRulesJob).toBeNull();              // job view dropped
 
   await tick(3);
-  expect(mockApi.getApplyRulesJob.mock.calls.length).toBe(before); // poll stopped
+  expect(polls()).toBe(before);                            // poll stopped
 
   // The lock was released (not just the timer) — a new sweep is accepted, not turned away.
   mockStatus = 'authed';
@@ -125,23 +117,20 @@ it('[G3] a Face-ID lock stops polling, drops the job, and releases the lock', as
 // heavy run at a time" latch reads false → a sync sweep could run concurrently. Fail-on-revert for
 // the `!applyRulesJobActive.current` half of beginApplyRulesJob's post-await guard.
 it('[G5] a lock while the start POST is in flight discards the start and keeps the lock consistent', async () => {
-  const start = deferred<ApplyRulesJob>();
-  mockApi.startApplyRulesJob.mockReturnValueOnce(start.promise);
-  mockApi.getApplyRulesJob.mockResolvedValue(job({ status: 'running', matched: 900, filed: 100 }));
+  const held = server.hold(JOBS);
 
   const r = mount().result;
   let started: Promise<unknown>;
   await act(async () => { started = r.current.startApplyRulesSweep(); });   // POST now pending
   await act(async () => { mockSetStatus('locked'); });                      // lock clears active + job
-  await act(async () => { start.resolve(job({ status: 'running' })); await started; });
+  await act(async () => { held.release(); await started; });
 
   expect(r.current.applyRulesJob).toBeNull();               // the cleared job is NOT resurrected
   await tick(3);
-  expect(mockApi.getApplyRulesJob).not.toHaveBeenCalled();  // no poll loop was armed
+  expect(polls()).toBe(0);                                  // no poll loop was armed
 
   // The lock was left consistent — after unlock a fresh sweep is accepted (latch not stuck true).
   mockStatus = 'authed';
-  mockApi.startApplyRulesJob.mockResolvedValueOnce(job({ status: 'running' }));
   let again: unknown;
   await act(async () => { again = await r.current.startApplyRulesSweep(); });
   expect(again).toEqual({ ok: true });
@@ -153,11 +142,10 @@ it('[G5] a lock while the start POST is in flight discards the start and keeps t
 it('[G4] add-rule success prepends the minted rule (NEW badge) and skips the rules refetch', async () => {
   queryClient.setQueryData(['rules'], []); // seed so patchRules has a cache to prepend into
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-  mockApi.startApplyRulesJob.mockResolvedValue(job({ status: 'running' }));
-  mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
 
   const r = mount().result;
   await act(async () => { await r.current.startNewRuleJob('COLES', 'groceries', false); });
+  server.seed(jobPath('job-1'), job({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
   const before = invalidate.mock.calls.length;
   await tick();
 
@@ -171,12 +159,11 @@ it('[G4] add-rule success prepends the minted rule (NEW badge) and skips the rul
 it('[G4] file-this-shop success does NOT prepend and DOES refresh the rules list', async () => {
   queryClient.setQueryData(['rules'], []);
   const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
-  mockApi.startApplyRulesJob.mockResolvedValue(job({ status: 'running' }));
-  mockApi.getApplyRulesJob.mockResolvedValueOnce(job({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
 
   const r = mount().result;
   const grp = { merchant: 'Coles', rulePattern: 'coles', groupedBy: 'merchant', count: 5, samples: [], firstDate: '2026-01-01', lastDate: '2026-02-01', alsoCatches: [] } as unknown as Parameters<typeof r.current.startFileByShopJob>[0];
   await act(async () => { await r.current.startFileByShopJob(grp, 'groceries'); });
+  server.seed(jobPath('job-1'), job({ status: 'succeeded', matched: 5, filed: 5, createdRule: minted }));
   const before = invalidate.mock.calls.length;
   await tick();
 
