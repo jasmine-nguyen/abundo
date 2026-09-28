@@ -70,6 +70,8 @@ class BuildState(TypedDict):
     clarify_questions: NotRequired[list[dict]]
     clarify_answers: NotRequired[str]
     clarify_rounds: NotRequired[int]
+    designer_session: NotRequired[str]
+    critic_session: NotRequired[str]
     plan: NotRequired[str]
     problem: NotRequired[list[str]]
     task: NotRequired[list[str]]
@@ -275,11 +277,9 @@ CODE_CRITIC_OUTPUT = _output(
     decisions_to_escalate=TEXTS,
     advisory=TEXTS,
     tech_debt=_list_of(title=TEXT, problem=TEXT, fix=TEXT),
-    report=TEXT,
 )
 QA_OUTPUT = _output(
     spec_gaps=TEXTS, real_bugs=TEXTS, manual_checks=TEXTS, patch_written={"type": "boolean"}, test_command=TEXT,
-    report=TEXT,
 )
 
 
@@ -377,7 +377,9 @@ def agent_prompt(prompt_file: str) -> str:
     return (ROOT / ".claude" / "agents" / prompt_file).read_text() + "\n\n" + read_text(PROJECT_CONTEXT_FILE)
 
 
-async def run_agent(name: str, prompt: str, output_format: dict, resume: str | None = None) -> AgentResult:
+async def run_agent(
+    name: str, prompt: str, output_format: dict, resume: str | None = None, cwd: Path = ROOT
+) -> AgentResult:
     agent = AGENTS[name]
     options = ClaudeAgentOptions(
         model=DEFAULT_MODEL,
@@ -393,7 +395,9 @@ async def run_agent(name: str, prompt: str, output_format: dict, resume: str | N
         # anything else is refused. Set here rather than inherited, so a build behaves the same
         # on a laptop and in a cloud session, whatever mode that session is in.
         permission_mode="dontAsk",
-        cwd=str(ROOT),
+        # A `cd` doesn't carry over to the agent's next Bash call, so an agent that works
+        # somewhere else (QA's worktree) has to start there.
+        cwd=str(cwd),
         resume=resume,
         # The repo's own CLAUDE.md and settings, but not the user's global plugins,
         # MCP servers, hooks and preferences, which bloat every turn and hand
@@ -419,6 +423,20 @@ async def run_agent(name: str, prompt: str, output_format: dict, resume: str | N
     if not isinstance(result.structured_output, dict):
         raise AgentError(name, "returned no structured answer")
     return AgentResult(result.structured_output, result.session_id)
+
+
+async def continue_agent(name: str, session: str, news: str, fresh_prompt: str, output_format: dict) -> tuple[AgentResult, bool]:
+    """Send just the news to the agent's earlier session, so it keeps everything it already
+    read instead of researching again. Starts a fresh session when there's none to continue,
+    or it can't be continued. Returns the result and whether the session was continued."""
+    if session and news:
+        try:
+            return await run_agent(name, news, output_format, resume=session), True
+        except AgentError as e:
+            if e.transient:
+                raise
+            print(f"   ↺ Couldn't continue the {NODE_LABELS[name]}'s session, starting a fresh one", flush=True)
+    return await run_agent(name, fresh_prompt, output_format), False
 
 
 # --- helpers ---
@@ -467,7 +485,7 @@ def running_message(name: str, state: BuildState) -> str | None:
         "implementer": f"Implementer is {verb} the code (round {round_number})",
         "checks": "Running typecheck and tests",
         "code_critic": "Code review: hunting for bugs and checking your standards",
-        "qa": "QA: checking it does what the card asked, then testing the edge cases",
+        "qa": None if qa_passed_last_round(state) else "QA: checking it does what the card asked, then testing the edge cases",
         "ship": "Opening the PR (after running QA's new tests, if it added any)",
     }
     return messages.get(name)
@@ -489,6 +507,8 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
     if name in REVIEWERS:
         key = name.removesuffix("_critic")
         label = REVIEW_LABELS[key]
+        if name == "qa" and qa_passed_last_round(state):
+            return "✅ QA passed last round, not re-run (its tests ran in the checks)"
         if update[f"{key}_verdict"] == "APPROVED":
             return f"✅ {label} passed"
         return f"❌ {label}: {plural(finding_count(review_findings(update, key)), 'thing')} to fix"
@@ -1004,12 +1024,13 @@ def cleared_reviews() -> dict:
 # --- planning nodes ---
 
 
-async def designer(state: BuildState):
-    rounds = state.get("clarify_rounds", 0)
-    parts = [card_block(state)]
+def designer_news(state: BuildState, continuing: bool) -> list[str]:
+    """What the designer hasn't seen yet: answers to its questions, and feedback on its plan.
+    A continued session already has its previous plan, unless it was edited during the pause."""
+    parts = []
     if state.get("clarify_answers"):
         parts.append(f"## Your clarifying questions, answered\n{state['clarify_answers']}")
-    if rounds >= MAX_CLARIFY_ROUNDS:
+    if state.get("clarify_rounds", 0) >= MAX_CLARIFY_ROUNDS:
         parts.append(
             "You have used every clarifying round. Don't ask more questions: decide, "
             "and list each assumption under `decisions`."
@@ -1017,25 +1038,40 @@ async def designer(state: BuildState):
     feedback = state.get("plan_feedback", "")
     previous_plan = read_text(plan_file(state))
     if feedback and previous_plan:
+        resend = not continuing or previous_plan != state.get("plan")
         parts.append(
-            "--- REWORK ---\nYour previous plan (below) was sent back. Do NOT start from scratch: "
+            "--- REWORK ---\nYour previous plan was sent back. Do NOT start from scratch: "
             "apply the feedback and keep everything else intact.\n\n"
-            f"## Feedback\n{feedback}\n\n## Previous plan\n{previous_plan}"
+            f"## Feedback\n{feedback}" + (f"\n\n## Previous plan\n{previous_plan}" if resend else "")
         )
     elif feedback:
         parts.append(f"## Your previous plan was sent back. Feedback:\n{feedback}")
+    if continuing and parts:
+        parts.append("Return your whole answer again, every field, updated.")
+    return parts
 
-    result = await run_agent("designer", "\n\n".join(parts), DESIGNER_OUTPUT)
+
+async def designer(state: BuildState):
+    rounds = state.get("clarify_rounds", 0)
+    result, _ = await continue_agent(
+        "designer",
+        state.get("designer_session", ""),
+        "\n\n".join(designer_news(state, continuing=True)),
+        "\n\n".join([card_block(state), *designer_news(state, continuing=False)]),
+        DESIGNER_OUTPUT,
+    )
     out = result.output
     if out["clarifying_questions"] and rounds < MAX_CLARIFY_ROUNDS:
         # Keep the previous plan and the feedback it was sent back with: the next draft still needs them.
         return {
+            "designer_session": result.session_id,
             "clarify_questions": out["clarifying_questions"],
             "history": [f"• designer: asked {len(out['clarifying_questions'])} clarifying question(s)"],
         }
     write_text(plan_file(state), out["plan"])
     slices = [] if is_bug(state) else out["slices"]
     return {
+        "designer_session": result.session_id,
         "validity": out["validity"],
         "validity_evidence": out["validity_evidence"],
         "clarify_questions": [],
@@ -1071,12 +1107,24 @@ def clarify(state: BuildState):
 
 
 async def plan_critic(state: BuildState):
-    prompt = f"{card_block(state)}\n\n## Proposed plan\n{state['plan']}"
-    result = await run_agent("plan_critic", prompt, CRITIC_OUTPUT)
+    revised = (
+        f"## Revised plan\n{state['plan']}\n\n"
+        "The designer revised the plan since your review. Check your findings were addressed, and look "
+        "for new problems in what changed. Don't re-check citations you already verified unless the plan "
+        "changed them. Return your whole answer again, every field."
+    )
+    result, _ = await continue_agent(
+        "plan_critic",
+        state.get("critic_session", ""),
+        revised,
+        f"{card_block(state)}\n\n## Proposed plan\n{state['plan']}",
+        CRITIC_OUTPUT,
+    )
     out = result.output
     rework = out["verdict"] == "NEEDS REWORK"
     worst = f" — {out['top_findings'][0]}" if rework and out["top_findings"] else ""
     return {
+        "critic_session": result.session_id,
         "plan_verdict": out["verdict"],
         "plan_findings": out["top_findings"],
         "plan_tweaks": out["tweaks"] if out["verdict"] == "SOLID WITH TWEAKS" else [],
@@ -1320,21 +1368,12 @@ async def implementer(state: BuildState):
     feedback = fix_feedback(state)
     answer = state.get("escalation_answer", "")
     news = "\n\n".join(p for p in [feedback, answer and f"## Your escalated question, answered\n{answer}"] if p)
-    session = state.get("implementer_session", "")
     resumes = state.get("implementer_resumes", 0)
     # Continue the same session on fix rounds: it already knows the code it wrote.
-    resume = session if session and news and resumes < MAX_SESSION_RESUMES else None
-    try:
-        if resume:
-            result = await run_agent("implementer", news, IMPLEMENTER_OUTPUT, resume=resume)
-        else:
-            result = await run_agent("implementer", implementer_prompt(state, feedback), IMPLEMENTER_OUTPUT)
-    except AgentError as e:
-        if not resume or e.transient:
-            raise
-        print("   ↺ Couldn't continue the implementer's session, starting a fresh one", flush=True)
-        resume = None
-        result = await run_agent("implementer", implementer_prompt(state, feedback), IMPLEMENTER_OUTPUT)
+    session = state.get("implementer_session", "") if resumes < MAX_SESSION_RESUMES else ""
+    result, resume = await continue_agent(
+        "implementer", session, news, implementer_prompt(state, feedback), IMPLEMENTER_OUTPUT
+    )
     out = result.output
     session_update = {
         "implementer_session": result.session_id,
@@ -1473,19 +1512,35 @@ async def code_critic(state: BuildState):
     }
 
 
+def qa_passed_last_round(state: BuildState) -> bool:
+    """QA re-runs on a fix round only if it asked for changes. Its tests are pinned and run
+    in every check, and the code critic reviews the fixes."""
+    last = state.get("last_review") or {}
+    return bool(last.get("head")) and not last.get("qa")
+
+
 async def qa(state: BuildState):
+    if qa_passed_last_round(state):
+        return {
+            "qa_verdict": "APPROVED",
+            "qa_feedback": "",
+            "qa_patch": "",
+            "qa_test_command": "",
+            "history": ["✓ qa: passed last round, not re-run (its tests ran in the checks)"],
+        }
     patch = work_dir(state) / f"qa-{state.get('current_slice', 0)}-{state.get('implementation_attempts', 0)}.patch"
     patch.parent.mkdir(parents=True, exist_ok=True)
     patch.unlink(missing_ok=True)
     worktree = add_worktree()
     extra = (
-        f"## Your worktree\n`{worktree}`: a checkout of HEAD, with the main checkout's installed "
-        "packages linked in. Work only there; the pipeline removes it when you finish.\n\n"
+        f"## Your worktree\n`{worktree}`: your working directory, a checkout of HEAD with the main "
+        f"checkout's installed packages linked in. Work only there; never touch the main checkout at "
+        f"`{ROOT}`. The pipeline removes the worktree when you finish.\n\n"
         f"## Where your tests go\nSave your test changes as a patch at `{patch}` "
         "(see 'Hand back your tests'). The pipeline applies it to the branch."
     )
     try:
-        result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT)
+        result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT, cwd=worktree)
     finally:
         remove_worktree(worktree)
     out = result.output

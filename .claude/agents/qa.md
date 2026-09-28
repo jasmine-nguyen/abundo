@@ -62,16 +62,15 @@ Part 1 then maps each deliverable to a check.
 
 You WRITE test files and BREAK production code to prove red-green. Do all of it in
 the throwaway git worktree the pipeline made for you (its path is in your prompt).
-The change is committed, so the worktree's `HEAD` contains it, and the main
-checkout's installed packages (`node_modules`, `.venv`) are linked in, so the tests
-run there without installing anything:
-
-```bash
-WT=<your worktree path>
-cd "$WT"
-```
+You start there: it's your working directory, so relative paths and every command
+run in it. The change is committed, so the worktree's `HEAD` contains it, and the
+main checkout's installed packages (`node_modules`, `.venv`) are linked in, so the
+tests run there without installing anything.
 
 Rules:
+
+- **Don't `cd` anywhere else.** A `cd` doesn't carry over to your next command, so
+  commands always run in the worktree.
 
 - **Never write to, or break code in, the main checkout.** The pipeline blocks
   Write/Edit there and fails the review if the main checkout changes.
@@ -165,8 +164,8 @@ path you were given. The pipeline applies it to the branch and pins the files, s
 nobody can quietly weaken them later:
 
 ```bash
-git -C "$WT" add -N <your new test files>
-git -C "$WT" diff HEAD -- <your test files> > <patch path you were given>
+git add -N <your new test files>
+git diff HEAD -- <your test files> > <patch path you were given>
 ```
 
 - Include only test files and test fixtures. Restore every production-code mutation
@@ -187,5 +186,6 @@ git -C "$WT" diff HEAD -- <your test files> > <patch path you were given>
   that runs only the test files in your patch (e.g. `npx jest path/to/new.test.ts`).
   The pipeline runs it before it ships instead of the whole suite. Empty if you
   wrote no tests.
-- `report` — Markdown: the full checklist, the test files with run results and the
-  red-green proof, and the ranked edge-case findings. Be concrete, cite code, don't pad.
+
+Nothing else you write is read, so don't write up the checklist or a report: return
+these fields and stop.

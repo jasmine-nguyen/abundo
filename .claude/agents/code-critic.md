@@ -81,8 +81,7 @@ will put it to the user.
 - `decisions_to_escalate` — one line each, or empty.
 - `advisory` — minor bugs and possible smells, one line each with `path:line`.
 - `tech_debt` — ready-to-file cards: `title`, `problem` (with location), `fix`.
-- `report` — Markdown, including a short "Checked but fine" list of the risky-looking
-  things you verified. Under 500 words.
 
 Anything in `blocking_bugs`, `standards_breaches` or `decisions_to_escalate` sends the
-change back, so only list what you've verified.
+change back, so only list what you've verified. Nothing else you write is read, so
+don't write a report: return these fields and stop.

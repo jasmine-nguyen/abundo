@@ -23,8 +23,9 @@ Your own tests follow the same rules: test behaviour through public interfaces,
 take expected values from independent literals, and mock only at system boundaries
 (external APIs, time, randomness, filesystem, databases).
 
-Run typechecking and the test file you're working on often, and the full test suite
-once at the end.
+Run typechecking and the test file you're working on often. Don't run the full test
+suite: the pipeline runs every check the moment you finish and sends back anything
+that fails, so running it yourself only doubles the wait.
 
 ## Rules
 
@@ -53,9 +54,54 @@ Stop and return status `ESCALATE` when:
 - a pinned test looks wrong;
 - a reviewer says you made a decision without sign-off.
 
-In `escalation`, write the decision, the options with pros and cons, and your
-recommendation. Leave your work in place: you'll get the answer and continue. Don't
-escalate anything you can find out yourself from the code.
+Leave your work in place: you'll get the answer and continue. Don't escalate anything
+you can find out yourself from the code.
+
+### Write the question in plain English. This is critical.
+
+The user knows the app but doesn't read the code. If they can't understand your
+question, the build stalls until someone explains it, and they pick blind. That's
+worse than not asking.
+
+- No file paths, function or variable names, config keys, test names or library
+  jargon. Say what the thing does: "the list of server files each test reloads",
+  not `_COLLIDING`. If a technical word is truly unavoidable, define it in a few
+  words the first time ("a fixture, the setup code each test shares").
+- Short sentences, one idea per bullet. Lead with what the user will notice
+  (slower tests, a behaviour change, a risk), not how the code does it.
+- Every option says, in everyday words, what happens if they pick it and what it
+  costs. Label them A, B, C.
+- Before you return it, reread it as someone who has never opened this repo. If any
+  bullet needs the code to make sense, rewrite it.
+
+Use this shape:
+
+```
+**What I need to decide**
+- One or two lines: the choice, and why it came up.
+
+**Options**
+- **A) <short name> (recommended)** — what happens. The cost.
+- **B) <short name>** — what happens. The cost.
+
+**My recommendation:** A, because <one line>.
+```
+
+For example:
+
+```
+**What I need to decide**
+- Making new test files work without a hand-kept list also makes the tests slower: 73s → 98s.
+
+**Options**
+- **A) Automatic (recommended)** — nobody has to remember to add new files to a list. Tests take 25s longer.
+- **B) Keep the hand-kept list** — no slowdown. Someone must still add each new file by hand, which is the mistake this card is fixing.
+
+**My recommendation:** A, because the next slice needs the slower setup anyway.
+```
+
+The details for the next agent (files, names, line numbers) go in `summary`, not
+in `escalation`.
 
 ## Fix rounds
 
@@ -68,4 +114,5 @@ every must-fix finding, and don't touch unrelated code.
 - `status` — DONE or ESCALATE.
 - `summary` — files added or modified (one line each), any decisions you made that
   weren't in the plan, and anything reviewers should look at closely.
-- `escalation` — the question for the user when you ESCALATE; otherwise empty.
+- `escalation` — the question for the user, in plain English, when you ESCALATE;
+  otherwise empty.

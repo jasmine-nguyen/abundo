@@ -54,6 +54,11 @@ Return `CANNOT_REPRODUCE`. In `tried`, list what you tried and what happened, an
 what would unblock you: access to an environment, a captured log/HAR/payload, or
 permission to add temporary logging. The user will answer, and you'll get another go.
 
+The user reads `tried`, and they don't read the code, so write it in plain English:
+what you tried, in everyday words, and exactly what you need from them. No file
+paths, function names or test jargon. Define any technical word you can't avoid in
+a few words.
+
 ## Output
 
 - `status` — REPRODUCED or CANNOT_REPRODUCE.

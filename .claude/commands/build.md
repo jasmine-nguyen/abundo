@@ -8,6 +8,34 @@ Run the script with `.venv/bin/python` when the repo has a `.venv` (a cloud
 session always does: the repo's session hook creates it), otherwise with
 `python3`. The commands below write `python3`; use the same one throughout.
 
+A build runs for many minutes, far past a foreground shell command's timeout, and
+a killed run loses the step it was on. So run every `build_graph.py` command except
+`--status` in the background (Bash `run_in_background`), and follow its output as
+it arrives.
+
+## Plain English is critical
+
+The user knows the app but doesn't read the code. Every message and question they
+see from you must make sense without opening the repo. If they can't understand
+it, they pick blind or the build stalls while you explain. Both are worse than
+taking a moment to write it clearly.
+
+- No file paths, function or variable names, config keys, test names, git terms or
+  library jargon. Say what the thing does: "the list of files each test reloads",
+  not `_COLLIDING`. If a technical word is truly unavoidable, define it in a few
+  words the first time.
+- Short sentences, one idea per bullet. Lead with what the user will notice (a
+  slower test run, a behaviour change, a risk), not with how the code works.
+- Every option says what happens if they pick it and what it costs, in everyday
+  words. An option label is a few plain words ("Automatic", "Keep the list"), never
+  a code term.
+- Agents write their pause messages for the user, but some still slip into code
+  talk. You're the last check: if any line of a pause needs the code to make sense,
+  rewrite it in plain English before you show it or ask. Keep every option and its
+  meaning. Only the wording changes.
+- If the user answers with a question ("what does this mean?"), the wording failed.
+  Explain it more simply, with a concrete example, and ask again.
+
 Read `project-context.md` first. It contains the board data source ID,
 card prefix, default card type, card picking rules (sort field,
 blocker relation, skip patterns), and the check commands the pipeline runs.
@@ -121,21 +149,35 @@ the card number for card builds) and check where it is:
      message exactly as printed, formatted as Markdown (section titles in
      bold, lines as bullets): the header line, Problem, Task and Solution,
      any unresolved critic concerns, and the details line. Don't add to it,
-     shorten it, or pull more in from the plan file. If the user asks for
-     the details, show them the parts they ask about.
+     shorten it, or pull more in from the plan file. The one exception is a
+     line that isn't plain English: rewrite that line (see "Plain English is
+     critical"). If the user asks for the details, show them the parts they
+     ask about, in plain English too.
 
      Then ask the decisions with AskUserQuestion instead of printing them a
      second time, recommended answer first and marked "(Recommended)", and
      offer: Approve · Rework · Stop.
+
+     If the user chooses to **split** the card (the designer offers this when
+     the plan has 3 or more slices):
+     1. Read the slices from the plan file. For every slice after the first,
+        create a card on the board the same way as step 1b. Title it with the
+        slice's title and describe what it delivers. If project-context.md
+        has a blocker relation, set this card as each new card's blocker.
+     2. Resume with `rework: Split. Plan only slice 1: <title>. The other
+        slices are now their own cards: <new card IDs>.` The designer replans
+        just slice 1, and you'll get a new PLAN FOR REVIEW.
+     3. Tell the user which cards you filed.
    - **CARD LOOKS INVALID** — show the block (evidence, problem, and what
      the card should become), then ask: Close the card · Plan it anyway (ask
      why it's still needed) · Stop.
    - **QUESTIONS BEFORE PLANNING** — the card was too thin to plan. Ask the
      questions with AskUserQuestion, recommended answer first.
    - **DECISION NEEDED** — an agent hit a decision it shouldn't make alone
-     (or couldn't reproduce the bug, or write failing tests). Show it and
-     ask the user; offer the options it lists and any hint on the last
-     line (`skip`, `unpin`).
+     (or couldn't reproduce the bug, or write failing tests). Show it in
+     plain English, rewriting any line that talks code, and ask the user.
+     Offer the options it lists and any hint on the last line (`skip`,
+     `unpin`), each explained in everyday words.
 
    Every pause also accepts **Stop**: it ends the build there and nothing
    ships.

@@ -73,6 +73,19 @@ own. Put any prefactoring ("make the change easy, then make the easy change") in
 first slice. Leave `slices` empty for normal-sized cards — don't split for the sake
 of it.
 
+**Three or more slices means the card is too big for one build.** A long build
+waits on the user more, runs more review rounds and is harder to recover when it
+stalls. So when you have 3+ slices, make the FIRST entry in `decisions` a split:
+
+- `question`: "This card is big: <N> slices, about <M> files. Split it into smaller
+  cards?" (plain English, as below).
+- `options`: "A) Split: build slice 1 now, and file the other slices as their own
+  cards · B) Build all <N> slices in this one run (slower, more pauses)".
+- `recommendation`: A, unless the slices only work if they ship together. Then
+  recommend B and say why in one line.
+
+Still plan every slice in full, so the user can see what they're choosing between.
+
 ## Output
 
 Return these fields:
@@ -82,6 +95,15 @@ Return these fields:
 - `validity_evidence` — the `path:line` evidence for that verdict, one or two lines.
 - `clarifying_questions` — `question` + `recommendation`, only when the card is too
   thin to plan; otherwise empty.
+**Plain English is critical.** The user knows the app but doesn't read the code.
+Everything they see from you (`clarifying_questions`, `problem`, `task`, `solution`,
+`decisions` and slice titles) must make sense without opening the repo. If they
+can't follow it, they approve blind or the build stalls while someone explains.
+For those fields: no file paths, function or variable names, config keys, test names
+or library jargon. Say what the thing does instead. If a technical word is truly
+unavoidable, define it in a few words the first time. Each decision option says what
+happens if they pick it and what it costs, in everyday words.
+
 - `problem`, `task`, `solution` — the summary the user approves the plan from. It's
   all they see at sign-off, so write it for someone who knows the app but isn't
   reading the code:
@@ -125,9 +147,11 @@ Return these fields:
   a deletion, a public API or schema change), otherwise `two-way`.
 - `blast_radius` — one line: what could break if this is wrong, and for whom.
 - `seams` — one line each.
-- `decisions` — `question`, `options` (e.g. "A) … B) …"), `recommendation`. Empty if
+- `decisions` — `question`, `options` (e.g. "A) … B) …"), `recommendation`, all in
+  plain English. A split decision comes first when there are 3+ slices. Empty if
   none.
-- `slices` — `title` + `delivers` (the end-to-end behaviour it makes work), or empty.
+- `slices` — `title` (plain English) + `delivers` (the end-to-end behaviour it makes
+  work), or empty.
 - `plan` — the full plan in Markdown, in exactly the structure below. If `validity`
   isn't VALID, keep it to a short note on what the card should become instead.
 
