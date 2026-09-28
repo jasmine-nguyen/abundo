@@ -1,4 +1,4 @@
-langgraph
-langgraph-checkpoint-sqlite
+langgraph>=1.0
+langgraph-checkpoint-sqlite>=3.0
 aiosqlite
-claude-agent-sdk
+claude-agent-sdk>=0.2.140

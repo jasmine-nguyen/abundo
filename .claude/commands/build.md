@@ -5,16 +5,18 @@ description: Run the build graph for a card or request
 Run the build pipeline using `build_graph.py`.
 
 Read `project-context.md` first. It contains the board data source ID,
-card prefix, default card type, and card picking rules (sort field,
-blocker relation, skip patterns).
+card prefix, default card type, card picking rules (sort field,
+blocker relation, skip patterns), and the check commands the pipeline runs.
 
 ## Resuming a stopped build
 
 If the user says "resume" or "continue the build" (and `$ARGUMENTS` is
-empty or says "resume"), check the conversation for the last paused build.
-You'll have the thread ID and card number from the earlier run. Resume with:
-`python3 build_graph.py --thread <id> --resume "go"`
-Then continue from step 3 below.
+empty or says "resume"), find the thread ID from the conversation (it's
+the card number for card builds) and check where it is:
+`python3 build_graph.py --thread <id> --status`
+- "Paused: waiting for your reply" → go to step 3 and handle the pause.
+- A next step but no pause → it stopped on an error: `--retry`.
+- Finished with outcome `failed` → step 5, BUILD FAILED.
 
 ## Starting a new build
 
@@ -68,52 +70,112 @@ Then continue from step 3 below.
 
    Echo which card you're building and why before continuing.
 
-2. Run the script:
-   `python3 build_graph.py --card <number> --type "<card Type>" --details "<title and description>"`
+2. Set the card's Status to 'In Progress'. Write the card's title and
+   description to `.build/cards/<card number>.md` with the Write tool —
+   never paste card text into a shell command, where quotes or `$(...)`
+   in the card would break or run. Then run:
+   `python3 build_graph.py --card <number> --type "<card Type>" --details-file .build/cards/<number>.md`
 
    `--type` sets the branch, commit and PR prefix: Story/Feature → `feat`,
    Bug/Defect → `fix`, Chore → `chore`, Refactor → `refactor`, Docs → `docs`.
-   Anything else falls back to `feat`.
+   Anything else falls back to `feat`. Bug and Defect cards also take the
+   bug path: the bug is reproduced with a failing test before it's fixed.
+
+   The script refuses to start if tracked files have uncommitted changes,
+   or if a build for this card already exists. Relay the message; only add
+   `--restart` if the user wants to throw the old build away.
 
    While it runs, give the user short status updates based on the output.
-   The script prints which node is running and what tools it's using. Relay
-   the key milestones:
-   - "Designer is planning..." (when you see `▶ Designer`)
-   - "Plan critic is reviewing..." (when you see `▶ Plan Critic`)
-   - "Implementer is coding..." (when you see `▶ Implementer`)
-   - "Code review in progress..." (when you see `▶ Code Review`)
-   - "QA testing..." (when you see `▶ QA`)
-   Don't flood — one line per node is enough.
+   The script prints which step is running and what tools it's using.
+   Relay the key milestones, one line per step:
+   - "Designer is planning..." (`▶ Designer`)
+   - "Plan critic is reviewing..." (`▶ Plan Critic`)
+   - "Reproducing the bug..." (`▶ Reproducer`)
+   - "Writing the acceptance tests..." (`▶ Test Writer`)
+   - "Implementer is coding..." (`▶ Implementer`)
+   - "Running typecheck, lint and tests..." (`▶ Checks`)
+   - "Four reviewers are checking the change..." (`▶ Standards Review` etc.)
+   - "Opening the PR..." (`▶ Ship`)
+   Don't flood, and don't go silent.
 
-3. If the script pauses (prints "PLAN FOR REVIEW" between === lines),
-   you MUST show the full plan to the user BEFORE the approval prompt.
-   Format it as:
-   - **Task:** what we're building (1-2 sentences, plain english)
-   - **Plan:** the approach (bullet points, plain english, no jargon)
-   - **Risks:** anything to watch out for (or "None" if clean)
+3. When the script pauses, it prints a block between `===` lines and
+   `Paused. Resume with: ...`. The first line of the block says why:
 
-   The plan is printed by the script between the === lines — read it
-   and present it clearly. Do NOT skip this or collapse it into one
-   sentence. The user needs to review the plan before deciding.
+   - **PLAN FOR REVIEW** — show the user the block: the critic's verdict
+     and findings, the summary, the test points, any slices, and the
+     plan file path (they can edit that file directly before approving).
+     If it lists decisions (Q1, Q2, ...), ask them with AskUserQuestion,
+     putting the recommended answer first and marking it "(Recommended)".
+     Then offer: Approve · Rework · Stop.
+   - **CARD LOOKS INVALID** — show the evidence and ask: Close the card ·
+     Plan it anyway (ask why it's still needed) · Stop.
+   - **QUESTIONS BEFORE PLANNING** — the card was too thin to plan. Ask the
+     questions with AskUserQuestion, recommended answer first.
+   - **DECISION NEEDED** — an agent hit a decision it shouldn't make alone
+     (or couldn't reproduce the bug, or write failing tests). Show it and
+     ask the user; offer the options it lists and any hint on the last
+     line (`skip`, `unpin`).
+   - **RETRO PROPOSALS** — lines to add to project-context.md, learned from
+     this build's friction. Ask which to add (all, some, or none).
 
-   Then present options using AskUserQuestion:
-   - "Approve" — resume with "go"
-   - "Rework" — ask for feedback, then resume with that feedback
-   - "Stop" — end the build, don't resume
+   Every pause also accepts **Stop**: it ends the build there and nothing
+   ships.
 
-4. Based on the user's choice, run the resume command shown in the output
-   (e.g. `python3 build_graph.py --thread <id> --resume "go"`)
+   Never answer a pause yourself: every one of them is the user's call.
 
-   While the resumed script runs, relay progress the same way as step 2:
-   one short status line per node ("Implementer is coding...",
-   "Code review in progress...", etc.). Don't go silent — the user needs
-   to see the build is alive and which stage it's at.
+4. Resume with the user's reply:
+   `python3 build_graph.py --thread <id> --resume "<reply>"`
 
-5. Repeat steps 3-4 until the script prints "Done."
+   Any pause: `stop` ends the build.
 
-   When both code review and QA pass, the script commits, pushes, and
-   opens the PR itself — don't ask the user for confirmation. Relay the
-   "PR opened: <url>" line. If it prints "opening the PR failed", show
-   the error and stop.
+   | Pause | Reply |
+   |---|---|
+   | PLAN FOR REVIEW | `go` (recommended answers) · `go: Q1 <answer>; Q2 <answer>` · `rework: <feedback>` |
+   | CARD LOOKS INVALID | `close` · `rework: <why it's still needed>` |
+   | QUESTIONS BEFORE PLANNING | `go` (recommendations) or `Q1: <answer>; Q2: <answer>` |
+   | DECISION NEEDED | the decision in plain words · `skip` · `unpin: <reason>` |
+   | RETRO PROPOSALS | `go` · `go: 1,3` · `skip` |
 
-6. Once done, update the card's Status to 'Done' on the board.
+   If the reply contains quotes, backticks or `$`, pass it through a
+   quoted heredoc so the shell doesn't touch it:
+   ```
+   python3 build_graph.py --thread <id> --resume "$(cat <<'EOF'
+   <reply>
+   EOF
+   )"
+   ```
+   If the user chose Stop, resume with `stop`: the build is closed out
+   properly instead of left hanging, and nothing more runs.
+
+   While the resumed script runs, relay progress the same way as step 2.
+
+5. Repeat steps 3–4 until the script ends with one of these:
+
+   - **PR opened: <url>** — relay the link. The script already committed,
+     pushed and opened the PR.
+   - **BUILD CANCELLED** — the user stopped it. Set the card's Status back
+     to 'To Do', and mention the branch if the script printed one.
+   - **CARD CLOSED** — the user agreed the card isn't needed. Set its Status
+     to 'Done' (or the board's won't-do option) and add a comment with the
+     evidence.
+   - **BUILD FAILED** — the automatic loop ran out of rounds. Don't ask the
+     user what to do: read the findings below the line, fix them yourself
+     in the codebase (don't edit pinned test files; if one is wrong, ask the
+     user), then run
+     `python3 build_graph.py --thread <id> --recheck`
+     to re-run the checks and all four reviews on your fixes. Repeat until
+     it passes.
+   - **BUILD STOPPED** — a step errored (an agent ran out of turns or
+     budget, returned no verdict, or files changed that shouldn't have).
+     Show the user the error, fix the cause if it's yours to fix, then
+     `--retry`. Don't retry blindly in a loop.
+   - **BUILD PASSED but opening the PR failed** — show the error; once the
+     cause is fixed (e.g. `gh auth login`), `--retry`.
+
+6. After the run:
+   - If it printed **TECH DEBT CARDS TO FILE**, create each one on the board
+     (Status 'To Do', Type 'Tech Debt' if the board has it, otherwise the
+     default card type), and tell the user they were filed.
+   - If it printed **CHECKS WORTH AUTOMATING**, pass the ideas on to the user
+     in one short list; don't implement them unasked.
+   - Once the PR is open, update the card's Status to 'Done'.

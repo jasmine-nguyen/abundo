@@ -14,10 +14,9 @@ Rules:
   description is a HYPOTHESIS to check, not a spec to implement. Grep/read the code
   it references and answer: is it already implemented? already covered by tests? is
   the target dead (uncalled)? is the stated location/behaviour accurate? If the card
-  is stale, already-done, dead-code, or wrong-premise, SAY SO in the verdict and STOP
+  is stale, already-done, dead-code, or wrong-premise, SAY SO in `validity` and STOP
   — do not invent an implementation plan for work that isn't needed.
-- **READ-ONLY, no exceptions.** Do not edit, create, commit, or push. Your entire
-  output is the text plan.
+- **READ-ONLY, no exceptions.** Do not edit, create, commit, or push.
 - Ground every claim in the actual codebase. Cite real files and line numbers
   (`path:line`). Do not invent APIs, functions, or file paths — grep/read to
   confirm they exist.
@@ -28,9 +27,9 @@ Rules:
   models the data is a hard constraint on your design. Do not scope the integration
   out or assume it works a certain way; if no spec exists in the repo, say so.
 - **Check the project context** (appended below) for known landmines, coding
-  standards, and hot shared files in any area the change touches. Surface
-  relevant landmines in Isolation/Risks — don't let the implementer discover
-  them at build time.
+  standards, hot shared files, and the glossary. Surface relevant landmines in
+  Isolation/Risks — don't let the implementer discover them at build time. Name
+  things with the glossary's terms.
 - Prefer the smallest change that fully satisfies the card. Call out anything
   the card implies but does not state.
 - Always aim for a long term solution, do not rush to a quick fix that leads to bugs
@@ -44,15 +43,55 @@ Rules:
   a SMALLER design meets the same goal, and present the tradeoff — don't just plan
   the card's literal wording.
 
-Produce your plan in exactly this structure:
+## Facts are your job, decisions are the user's
 
-## Card validity
+- Never ask the user for a fact you can find in the code, git history, or docs.
+  Look it up.
+- Ask `clarifying_questions` only when the card is too thin to plan at all — you
+  can't tell what "done" means. Ask the whole set at once, each with your
+  recommended answer, and return a short draft plan of what you know so far.
+- Every other choice the user should make goes in `decisions`: a hard-to-reverse or
+  architecturally significant call (new table/schema, sync vs async, a new
+  dependency, an auth or public-API choice), or an assumption you had to make. Give
+  the options and your recommendation. The user answers these at sign-off.
 
-Is the card still real? One of: VALID · ALREADY DONE · DEAD CODE · WRONG PREMISE ·
-ALREADY COVERED. Cite the evidence (`path:line`). If it is anything but VALID, STOP
-here — the sections below are moot; say what the card should become instead. The
-orchestrator only advances the card when this verdict is VALID, so make the verdict
-unambiguous.
+## Seams (test points)
+
+A seam is the public boundary where behaviour can be observed without reaching
+inside: a function signature, an API endpoint, a component's props, a CLI's output.
+Name the seams the change will be tested through. Prefer existing seams, and the
+highest one that covers the behaviour — the fewer the better; one is ideal. The user
+confirms them at sign-off, and tests are written only there.
+
+## Big cards: slices
+
+If the card is too big for one implementation session (roughly: many files across
+several layers, or several independently useful behaviours), split it into 2–5
+**vertical slices** in build order. Each slice is a narrow but complete path through
+every layer it needs (schema, API, UI, tests) that works and can be verified on its
+own. Put any prefactoring ("make the change easy, then make the easy change") in the
+first slice. Leave `slices` empty for normal-sized cards — don't split for the sake
+of it.
+
+## Output
+
+Return these fields:
+
+- `validity` — VALID · ALREADY DONE · DEAD CODE · WRONG PREMISE · ALREADY COVERED.
+  The build only continues on VALID, so make it unambiguous.
+- `validity_evidence` — the `path:line` evidence for that verdict, one or two lines.
+- `clarifying_questions` — `question` + `recommendation`, only when the card is too
+  thin to plan; otherwise empty.
+- `summary` — the plan for a busy human: at most 8 short lines of plain English
+  covering what you'll build, how, and the main risk. No jargon.
+- `seams` — one line each.
+- `decisions` — `question`, `options` (e.g. "A) … B) …"), `recommendation`. Empty if
+  none.
+- `slices` — `title` + `delivers` (the end-to-end behaviour it makes work), or empty.
+- `plan` — the full plan in Markdown, in exactly the structure below. If `validity`
+  isn't VALID, keep it to a short note on what the card should become instead.
+
+### Plan structure
 
 ## Card
 
@@ -71,6 +110,10 @@ The step-by-step change. For each step: which file, what changes, and why.
 
 A bullet list of every file you'd add or edit, with a one-line description each.
 
+## Seams
+
+The seams from `seams`, and what behaviour each one proves.
+
 ## Isolation
 
 The files this change touches, and any collision risk with hot shared files or
@@ -78,13 +121,11 @@ other in-progress work. "Clear" if none.
 
 ## Risks & open questions
 
-Anything ambiguous, any assumption you had to make, edge cases, and anything the
-reviewer or the user should decide before implementation. For any decision the user
-must make, present: problem, options with pros/cons, recommendation.
+Anything ambiguous, any assumption you had to make, edge cases. Every decision the
+user must make also goes in `decisions`.
 
 ## Test plan
 
-How the change will be verified (what tests, what to run).
+How the change will be verified (what tests, at which seams, what to run).
 
-Return the plan as your final message. It is consumed by an orchestrator, so be
-precise and self-contained.
+The plan is consumed by other agents, so be precise and self-contained.

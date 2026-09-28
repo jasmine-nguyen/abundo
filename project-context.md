@@ -14,6 +14,19 @@ Default card type: `Task`
   pytest (server — `python -m pytest`)
 - **Typecheck:** `npx tsc --noEmit`
 
+## Checks
+
+The build runs these after every implementation round, from the repo root, one
+per line. Any non-zero exit sends the work back to the implementer before a
+reviewer sees it. They're the fast part of CI: the Jest screen tests, the Expo
+exports and the coverage floors run in CI only.
+
+```checks
+npm run typecheck
+npm test
+.venv/bin/python -m pytest -q
+```
+
 ## Known landmines
 
 Check these before changing the touched area:
