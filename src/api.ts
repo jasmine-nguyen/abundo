@@ -104,9 +104,8 @@ function readJson(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): P
  * escaping here would carry no status, which defeats src/queryClient.ts's auth detection and
  * breaks the message contract the suite pins.
  *
- * Used by the three category writes only. The other 30 not-OK guards still throw a plain Error;
- * widening one is a one-line swap (see WHIT-437's follow-up card). The error-body read runs under
- * withBodyTimeout so a stalled body can't hang the failed-save writer (WHIT-441).
+ * The error-body read runs under withBodyTimeout so a stalled body can't hang the failed-save
+ * writer (WHIT-441).
  */
 async function failed(response: Response, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<ApiError> {
   let serverMessage: string | null = null;
@@ -137,6 +136,61 @@ async function apiFetch(input: string, init?: RequestInit, timeoutMs: number = R
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * How an endpoint turns a not-OK response into an error. Every message stays `API error: N`
+ * (src/queryClient.ts's auth-retry match reads it):
+ *  - plain: a plain Error.
+ *  - statusOnly: an ApiError carrying the status only — the caller branches on it (a 409 clash,
+ *    a 404 expired job), but the server's wording is never shown, so it isn't carried.
+ *  - withReason: failed() — an ApiError carrying the server's stated reason as user-facing copy.
+ */
+type ErrorHandling = "plain" | "statusOnly" | "withReason";
+
+interface RequestSpec {
+  path: string;
+  method?: "POST" | "PUT" | "PATCH" | "DELETE";
+  body?: unknown;
+  timeoutMs?: number;
+}
+
+/**
+ * The one request step every endpoint runs: auth headers → fetch → not-OK guard → JSON read.
+ * A read sends no `method`; only a request with a body gets `Content-Type`. The same time
+ * limit bounds the headers and the body read.
+ */
+async function request(spec: RequestSpec, errors: ErrorHandling): Promise<any> {
+  const timeoutMs = spec.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const init: RequestInit = {};
+  if (spec.method) init.method = spec.method;
+  if (spec.body === undefined) {
+    init.headers = await buildHeaders();
+  } else {
+    init.headers = await buildHeaders({ "Content-Type": "application/json" });
+    init.body = JSON.stringify(spec.body);
+  }
+  const response = await apiFetch(`${API_BASE}${spec.path}`, init, timeoutMs);
+  if (response.ok == false) {
+    if (errors === "withReason") throw await failed(response, timeoutMs);
+    if (errors === "statusOnly") throw new ApiError(response.status, null);
+    throw new Error(`API error: ${response.status}`);
+  }
+  return readJson(response, timeoutMs);
+}
+
+type Send = (spec: RequestSpec) => Promise<any>;
+
+/**
+ * Declare an endpoint with its error style. The style is attached as `.errors` so
+ * src/__tests__/apiErrorContainment.logic.test.ts can check each endpoint behaves as declared.
+ */
+function endpoint<A extends unknown[], R>(
+  errors: ErrorHandling,
+  run: (send: Send, ...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+  const send: Send = (spec) => request(spec, errors);
+  return Object.assign(async (...args: A) => run(send, ...args), { errors });
 }
 
 /** One condition of a categorisation rule (WHIT-541 multi-condition). */
@@ -198,12 +252,8 @@ export interface RuleWriteInput {
  * @returns The recent-window transactions from the API.
  * @throws If the response status is not OK.
  */
-export async function fetchTransactions(): Promise<Transaction[]> {
-  const response = await apiFetch(`${API_BASE}/transactions`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchTransactions = endpoint("plain", (send): Promise<Transaction[]> =>
+  send({ path: "/transactions" }));
 
 /** One page of the all-accounts transaction feed (the Transactions tab's "Load More"). */
 export interface TransactionFeedPage {
@@ -222,16 +272,16 @@ export interface TransactionFeedPage {
  * @returns One page: its transactions plus the cursor for the next page (null at the end).
  * @throws If the response status is not OK.
  */
-export async function fetchTransactionsFeed(cursor?: string, limit?: number): Promise<TransactionFeedPage> {
-  const parts: string[] = [];
-  if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
-  if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
-  const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
-  const response = await apiFetch(`${API_BASE}/transactions/feed${qs}`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchTransactionsFeed = endpoint(
+  "plain",
+  (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> => {
+    const parts: string[] = [];
+    if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+    if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
+    const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
+    return send({ path: `/transactions/feed${qs}` });
+  },
+);
 
 /**
  * Fetch one page of the UNCATEGORIZED-only feed, newest first — every account merged,
@@ -247,16 +297,16 @@ export async function fetchTransactionsFeed(cursor?: string, limit?: number): Pr
  * @returns One page: its uncategorized transactions plus the cursor for the next page (null at the end).
  * @throws If the response status is not OK.
  */
-export async function fetchUncategorizedFeed(cursor?: string, limit?: number): Promise<TransactionFeedPage> {
-  const parts: string[] = [];
-  if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
-  if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
-  const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
-  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/feed${qs}`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchUncategorizedFeed = endpoint(
+  "plain",
+  (send, cursor?: string, limit?: number): Promise<TransactionFeedPage> => {
+    const parts: string[] = [];
+    if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+    if (limit != null) parts.push(`limit=${encodeURIComponent(limit)}`);
+    const qs = parts.length > 0 ? `?${parts.join('&')}` : '';
+    return send({ path: `/transactions/uncategorized/feed${qs}` });
+  },
+);
 
 /** The Transactions-tab search over ALL history (WHIT-576): the newest matches, and whether the
  *  server's result cap cut any off. */
@@ -275,16 +325,14 @@ export interface TransactionSearchResult {
  * @returns The newest matches plus whether more were cut off.
  * @throws If the response status is not OK.
  */
-export async function fetchTransactionsSearch(tab: 'all' | 'uncategorized', query: string): Promise<TransactionSearchResult> {
-  const response = await apiFetch(
-    `${API_BASE}/transactions/search?tab=${encodeURIComponent(tab)}&q=${encodeURIComponent(query)}`,
-    { headers: await buildHeaders() },
-    APPLY_RULES_TIMEOUT_MS,
-  );
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response, APPLY_RULES_TIMEOUT_MS);
-}
+export const fetchTransactionsSearch = endpoint(
+  "plain",
+  (send, tab: 'all' | 'uncategorized', query: string): Promise<TransactionSearchResult> =>
+    send({
+      path: `/transactions/search?tab=${encodeURIComponent(tab)}&q=${encodeURIComponent(query)}`,
+      timeoutMs: APPLY_RULES_TIMEOUT_MS,
+    }),
+);
 
 /**
  * Fetch the full-history uncategorized count (WHIT-500): how many uncategorized charges
@@ -294,11 +342,8 @@ export async function fetchTransactionsSearch(tab: 'all' | 'uncategorized', quer
  * @returns The count (a bare number, unwrapped from the server's {count}).
  * @throws If the response status is not OK.
  */
-export async function fetchUncategorizedCount(): Promise<number> {
-  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/count`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  const body = await readJson(response);
+export const fetchUncategorizedCount = endpoint("plain", async (send): Promise<number> => {
+  const body = await send({ path: "/transactions/uncategorized/count" });
   // Fail LOUD on a malformed envelope (missing / stringified count), mirroring selectCategories.
   // A non-number would otherwise flow straight through as the badge TEXT and defeat the `=== 0`
   // "All caught up" gate (a stringified "0" is not `=== 0`). Throwing → the query errors → the hook
@@ -306,7 +351,7 @@ export async function fetchUncategorizedCount(): Promise<number> {
   if (typeof body?.count !== 'number' || Number.isNaN(body.count))
     throw new Error(`fetchUncategorizedCount: expected a numeric count, got ${JSON.stringify(body?.count)}`);
   return body.count;
-}
+});
 
 /** One applicable rule's share of an apply-rules plan: how many unfiled charges it catches,
  *  with a few example descriptions so an over-eager rule is visible before anything is written.
@@ -397,27 +442,26 @@ export interface CreatedRule {
  * @returns The plan summary plus this request's outcome.
  * @throws If the response status is not OK (the sheet shows phase-specific copy).
  */
-export async function applyRulesToUncategorized(
-  dryRun: boolean,
-  rule?: { value: string; categoryId: string; budgetExcluded?: boolean },
-): Promise<ApplyRulesResult> {
-  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules`, {
-    method: "POST",
-    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
-    // The inline rule is sent ONLY when present — "Apply my rules" (no rule) stays byte-identical
-    // on the wire ({dryRun}). "File by shop" (WHIT-517) sends {dryRun, rule} to mint + file in one call.
-    body: JSON.stringify(rule ? { dryRun, rule } : { dryRun }),
-  }, APPLY_RULES_TIMEOUT_MS);
-  // Throw an ApiError carrying the STATUS but NOT the server body: "file by shop" needs to spot a
-  // 409 clash (an existing rule already files this shop elsewhere) to show its own copy for it
-  // (WHIT-517), and the status is the only thing it reads. serverMessage stays null on purpose —
-  // this endpoint's 4xx wording ("dryRun must be a boolean", BankSync internals) is never shown to
-  // the user, so it must not be carried. The message is byte-identical to the old `API error: N`
-  // throw, so the plain "Apply my rules" path and its tests are unaffected.
-  if (response.ok == false) throw new ApiError(response.status, null);
-
-  return readJson(response, APPLY_RULES_TIMEOUT_MS);
-}
+// statusOnly: "file by shop" needs to spot a 409 clash (an existing rule already files this shop
+// elsewhere) to show its own copy for it (WHIT-517), and the status is the only thing it reads.
+// This endpoint's 4xx wording ("dryRun must be a boolean", BankSync internals) is never shown to
+// the user, so it must not be carried.
+export const applyRulesToUncategorized = endpoint(
+  "statusOnly",
+  (
+    send,
+    dryRun: boolean,
+    rule?: { value: string; categoryId: string; budgetExcluded?: boolean },
+  ): Promise<ApplyRulesResult> =>
+    send({
+      path: "/transactions/uncategorized/apply-rules",
+      method: "POST",
+      // The inline rule is sent ONLY when present — "Apply my rules" (no rule) stays byte-identical
+      // on the wire ({dryRun}). "File by shop" (WHIT-517) sends {dryRun, rule} to mint + file in one call.
+      body: rule ? { dryRun, rule } : { dryRun },
+      timeoutMs: APPLY_RULES_TIMEOUT_MS,
+    }),
+);
 
 export type ApplyRulesJobStatus = "running" | "succeeded" | "failed";
 
@@ -455,18 +499,16 @@ export interface ApplyRulesJob {
  * @throws ApiError carrying the status (not the body) so the sheet can branch on 400 (bad rule),
  *   409 (a rule that would clash), and 502 (the worker could not be dispatched).
  */
-export async function startApplyRulesJob(
-  rule?: { value: string; categoryId: string; budgetExcluded?: boolean },
-): Promise<ApplyRulesJob> {
-  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/apply-rules/jobs`, {
-    method: "POST",
-    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
-    // Plain sweep sends a byte-identical {}; "file this shop" sends {rule}, mirroring the sync call.
-    body: JSON.stringify(rule ? { rule } : {}),
-  });
-  if (response.ok == false) throw new ApiError(response.status, null);
-  return readJson(response);
-}
+export const startApplyRulesJob = endpoint(
+  "statusOnly",
+  (send, rule?: { value: string; categoryId: string; budgetExcluded?: boolean }): Promise<ApplyRulesJob> =>
+    send({
+      path: "/transactions/uncategorized/apply-rules/jobs",
+      method: "POST",
+      // Plain sweep sends a byte-identical {}; "file this shop" sends {rule}, mirroring the sync call.
+      body: rule ? { rule } : {},
+    }),
+);
 
 /**
  * Poll one apply-rules background job's status (WHIT-560). A short timeout (a status read is tiny),
@@ -476,15 +518,11 @@ export async function startApplyRulesJob(
  *   TTL) — the caller treats that as a real terminal failure, distinct from a thrown network error
  *   (offline/airplane), which it tolerates and retries.
  */
-export async function getApplyRulesJob(jobId: string): Promise<ApplyRulesJob> {
-  const response = await apiFetch(
-    `${API_BASE}/transactions/uncategorized/apply-rules/jobs/${encodeURIComponent(jobId)}`,
-    { headers: await buildHeaders() },
-    APPLY_RULES_JOB_POLL_TIMEOUT_MS,
-  );
-  if (response.ok == false) throw new ApiError(response.status, null);
-  return readJson(response, APPLY_RULES_JOB_POLL_TIMEOUT_MS);
-}
+export const getApplyRulesJob = endpoint("statusOnly", (send, jobId: string): Promise<ApplyRulesJob> =>
+  send({
+    path: `/transactions/uncategorized/apply-rules/jobs/${encodeURIComponent(jobId)}`,
+    timeoutMs: APPLY_RULES_JOB_POLL_TIMEOUT_MS,
+  }));
 
 /** An inclusive YYYY-MM-DD date range. */
 export interface DateRange {
@@ -537,15 +575,8 @@ export interface ChatJob {
  * @param messages - The conversation so far, ending with the user's new question.
  * @throws ApiError carrying the status.
  */
-export async function startAiChat(messages: ChatTurn[]): Promise<ChatJob> {
-  const response = await apiFetch(`${API_BASE}/ai/chat`, {
-    method: "POST",
-    headers: await buildHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ messages }),
-  });
-  if (response.ok == false) throw new ApiError(response.status, null);
-  return readJson(response);
-}
+export const startAiChat = endpoint("statusOnly", (send, messages: ChatTurn[]): Promise<ChatJob> =>
+  send({ path: "/ai/chat", method: "POST", body: { messages } }));
 
 /**
  * Poll one chat job: its status, the "Looking at …" line, and the reply once done. A short
@@ -553,15 +584,8 @@ export async function startAiChat(messages: ChatTurn[]): Promise<ChatJob> {
  *
  * @throws ApiError carrying the status; 404 = unknown or expired job.
  */
-export async function getAiChatJob(jobId: string): Promise<ChatJob> {
-  const response = await apiFetch(
-    `${API_BASE}/ai/chat/jobs/${encodeURIComponent(jobId)}`,
-    { headers: await buildHeaders() },
-    AI_CHAT_JOB_POLL_TIMEOUT_MS,
-  );
-  if (response.ok == false) throw new ApiError(response.status, null);
-  return readJson(response, AI_CHAT_JOB_POLL_TIMEOUT_MS);
-}
+export const getAiChatJob = endpoint("statusOnly", (send, jobId: string): Promise<ChatJob> =>
+  send({ path: `/ai/chat/jobs/${encodeURIComponent(jobId)}`, timeoutMs: AI_CHAT_JOB_POLL_TIMEOUT_MS }));
 
 /** One rule-group of unfiled charges the server proposes for "file by shop" (WHIT-517). The
  *  `alsoCatches` list names other shops the same rule would sweep, so an over-broad rule is
@@ -595,14 +619,8 @@ export interface UncategorizedMerchants {
  * @returns The grouped shops plus the ungrouped one-offs.
  * @throws If the response status is not OK.
  */
-export async function fetchUncategorizedMerchants(): Promise<UncategorizedMerchants> {
-  const response = await apiFetch(`${API_BASE}/transactions/uncategorized/merchants`, {
-    headers: await buildHeaders(),
-  }, APPLY_RULES_TIMEOUT_MS);
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response, APPLY_RULES_TIMEOUT_MS);
-}
+export const fetchUncategorizedMerchants = endpoint("plain", (send): Promise<UncategorizedMerchants> =>
+  send({ path: "/transactions/uncategorized/merchants", timeoutMs: APPLY_RULES_TIMEOUT_MS }));
 
 /** One rule suggested from the user's hand-filing habits (WHIT-542): they have filed `merchant`
  *  to `categoryId` by hand on `distinctDays` separate days. `rulePattern` is the exact
@@ -630,14 +648,8 @@ export interface FilingSuggestions {
  * @returns The suggested rules, most-filed first.
  * @throws If the response status is not OK.
  */
-export async function fetchFilingSuggestions(): Promise<FilingSuggestions> {
-  const response = await apiFetch(`${API_BASE}/transactions/filing-suggestions`, {
-    headers: await buildHeaders(),
-  }, APPLY_RULES_TIMEOUT_MS);
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response, APPLY_RULES_TIMEOUT_MS);
-}
+export const fetchFilingSuggestions = endpoint("plain", (send): Promise<FilingSuggestions> =>
+  send({ path: "/transactions/filing-suggestions", timeoutMs: APPLY_RULES_TIMEOUT_MS }));
 
 /**
  * Fetch the full category taxonomy.
@@ -645,12 +657,8 @@ export async function fetchFilingSuggestions(): Promise<FilingSuggestions> {
  * @returns The list of categories from the API.
  * @throws If the response status is not OK.
  */
-export async function fetchCategories(): Promise<Category[]> {
-  const response = await apiFetch(`${API_BASE}/categories`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchCategories = endpoint("plain", (send): Promise<Category[]> =>
+  send({ path: "/categories" }));
 
 /**
  * Create a new category. The server derives the immutable id/slug from the name
@@ -660,18 +668,11 @@ export async function fetchCategories(): Promise<Category[]> {
  * @returns The created category, including its server-assigned id and color.
  * @throws If the response status is not OK (e.g. 409 when the slug already exists).
  */
-export async function createCategory(
-  input: { name: string; bucket: Bucket; icon: string; parent?: string | null }
-): Promise<Category> {
-  const response = await apiFetch(`${API_BASE}/categories`, {
-    method: "POST",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(input),
-  });
-  if (response.ok == false) throw await failed(response);
-
-  return readJson(response);
-}
+export const createCategory = endpoint(
+  "withReason",
+  (send, input: { name: string; bucket: Bucket; icon: string; parent?: string | null }): Promise<Category> =>
+    send({ path: "/categories", method: "POST", body: input }),
+);
 
 /**
  * Update an existing category's name, bucket, and icon. The id/slug is immutable
@@ -682,19 +683,15 @@ export async function createCategory(
  * @returns The updated category.
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
-export async function updateCategory(
-  id: string,
-  input: { name: string; bucket: Bucket; icon: string; parent?: string | null }
-): Promise<Category> {
-  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(input),
-  });
-  if (response.ok == false) throw await failed(response);
-
-  return readJson(response);
-}
+export const updateCategory = endpoint(
+  "withReason",
+  (
+    send,
+    id: string,
+    input: { name: string; bucket: Bucket; icon: string; parent?: string | null },
+  ): Promise<Category> =>
+    send({ path: `/categories/${encodeURIComponent(id)}`, method: "PATCH", body: input }),
+);
 
 /**
  * Hard-delete a category. The server does no cascade, so transactions still
@@ -704,15 +701,8 @@ export async function updateCategory(
  * @returns The id of the deleted category.
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
-export async function deleteCategory(id: string): Promise<{ id: string }> {
-  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    headers: await buildHeaders(),
-  });
-  if (response.ok == false) throw await failed(response);
-
-  return readJson(response);
-}
+export const deleteCategory = endpoint("withReason", (send, id: string): Promise<{ id: string }> =>
+  send({ path: `/categories/${encodeURIComponent(id)}`, method: "DELETE" }));
 
 /** A bill spread's shape on a budget (WHIT-504/505). `adjustment` is the signed dollars this
  * cycle's spendable moves by — a positive cushion in the anchor cycle, a negative slice in a
@@ -752,12 +742,8 @@ export interface BudgetRollup {
  * @returns A map of category id to its { target, posted, pending }.
  * @throws If the response status is not OK.
  */
-export async function fetchBudgets(days: number): Promise<Record<string, BudgetRollup>> {
-  const response = await apiFetch(`${API_BASE}/budgets?days=${encodeURIComponent(days)}`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchBudgets = endpoint("plain", (send, days: number): Promise<Record<string, BudgetRollup>> =>
+  send({ path: `/budgets?days=${encodeURIComponent(days)}` }));
 
 /**
  * Fetch the transactions behind a budget's total: every contributing charge in the
@@ -770,12 +756,8 @@ export async function fetchBudgets(days: number): Promise<Record<string, BudgetR
  * @returns The cycle's transactions for that budget, newest first.
  * @throws If the response status is not OK.
  */
-export async function fetchBudgetTransactions(categoryId: string): Promise<Transaction[]> {
-  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/transactions`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchBudgetTransactions = endpoint("plain", (send, categoryId: string): Promise<Transaction[]> =>
+  send({ path: `/budgets/${encodeURIComponent(categoryId)}/transactions` }));
 
 /** A category's computed spend for the current pay cycle. */
 export interface CategorySpend {
@@ -815,13 +797,13 @@ export interface BreakdownRollup {
  * @returns A map of category id to its { posted, pending }.
  * @throws If the response status is not OK.
  */
-export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<string, CategorySpend>> {
-  const cycleParam = cycle > 0 ? `&cycle=${encodeURIComponent(cycle)}` : '';
-  const response = await apiFetch(`${API_BASE}/breakdown?days=${encodeURIComponent(days)}${cycleParam}`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchBreakdown = endpoint(
+  "plain",
+  (send, days: number, cycle: number = 0): Promise<Record<string, CategorySpend>> => {
+    const cycleParam = cycle > 0 ? `&cycle=${encodeURIComponent(cycle)}` : '';
+    return send({ path: `/breakdown?days=${encodeURIComponent(days)}${cycleParam}` });
+  },
+);
 
 /**
  * Fetch the transactions behind one /breakdown row: every charge filed on a single
@@ -836,16 +818,16 @@ export async function fetchBreakdown(days: number, cycle = 0): Promise<Record<st
  * @returns The cycle's transactions for that category, newest first.
  * @throws If the response status is not OK.
  */
-export async function fetchCategoryTransactions(categoryId: string, cycle = 0, range?: DateRange): Promise<Transaction[]> {
-  // Card 609: a date range (the Ask Abundo deep link) replaces the cycle. The server then
-  // includes the category's subcategories, so the list adds up to the chat's figure.
-  let query = cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : '';
-  if (range) query = `?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
-  const response = await apiFetch(`${API_BASE}/categories/${encodeURIComponent(categoryId)}/transactions${query}`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchCategoryTransactions = endpoint(
+  "plain",
+  (send, categoryId: string, cycle: number = 0, range?: DateRange): Promise<Transaction[]> => {
+    // Card 609: a date range (the Ask Abundo deep link) replaces the cycle. The server then
+    // includes the category's subcategories, so the list adds up to the chat's figure.
+    let query = cycle > 0 ? `?cycle=${encodeURIComponent(cycle)}` : '';
+    if (range) query = `?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
+    return send({ path: `/categories/${encodeURIComponent(categoryId)}/transactions${query}` });
+  },
+);
 
 /**
  * Set (persist) a single transaction's category. Thin wrapper over
@@ -857,12 +839,15 @@ export async function fetchCategoryTransactions(categoryId: string, cycle = 0, r
  * @returns The saved transaction_id and category.
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
-export async function setTransactionCategory(
-  id: string,
-  category: string
-): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[] }> {
-  return setTransactionFields(id, { category });
-}
+export const setTransactionCategory = endpoint(
+  "plain",
+  (
+    _send,
+    id: string,
+    category: string,
+  ): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[] }> =>
+    setTransactionFields(id, { category }),
+);
 
 /**
  * Set (persist) a single transaction's editable fields — any of category, notes,
@@ -873,19 +858,15 @@ export async function setTransactionCategory(
  *
  * @throws If the response status is not OK (e.g. 404 when the id is unknown).
  */
-export async function setTransactionFields(
-  id: string,
-  fields: { category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean }
-): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean }> {
-  const response = await apiFetch(`${API_BASE}/transactions/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(fields),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const setTransactionFields = endpoint(
+  "plain",
+  (
+    send,
+    id: string,
+    fields: { category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean },
+  ): Promise<{ transaction_id: string; category?: string; notes?: string; tags?: string[]; budget_excluded?: boolean }> =>
+    send({ path: `/transactions/${encodeURIComponent(id)}`, method: "PATCH", body: fields }),
+);
 
 /** One transaction's outcome in a batch category update (WHIT-70). */
 export interface BatchCategoryResult {
@@ -902,18 +883,11 @@ export interface BatchCategoryResult {
  *
  * @throws If the response status is not OK.
  */
-export async function setTransactionCategories(
-  updates: { id: string; category: string }[]
-): Promise<{ results: BatchCategoryResult[] }> {
-  const response = await apiFetch(`${API_BASE}/transactions`, {
-    method: "PATCH",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ updates }),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const setTransactionCategories = endpoint(
+  "plain",
+  (send, updates: { id: string; category: string }[]): Promise<{ results: BatchCategoryResult[] }> =>
+    send({ path: "/transactions", method: "PATCH", body: { updates } }),
+);
 
 /**
  * The live home-loan balance (WHIT-8). `balance` is the outstanding mortgage
@@ -934,12 +908,8 @@ export interface HomeLoan {
  * @returns The stored { balance, as_of, currency } (balance null if unpolled).
  * @throws If the response status is not OK.
  */
-export async function fetchHomeLoan(): Promise<HomeLoan> {
-  const response = await apiFetch(`${API_BASE}/homeloan`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchHomeLoan = endpoint("plain", (send): Promise<HomeLoan> =>
+  send({ path: "/homeloan" }));
 
 /**
  * One account's live balance (WHIT-212), as served by GET /accounts/balances. `amount`
@@ -964,12 +934,8 @@ export interface AccountBalance {
  *
  * @throws If the response status is not OK.
  */
-export async function fetchAccountBalances(): Promise<AccountBalance[]> {
-  const response = await apiFetch(`${API_BASE}/accounts/balances`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchAccountBalances = endpoint("plain", (send): Promise<AccountBalance[]> =>
+  send({ path: "/accounts/balances" }));
 
 /**
  * Ask the server to fetch FRESH balances from the bank right now (pull-to-refresh), rather than
@@ -980,15 +946,8 @@ export async function fetchAccountBalances(): Promise<AccountBalance[]> {
  *
  * @throws If the response status is not OK (the caller keeps the last-good balances + toasts).
  */
-export async function refreshAccountBalances(): Promise<AccountBalance[]> {
-  const response = await apiFetch(`${API_BASE}/accounts/balances/refresh`, {
-    method: "POST",
-    headers: await buildHeaders(),
-  }, BALANCE_REFRESH_TIMEOUT_MS);
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response, BALANCE_REFRESH_TIMEOUT_MS);
-}
+export const refreshAccountBalances = endpoint("plain", (send): Promise<AccountBalance[]> =>
+  send({ path: "/accounts/balances/refresh", method: "POST", timeoutMs: BALANCE_REFRESH_TIMEOUT_MS }));
 
 /**
  * One step on the way to a goal's target (WHIT-476) — a labelled amount the balance passes
@@ -1067,12 +1026,8 @@ export type GoalWriteBody =
  *
  * @throws If the response status is not OK.
  */
-export async function fetchGoals(): Promise<GoalRecord[]> {
-  const response = await apiFetch(`${API_BASE}/goals`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchGoals = endpoint("plain", (send): Promise<GoalRecord[]> =>
+  send({ path: "/goals" }));
 
 /**
  * A saved milestone in the user's home-loan paydown plan. The server owns the id (it mints one
@@ -1092,12 +1047,8 @@ export interface MilestoneRecord {
  *
  * @throws If the response status is not OK.
  */
-export async function fetchMilestones(): Promise<MilestoneRecord[]> {
-  const response = await apiFetch(`${API_BASE}/milestones`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchMilestones = endpoint("plain", (send): Promise<MilestoneRecord[]> =>
+  send({ path: "/milestones" }));
 
 /**
  * Save (replace) the user's milestone plan — the whole ordered list at once. The client mints an
@@ -1106,16 +1057,8 @@ export async function fetchMilestones(): Promise<MilestoneRecord[]> {
  *
  * @throws If the response status is not OK (e.g. 400 on an empty / invalid / out-of-order list).
  */
-export async function setMilestones(milestones: MilestoneRecord[]): Promise<MilestoneRecord[]> {
-  const response = await apiFetch(`${API_BASE}/milestones`, {
-    method: "PUT",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ milestones }),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const setMilestones = endpoint("plain", (send, milestones: MilestoneRecord[]): Promise<MilestoneRecord[]> =>
+  send({ path: "/milestones", method: "PUT", body: { milestones } }));
 
 /**
  * Save (create or replace) a goal — an idempotent upsert at PUT /goals/{id}. A create and
@@ -1127,16 +1070,8 @@ export async function setMilestones(milestones: MilestoneRecord[]): Promise<Mile
  * @returns The saved goal, with its id echoed by the server.
  * @throws If the response status is not OK (e.g. 400 on an invalid field or two sources).
  */
-export async function saveGoal(id: string, body: GoalWriteBody): Promise<GoalRecord> {
-  const response = await apiFetch(`${API_BASE}/goals/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const saveGoal = endpoint("plain", (send, id: string, body: GoalWriteBody): Promise<GoalRecord> =>
+  send({ path: `/goals/${encodeURIComponent(id)}`, method: "PUT", body }));
 
 /**
  * Delete a goal. Idempotent server-side — deleting an unknown/already-gone id still
@@ -1146,15 +1081,8 @@ export async function saveGoal(id: string, body: GoalWriteBody): Promise<GoalRec
  * @returns The id of the deleted goal.
  * @throws If the response status is not OK.
  */
-export async function deleteGoal(id: string): Promise<{ id: string }> {
-  const response = await apiFetch(`${API_BASE}/goals/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    headers: await buildHeaders(),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const deleteGoal = endpoint("plain", (send, id: string): Promise<{ id: string }> =>
+  send({ path: `/goals/${encodeURIComponent(id)}`, method: "DELETE" }));
 
 /**
  * The most recent home-loan repayment (WHIT-115), derived server-side from the
@@ -1175,12 +1103,8 @@ export interface Repayment {
  *
  * @throws If the response status is not OK.
  */
-export async function fetchRepayment(): Promise<Repayment> {
-  const response = await apiFetch(`${API_BASE}/repayment`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchRepayment = endpoint("plain", (send): Promise<Repayment> =>
+  send({ path: "/repayment" }));
 
 /**
  * The user-entered home-loan facts no bank feed provides (Loan facts card).
@@ -1220,12 +1144,8 @@ export interface LoanFactsInput {
  *
  * @throws If the response status is not OK.
  */
-export async function fetchLoanFacts(): Promise<LoanFacts> {
-  const response = await apiFetch(`${API_BASE}/loanfacts`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchLoanFacts = endpoint("plain", (send): Promise<LoanFacts> =>
+  send({ path: "/loanfacts" }));
 
 /**
  * Save (replace) the user's loan facts — all six fields together.
@@ -1234,16 +1154,8 @@ export async function fetchLoanFacts(): Promise<LoanFacts> {
  * @returns The saved facts.
  * @throws If the response status is not OK (e.g. 400 on an invalid field).
  */
-export async function setLoanFacts(facts: LoanFactsInput): Promise<LoanFactsInput> {
-  const response = await apiFetch(`${API_BASE}/loanfacts`, {
-    method: "PUT",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(facts),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const setLoanFacts = endpoint("plain", (send, facts: LoanFactsInput): Promise<LoanFactsInput> =>
+  send({ path: "/loanfacts", method: "PUT", body: facts }));
 
 /** The persisted pay cycle: window length in days + the last pay date. */
 export interface PayCycle {
@@ -1262,12 +1174,8 @@ export interface PayCycle {
  * @returns The stored { length, last_pay_date }.
  * @throws If the response status is not OK.
  */
-export async function fetchPayCycle(): Promise<PayCycle> {
-  const response = await apiFetch(`${API_BASE}/paycycle`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchPayCycle = endpoint("plain", (send): Promise<PayCycle> =>
+  send({ path: "/paycycle" }));
 
 /**
  * Set (replace) the persisted pay cycle. Both fields are written together, so
@@ -1278,16 +1186,8 @@ export async function fetchPayCycle(): Promise<PayCycle> {
  * @throws If the response status is not OK (e.g. 400 on a bad length or a
  *   future/malformed last_pay_date).
  */
-export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
-  const response = await apiFetch(`${API_BASE}/paycycle`, {
-    method: "PUT",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(cycle),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const setPayCycle = endpoint("plain", (send, cycle: PayCycle): Promise<PayCycle> =>
+  send({ path: "/paycycle", method: "PUT", body: cycle }));
 
 /**
  * Set (upsert) a category's budget target. Idempotent — works whether or not
@@ -1298,23 +1198,15 @@ export async function setPayCycle(cycle: PayCycle): Promise<PayCycle> {
  * @returns The saved id and target.
  * @throws If the response status is not OK (e.g. 400 on an invalid target).
  */
-export async function setBudget(
-  categoryId: string,
-  target: number,
-  rollover?: boolean
-): Promise<{ id: string; target: number }> {
-  // Send `rollover` only when the caller passes it, so a plain amount edit leaves the
-  // stored flag untouched (the server treats an absent `rollover` as "no change").
-  const body = rollover === undefined ? { target } : { target, rollover };
-  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
-    method: "PUT",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const setBudget = endpoint(
+  "plain",
+  (send, categoryId: string, target: number, rollover?: boolean): Promise<{ id: string; target: number }> => {
+    // Send `rollover` only when the caller passes it, so a plain amount edit leaves the
+    // stored flag untouched (the server treats an absent `rollover` as "no change").
+    const body = rollover === undefined ? { target } : { target, rollover };
+    return send({ path: `/budgets/${encodeURIComponent(categoryId)}`, method: "PUT", body });
+  },
+);
 
 /**
  * Delete a category's budget target. Idempotent — a category with no target
@@ -1325,15 +1217,8 @@ export async function setBudget(
  * @returns The id whose budget was removed.
  * @throws If the response status is not OK.
  */
-export async function deleteBudget(categoryId: string): Promise<{ id: string }> {
-  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}`, {
-    method: "DELETE",
-    headers: await buildHeaders(),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const deleteBudget = endpoint("plain", (send, categoryId: string): Promise<{ id: string }> =>
+  send({ path: `/budgets/${encodeURIComponent(categoryId)}`, method: "DELETE" }));
 
 /**
  * Spread a one-off bill over the coming pay cycles (WHIT-504): cushion `amount` this cycle,
@@ -1346,20 +1231,11 @@ export async function deleteBudget(categoryId: string): Promise<{ id: string }> 
  * @returns The saved id, amount and cycle count.
  * @throws If the response status is not OK (e.g. 400 on a bad amount/cycles, rollover on, or no budget).
  */
-export async function setSpread(
-  categoryId: string,
-  amount: number,
-  cycles: number
-): Promise<{ id: string; amount: number; cycles: number }> {
-  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/spread`, {
-    method: "PUT",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ amount, cycles }),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const setSpread = endpoint(
+  "plain",
+  (send, categoryId: string, amount: number, cycles: number): Promise<{ id: string; amount: number; cycles: number }> =>
+    send({ path: `/budgets/${encodeURIComponent(categoryId)}/spread`, method: "PUT", body: { amount, cycles } }),
+);
 
 /**
  * Remove a category's bill spread (WHIT-504). Idempotent — a category with no plan (or an
@@ -1369,15 +1245,8 @@ export async function setSpread(
  * @returns The id whose spread was removed.
  * @throws If the response status is not OK.
  */
-export async function deleteSpread(categoryId: string): Promise<{ id: string }> {
-  const response = await apiFetch(`${API_BASE}/budgets/${encodeURIComponent(categoryId)}/spread`, {
-    method: "DELETE",
-    headers: await buildHeaders(),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const deleteSpread = endpoint("plain", (send, categoryId: string): Promise<{ id: string }> =>
+  send({ path: `/budgets/${encodeURIComponent(categoryId)}/spread`, method: "DELETE" }));
 
 /**
  * List every categorisation rule from the /rules API. Auth-gated.
@@ -1385,12 +1254,8 @@ export async function deleteSpread(categoryId: string): Promise<{ id: string }> 
  * @returns The rules currently held in our own rule store.
  * @throws If the response status is not OK (401 when the token is wrong/missing).
  */
-export async function listRules(): Promise<RuleRecord[]> {
-  const response = await apiFetch(`${API_BASE}/rules`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const listRules = endpoint("plain", (send): Promise<RuleRecord[]> =>
+  send({ path: "/rules" }));
 
 /**
  * Create a categorisation rule. `field`/`operator` are omitted by default so the
@@ -1403,16 +1268,8 @@ export async function listRules(): Promise<RuleRecord[]> {
  *   tell a spread rule's 409 (category already spread) / 422 (no recurring bill) apart (WHIT-559),
  *   from a 400 (invalid) or 401 (auth).
  */
-export async function createRule(input: RuleWriteInput): Promise<RuleRecord> {
-  const response = await apiFetch(`${API_BASE}/rules`, {
-    method: "POST",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(input),
-  });
-  if (response.ok == false) throw new ApiError(response.status, null);
-
-  return readJson(response);
-}
+export const createRule = endpoint("statusOnly", (send, input: RuleWriteInput): Promise<RuleRecord> =>
+  send({ path: "/rules", method: "POST", body: input }));
 
 /**
  * Update (replace) a categorisation rule. `field`/`operator` are omitted by
@@ -1424,16 +1281,8 @@ export async function createRule(input: RuleWriteInput): Promise<RuleRecord> {
  * @throws {ApiError} If the response status is not OK — carrying `.status` so an edit that turns
  *   spread on can surface its 409/422 (WHIT-559), apart from 404 (unknown id) / 400 / 401.
  */
-export async function updateRule(id: string, input: RuleWriteInput): Promise<RuleRecord> {
-  const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(input),
-  });
-  if (response.ok == false) throw new ApiError(response.status, null);
-
-  return readJson(response);
-}
+export const updateRule = endpoint("statusOnly", (send, id: string, input: RuleWriteInput): Promise<RuleRecord> =>
+  send({ path: `/rules/${encodeURIComponent(id)}`, method: "PUT", body: input }));
 
 /**
  * Delete a categorisation rule. Idempotent server-side (an unknown id still
@@ -1443,15 +1292,8 @@ export async function updateRule(id: string, input: RuleWriteInput): Promise<Rul
  * @returns The id of the deleted rule.
  * @throws If the response status is not OK (401 on auth).
  */
-export async function deleteRule(id: string): Promise<{ id: string }> {
-  const response = await apiFetch(`${API_BASE}/rules/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    headers: await buildHeaders(),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const deleteRule = endpoint("plain", (send, id: string): Promise<{ id: string }> =>
+  send({ path: `/rules/${encodeURIComponent(id)}`, method: "DELETE" }));
 
 /**
  * AI spending insights (WHIT-104): a short summary + a few suggestions grounded in
@@ -1511,12 +1353,8 @@ export type AiGoalSignal =
  *
  * @throws If the response status is not OK (401 on auth).
  */
-export async function fetchAiInsights(): Promise<AiInsights> {
-  const response = await apiFetch(`${API_BASE}/insights/ai`, { headers: await buildHeaders() });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const fetchAiInsights = endpoint("plain", (send): Promise<AiInsights> =>
+  send({ path: "/insights/ai" }));
 
 /**
  * Generate (or return the cached) AI insights for the current cycle — the paid
@@ -1530,16 +1368,13 @@ export async function fetchAiInsights(): Promise<AiInsights> {
  *
  * @throws If the response status is not OK (401 auth, 502 when the AI is unavailable).
  */
-export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<AiInsights> {
-  const response = await apiFetch(`${API_BASE}/insights/ai`, {
+export const generateAiInsights = endpoint("plain", (send, goal?: AiGoalSignal | null): Promise<AiInsights> =>
+  send({
+    path: "/insights/ai",
     method: "POST",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ goal: goal ?? null }),
-  }, AI_GENERATE_TIMEOUT_MS); // the paid generation runs long — don't cap it at the 15s read budget
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response, AI_GENERATE_TIMEOUT_MS); // the long body budget too, not just the headers
-}
+    body: { goal: goal ?? null },
+    timeoutMs: AI_GENERATE_TIMEOUT_MS, // the paid generation runs long — don't cap it at the 15s read budget
+  }));
 
 /**
  * Register this device's Expo push token so the server can send it notifications.
@@ -1551,13 +1386,5 @@ export async function generateAiInsights(goal?: AiGoalSignal | null): Promise<Ai
  * @returns The registered token, echoed by the server.
  * @throws If the response status is not OK (400 invalid token, 401 auth).
  */
-export async function registerDevice(token: string): Promise<{ token: string }> {
-  const response = await apiFetch(`${API_BASE}/devices`, {
-    method: "POST",
-    headers: await buildHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ token }),
-  });
-  if (response.ok == false) throw new Error(`API error: ${response.status}`);
-
-  return readJson(response);
-}
+export const registerDevice = endpoint("plain", (send, token: string): Promise<{ token: string }> =>
+  send({ path: "/devices", method: "POST", body: { token } }));

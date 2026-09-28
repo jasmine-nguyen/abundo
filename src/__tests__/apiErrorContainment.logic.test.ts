@@ -1,12 +1,13 @@
-// WHIT-437 — [A10][A11][A12] containment: `failed()` reaches the THREE category writes and
-// nothing else, and `API error: N` stays byte-identical on ALL 34 endpoints.
+// WHIT-437 / WHIT-631 — [A10][A11][A12] containment: every endpoint in src/api.ts DECLARES its
+// error style next to itself (`api.<name>.errors`), and this sweep checks each one behaves as it
+// says. `failed()` (the server's reason) reaches only the three category writes, and
+// `API error: N` stays byte-identical on every endpoint.
 //
-// The card only rewired 3 of 33 not-OK guards. Nothing in the codebase stops a later edit from
-// (a) folding the server's words INTO the message — which would feed arbitrary server text to
-// src/queryClient.ts's /\b40[13]\b/ auth-retry match and to ~99 message assertions — or
-// (b) quietly widening `failed()` to an endpoint whose 4xx bodies were never reviewed for
-// user-facing wording. This sweeps every exported endpoint against a not-OK response that DOES
-// carry an `error` body and pins exactly who is allowed to see it.
+// Nothing else stops a later edit from (a) folding the server's words INTO the message — which
+// would feed arbitrary server text to src/queryClient.ts's /\b40[13]\b/ auth-retry match and to
+// ~99 message assertions — or (b) quietly widening `failed()` to an endpoint whose 4xx bodies were
+// never reviewed for user-facing wording. This sweeps every exported endpoint against a not-OK
+// response that DOES carry an `error` body.
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 
 jest.mock('../auth', () => ({ getAuthToken: jest.fn<() => Promise<string | undefined>>() }));
@@ -31,21 +32,13 @@ beforeEach(() => {
   (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
 });
 
-/** The three writes the card rewired — the ONLY endpoints allowed to carry a server reason. */
-const REASON_CARRYING = ['createCategory', 'updateCategory', 'deleteCategory'] as const;
+type ErrorHandling = 'plain' | 'statusOnly' | 'withReason';
+const ERROR_STYLES: readonly ErrorHandling[] = ['plain', 'statusOnly', 'withReason'];
 
-// WHIT-517: endpoints that throw an ApiError to expose the STATUS for control flow, but carry NO
-// server reason (serverMessage is null). "File by shop" reads a 409 to show its own clash copy; the
-// server's 4xx wording is never shown, so it is never carried. Adding one here is the same
-// deliberate decision as REASON_CARRYING, pointing the other way: an ApiError whose body stays
-// hidden. It must NOT overlap REASON_CARRYING.
-// WHIT-559: createRule/updateRule throw an ApiError to expose the STATUS so a spread rule's 409
-// (category already spread) / 422 (no recurring bill) get specific copy — but carry NO server
-// reason (serverMessage null); the client picks the wording.
-const STATUS_ONLY = [
-  'applyRulesToUncategorized', 'startApplyRulesJob', 'getApplyRulesJob', 'createRule', 'updateRule',
-  'startAiChat', 'getAiChatJob',
-] as const;
+/** The error style an endpoint declares next to itself in src/api.ts. */
+function declaredErrors(name: string): unknown {
+  return (api as unknown as Record<string, { errors?: unknown }>)[name].errors;
+}
 
 // Every exported endpoint with plausible arguments. Keyed by name so the tripwire below can
 // prove none was skipped (and that a NEW endpoint can't be added without a decision here).
@@ -60,10 +53,10 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   // WHIT-508/WHIT-517: a write. It throws an ApiError so "file by shop" can read the 409 clash
   // STATUS — but with serverMessage NULL, deliberately: its 4xx wording ("dryRun must be a
   // boolean") and 502 BankSync internals are never shown, so the body is never carried. The sheet's
-  // own phase-specific + clash copy is what the user reads. STATUS_ONLY (below) pins that.
+  // own phase-specific + clash copy is what the user reads. Declared statusOnly in src/api.ts.
   applyRulesToUncategorized: () => api.applyRulesToUncategorized(true),
   // WHIT-560: the async apply-rules job endpoints. Both throw an ApiError to expose the STATUS
-  // (start reads a 409 clash; get reads a 404 expired id) but carry NO server reason — STATUS_ONLY.
+  // (start reads a 409 clash; get reads a 404 expired id) but carry NO server reason — statusOnly.
   startApplyRulesJob: () => api.startApplyRulesJob(),
   getApplyRulesJob: () => api.getApplyRulesJob('j1'),
   // Card 609: the Ask Abundo chat job endpoints — same job pattern, status only (the chat reads a
@@ -116,9 +109,33 @@ describe('[A12] the sweep really covers every endpoint', () => {
       .filter(([name, value]) => typeof value === 'function' && name !== 'ApiError')
       .map(([name]) => name)
       .sort();
-    // If this fails you added an endpoint: add it to CALLS and decide, deliberately, whether it
-    // may quote the server (see WHIT-437's follow-up card) — don't just append it to the list.
+    // If this fails you added an endpoint: add it to CALLS, and declare its error style next to it
+    // in src/api.ts — deliberately, not by copying a neighbour.
     expect(exported).toEqual([...NAMES].sort());
+  });
+});
+
+describe('[A12b] every endpoint declares its error style', () => {
+  it.each(NAMES)('%s has an errors label', (name) => {
+    expect(ERROR_STYLES).toContain(declaredErrors(name));
+  });
+
+  it('only the three category writes carry the server reason', () => {
+    // Deliberate pin: widening failed() to another endpoint makes its 4xx wording user-facing copy.
+    // That is a product decision, so it must edit this line on purpose.
+    expect(NAMES.filter((name) => declaredErrors(name) === 'withReason').sort())
+      .toEqual(['createCategory', 'deleteCategory', 'updateCategory']);
+  });
+});
+
+describe('[A13] every request sends the sign-in header, and Content-Type only with a body', () => {
+  it.each(NAMES)('%s', async (name) => {
+    fetchMock.mockReturnValue(
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ count: 0 }) }));
+    await CALLS[name]().catch(() => undefined);
+    const init = fetchMock.mock.calls[0][1] as { headers: Record<string, string>; body?: unknown };
+    expect('Content-Type' in init.headers).toBe(init.body !== undefined);
+    expect(init.headers.Authorization).toBe('Bearer tok');
   });
 });
 
@@ -132,24 +149,23 @@ describe('[A10] every endpoint keeps the byte-identical `API error: N`', () => {
   });
 });
 
-describe('[A11] the server body reaches only the three category writes', () => {
-  it.each(NAMES)('%s exposes serverMessage only if it is a category write', async (name) => {
+describe('[A11] a failed response behaves as the endpoint declares', () => {
+  it.each(NAMES)('%s follows its declared errors label', async (name) => {
     const error = (await CALLS[name]().then(() => null, (e: unknown) => e)) as Error & {
       serverMessage?: string | null;
     };
-    if ((REASON_CARRYING as readonly string[]).includes(name)) {
+    const errors = declaredErrors(name);
+    if (errors === 'withReason') {
       expect(error).toBeInstanceOf(ApiError);
       expect(error.serverMessage).toBe(LEAK);
-    } else if ((STATUS_ONLY as readonly string[]).includes(name)) {
-      // WHIT-517: an ApiError for its STATUS, but the body is deliberately NOT carried — the 409
-      // clash drives control flow, the server's wording is never shown. serverMessage stays null.
+    } else if (errors === 'statusOnly') {
+      // An ApiError for its STATUS (e.g. a 409 clash or 404 expired job drives control flow), but
+      // the body is deliberately NOT carried — the server's wording is never shown.
       expect(error).toBeInstanceOf(ApiError);
       expect(error.serverMessage).toBeNull();
-      // Still byte-identical: the leak must never reach the message either.
       expect((error as Error).message).not.toContain(LEAK);
     } else {
-      // Deliberate tripwire, not an accident: widening `failed()` to another endpoint is a
-      // product decision (its 4xx wording becomes user-facing copy), so it must edit this list.
+      expect(errors).toBe('plain');
       expect(error).not.toBeInstanceOf(ApiError);
       expect(error.serverMessage).toBeUndefined();
     }
