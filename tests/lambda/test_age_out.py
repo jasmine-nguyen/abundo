@@ -162,19 +162,23 @@ def test_sweeps_every_account(lam, repo):
 
 
 def test_reaps_stale_pending_beyond_first_page(lam, repo):
-    # The stale pending sits on a later query page. If get_pending_transactions_for_account
-    # didn't paginate, the sweep would miss it and the ghost would linger (WHIT-82 class).
+    # Rows come back date-ascending and the page is cut before the pending filter, so the two
+    # older posted rows fill page 1 and the stale pending sits on page 2. If
+    # get_pending_transactions_for_account didn't paginate, the sweep would see no pending at
+    # all and the ghost would linger (WHIT-82 class).
     _store(lam, repo,
-           _raw_row("fresh1", "2026-06-30"),
-           _raw_row("fresh2", "2026-06-29"),
-           _raw_row("ghost", "2026-06-05"))
+           _raw_row("settled1", "2026-06-01", pending=False),
+           _raw_row("settled2", "2026-06-02", pending=False),
+           _raw_row("ghost", "2026-06-05"),
+           _raw_row("fresh", "2026-06-30"))
     repo._table.page_size = 2
 
     summary = _sweep(lam, repo)
 
     assert summary["reaped"] == 1
-    assert "ghost" not in _rows(repo)
-    assert "fresh1" in _rows(repo) and "fresh2" in _rows(repo)
+    rows = _rows(repo)
+    assert "ghost" not in rows
+    assert {"settled1", "settled2", "fresh"} <= rows.keys()
 
 
 # --- accepted trade-off: a slow-but-legit pending -----------------------------

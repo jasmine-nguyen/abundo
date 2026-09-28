@@ -4,27 +4,27 @@ Independent of the impl suite (test_rule_ingest_spread.py, which covers seed+mar
 / no-op-not-marked / non-spread-zero / already-seeded / reprocess-no-spread). Here: cross-DELIVERY
 idempotency (the store-row spread_seeded flag survives across two deliveries, each with its OWN
 SpreadSeeder), a multi-condition (WHIT-541) spread rule, a spread rule matching nothing, and a
-budget_excluded (non-spread) regression with the spread wiring live. Local fakes per the webhook-suite
-convention, like test_rule_ingest_spread.py."""
+budget_excluded (non-spread) regression with the spread wiring live. The real RuleRepository runs over
+the stand-in table, like test_rule_ingest_spread.py."""
 
 from decimal import Decimal
 
 import pytest
 
+from _dynamo_fakes import FakeTable
 
-class FakeRuleStore:
-    def __init__(self, rules=()):
-        self._rules = [dict(r) for r in rules]
-        self.marked = []
 
-    def list_rules(self):
-        return [dict(r) for r in self._rules]
+def _rule_store(rules):
+    import repository_rule
 
-    def mark_spread_seeded(self, rule_id):
-        self.marked.append(rule_id)
-        for row in self._rules:
-            if row["id"] == rule_id:
-                row["spread_seeded"] = True
+    store = repository_rule.RuleRepository()
+    store._table = FakeTable()
+    store._table.seed(*({"pk": "RULE", "sk": f"RULE#{rule['id']}", **rule} for rule in rules))
+    return store
+
+
+def _seeded(store):
+    return [rule["id"] for rule in store.list_rules() if rule.get("spread_seeded")]
 
 
 class FakeCategoryRepo:
@@ -78,9 +78,9 @@ def test_two_deliveries_over_the_same_store_seed_once(lam):
     # skips. This is the guarantee that makes the webhook and the sweep never double-seed: it lives in
     # the store row, not the in-memory run. FAIL-ON-REVERT: stop reading spreadSeeded in rule_book.rule_from_row
     # (or stop mark_spread_seeded flipping it) and delivery 2 re-seeds.
-    store = FakeRuleStore([_spread_rule()])
+    store = _rule_store([_spread_rule()])
     b1, _ = _apply(lam, store, [_charge("t1")])
-    assert len(b1.calls) == 1 and store.marked == ["r-origin"]
+    assert len(b1.calls) == 1 and _seeded(store) == ["r-origin"]
 
     b2, p2 = _apply(lam, store, [_charge("t2")])
     assert b2.calls == [] and p2.reads == 0            # delivery 2 does not re-seed
@@ -92,27 +92,27 @@ def test_a_multi_condition_spread_rule_still_seeds(lam):
     conditions = [{"field": "description", "operator": "contains", "value": "ORIGIN"},
                   {"field": "amount", "operator": "less_than", "value": "100"}]
     rule = _spread_rule(conditions=conditions, logic="all")
-    store = FakeRuleStore([rule])
+    store = _rule_store([rule])
     charge = _charge("t1", amount=Decimal("-42.50"))
     budget, _ = _apply(lam, store, [charge])
     assert charge["category"] == "insurance"
-    assert len(budget.calls) == 1 and store.marked == ["r-origin"]
+    assert len(budget.calls) == 1 and _seeded(store) == ["r-origin"]
 
 
 def test_a_spread_rule_matching_nothing_reads_no_paycycle(lam):
     # [A12] No matching charge -> the seeder is never invoked -> zero pay-cycle read, zero budget write.
-    store = FakeRuleStore([_spread_rule(value="NOMATCH")])
+    store = _rule_store([_spread_rule(value="NOMATCH")])
     charge = _charge("t1")
     budget, paycycle = _apply(lam, store, [charge])
     assert charge["category"] is None
-    assert budget.calls == [] and paycycle.reads == 0 and store.marked == []
+    assert budget.calls == [] and paycycle.reads == 0 and _seeded(store) == []
 
 
 def test_a_budget_excluded_non_spread_rule_still_files_and_excludes(lam):
     # [A13] Regression: with the spread wiring present, a plain budget_excluded rule still files the
     # charge, sets budget_excluded, and touches no budget/paycycle repo.
-    store = FakeRuleStore([_spread_rule(spread=False, budget_excluded=True)])
+    store = _rule_store([_spread_rule(spread=False, budget_excluded=True)])
     charge = _charge("t1")
     budget, paycycle = _apply(lam, store, [charge])
     assert charge["category"] == "insurance" and charge["budget_excluded"] is True
-    assert budget.calls == [] and paycycle.reads == 0 and store.marked == []
+    assert budget.calls == [] and paycycle.reads == 0 and _seeded(store) == []

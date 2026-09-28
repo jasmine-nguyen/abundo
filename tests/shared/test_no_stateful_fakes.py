@@ -43,6 +43,10 @@ def _mutations(method):
             attribute = _self_attribute(node.value)
             if attribute:
                 aliases[node.targets[0].id] = attribute
+        if isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(node.target, ast.Name):
+            attribute = _self_attribute(node.iter)
+            if attribute:
+                aliases[node.target.id] = attribute
 
     def owner(node):
         if isinstance(node, ast.Name):
@@ -161,6 +165,20 @@ def test_a_fake_that_overwrites_a_saved_value_and_reads_it_back_is_caught():
         "        return self._last\n"
     )
     assert _stateful(cls) == ["set_last_refresh_at → self._last"]
+
+
+def test_a_fake_that_edits_a_saved_row_found_by_a_loop_is_caught():
+    [cls] = _classes(
+        "class Rules:\n"
+        "    def __init__(self):\n"
+        "        self._rules = []\n"
+        "    def mark_seeded(self, rule_id):\n"
+        "        for row in self._rules:\n"
+        "            row['seeded'] = True\n"
+        "    def list_rules(self):\n"
+        "        return list(self._rules)\n"
+    )
+    assert _stateful(cls) == ["mark_seeded → self._rules"]
 
 
 def test_a_spy_that_only_records_calls_passes():
