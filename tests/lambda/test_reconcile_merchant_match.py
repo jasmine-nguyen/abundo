@@ -1,7 +1,7 @@
 """WHIT-336 QA gaps (adversarial) — the skewed-date tier's merchant gate after the
 prefix-tolerant matcher was replaced by a POSITIONAL slice of ANZ's fixed-width
 merchant column plus CLEANED-NAME EQUALITY (lambda/repository.py
-`merchant.pending_merchant_column` / `repository._merchant_matches_pending`).
+`merchant.pending_merchant_column` / `reconcile.merchant_matches_pending`).
 
 Written on top of the implementer's WHIT-336 section in test_reconcile.py. That
 section already pins: the exhaustive live-name cross, padding drift on a full column,
@@ -15,7 +15,7 @@ What this file covers instead:
   * that the widened gate did not shift which TIER claims a pending — and the one
     place it DID: the tip and blank-auth tiers never got the column fix, so on a
     full-column shop the loosest tier is now the only one that can see the name,
-  * shared/budget_alerts.py, which previews alerts by driving this very gate,
+  * lambda/budget_alerts.py, which previews alerts by driving this very gate,
   * refunds / sign flips / zero through the new equality gate,
   * degenerate ANZ descriptors — blank merchant column, sub-column-length text,
     tab / newline / non-breaking-space padding, an accented name,
@@ -211,7 +211,7 @@ def test_exact_same_day_twin_still_beats_a_full_column_skew_candidate(lam, repo)
 
 
 def test_tip_tier_also_sees_a_fused_full_column_merchant(lam, repo):
-    # [A6] All three heuristic tiers share `_merchant_matches_pending`, so the tip tier
+    # [A6] All three heuristic tiers share `merchant_matches_pending`, so the tip tier
     # reads the fixed-width column too. Before that, a merchant filling the 25-char
     # column ("...MILLERS RDALTONA NORTH") was invisible here while the LOOSER skew tier
     # could see it — which inverted the tightest-first ordering (see A6c).
@@ -330,7 +330,7 @@ def test_single_word_full_column_merchant_now_merges_on_the_column_gate(lam, rep
 
 
 # ===========================================================================
-# C. shared/budget_alerts.py previews alerts by driving this exact gate
+# C. lambda/budget_alerts.py previews alerts by driving this exact gate
 # ===========================================================================
 
 
@@ -518,7 +518,7 @@ def test_accented_merchant_needs_exact_equality_not_a_stripped_stump(lam):
     # deleted matcher needed an explicit guard to stop that stump PREFIX-matching an
     # unrelated shop; equality removes the need, and this pins that it really did.
     # (Fixtures carried over from the test WHIT-336 deleted.)
-    g = lam.repository._merchant_matches_pending
+    g = lam.reconcile.merchant_matches_pending
     assert g("CAFÉ ROSÉ", "", _pend("CAFÉ ROSEWOOD BAR")) is False   # stump must not match
     assert g("CAFE ROSE", "", _pend("CAFE ROSEWOOD BAR")) is False   # nor the ascii form
     assert g("CAFÉ ROSÉ", "", _pend("CAFÉ ROSÉ")) is True            # the real twin still does
@@ -543,7 +543,7 @@ def test_a_blank_merchant_column_refuses_instead_of_falling_through(lam):
     # the whole description, suburb included, so a merchant named after a place matched
     # anyway. The gate now branches on the ANZ SHAPE, not on whether a column came back,
     # so an unreadable column refuses rather than falling through to something looser.
-    g = lam.repository._merchant_matches_pending
+    g = lam.reconcile.merchant_matches_pending
     blank_column = "POS AUTHORISATION" + " " * 9 + " " * 25 + "ALTONA NORTH " + "AU"
     assert lam.merchant.pending_merchant_column(blank_column) is None
     assert g("ALTONA NORTH", "", blank_column) is False
@@ -576,7 +576,7 @@ def test_a_non_anz_shaped_pending_still_merges_two_different_chemist_warehouses(
     # enforced when the pending carries the "POS AUTHORISATION" + 2-space shape. Two of
     # the seven live pendings do NOT ("Movie Tkts", "WELLBEING SERVICES PTY ST ALBA"),
     # and Up rows never do. On those the unchanged containment fallback still merges.
-    g = lam.repository._merchant_matches_pending
+    g = lam.reconcile.merchant_matches_pending
     assert g("CHEMIST WAREHOUSE", "", _pend("CHEMIST WAREHOUSE DARLING")) is False  # ANZ: safe
     assert g("CHEMIST WAREHOUSE", "",
              "CHEMIST WAREHOUSE DARLING ALTONA NORTH") is True                      # not ANZ
@@ -588,7 +588,7 @@ def test_single_space_padding_is_not_an_anz_column_and_falls_to_containment(lam)
     # space of padding the descriptor is not recognised as ANZ and drops to the loose
     # containment gate — the wrong merge is back. Pinned so a future "tolerate one
     # space" tweak reds here.
-    g = lam.repository._merchant_matches_pending
+    g = lam.reconcile.merchant_matches_pending
     one_space = "POS AUTHORISATION CHEMIST WAREHOUSE DARLING ALTONA NORTH AU"
     assert lam.merchant.pending_merchant_column(one_space) is None
     assert g("CHEMIST WAREHOUSE", "", one_space) is True

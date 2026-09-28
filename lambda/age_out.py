@@ -31,7 +31,8 @@ from datetime import date, timedelta
 
 import rule_engine
 from constants import ACCOUNT_ID_MAP, PENDING_AGE_OUT_DAYS
-from repository import TransactionRepository, _merchant_matches_pending
+from reconcile import merchant_matches_pending, with_carried_category
+from repository import TransactionRepository
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError
 from spend import melbourne_today
@@ -84,7 +85,7 @@ def _load_is_unfiled(category_repo):
 
 def _pending_is_filed(pending: dict, is_unfiled) -> bool:
     """Whether the user actually filed this pending — a real category, OR a note/tag/exclusion
-    they set. These are the user-owned fields _with_carried_category carries (plus filed_by_rule,
+    they set. These are the user-owned fields with_carried_category carries (plus filed_by_rule,
     which never exists without a category and so is already covered by the category check), so
     losing any of them to the reap is the harm WHIT-511 fixes."""
     if not is_unfiled(pending.get("category")):
@@ -116,14 +117,14 @@ def _is_carry_twin(pending: dict, posted: dict) -> bool:
     dates within the window.
 
     Amount must match EXACTLY. The reconciler pairs a tip-adjusted settlement via its own tip
-    tier (repository._is_tip_adjusted), but the rescue deliberately does NOT — carrying a
+    tier (reconcile._is_tip_adjusted), but the rescue deliberately does NOT — carrying a
     user's category is kept strict, so the amount gate is not widened to a tip range. The
     accepted cost: a tipped charge (dining/rideshare) that missed ALL six reconcile tiers is
     not rescued at reap time. This is a narrow miss (it already had to miss the tip tier), and
     the strict gate is the safety Jasmine chose over widening the match (WHIT-511)."""
     if pending.get("amount") != posted.get("amount"):
         return False
-    if not _merchant_matches_pending(
+    if not merchant_matches_pending(
         posted.get("merchant_name") or "",
         pending.get("merchant_name") or "",
         pending.get("description") or "",
@@ -209,7 +210,7 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
             # WHIT-545: the carry now recomputes counts_to_budget for the carried category
             # itself (given is_unfiled), so no separate recompute here. The rescue only runs
             # on a filed pending, so the is_unfiled category gate never skips this carry.
-            carried = repo._with_carried_category(twin, pending, is_unfiled=is_unfiled)
+            carried = with_carried_category(twin, pending, is_unfiled=is_unfiled)
             try:
                 repo.insert_transactions([carried])
             except DatabaseError as exc:
@@ -230,7 +231,7 @@ def age_out_account(repo, account_id: str, cutoff: str, dry_run: bool, is_unfile
             carry_candidates = [posted for posted in carry_candidates if posted.get("sk") != twin.get("sk")]
 
         try:
-            repo._delete_pending_if_present(pending["pk"], pending["sk"])
+            repo.delete_pending_if_present(pending["pk"], pending["sk"])
         except DatabaseError as exc:
             # Best-effort: a throttled/failed DeleteItem on ONE ghost must not strand the
             # remaining ghosts (or every later account) in this unattended run. Log it,

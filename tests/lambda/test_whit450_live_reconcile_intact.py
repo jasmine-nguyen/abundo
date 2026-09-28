@@ -8,7 +8,7 @@ the stale pending — is a SEPARATE code path that loads pending rows via the KE
 is gone; nothing proves the live path still wires through its OWN (kept) loader and is undisturbed.
 
 Forward regression guard (the deleted code is gone, so there is nothing to revert-to-red on the
-removal itself). Red-green here is on the KEPT wiring: breaking `_ensure_pool` so it no longer
+removal itself). Red-green here is on the KEPT wiring: breaking the up-front pool load in `insert_or_reconcile` so it no longer
 calls `get_pending_transactions_for_account` reddens both the spy count AND the carry/delete.
 Reuses the webhook suite's `lam` + `repo` fixtures (tests/lambda/conftest.py).
 """

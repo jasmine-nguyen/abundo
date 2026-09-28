@@ -15,8 +15,8 @@ the call site (a failure never breaks the transaction write):
     cycle window, the pre-write windowed rows, AND the pending pools reconcile will
     consume. Returns None (skip) when there are no tokens or no budgets.
   * `fire_budget_alerts` — AFTER the write succeeds: compute the post-write spend by
-    replaying the write in memory over the snapshot (reusing the repo's OWN reconcile
-    primitives), NOT by re-reading the date-index GSI (which is eventually consistent
+    replaying the write in memory over the snapshot (the SAME `reconcile` plan the
+    write carries out), NOT by re-reading the date-index GSI (which is eventually consistent
     and would miss the just-written row).
 
 The snapshot reads the date-index GSI, which is eventually consistent. Right after a
@@ -41,6 +41,7 @@ hard process crash between claim and send loses that one alert for the cycle —
 import logging
 from decimal import Decimal
 
+import reconcile
 import rule_engine
 from budget_standing import budget_standing, standing_window
 from constants import INCOME_BUCKET, PENDING_STATUS, SAVINGS_BUCKET
@@ -96,69 +97,21 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
     }
 
 
-def _simulate_after(ctx, normalised, webhook_repo, is_unfiled=None) -> list[dict]:
+def _simulate_after(ctx, normalised, is_unfiled=None) -> list[dict]:
     """The windowed row set AFTER `insert_or_reconcile` applies `normalised`, built
-    in memory from the pre-write snapshot — never a second (GSI-lagging) read. Mirrors
-    the reconcile decisions by driving the repo's own `_reconcile_matches` /
-    `_with_carried_category`, so it can't drift from the real write — including the
-    WHIT-117 two-pass (exact-before-tip across the batch).
-
-    `is_unfiled` (WHIT-545) is passed only to the first-settlement carry, matching the
-    real write: the re-send / pending-resync paths go through `_update_bank_fields`, which
-    never gates the stored category or recomputes the flag, so gating them here would drift."""
+    in memory from the pre-write snapshot — never a second (GSI-lagging) read. Plans
+    with the same `reconcile.plan_reconcile` the real write carries out, over the same
+    pre-write pending pools, so it can't drift from the real write."""
     by_id = {r["transaction_id"]: r for r in ctx["before_rows"] if r.get("transaction_id") is not None}
-    pools = {a: list(rows) for a, rows in ctx["pending_pools"].items()}  # copy: the matcher pops
-
-    # Same tier passes as the real write: resolve twins for the whole batch up front, then
-    # replay in `normalised` order so pending-inserts and the resync fallback keep their
-    # original interleaving. A posted row already stored under its own id is a RE-SEND and
-    # is held out of the twin search, exactly as insert_or_reconcile holds it out — letting
-    # it match would consume a pending the real write leaves alone (WHIT-331).
-    posted_txns = [t for t in normalised if t.get("status") != PENDING_STATUS]
-    posted_matches = iter(webhook_repo._reconcile_matches(
-        [t for t in posted_txns if t["transaction_id"] not in by_id], pools))
-
-    # The real write inserts everything, THEN deletes the stale pendings, so a pending
-    # re-send that arrives in the same payload as its own settlement does not survive.
-    # Popping twins inline would let that re-send re-add itself and double-count.
-    consumed_twin_ids: set[str] = set()
-
-    for txn in normalised:
-        tid = txn["transaction_id"]
-        if txn.get("status") == PENDING_STATUS:
-            # Mirror the real write's pending re-sync carry (WHIT-329): keep the user's
-            # category/notes/tags/budget_excluded so the preview can't drift from the
-            # stored row and fire (or suppress) an alert on the wrong category.
-            existing = by_id.get(tid)
-            if existing is not None:
-                by_id[tid] = dict(webhook_repo._with_carried_category(txn, existing))
-            else:
-                by_id[tid] = dict(txn)
-            continue
-        existing = by_id.get(tid)
-        if existing is not None:
-            # A re-send: carry the user's fields off the stored row, never match a twin.
-            merged = webhook_repo._with_carried_category(txn, existing)
-            webhook_repo._inherit_swipe_date(merged, txn, existing)  # parity with the real write
-            by_id[tid] = dict(merged)
-            continue
-        _, match = next(posted_matches, (None, None))  # defensive: over-run -> no-match (see repo)
-        if match is not None:
-            merged = webhook_repo._with_carried_category(txn, match, is_unfiled=is_unfiled)
-            webhook_repo._inherit_swipe_date(merged, txn, match)  # parity with the real write
-            by_id[merged["transaction_id"]] = dict(merged)
-            twin_id = match.get("transaction_id")
-            if twin_id is not None and twin_id != merged["transaction_id"]:
-                consumed_twin_ids.add(twin_id)
-        else:
-            by_id[tid] = dict(txn)
-
-    for twin_id in consumed_twin_ids:
-        by_id.pop(twin_id, None)
+    # A posted row already in the snapshot under its own id is a re-send (WHIT-331).
+    stored_rows = {t["transaction_id"]: by_id[t["transaction_id"]] for t in normalised
+                   if t.get("status") != PENDING_STATUS and t["transaction_id"] in by_id}
+    plan = reconcile.plan_reconcile(normalised, stored_rows, ctx["pending_pools"])
+    rows = reconcile.apply_plan(by_id, plan, is_unfiled)
 
     # A just-inserted row dated outside the cycle window must not inflate the total.
     start, end = ctx["start"], ctx["end"]
-    return [r for r in by_id.values() if start <= (r.get("date") or "") <= end]
+    return [r for r in rows.values() if start <= (r.get("date") or "") <= end]
 
 
 def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
@@ -203,7 +156,7 @@ def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_r
     # a rollover only reads completed cycles, so the pre-write history before this cycle plus
     # the simulated current cycle is the whole picture. Read-only: the settlements are ignored;
     # the /budgets read owns persistence.
-    after_rows = _simulate_after(ctx, normalised, webhook_repo, is_unfiled)
+    after_rows = _simulate_after(ctx, normalised, is_unfiled)
     history = [r for r in ctx["rollover_txns"]
                if window.fetch_start <= r.get("date", "") < window.cycle_start]
     rows, _ = budget_standing(targets, window, categories, history + after_rows)

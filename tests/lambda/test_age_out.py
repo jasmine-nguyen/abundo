@@ -233,7 +233,7 @@ def test_delete_failure_on_one_account_does_not_strand_the_others(lam, repo, mon
            _raw_row("ghost_a", "2026-06-10", account=_ACCOUNT_A),
            _raw_row("ghost_b", "2026-06-10", account=_ACCOUNT_B))
 
-    real_delete = repo._delete_pending_if_present
+    real_delete = repo.delete_pending_if_present
 
     def flaky_delete(pk, sk):
         # anz (account A) is swept before up-spending (account B) alphabetically, so this
@@ -242,7 +242,7 @@ def test_delete_failure_on_one_account_does_not_strand_the_others(lam, repo, mon
             raise lam.age_out.DatabaseError("Database delete pending failed: throttled")
         return real_delete(pk, sk)
 
-    monkeypatch.setattr(repo, "_delete_pending_if_present", flaky_delete)
+    monkeypatch.setattr(repo, "delete_pending_if_present", flaky_delete)
 
     import logging
     with caplog.at_level(logging.ERROR, logger="age_out"):
@@ -292,7 +292,7 @@ def test_live_run_with_all_deletes_failing_logs_an_error(lam, repo, monkeypatch,
     def always_fail(pk, sk):
         raise lam.age_out.DatabaseError("Database delete pending failed: throttled")
 
-    monkeypatch.setattr(repo, "_delete_pending_if_present", always_fail)
+    monkeypatch.setattr(repo, "delete_pending_if_present", always_fail)
 
     with caplog.at_level(logging.ERROR, logger="age_out"):
         summary = _sweep(lam, repo)
@@ -926,18 +926,18 @@ def test_second_sweep_after_rescue_does_not_recarry(lam, repo, monkeypatch):
     twin = _norm(lam, "settled_twin", "2026-06-11", pending=False, category=None)
     repo.insert_transactions([filed, twin])
 
-    real_delete = repo._delete_pending_if_present
+    real_delete = repo.delete_pending_if_present
 
     def fail_delete(pk, sk):
         raise lam.age_out.DatabaseError("Database delete pending failed: throttled")
 
-    monkeypatch.setattr(repo, "_delete_pending_if_present", fail_delete)
+    monkeypatch.setattr(repo, "delete_pending_if_present", fail_delete)
     first = _sweep_tax(lam, repo, ["groceries"])
     assert first["rescued"] == 1 and first["failed"] == 1 and first["reaped"] == 0
     assert "filed_pending" in _rows(repo)
     assert _rows(repo)["settled_twin"]["category"] == "groceries"
 
-    monkeypatch.setattr(repo, "_delete_pending_if_present", real_delete)
+    monkeypatch.setattr(repo, "delete_pending_if_present", real_delete)
     second = _sweep_tax(lam, repo, ["groceries"])
     rows = _rows(repo)
     assert second["rescued"] == 0 and second["reaped"] == 1
@@ -1015,9 +1015,9 @@ def test_posted_read_failure_reaps_as_today_without_aborting(lam, repo, monkeypa
 
 
 # [G8] [A17] A rule-filed stale pending (category + stamp) is rescued onto its settled twin
-# before the reap. The rescue reuses _with_carried_category, so the stamp must ride onto the twin
+# before the reap. The rescue reuses reconcile.with_carried_category, so the stamp must ride onto the twin
 # — history still explains the carried category. FAIL-ON-REVERT: drop the carry block in
-# _with_carried_category and the rescued twin keeps the category but loses the stamp.
+# with_carried_category and the rescued twin keeps the category but loses the stamp.
 def test_age_out_rescue_carries_the_rule_stamp_onto_the_twin(lam, repo):
     filed = _norm(lam, "filed_pending", "2026-06-10", pending=True, category="groceries")
     filed["filed_by_rule"] = "rule-7"
@@ -1167,7 +1167,7 @@ def test_whit545_note_rescue_does_not_carry_the_pendings_raw_enum_onto_the_twin(
     # A pending with a raw (unfiled) category BUT a user note is rescued for the note's sake.
     # WHIT-545 wires is_unfiled into the rescue carry, so the pending's raw enum ("FOOD_AND_DRINK")
     # must NOT be copied onto the twin — the twin keeps its own category — while the note DOES
-    # carry. FAIL-ON-REVERT: drop the is_unfiled gate in _with_carried_category and the twin's
+    # carry. FAIL-ON-REVERT: drop the is_unfiled gate in with_carried_category and the twin's
     # category is clobbered to "FOOD_AND_DRINK" (and its budget flag flips with it).
     filed = _norm(lam, "noted_pending", "2026-06-10", pending=True, category="FOOD_AND_DRINK")
     filed["notes"] = "work lunch"

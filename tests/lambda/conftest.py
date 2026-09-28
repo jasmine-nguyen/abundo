@@ -61,7 +61,7 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Bare module names whose imports must resolve fresh per test: lambda/'s own copies
 # (handler / repository / banksync) plus the folded modules now provided by shared/
 # (constants / models / encoders). Shed so a sibling suite's cached copy can't win.
-_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "banksync", "encoders", "merchant", "reprocess", "age_out",
+_REIMPORT = ("handler", "up_webhook", "constants", "models", "repository", "reconcile", "banksync", "encoders", "merchant", "reprocess", "age_out",
              "budget_alerts", "repayment_alerts", "spend", "budget_standing", "push", "repository_base", "repository_transaction", "repository_budget",
              "repository_category", "repository_device", "repository_notify", "repository_paycycle", "rule_engine",
              "rule_ingest", "repository_rule")
@@ -94,6 +94,7 @@ def lam():
         import up_webhook
         import merchant
         import models
+        import reconcile
         import repository
         import reprocess
         import age_out
@@ -102,7 +103,7 @@ def lam():
         import rule_ingest
 
         ns = types.SimpleNamespace(
-            repository=repository, banksync=banksync, handler=handler, models=models,
+            repository=repository, reconcile=reconcile, banksync=banksync, handler=handler, models=models,
             merchant=merchant, reprocess=reprocess,
             age_out=age_out,
             budget_alerts=budget_alerts, repayment_alerts=repayment_alerts,
