@@ -1,4 +1,4 @@
-"""Budget-threshold alert detection (shared/budget_alerts.py), WHIT-22.
+"""Budget-threshold alert detection (lambda/budget_alerts.py), WHIT-22.
 
 Driven through the webhook `lam` fixture (so budget_alerts + the real webhook repo
 reconcile primitives are importable). `spend.melbourne_today` is pinned so the
