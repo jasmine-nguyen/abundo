@@ -3,15 +3,16 @@
 // hot src/context.tsx AppProvider. Mounted at the root so the thread survives tab switches and
 // closing the sheet; the messages live in memory only, the consent is saved on the device.
 //
-// Answers come from a background job the app checks every second (the server can't stream):
-// a self-scheduling timer, a generation counter so Stop / New chat / sign-out cut off an
-// in-flight check, and tolerance for a few dropped network calls — the apply-rules loop's shape.
+// Answers come from a background job the app checks every second (the server can't stream),
+// through the shared job poller (WHIT-629). Stop / New chat / sign-out stop the poller, and a
+// generation counter drops a start request that settles after that.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAiChatJob, startAiChat } from '../api';
 import type { ChatReply, ChatTurn } from '../api';
-import { ApiError } from '../apiError';
 import { getStatus, subscribe } from '../auth';
+import { pollJob } from '../jobPoller';
+import type { PollHandle } from '../jobPoller';
 
 export const CHAT_CONSENT_KEY = 'abundo.chatConsent';
 export const CHAT_ERROR_TEXT = "Couldn't reach the assistant. Try again.";
@@ -92,9 +93,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inFlight, setInFlight] = useState(false);
   const [toolStatus, setToolStatus] = useState<string | null>(null);
-  // Bumped by every stop / restart, so a check that resolves afterwards knows it's stale.
+  // Bumped by every stop / restart, so a start request that resolves afterwards knows it's stale.
   const generation = useRef(0);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const poller = useRef<PollHandle | null>(null);
   const nextId = useRef(0);
   const newId = () => `m${nextId.current++}`;
 
@@ -108,8 +109,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const halt = useCallback(() => {
     generation.current += 1;
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
+    poller.current?.stop();
+    poller.current = null;
     setInFlight(false);
     setToolStatus(null);
   }, []);
@@ -127,39 +128,28 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     const gen = generation.current;
     const current = () => gen === generation.current;
     const startedAt = Date.now();
-    let netErrors = 0;
     setInFlight(true);
 
-    const check = async (jobId: string) => {
-      if (!current()) return;
-      if (Date.now() - startedAt > CHAT_MAX_WAIT_MS) { fail(gen); return; }
-      try {
-        const job = await getAiChatJob(jobId);
-        if (!current()) return;
-        netErrors = 0;
-        if (job.status === 'running') {
-          setToolStatus(job.toolStatus ?? null);
-          timer.current = setTimeout(() => check(jobId), CHAT_POLL_DELAY_MS);
-          return;
-        }
-        const reply = job.reply;
-        if (job.status !== 'succeeded' || !reply) { fail(gen); return; }
-        halt();
-        setMessages((prev) => [...prev, { id: newId(), role: 'assistant', status: 'done', text: reply.text, reply }]);
-      } catch (e) {
-        if (!current()) return;
-        // A 404 means the job is gone; a thrown network call is retried a few times.
-        if (e instanceof ApiError && e.status === 404) { fail(gen); return; }
-        netErrors += 1;
-        if (netErrors >= CHAT_MAX_NET_ERRORS) { fail(gen); return; }
-        timer.current = setTimeout(() => check(jobId), CHAT_POLL_DELAY_MS);
-      }
-    };
-
     try {
-      const job = await startAiChat(history);
+      const { jobId } = await startAiChat(history);
       if (!current()) return;
-      timer.current = setTimeout(() => check(job.jobId), CHAT_POLL_DELAY_MS);
+      poller.current = pollJob({
+        jobId,
+        check: (id) => getAiChatJob(id),
+        isRunning: (job) => job.status === 'running',
+        delayMs: CHAT_POLL_DELAY_MS,
+        maxNetErrors: CHAT_MAX_NET_ERRORS,
+        maxWaitMs: CHAT_MAX_WAIT_MS,
+        startedAt,
+        onProgress: (job) => setToolStatus(job.toolStatus ?? null),
+        onDone: (job) => {
+          const reply = job.reply;
+          if (job.status !== 'succeeded' || !reply) { fail(gen); return; }
+          halt();
+          setMessages((prev) => [...prev, { id: newId(), role: 'assistant', status: 'done', text: reply.text, reply }]);
+        },
+        onFail: () => fail(gen),
+      });
     } catch {
       fail(gen);
     }

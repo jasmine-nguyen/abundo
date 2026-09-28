@@ -35,6 +35,7 @@ export type ApplyRulesJobStart =
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
 import { runOptimisticSave, type SaveSteps } from './optimisticSave';
+import { pollJob, type PollHandle } from './jobPoller';
 import { getStatus, subscribe } from './auth';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
@@ -816,13 +817,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const applyRulesStallPolls = useRef(0);
   const applyRulesLastProgress = useRef('');
   const applyRulesJobId = useRef<string | null>(null);
-  const applyRulesPollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // WHIT-629: the live job poller. Stopping it (terminal, dismiss, lock, sign-out) cuts off a GET
+  // that was in flight, so it can't re-arm — a dismiss-then-reopen never leaves two live chains.
+  const applyRulesPoller = useRef<PollHandle | null>(null);
+  // Dropped connections carried across a dismiss-then-reopen, so the resumed poller keeps counting.
   const applyRulesNetErrors = useRef(0);
   const applyRulesJobActive = useRef(false);
-  // Bumped by every poll teardown (terminal, dismiss, lock, sign-out). A poll captures it before its
-  // await and bails without re-arming if it changed — so a GET that was in flight when the sheet was
-  // dismissed can't resurrect the timer, and a dismiss-then-reopen can never leave two live chains.
-  const applyRulesPollGen = useRef(0);
   // The variant + args of the RUNNING job, so "Try again" always restarts the SAME sweep — even when
   // the job view is rendered from a different sheet than the one that started it (applyRulesJob is
   // global). Without this, a failed file-this-shop job's retry from the plain sheet would run a
@@ -833,17 +833,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // its NEW badge (like fileNewRule), skipping the rules refetch. False for the plain sweep and
   // "file this shop", which refresh rules normally.
   const applyRulesJobPrependRule = useRef(false);
-  // The latest poll callback, read through a ref so a scheduled timer always runs the freshest
-  // closure (over refreshAfterApplyRules etc.) rather than a stale one captured at schedule time.
-  const applyRulesPollRef = useRef<() => void>(() => {});
-  // WHIT-566: the shared core of every apply-rules poll teardown — clear the timer, forget its
-  // handle, and bump the generation so an in-flight poll bails without re-arming. All three teardown
+  // WHIT-566: the shared core of every apply-rules poll teardown — keep the dropped-connection count,
+  // stop the poller (an in-flight poll then bails without re-arming) and forget it. All three teardown
   // sites (sign-out/lock, sheet-dismiss, endApplyRulesJob) route through this so the delicate order
   // lives once. Ref-only → stable identity (empty deps), so it perturbs no effect's dependencies.
   const stopApplyRulesPolling = useCallback(() => {
-    clearTimeout(applyRulesPollTimer.current);
-    applyRulesPollTimer.current = undefined;
-    applyRulesPollGen.current += 1;
+    applyRulesNetErrors.current = applyRulesPoller.current?.netErrors() ?? applyRulesNetErrors.current;
+    applyRulesPoller.current?.stop();
+    applyRulesPoller.current = null;
   }, []);
   const readSheetDraft = useCallback((key: string): unknown => sheetDrafts.current.get(key), []);
   const writeSheetDraft = useCallback((key: string, value: unknown) => { sheetDrafts.current.set(key, value); }, []);
@@ -921,7 +918,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // that also kept the jest worker alive between tests).
   useEffect(() => () => {
     clearTimeout(toastTimer.current);
-    clearTimeout(applyRulesPollTimer.current); // WHIT-560: no zombie poll after the provider unmounts
+    applyRulesPoller.current?.stop(); // WHIT-560: no zombie poll after the provider unmounts
   }, []);
 
   // WHIT-268: overlays render OUTSIDE the auth gate in app/_layout.tsx, so the gate's
@@ -974,8 +971,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // previews fresh.
   useEffect(() => {
     if (sheet !== null) {
-      if (applyRulesJobActive.current && applyRulesJobId.current && !applyRulesPollTimer.current) {
-        applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
+      if (applyRulesJobActive.current && applyRulesJobId.current && !applyRulesPoller.current) {
+        startApplyRulesPolling(applyRulesJobId.current);
       }
       return;
     }
@@ -1572,25 +1569,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshAfterApplyRules();
   }, [endApplyRulesJob, refreshAfterApplyRules]);
 
-  // One poll of the running job, self-scheduling: it arms the NEXT poll only after this one settles,
-  // so polls never overlap. Bails silently if the job was torn down (id cleared) or the session
-  // changed under it. A thrown fetch (offline) is swallowed and retried up to the net-error cap; only
-  // a server `status` or a 404 ends the job.
-  const pollApplyRulesJob = useCallback(async () => {
-    const jobId = applyRulesJobId.current;
-    if (!jobId) return;
+  // Poll the running job through the shared poller (WHIT-629): one check at a time, a thrown fetch
+  // (offline) retried up to the net-error cap, and only a server `status` or a 404 ends the job. A
+  // callback bails if the job was torn down (id cleared) or the session changed under it.
+  const startApplyRulesPolling = useCallback((jobId: string) => {
     const startEpoch = applyRulesJobStartEpoch.current;
-    const gen = applyRulesPollGen.current;
-    // A teardown (dismiss/lock/sign-out/terminal) between this poll firing and its GET resolving
-    // bumps the generation — this poll must then NOT re-arm the timer, or it would revive a stopped
-    // loop (and race the reopen effect into two live chains).
-    const superseded = () => applyRulesJobId.current !== jobId
-      || startEpoch !== sessionEpoch.current || gen !== applyRulesPollGen.current;
-    try {
-      const job = await apiGetApplyRulesJob(jobId);
-      if (superseded()) return;
-      applyRulesNetErrors.current = 0;
-      if (job.status === 'running') {
+    const superseded = () => applyRulesJobId.current !== jobId || startEpoch !== sessionEpoch.current;
+    const poller: PollHandle = pollJob<ApplyRulesJob>({
+      jobId,
+      check: (id) => apiGetApplyRulesJob(id),
+      isRunning: (job) => job.status === 'running',
+      delayMs: APPLY_RULES_JOB_POLL_DELAY_MS,
+      maxNetErrors: APPLY_RULES_JOB_MAX_NET_ERRORS,
+      initialNetErrors: applyRulesNetErrors.current,
+      onProgress: (job) => {
+        if (superseded()) { poller.stop(); return; }
         setApplyRulesJob(job);
         // WHIT-565: stall nudge. Reset the counter whenever progress advances (and clear any
         // existing nudge); otherwise count unchanged polls and raise the nudge at the threshold.
@@ -1604,19 +1597,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           applyRulesStallPolls.current += 1;
           if (applyRulesStallPolls.current >= APPLY_RULES_JOB_MAX_STALL_POLLS) setApplyRulesStalled(true);
         }
-        applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
-        return;
-      }
-      finishApplyRulesJob(job); // succeeded or failed — terminal
-    } catch (e) {
-      if (superseded()) return;
-      if (e instanceof ApiError && e.status === 404) { failApplyRulesJob('expired'); return; }
-      applyRulesNetErrors.current += 1;
-      if (applyRulesNetErrors.current >= APPLY_RULES_JOB_MAX_NET_ERRORS) { failApplyRulesJob('network'); return; }
-      applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
-    }
+      },
+      onDone: (job) => {
+        if (superseded()) return;
+        finishApplyRulesJob(job); // succeeded or failed — terminal
+      },
+      onFail: (reason) => {
+        if (superseded()) return;
+        failApplyRulesJob(reason);
+      },
+    });
+    applyRulesPoller.current = poller;
   }, [finishApplyRulesJob, failApplyRulesJob]);
-  useEffect(() => { applyRulesPollRef.current = pollApplyRulesJob; }, [pollApplyRulesJob]);
 
   // Start a background job (the plain sweep passes no rule; the inline variants pass one). Blocks if
   // any apply-rules run — sync OR a still-active async job — is already going. On the accepted 202 it
@@ -1650,14 +1642,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       applyRulesJobId.current = job.jobId;
       setApplyRulesJob(job);
-      applyRulesPollTimer.current = setTimeout(() => applyRulesPollRef.current(), APPLY_RULES_JOB_POLL_DELAY_MS);
+      startApplyRulesPolling(job.jobId);
       return { ok: true };
     } catch (e) {
       applyRulesJobActive.current = false;
       if (applyRulesJobStartEpoch.current !== sessionEpoch.current) return { ok: false, clash: null };
       return { ok: false, clash: e instanceof ApiError && e.status === 409 ? e : null };
     }
-  }, []);
+  }, [startApplyRulesPolling]);
 
   const startApplyRulesSweep = useCallback(() => beginApplyRulesJob(undefined, false), [beginApplyRulesJob]);
   const startFileByShopJob = useCallback(
