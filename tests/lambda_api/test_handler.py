@@ -711,50 +711,6 @@ def test_recent_tomorrow_dated_row_sorts_first(handler):
     assert [t["transaction_id"] for t in result] == ["tomorrow", "today"]
 
 
-# --- _fetch_windowed_transactions: bounded pagination (WHIT-102) --------------
-
-
-def test_fetch_windowed_transactions_aborts_on_nonterminating_cursor(handler):
-    # A repo whose cursor is NEVER null must not spin forever: the per-account loop
-    # is bounded, so it raises loudly instead of hanging to the Lambda timeout.
-    # Without the cap this test would hang; with it, it raises at the ceiling.
-    class _NeverEndingRepo:
-        def __init__(self):
-            self.calls = 0
-
-        def get_transactions_by_date_range(
-            self, account_id, start, end, limit=20, cursor=None
-        ):
-            self.calls += 1
-            return [_row(account_id, "2026-07-01", f"t{self.calls}")], {"cur": self.calls}
-
-    repo = _NeverEndingRepo()
-
-    with pytest.raises(RuntimeError, match="did not finish"):
-        handler._fetch_windowed_transactions(repo, "2026-06-26", "2026-07-04")
-
-    # Stopped exactly at the ceiling (the first account trips it), not later.
-    import constants
-
-    assert repo.calls == constants.DATE_RANGE_MAX_PAGES
-
-
-def test_fetch_windowed_transactions_terminates_normally_within_the_cap(handler):
-    # A well-behaved repo (cursor -> None) returns all rows and never approaches the
-    # ceiling — the guard doesn't interfere with normal pagination.
-    a = list(handler.ACCOUNT_ID_MAP.values())[0]
-    repo = FakeRecentFeedRepo(pages_by_account={
-        a: [
-            ([_row(a, "2026-07-01", "p1")], {"cur": 1}),
-            ([_row(a, "2026-07-02", "p2")], None),
-        ],
-    })
-
-    result = handler._fetch_windowed_transactions(repo, "2026-06-26", "2026-07-04")
-
-    assert {t["transaction_id"] for t in result} == {"p1", "p2"}
-
-
 # === WHIT-275 adversarial gaps: patch_transaction notes/tags boundaries (folded from
 # test_handler_whit275_gaps.py) — the EXACT-boundary passes, dedupe-then-cap ordering, and
 # the partial-write guard the over-limit rejection tests above don't cover. =================

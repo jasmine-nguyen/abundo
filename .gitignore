@@ -68,7 +68,6 @@ lambda/*
 !lambda/rule_ingest.py
 !lambda/requirements.txt
 
-
 # terraform
 terraform/artifacts/*
 terraform/layer/

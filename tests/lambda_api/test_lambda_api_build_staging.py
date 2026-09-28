@@ -1,8 +1,11 @@
 """WHIT-626 — run the REAL build script's `lambda_api` target in a sandbox git repo.
 
 scripts/tests/build_artifacts_test.sh only runs in the deploy workflow; these run with pytest on
-every build, and cover the edges it doesn't: nested files, a missing git repo, an empty index,
-and a rebuild after a module stops being tracked.
+every build, and cover the edges it doesn't:
+  [A1] nested files  [A2] a missing git repo  [A3] an empty index
+  [A4] a rebuild after a module stops being tracked  [A5] a tracked module missing from disk
+  [A6] a build started from outside the repo (terraform's local-exec cwd)
+  [A7] the `lambda/` ignore block that must stay
 """
 
 import os
@@ -45,10 +48,10 @@ def _write(root: pathlib.Path, relative: str, body: str) -> None:
     path.write_text(body)
 
 
-def _build(root: pathlib.Path) -> subprocess.CompletedProcess:
+def _build(root: pathlib.Path, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(root / "scripts" / _SCRIPT.name), "lambda_api"],
-        cwd=root, env=_env(root), capture_output=True, text=True,
+        cwd=cwd or root, env=_env(root), capture_output=True, text=True,
     )
 
 
@@ -110,3 +113,44 @@ def test_a_rebuild_drops_a_module_that_is_no_longer_tracked(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert _staged(root) == {"handler.py"}
+
+
+def test_a_tracked_module_missing_from_disk_fails_the_build(tmp_path):
+    # [A5] tracked but deleted locally -> non-zero, never a bundle silently missing an import.
+    root = _sandbox(tmp_path)
+    (root / "lambda_api" / "handler.py").write_text("import merchant_groups\n")
+    (root / "lambda_api" / "merchant_groups.py").write_text("X = 1\n")
+    _git(root, "add", "lambda_api")
+    (root / "lambda_api" / "merchant_groups.py").unlink()
+
+    result = _build(root, cwd=root)
+
+    assert result.returncode != 0
+
+
+def test_the_build_works_when_started_from_outside_the_repo(tmp_path):
+    # [A6] terraform's local-exec runs from terraform/ (or anywhere) -> same tracked set is staged.
+    root = _sandbox(tmp_path)
+    (root / "lambda_api" / "handler.py").write_text("HANDLER = 1\n")
+    (root / "lambda_api" / "ai_chat.py").write_text("CHAT = 1\n")
+    _git(root, "add", "lambda_api")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    result = _build(root, cwd=elsewhere)
+
+    assert result.returncode == 0, result.stderr
+    assert _staged(root) == {"handler.py", "ai_chat.py"}
+
+
+def test_the_webhook_lambda_dir_is_still_ignored_except_its_sources():
+    # [A7] regression: only the lambda_api block left .gitignore; lambda/ still gets
+    # `pip install --target`, so installed packages must stay out of git.
+    def ignored(path: str) -> bool:
+        return subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", path], cwd=_REPO_ROOT
+        ).returncode == 0
+
+    assert ignored("lambda/standardwebhooks/__init__.py")
+    assert not ignored("lambda/handler.py")
+    assert not ignored("lambda_api/handler.py")

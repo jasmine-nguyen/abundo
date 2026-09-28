@@ -70,7 +70,7 @@ def _row_at(repo, txn_id, account=SPENDING):
 
 
 def test_delete_undoes_charges_across_multiple_accounts(handler):
-    # The same rule filed charges in the SPENDING and ANZ accounts. _fetch_windowed_transactions
+    # The same rule filed charges in the SPENDING and ANZ accounts. read_window
     # walks EVERY account, so a delete must undo BOTH. FAIL-ON-REVERT: scan only one account and
     # the other account's fill survives (a dangling stamp on a deleted rule).
     rule_repo, rid = _seed_rule("coles", "groceries")
