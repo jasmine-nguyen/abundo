@@ -42,9 +42,6 @@ Check these before changing the touched area:
   behaviour.
 - **`get_api_key()` lives once in `shared/api_key.py`**, cached by SSM path. Each
   lambda keeps a one-line wrapper passing its own path — don't re-copy the SSM fetch.
-- **`lambda_api/` files ship from an allow-list** — a new `lambda_api/*.py` must be
-  listed in BOTH `LAMBDA_API_SOURCES` (`scripts/build_terraform_artifacts.sh`) and
-  `.gitignore`'s `!lambda_api/…` lines, or it is never committed or never deployed.
 - **The chat's time limits are a chain** (WHIT-609) — `ANTHROPIC_CHAT_TIMEOUT_SECONDS ×
   CHAT_MAX_TOOL_ROUNDS` < the `ai_chat_worker` timeout in `terraform/lambda.tf` < the app's
   `CHAT_MAX_WAIT_MS` (`src/chat/ChatContext.tsx`). `CHAT_MESSAGE_MAX_LEN` and the 20-message

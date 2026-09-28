@@ -46,8 +46,8 @@ env:
   TF_VAR_apple_private_key: ${{ secrets.TF_VAR_apple_private_key }}
 
 jobs:
-  # Offline guard: the build script's lambda_api allowlist stays in lockstep with
-  # the .gitignore allowlist, stages exactly that set, and ships no cruft. No AWS
+  # Offline guard: the build script stages exactly the git-tracked lambda_api/*.py
+  # files and ships no cruft. No AWS
   # creds/secrets, so it runs on every PR incl. forks.
   verify-build-script:
     name: Verify build script

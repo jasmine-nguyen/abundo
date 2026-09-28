@@ -27,18 +27,16 @@ data "archive_file" "lambda_zip" {
   output_path = "${path.module}/artifacts/lambda.zip"
 }
 
-# Stage the lambda_api package from ONLY its true source (handler.py + its
-# API-only api_constants.py; shared constants come from the layer). repository.py, models.py, and encoders.py come from the
-# shared layer. Previously this zipped the raw lambda_api/ dir — a leftover stale
-# repository.py once landed in /var/task, shadowed the layer's fresh copy, and
-# 500'd every route on import. Staging a clean dir keeps the package deterministic
-# regardless of local cruft.
+# Stage the lambda_api package from ONLY its true source: every git-tracked
+# lambda_api/*.py (shared code comes from the layer). Previously this zipped the raw
+# lambda_api/ dir — a leftover stale repository.py once landed in /var/task,
+# shadowed the layer's fresh copy, and 500'd every route on import. Staging a clean
+# dir from tracked files keeps the package deterministic regardless of local cruft.
 #
-# The explicit true-source allowlist and the copy live in
-# scripts/build_terraform_artifacts.sh (the single recipe CI and local apply
-# share). The trigger below hashes lambda_api/*.py with a glob: that only affects
-# WHEN we rebuild — the copy still uses the script's explicit allowlist, so on-disk
-# cruft never ships.
+# The copy lives in scripts/build_terraform_artifacts.sh (the single recipe CI and
+# local apply share). The trigger below hashes the on-disk lambda_api/*.py with a
+# glob: that only decides WHEN we rebuild — the script still stages only tracked
+# files, so on-disk cruft never ships.
 resource "null_resource" "prepare_lambda_api" {
   triggers = {
     sources      = sha256(join("", [for f in fileset("${path.module}/../lambda_api", "*.py") : filesha256("${path.module}/../lambda_api/${f}")]))
