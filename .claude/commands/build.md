@@ -4,6 +4,10 @@ description: Run the build graph for a card or request
 
 Run the build pipeline using `build_graph.py`.
 
+Run the script with `.venv/bin/python` when the repo has a `.venv` (a cloud
+session always does: the repo's session hook creates it), otherwise with
+`python3`. The commands below write `python3`; use the same one throughout.
+
 Read `project-context.md` first. It contains the board data source ID,
 card prefix, default card type, card picking rules (sort field,
 blocker relation, skip patterns), and the check commands the pipeline runs.
@@ -75,6 +79,12 @@ the card number for card builds) and check where it is:
    never paste card text into a shell command, where quotes or `$(...)`
    in the card would break or run. Then run:
    `python3 build_graph.py --card <number> --type "<card Type>" --details-file .build/cards/<number>.md`
+
+   **In a cloud session** (`CLAUDE_CODE_REMOTE` is `true`), add
+   `--branch <your session's branch>`: the branch your session instructions
+   tell you to develop on and push to. A cloud session can push only that
+   branch, so the script refuses to start without it. If you don't know the
+   branch, ask the user.
 
    `--type` sets the branch, commit and PR prefix: Story/Feature → `feat`,
    Bug/Defect → `fix`, Chore → `chore`, Refactor → `refactor`, Docs → `docs`.

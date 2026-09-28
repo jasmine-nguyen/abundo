@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import hashlib
 import operator
+import os
 import re
 import shutil
 import subprocess
@@ -51,6 +52,7 @@ class BuildState(TypedDict):
     card_details: str
     card_type: NotRequired[str]
     untracked_at_start: NotRequired[list[str]]
+    requested_branch: NotRequired[str]
     history: Annotated[list[str], operator.add]
     cost_usd: Annotated[float, operator.add]
     # planning
@@ -561,6 +563,11 @@ def commit_all(state: BuildState, message: str) -> tuple[bool, str]:
     return code == 0, output
 
 
+def in_cloud() -> bool:
+    """True in a Claude Code cloud session, which can push only the session's own branch."""
+    return os.environ.get("CLAUDE_CODE_REMOTE") == "true"
+
+
 def default_branch() -> str:
     try:
         return git("symbolic-ref", "--short", "refs/remotes/origin/HEAD").removeprefix("origin/")
@@ -912,7 +919,14 @@ def prepare_branch(state: BuildState):
         )
     base = default_branch()
     branch = git("rev-parse", "--abbrev-ref", "HEAD")
-    if branch in (base, "HEAD"):
+    requested = state.get("requested_branch")
+    if requested and requested != branch:
+        if run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{requested}"])[0] == 0:
+            git("checkout", requested)
+        else:
+            git("checkout", "-b", requested)
+        branch = requested
+    elif not requested and branch in (base, "HEAD"):
         branch = free_branch_name(f"{commit_prefix(state)}/{state['thread_id'].lower()}")
         git("checkout", "-b", branch)
     head = git("rev-parse", "HEAD")
@@ -1513,6 +1527,9 @@ builder.add_conditional_edges("retro_review", after_retro_review)
 #   python3 build_graph.py --thread WHIT-123 --retry                               → re-run a step that errored
 #   python3 build_graph.py --thread WHIT-123 --recheck                             → after fixing a failed build by hand
 #   add --restart to a new build to discard saved progress for that card
+#   add --branch <name> to build on a given branch; a cloud session must pass its own
+#
+# Use .venv/bin/python instead of python3 when the repo has a .venv.
 #
 # Without --card, the request text is the card, and the thread ID is a short
 # hash of it. Everything the pipeline writes lives in .build/ (kept out of git).
@@ -1527,6 +1544,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     details.add_argument("--details", help="card title and description")
     details.add_argument("--details-file", help="read the card title and description from a file ('-' for stdin)")
     parser.add_argument("--thread", help="build thread ID (defaults to the card number)")
+    parser.add_argument("--branch", help="branch to build and push on; in a cloud session, the session's own branch")
     parser.add_argument("--restart", action="store_true", help="discard saved progress and start over")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--resume", metavar="REPLY", help="answer the question a paused build is waiting on")
@@ -1549,6 +1567,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     elif not args.card and not args.request:
         parser.error("provide a request or --card")
     return args
+
+
+def rerun() -> str:
+    """How to run this script again with the same Python, e.g. `.venv/bin/python build_graph.py`."""
+    python = Path(sys.executable)
+    shown = python.relative_to(ROOT) if python.is_relative_to(ROOT) else "python3"
+    return f"{shown} build_graph.py"
 
 
 def print_history(values: dict, last: int = 15):
@@ -1588,7 +1613,7 @@ def report(thread: str, result: dict) -> int:
         print("\n" + "=" * 60)
         print(interrupts[0].value)
         print("=" * 60)
-        print(f'\nPaused. Resume with:\n  python3 build_graph.py --thread {thread} --resume "<your reply>"')
+        print(f'\nPaused. Resume with:\n  {rerun()} --thread {thread} --resume "<your reply>"')
         return 0
 
     outcome, code = result.get("outcome"), 0
@@ -1602,7 +1627,7 @@ def report(thread: str, result: dict) -> int:
         for key, label in REVIEW_LABELS.items():
             if result.get(f"{key}_verdict") == "NEEDS_REWORK":
                 print(f"\n## {label}\n{result.get(f'{key}_feedback', '')}")
-        print(f"\nFix these by hand, then re-run checks and reviews:\n  python3 build_graph.py --thread {thread} --recheck")
+        print(f"\nFix these by hand, then re-run checks and reviews:\n  {rerun()} --thread {thread} --recheck")
         code = 1
     elif outcome == "stopped":
         print("BUILD CANCELLED — you stopped it. Nothing was shipped.")
@@ -1610,7 +1635,7 @@ def report(thread: str, result: dict) -> int:
             print(f"Work so far is on branch {result['branch']}.")
     elif outcome == "ship_error":
         print(f"BUILD PASSED but opening the PR failed:\n{result.get('pr_error', '')}")
-        print(f"\nFix the cause, then:\n  python3 build_graph.py --thread {thread} --retry")
+        print(f"\nFix the cause, then:\n  {rerun()} --thread {thread} --retry")
         code = 1
     elif outcome == "shipped":
         print(f"PR opened: {result['pr_url']}")
@@ -1636,6 +1661,16 @@ async def start_build(graph, saver, config, snapshot, args):
             "Continue it with --resume, --retry or --recheck, or add --restart to discard it and start over."
         )
         return None
+    base, current = default_branch(), git("rev-parse", "--abbrev-ref", "HEAD")
+    if args.branch == base:
+        print(f"--branch can't be {base}: the build opens a PR into it.")
+        return None
+    if in_cloud() and not args.branch and current in (base, "HEAD"):
+        print(
+            "This is a cloud session, and it can push only its own branch. "
+            "Run again with --branch <this session's branch>."
+        )
+        return None
     modified = [path for status, path in git_status() if status != "??"]
     if modified:
         print(f"Commit or stash these changes before starting a build:\n{bullets(modified)}")
@@ -1651,6 +1686,7 @@ async def start_build(graph, saver, config, snapshot, args):
             "card_details": args.details if args.card else args.request,
             "card_type": args.type,
             "untracked_at_start": [path for status, path in git_status() if status == "??"],
+            "requested_branch": args.branch or "",
             "history": [],
             "cost_usd": 0.0,
         },
@@ -1738,7 +1774,7 @@ async def main(argv: list[str] | None = None) -> int:
             print("\n" + "=" * 60)
             print(f"BUILD STOPPED at {', '.join(stopped.next) or 'the end'}:\n{e}")
             print("=" * 60)
-            print(f"\nFix the cause, then run:\n  python3 build_graph.py --thread {args.thread} --retry")
+            print(f"\nFix the cause, then run:\n  {rerun()} --thread {args.thread} --retry")
             return 1
         if result is None:
             return 1
