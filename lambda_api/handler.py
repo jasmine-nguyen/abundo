@@ -681,7 +681,7 @@ def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
 
     # Every row in the window across all accounts, following the date-index cursor
     # to exhaustion — the feed must not silently truncate at one page/account.
-    all_recent_transactions = _fetch_windowed_transactions(repo, start_date, end_date)
+    all_recent_transactions = read_window(repo, start_date, end_date)
 
     # remove pk and sk before returning to api, and ensure sparse fields default to None
     for txn in all_recent_transactions:
@@ -1246,7 +1246,7 @@ def _capture_spread_bill(parsed: dict, transaction_repo: TransactionRepository):
     engine_rule = {"field": parsed["field"], "operator": parsed["operator"],
                    "value": parsed["value"], "conditions": parsed["conditions"],
                    "logic": parsed["logic"]}
-    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    transactions = read_window(transaction_repo, None, None)
     matched = [transaction for transaction in transactions if rule_matches(engine_rule, transaction)]
     bills = detect_recurring_bills(matched)["bills"]
     if not bills:
@@ -1412,12 +1412,6 @@ def delete_rule_route(event: dict, rule_repo: RuleRepository,
     return _json_response(200, {"id": rule_id, "remaining": remaining})
 
 
-def _fetch_windowed_transactions(repo: TransactionRepository, start: str | None, end: str | None) -> list[dict]:
-    """Every transaction across all accounts within [start, end], every page (bounded).
-    `start`/`end` may be None for no floor/ceiling (whole history)."""
-    return read_window(repo, start, end)
-
-
 # The unfiled-category predicate now lives in the shared rule engine (WHIT-527), so the
 # count, the /breakdown bucket, the rule sweep, and the webhook all decide "unfiled" the
 # same way. Kept under the old name for the call sites that read like a handler local.
@@ -1435,7 +1429,7 @@ def get_uncategorized_count(transaction_repo: TransactionRepository, category_re
     counts excluded transfers too (WHIT-330), so the count must, or it wouldn't match the list.
     """
     taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    transactions = read_window(transaction_repo, None, None)
     count = sum(
         1
         for transaction in transactions
@@ -1529,7 +1523,7 @@ def get_uncategorized_merchants(
     separate, explicit request (WHIT-516).
     """
     taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    transactions = read_window(transaction_repo, None, None)
     body = group_unfiled_by_merchant(
         transactions, lambda category: _is_unmapped_category(category, taxonomy_ids)
     )
@@ -1550,7 +1544,7 @@ def get_filing_suggestions(
     """
     taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
     rules = [rule_from_row(row) for row in rule_repo.list_rules()]
-    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    transactions = read_window(transaction_repo, None, None)
     body = suggest_rules_from_filing_habits(transactions, rules, taxonomy_ids)
     return _json_response(200, body)
 
@@ -1581,7 +1575,7 @@ def get_transactions_search(
 
     started = time.monotonic()
     category_names = {category["id"]: category["name"] for category in category_repo.list_categories()}
-    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
+    transactions = read_window(transaction_repo, None, None)
     matches, truncated = search_transactions(
         transactions, query, category_names, unfiled_only=tab == "uncategorized")
     _shape_feed_rows(matches)
@@ -2207,7 +2201,7 @@ def list_budgets(
         return {}
     window = standing_window(targets, paycycle_repo.get_paycycle())
     categories = category_repo.list_categories()
-    transactions = _fetch_windowed_transactions(transaction_repo, window.fetch_start, window.today)
+    transactions = read_window(transaction_repo, window.fetch_start, window.today)
     rows, settlements = budget_standing(targets, window, categories, transactions)
     _persist_rollover_settlements(budget_repo, settlements["rollover"], window.length, window.last_pay_date)
     _persist_spread_settlements(budget_repo, settlements["spread_finished"], settlements["spread_reanchored"])
@@ -2236,7 +2230,7 @@ def get_budget_transactions(
         return _json_response(404, {"error": "budget not found"})
 
     start, end = _cycle_window_for(paycycle_repo)
-    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+    transactions = read_window(transaction_repo, start, end)
 
     categories = category_repo.list_categories()
     bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
@@ -2311,7 +2305,7 @@ def list_category_breakdown(
     """
     categories = category_repo.list_categories()
     start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
-    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+    transactions = read_window(transaction_repo, start, end)
 
     all_ids = {c["id"] for c in categories}
     spend_ids = {c["id"] for c in categories if c.get("bucket") in SPEND_BUCKETS}
@@ -2469,7 +2463,7 @@ def get_category_transactions(
                 400, {"error": f"from/to must be in order within [{floor}, {today}]"})
     else:
         start, end = _cycle_window_for_lookback(paycycle_repo, cycle)
-    transactions = _fetch_windowed_transactions(transaction_repo, start, end)
+    transactions = read_window(transaction_repo, start, end)
 
     if category_id == UNCATEGORIZED_KEY:
         taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
@@ -2702,7 +2696,7 @@ def assemble_insight_input(
     length = cycle["length"]
     start, end = current_cycle_window(cycle["last_pay_date"], length)
 
-    current = _fetch_windowed_transactions(transaction_repo, start, end)
+    current = read_window(transaction_repo, start, end)
     targets = budget_repo.list_budgets()  # {id: {"target": Decimal}}
     all_ids = {c["id"] for c in categories}
 
@@ -2741,7 +2735,7 @@ def assemble_insight_input(
     prior = []
     for n in range(1, INSIGHTS_PRIOR_CYCLES + 1):
         prev_start, prev_end = nth_prior_cycle_window(start, length, n)
-        prev_txns = _fetch_windowed_transactions(transaction_repo, prev_start, prev_end)
+        prev_txns = read_window(transaction_repo, prev_start, prev_end)
         prev_entry = {
             "start": prev_start,
             "end": prev_end,

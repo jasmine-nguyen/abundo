@@ -378,7 +378,7 @@ class _FakeBudgetRepo:
 
 class _FakeTxnRepo:
     """Serves a per-window transaction list, once for the FIRST account and empty
-    for the rest (so _fetch_windowed_transactions' account loop doesn't triple it)."""
+    for the rest (so read_window's account loop doesn't triple it)."""
 
     def __init__(self, by_window):
         self._by_window = by_window

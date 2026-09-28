@@ -47,8 +47,7 @@ env:
 
 jobs:
   # Offline guard: the build script stages exactly the git-tracked lambda_api/*.py
-  # files and ships no cruft. No AWS
-  # creds/secrets, so it runs on every PR incl. forks.
+  # files and ships no cruft. No AWS creds/secrets, so it runs on every PR incl. forks.
   verify-build-script:
     name: Verify build script
     if: github.event_name == 'pull_request'

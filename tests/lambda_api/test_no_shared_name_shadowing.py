@@ -9,7 +9,8 @@ are static (nothing is imported):
   [G2] no constant is defined in both api_constants.py and shared/constants.py
   [G3] every name a lambda_api module imports from either constants file exists there
 
-Fail-on-revert: create lambda_api/constants.py -> G1 reddens; re-add a mirror such as MAX_PAGE_SIZE to api_constants.py -> G2 reddens.
+Fail-on-revert: create lambda_api/constants.py -> G1 reddens;
+re-add a mirror such as MAX_PAGE_SIZE to api_constants.py -> G2 reddens.
 """
 
 import ast

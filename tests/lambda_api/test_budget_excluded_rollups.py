@@ -46,7 +46,7 @@ class _CategoryRepo:
 
 class _TxnRepo:
     """Single page of `transactions` for the FIRST account, empty after — so the
-    _fetch_windowed_transactions per-account loop sums each row once. Ignores the
+    read_window's per-account loop sums each row once. Ignores the
     date bounds (mirrors test_budgets.FakeTransactionRepo)."""
 
     def __init__(self, transactions):

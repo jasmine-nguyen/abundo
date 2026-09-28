@@ -395,7 +395,7 @@ def test_totally_unknown_id_returns_empty_200_not_404(handler, monkeypatch):
 def test_merges_same_category_rows_across_accounts_newest_first(handler, monkeypatch):
     # A category's charges span TWO accounts (up-spending + anz-rewards-black-visa). The drill
     # must merge both accounts' rows and sort the merged set newest-first — the per-account loop
-    # in _fetch_windowed_transactions, which the pool-once fake never exercises.
+    # in read_window, which the pool-once fake never exercises.
     # FAIL-ON-REVERT: breaking to a single-account fetch (dropping the loop) drops 'anz1'.
     _pin_today(monkeypatch)
     txns = [

@@ -26,7 +26,7 @@ class FakeCategoryRepo:
 
 class FakeTransactionRepo:
     """Serves a single page of `transactions` per account then empties, so the
-    per-account loop in _fetch_windowed_transactions sums each txn once."""
+    per-account loop in read_window sums each txn once."""
 
     def __init__(self, transactions=None):
         self._queue = [(list(transactions or []), None)]
