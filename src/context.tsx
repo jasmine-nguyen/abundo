@@ -4,7 +4,7 @@ import { normalizeColorSlot } from './chartColors';
 import { colorForCategory } from './categoryColors';
 import { writeFailureMessage, ApiError } from './apiError';
 import { MONTHS, isoToUtcDayMs, dateToUtcDayMs, wholeDaysBetween, utcDayMsToISO, MS_PER_DAY } from './dateutil';
-import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, TransactionFeedPage, TransactionSearchResult, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
+import { createCategory, updateCategory, deleteCategory as apiDeleteCategory, setBudget as apiSetBudget, deleteBudget as apiDeleteBudget, setSpread as apiSetSpread, deleteSpread as apiDeleteSpread, setTransactionCategory as apiSetTransactionCategory, setTransactionCategories as apiSetTransactionCategories, setTransactionFields as apiSetTransactionFields, setPayCycle as apiSetPayCycle, setLoanFacts as apiSetLoanFacts, saveGoal as apiSaveGoal, deleteGoal as apiDeleteGoal, setMilestones as apiSetMilestones, GoalRecord, GoalWriteBody, LoanFacts, LoanFactsInput, MilestoneRecord, Repayment, BudgetRollup, SpreadPlan, CategorySpend, BreakdownRollup, createRule, updateRule as apiUpdateRule, deleteRule as apiDeleteRule, RuleRecord, RuleCondition, RuleLogic, fetchAiInsights, generateAiInsights as apiGenerateAiInsights, AiInsights, AiGoalSignal, applyRulesToUncategorized, ApplyRulesResult, startApplyRulesJob as apiStartApplyRulesJob, getApplyRulesJob as apiGetApplyRulesJob, ApplyRulesJob, UncategorizedMerchantGroup } from './api';
 import * as Crypto from 'expo-crypto';
 import { usableEquity as computeUsableEquity, milestoneTime } from './milestones';
 import { reinsertBefore } from './reinsert';
@@ -12,6 +12,7 @@ import { RULE_FIELD_OPERATORS } from './ruleVocabulary';
 
 export type { LoanFacts, LoanFactsInput } from './api';
 export type { ApplyRulesResult, ApplyRulesJob } from './api';
+export { unionById, budgetSubtreeContains } from './transactionCache';
 // WHIT-517: the outcome of a "file by shop" preview or write. On failure, `clash` carries the
 // server's 409 ApiError when an existing rule would fight this one (so the sheet can explain it),
 // and is null for any other failure. Kept distinct from applyRulesToHistory's plain null, which
@@ -32,7 +33,7 @@ export type ApplyRulesJobStart =
 // Import the singleton directly (not the ['transactions'] key from ./queries) to avoid
 // a circular import — ./queries imports from this module.
 import { queryClient } from './queryClient';
-import type { InfiniteData } from '@tanstack/react-query';
+import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
 import { getStatus, subscribe } from './auth';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
@@ -234,21 +235,6 @@ export const CLEAN_NAME: Record<string, string> = {
   'SQ *KKV INTERNATIONAL': 'KKV International',
 };
 export function cleanName(m: string) { return CLEAN_NAME[m] || m; }
-
-// Concatenate transaction lists, keeping the FIRST copy of each id — so callers list their
-// freshest source first.
-export function unionById(lists: Transaction[][]): Transaction[] {
-  const seen = new Set<string>();
-  const merged: Transaction[] = [];
-  for (const list of lists) {
-    for (const transaction of list) {
-      if (seen.has(transaction.transaction_id)) continue;
-      seen.add(transaction.transaction_id);
-      merged.push(transaction);
-    }
-  }
-  return merged;
-}
 
 // Best-effort display name for a transaction's merchant, applying the cleanup
 // map. Single source of truth so the transaction row and the categorize sheets
@@ -799,61 +785,6 @@ function ruleWriteErrorMessage(error: unknown, fallback: string, spread: boolean
 
 const Ctx = createContext<AppContext | null>(null);
 
-// A charge can live in TWO caches: the Transactions tab's ['transactions'] FEED (an InfiniteData
-// of pages — the "Load More" history) and the bounded ['transactionsRecent'] window (the tab-bar
-// dot, account-detail, goal-edit). They overlap on the newest rows but each holds some the other
-// doesn't (deep history is feed-only; a recent charge beyond the feed's loaded pages is
-// recent-only). So the write path must READ the union (or a row tapped on account-detail is
-// "not found" and the write silently no-ops) and PATCH both (or the dot/account-detail keep stale
-// data after an edit). These helpers own that reconciliation for every writer.
-function readFeedRows(): Transaction[] {
-  const data = queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(['transactions']);
-  return data ? data.pages.flatMap((p) => p.transactions) : [];
-}
-// The Uncategorized tab's own paged feed (its loaded pages). A deep-history unfiled charge shown
-// on that tab lives ONLY here — not in the general feed's loaded pages nor the recent window — so
-// the union below must include it, or tapping it on the tab would "not find" the row and the
-// categorise would silently no-op.
-function readUncategorizedFeedRows(): Transaction[] {
-  const data = queryClient.getQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed']);
-  return data ? data.pages.flatMap((p) => p.transactions) : [];
-}
-// WHIT-576: the Transactions-tab search results (one flat list per tab + query). A deep-history
-// match lives ONLY here, so it joins the union — or tapping it would "not find" the row.
-function readSearchRows(): Transaction[] {
-  return queryClient
-    .getQueriesData<TransactionSearchResult>({ queryKey: ['transactionsSearch'] })
-    .flatMap(([, data]) => data?.transactions ?? []);
-}
-// The union of the list caches, de-duped by id (a charge in more than one appears once).
-// Newest-first from the feed, then uncategorized-feed-only rows, then recent-only rows, then
-// search-only rows (last, so a fresher list copy wins).
-function readTransactionsCache(): Transaction[] {
-  const recent = queryClient.getQueryData<Transaction[]>(['transactionsRecent']) ?? [];
-  return unionById([readFeedRows(), readUncategorizedFeedRows(), recent, readSearchRows()]);
-}
-// Map the caller's per-row transform over the feed pages, the uncategorized-feed pages (page
-// boundaries + cursors preserved) AND the flat recent array, so an optimistic edit reflects on the
-// tab list, the uncategorized tab, the dot, account-detail, and goal-edit at once.
-// On the uncategorized tab this is what drops a just-filed
-// row from the list instantly: the row stays in the cached page but no longer matches the client
-// re-filter, so it disappears without a whole-history re-scan.
-// Most callers are a plain .map() that adds and removes no rows. The exception is WHIT-508's
-// apply-rules reconcile, which also REMOVES rows the server reported as deleted mid-run: safe
-// because page boundaries and cursors are untouched and the feeds already tolerate a sparse or
-// empty page (see useUncategorizedFeedQuery).
-function patchInfiniteFeed(key: readonly unknown[], fn: (prev: Transaction[]) => Transaction[]): void {
-  queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(key, (prev) =>
-    prev ? { ...prev, pages: prev.pages.map((pg) => ({ ...pg, transactions: fn(pg.transactions) })) } : prev);
-}
-function patchTransactionsCache(fn: (prev: Transaction[]) => Transaction[]): void {
-  patchInfiniteFeed(['transactions'], fn);
-  patchInfiniteFeed(['uncategorizedFeed'], fn);
-  queryClient.setQueryData<Transaction[]>(['transactionsRecent'], (prev) => (prev ? fn(prev) : prev));
-  queryClient.setQueriesData<TransactionSearchResult>({ queryKey: ['transactionsSearch'] }, (prev) =>
-    prev ? { ...prev, transactions: fn(prev.transactions) } : prev);
-}
-
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [alerts, setAlerts] = useState(true);
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -1190,7 +1121,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // WHIT-192: source the transactions + taxonomy from the query cache the screens read
     // (the eager store is gone). By the time the confirm sheet is open the Transactions
     // list + pickers have warmed both caches; an empty fallback just closes the sheet.
-    const transactions = readTransactionsCache();
+    const transactions = readTransactionCopies(queryClient, { includeScopedLists: false });
     const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
     const transaction = transactions.find((t) => t.transaction_id === txId);
     const category = categories.find((c) => c.id === categoryId);
@@ -1203,24 +1134,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // FAILURE toasts have no such guard, so gate them on the session epoch — a save settling
     // after sign-out must not toast into the next session.
     const epoch = sessionEpoch.current;
-
-    // After a categorisation persists, invalidate the server-derived caches the migrated
-    // screens read. The ['budgets']/['breakdown'] invalidation is what closes the ≤45s
-    // staleness (WHIT-193). The ['transactions'] FEED is deliberately NOT invalidated: it is
-    // an InfiniteData of loaded pages, so invalidating would refetch every page sequentially
-    // (a storm once the user has paged back). The optimistic patchTransactions above already
-    // wrote the exact category change into the feed cache, and the tab reconciles the newest
-    // page on focus — so a blanket feed refetch here is both redundant and costly.
-    const invalidateAfterCategorise = () => {
-      queryClient.invalidateQueries({ queryKey: ['budgets'] });
-      queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-      // Re-tagging a charge changes which budget's + category's cycle list it belongs to;
-      // refresh the budget-detail and category drill-in lists (flat prefix → every cached list).
-      queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
-      // WHIT-501: filing a charge changes the full-history uncategorized tally (badge/dot/empty state).
-      queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
-    };
+    const epochStillCurrent = () => epoch === sessionEpoch.current;
 
     if (scope === 'all') {
       // "Every {merchant} charge": every OTHER uncategorised transaction from the
@@ -1245,22 +1159,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // already-categorised charge, which categoryIsUnmapped filters out of the sweep. The
       // tapped charge is the user's explicit pick, so include it regardless of its current state.
       const sameMerchantIds = sweepIds.includes(txId) ? sweepIds : [txId, ...sweepIds];
-      // Snapshot each affected charge's current category so a failed save reverts to what it
-      // ACTUALLY was, not a blanket Uncategorized — now that the tapped charge may already be
-      // categorised. Mirrors applyCategoryToMany's per-id rollback.
-      const previousById = new Map(
-        sameMerchantIds.map((id) => [id, transactions.find((t) => t.transaction_id === id)?.category ?? null]),
-      );
-
-      // Optimistically file all of them under the chosen category (one state update).
-      patchTransactions((prev) =>
-        prev.map((existing) => {
-          if (!sameMerchantIds.includes(existing.transaction_id)) return existing;
-          return { ...existing, category: categoryId };
-        }));
-      // WHIT-348: a re-file also drops the charges from any budget-detail list whose budget no
-      // longer owns the new category, so the old budget's list updates before the refetch lands.
-      const budgetTxSnaps = removeRefiledFromBudgetLists(categories, sameMerchantIds, categoryId);
+      // Optimistically file all of them under the chosen category; the rollback reverts each
+      // failed one to what it ACTUALLY was (WHIT-324) and restores the old budget's list (WHIT-348).
+      const rollback = optimisticRefile(sameMerchantIds, categoryId, categories, epochStillCurrent);
 
       // WHIT-355: don't mint a second rule when one already matches this pattern. Only CREATE a
       // new rule when there's no existing same-pattern rule. A same-category one already does the
@@ -1361,64 +1262,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       const anyRuleRejected = ruleOutcomes.some((outcome) => outcome.status === 'rejected');
       if (failedIds.length > 0) {
-        // Roll back only the ones whose save failed — each to its OWN previous category
-        // (WHIT-324), so a failed re-file of an already-categorised charge doesn't wrongly
-        // blank it to Uncategorized.
-        patchTransactions((prev) =>
-          prev.map((existing) => {
-            if (!failedIds.includes(existing.transaction_id)) return existing;
-            return { ...existing, category: previousById.get(existing.transaction_id) ?? null };
-          }));
-        // WHIT-348: restore the budget lists, then re-drop only the ids that DID save — so a
-        // failed re-file's row reappears while a saved one stays gone. Epoch-gated (raw
-        // setQueryData recreates a cleared entry after sign-out).
-        if (epoch === sessionEpoch.current) {
-          budgetTxSnaps.forEach(([key, data]) => queryClient.setQueryData(key, data));
-          const savedIds = sameMerchantIds.filter((id) => !failedIds.includes(id));
-          if (savedIds.length > 0) removeRefiledFromBudgetLists(categories, savedIds, categoryId);
-          showToast('Could not save some categories. Please try again.');
-        }
+        rollback(failedIds);
+        if (epochStillCurrent()) showToast('Could not save some categories. Please try again.');
       } else if (anyRuleRejected) {
         // Transactions filed fine; at least one future-rule failed to persist.
         if (epoch === sessionEpoch.current) showToast('Filed, but could not save the rule for future charges.');
       }
-      // Some categorisations persisted -> refresh the bars + breakdown so spend updates
-      // (old store) and invalidate the query cache (migrated screens).
-      if (failedIds.length < sameMerchantIds.length) invalidateAfterCategorise();
+      if (failedIds.length < sameMerchantIds.length) refreshAfter('refile');
       return;
     }
 
     // scope === 'one': just this single transaction.
-    const previousCategory = transaction.category;
-    // Optimistically show the new category on this one transaction.
-    patchTransactions((prev) =>
-      prev.map((existing) => {
-        if (existing.transaction_id !== txId) return existing;
-        return { ...existing, category: categoryId };
-      }));
-    // WHIT-348: drop this charge from any budget-detail list whose budget no longer owns the new
-    // category, so the old budget's list updates before the refetch lands.
-    const budgetTxSnaps = removeRefiledFromBudgetLists(categories, [txId], categoryId);
+    const rollback = optimisticRefile([txId], categoryId, categories, epochStillCurrent);
     showToast(`This transaction filed under ${category.name}.`);
     setSheet(null); // close the confirm sheet
 
     try {
       await apiSetTransactionCategory(txId, categoryId);
-      invalidateAfterCategorise(); // budget bars + breakdown (old store) + query cache
+      refreshAfter('refile');
     } catch {
-      // Save failed — undo the optimistic change on BOTH stores, old category back.
-      patchTransactions((prev) =>
-        prev.map((existing) => {
-          if (existing.transaction_id !== txId) return existing;
-          return { ...existing, category: previousCategory };
-        }));
-      // WHIT-348: restore the budget lists too (raw setQueryData → epoch-gated, mirrors WHIT-344).
-      if (epoch === sessionEpoch.current) {
-        budgetTxSnaps.forEach(([key, data]) => queryClient.setQueryData(key, data));
-        showToast('Could not save category. Please try again.');
-      }
+      rollback([txId]);
+      if (epochStillCurrent()) showToast('Could not save category. Please try again.');
     }
-  }, [sheet, showToast, patchRules, patchTransactions]);
+  }, [sheet, showToast, patchRules]);
 
   // WHIT-291: re-file a captured SET of transactions under one category in a single action
   // (multi-select). This is applyCategory's 'all' batch path WITHOUT the merchant rule/sweep —
@@ -1426,64 +1292,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // chunks under the server cap, then reconcile BY ID and roll back only the ones that failed to
   // their PREVIOUS category (never a blanket null — a re-filed charge may have been categorised).
   const applyCategoryToMany = useCallback(async (txIds: string[], categoryId: string): Promise<void> => {
-    const transactions = readTransactionsCache();
+    const transactions = readTransactionCopies(queryClient, { includeScopedLists: false });
     const categories = queryClient.getQueryData<Category[]>(['categories']) ?? [];
     const category = categories.find((c) => c.id === categoryId);
     // Only touch ids that are actually in the cache; dedupe defensively.
     const ids = Array.from(new Set(txIds)).filter((id) => transactions.some((t) => t.transaction_id === id));
     if (!category || ids.length === 0) { setSheet(null); return; }
 
-    // Snapshot each charge's current category so a partial-failure rollback restores exactly it.
-    const previousById = new Map(
-      transactions.filter((t) => ids.includes(t.transaction_id)).map((t) => [t.transaction_id, t.category] as const));
-
-    patchTransactions((prev) =>
-      prev.map((existing) => (ids.includes(existing.transaction_id) ? { ...existing, category: categoryId } : existing)));
-    // WHIT-348: drop the re-filed charges from any budget-detail list whose budget no longer owns
-    // the new category, so the old budget's list updates before the refetch lands.
-    const budgetTxSnaps = removeRefiledFromBudgetLists(categories, ids, categoryId);
+    // WHIT-271: the optimistic writes are guarded (no-op on the cleared cache); gate late toasts on epoch.
+    const epoch = sessionEpoch.current;
+    const epochStillCurrent = () => epoch === sessionEpoch.current;
+    const rollback = optimisticRefile(ids, categoryId, categories, epochStillCurrent);
     showToast(ids.length === 1
       ? `This transaction filed under ${category.name}.`
       : `${ids.length} transactions filed under ${category.name}.`);
     setSheet(null); // close the confirm sheet
 
-    // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate late toasts on epoch.
-    const epoch = sessionEpoch.current;
-
     // Batch-persist in chunks under the server cap and reconcile BY ID (shared with
     // applyCategory('all') since WHIT-292). A rejected/malformed chunk leaves its ids in
-    // failedIds -> rolled back to their previous category below.
+    // failedIds -> rolled back to their previous category.
     const { failedIds } = await persistCategoryBatch(ids, categoryId);
     if (failedIds.length > 0) {
-      patchTransactions((prev) =>
-        prev.map((existing) => (failedIds.includes(existing.transaction_id)
-          ? { ...existing, category: previousById.get(existing.transaction_id) ?? null }
-          : existing)));
-      // WHIT-348: restore the budget lists, then re-drop only the ids that DID save (epoch-gated).
-      if (epoch === sessionEpoch.current) {
-        budgetTxSnaps.forEach(([key, data]) => queryClient.setQueryData(key, data));
-        const savedIds = ids.filter((id) => !failedIds.includes(id));
-        if (savedIds.length > 0) removeRefiledFromBudgetLists(categories, savedIds, categoryId);
-        showToast('Could not save some categories. Please try again.');
-      }
+      rollback(failedIds);
+      if (epochStillCurrent()) showToast('Could not save some categories. Please try again.');
     }
-    // Some categorisations persisted -> refresh the server-derived Budgets/Insights reads. The
-    // ['transactions'] feed is NOT invalidated (the optimistic patch already wrote the change;
-    // an InfiniteData invalidate would storm every loaded page — see applyCategory above).
-    if (failedIds.length < ids.length) {
-      queryClient.invalidateQueries({ queryKey: ['budgets'] });
-      queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-      queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
-      queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
-      // WHIT-501: a batch re-file changes the full-history uncategorized tally.
-      queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
-    }
-  }, [showToast, patchTransactions]);
+    if (failedIds.length < ids.length) refreshAfter('refile');
+  }, [showToast]);
 
   // WHIT-508: bring the server-derived reads back in line after an apply-rules run.
   //
-  // Ordering matters. Invalidating an InfiniteData refetches EVERY loaded page sequentially (the
-  // storm applyCategory documents above), and each page of the now-sparse uncategorized feed makes
+  // Ordering matters. Invalidating an InfiniteData refetches EVERY loaded page sequentially (a
+  // storm), and each page of the now-sparse uncategorized feed makes
   // the server re-walk up to its own scan cap. So trim to page 1 FIRST, then invalidate: one round
   // trip. `resetQueries` would also avoid the storm but drops the data, and the tab's cold-load
   // gate is `isLoading && transactions.length === 0` — so the list would blank to a spinner right
@@ -1504,34 +1343,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // minted rule optimistically (with its "NEW" badge); invalidating here would refetch and reset
   // that badge to false, so it flashes then vanishes. Every other caller mints no rule (or mints
   // one it does NOT show optimistically), so they invalidate as before.
-  const refreshAfterApplyRules = useCallback((opts?: { skipRules?: boolean }) => {
-    queryClient.setQueryData<InfiniteData<TransactionFeedPage>>(['uncategorizedFeed'], (prev) =>
-      prev && prev.pages.length > 1
-        ? { ...prev, pages: prev.pages.slice(0, 1), pageParams: prev.pageParams.slice(0, 1) }
-        : prev);
-    queryClient.invalidateQueries({ queryKey: ['budgets'] });
-    queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-    queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
-    queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
-    queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
-    queryClient.invalidateQueries({ queryKey: ['uncategorizedFeed'] });
-    // WHIT-576: a server-side re-file can move rows into or out of a search's results.
-    queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
-    // The reconcile writes the SERVER's category id onto the row, and a row whose id isn't in the
-    // client's taxonomy still counts as unfiled (categoryIsUnmapped). So a category created in
-    // another session during the run would leave its charges sitting in the Uncategorized list
-    // while the badge dropped — list and badge disagreeing. Re-read the taxonomy too.
-    queryClient.invalidateQueries({ queryKey: ['categories'] });
-    // WHIT-517: a rule sweep files charges (shrinking the shop groups) and — for "file by shop" —
-    // mints a rule. Refresh the "file by shop" list so a filed shop leaves it, and the rules list
-    // so a minted rule appears. Harmless (and correct) for plain "Apply my rules" too, which also
-    // shrinks the groups.
-    if (!opts?.skipRules) queryClient.invalidateQueries({ queryKey: ['rules'] });
-    queryClient.invalidateQueries({ queryKey: ['uncategorizedMerchants'] });
-    // WHIT-542: accepting a suggestion mints a rule for that shop (and files its charges), so the
-    // shop no longer reads as a hand-filing habit — refresh the suggestions so it drops off.
-    queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
-  }, []);
+  const refreshAfterApplyRules = useCallback(
+    (opts?: { skipRules?: boolean }) => refreshAfter('rulesApplied', opts),
+    [],
+  );
 
   // WHIT-508: preview what the user's existing rules would file, writing nothing. Lives here
   // rather than in the sheet so the component never imports the api layer directly: it keeps the
@@ -1858,37 +1673,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // (and vice-versa); a passed "" note / [] tags clears that field on the server.
   const applyTransactionEdit = useCallback(
     async (txId: string, patch: { notes?: string; tags?: string[]; budget_excluded?: boolean }): Promise<void> => {
-      // The budget-detail + Insights category-drill lists live in their own per-category (and
-      // per-cycle) caches, NOT in readTransactionsCache's feed/uncat/recent union. A charge
-      // opened from one of those lists that lives ONLY there (an older one-off, off the recent
-      // window) would otherwise not be found here and the edit would silently no-op. Scan those
-      // caches ONLY for this lookup — kept local to this edit so applyCategory's re-file sweep,
-      // which shares readTransactionsCache, never sees a stale cycle-keyed row (WHIT-524).
-      const findInScopedLists = (id: string): Transaction | undefined => {
-        for (const prefix of [['budgetTransactions'], ['categoryTransactions']] as const) {
-          for (const [, data] of queryClient.getQueriesData<Transaction[]>({ queryKey: prefix })) {
-            const hit = data?.find((t) => t.transaction_id === id);
-            if (hit) return hit;
-          }
-        }
-        return undefined;
-      };
-      // Stamp `fields` onto this txId wherever it appears; leave other rows untouched.
-      const stamp = (fields: Partial<Transaction>) => (row: Transaction) =>
-        (row.transaction_id === txId ? { ...row, ...fields } : row);
-      // Map `stamp` over each cache under the given key prefixes, in place. Guarded (no-ops on a
-      // cleared cache), so — like patchTransactions — the rollback below needs no epoch gate.
-      const patchScopedLists = (prefixes: readonly (readonly string[])[], mapRow: (t: Transaction) => Transaction) => {
-        for (const prefix of prefixes) {
-          for (const [key] of queryClient.getQueriesData<Transaction[]>({ queryKey: prefix })) {
-            queryClient.setQueryData<Transaction[]>(key, (prev) => (prev ? prev.map(mapRow) : prev));
-          }
-        }
-      };
-      const BUDGET_AND_CATEGORY = [['budgetTransactions'], ['categoryTransactions']] as const;
-
-      const transaction =
-        readTransactionsCache().find((t) => t.transaction_id === txId) ?? findInScopedLists(txId);
+      // A charge opened from a budget-detail or category drill-in list may live ONLY there (an
+      // older one-off, off the recent window), so this lookup includes those lists.
+      const transaction = findTransaction(txId, { includeScopedLists: true });
       if (!transaction) return; // cache evicted / unknown id — nothing to edit
 
       // Snapshot only the fields we're about to change, so a failed save restores
@@ -1898,43 +1685,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if ('tags' in patch) previous.tags = transaction.tags;
       if ('budget_excluded' in patch) previous.budget_excluded = transaction.budget_excluded;
 
-      patchTransactions((prev) =>
-        prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...patch } : existing)));
+      // Stamp `fields` onto this txId wherever it appears; leave other rows untouched.
+      const stamp = (fields: Partial<Transaction>) => (row: Transaction) =>
+        (row.transaction_id === txId ? { ...row, ...fields } : row);
 
-      // WHIT-525: stamp the row in BOTH scoped caches (budget + category) uniformly. The old
-      // approach (WHIT-344) removed the row from budgetTransactions, which blanked a budget-only
-      // charge's detail screen to "not found." Now the row stays findable; budgetDetail filters
-      // out excluded rows at the view-model level so the budget list still drops them visually.
-      // Re-including (budget_excluded: false) still relies on the invalidate (no optimistic add).
-      patchScopedLists(BUDGET_AND_CATEGORY, stamp(patch));
+      // WHIT-525: stamp the row in every copy, including both scoped lists (budget + category).
+      // The old approach (WHIT-344) removed the row from budgetTransactions, which blanked a
+      // budget-only charge's detail screen to "not found." Now the row stays findable;
+      // budgetDetail filters out excluded rows at the view-model level so the budget list still
+      // drops them visually. Re-including (budget_excluded: false) still relies on the refresh.
+      patchAllCopies(stamp(patch));
 
-      // WHIT-271: patchTransactions is guarded (no-ops on the cleared cache); gate the late
-      // failure toast on the epoch so a save settling after sign-out doesn't toast the next session.
+      // WHIT-271: the patches are guarded (no-op on the cleared cache); gate the late failure
+      // toast on the epoch so a save settling after sign-out doesn't toast the next session.
       const epoch = sessionEpoch.current;
       try {
         await apiSetTransactionFields(txId, patch);
-        // The ['transactions'] feed is NOT invalidated: the optimistic patchTransactions above
-        // already wrote notes/tags/budget_excluded into the feed cache, and an InfiniteData
-        // invalidate would refetch every loaded page (a storm once paged back).
-        // Excluding/including a charge changes the budget total AND its cycle list — refresh
-        // both together so the detail header and its rows stay reconciled (a note/tag edit
-        // touches neither, so only do this for a budget_excluded change).
-        if ('budget_excluded' in patch) {
-          queryClient.invalidateQueries({ queryKey: ['budgets'] });
-          queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-          queryClient.invalidateQueries({ queryKey: ['budgetTransactions'] });
-          queryClient.invalidateQueries({ queryKey: ['categoryTransactions'] });
-        }
+        // A note/tag edit touches no server-derived total, so only an exclude refreshes.
+        if ('budget_excluded' in patch) refreshAfter('budgetExclusion');
       } catch {
-        patchTransactions((prev) =>
-          prev.map((existing) => (existing.transaction_id === txId ? { ...existing, ...previous } : existing)));
-        patchScopedLists(BUDGET_AND_CATEGORY, stamp(previous));
+        patchAllCopies(stamp(previous));
         if (epoch === sessionEpoch.current) {
           showToast('Could not save. Please try again.');
         }
       }
     },
-    [patchTransactions, showToast],
+    [showToast],
   );
 
   const saveBudget = useCallback(
@@ -2173,20 +1949,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       patchRules((prev) => prev.filter((r) => r.categoryId !== id));
       patchTransactionsCache((prev) => prev.map((t) => (t.category === id ? { ...t, category: null } : t)));
-      // The deleted category's in-cycle spend now falls into Uncategorized on the
-      // breakdown; invalidate so the Insights tab re-pulls and reflects that.
-      queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-      // WHIT-501: the deleted category's charges just became uncategorized (patched to null
-      // above, and the id dropped from the server's taxonomy), so the full-history tally rose.
-      // Invalidate (not setQueryData) — the server count genuinely changed, so a refetch is truth.
-      queryClient.invalidateQueries({ queryKey: ['uncategorizedCount'] });
-      // Those charges must also ENTER the Uncategorized tab's list. The patch above only cleared
-      // the category on rows already in a cache; the uncategorized feed is a separate paged query
-      // that must re-fetch to include them. Unlike a single categorise (where an in-place patch
-      // suffices, so the frequent path avoids an InfiniteData refetch storm), deleting a category
-      // is rare, so invalidating the paged feed here is cheap and keeps the list correct.
-      queryClient.invalidateQueries({ queryKey: ['uncategorizedFeed'] });
-      queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
+      // The deleted category's spend and charges now count as Uncategorized. Deleting a category
+      // is rare, so refetching the paged uncategorized feed here is cheap and keeps it correct.
+      refreshAfter('categoryDeleted');
       // WHIT-271: return false (not just skip the toast) so app/category/edit.tsx's `if (ok)`
       // doesn't router.back() the next session after a mid-delete sign-out.
       if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
@@ -2938,51 +2703,6 @@ function ancestorDepth(byId: Map<string, Category>, id: string | null): number {
 export function categoryDepth(categories: Category[], parentId: string | null): number {
   if (parentId === null) return 1;
   return ancestorDepth(new Map(categories.map((c) => [c.id, c])), parentId) + 1;
-}
-
-// Does the budget on `budgetId` own `categoryId`? — the client mirror of the server's
-// subtree_ids (shared/spend.py): a budget's spend is its own category id PLUS every descendant
-// in the SAME bucket. The descent passes THROUGH a cross-bucket intermediate to reach a
-// same-bucket descendant, so only the two ENDPOINTS' buckets matter, not the nodes between. In a
-// single-parent tree, walking UP the `parent` chain from categoryId and reaching budgetId proves
-// categoryId is a descendant; we then keep it iff it is the root itself or shares the root's
-// bucket (an absent category's bucket is `undefined`, mirroring the server's `None == None`).
-// Cycle-safe via `seen`. Pinned to the server rule by the shared-fixture parity test
-// (budgetSubtreeParity) so the two can't silently drift.
-export function budgetSubtreeContains(categories: Category[], budgetId: string, categoryId: string): boolean {
-  if (categoryId === budgetId) return true; // the root is always in its own subtree
-  const byId = new Map(categories.map((c) => [c.id, c]));
-  const seen = new Set<string>();
-  let cur = byId.get(categoryId)?.parent ?? null;
-  while (cur && !seen.has(cur)) {
-    if (cur === budgetId) return byId.get(categoryId)?.bucket === byId.get(budgetId)?.bucket;
-    seen.add(cur);
-    cur = byId.get(cur)?.parent ?? null;
-  }
-  return false; // categoryId is not a descendant of budgetId (an orphan/unknown id that isn't the root)
-}
-
-// WHIT-348: drop the given re-filed tx ids from every cached ['budgetTransactions', budgetId]
-// list whose budget no longer owns their NEW category, so a re-file disappears from the old
-// budget's detail list instantly (mirrors WHIT-344's exclude removal). Removal only — a charge
-// re-filed INTO a budget is added back by the invalidate refetch, which owns the window + sort.
-// Only rewrites a list that actually shrank (skips lists the id was never in). Returns the prior
-// snapshots of ONLY the lists it changed, so a failed save rolls back exactly those (WHIT-360) —
-// restoring untouched lists would clobber a concurrent refetch of an unrelated budget. Epoch-gated
-// at the call site.
-function removeRefiledFromBudgetLists(categories: Category[], ids: string[], newCategoryId: string) {
-  const snapshots = queryClient.getQueriesData<Transaction[]>({ queryKey: ['budgetTransactions'] });
-  const changed: typeof snapshots = [];
-  snapshots.forEach(([key, data]) => {
-    if (!data) return;
-    const budgetId = key[1] as string;
-    if (budgetSubtreeContains(categories, budgetId, newCategoryId)) return; // still owned by this budget
-    const next = data.filter((t) => !ids.includes(t.transaction_id));
-    if (next.length === data.length) return; // the id was never in this list — leave it untouched
-    changed.push([key, data]);
-    queryClient.setQueryData<Transaction[]>(key, next);
-  });
-  return changed;
 }
 
 // The tallest downward chain from `id` in LEVELS (1 for a leaf), cycle-safe. Mirrors the

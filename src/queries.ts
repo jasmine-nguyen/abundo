@@ -8,7 +8,8 @@ import { useQuery, useInfiniteQuery, useQueryClient, replaceEqualDeep } from '@t
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { fetchBudgets, fetchBudgetTransactions, fetchBreakdown, fetchCategories, fetchCategoryTransactions, fetchPayCycle, fetchTransactions, fetchTransactionsFeed, fetchTransactionsSearch, fetchUncategorizedFeed, fetchUncategorizedCount, fetchUncategorizedMerchants, fetchFilingSuggestions, fetchLoanFacts, fetchHomeLoan, fetchRepayment, fetchAccountBalances, refreshAccountBalances, fetchGoals, fetchMilestones, listRules } from './api';
 import type { AccountBalance, BudgetRollup, CategorySpend, DateRange, RuleRecord, GoalRecord, HomeLoan, LoanFacts, MilestoneRecord, PayCycle, Repayment, TransactionFeedPage, TransactionSearchResult, UncategorizedMerchants, FilingSuggestions } from './api';
-import { cycleClockView, cycleStart, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, unionById, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { cycleClockView, cycleStart, cycleName, loanFactsReady, toBudget, toCategory, toRule, readIncomeSources, EARNED_KEY, EMPTY_LOAN_FACTS } from './context';
+import { readTransactionCopies } from './transactionCache';
 import { RECONCILE_EPSILON } from './theme';
 import type { Budget, Category, HomeLoanState, Rule, Transaction } from './context';
 import { getStatus, subscribe } from './auth';
@@ -351,15 +352,13 @@ export function useTransactionResolver(): TransactionResolver {
   // Feed / uncategorized / recent / search FIRST, so their fresher (optimistically-patched) copy
   // wins the de-dup over a stale budget/category copy of the same charge. A deep-history search
   // match (WHIT-576) lives only in the search cache.
-  const transactions = useMemo(() => unionById([
-    ...(feedQuery.data?.pages ?? []).map((page) => page.transactions),
-    ...(uncategorizedFeedQuery.data?.pages ?? []).map((page) => page.transactions),
-    recentQuery.data ?? EMPTY_TX,
-    ...queryClient.getQueriesData<TransactionSearchResult>({ queryKey: transactionsSearchKey })
-      .map(([, result]) => result?.transactions ?? EMPTY_TX),
-    ...queryClient.getQueriesData<Transaction[]>({ queryKey: budgetTransactionsKey }).map(([, rows]) => rows ?? EMPTY_TX),
-    ...queryClient.getQueriesData<Transaction[]>({ queryKey: categoryTransactionsKey }).map(([, rows]) => rows ?? EMPTY_TX),
-  ]), [feedQuery.data, uncategorizedFeedQuery.data, recentQuery.data, scopedVersion, queryClient]);
+  // The feed/uncategorized/recent data and scopedVersion aren't read in the body: they are the
+  // reactivity triggers that re-run this point-in-time read when a copy changes.
+  const transactions = useMemo(
+    () => readTransactionCopies(queryClient, { includeScopedLists: true }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the triggers above are the deps
+    [feedQuery.data, uncategorizedFeedQuery.data, recentQuery.data, scopedVersion, queryClient],
+  );
   const findTx = useCallback(
     (id: string) => transactions.find((transaction) => transaction.transaction_id === id),
     [transactions],
