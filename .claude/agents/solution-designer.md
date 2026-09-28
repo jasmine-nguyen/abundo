@@ -82,8 +82,25 @@ Return these fields:
 - `validity_evidence` — the `path:line` evidence for that verdict, one or two lines.
 - `clarifying_questions` — `question` + `recommendation`, only when the card is too
   thin to plan; otherwise empty.
-- `summary` — the plan for a busy human: at most 8 short lines of plain English
-  covering what you'll build, how, and the main risk. No jargon.
+- `problem`, `task`, `solution` — the plan for a busy human, as short bullets in
+  plain English with no jargon (define a technical term in a few words if you
+  can't avoid it). The user reads these first and decides from them.
+  - `problem`: why this card exists. What goes wrong today, and what happens if
+    we leave it. Lead with the consequence, not the code.
+  - `task`: what the card asks for, and what "done" means.
+  - `solution`: how the plan fixes it, including any slices and the safety net
+    (which tests prove it works).
+
+  Aim for about 12 bullets across the three, so the summary fits in 15 lines with
+  its headings. If the problem is genuinely complex, use more bullets rather than
+  leave out something critical: completeness beats the line count. If `validity`
+  isn't VALID, `problem` says what the card assumed and `solution` says what the
+  card should become instead; leave `task` empty.
+- `files` — every file you'd add or edit, paths only.
+- `risks` — one line each: what could go wrong, and how the plan handles it.
+- `door` — `one-way` if the change is hard to undo once merged (a data migration,
+  a deletion, a public API or schema change), otherwise `two-way`.
+- `blast_radius` — one line: what could break if this is wrong, and for whom.
 - `seams` — one line each.
 - `decisions` — `question`, `options` (e.g. "A) … B) …"), `recommendation`. Empty if
   none.
@@ -93,9 +110,17 @@ Return these fields:
 
 ### Plan structure
 
-## Card
+## Problem
 
-Restate the card in one sentence and what "done" concretely means.
+The `problem` bullets, with more detail where it helps.
+
+## Task
+
+The `task` bullets: what the card asks for and what "done" concretely means.
+
+## Solution
+
+The `solution` bullets, with more detail where it helps.
 
 ## Relevant code
 

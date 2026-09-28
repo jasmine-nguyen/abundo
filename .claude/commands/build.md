@@ -75,10 +75,14 @@ the card number for card builds) and check where it is:
    Echo which card you're building and why before continuing.
 
 2. Set the card's Status to 'In Progress'. Write the card's title and
-   description to `.build/cards/<card number>.md` with the Write tool —
+   description to `.build/cards/<card ID>.md` with the Write tool —
    never paste card text into a shell command, where quotes or `$(...)`
    in the card would break or run. Then run:
-   `python3 build_graph.py --card <number> --type "<card Type>" --details-file .build/cards/<number>.md`
+   `python3 build_graph.py --card <card ID> --type "<card Type>" --details-file .build/cards/<card ID>.md`
+
+   `<card ID>` is the full ID with its prefix (e.g. `WHIT-622`, not `622`),
+   even if the user typed a bare number. It names the build, the branch
+   and the PR.
 
    **In a cloud session** (`CLAUDE_CODE_REMOTE` is `true`), add
    `--branch <your session's branch>`: the branch your session instructions
@@ -92,8 +96,14 @@ the card number for card builds) and check where it is:
    bug path: the bug is reproduced with a failing test before it's fixed.
 
    The script refuses to start if tracked files have uncommitted changes,
-   or if a build for this card already exists. Relay the message; only add
+   if `project-context.md` has no ```checks block (it must be able to run
+   the tests), or if a build for this card already exists. Relay the message; only add
    `--restart` if the user wants to throw the old build away.
+
+   If it says `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set, stop and tell
+   the user: with a key set, every agent is billed per token instead of using
+   their Claude plan. Never add `--allow-api-billing` yourself; only the user
+   can decide to pay per token.
 
    While it runs, give the user short status updates based on the output.
    The script prints which step is running and what tools it's using.
@@ -111,22 +121,30 @@ the card number for card builds) and check where it is:
 3. When the script pauses, it prints a block between `===` lines and
    `Paused. Resume with: ...`. The first line of the block says why:
 
-   - **PLAN FOR REVIEW** — show the user the block: the critic's verdict
-     and findings, the summary, the test points, any slices, and the
-     plan file path (they can edit that file directly before approving).
-     If it lists decisions (Q1, Q2, ...), ask them with AskUserQuestion,
-     putting the recommended answer first and marking it "(Recommended)".
-     Then offer: Approve · Rework · Stop.
-   - **CARD LOOKS INVALID** — show the evidence and ask: Close the card ·
-     Plan it anyway (ask why it's still needed) · Stop.
+   The user can't see the script's output, only your messages. So at every
+   pause, show what the block says in your own message BEFORE you ask
+   anything.
+
+   - **PLAN FOR REVIEW** — you MUST show the whole block in your message
+     before any question. Show it as printed, formatted as Markdown: each
+     section title in bold, its lines as bullets. Keep every section, every
+     line and the order. Don't summarise it, shorten it, or go straight to
+     the questions. The block runs in this order: Problem, Task, Solution
+     (why, what, how), then Slices, Files touched, Test points, Critic
+     findings, Critic tweaks, Risks, Decisions, and the plan file's path
+     (they can edit that file before approving).
+
+     Then ask the decisions with AskUserQuestion, recommended answer first
+     and marked "(Recommended)", and offer: Approve · Rework · Stop.
+   - **CARD LOOKS INVALID** — show the block (evidence, problem, and what
+     the card should become), then ask: Close the card · Plan it anyway (ask
+     why it's still needed) · Stop.
    - **QUESTIONS BEFORE PLANNING** — the card was too thin to plan. Ask the
      questions with AskUserQuestion, recommended answer first.
    - **DECISION NEEDED** — an agent hit a decision it shouldn't make alone
      (or couldn't reproduce the bug, or write failing tests). Show it and
      ask the user; offer the options it lists and any hint on the last
      line (`skip`, `unpin`).
-   - **RETRO PROPOSALS** — lines to add to project-context.md, learned from
-     this build's friction. Ask which to add (all, some, or none).
 
    Every pause also accepts **Stop**: it ends the build there and nothing
    ships.
@@ -144,7 +162,6 @@ the card number for card builds) and check where it is:
    | CARD LOOKS INVALID | `close` · `rework: <why it's still needed>` |
    | QUESTIONS BEFORE PLANNING | `go` (recommendations) or `Q1: <answer>; Q2: <answer>` |
    | DECISION NEEDED | the decision in plain words · `skip` · `unpin: <reason>` |
-   | RETRO PROPOSALS | `go` · `go: 1,3` · `skip` |
 
    If the reply contains quotes, backticks or `$`, pass it through a
    quoted heredoc so the shell doesn't touch it:
@@ -162,7 +179,7 @@ the card number for card builds) and check where it is:
 5. Repeat steps 3–4 until the script ends with one of these:
 
    - **PR opened: <url>** — relay the link. The script already committed,
-     pushed and opened the PR.
+     pushed and opened the PR, and it ran the checks one last time first.
    - **BUILD CANCELLED** — the user stopped it. Set the card's Status back
      to 'To Do', and mention the branch if the script printed one.
    - **CARD CLOSED** — the user agreed the card isn't needed. Set its Status
@@ -186,6 +203,4 @@ the card number for card builds) and check where it is:
    - If it printed **TECH DEBT CARDS TO FILE**, create each one on the board
      (Status 'To Do', Type 'Tech Debt' if the board has it, otherwise the
      default card type), and tell the user they were filed.
-   - If it printed **CHECKS WORTH AUTOMATING**, pass the ideas on to the user
-     in one short list; don't implement them unasked.
    - Once the PR is open, update the card's Status to 'Done'.

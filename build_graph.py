@@ -14,11 +14,13 @@
 #                         └→ standards ∥ spec ∥ correctness ∥ qa → fix_or_ship
 # fix_or_ship ─┬→ implementer                                   findings, rounds left
 #              ├→ next_slice → test_writer                      more slices to build
-#              └→ retro → retro_review (pause, if proposals) → ship → END
-#                                                   (END instead of ship when the build failed)
+#              └→ ship → END                                    all four reviews passed
+#                 (END instead, with BUILD FAILED, when rounds run out)
+# ship ─→ implementer                                            final checks failed, rounds left
 import argparse
 import asyncio
 import hashlib
+import inspect
 import operator
 import os
 import re
@@ -31,17 +33,16 @@ from pathlib import Path
 from typing import Annotated, NotRequired, TypedDict
 
 from claude_agent_sdk import (
-    AssistantMessage,
     ClaudeAgentOptions,
     CLIConnectionError,
     HookMatcher,
     ProcessError,
     ResultError,
     ResultMessage,
-    ToolUseBlock,
     query,
 )
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, RetryPolicy, interrupt
 
@@ -54,7 +55,6 @@ class BuildState(TypedDict):
     untracked_at_start: NotRequired[list[str]]
     requested_branch: NotRequired[str]
     history: Annotated[list[str], operator.add]
-    cost_usd: Annotated[float, operator.add]
     # planning
     validity: NotRequired[str]
     validity_evidence: NotRequired[str]
@@ -62,7 +62,13 @@ class BuildState(TypedDict):
     clarify_answers: NotRequired[str]
     clarify_rounds: NotRequired[int]
     plan: NotRequired[str]
-    summary: NotRequired[str]
+    problem: NotRequired[list[str]]
+    task: NotRequired[list[str]]
+    solution: NotRequired[list[str]]
+    files: NotRequired[list[str]]
+    risks: NotRequired[list[str]]
+    door: NotRequired[str]
+    blast_radius: NotRequired[str]
     seams: NotRequired[list[str]]
     decisions: NotRequired[list[dict]]
     slices: NotRequired[list[dict]]
@@ -103,14 +109,11 @@ class BuildState(TypedDict):
     correctness_verdict: NotRequired[str]
     correctness_feedback: NotRequired[str]
     correctness_minor: NotRequired[list[str]]
-    context_updates: NotRequired[list[str]]
     qa_verdict: NotRequired[str]
     qa_feedback: NotRequired[str]
     qa_patch: NotRequired[str]
     manual_checks: NotRequired[list[str]]
     # wrap-up
-    retro_proposals: NotRequired[list[dict]]
-    lint_ideas: NotRequired[list[str]]
     failed: NotRequired[bool]
     outcome: NotRequired[str]
     pr_url: NotRequired[str]
@@ -169,8 +172,6 @@ NODE_LABELS = {
     "qa": "QA",
     "fix_or_ship": "Fix or Ship",
     "next_slice": "Next Slice",
-    "retro": "Retro",
-    "retro_review": "Retro Review",
     "ship": "Ship",
 }
 
@@ -187,7 +188,8 @@ class Agent:
 READ = ("Read", "Grep", "Glob", "Bash")
 WRITE = ("Read", "Grep", "Glob", "Edit", "Write", "Bash")
 
-# Turn and spend caps stop a stuck agent. Raise them if big cards hit them.
+# Turn and usage caps stop a stuck agent. Usage is measured at API prices, even on a
+# subscription. Raise the caps if big cards hit them.
 AGENTS = {
     "designer": Agent("solution-designer.md", READ, "read_only", 80, 10.0),
     "plan_critic": Agent("solution-critic.md", READ, "read_only", 60, 6.0),
@@ -198,7 +200,6 @@ AGENTS = {
     "spec_critic": Agent("spec-critic.md", READ, "read_only", 50, 5.0),
     "correctness_critic": Agent("correctness-critic.md", READ, "read_only", 60, 6.0),
     "qa": Agent("qa.md", WRITE, "qa", 150, 15.0),
-    "retro": Agent("retro.md", READ, "read_only", 30, 3.0),
 }
 
 
@@ -236,7 +237,13 @@ DESIGNER_OUTPUT = _output(
     validity=_one_of("VALID", "ALREADY DONE", "DEAD CODE", "WRONG PREMISE", "ALREADY COVERED"),
     validity_evidence=TEXT,
     clarifying_questions=_list_of(question=TEXT, recommendation=TEXT),
-    summary=TEXT,
+    problem=TEXTS,
+    task=TEXTS,
+    solution=TEXTS,
+    files=TEXTS,
+    risks=TEXTS,
+    door=_one_of("one-way", "two-way"),
+    blast_radius=TEXT,
     seams=TEXTS,
     decisions=_list_of(question=TEXT, options=TEXT, recommendation=TEXT),
     slices=_list_of(title=TEXT, delivers=TEXT),
@@ -269,17 +276,10 @@ CORRECTNESS_OUTPUT = _output(
     blocking_bugs=TEXTS,
     minor_bugs=TEXTS,
     decisions_to_escalate=TEXTS,
-    context_updates=TEXTS,
     report=TEXT,
 )
 QA_OUTPUT = _output(real_bugs=TEXTS, manual_checks=TEXTS, patch_written={"type": "boolean"}, report=TEXT)
-RETRO_OUTPUT = _output(
-    context_additions=_list_of(
-        section=_one_of("Known landmines", "Coding standards", "Glossary"), text=TEXT
-    ),
-    lint_ideas=TEXTS,
-    notes=TEXT,
-)
+
 
 
 # --- guards ---
@@ -357,7 +357,6 @@ class AgentError(Exception):
 class AgentResult:
     output: dict
     session_id: str
-    cost: float
 
 
 TRANSIENT_STATUSES = {408, 429, 500, 502, 503, 504, 529}
@@ -373,13 +372,6 @@ AGENT_RETRY = RetryPolicy(max_attempts=2, retry_on=lambda e: getattr(e, "transie
 
 def agent_prompt(prompt_file: str) -> str:
     return (ROOT / ".claude" / "agents" / prompt_file).read_text() + "\n\n" + read_text(PROJECT_CONTEXT_FILE)
-
-
-def print_progress(message):
-    if isinstance(message, AssistantMessage):
-        for block in message.content:
-            if isinstance(block, ToolUseBlock):
-                print(f"  → {block.name}", flush=True)
 
 
 async def run_agent(name: str, prompt: str, output_format: dict, resume: str | None = None) -> AgentResult:
@@ -404,7 +396,6 @@ async def run_agent(name: str, prompt: str, output_format: dict, resume: str | N
     result = None
     try:
         async for message in query(prompt=prompt, options=options):
-            print_progress(message)
             if isinstance(message, ResultMessage):
                 result = message
     except ResultError as e:
@@ -419,7 +410,7 @@ async def run_agent(name: str, prompt: str, output_format: dict, resume: str | N
         raise AgentError(name, detail, _transient(result.terminal_reason, result.api_error_status))
     if not isinstance(result.structured_output, dict):
         raise AgentError(name, "returned no structured answer")
-    return AgentResult(result.structured_output, result.session_id, result.total_cost_usd or 0.0)
+    return AgentResult(result.structured_output, result.session_id)
 
 
 # --- helpers ---
@@ -429,13 +420,172 @@ class BuildError(Exception):
     """Something the user has to sort out before running --retry."""
 
 
-def node_start(name: str):
-    print(f"\n▶ {NODE_LABELS.get(name, name)}...", flush=True)
+# Either of these makes the agents bill per token instead of using the Claude plan.
+PAID_AUTH_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 
-def node_done(name: str, cost: float | None = None):
-    spent = f" (${cost:.2f})" if cost else ""
-    print(f"✅ {NODE_LABELS.get(name, name)} done{spent}", flush=True)
+def paid_auth_var() -> str | None:
+    return next((name for name in PAID_AUTH_VARS if os.environ.get(name)), None)
+
+
+# --- progress ---
+#
+# Every step prints one line when it starts (⌛) and one when it ends: ✅ done,
+# ❌ sent back, ❓ or ⏸ waiting for you, ⏹ stopped. announce() wraps each step,
+# so all the wording lives here instead of inside the steps.
+
+
+def plural(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def finding_count(feedback: str) -> int:
+    return sum(1 for line in (feedback or "").splitlines() if line.startswith("- "))
+
+
+def running_message(name: str, state: BuildState) -> str | None:
+    if fix_feedback(state):
+        verb = "fixing"
+    elif state.get("escalation_answer"):
+        verb = "continuing"
+    else:
+        verb = "writing"
+    round_number = state.get("implementation_attempts", 0) + 1
+    messages = {
+        "designer": "Designer is planning the change",
+        "plan_critic": "Critic is checking the plan",
+        "reproducer": "Reproducing the bug with a failing test",
+        "test_writer": "Writing the tests that define done",
+        "implementer": f"Implementer is {verb} the code (round {round_number})",
+        "checks": "Running typecheck and tests",
+        "standards_critic": "Standards review: checking the code against your standards",
+        "spec_critic": "Spec review: checking the code does what the card asked",
+        "correctness_critic": "Correctness review: hunting for bugs",
+        "qa": "QA: testing the edge cases",
+        "ship": "Running the checks one last time, then opening the PR",
+    }
+    return messages.get(name)
+
+
+def paused_message(name: str, state: BuildState) -> str:
+    if name == "sign_off" and state.get("validity", "VALID") != "VALID":
+        return "Waiting for you: the designer thinks the card isn't needed"
+    return {
+        "sign_off": "Waiting for you to review the plan",
+        "clarify": "Waiting for your answers to the designer's questions",
+        "escalation": "Waiting for your decision",
+    }.get(name, "Waiting for you")
+
+
+def finished_message(name: str, state: BuildState, update: dict) -> str | None:
+    if update.get("outcome") == "stopped":
+        return "⏹ You stopped the build"
+    if name in REVIEWERS:
+        key = name.removesuffix("_critic")
+        label = REVIEW_LABELS[key]
+        if update[f"{key}_verdict"] == "APPROVED":
+            return f"✅ {label} passed"
+        return f"❌ {label}: {plural(finding_count(update[f'{key}_feedback']), 'thing')} to fix"
+    if name == "designer":
+        if update["clarify_questions"]:
+            return f"❓ Designer has {plural(len(update['clarify_questions']), 'question')} before planning"
+        if update["validity"] != "VALID":
+            return f"❌ Designer thinks the card isn't needed ({update['validity'].lower()})"
+        details = [
+            plural(len(update[key]), word) for key, word in (("decisions", "decision"), ("slices", "slice")) if update[key]
+        ]
+        return "✅ Plan drafted" + (f" ({', '.join(details)})" if details else "")
+    if name == "plan_critic":
+        if update["plan_verdict"] != "NEEDS REWORK":
+            tweaks = len(update["plan_tweaks"])
+            return "✅ Critic approved the plan" + (f" with {plural(tweaks, 'tweak')}" if tweaks else "")
+        if state.get("plan_attempts", 0) < MAX_PLAN_ATTEMPTS:
+            return "❌ Critic sent the plan back to the designer"
+        return "❌ Critic still has concerns; you'll decide at sign-off"
+    if name == "fix_or_ship":
+        unhappy = [label for key, label in REVIEW_LABELS.items() if state.get(f"{key}_verdict") == "NEEDS_REWORK"]
+        if update["failed"]:
+            return f"❌ Out of rounds, still unresolved: {', '.join(unhappy)}"
+        if unhappy:
+            return f"↩️ Sending the findings from {', '.join(unhappy)} back to the implementer"
+        return "✅ All four reviews passed"
+    if name == "checks":
+        if not update["checks_feedback"]:
+            return "✅ Typecheck and tests pass, changes committed"
+        if update["failed"]:
+            return f"❌ Checks still failing after {plural(MAX_IMPLEMENTATION_ROUNDS, 'round')}"
+        return "❌ Checks failed, back to the implementer"
+    if name == "ship":
+        if update.get("outcome") == "shipped":
+            return f"✅ PR opened: {update['pr_url']}"
+        if update.get("checks_feedback"):
+            return "❌ Final checks failed, nothing pushed" + ("" if update["failed"] else ", back to the implementer")
+        return "❌ Couldn't push or open the PR"
+    if name == "implementer":
+        if update.get("escalation"):
+            return "❓ Implementer needs a decision from you"
+        return f"✅ Code written (round {update['implementation_attempts']})"
+    if name == "test_writer":
+        if update.get("escalation"):
+            return "❌ Couldn't write tests that fail before the code exists"
+        if update.get("test_feedback"):
+            return "❌ The new tests passed before any code existed, rewriting them"
+        if "pinned" in update:
+            return "✅ Failing tests written and locked"
+        return "✅ No new tests needed at this level"
+    if name == "reproducer":
+        if update.get("repro"):
+            return "✅ Bug reproduced with a failing test"
+        return "❌ Couldn't reproduce the bug"
+    if name == "next_slice":
+        index, slices = update["current_slice"], state["slices"]
+        return f"✅ Slice {index} done, starting slice {index + 1} of {len(slices)}: {slices[index]['title']}"
+    return {
+        "sign_off": {
+            "APPROVED": "✅ You approved the plan",
+            "REJECTED": "↩️ You sent the plan back to the designer",
+            "CLOSED": "✅ Card closed as not needed",
+        }.get(update.get("plan_decision")),
+        "clarify": "✅ Got your answers",
+        "escalation": "✅ Got your decision",
+        "prepare_branch": f"✅ Working on branch {update.get('branch')}",
+    }.get(name)
+
+
+def announce(name: str, node):
+    """Wrap a step so it prints its own progress lines."""
+
+    def before(state: BuildState):
+        message = running_message(name, state)
+        if message:
+            print(f"⌛ {message}…", flush=True)
+
+    def after(state: BuildState, update: dict | None):
+        message = finished_message(name, state, update or {})
+        if message:
+            print(message, flush=True)
+
+    if inspect.iscoroutinefunction(node):
+
+        async def run_async(state: BuildState):
+            before(state)
+            update = await node(state)
+            after(state, update)
+            return update
+
+        return run_async
+
+    def run(state: BuildState):
+        before(state)
+        try:
+            update = node(state)
+        except GraphInterrupt:
+            print(f"⏸ {paused_message(name, state)}", flush=True)
+            raise
+        after(state, update)
+        return update
+
+    return run
 
 
 def bullets(items) -> str:
@@ -729,7 +879,6 @@ def cleared_reviews() -> dict:
 
 
 async def designer(state: BuildState):
-    node_start("designer")
     rounds = state.get("clarify_rounds", 0)
     parts = [card_block(state)]
     if state.get("clarify_answers"):
@@ -759,25 +908,22 @@ async def designer(state: BuildState):
         note = f"asked {len(out['clarifying_questions'])} clarifying question(s)"
     else:
         note = f"{len(out['decisions'])} decision(s), {len(slices)} slice(s)"
-    node_done("designer", result.cost)
     return {
         "validity": out["validity"],
         "validity_evidence": out["validity_evidence"],
         "clarify_questions": out["clarifying_questions"] if asking else [],
         "plan": out["plan"],
-        "summary": out["summary"],
+        **{key: out[key] for key in ("problem", "task", "solution", "files", "risks", "door", "blast_radius")},
         "seams": out["seams"],
         "decisions": out["decisions"],
         "slices": slices,
         "plan_attempts": state.get("plan_attempts", 0) + (0 if asking else 1),
         "plan_feedback": "",
         "history": [f"• designer: {out['validity']}, {note}"],
-        "cost_usd": result.cost,
     }
 
 
 def clarify(state: BuildState):
-    node_start("clarify")
     questions = format_questions(state["clarify_questions"])
     reply = interrupt(
         f"QUESTIONS BEFORE PLANNING\n\n{questions}\n\n"
@@ -798,21 +944,28 @@ def clarify(state: BuildState):
 
 
 async def plan_critic(state: BuildState):
-    node_start("plan_critic")
     prompt = f"{card_block(state)}\n\n## Proposed plan\n{state['plan']}"
     result = await run_agent("plan_critic", prompt, CRITIC_OUTPUT)
     out = result.output
     rework = out["verdict"] == "NEEDS REWORK"
     worst = f" — {out['top_findings'][0]}" if rework and out["top_findings"] else ""
-    node_done("plan_critic", result.cost)
     return {
         "plan_verdict": out["verdict"],
         "plan_findings": out["top_findings"],
         "plan_tweaks": out["tweaks"] if out["verdict"] == "SOLID WITH TWEAKS" else [],
         "plan_feedback": out["review"] if rework else "",
         "history": [mark(not rework, f"plan_critic: {out['verdict']}{worst}")],
-        "cost_usd": result.cost,
     }
+
+
+DOORS = {
+    "one-way": "One-way door: hard to undo once merged",
+    "two-way": "Two-way door: easy to roll back",
+}
+
+
+def section(title: str, items) -> list[str]:
+    return ["", f"{title}:", *[f"  - {item}" for item in items]] if items else []
 
 
 def plan_brief(state: BuildState) -> str:
@@ -820,23 +973,24 @@ def plan_brief(state: BuildState) -> str:
         (
             f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} "
             f"({state.get('card_type', '')}), attempt {state.get('plan_attempts', 0)}"
+            f" · critic: {state.get('plan_verdict', 'not run')}"
         ),
-        "",
-        f"Critic: {state.get('plan_verdict', 'not run')}",
-        *[f"  - {finding}" for finding in state.get("plan_findings", [])],
-        "",
-        "Summary:",
-        state.get("summary", "").strip(),
+        *section("Problem", state.get("problem", [])),
+        *section("Task", state.get("task", [])),
+        *section("Solution", state.get("solution", [])),
     ]
-    if state.get("seams"):
-        lines += ["", "Test points (confirm these):", *[f"  - {seam}" for seam in state["seams"]]]
     if state.get("slices"):
-        lines += ["", "Built in slices, in this order:"]
+        lines += ["", "Slices, built in this order:"]
         lines += [f"  {n}. {s['title']} — {s['delivers']}" for n, s in enumerate(state["slices"], 1)]
+    lines += section("Files touched", state.get("files", []))
+    lines += section("Test points (confirm these)", state.get("seams", []))
+    lines += section("Critic findings", state.get("plan_findings", []))
+    lines += section("Critic tweaks (will be applied)", state.get("plan_tweaks", []))
+    lines += section("Risks", state.get("risks", []))
+    if state.get("door"):
+        lines += section("Merge danger", [DOORS[state["door"]], f"Blast radius: {state.get('blast_radius', '')}"])
     if state.get("decisions"):
         lines += ["", "Decisions for you:", format_questions(state["decisions"])]
-    if state.get("plan_tweaks"):
-        lines += ["", "Critic tweaks that will be applied:", *[f"  - {t}" for t in state["plan_tweaks"]]]
     lines += [
         "",
         f"Full plan: {plan_file(state).relative_to(ROOT)} (edit it directly before replying if you like)",
@@ -850,12 +1004,19 @@ def plan_brief(state: BuildState) -> str:
 
 
 def invalid_brief(state: BuildState) -> str:
-    return (
-        f"CARD LOOKS INVALID — {state.get('card_number') or 'ad-hoc request'}: {state['validity']}\n\n"
-        f"Evidence: {state.get('validity_evidence', '')}\n\n{state.get('summary', '').strip()}\n\n"
-        'Reply "close" if the card is not needed, "rework: <why it is still needed>" to plan it '
-        'anyway, or "stop" to end the build without deciding.'
-    )
+    lines = [
+        f"CARD LOOKS INVALID — {state.get('card_number') or 'ad-hoc request'}: {state['validity']}",
+        "",
+        f"Evidence: {state.get('validity_evidence', '')}",
+        *section("Problem", state.get("problem", [])),
+        *section("What the card should become", state.get("solution", [])),
+        "",
+        (
+            'Reply "close" if the card is not needed, "rework: <why it is still needed>" to plan it '
+            'anyway, or "stop" to end the build without deciding.'
+        ),
+    ]
+    return "\n".join(lines)
 
 
 def _sent_back(state: BuildState, feedback: str) -> dict:
@@ -870,7 +1031,6 @@ def _sent_back(state: BuildState, feedback: str) -> dict:
 
 
 def sign_off(state: BuildState):
-    node_start("sign_off")
     if state.get("validity", "VALID") != "VALID":
         reply = interrupt(invalid_brief(state))
         word, rest = split_reply(reply)
@@ -910,7 +1070,6 @@ def sign_off(state: BuildState):
 
 
 def prepare_branch(state: BuildState):
-    node_start("prepare_branch")
     stray = stray_changes(state)
     if stray:
         raise BuildError(
@@ -930,7 +1089,6 @@ def prepare_branch(state: BuildState):
         branch = free_branch_name(f"{commit_prefix(state)}/{state['thread_id'].lower()}")
         git("checkout", "-b", branch)
     head = git("rev-parse", "HEAD")
-    node_done("prepare_branch")
     return {
         "base_branch": base,
         "branch": branch,
@@ -944,13 +1102,11 @@ def prepare_branch(state: BuildState):
 
 
 async def reproducer(state: BuildState):
-    node_start("reproducer")
     parts = [card_block(state), f"## Approved plan\n{state['plan']}"]
     if state.get("escalation_answer"):
         parts.append(f"## You couldn't reproduce this before. The user says:\n{state['escalation_answer']}")
     result = await run_agent("reproducer", "\n\n".join(parts), REPRODUCER_OUTPUT)
     out = result.output
-    node_done("reproducer", result.cost)
     if out["status"] == "REPRODUCED":
         red, output = is_red(out["command"])
         if red:
@@ -960,7 +1116,6 @@ async def reproducer(state: BuildState):
                 "pinned": {**state.get("pinned", {}), **fingerprints(out["test_files"])},
                 "escalation_answer": "",
                 "history": [f"✓ reproducer: red on {first_line(out['symptom'])}"],
-                "cost_usd": result.cost,
             }
         reason = (
             f"The reproducer said `{out['command']}` fails on the bug, but it passed "
@@ -973,12 +1128,10 @@ async def reproducer(state: BuildState):
         "escalation_source": "reproducer",
         "escalation_answer": "",
         "history": [f"✗ reproducer: couldn't reproduce — {first_line(reason)}"],
-        "cost_usd": result.cost,
     }
 
 
 async def test_writer(state: BuildState):
-    node_start("test_writer")
     parts = [card_block(state), slice_block(state), f"## Approved plan\n{state['plan']}"]
     if state.get("seams"):
         parts.append(f"## Agreed test points (seams)\n{bullets(state['seams'])}")
@@ -988,8 +1141,7 @@ async def test_writer(state: BuildState):
         parts.append(f"## The user says\n{state['escalation_answer']}")
     result = await run_agent("test_writer", "\n\n".join(p for p in parts if p), TEST_WRITER_OUTPUT)
     out = result.output
-    node_done("test_writer", result.cost)
-    done = {"test_attempts": 0, "test_feedback": "", "escalation_answer": "", "cost_usd": result.cost}
+    done = {"test_attempts": 0, "test_feedback": "", "escalation_answer": ""}
     if not out["test_files"]:
         return {**done, "tests": out["summary"], "history": [f"• test_writer: no tests — {first_line(out['summary'])}"]}
 
@@ -1010,7 +1162,6 @@ async def test_writer(state: BuildState):
         "test_attempts": attempts,
         "test_feedback": feedback,
         "history": [f"✗ test_writer: tests weren't red — {first_line(out['command'])}"],
-        "cost_usd": result.cost,
     }
     if attempts >= MAX_TEST_ATTEMPTS:
         update["escalation"] = f"The test writer couldn't produce failing acceptance tests.\n\n{feedback}"
@@ -1039,7 +1190,6 @@ def implementer_prompt(state: BuildState, feedback: str) -> str:
 
 
 async def implementer(state: BuildState):
-    node_start("implementer")
     feedback = fix_feedback(state)
     answer = state.get("escalation_answer", "")
     news = "\n\n".join(p for p in [feedback, answer and f"## Your escalated question, answered\n{answer}"] if p)
@@ -1055,16 +1205,14 @@ async def implementer(state: BuildState):
     except AgentError as e:
         if not resume or e.transient:
             raise
-        print("  ↺ couldn't resume the previous session, starting fresh", flush=True)
+        print("   ↺ Couldn't continue the implementer's session, starting a fresh one", flush=True)
         resume = None
         result = await run_agent("implementer", implementer_prompt(state, feedback), IMPLEMENTER_OUTPUT)
     out = result.output
     session_update = {
         "implementer_session": result.session_id,
         "implementer_resumes": resumes + 1 if resume else 0,
-        "cost_usd": result.cost,
     }
-    node_done("implementer", result.cost)
     if out["status"] == "ESCALATE":
         question = out["escalation"] or out["summary"]
         return {
@@ -1093,7 +1241,6 @@ ESCALATION_HINTS = {
 
 
 def escalation(state: BuildState):
-    node_start("escalation")
     source = state.get("escalation_source", "implementer")
     reply = interrupt(
         f"DECISION NEEDED (from the {NODE_LABELS[source]})\n\n{state['escalation']}\n\n"
@@ -1117,8 +1264,8 @@ def escalation(state: BuildState):
     return update
 
 
-def checks(state: BuildState):
-    node_start("checks")
+def failing_checks(state: BuildState) -> list[str]:
+    """Run the pinned-test check and every command in project-context.md's checks block."""
     problems = []
     tampered = tampered_pins(state.get("pinned", {}))
     if tampered:
@@ -1128,18 +1275,22 @@ def checks(state: BuildState):
         )
     commands = check_commands()
     if not commands:
-        print("  ⚠ no ```checks block in project-context.md: only pinned tests are verified", flush=True)
+        problems.append(f"{PROJECT_CONTEXT_FILE.name} has no ```checks block, so the tests can't be run.")
     for command in commands:
         code, output = run(command, timeout=CHECK_TIMEOUT_S)
-        print(f"  {'✓' if code == 0 else '✗'} {command}", flush=True)
+        print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
         if code != 0:
             problems.append(f"$ {command}\n{tail(output)}")
+    return problems
+
+
+def checks(state: BuildState):
+    problems = failing_checks(state)
     if not problems:
         ok, output = commit_all(state, commit_message(state))
         if not ok:
             problems.append(f"git commit failed (a pre-commit hook?):\n{tail(output)}")
     failed = bool(problems) and state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
-    node_done("checks")
     return {
         "checks_feedback": "\n\n".join(problems),
         "failed": failed,
@@ -1162,23 +1313,19 @@ def commit_message(state: BuildState) -> str:
 
 
 async def standards_critic(state: BuildState):
-    node_start("standards_critic")
     result = await run_agent("standards_critic", review_block(state), STANDARDS_OUTPUT)
     out = result.output
     blocking = out["blocking"]
-    node_done("standards_critic", result.cost)
     return {
         "standards_verdict": "NEEDS_REWORK" if blocking else "APPROVED",
         "standards_feedback": bullets(blocking),
         "standards_advisory": out["advisory"],
         "tech_debt": out["tech_debt"],
         "history": [mark(not blocking, f"standards: {len(blocking)} must-fix" if blocking else "standards: approved")],
-        "cost_usd": result.cost,
     }
 
 
 async def spec_critic(state: BuildState):
-    node_start("spec_critic")
     result = await run_agent("spec_critic", review_block(state), SPEC_OUTPUT)
     out = result.output
     findings = [
@@ -1186,17 +1333,14 @@ async def spec_critic(state: BuildState):
         *(f"Wrong: {item}" for item in out["wrong"]),
         *(f"Not asked for: {item}" for item in out["scope_creep"]),
     ]
-    node_done("spec_critic", result.cost)
     return {
         "spec_verdict": "NEEDS_REWORK" if findings else "APPROVED",
         "spec_feedback": bullets(findings),
         "history": [mark(not findings, f"spec: {first_line(findings[0])}" if findings else "spec: approved")],
-        "cost_usd": result.cost,
     }
 
 
 async def correctness_critic(state: BuildState):
-    node_start("correctness_critic")
     result = await run_agent("correctness_critic", review_block(state), CORRECTNESS_OUTPUT)
     out = result.output
     bugs, decisions = out["blocking_bugs"], out["decisions_to_escalate"]
@@ -1209,20 +1353,16 @@ async def correctness_critic(state: BuildState):
             f"reply with status ESCALATE and put them to the user:\n{bullets(decisions)}"
         )
     rework = bool(bugs or decisions)
-    node_done("correctness_critic", result.cost)
     return {
         "correctness_verdict": "NEEDS_REWORK" if rework else "APPROVED",
         "correctness_feedback": "\n\n".join(feedback),
         "correctness_minor": out["minor_bugs"],
-        "context_updates": out["context_updates"],
         "history": [mark(not rework, f"correctness: {len(bugs)} bug(s), {len(decisions)} unapproved decision(s)"
                          if rework else "correctness: approved")],
-        "cost_usd": result.cost,
     }
 
 
 async def qa(state: BuildState):
-    node_start("qa")
     patch = work_dir(state) / f"qa-{state.get('current_slice', 0)}-{state.get('implementation_attempts', 0)}.patch"
     patch.parent.mkdir(parents=True, exist_ok=True)
     patch.unlink(missing_ok=True)
@@ -1233,19 +1373,16 @@ async def qa(state: BuildState):
     result = await run_agent("qa", review_block(state, extra), QA_OUTPUT)
     out = result.output
     bugs = out["real_bugs"]
-    node_done("qa", result.cost)
     return {
         "qa_verdict": "NEEDS_REWORK" if bugs else "APPROVED",
         "qa_feedback": bullets(bugs),
         "qa_patch": str(patch) if patch.is_file() else "",
         "manual_checks": out["manual_checks"],
         "history": [mark(not bugs, f"qa: {len(bugs)} real bug(s)" if bugs else "qa: passed")],
-        "cost_usd": result.cost,
     }
 
 
 def fix_or_ship(state: BuildState):
-    node_start("fix_or_ship")
     stray = stray_changes(state)
     if stray:
         raise BuildError(
@@ -1260,19 +1397,16 @@ def fix_or_ship(state: BuildState):
             update["pinned"] = {**state.get("pinned", {}), **fingerprints(applied)}
     needs_rework = any(state.get(f"{key}_verdict") == "NEEDS_REWORK" for key in REVIEW_LABELS)
     failed = needs_rework and state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
-    node_done("fix_or_ship")
     return {**update, "failed": failed, "outcome": "failed" if failed else "", "history": history}
 
 
 def next_slice(state: BuildState):
-    node_start("next_slice")
     index = state.get("current_slice", 0)
     title = state["slices"][index]["title"]
     ok, output = commit_all(state, f"test: QA tests for {title}")
     if not ok:
         raise BuildError(f"Couldn't commit QA's tests before the next slice:\n{tail(output)}\nFix it, then run --retry.")
     index += 1
-    node_done("next_slice")
     return {
         **cleared_reviews(),
         "current_slice": index,
@@ -1290,85 +1424,55 @@ def next_slice(state: BuildState):
 # --- wrap-up nodes ---
 
 
-async def retro(state: BuildState):
-    node_start("retro")
-    history = state.get("history", [])
-    suggested = state.get("context_updates", [])
-    if not any(line.startswith("✗") for line in history) and not suggested:
-        node_done("retro")
-        return {"retro_proposals": []}
-    parts = [card_block(state), "## Build history (✗ = friction)\n" + "\n".join(history)]
-    if suggested:
-        parts.append(f"## Landmines the correctness reviewer suggested\n{bullets(suggested)}")
-    if state.get("tech_debt"):
-        parts.append("## Tech debt the standards reviewer filed\n" + bullets(t["title"] for t in state["tech_debt"]))
-    result = await run_agent("retro", "\n\n".join(parts), RETRO_OUTPUT)
-    out = result.output
-    node_done("retro", result.cost)
-    return {
-        "retro_proposals": out["context_additions"],
-        "lint_ideas": out["lint_ideas"],
-        "history": [f"• retro: {first_line(out['notes'])}"],
-        "cost_usd": result.cost,
-    }
-
-
-def add_to_section(text: str, section: str, line: str) -> str:
-    heading = re.search(rf"^## {re.escape(section)}[ \t]*$", text, re.MULTILINE)
-    if not heading:
-        return f"{text.rstrip()}\n\n## {section}\n\n- {line}\n"
-    following = re.search(r"^## ", text[heading.end():], re.MULTILINE)
-    end = heading.end() + following.start() if following else len(text)
-    before, after = text[:end].rstrip(), text[end:]
-    return f"{before}\n- {line}\n" + (f"\n{after}" if after else "")
-
-
-def retro_review(state: BuildState):
-    node_start("retro_review")
-    proposals = state["retro_proposals"]
-    listing = "\n".join(f"{n}. [{p['section']}] {p['text']}" for n, p in enumerate(proposals, 1))
-    reply = interrupt(
-        f"RETRO PROPOSALS — additions to {PROJECT_CONTEXT_FILE.name} from what this build ran into:\n\n"
-        f"{listing}\n\n"
-        'Reply "go" to add them all, "go: 1,3" to add some, "skip" to add none, '
-        'or "stop" to end the build without shipping.'
-    )
-    word, rest = split_reply(reply)
-    if word in STOPS:
-        return {"retro_proposals": [], **stopped("retro_review")}
-    if word not in APPROVALS:
-        return {"retro_proposals": [], "history": ["• retro: proposals skipped"]}
-    picks = [int(n) for n in re.findall(r"\d+", rest)] or range(1, len(proposals) + 1)
-    chosen = [proposals[n - 1] for n in picks if 1 <= n <= len(proposals)]
-    text = read_text(PROJECT_CONTEXT_FILE)
-    for proposal in chosen:
-        text = add_to_section(text, proposal["section"], proposal["text"])
-    PROJECT_CONTEXT_FILE.write_text(text)
-    name = PROJECT_CONTEXT_FILE.name
-    if run(["git", "ls-files", "--error-unmatch", name])[0] == 0:
-        run(["git", "commit", "-m", "docs: update project context from build retro", "--", name])
-    return {"retro_proposals": [], "history": [f"• retro: added {len(chosen)} line(s) to {name}"]}
-
-
 def pr_body(state: BuildState) -> str:
+    """The PR description, in the sections of .github/pull_request_template.md."""
+    card = f"{state.get('card_number') or 'Ad-hoc request'}: {first_line(state.get('card_details', ''), 120)}"
+    if state.get("repro"):
+        before = f"The bug reproduced with a failing test: {first_line(state['repro'], 200)}"
+    elif state.get("tests"):
+        before = f"The new tests failed, because the behaviour didn't exist yet: {first_line(state['tests'], 200)}"
+    else:
+        before = "No new test could fail first for this change."
+    checks = ", ".join(f"`{command}`" for command in check_commands())
+    door = state.get("door")
     sections = [
-        f"## Card\n{state.get('card_number') or 'Ad-hoc request'}\n\n{state.get('card_details', '').strip()}",
-        f"## Summary\n{state.get('summary', '').strip()}",
-        f"## Checks\n{bullets(f'`{c}`' for c in check_commands()) or 'None configured.'}",
-        "## Review\nStandards, spec, correctness and QA reviews all approved.",
+        ("Problem", bullets(state.get("problem", []))),
+        ("Task", bullets([f"Card: {card}", *state.get("task", [])])),
+        ("Solution", bullets(state.get("solution", []))),
+        ("Evidence", bullets([
+            f"**Before:** {before}",
+            f"**After:** {checks} pass, and the standards, spec, correctness and QA reviews all approved.",
+        ])),
+        ("Merge danger", bullets([
+            f"**Door:** {DOORS[door] if door else 'not assessed'}",
+            f"**Blast radius:** {state.get('blast_radius') or 'not assessed'}",
+            *state.get("risks", []),
+        ])),
     ]
     if state.get("manual_checks"):
-        sections.append("## Manual QA checklist\n" + "\n".join(f"- [ ] {c}" for c in state["manual_checks"]))
-    notes = [*state.get("standards_advisory", []), *state.get("correctness_minor", [])]
-    if notes:
-        sections.append(f"## Non-blocking notes\n{bullets(notes)}")
-    if state.get("tech_debt"):
-        sections.append("## Tech debt to file\n" + bullets(f"{t['title']}: {t['problem']}" for t in state["tech_debt"]))
-    return "\n\n".join(sections)
+        sections.append(("Manual checks", "\n".join(f"- [ ] {check}" for check in state["manual_checks"])))
+    follow_ups = [
+        *(f"Tech debt: {t['title']}: {t['problem']}" for t in state.get("tech_debt", [])),
+        *state.get("standards_advisory", []),
+        *state.get("correctness_minor", []),
+    ]
+    if follow_ups:
+        sections.append(("Follow-ups", bullets(follow_ups)))
+    return "\n\n".join(f"## {title}\n\n{body}" for title, body in sections) + "\n"
 
 
 def ship(state: BuildState):
-    node_start("ship")
+    # QA's tests landed after the last checks run, so check again.
+    # A failure goes back to the implementer, and its fix gets checked and reviewed again.
+    problems = failing_checks(state)
+    if problems:
+        failed = state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
+        return {
+            "checks_feedback": "The final checks before pushing failed:\n\n" + "\n\n".join(problems),
+            "failed": failed,
+            "outcome": "failed" if failed else "",
+            "history": [mark(False, f"ship: final checks failed, nothing pushed — {first_line(problems[0])}")],
+        }
     ok, output = commit_all(state, f"test: add QA tests for {state.get('card_number') or 'build'}")
     if not ok:
         return {"outcome": "ship_error", "pr_error": f"git commit failed:\n{tail(output)}"}
@@ -1387,7 +1491,6 @@ def ship(state: BuildState):
             pr_url = created.stdout.strip().splitlines()[-1]
     except subprocess.CalledProcessError as e:
         return {"outcome": "ship_error", "pr_error": f"{' '.join(e.cmd[:3])}\n{e.stderr or e.stdout}".strip()}
-    node_done("ship")
     return {"outcome": "shipped", "pr_url": pr_url, "pr_error": "", "history": [f"✓ ship: {pr_url}"]}
 
 
@@ -1447,25 +1550,21 @@ def after_escalation(state: BuildState):
 def after_checks(state: BuildState):
     if not state.get("checks_feedback"):
         return REVIEWERS
-    return "retro" if state.get("failed") else "implementer"
+    return END if state.get("failed") else "implementer"
 
 
 def after_review(state: BuildState):
     if any(state.get(f"{key}_verdict") == "NEEDS_REWORK" for key in REVIEW_LABELS):
-        return "retro" if state.get("failed") else "implementer"
+        return END if state.get("failed") else "implementer"
     if state.get("current_slice", 0) + 1 < len(state.get("slices") or []):
         return "next_slice"
-    return "retro"
+    return "ship"
 
 
-def after_retro(state: BuildState):
-    if state.get("retro_proposals"):
-        return "retro_review"
-    return END if state.get("failed") else "ship"
-
-
-def after_retro_review(state: BuildState):
-    return END if state.get("failed") or state.get("outcome") == "stopped" else "ship"
+def after_ship(state: BuildState):
+    if state.get("checks_feedback") and not state.get("failed"):
+        return "implementer"
+    return END
 
 
 # --- graph ---
@@ -1481,9 +1580,8 @@ for name, node in [
     ("spec_critic", spec_critic),
     ("correctness_critic", correctness_critic),
     ("qa", qa),
-    ("retro", retro),
 ]:
-    builder.add_node(name, node, retry_policy=AGENT_RETRY)
+    builder.add_node(name, announce(name, node), retry_policy=AGENT_RETRY)
 for name, node in [
     ("clarify", clarify),
     ("sign_off", sign_off),
@@ -1492,15 +1590,13 @@ for name, node in [
     ("checks", checks),
     ("fix_or_ship", fix_or_ship),
     ("next_slice", next_slice),
-    ("retro_review", retro_review),
     ("ship", ship),
 ]:
-    builder.add_node(name, node)
+    builder.add_node(name, announce(name, node))
 
 builder.add_edge(START, "designer")
 builder.add_edge(REVIEWERS, "fix_or_ship")
 builder.add_edge("next_slice", "test_writer")
-builder.add_edge("ship", END)
 
 builder.add_conditional_edges("designer", after_designer)
 builder.add_conditional_edges("clarify", after_clarify)
@@ -1513,8 +1609,7 @@ builder.add_conditional_edges("implementer", after_implementer)
 builder.add_conditional_edges("escalation", after_escalation)
 builder.add_conditional_edges("checks", after_checks)
 builder.add_conditional_edges("fix_or_ship", after_review)
-builder.add_conditional_edges("retro", after_retro)
-builder.add_conditional_edges("retro_review", after_retro_review)
+builder.add_conditional_edges("ship", after_ship)
 
 
 # --- cli ---
@@ -1551,6 +1646,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     action.add_argument("--status", action="store_true", help="show where a build is")
     action.add_argument("--retry", action="store_true", help="re-run the step that stopped with an error")
     action.add_argument("--recheck", action="store_true", help="re-run checks and reviews after fixing a failed build")
+    parser.add_argument(
+        "--allow-api-billing", action="store_true",
+        help="run even though an API key is set, so every token is billed (the user's call only)",
+    )
     args = parser.parse_args(argv)
 
     if args.details_file:
@@ -1602,7 +1701,7 @@ def print_status(thread: str, snapshot) -> int:
     for key, label in [("branch", "Branch"), ("pr_url", "PR"), ("pr_error", "PR error")]:
         if values.get(key):
             print(f"{label}: {values[key]}")
-    print(f"Agent cost so far: ${values.get('cost_usd', 0):.2f}\n")
+    print()
     print_history(values)
     return 0
 
@@ -1646,9 +1745,6 @@ def report(thread: str, result: dict) -> int:
         print("\nTECH DEBT CARDS TO FILE:")
         for card in result["tech_debt"]:
             print(f"- {card['title']}: {card['problem']} → {card['fix']}")
-    if result.get("lint_ideas"):
-        print(f"\nCHECKS WORTH AUTOMATING:\n{bullets(result['lint_ideas'])}")
-    print(f"\nAgent cost: ${result.get('cost_usd', 0):.2f}")
     return code
 
 
@@ -1671,6 +1767,12 @@ async def start_build(graph, saver, config, snapshot, args):
             "Run again with --branch <this session's branch>."
         )
         return None
+    if not check_commands():
+        print(
+            f"{PROJECT_CONTEXT_FILE.name} has no ```checks block, so the build couldn't run your tests. "
+            "Add one (see project-context-template.md), then start again."
+        )
+        return None
     modified = [path for status, path in git_status() if status != "??"]
     if modified:
         print(f"Commit or stash these changes before starting a build:\n{bullets(modified)}")
@@ -1688,7 +1790,6 @@ async def start_build(graph, saver, config, snapshot, args):
             "untracked_at_start": [path for status, path in git_status() if status == "??"],
             "requested_branch": args.branch or "",
             "history": [],
-            "cost_usd": 0.0,
         },
         config,
     )
@@ -1718,7 +1819,7 @@ async def retry_build(graph, config, snapshot):
         print(f"Retrying {', '.join(snapshot.next)}...\n")
         return await graph.ainvoke(None, config)
     if snapshot.values.get("outcome") == "ship_error":
-        await graph.aupdate_state(config, {"outcome": "", "pr_error": ""}, as_node="retro_review")
+        await graph.aupdate_state(config, {"outcome": "", "pr_error": ""}, as_node="fix_or_ship")
         return await graph.ainvoke(None, config)
     print("Nothing to retry: the build isn't stopped on an error.")
     return None
@@ -1746,6 +1847,16 @@ async def recheck_build(graph, config, snapshot):
 
 async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    paid = paid_auth_var()
+    if paid and not args.allow_api_billing and not args.status:
+        print(
+            f"{paid} is set, so every agent in this build would be billed per token instead of "
+            "using your Claude plan. Unset it to use your plan, or add --allow-api-billing if "
+            "per-token billing is what you want."
+        )
+        return 1
+    if paid and not args.status:
+        print(f"⚠️ {paid} is set, so this build is billed per token, not to your Claude plan.\n")
     if not PROJECT_CONTEXT_FILE.is_file():
         print(f"Missing {PROJECT_CONTEXT_FILE.name}: copy project-context-template.md and fill it in.")
         return 1

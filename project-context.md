@@ -16,10 +16,11 @@ Default card type: `Task`
 
 ## Checks
 
-The build runs these after every implementation round, from the repo root, one
-per line. Any non-zero exit sends the work back to the implementer before a
-reviewer sees it. They're the fast part of CI: the Jest screen tests, the Expo
-exports and the coverage floors run in CI only.
+The build runs these after every implementation round and once more before it
+pushes, from the repo root, one per line. Any non-zero exit sends the work back
+to the implementer. The build won't start without this block. They're the fast
+part of CI: the Jest screen tests, the Expo exports and the coverage floors run
+in CI only.
 
 ```checks
 npm run typecheck

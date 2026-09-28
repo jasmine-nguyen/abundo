@@ -49,19 +49,12 @@ schema, a new dependency, sync vs async, a public-API or auth choice), list it: 
 decision, what the change assumes, and the realistic alternatives. The implementer
 will put it to the user.
 
-## Project context updates
-
-If the change introduces a landmine future changes need to know about (a new shared
-module with deployment quirks, a new shadow or duplicate, a non-obvious
-constraint), give the exact line to add to project-context.md.
-
 ## Output
 
 - `blocking_bugs` — ship-blocking bugs, worst-first, one each:
   `path:line — trigger → wrong outcome (confidence) → smallest fix`.
 - `minor_bugs` — real but not ship-blocking, same format.
 - `decisions_to_escalate` — one line each, or empty.
-- `context_updates` — exact lines for project-context.md, or empty.
 - `report` — Markdown, including a short "Checked but fine" list of the risky-looking
   things you verified. Under 500 words.
 

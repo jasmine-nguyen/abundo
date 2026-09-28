@@ -16,6 +16,10 @@ the (ephemeral) container may time out — so Jasmine can review the code hersel
 Always create the PR; don't wait to be asked. Keep unrelated changes on separate
 branches/PRs so each one stays independently reviewable.
 
+Write every PR description with `.github/pull_request_template.md`: Problem, Task,
+Solution, Evidence and Merge danger, plus Manual checks and Follow-ups when there
+are any. This applies to every agent, including when using the `pr` skill.
+
 # How to communicate with Jas
 
 When explaining, presenting ideas, or writing to Notion:
