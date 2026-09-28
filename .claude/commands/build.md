@@ -105,18 +105,10 @@ the card number for card builds) and check where it is:
    their Claude plan. Never add `--allow-api-billing` yourself; only the user
    can decide to pay per token.
 
-   While it runs, give the user short status updates based on the output.
-   The script prints which step is running and what tools it's using.
-   Relay the key milestones, one line per step:
-   - "Designer is planning..." (`▶ Designer`)
-   - "Plan critic is reviewing..." (`▶ Plan Critic`)
-   - "Reproducing the bug..." (`▶ Reproducer`)
-   - "Writing the acceptance tests..." (`▶ Test Writer`)
-   - "Implementer is coding..." (`▶ Implementer`)
-   - "Running typecheck, lint and tests..." (`▶ Checks`)
-   - "Four reviewers are checking the change..." (`▶ Standards Review` etc.)
-   - "Opening the PR..." (`▶ Ship`)
-   Don't flood, and don't go silent.
+   While it runs, keep the user posted. The script prints one plain-English
+   line when each step starts (⌛) and one when it ends (✅ done, ❌ or ↩️ sent
+   back, ❓ or ⏸ waiting for them). Relay those lines as they come, as written.
+   Don't add commentary of your own, and don't go silent.
 
 3. When the script pauses, it prints a block between `===` lines and
    `Paused. Resume with: ...`. The first line of the block says why:
@@ -190,7 +182,7 @@ the card number for card builds) and check where it is:
      in the codebase (don't edit pinned test files; if one is wrong, ask the
      user), then run
      `python3 build_graph.py --thread <id> --recheck`
-     to re-run the checks and all four reviews on your fixes. Repeat until
+     to re-run the checks and both reviews (code review and QA) on your fixes. Repeat until
      it passes.
    - **BUILD STOPPED** — a step errored (an agent ran out of turns or
      budget, returned no verdict, or files changed that shouldn't have).
