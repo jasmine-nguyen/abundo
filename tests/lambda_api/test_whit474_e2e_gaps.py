@@ -29,8 +29,8 @@ TODAY = "2026-08-10"
 # Models the ONE budgets config item (pk=sk="BUDGETS"): an `items` map + a numeric
 # `version` written under the attribute_exists(pk) AND #v=:expected optimistic lock,
 # plus the nested SET-one-key / REMOVE-one-key + version bump the repo emits. This is
-# the same contract tests/shared/conftest.py::ConfigItemTable models; kept local because
-# that fixture lives in the shared suite's conftest, not on the import path here.
+# a subset of what the shared FakeTable (tests/shared/_dynamo_fakes.py) interprets; this local
+# copy is due to be replaced by it (WHIT-625).
 def _client_error(code):
     from botocore.exceptions import ClientError
     err = ClientError.__new__(ClientError)

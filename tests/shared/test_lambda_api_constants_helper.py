@@ -10,8 +10,8 @@ nobody deploys. These pin the three properties the rest of the consolidation lea
        parametrize tables in test_loanfacts_edges.py);
   [B3] it re-reads the file every call — no caching, no .pyc, no sys.modules;
   [B4] it does not register `api_constants` / `constants` in sys.modules (the docstring's
-       whole reason for exec'ing instead of importing — both are in the _COLLIDING list of
-       the lambda_api conftest, and importing one here would poison the sibling suites);
+       whole reason for exec'ing instead of importing — the lambda_api conftest re-imports
+       them per test, and importing one here would poison the sibling suites);
   [B5] the namespace is fresh per call, so a name deleted from the file stops resolving.
 """
 

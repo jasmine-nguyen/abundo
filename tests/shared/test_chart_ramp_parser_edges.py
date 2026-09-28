@@ -11,7 +11,9 @@ Covers, by checklist id:
               these keep meaning after a legitimate palette change)
   [A13]-[A16] ramp_source_path() discovery: test-tree fixtures, ambiguity, a missing
               client dir, build artefacts
-  [A19]       tests/shared/conftest.py sheds every shared module this suite imports
+
+The old [A19] checked conftest's hand-kept _REIMPORT list; WHIT-625 builds that list from the
+shared/ folder, so every shared module is shed by construction.
 
 The old [A17]/[A18] pinned the hand-maintained `src/chartColors.ts` paths entry in
 python-tests.yml as a live trigger. WHIT-436 replaced that per-file pin with the
@@ -19,17 +21,11 @@ twin-guards.yml drift job (this suite reads a client file, so it is marked `cros
 and runs there on any src/ change), so those trigger pins are gone.
 """
 
-import ast
 import pathlib
-import re
 
 import pytest
 
 import _chart_ramp
-
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_SHARED_DIR = _REPO_ROOT / "shared"
-_TESTS_SHARED_DIR = pathlib.Path(__file__).resolve().parent
 
 
 def _ramp_src(body: str, name: str = "CATEGORY_COLORS") -> str:
@@ -258,45 +254,3 @@ def test_build_artefacts_beside_the_ramp_are_not_read_as_ramps(tmp_path, monkeyp
     monkeypatch.setattr(_chart_ramp, "_REPO_ROOT", tmp_path)
 
     assert _chart_ramp.ramp_source_path() == tmp_path / "src" / "chartColors.ts"
-
-
-# ------------------------------------------------------------- module-leak regression
-
-
-def _reimport_names() -> tuple:
-    """conftest._REIMPORT, read as source so importing it has no side effects."""
-    tree = ast.parse((_TESTS_SHARED_DIR / "conftest.py").read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_REIMPORT" for t in node.targets
-        ):
-            return tuple(ast.literal_eval(node.value))
-    raise AssertionError("no _REIMPORT assignment in tests/shared/conftest.py")
-
-
-def test_every_shared_module_this_suite_imports_is_shed_between_tests():
-    """[A19] The bug the drift guard introduced and the diff fixed by hand. `shared/`
-    modules have bare names that collide with lambda_api's own copies; the `shared`
-    fixture only sheds the names listed in _REIMPORT, so importing one that is NOT
-    listed leaves it in sys.modules and the next suite resolves the wrong module.
-
-    Worth automating because the symptom is invisible where you would look for it: with
-    repository_category dropped from _REIMPORT, `pytest tests/shared tests/lambda_api`
-    fails 24 lambda_api tests, but a plain full-suite `pytest` — where shared sorts
-    AFTER lambda_api — passes all 2329. The leak is real and the default run is blind to
-    it, so pin the rule at its source instead of hoping for an unlucky order."""
-    shared_modules = {path.stem for path in _SHARED_DIR.glob("*.py")}
-    imported = set()
-    import_pattern = re.compile(r"^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
-    for test_file in sorted(_TESTS_SHARED_DIR.glob("*.py")):
-        if test_file.name == "conftest.py":
-            continue
-        imported |= set(import_pattern.findall(test_file.read_text()))
-
-    unshed = sorted((imported & shared_modules) - set(_reimport_names()))
-    assert not unshed, (
-        f"tests/shared imports shared modules that conftest._REIMPORT does not shed: "
-        f"{unshed}. They stay in sys.modules after the `shared` fixture tears down, and "
-        "a sibling suite (lambda_api / sync_trigger, which have their own module of the "
-        "same name) then imports shared's copy instead of its own. Add them to _REIMPORT."
-    )

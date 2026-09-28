@@ -20,9 +20,10 @@ import pytest
 # call-time `import repository` inside these still runs under the `handler` fixture.
 # (The colorSlot fakes moved to test_category_color_slots.py with their tests — WHIT-462.)
 from _category_fakes import (
-    FakeTable, FakeBudgetRepo, _MAX_UPDATE_EXPRESSION_BYTES,
-    _CFG, _SLOT, _cat, _categories_event, _repo_with_fake_table,
+    FakeBudgetRepo, _CFG, _SLOT, _before_next_update, _cat, _categories_event,
+    _repo_with_fake_table,
 )
+from _dynamo_fakes import _MAX_UPDATE_EXPRESSION_BYTES
 
 
 # --- handler-level fake ------------------------------------------------------
@@ -622,7 +623,7 @@ def test_repo_create_retries_after_version_race(handler):
     # first update hits CCFE (id still free) and the retry succeeds — seeds intact.
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed -> version 1
-    repo._table.before_update.append(_bump_version)
+    _before_next_update(repo._table, _bump_version)
 
     created = repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
 
@@ -641,7 +642,7 @@ def test_repo_create_ccfe_resolves_to_duplicate(handler):
     def add_same(item):
         item["items"]["gym"] = {"id": "gym", "name": "Gym", "icon": "tag",
                                 "color": "#000000", "bucket": "Living"}
-    repo._table.before_update.append(add_same)
+    _before_next_update(repo._table, add_same)
 
     try:
         repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
@@ -654,7 +655,8 @@ def test_repo_create_raises_under_sustained_contention(handler):
     # Every attempt sees a fresh version bump (id stays free) -> never converges.
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed
-    repo._table.before_update.extend([_bump_version, _bump_version])
+    _before_next_update(repo._table, _bump_version)
+    _before_next_update(repo._table, _bump_version)
 
     try:
         repo.create_category("gym", "Gym", "Lifestyle", "dumbbell")
@@ -711,7 +713,7 @@ def test_repo_update_unknown_id_raises(handler):
 def test_repo_update_retries_after_version_race(handler):
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed -> version 1
-    repo._table.before_update.append(_bump_version)
+    _before_next_update(repo._table, _bump_version)
 
     repo.update_category("coffee", "Coffee & Cake", "Living", "cart")
 
@@ -723,7 +725,7 @@ def test_repo_update_retries_after_version_race(handler):
 def test_repo_update_concurrently_deleted_raises(handler):
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed
-    repo._table.before_update.append(lambda item: item["items"].pop("coffee", None))
+    _before_next_update(repo._table, lambda item: item["items"].pop("coffee", None))
     try:
         repo.update_category("coffee", "Coffee & Cake", "Living", "cart")
         assert False, "expected CategoryNotFoundError"
@@ -759,7 +761,7 @@ def test_repo_delete_unknown_id_raises(handler):
 def test_repo_delete_retries_after_version_race(handler):
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed
-    repo._table.before_update.append(_bump_version)
+    _before_next_update(repo._table, _bump_version)
 
     repo.delete_category("coffee")
 
@@ -770,7 +772,7 @@ def test_repo_delete_retries_after_version_race(handler):
 def test_repo_delete_concurrently_deleted_raises(handler):
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed
-    repo._table.before_update.append(lambda item: item["items"].pop("coffee", None))
+    _before_next_update(repo._table, lambda item: item["items"].pop("coffee", None))
     try:
         repo.delete_category("coffee")
         assert False, "expected CategoryNotFoundError"
@@ -1225,7 +1227,7 @@ def test_repo_reparent_survives_version_race_retry(handler):
     # (the SET clause is rebuilt each attempt), not silently drop.
     repository, repo = _repo_with_fake_table(handler)
     repo.list_categories()  # seed -> version 1; groceries + transport both Living
-    repo._table.before_update.append(_bump_version)
+    _before_next_update(repo._table, _bump_version)
 
     updated = repo.update_category("groceries", "Groceries", "Living", "cart", parent="transport")
 
@@ -1704,7 +1706,7 @@ def test_the_loser_of_a_race_for_the_last_slot_is_refused_not_squeezed_in(handle
                                       parent="coffee", **{_SLOT: Decimal(3)})
         item["version"] = item["version"] + 1
 
-    repo._table.before_update.append(rival_takes_the_last_slot)
+    _before_next_update(repo._table, rival_takes_the_last_slot)
 
     with pytest.raises(repository.InvalidCategoryParentError, match="at most"):
         repo.create_category("wine", "Wine", "Lifestyle", "glass", parent="coffee")
@@ -1727,7 +1729,7 @@ def test_the_loser_of_a_reparent_race_for_the_last_slot_is_refused_too(handler):
                                       **{_SLOT: Decimal(3)})
         item["version"] = item["version"] + 1
 
-    repo._table.before_update.append(rival_takes_the_last_slot)
+    _before_next_update(repo._table, rival_takes_the_last_slot)
 
     with pytest.raises(repository.InvalidCategoryParentError, match="at most"):
         repo.update_category("loner", "Loner", "Lifestyle", "tag", parent="coffee")
@@ -1744,7 +1746,7 @@ def test_a_plain_version_race_does_not_turn_a_legal_create_into_a_false_refusal(
     repository, repo = _repo_with_fake_table(handler)
     cap = _breadth_cap()
     _parent_with_children_and_loose_rows(repo, repository, cap - 1)
-    repo._table.before_update.append(_bump_version)      # rival writes something unrelated
+    _before_next_update(repo._table, _bump_version)      # rival writes something unrelated
 
     created = repo.create_category("wine", "Wine", "Lifestyle", "glass", parent="coffee")
 
@@ -1770,7 +1772,7 @@ def test_the_delete_guard_is_re_evaluated_on_the_retry_not_only_the_first_read(h
                                        parent="coffee")
         item["version"] = item["version"] + 1
 
-    repo._table.before_update.append(a_restore_widens_the_parent)
+    _before_next_update(repo._table, a_restore_widens_the_parent)
 
     with pytest.raises(repository.InvalidCategoryParentError, match="move some out"):
         repo.delete_category("coffee")

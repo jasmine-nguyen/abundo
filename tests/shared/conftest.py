@@ -16,7 +16,6 @@ fake ``boto3.resource`` is never exercised. The fake ``Key``/``Attr`` (``_Field`
 record conditions that ``FakeTable`` can evaluate against a stored item.
 """
 
-import copy
 import pathlib
 import sys
 import types
@@ -25,9 +24,6 @@ from decimal import Decimal
 import pytest
 
 from _boto_stubs import install_import_satisfiers, use_condition_fields
-# FakeTable + _client_error moved to _dynamo_fakes so a sibling suite (tests/scripts) can import
-# them by basename (WHIT-532). Re-imported here so this conftest's fixtures and the
-# conftest.FakeTable attribute are unchanged.
 from _dynamo_fakes import FakeTable, _client_error
 
 # Set the env vars + install fake boto3/botocore/ssm at module load, so
@@ -38,17 +34,10 @@ install_import_satisfiers(ssm_default="shared-fake-key")
 
 
 _SHARED_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "shared")
-# shared/ modules whose bare names collide with the sibling suites.
-_REIMPORT = (
-    "constants", "models", "encoders", "repository", "repository_base", "repository_transaction",
-    "repository_balance", "repository_loanfacts", "repository_milestone", "repository_budget",
-    "repository_goals", "repository_category",
-    "repository_errors", "repository_insight", "repository_device", "push",
-    "repository_push_receipt", "repository_notify", "spend", "budget_standing",
-    "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
-    "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
-    "balance_fetch", "rule_engine", "repository_rule", "repository_job", "rule_spreading",
-)
+# Every shared/ module, shed and re-imported per test: their bare names collide with the sibling
+# suites. Built from the folder so a new module needs no entry here. `ssm` stays out — the one in
+# sys.modules is _boto_stubs' fake, installed above.
+_REIMPORT = tuple(sorted({path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")} - {"ssm"}))
 
 
 @pytest.fixture
@@ -163,70 +152,6 @@ def database_error(shared):
     return repository_errors.DatabaseError
 
 
-class ConfigItemTable:
-    """In-memory stand-in for a single config item (pk=sk=``key``): an ``items`` map +
-    a numeric ``version`` written under the ``attribute_exists(pk) AND #v = :expected``
-    optimistic lock. Emulates the seed put_item (attribute_not_exists guard), the
-    nested-map SET one key / REMOVE one key update, and a one-shot version race.
-
-    The shared FakeTable above only parses flat SET expressions, so the budget and
-    goals config-item repo suites each used to carry their own identical copy of this
-    (WHIT-251). Build one per test via the ``config_item_table`` fixture.
-    """
-
-    def __init__(self, key, items=None, version=1, present=True):
-        self.item = {
-            "pk": key, "sk": key,
-            "items": dict(items or {}), "version": Decimal(version),
-        }
-        self.present = present   # False -> config item never seeded
-        self.update_calls = 0
-        self.put_calls = 0
-        self._bump_before_next_update = False
-
-    def get_item(self, Key):
-        return {"Item": copy.deepcopy(self.item)} if self.present else {}
-
-    def put_item(self, Item, ConditionExpression=None):
-        self.put_calls += 1
-        # Seed guard: a present item makes attribute_not_exists fail (lost race -> no-op).
-        if ConditionExpression == "attribute_not_exists(pk)" and self.present:
-            raise _client_error("ConditionalCheckFailedException")
-        self.item = copy.deepcopy(Item)
-        self.present = True
-
-    def race_next_update(self):
-        """Arm a one-shot optimistic-lock race: the next update_item sees a version
-        that moved under it (someone else wrote), then the retry converges."""
-        self._bump_before_next_update = True
-
-    def always_race(self):
-        """Arm the lock race on EVERY update, so the optimistic-lock retry never converges:
-        the repo exhausts its retry budget and raises VersionConflictError. Contrast
-        race_next_update(), which loses exactly one update then converges. Call once per table."""
-        original = self.update_item
-        def armed_update(*args, **kwargs):
-            self.race_next_update()
-            return original(*args, **kwargs)
-        self.update_item = armed_update
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames,
-                    ExpressionAttributeValues, ConditionExpression=None):
-        self.update_calls += 1
-        if self._bump_before_next_update:
-            self._bump_before_next_update = False
-            self.item["version"] = self.item["version"] + Decimal(1)  # concurrent writer
-        expected = ExpressionAttributeValues[":expected"]
-        if not self.present or expected != self.item["version"]:
-            raise _client_error("ConditionalCheckFailedException")
-        item_id = ExpressionAttributeNames["#id"]
-        if UpdateExpression.startswith("REMOVE"):
-            self.item["items"].pop(item_id, None)                    # REMOVE #items.#id
-        else:
-            self.item["items"][item_id] = ExpressionAttributeValues[":val"]  # SET #items.#id = :val
-        self.item["version"] = ExpressionAttributeValues[":next"]            # SET #v = :next
-
-
 @pytest.fixture
 def repo(shared):
     """A shared TransactionRepository backed by an in-memory FakeTable."""
@@ -307,6 +232,12 @@ def client_error():
 
 @pytest.fixture
 def config_item_table():
-    """Factory for a config-item table fake (pk=sk=key), seeded per test (WHIT-251).
+    """Factory for a FakeTable holding one config item (pk=sk=key): an ``items`` map plus a
+    numeric ``version`` (WHIT-251, WHIT-625). ``present=False`` leaves the table empty.
     Call as ``config_item_table("BUDGETS", items=..., version=..., present=...)``."""
-    return ConfigItemTable
+    def build(key, items=None, version=1, present=True):
+        table = FakeTable()
+        if present:
+            table.seed({"pk": key, "sk": key, "items": dict(items or {}), "version": Decimal(version)})
+        return table
+    return build

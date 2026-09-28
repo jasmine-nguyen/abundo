@@ -15,6 +15,8 @@ from decimal import Decimal
 
 import pytest
 
+_KEY = ("BUDGETS", "BUDGETS")  # the config item's store key in FakeTable
+
 
 @pytest.fixture
 def budget_repo(shared):
@@ -34,13 +36,13 @@ _EXPECTED_SPREAD_KEYS = {
 
 def test_set_spread_if_absent_skips_a_present_but_empty_entry(shared, budget_repo, config_item_table):
     table = config_item_table("BUDGETS", items={"insurance": {}})
-    before_version = table.item["version"]
+    before_version = table.store[_KEY]["version"]
     _with_table(budget_repo, table)
 
     assert budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
                                             "2026-09-05", 30, "2026-01-01") is None
-    assert table.update_calls == 0
-    assert table.item["version"] == before_version
+    assert len(table.update_calls) == 0
+    assert table.store[_KEY]["version"] == before_version
 
 
 def test_set_spread_if_absent_writes_exactly_the_spread_fields_no_stray_marker(
@@ -53,9 +55,9 @@ def test_set_spread_if_absent_writes_exactly_the_spread_fields_no_stray_marker(
 
     budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3, "2026-09-05", 30, "2026-01-01")
 
-    stored = table.item["items"]["insurance"]
+    stored = table.store[_KEY]["items"]["insurance"]
     assert set(stored) == _EXPECTED_SPREAD_KEYS
-    assert table.item["version"] == Decimal(2)
+    assert table.store[_KEY]["version"] == Decimal(2)
 
 
 def test_set_spread_if_absent_skips_a_rollover_category_that_also_has_a_target(
@@ -69,5 +71,5 @@ def test_set_spread_if_absent_skips_a_rollover_category_that_also_has_a_target(
 
     assert budget_repo.set_spread_if_absent("insurance", Decimal("600.00"), 3,
                                             "2026-09-05", 30, "2026-01-01") is None
-    assert table.item["items"]["insurance"] == before
-    assert table.update_calls == 0
+    assert table.store[_KEY]["items"]["insurance"] == before
+    assert len(table.update_calls) == 0

@@ -35,15 +35,15 @@ install_import_satisfiers(ssm_default="test-api-key")
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _LAMBDA_API_DIR = str(_REPO_ROOT / "lambda_api")
 _SHARED_DIR = str(_REPO_ROOT / "shared")
-# Modules re-imported fresh per test: names that collide with the sibling
-# sync_trigger suite.
-_COLLIDING = (
-    "handler", "constants", "api_constants", "models", "encoders", "repository",
-    "insights_ai", "anthropic_client", "rule_engine",
-    "merchant_groups", "filing_habits", "apply_rules_worker", "repository_job",
-    "spend", "budget_standing", "repayment_rules", "api_key", "recurring_bills", "transaction_search",
-    "chat_tools", "ai_chat",
-)
+# Modules re-imported fresh per test: every lambda_api/ module, plus the shared/ modules whose bare
+# name another lambda folder also defines (e.g. `repository`). Built from the folders so a new
+# module needs no entry here. Shedding every shared/ module too is correct but ~70% slower.
+_OTHER_DIRS = [folder for folder in _REPO_ROOT.glob("lambda*") if folder.name != "lambda_api"]
+_COLLIDING = tuple(sorted(
+    {path.stem for path in pathlib.Path(_LAMBDA_API_DIR).glob("*.py")}
+    | ({path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")}
+       & {path.stem for folder in _OTHER_DIRS for path in folder.glob("*.py")})
+))
 
 
 @contextlib.contextmanager

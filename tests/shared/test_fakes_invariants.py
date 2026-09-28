@@ -205,8 +205,7 @@ _REGISTRY = [
     _Domain(
         "category",
         [_Module("_category_fakes", {
-            "FakeTable", "FakeBudgetRepo", "_ccfe", "_validation_error", "_throttle",
-            "_MAX_UPDATE_EXPRESSION_BYTES", "_CFG", "_SLOT", "_cat", "_categories_event",
+            "FakeBudgetRepo", "_ccfe", "_before_next_update", "_CFG", "_SLOT", "_cat", "_categories_event",
             "_drain", "_piled_store", "_repo_with_fake_table", "_schema", "_slot_histogram",
         })],
         (_API_TESTS / "test_categories.py", _API_TESTS / "test_category_color_slots.py"),
