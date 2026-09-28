@@ -952,32 +952,32 @@ def section(title: str, items) -> list[str]:
     return ["", f"{title}:", *[f"  - {item}" for item in items]] if items else []
 
 
+def critic_summary(state: BuildState) -> str:
+    verdict = state.get("plan_verdict")
+    if verdict == "NEEDS REWORK":
+        return "critic still has concerns (below)"
+    tweaks = len(state.get("plan_tweaks", []))
+    if tweaks:
+        return f"critic approved, with {plural(tweaks, 'small change')} folded in"
+    return "critic approved" if verdict else "critic not run"
+
+
 def plan_brief(state: BuildState) -> str:
+    """Only what's needed to decide: the why/what/how summary and any open questions.
+    Files, tests, critic notes and risks stay in the plan file."""
     lines = [
-        (
-            f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} "
-            f"({state.get('card_type', '')}), attempt {state.get('plan_attempts', 0)}"
-            f" · critic: {state.get('plan_verdict', 'not run')}"
-        ),
+        f"PLAN FOR REVIEW — {state.get('card_number') or 'ad-hoc request'} · {critic_summary(state)}",
         *section("Problem", state.get("problem", [])),
         *section("Task", state.get("task", [])),
         *section("Solution", state.get("solution", [])),
     ]
-    if state.get("slices"):
-        lines += ["", "Slices, built in this order:"]
-        lines += [f"  {n}. {s['title']} — {s['delivers']}" for n, s in enumerate(state["slices"], 1)]
-    lines += section("Files touched", state.get("files", []))
-    lines += section("Test points (confirm these)", state.get("seams", []))
-    lines += section("Critic findings", state.get("plan_findings", []))
-    lines += section("Critic tweaks (will be applied)", state.get("plan_tweaks", []))
-    lines += section("Risks", state.get("risks", []))
-    if state.get("door"):
-        lines += section("Merge danger", [DOORS[state["door"]], f"Blast radius: {state.get('blast_radius', '')}"])
+    if state.get("plan_verdict") == "NEEDS REWORK":
+        lines += section("The critic's unresolved concerns", state.get("plan_findings", []))
     if state.get("decisions"):
         lines += ["", "Decisions for you:", format_questions(state["decisions"])]
     lines += [
         "",
-        f"Full plan: {plan_file(state).relative_to(ROOT)} (edit it directly before replying if you like)",
+        f"Details (files, tests, critic notes, risks): {plan_file(state).relative_to(ROOT)}",
         "",
         (
             'Reply "go" to approve (recommended answers), "go: Q1 <answer>; Q2 <answer>" to approve '

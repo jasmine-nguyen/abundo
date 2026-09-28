@@ -117,17 +117,16 @@ the card number for card builds) and check where it is:
    pause, show what the block says in your own message BEFORE you ask
    anything.
 
-   - **PLAN FOR REVIEW** — you MUST show the whole block in your message
-     before any question. Show it as printed, formatted as Markdown: each
-     section title in bold, its lines as bullets. Keep every section, every
-     line and the order. Don't summarise it, shorten it, or go straight to
-     the questions. The block runs in this order: Problem, Task, Solution
-     (why, what, how), then Slices, Files touched, Test points, Critic
-     findings, Critic tweaks, Risks, Decisions, and the plan file's path
-     (they can edit that file before approving).
+   - **PLAN FOR REVIEW** — before any question, show the summary in your
+     message exactly as printed, formatted as Markdown (section titles in
+     bold, lines as bullets): the header line, Problem, Task and Solution,
+     any unresolved critic concerns, and the details line. Don't add to it,
+     shorten it, or pull more in from the plan file. If the user asks for
+     the details, show them the parts they ask about.
 
-     Then ask the decisions with AskUserQuestion, recommended answer first
-     and marked "(Recommended)", and offer: Approve · Rework · Stop.
+     Then ask the decisions with AskUserQuestion instead of printing them a
+     second time, recommended answer first and marked "(Recommended)", and
+     offer: Approve · Rework · Stop.
    - **CARD LOOKS INVALID** — show the block (evidence, problem, and what
      the card should become), then ask: Close the card · Plan it anyway (ask
      why it's still needed) · Stop.
