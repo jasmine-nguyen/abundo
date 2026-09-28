@@ -41,7 +41,7 @@ _COLLIDING = (
     "handler", "constants", "api_constants", "models", "encoders", "repository",
     "insights_ai", "anthropic_client", "rule_engine",
     "merchant_groups", "filing_habits", "apply_rules_worker", "repository_job",
-    "spend", "repayment_rules", "api_key", "recurring_bills", "transaction_search",
+    "spend", "budget_standing", "repayment_rules", "api_key", "recurring_bills", "transaction_search",
     "chat_tools", "ai_chat",
 )
 

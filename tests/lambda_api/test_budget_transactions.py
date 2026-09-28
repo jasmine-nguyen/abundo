@@ -51,7 +51,7 @@ def test_list_reconciles_with_budget_total(handler, monkeypatch):
     # cycle and the WHOLE subtree. Reverting the subtree filter drops t4; reverting to a
     # 7-day feed drops t3/t4; both flip this. contributes drops t5/t6; the window drops t7.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
 
     total = handler.list_budgets(
         _FakeBudgetRepo({"coffee": {"target": Decimal("80")}}),
@@ -82,7 +82,7 @@ def test_refund_reconciles_across_endpoints(handler, monkeypatch):
     # Reverting either endpoint's window/subtree/contributes filter (or dropping the
     # refund row from the list) breaks the equality.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
     transactions = [
         _txn("spend", "coffee", -30, "2026-07-10"),          # $30 posted spend
         _txn("refund", "coffee-beans", 10, "2026-07-11"),    # $10 posted refund (sub-category)
@@ -115,7 +115,7 @@ def test_refund_that_clamps_the_header_still_bounds_the_list(handler, monkeypatc
     # RED if the list ever drops refund rows (listed rises above the floored header) or the
     # rollup stops clamping (a bucket goes negative).
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
     transactions = [
         _txn("spend", "coffee", -10, "2026-07-10"),    # $10 posted spend
         _txn("refund", "coffee", 30, "2026-07-11"),    # $30 posted refund → posted nets -20
@@ -143,10 +143,10 @@ def test_refund_that_clamps_the_header_still_bounds_the_list(handler, monkeypatc
 def test_null_amount_row_does_not_break_the_header_and_stays_in_the_list(handler, monkeypatch):
     # WHIT-362: a contributing row with a missing/None amount (malformed data) must not
     # 500 the /budgets header — it counts as $0 — while /budgets/{id}/transactions still
-    # lists it. Fail-on-revert: reverting _spend_contribution to Decimal(str(amount)) makes
+    # lists it. Fail-on-revert: reverting spend_contribution to Decimal(str(amount)) makes
     # list_budgets raise on Decimal("None"), so this test errors.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
     null_row = {
         "transaction_id": "null_amt", "category": "coffee", "amount": None,
         "status": "posted", "counts_to_budget": True, "date": "2026-07-11",
@@ -170,7 +170,7 @@ def test_excludes_non_contributing_rows(handler, monkeypatch):
     # budget_excluded, !counts_to_budget and an unknown status never appear (they're not
     # in the total either), so the eyeballed rows can't disagree with the header.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
     txns = [
         _txn("keep", "coffee", -10, "2026-07-10"),
         _txn("nocount", "coffee", -10, "2026-07-10", counts=False),
@@ -186,7 +186,7 @@ def test_excludes_non_contributing_rows(handler, monkeypatch):
 
 def test_strips_pk_sk(handler, monkeypatch):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
     resp = handler.get_budget_transactions(
         _event("coffee"),
         _DateFilteringTransactionRepo([_txn("t1", "coffee", -5, "2026-07-10")]),
@@ -209,7 +209,7 @@ def test_missing_category_id_returns_404(handler):
 
 def test_empty_cycle_returns_empty_list(handler, monkeypatch):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2026, 7, 25))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2026, 7, 25))
     resp = handler.get_budget_transactions(
         _event("coffee"), _DateFilteringTransactionRepo([]), _FakePayCycleRepo(),
         _FakeCategoryRepo(CATEGORIES))
@@ -260,7 +260,7 @@ def test_router_put_budget_not_captured_by_transactions_route(handler, monkeypat
 
 def _pin_today(monkeypatch, day=date(2026, 7, 25)):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: day)
+    monkeypatch.setattr(spend, "melbourne_today", lambda: day)
 
 
 # --- refunds -----------------------------------------------------------------
@@ -300,7 +300,7 @@ def test_refund_reconciles_with_the_budget_total(handler, monkeypatch):
 def test_net_negative_bucket_list_and_clamped_header_DIVERGE(handler, monkeypatch):
     # CHARACTERISATION (pins current, arguably-wrong behaviour — see the ranked critique):
     # a refund LARGER than the cycle's spend drives the posted bucket net-negative. The
-    # /budgets header CLAMPS each bucket at >= 0 (spend.py _summarise), so it shows $0 — but
+    # /budgets header CLAMPS each bucket at >= 0 (spend.py summarise), so it shows $0 — but
     # the transaction list returns every contributing row, whose signed sum is NEGATIVE. The
     # "the rows always reconcile with the header" promise does NOT hold in this corner.
     _pin_today(monkeypatch)

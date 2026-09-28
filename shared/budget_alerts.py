@@ -42,19 +42,11 @@ import logging
 from decimal import Decimal
 
 import rule_engine
-from constants import ACCOUNT_ID_MAP, MAX_PAGE_SIZE, PENDING_STATUS
+from budget_standing import budget_standing, standing_window
+from constants import INCOME_BUCKET, PENDING_STATUS, SAVINGS_BUCKET
 from push import send_push
-from spend import (
-    _spread_state,
-    build_category_children,
-    current_cycle_window,
-    fold_subtree,
-    rollover_windows,
-    seal_rollover,
-    subtree_ids,
-    summarise_transactions,
-    transactions_in_window,
-)
+from repository_transaction import read_window
+from spend import transactions_in_window
 
 logger = logging.getLogger(__name__)
 
@@ -62,37 +54,11 @@ logger = logging.getLogger(__name__)
 # reached threshold is still marked fired.
 _THRESHOLDS = ((Decimal("1.0"), 100), (Decimal("0.8"), 80))
 
-# Bounded pagination backstop per account (mirrors _fetch_windowed_transactions).
-_MAX_PAGES_PER_ACCOUNT = 1000
-
 # Push copy per threshold pct. {name} = the category's display name.
 _COPY = {
     80: ("Heads up \U0001f440", "{name} is at 80% of its budget this cycle."),
     100: ("Budget hit", "You've spent your whole {name} budget for this cycle."),
 }
-
-
-def _window_rows(window_repo, start: str, end: str) -> list[dict]:
-    """Every transaction in [start, end] across the mapped accounts, following the
-    date-index cursor to completion (bounded)."""
-    rows: list[dict] = []
-    for account_id in ACCOUNT_ID_MAP.values():
-        cursor = None
-        pages = 0
-        while True:
-            page, cursor = window_repo.get_transactions_by_date_range(
-                account_id, start, end, limit=MAX_PAGE_SIZE, cursor=cursor
-            )
-            rows.extend(page)
-            pages += 1
-            if not cursor:
-                break
-            if pages >= _MAX_PAGES_PER_ACCOUNT:
-                raise RuntimeError(
-                    f"budget-alert window read for {account_id} did not terminate "
-                    f"after {_MAX_PAGES_PER_ACCOUNT} pages ({start}..{end})"
-                )
-    return rows
 
 
 def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, window_repo, webhook_repo):
@@ -106,28 +72,14 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
     if not targets:
         return None
 
-    cycle = paycycle_repo.get_paycycle()
-    last_pay_date, length = cycle["last_pay_date"], cycle["length"]
-    start, end = current_cycle_window(last_pay_date, length)
+    window = standing_window(targets, paycycle_repo.get_paycycle())
+    start, end = window.cycle_start, window.today
 
-    # Rollover: compute the completed-cycle windows each rollover target needs, and
-    # widen the single fetch if any look further back than the current cycle. The wider
-    # rows are stored separately as `rollover_txns` — `before_rows` stays current-cycle-
-    # only so this cycle's spend is never inflated by prior-cycle transactions.
-    rollover_ids = {cat_id for cat_id, e in targets.items() if e.get("rollover")}
-    windows_by_id = {}
-    reanchor_by_id = {}
-    fetch_start = start
-    for cat_id in rollover_ids:
-        windows, reanchor = rollover_windows(targets[cat_id], start, length, last_pay_date)
-        windows_by_id[cat_id] = windows
-        if reanchor is not None:
-            reanchor_by_id[cat_id] = reanchor
-        if windows:
-            fetch_start = min(fetch_start, windows[0][0])
-
-    all_rows = _window_rows(window_repo, fetch_start, end)
-    before_rows = (all_rows if fetch_start == start
+    # One read, widened back to the oldest rollover cycle. The wide rows are kept as
+    # `rollover_txns`; `before_rows` stays current-cycle-only so this cycle's spend is never
+    # inflated by prior-cycle transactions.
+    all_rows = read_window(window_repo, window.fetch_start, end)
+    before_rows = (all_rows if window.fetch_start == start
                    else transactions_in_window(all_rows, start, end))
 
     # Pre-load the pending pools reconcile will consume, so the Δ simulation matches
@@ -137,14 +89,10 @@ def capture_pre_write(normalised, *, device_repo, budget_repo, paycycle_repo, wi
     pending_pools = {a: list(webhook_repo.get_pending_transactions_for_account(a)) for a in accounts}
 
     return {
-        "tokens": tokens, "targets": targets,
-        "last_pay_date": last_pay_date, "length": length,
+        "tokens": tokens, "targets": targets, "window": window,
         "start": start, "end": end,
         "before_rows": before_rows, "pending_pools": pending_pools,
         "rollover_txns": all_rows,
-        "rollover_ids": rollover_ids,
-        "windows_by_id": windows_by_id,
-        "reanchor_by_id": reanchor_by_id,
     }
 
 
@@ -213,24 +161,13 @@ def _simulate_after(ctx, normalised, webhook_repo, is_unfiled=None) -> list[dict
     return [r for r in by_id.values() if start <= (r.get("date") or "") <= end]
 
 
-def _combined_target(spend: dict, ids: set[str]) -> Decimal:
-    """A budgeted target's combined spend: the signed net over its whole subtree (the
-    target itself plus every descendant), posted and pending summed UNCLAMPED across the
-    subtree and each clamped once. `spend` is the per-id summary from a `clamp=False`
-    call, so a net-negative sibling nets against the rest before the floor — matching
-    /budgets' aggregate-then-clamp so an alert can't disagree with the screen (WHIT-343).
-    A leaf or orphan target maps to just itself. Seed Decimal(0) so an empty set (a
-    corrupt cycle) yields Decimal, not int; an id absent from `spend` contributes 0."""
-    folded = fold_subtree(spend, ids)
-    return folded["posted"] + folded["pending"]
-
-
 def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_repo) -> None:
     """Given the pre-write context and the just-written batch, push for every budgeted
     category whose combined spend has reached a threshold not yet fired this cycle."""
     if ctx is None:
         return
     targets = ctx["targets"]
+    window = ctx["window"]
     categories = category_repo.list_categories()
     names = {c["id"]: c["name"] for c in categories}
     bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
@@ -245,27 +182,15 @@ def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_r
     #   * A target whose category is GONE (an orphan left by a failed best-effort
     #     delete-cascade, lambda_api/handler.py) can't be classified, so it's dropped
     #     too — otherwise a negative clawback against an orphaned income target would
-    #     read as POSITIVE spend (_spend_contribution flips the sign) and fire a false
+    #     read as POSITIVE spend (spend_contribution flips the sign) and fire a false
     #     alert (WHIT-168). A deleted category shouldn't push regardless of its bucket,
     #     and its name would only render as a raw id.
     # A positive membership test (not `set(targets) - income_ids`) is what closes the
-    # orphan hole: subtraction kept unknown-category targets in. "Income"/"Savings" are
-    # bucket literals. NOTE: list_budgets (the /budgets read) intentionally still sums these
-    # as spend; the asymmetry is deliberate — this card is about the false push, and the
-    # client hides Savings budget rows (WHIT-201).
+    # orphan hole: subtraction kept unknown-category targets in. NOTE: list_budgets (the
+    # /budgets read) intentionally still sums Savings as spend; the asymmetry is deliberate —
+    # this card is about the false push, and the client hides Savings budget rows (WHIT-201).
     target_ids = {cat_id for cat_id in targets
-                  if cat_id in bucket_by_id and bucket_by_id[cat_id] not in ("Income", "Savings")}
-    # Sub-categories (WHIT-222, WHIT-228): a budgeted PARENT's spend is the sum over its
-    # whole subtree — the parent itself plus every descendant at any depth. Summing the
-    # parent id too counts a transaction tagged directly onto the parent (the picker
-    # allows it), so a parent alert and the Budgets screen never disagree — both use these
-    # same helpers (lambda_api/handler.py). A leaf/orphan target maps to just itself, so an
-    # unbudgeted leaf still feeds its budgeted parent and a leaf-only budget is summed
-    # exactly as before. The same-bucket rule keeps a spend parent's subtree all spend, so
-    # the spend summariser is correct for every needed id.
-    children = build_category_children(categories)
-    ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in target_ids}
-    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
+                  if cat_id in bucket_by_id and bucket_by_id[cat_id] not in (INCOME_BUCKET, SAVINGS_BUCKET)}
     # WHIT-545: mirror the write's settlement carry gate, so the preview buckets a charge
     # under the category that will actually land. Built from the categories already read
     # above; a best-effort second read of the taxonomy, like the write's own.
@@ -274,50 +199,26 @@ def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_r
     def is_unfiled(category):
         return rule_engine.is_unfiled_category(category, taxonomy_ids)
 
-    # Unclamped per id (clamp=False) so _combined_target can net a refunded sibling
-    # across the subtree before clamping the total — aggregate-then-clamp, WHIT-343.
-    after = summarise_transactions(
-        _simulate_after(ctx, normalised, webhook_repo, is_unfiled), needed_ids, clamp=False
-    )
+    # The same standing /budgets shows (budget_standing.py), over the AFTER-write rows. Sealing
+    # a rollover only reads completed cycles, so the pre-write history before this cycle plus
+    # the simulated current cycle is the whole picture. Read-only: the settlements are ignored;
+    # the /budgets read owns persistence.
+    after_rows = _simulate_after(ctx, normalised, webhook_repo, is_unfiled)
+    history = [r for r in ctx["rollover_txns"]
+               if window.fetch_start <= r.get("date", "") < window.cycle_start]
+    rows, _ = budget_standing(targets, window, categories, history + after_rows)
 
     # (cat_id, pct_to_send, [every reached pct]) — pct_to_send is the highest.
     due = []
-    rollover_ids = ctx.get("rollover_ids", set())
     for cat_id in target_ids:
-        entry = targets[cat_id]
-        target = Decimal(str(entry["target"]))
-        # Fold BOTH smoothing cushions into the threshold basis so the push agrees with the
-        # /budgets screen's spendable (WHIT-504 spread, WHIT-555 rollover). Same helpers + same
-        # args as list_budgets, so the two can't disagree. The two cushions are mutually exclusive
-        # on real data (a category is rollover OR spread); rollover wins if a corrupt row has both,
-        # matching set_budget which strips spread when rollover turns on.
-        # Read-only: _spread_state's finished/reanchor and seal_rollover's persist are ignored;
-        # the /budgets read owns persistence and re-derives the same state on every GET.
-        buffer_term = Decimal(0)
-        adjustment_term = Decimal(0)
-        if cat_id in rollover_ids:
-            if cat_id in ctx.get("reanchor_by_id", {}):
-                buffer_term = ctx["reanchor_by_id"][cat_id]["carryover"]
-            else:
-                windows = ctx.get("windows_by_id", {}).get(cat_id, [])
-                if windows:
-                    buffer_term, _ = seal_rollover(
-                        entry, windows, ids_by_target[cat_id],
-                        ctx["rollover_txns"], ctx["length"], ctx["end"])
-                else:
-                    buffer_term = entry.get("carryover", Decimal(0))
-        if "spread_amount" in entry and cat_id not in rollover_ids:
-            spread_row, _, _ = _spread_state(
-                entry, ctx["start"], ctx["length"], ctx["last_pay_date"], ctx["end"])
-            if spread_row is not None:
-                adjustment_term = spread_row["adjustment"]
-        basis = target + buffer_term + adjustment_term
+        row = rows[cat_id]
+        basis = row["available"]
         # basis <= 0 (a payback slice bigger than the whole target) would read every threshold
         # as reached at $0 spend. Such a cycle reads over-budget on screen but sends no push — a
         # push the user couldn't act on — a deliberate, defensible silence.
         if basis <= 0:
             continue
-        spend = _combined_target(after, ids_by_target[cat_id])
+        spend = row["posted"] + row["pending"]
         reached = [pct for frac, pct in _THRESHOLDS if frac * basis <= spend]
         if reached:
             due.append((cat_id, reached[0], reached))  # _THRESHOLDS is high→low
@@ -331,7 +232,7 @@ def fire_budget_alerts(ctx, normalised, *, webhook_repo, category_repo, notify_r
     # saved payday went stale — so a threshold fired once and then stayed suppressed for the
     # whole NOTIFY_TTL (60 days) across every later cycle, instead of re-arming each cycle. The
     # spend window already rolls forward per payday; the marker must roll with it.
-    cycle_start, length = ctx["start"], ctx["length"]
+    cycle_start, length = ctx["start"], window.length
     fired = notify_repo.fired_markers(cycle_start, length)
 
     claimed = []

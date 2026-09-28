@@ -116,8 +116,10 @@ def _list(handler, budget_repo, transactions=None, categories=None):
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    monkeypatch.setattr(handler, "current_cycle_window",
-                        lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
 
 
 # --- GET /budgets: the cushion, then the slices, then nothing ------------------
@@ -191,7 +193,8 @@ def test_a_pay_cycle_change_settles_the_outstanding_balance_over_this_cycle_then
     # The row is the settle plan itself: $50 over 1 cycle, at index 1 (all of it, now).
     assert result["insurance"]["spread"] == {
         "amount": Decimal("50.00"), "cycles": 1, "index": 1, "adjustment": Decimal("-50.00")}
-    taken_before = -sum((handler.spread_adjustment(original, 6, k) for k in range(1, 6)), Decimal(0))
+    import spend
+    taken_before = -sum((spend.spread_adjustment(original, 6, k) for k in range(1, 6)), Decimal(0))
     assert original - taken_before + result["insurance"]["spread"]["adjustment"] == 0
     # It is PERSISTED as a fresh one-cycle plan anchored one cycle back on the new grid —
     # not shown once and cleared. FAIL-ON-REVERT for the settle surviving past one read.
@@ -204,8 +207,10 @@ def test_a_pay_cycle_change_settles_the_outstanding_balance_over_this_cycle_then
 
     # Next cycle on the new grid: the settle plan is at index 2 of 1 -> finished, nothing
     # shown, cleared. The settle never lingers past the cycle it was owed in.
-    monkeypatch.setattr(handler, "current_cycle_window",
-                        lambda last_pay_date, length, today=None: ("2026-09-05", "2026-09-06"))
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, today=None: ("2026-09-05", "2026-09-06"))
     third_read = _list(handler, budget_repo)
     assert "spread" not in third_read["insurance"]
     assert budget_repo.clear_spread_calls == ["insurance"]
@@ -227,7 +232,8 @@ def test_taken_slices_are_measured_by_what_was_shown_under_the_old_grid_not_the_
     assert result["insurance"]["spread"] == {
         "amount": Decimal("1043.18"), "cycles": 1, "index": 1, "adjustment": Decimal("-1043.18")}
     assert budget_repo.set_spread_calls == [("insurance", Decimal("1043.18"), 1, "2026-07-07", LENGTH, PAYDATE)]
-    slice_one = -handler.spread_adjustment(BILL, 4, 1)
+    import spend
+    slice_one = -spend.spread_adjustment(BILL, 4, 1)
     assert BILL - slice_one + result["insurance"]["spread"]["adjustment"] == 0
 
 
@@ -343,12 +349,13 @@ def test_a_partial_spread_entry_is_cleared_instead_of_500ing_the_whole_screen(ha
 
 
 def test_the_handlers_spread_field_list_matches_the_repositorys(handler):
-    # GUARD: the read trusts an entry only when it has every field in _SPREAD_ENTRY_FIELDS;
+    # GUARD: the read trusts an entry only when it has every field in SPREAD_ENTRY_FIELDS;
     # the repo writes/strips _SPREAD_FIELDS. If one gains a field the other doesn't, a
     # freshly-written plan would read as "partial" and be cleared on its first read.
     import repository_budget
+    import spend
 
-    assert set(handler._SPREAD_ENTRY_FIELDS) == set(repository_budget._SPREAD_FIELDS)
+    assert set(spend.SPREAD_ENTRY_FIELDS) == set(repository_budget._SPREAD_FIELDS)
 
 
 # --- PUT /budgets/{category}/spread ---------------------------------------------

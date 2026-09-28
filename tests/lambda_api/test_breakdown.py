@@ -214,7 +214,7 @@ def test_breakdown_applies_current_cycle_window(handler, monkeypatch):
     # A tomorrow-dated txn is excluded; older-than-7-days but in-cycle spend is IN
     # (guards the FEED_WINDOW_DAYS trap that made a client-side derivation wrong).
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN (13 days ago)
@@ -306,7 +306,7 @@ def test_breakdown_earned_counts_in_cycle_income_older_than_feed_window(handler,
     # The whole reason earned is server-side: a paycheck lands once a cycle, often
     # >7 days ago. It must be counted over the FULL cycle window, not a 7-day feed.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("salary", "Income")])
     txns = _DateFilteringTransactionRepo([
         {**_transaction("salary", 2500, "posted"), "date": "2024-01-03"},  # cycle_start, 13 days ago -> IN
@@ -469,7 +469,7 @@ def test_breakdown_net_zero_income_source_dropped(handler):
 def test_breakdown_earned_uses_prior_cycle_window(handler, monkeypatch):
     # cycle=1 earns over the prior FULL cycle: income in the current window is excluded.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("salary", "Income")])
     txns = _DateFilteringTransactionRepo([
         {**_transaction("salary", 2000, "posted"), "date": "2023-12-20"},  # prior cycle -> IN for cycle=1
@@ -601,7 +601,7 @@ def _dated(cat, amount, d, status="posted"):
 
 def test_breakdown_cycle_1_reads_the_prior_window(handler, monkeypatch):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -10, "2023-12-25"),  # prior window   -> IN for cycle=1
@@ -619,7 +619,7 @@ def test_breakdown_cycle_0_is_byte_identical_to_the_default(handler, monkeypatch
     # cycle=0 (and an omitted param) must be the unchanged current-cycle behaviour —
     # the backward-compat / fail-on-revert guard for the window selection.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     pool = [_dated("coffee", -20, "2024-01-10")]  # current window
     cats = lambda: FakeCategoryRepo([_category("coffee", "Lifestyle")])
 
@@ -633,7 +633,7 @@ def test_breakdown_past_window_predating_history_is_empty(handler, monkeypatch):
     # A prior cycle with no transactions (e.g. before first sync) → empty {}, which the
     # client renders as its "No spending in that pay cycle" empty state.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([_dated("coffee", -20, "2024-01-10")])  # all current-cycle
 
@@ -642,7 +642,7 @@ def test_breakdown_past_window_predating_history_is_empty(handler, monkeypatch):
 
 def test_breakdown_cycle_param_flows_through_dispatch(handler, monkeypatch):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -10, "2023-12-25"),  # prior window
@@ -1047,7 +1047,7 @@ def test_breakdown_rollup_correct_over_prior_cycle_lookback(handler, monkeypatch
     # excluded. Fail-on-revert: ignore the window and the -99 changes car; floor per-id and
     # tolls -> 0 -> car 60.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([
         _category("car", "Living"),
         _child("petrol", "Living", "car"),

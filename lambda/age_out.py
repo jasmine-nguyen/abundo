@@ -34,7 +34,7 @@ from constants import ACCOUNT_ID_MAP, PENDING_AGE_OUT_DAYS
 from repository import TransactionRepository, _merchant_matches_pending
 from repository_category import CategoryRepository
 from repository_errors import DatabaseError
-from spend import _melbourne_today
+from spend import melbourne_today
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -251,13 +251,13 @@ def age_out_stale_pendings(repo, category_repo=None, today: date | None = None, 
     """Sweep every account for stale pendings. Returns a summary dict.
 
     `today` is injectable for deterministic tests; defaults to the app's Melbourne
-    "today" (shared spend._melbourne_today) — the one clock the rest of the app uses,
+    "today" (shared spend.melbourne_today) — the one clock the rest of the app uses,
     matching the schedule's own Australia/Melbourne timezone.
 
     `category_repo` is optional: when given, the taxonomy is read once and a filed pending's
     filing is rescued onto its settled twin before the reap (WHIT-511). Omitted (or an
     unreadable taxonomy) reaps exactly as before — so every existing caller/test is unchanged."""
-    today = today or _melbourne_today()
+    today = today or melbourne_today()
     cutoff = _cutoff_date(today)
     is_unfiled = _load_is_unfiled(category_repo)
     total = {"accounts": 0, "stale": 0, "reaped": 0, "failed": 0, "rescued": 0, "dry_run": dry_run, "cutoff": cutoff}

@@ -3,7 +3,7 @@ transactions behind one /breakdown row, so the category drill-in reconciles with
 Insights card instead of reading the rolling 7-day feed.
 
 Reconciliation is the headline: the endpoint's rows (clamped the way the client + server
-_summarise do) must equal list_category_breakdown[id] for the same fixture — for a named
+summarise do) must equal list_category_breakdown[id] for the same fixture — for a named
 category AND the uncategorized bucket, over the current and a prior cycle.
 """
 
@@ -96,12 +96,12 @@ def _event(category_id="coffee", cycle=None):
 
 def _pin_today(monkeypatch, day=date(2026, 7, 25)):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: day)
+    monkeypatch.setattr(spend, "melbourne_today", lambda: day)
 
 
 def _clamped_total(rows):
     """The rows' contributing spend, clamped per bucket at >= 0 then summed — the same
-    reconciliation math the client (categoryTransactions) and /breakdown (_summarise) use."""
+    reconciliation math the client (categoryTransactions) and /breakdown (summarise) use."""
     posted = sum((-Decimal(str(r["amount"])) for r in rows
                   if _contributes(r) and r["status"] == "posted"), Decimal(0))
     pending = sum((-Decimal(str(r["amount"])) for r in rows

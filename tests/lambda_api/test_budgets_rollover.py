@@ -86,8 +86,10 @@ def _spend_cat(cat_id="sink", bucket="Lifestyle"):
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
     # Deterministic current cycle, independent of the wall clock.
-    monkeypatch.setattr(handler, "current_cycle_window",
-                        lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
 
 
 def _entry(target, **extra):

@@ -101,7 +101,7 @@ def test_unbounded_pagination_raises(handler):
         def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
             return [_row(account_id, "2026-01-01", "x", category=None)], {"pk": "p", "sk": "s"}
 
-    with pytest.raises(RuntimeError, match="did not terminate"):
+    with pytest.raises(RuntimeError, match="did not finish"):
         handler.get_uncategorized_count(_NeverEndsRepo(), FakeCategoryRepo(set()))
 
 
@@ -244,5 +244,5 @@ def test_unbounded_pagination_propagates_through_handler(handler, monkeypatch):
         "rawPath": "/transactions/uncategorized/count",
         "requestContext": {"http": {"method": "GET"}},
     }
-    with pytest.raises(RuntimeError, match="did not terminate"):
+    with pytest.raises(RuntimeError, match="did not finish"):
         handler.lambda_handler(event, None)

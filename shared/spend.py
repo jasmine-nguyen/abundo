@@ -24,7 +24,7 @@ from constants import (
 _MELBOURNE = None  # ZoneInfo("Australia/Melbourne"), built lazily on first use.
 
 
-def _melbourne_today() -> date:
+def melbourne_today() -> date:
     """Today's date in the user's timezone (Australia/Melbourne), so the budget
     window resets at LOCAL midnight on payday, not UTC midnight.
 
@@ -63,7 +63,7 @@ def current_cycle_window(last_pay_date: str, length: int, today: date | None = N
     collapse it to the single inclusive day [today, today]).
     """
     if today is None:
-        today = _melbourne_today()
+        today = melbourne_today()
     pay_date = date.fromisoformat(last_pay_date)
     elapsed_days = (today - pay_date).days
     cycles_elapsed = max(0, elapsed_days // length)
@@ -216,7 +216,7 @@ def accrue_buffer(buffer: Decimal, target: Decimal, spend: Decimal) -> Decimal:
 
 # The five fields a stored bill spread carries — mirrors repository_budget._SPREAD_FIELDS (a
 # test pins the two equal). A read only trusts an entry that has all of them.
-_SPREAD_ENTRY_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
+SPREAD_ENTRY_FIELDS = ("spread_amount", "spread_cycles", "spread_from", "spread_len", "spread_paydate")
 
 
 def _settle_spread(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
@@ -256,7 +256,7 @@ def _settle_spread(entry: dict, cycle_start: str, length: int, last_pay_date: st
     }
 
 
-def _spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
+def spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str, today: str):
     """The bill-spread contribution for one category this read (WHIT-504).
 
     Returns (spread_row, finished, reanchor). `spread_row` is the {amount, cycles, index,
@@ -274,7 +274,7 @@ def _spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str
     strips all five together) is treated as finished and cleared, rather than letting one
     bad entry 500 every budget row.
     """
-    fields = [entry.get(field) for field in _SPREAD_ENTRY_FIELDS]
+    fields = [entry.get(field) for field in SPREAD_ENTRY_FIELDS]
     if None in fields:
         return None, True, None
     amount, cycles, spread_from, stored_len, stored_paydate = fields
@@ -283,7 +283,7 @@ def _spread_state(entry: dict, cycle_start: str, length: int, last_pay_date: str
         reanchor = _settle_spread(entry, cycle_start, length, last_pay_date, today)
         if reanchor is None:
             return None, True, None
-        spread_row, _, _ = _spread_state(reanchor, cycle_start, length, last_pay_date, today)
+        spread_row, _, _ = spread_state(reanchor, cycle_start, length, last_pay_date, today)
         return spread_row, False, reanchor
     index = spread_index(spread_from, cycle_start, length)
     if index > cycles:
@@ -310,7 +310,7 @@ def contributes_to_budget(transaction: dict) -> bool:
     WHIT-296), and its `status` is a known pending/posted (unknown status is skipped,
     never guessed).
 
-    The gate shared by the spend/income summarisers (via `_spend_contribution`) and the
+    The gate shared by the spend/income summarisers (via `spend_contribution`) and the
     budget-detail transaction list (`/budgets/{id}/transactions`), so the list can't
     disagree with the total about which rows count.
     """
@@ -319,7 +319,7 @@ def contributes_to_budget(transaction: dict) -> bool:
     return transaction.get("status") in (PENDING_STATUS, POSTED_STATUS)
 
 
-def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal] | None:
+def spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal] | None:
     """The (bucket, amount) a transaction adds to a budget summary, or None if it
     doesn't count. Shared by summarise_transactions, summarise_uncategorized and
     summarise_income: they differ only in WHICH categories they roll up and the
@@ -345,7 +345,7 @@ def _spend_contribution(transaction: dict, sign: int = -1) -> tuple[str, Decimal
     return bucket, sign * Decimal(str(amount if amount is not None else 0))
 
 
-def _summarise(
+def summarise(
     transactions: list[dict],
     *,
     keep: Callable[[str | None], bool],
@@ -357,7 +357,7 @@ def _summarise(
 
     For each transaction: gate on `keep(category)`, map it to a result bucket via
     `key(category)`, turn it into a posted/pending contribution via
-    `_spend_contribution(transaction, sign=sign)`, accumulate, then (when `clamp`)
+    `spend_contribution(transaction, sign=sign)`, accumulate, then (when `clamp`)
     clamp every bucket at >= 0 (a net refund/reversal can't drive a bar negative). The
     three public functions differ ONLY in `keep` (which categories count), `key` (per-id
     vs a single aggregate bucket), and `sign` (spend is -amount, income is +amount);
@@ -376,7 +376,7 @@ def _summarise(
         category = transaction.get("category")
         if not keep(category):
             continue
-        contribution = _spend_contribution(transaction, sign=sign)
+        contribution = spend_contribution(transaction, sign=sign)
         if contribution is None:
             continue
         bucket, amount = contribution
@@ -393,7 +393,7 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str], clamp
     """Sum posted vs pending spend per budgeted category over `transactions`.
 
     A transaction contributes only if it counts toward a budget (see
-    `_spend_contribution`) AND its `category` is a real budgeted id (not None, not
+    `spend_contribution`) AND its `category` is a real budgeted id (not None, not
     "income", and present in `target_ids`). Each bucket is clamped at >= 0 (unless
     `clamp=False`) so a net refund can't drive a bar negative. Pending vs posted is
     decided by the transaction's own `status`, so a pending->posted settlement needs no
@@ -405,7 +405,7 @@ def summarise_transactions(transactions: list[dict], target_ids: set[str], clamp
     Returns {category_id: {"posted": Decimal, "pending": Decimal}} for categories
     that had at least one contributing transaction.
     """
-    return _summarise(
+    return summarise(
         transactions,
         keep=lambda category: category is not None and category != "income" and category in target_ids,
         key=lambda category: category,
@@ -424,7 +424,7 @@ def summarise_uncategorized(transactions: list[dict], taxonomy_ids: set[str]) ->
     Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate
     (every contributor folds into one bucket), not a per-category dict.
     """
-    totals = _summarise(
+    totals = summarise(
         transactions,
         keep=lambda category: category != "income" and category not in taxonomy_ids,
         key=lambda category: "__all__",
@@ -438,7 +438,7 @@ def summarise_income(transactions: list[dict], income_ids: set[str], clamp: bool
 
     Income earn-targets are floors (over-is-good), so this rolls up the POSITIVE
     amount (`sign=+1`) rather than spend. A transaction contributes only if it counts
-    to budget (see `_spend_contribution`) AND its `category` is in `income_ids` — the
+    to budget (see `spend_contribution`) AND its `category` is in `income_ids` — the
     ids of the user's Income-bucket categories that carry a target. Unlike the spend
     summariser it does NOT special-case the raw "income" sentinel: income *categories*
     have their own ids (never the sentinel), and gating purely on `income_ids`
@@ -451,7 +451,7 @@ def summarise_income(transactions: list[dict], income_ids: set[str], clamp: bool
     that had at least one contributing transaction — the same shape as
     summarise_transactions, so a caller can merge the two uniformly.
     """
-    return _summarise(
+    return summarise(
         transactions,
         keep=lambda category: category in income_ids,
         key=lambda category: category,
@@ -474,7 +474,7 @@ def summarise_earned(transactions: list[dict], income_ids: set[str]) -> dict:
 
     Returns {"posted": Decimal, "pending": Decimal}, both >= 0 — a single aggregate.
     """
-    totals = _summarise(
+    totals = summarise(
         transactions,
         keep=lambda category: category in income_ids,
         key=lambda category: "__all__",

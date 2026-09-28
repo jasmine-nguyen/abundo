@@ -3,7 +3,7 @@ transaction from the READ rollups the client renders, not just the shared gate t
 implementer unit-tested (tests/shared/test_spend_budget_excluded.py).
 
 Every rollup here routes through summarise_transactions / summarise_uncategorized,
-so honouring the override in `_spend_contribution` should make the excluded charge
+so honouring the override in `spend_contribution` should make the excluded charge
 vanish from:
   * GET /budgets      (list_budgets)         — the budget bars,
   * GET /breakdown    (list_category_breakdown) — the category breakdown,

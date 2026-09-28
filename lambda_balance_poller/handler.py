@@ -55,6 +55,7 @@ from repository import (
     TransactionRepository,
 )
 from repository_notify import NotifyRepository
+from repository_transaction import read_date_range_pages
 from push import send_push
 from api_key import get_api_key as _fetch_api_key
 # BalanceError + normalise_account_balance + the raw fetch now live in the shared
@@ -367,20 +368,8 @@ def _check_goal_checkpoints(deltas: list) -> None:
 
 
 def _recent_transactions(transaction_repo, account_id: str, start_date: str) -> list:
-    """Every stored transaction for `account_id` dated on or after `start_date`, following the
-    date-index cursor to completion (bounded)."""
-    transactions = []
-    cursor = None
-    for _ in range(FEED_STALL_MAX_PAGES):
-        rows, cursor = transaction_repo.get_transactions_by_date_range(
-            account_id, start_date, None, MAX_PAGE_SIZE, cursor
-        )
-        transactions.extend(rows)
-        if cursor is None:
-            return transactions
-    raise RuntimeError(
-        f"feed-stall read for {account_id} did not finish after {FEED_STALL_MAX_PAGES} pages"
-    )
+    """Every stored transaction for `account_id` dated on or after `start_date`, every page (bounded)."""
+    return read_date_range_pages(transaction_repo, account_id, start_date, None, FEED_STALL_MAX_PAGES)
 
 
 def _check_feed_stall(account_id: str, balance: Decimal, *, transaction_repo, watch_repo,

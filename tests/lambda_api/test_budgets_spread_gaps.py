@@ -147,8 +147,10 @@ def _wire(handler, monkeypatch, budget_repo, categories=None, transactions=None)
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    monkeypatch.setattr(handler, "current_cycle_window",
-                        lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
 
 
 # --- subtree rows ------------------------------------------------------------------
