@@ -34,6 +34,7 @@ export type ApplyRulesJobStart =
 // a circular import — ./queries imports from this module.
 import { queryClient } from './queryClient';
 import { readTransactionCopies, findTransaction, patchTransactionsCache, patchAllCopies, optimisticRefile, refreshAfter } from './transactionCache';
+import { runOptimisticSave, type SaveSteps } from './optimisticSave';
 import { getStatus, subscribe } from './auth';
 
 // The empty loan-facts shape shown until the user saves the form. Kept as a
@@ -868,6 +869,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 	// mirroring the writers' epoch guard (and getStatus()'s call idiom). Lets category/edit bail on ANY
 	// session change mid-save — sign-out OR a different-account re-auth — not just a still-anon status.
 	const getSessionEpoch = useCallback(() => sessionEpoch.current, []);
+	// WHIT-628: every optimistic save goes through this — it owns the session check, so a save that
+	// settles after sign-out neither re-plants old data nor toasts into the next session.
+	const runSave = useCallback(<R, T>(steps: SaveSteps<R, T>): Promise<T> => {
+		const epoch = sessionEpoch.current;
+		return runOptimisticSave(() => epoch === sessionEpoch.current, steps);
+	}, []);
 
 	// AI spending insights (WHIT-104). `refreshAiInsights` reads the per-cycle cache
 	// (free); `generateAiInsights` is the paid "Analyse my spending" action. Error is
@@ -1006,28 +1013,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // changes it, so let cycleClockView fall back to the local cycleClock until the
       // invalidate below refetches the authoritative value (WHIT-341).
       const optimistic = { length: next.length, last_pay_date: next.last_pay_date };
-      queryClient.setQueryData(['payCycle'], optimistic);
-      // WHIT-271: if the user signs out during the round-trip, clearSession() wipes the cache
-      // and bumps the epoch — a late success/failure here must NOT re-seat the old cycle or
-      // toast into the next session. (The forward write above is pre-await, so clear() covers it.)
-      const epoch = sessionEpoch.current;
-      try {
-        await apiSetPayCycle(optimistic);
-        if (epoch !== sessionEpoch.current) return; // signed out mid-flight
-        // The window (length and/or payday) changed, so the server rollups move — refetch
-        // the migrated Budgets/Insights reads. Also refetch ['payCycle'] so the server's
-        // authoritative days_left is recomputed for the new settings (WHIT-341); the flat
-        // ['budgets']/['breakdown'] keys make each of these a single refresh (WHIT-72).
-        queryClient.invalidateQueries({ queryKey: ['payCycle'] });
-        queryClient.invalidateQueries({ queryKey: ['budgets'] });
-        queryClient.invalidateQueries({ queryKey: ['breakdown'] });
-      } catch {
-        if (epoch !== sessionEpoch.current) return; // signed out mid-flight
-        queryClient.setQueryData(['payCycle'], prev);
-        showToast('Could not save pay cycle. Please try again.');
-      }
+      // WHIT-271: runSave drops a late success/failure after sign-out, so the old cycle is never
+      // re-seated nor toasted into the next session.
+      return runSave({
+        apply: () => {
+          queryClient.setQueryData(['payCycle'], optimistic);
+          return () => queryClient.setQueryData(['payCycle'], prev);
+        },
+        send: () => apiSetPayCycle(optimistic),
+        onSaved: () => {
+          // The window (length and/or payday) changed, so the server rollups move — refetch
+          // the migrated Budgets/Insights reads. Also refetch ['payCycle'] so the server's
+          // authoritative days_left is recomputed for the new settings (WHIT-341); the flat
+          // ['budgets']/['breakdown'] keys make each of these a single refresh (WHIT-72).
+          queryClient.invalidateQueries({ queryKey: ['payCycle'] });
+          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          queryClient.invalidateQueries({ queryKey: ['breakdown'] });
+        },
+        onFailed: () => showToast('Could not save pay cycle. Please try again.'),
+        whenSignedOut: undefined,
+      });
     },
-    [showToast],
+    [showToast, runSave],
   );
 
   // Change the window length (Weekly/Fortnightly/Monthly), keeping the last_pay_date.
@@ -1048,23 +1055,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // form shows), not a store useState.
   const saveLoanFacts = useCallback(async (next: LoanFactsInput): Promise<boolean> => {
     const prev = queryClient.getQueryData<LoanFacts>(['loanFacts']) ?? EMPTY_LOAN_FACTS;
-    queryClient.setQueryData(['loanFacts'], next);
-    // WHIT-271: a sign-out during the round-trip must make this a no-op — no re-seat of the
-    // old mortgage details, no toast, and no `true` (which would fire the form's router.back()
-    // after the auth gate already redirected to login). The form unmounts on sign-out anyway.
-    const epoch = sessionEpoch.current;
-    try {
-      await apiSetLoanFacts(next);
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-      queryClient.invalidateQueries({ queryKey: ['loanFacts'] });
-      return true;
-    } catch {
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-      queryClient.setQueryData(['loanFacts'], prev);
-      showToast('Could not save loan details. Please try again.');
-      return false;
-    }
-  }, [showToast]);
+    // WHIT-271: a sign-out during the round-trip makes this a no-op — no re-seat of the old mortgage
+    // details, no toast, and no `true` (which would fire the form's router.back() post-redirect).
+    return runSave({
+      apply: () => {
+        queryClient.setQueryData(['loanFacts'], next);
+        return () => queryClient.setQueryData(['loanFacts'], prev);
+      },
+      send: () => apiSetLoanFacts(next),
+      onSaved: () => {
+        queryClient.invalidateQueries({ queryKey: ['loanFacts'] });
+        return true;
+      },
+      onFailed: () => {
+        showToast('Could not save loan details. Please try again.');
+        return false;
+      },
+      whenSignedOut: false,
+    });
+  }, [showToast, runSave]);
 
   // Save the milestone editor's plan: optimistically write the ['milestones'] cache the milestone
   // + mortgage screens read, PUT the whole ordered list, invalidate to reconcile. Roll the cache
@@ -1073,22 +1082,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // so this save's own invalidation is what refreshes the screen (WHIT-367 wired it that way).
   const saveMilestones = useCallback(async (next: MilestoneRecord[]): Promise<boolean> => {
     const prev = queryClient.getQueryData<MilestoneRecord[]>(['milestones']) ?? [];
-    queryClient.setQueryData(['milestones'], next);
-    // WHIT-271: a sign-out during the round-trip must make this a no-op — no re-seat of the old
-    // plan, no toast, and no `true` (which would fire the editor's router.back() post-redirect).
-    const epoch = sessionEpoch.current;
-    try {
-      await apiSetMilestones(next);
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-      queryClient.invalidateQueries({ queryKey: ['milestones'] });
-      return true;
-    } catch {
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-      queryClient.setQueryData(['milestones'], prev);
-      showToast('Could not save milestones. Please try again.');
-      return false;
-    }
-  }, [showToast]);
+    // WHIT-271: a sign-out during the round-trip makes this a no-op — no re-seat of the old plan,
+    // no toast, and no `true` (which would fire the editor's router.back() post-redirect).
+    return runSave({
+      apply: () => {
+        queryClient.setQueryData(['milestones'], next);
+        return () => queryClient.setQueryData(['milestones'], prev);
+      },
+      send: () => apiSetMilestones(next),
+      onSaved: () => {
+        queryClient.invalidateQueries({ queryKey: ['milestones'] });
+        return true;
+      },
+      onFailed: () => {
+        showToast('Could not save milestones. Please try again.');
+        return false;
+      },
+      whenSignedOut: false,
+    });
+  }, [showToast, runSave]);
 
   const openPicker = useCallback((txId: string) => setSheet({ mode: 'picker', txId }), []);
   // WHIT-291: open the picker for a captured set of ids. A no-op on an empty set (nothing to file).
@@ -1737,31 +1749,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const existing = queryClient
         .getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] })
         .some(([, data]) => !!data && (data[categoryId]?.target ?? 0) > 0);
-      // WHIT-271: `c` (category name) + `saved.target` (dollar figure) are the OLD session's
-      // data — if the user signs out during the round-trip this success toast would render
-      // them to the next signed-in user. Gate every post-await toast on the session epoch.
-      const epoch = sessionEpoch.current;
-      try {
+      // WHIT-271: `c` (category name) + `saved.target` (dollar figure) are the OLD session's data,
+      // and app/budget/edit.tsx invalidates + navigates on `true` — runSave returns false after a
+      // mid-save sign-out so neither reaches the next session.
+      return runSave({
         // Pass rollover only when the caller supplied it — a plain amount save (no rollover
         // arg) leaves the stored flag untouched, so the API omits it from the body.
-        const saved = rollover === undefined
-          ? await apiSetBudget(categoryId, value)
-          : await apiSetBudget(categoryId, value, rollover);
-        // WHIT-271: return false (not just skip the toast) so app/budget/edit.tsx's `if (ok)`
-        // doesn't invalidate + navigate the NEXT session after a mid-save sign-out.
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        // The Budgets screen reads ['budgets'] and app/budget/edit.tsx invalidates it after
-        // this returns true, so the just-saved target reconciles from the server rollup —
-        // no optimistic cache write needed here.
-        if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(saved.target)}.`);
-        return true;
-      } catch {
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        showToast('Could not save budget. Please try again.');
-        return false;
-      }
+        send: () => (rollover === undefined
+          ? apiSetBudget(categoryId, value)
+          : apiSetBudget(categoryId, value, rollover)),
+        onSaved: (saved) => {
+          // The Budgets screen reads ['budgets'] and app/budget/edit.tsx invalidates it after
+          // this returns true, so the just-saved target reconciles from the server rollup —
+          // no optimistic cache write needed here.
+          if (c) showToast(`${c.name} budget ${existing ? 'updated' : 'set'} to ${fmt(saved.target)}.`);
+          return true;
+        },
+        onFailed: () => {
+          showToast('Could not save budget. Please try again.');
+          return false;
+        },
+        whenSignedOut: false,
+      });
     },
-    [showToast],
+    [showToast, runSave],
   );
 
   // WHIT-505: spread a one-off bill over the coming cycles. Non-optimistic — invalidates
@@ -1773,20 +1784,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (categoryId: string, amount: number, cycles: number): Promise<boolean> => {
       if (amount <= 0 || cycles < SPREAD_MIN_CYCLES || cycles > SPREAD_MAX_CYCLES) return false;
       const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
-      const epoch = sessionEpoch.current;
-      try {
-        await apiSetSpread(categoryId, amount, cycles);
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        queryClient.invalidateQueries({ queryKey: ['budgets'] });
-        if (c) showToast(`Bill spread set for ${c.name}.`);
-        return true;
-      } catch {
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        showToast('Could not set the bill spread. Please try again.');
-        return false;
-      }
+      return runSave({
+        send: () => apiSetSpread(categoryId, amount, cycles),
+        onSaved: () => {
+          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          if (c) showToast(`Bill spread set for ${c.name}.`);
+          return true;
+        },
+        onFailed: () => {
+          showToast('Could not set the bill spread. Please try again.');
+          return false;
+        },
+        whenSignedOut: false,
+      });
     },
-    [showToast],
+    [showToast, runSave],
   );
 
   // WHIT-505: remove a category's bill spread. Non-optimistic (invalidate + refetch), matching
@@ -1795,20 +1807,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const removeSpread = useCallback(
     async (categoryId: string): Promise<boolean> => {
       const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
-      const epoch = sessionEpoch.current;
-      try {
-        await apiDeleteSpread(categoryId);
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        queryClient.invalidateQueries({ queryKey: ['budgets'] });
-        if (c) showToast(`Bill spread removed for ${c.name}.`);
-        return true;
-      } catch {
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        showToast('Could not remove the bill spread. Please try again.');
-        return false;
-      }
+      return runSave({
+        send: () => apiDeleteSpread(categoryId),
+        onSaved: () => {
+          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          if (c) showToast(`Bill spread removed for ${c.name}.`);
+          return true;
+        },
+        onFailed: () => {
+          showToast('Could not remove the bill spread. Please try again.');
+          return false;
+        },
+        whenSignedOut: false,
+      });
     },
-    [showToast],
+    [showToast, runSave],
   );
 
   // WHIT-203: remove a category's budget target (the Budget detail screen's Delete). The
@@ -1820,30 +1833,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteBudget = useCallback(
     async (categoryId: string): Promise<boolean> => {
       const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
-      // Snapshot every ['budgets'] entry so a failure can restore exactly what was there.
-      const snapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] });
-      snapshots.forEach(([key, data]) => {
-        if (!data || !(categoryId in data)) return;
-        const { [categoryId]: _removed, ...rest } = data;
-        queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
+      // WHIT-271: runSave skips the restore after sign-out, so stale rollups never reach the
+      // cleared cache, and no toast reaches the next session.
+      return runSave({
+        apply: () => {
+          // Snapshot every ['budgets'] entry so a failure can restore exactly what was there.
+          const snapshots = queryClient.getQueriesData<Record<string, BudgetRollup>>({ queryKey: ['budgets'] });
+          snapshots.forEach(([key, data]) => {
+            if (!data || !(categoryId in data)) return;
+            const { [categoryId]: _removed, ...rest } = data;
+            queryClient.setQueryData<Record<string, BudgetRollup>>(key, rest);
+          });
+          return () => snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
+        },
+        send: () => apiDeleteBudget(categoryId),
+        onSaved: () => {
+          queryClient.invalidateQueries({ queryKey: ['budgets'] });
+          if (c) showToast(`${c.name} budget removed.`);
+          return true;
+        },
+        onFailed: () => {
+          showToast('Could not remove budget. Please try again.');
+          return false;
+        },
+        whenSignedOut: false,
       });
-      // WHIT-271: a failure settling after sign-out must not restore stale rollups into the
-      // cleared cache, nor toast into the next session.
-      const epoch = sessionEpoch.current;
-      try {
-        await apiDeleteBudget(categoryId);
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        queryClient.invalidateQueries({ queryKey: ['budgets'] });
-        if (c) showToast(`${c.name} budget removed.`);
-        return true;
-      } catch {
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
-        showToast('Could not remove budget. Please try again.');
-        return false;
-      }
     },
-    [showToast],
+    [showToast, runSave],
   );
 
   // Create a category and RETURN it (not just a boolean), so a caller can act on the new
@@ -1861,31 +1877,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const input = 'parent' in form
         ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
         : { name, bucket: form.bucket, icon: form.icon };
-      // WHIT-271: the cache write below is guarded (`prev ? … : prev`), so it no-ops after
-      // sign-out; gate the toast on the epoch so a late create doesn't toast the next session.
-      const epoch = sessionEpoch.current;
-      try {
-        const created = toCategory(await createCategory(input));
-        // WHIT-271: return null (not just skip the toast) so callers (the categorise sheet's
-        // createAndFile, app/category/edit.tsx) don't act on it after a mid-save sign-out. The
-        // append is also NON-id-keyed, so it would plant this category into the next session's list.
-        if (epoch !== sessionEpoch.current) return null; // signed out mid-flight
-        queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, created] : prev));
-        queryClient.invalidateQueries({ queryKey: ['categories'] });
-        if (!opts?.silent) showToast('Category created.');
-        return created;
-      } catch (error) {
-        // WHIT-271/282: a session change mid-flight is not a failure to report — neither toast
-        // nor throw; the caller's own epoch check owns the bail.
-        if (epoch !== sessionEpoch.current) return null;
-        // WHIT-437: `silent` means "I don't toast" — so hand the caller the error to speak with.
-        // app/category/edit.tsx folds the reason into its one summary toast.
-        if (opts?.silent) throw error;
-        showToast(writeFailureMessage(error, 'Could not save category. Please try again.'));
-        return null;
-      }
+      // WHIT-271: after a mid-save sign-out runSave returns null, so callers (the categorise sheet's
+      // createAndFile, app/category/edit.tsx) don't act on it, and the non-id-keyed append below
+      // never plants this category into the next session's list. It neither toasts nor throws:
+      // the caller's own epoch check owns the bail (WHIT-282).
+      return runSave({
+        send: async () => toCategory(await createCategory(input)),
+        onSaved: (created) => {
+          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? [...prev, created] : prev));
+          queryClient.invalidateQueries({ queryKey: ['categories'] });
+          if (!opts?.silent) showToast('Category created.');
+          return created;
+        },
+        onFailed: (error): Category | null => {
+          // WHIT-437: `silent` means "I don't toast" — so hand the caller the error to speak with.
+          // app/category/edit.tsx folds the reason into its one summary toast.
+          if (opts?.silent) throw error;
+          showToast(writeFailureMessage(error, 'Could not save category. Please try again.'));
+          return null;
+        },
+        whenSignedOut: null,
+      });
     },
-    [showToast],
+    [showToast, runSave],
   );
 
   const saveCategory = useCallback(
@@ -1900,38 +1914,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const input = 'parent' in form
         ? { name, bucket: form.bucket, icon: form.icon, parent: form.parent ?? null }
         : { name, bucket: form.bucket, icon: form.icon };
-      // WHIT-271: guarded cache write no-ops after sign-out; gate the toast on the epoch.
-      const epoch = sessionEpoch.current;
-      try {
-        const updated = await updateCategory(editId, input);
-        // WHIT-271: return false (not just skip the toast) so app/category/edit.tsx doesn't run
-        // its summary toast + router.back() after a mid-save sign-out.
-        if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-        const previousName = queryClient.getQueryData<Category[]>(['categories'])?.find((c) => c.id === editId)?.name;
-        queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
-        // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
-        // pickers; the invalidate then reconciles with the server.
-        queryClient.invalidateQueries({ queryKey: ['categories'] });
-        // WHIT-576: a rename changes the category text a search matches on.
-        if (updated.name !== previousName) queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
-        if (!opts?.silent) showToast('Category updated.');
-        return true;
-      } catch (error) {
-        if (epoch !== sessionEpoch.current) return false;   // WHIT-271/282, as above
-        if (opts?.silent) throw error;                      // WHIT-437, as above
-        showToast(writeFailureMessage(error, 'Could not save category. Please try again.'));
-        return false;
-      }
+      // WHIT-271: runSave returns false after a mid-save sign-out so app/category/edit.tsx doesn't
+      // run its summary toast + router.back() in the next session.
+      return runSave({
+        send: () => updateCategory(editId, input),
+        onSaved: (updated) => {
+          const previousName = queryClient.getQueryData<Category[]>(['categories'])?.find((c) => c.id === editId)?.name;
+          queryClient.setQueryData<Category[]>(['categories'], (prev) => (prev ? prev.map((c) => (c.id === editId ? toCategory(updated) : c)) : prev));
+          // WHIT-203: the setQueryData shows the change instantly on the migrated screens /
+          // pickers; the invalidate then reconciles with the server.
+          queryClient.invalidateQueries({ queryKey: ['categories'] });
+          // WHIT-576: a rename changes the category text a search matches on.
+          if (updated.name !== previousName) queryClient.invalidateQueries({ queryKey: ['transactionsSearch'] });
+          if (!opts?.silent) showToast('Category updated.');
+          return true;
+        },
+        onFailed: (error) => {
+          if (opts?.silent) throw error; // WHIT-437, as above
+          showToast(writeFailureMessage(error, 'Could not save category. Please try again.'));
+          return false;
+        },
+        whenSignedOut: false,
+      });
     },
-    [showToast, createCategoryInline],
+    [showToast, createCategoryInline, runSave],
   );
 
-  const deleteCategory = useCallback(async (id: string): Promise<boolean> => {
-    // WHIT-271: the cascade cache writes below are all guarded (`prev?.` / patchRules), so they
-    // no-op after sign-out; gate the toasts on the epoch so a late delete doesn't toast the next session.
-    const epoch = sessionEpoch.current;
-    try {
-      await apiDeleteCategory(id);
+  const deleteCategory = useCallback(async (id: string): Promise<boolean> => runSave({
+    send: () => apiDeleteCategory(id),
+    onSaved: () => {
       // Client-side cascade into the query caches the migrated screens read (category
       // list, budget screens, tab badge, pickers). setQueryData — NOT invalidate —
       // because the server does no cascade, so a refetch would resurrect the just-dropped
@@ -1952,17 +1963,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // The deleted category's spend and charges now count as Uncategorized. Deleting a category
       // is rare, so refetching the paged uncategorized feed here is cheap and keeps it correct.
       refreshAfter('categoryDeleted');
-      // WHIT-271: return false (not just skip the toast) so app/category/edit.tsx's `if (ok)`
-      // doesn't router.back() the next session after a mid-delete sign-out.
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
       showToast('Category deleted.');
       return true;
-    } catch (error) {
-      if (epoch === sessionEpoch.current)
-        showToast(writeFailureMessage(error, 'Could not delete category. Please try again.'));
+    },
+    onFailed: (error) => {
+      showToast(writeFailureMessage(error, 'Could not delete category. Please try again.'));
       return false;
-    }
-  }, [showToast, patchRules]);
+    },
+    // WHIT-271: false (not just no toast) so app/category/edit.tsx's `if (ok)` doesn't
+    // router.back() the next session after a mid-delete sign-out.
+    whenSignedOut: false,
+  }), [showToast, patchRules, runSave]);
 
   // Optimistically remove the rule, then delete it in BankSync; on failure put it back in
   // front of the row that followed it (WHIT-254 — a saved index would misplace it when two
@@ -1977,25 +1988,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (index === -1) return;
     const removed = current[index];
     const successorIds = current.slice(index + 1).map((r) => r.id);
-    patchRules((prev) => prev.filter((r) => r.id !== id));
-    // WHIT-271: patchRules is guarded (no-ops on the evicted cache); gate the toast on the epoch.
-    const epoch = sessionEpoch.current;
     // WHIT-540: deleting a rule now UNDOES the fills it left on stored charges (the server clears
     // them back to unfiled), so the server-derived reads DO move — refresh the count, feed, budgets
     // and merchant groups. `skipRules` leaves the ['rules'] cache alone: the optimistic removal
-    // above already dropped this rule, and a refetch would just race that.
-    try {
-      await apiDeleteRule(id);
-      if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
-    } catch {
-      // WHIT-271: guard the CACHE write too, not just the toast — reinsertBefore appends the rule
-      // when its successorIds aren't found, so on the NEXT session's repopulated ['rules'] cache
-      // (patchRules only no-ops on the CLEARED cache) it would plant this rule into that account.
-      if (epoch !== sessionEpoch.current) return; // signed out mid-flight
-      patchRules((prev) => reinsertBefore(prev, removed, successorIds));
-      showToast('Could not delete rule. Please try again.');
-    }
-  }, [showToast, patchRules, refreshAfterApplyRules]);
+    // already dropped this rule, and a refetch would just race that.
+    // WHIT-271: runSave skips the undo after sign-out — reinsertBefore appends the rule when its
+    // successorIds aren't found, so on the NEXT session's repopulated ['rules'] cache it would
+    // plant this rule into that account.
+    await runSave({
+      apply: () => {
+        patchRules((prev) => prev.filter((r) => r.id !== id));
+        return () => patchRules((prev) => reinsertBefore(prev, removed, successorIds));
+      },
+      send: () => apiDeleteRule(id),
+      onSaved: () => refreshAfterApplyRules({ skipRules: true }),
+      onFailed: () => showToast('Could not delete rule. Please try again.'),
+      whenSignedOut: undefined,
+    });
+  }, [showToast, patchRules, refreshAfterApplyRules, runSave]);
 
   // Optimistically add the rule (temp id), create it in BankSync, then swap in the
   // real id — or remove it and warn on failure. Value is sent as typed (trimmed,
@@ -2013,31 +2023,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const optimistic: Rule = write
       ? { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
       : { id: tempRuleId, pattern: value, categoryId, isNew: true, budgetExcluded, spread };
-    patchRules((prev) => [optimistic, ...prev]);
-    setSheet(null);
-    // WHIT-563: a multi-condition rule's `value` is just the first condition's raw value (an
-    // account id or a direction token for those fields), so it isn't shown — the toast names the
-    // category only. A classic single rule still quotes its readable pattern.
-    if (c) showToast(write ? `Rule added — files as ${c.name}.` : `Rule added — ${value} files as ${c.name}.`);
-    // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
-    const epoch = sessionEpoch.current;
     // WHIT-502: a new rule only files FUTURE charges (the webhook applies rules as charges land); no stored
     // charge changes category here, so ['uncategorizedCount'] is intentionally NOT invalidated. Any later
     // bank-side re-tag arrives via the webhook, already covered by the count's staleTime + pull-to-refresh.
-    try {
-      const created = await createRule(write ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded, spread } : { value, categoryId, budgetExcluded, spread });
-      // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
-      // false for the load path, where rules genuinely aren't new).
-      patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
-      // WHIT-542: this shop now has a rule, so it is no longer a hand-filing habit. The "file now"
-      // arm reaches this via refreshAfterApplyRules; the "save rule only" arm (here) mints without a
-      // sweep, so invalidate the suggestions itself or an accepted "make a rule?" card lingers.
-      queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
-    } catch (e) {
-      patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
-      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not save rule. Please try again.', spread));
-    }
-  }, [showToast, patchRules]);
+    await runSave({
+      apply: () => {
+        patchRules((prev) => [optimistic, ...prev]);
+        setSheet(null);
+        // WHIT-563: a multi-condition rule's `value` is just the first condition's raw value (an
+        // account id or a direction token for those fields), so it isn't shown — the toast names the
+        // category only. A classic single rule still quotes its readable pattern.
+        if (c) showToast(write ? `Rule added — files as ${c.name}.` : `Rule added — ${value} files as ${c.name}.`);
+        return () => patchRules((prev) => prev.filter((r) => r.id !== tempRuleId));
+      },
+      send: () => createRule(write ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded, spread } : { value, categoryId, budgetExcluded, spread }),
+      onSaved: (created) => {
+        // Keep isNew so the "NEW" badge survives settlement (toRule defaults it
+        // false for the load path, where rules genuinely aren't new).
+        patchRules((prev) => prev.map((r) => (r.id === tempRuleId ? { ...toRule(created), isNew: true } : r)));
+        // WHIT-542: this shop now has a rule, so it is no longer a hand-filing habit. The "file now"
+        // arm reaches this via refreshAfterApplyRules; the "save rule only" arm (here) mints without a
+        // sweep, so invalidate the suggestions itself or an accepted "make a rule?" card lingers.
+        queryClient.invalidateQueries({ queryKey: ['filingSuggestions'] });
+      },
+      onFailed: (e) => showToast(ruleWriteErrorMessage(e, 'Could not save rule. Please try again.', spread)),
+      whenSignedOut: undefined,
+    });
+  }, [showToast, patchRules, runSave]);
 
   // Optimistically edit a rule in place, then PUT it; roll back to the snapshot on
   // failure. The rule's field/operator are preserved (passed through) so a
@@ -2055,27 +2067,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const patch = write
       ? { pattern: value, categoryId, budgetExcluded, spread, field: write.conditions[0].field, operator: write.conditions[0].operator, conditions: write.conditions, logic: write.logic }
       : { pattern: value, categoryId, budgetExcluded, spread, conditions: null, logic: null };
-    patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-    setSheet(null);
     const c = queryClient.getQueryData<Category[]>(['categories'])?.find((x) => x.id === categoryId);
-    if (c) showToast(write ? `Rule updated — files as ${c.name}.` : `Rule updated — ${value} files as ${c.name}.`);
-    // WHIT-271: the success toast above is pre-await (safe); gate the late failure toast on the epoch.
-    const epoch = sessionEpoch.current;
     // WHIT-540: editing a rule now RE-FILES the stored charges it already touched (the server moves
     // them to the new target, or clears the ones the edit no longer matches), so the server-derived
     // reads DO move — refresh the count, feed, budgets and merchant groups. `skipRules` leaves the
-    // ['rules'] cache alone: the optimistic edit above already patched this rule's row.
-    try {
-      const saved = await apiUpdateRule(id, write
+    // ['rules'] cache alone: the optimistic edit already patched this rule's row.
+    await runSave({
+      apply: () => {
+        patchRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+        setSheet(null);
+        if (c) showToast(write ? `Rule updated — files as ${c.name}.` : `Rule updated — ${value} files as ${c.name}.`);
+        return () => patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
+      },
+      send: () => apiUpdateRule(id, write
         ? { conditions: write.conditions, logic: write.logic, categoryId, budgetExcluded, spread }
-        : { value, categoryId, field: before.field, operator: before.operator, budgetExcluded, spread });
-      patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
-      if (epoch === sessionEpoch.current) refreshAfterApplyRules({ skipRules: true });
-    } catch (e) {
-      patchRules((prev) => prev.map((r) => (r.id === id ? before : r)));
-      if (epoch === sessionEpoch.current) showToast(ruleWriteErrorMessage(e, 'Could not update rule. Please try again.', spread));
-    }
-  }, [showToast, patchRules, refreshAfterApplyRules]);
+        : { value, categoryId, field: before.field, operator: before.operator, budgetExcluded, spread }),
+      onSaved: (saved) => {
+        patchRules((prev) => prev.map((r) => (r.id === id ? { ...toRule(saved), isNew: r.isNew } : r)));
+        refreshAfterApplyRules({ skipRules: true });
+      },
+      onFailed: (e) => showToast(ruleWriteErrorMessage(e, 'Could not update rule. Please try again.', spread)),
+      whenSignedOut: undefined,
+    });
+  }, [showToast, patchRules, refreshAfterApplyRules, runSave]);
 
   // Save a goal — one method for create AND edit (an upsert, mirroring the server). A
   // create mints a client id (Crypto.randomUUID) and APPENDS; an edit (editId set) REPLACES
@@ -2094,35 +2108,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // and the saved row can't disagree. The server still mints for a body that omits them.
     const checkpoints = body.checkpoints?.map((cp) => ({ ...cp, id: cp.id ?? Crypto.randomUUID() }));
     const optimistic: GoalRecord = { id, ...body, checkpoints };
-    // Upsert into the cache: replace the id in place if present, else append.
-    queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
-      const list = prev ?? [];
-      const at = list.findIndex((g) => g.id === id);
-      if (at >= 0) { const next = [...list]; next[at] = optimistic; return next; }
-      return [...list, optimistic];
-    });
-    // WHIT-271: on sign-out mid-flight, neither the success swap NOR the rollback may run —
+    // WHIT-271: on sign-out mid-flight runSave runs neither the success swap NOR the rollback —
     // both use `prev ?? []`, so on the cleared cache they'd SEED a stale/empty goals list into
-    // the next session. Return false so the edit form's router.back() doesn't fire post-redirect.
-    const epoch = sessionEpoch.current;
-    try {
-      const saved = await apiSaveGoal(id, { ...body, checkpoints });
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-      // Swap the optimistic row for the server's authoritative one (same id).
-      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) =>
-        (prev ?? []).map((g) => (g.id === id ? saved : g)));
-      return true;
-    } catch {
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-      // Roll back: restore the prior record for an edit, or drop the appended one for a create.
-      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
-        const list = prev ?? [];
-        return before ? list.map((g) => (g.id === id ? before : g)) : list.filter((g) => g.id !== id);
-      });
-      showToast('Could not save goal. Please try again.');
-      return false;
-    }
-  }, [showToast]);
+    // the next session. It returns false so the edit form's router.back() doesn't fire post-redirect.
+    return runSave({
+      apply: () => {
+        // Upsert into the cache: replace the id in place if present, else append.
+        queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
+          const list = prev ?? [];
+          const at = list.findIndex((g) => g.id === id);
+          if (at >= 0) { const next = [...list]; next[at] = optimistic; return next; }
+          return [...list, optimistic];
+        });
+        // Roll back: restore the prior record for an edit, or drop the appended one for a create.
+        return () => queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => {
+          const list = prev ?? [];
+          return before ? list.map((g) => (g.id === id ? before : g)) : list.filter((g) => g.id !== id);
+        });
+      },
+      send: () => apiSaveGoal(id, { ...body, checkpoints }),
+      onSaved: (saved) => {
+        // Swap the optimistic row for the server's authoritative one (same id).
+        queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) =>
+          (prev ?? []).map((g) => (g.id === id ? saved : g)));
+        return true;
+      },
+      onFailed: () => {
+        showToast('Could not save goal. Please try again.');
+        return false;
+      },
+      whenSignedOut: false,
+    });
+  }, [showToast, runSave]);
 
   // Delete a goal. Optimistically remove it from the ['goals'] cache, then DELETE server-side;
   // on failure put it back in front of the row that followed it (WHIT-254 — a saved index
@@ -2135,21 +2152,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (index === -1) return false;
     const removed = current[index];
     const successorIds = current.slice(index + 1).map((g) => g.id);
-    queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => (prev ?? []).filter((g) => g.id !== id));
-    // WHIT-271: a failure settling after sign-out must not resurrect the removed goal (via
-    // `prev ?? []`) into the cleared cache, nor toast into the next session.
-    const epoch = sessionEpoch.current;
-    try {
-      await apiDeleteGoal(id);
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight — don't fire the form's router.back()
-      return true;
-    } catch {
-      if (epoch !== sessionEpoch.current) return false; // signed out mid-flight
-      queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => reinsertBefore(prev ?? [], removed, successorIds));
-      showToast('Could not delete goal. Please try again.');
-      return false;
-    }
-  }, [showToast]);
+    // WHIT-271: runSave skips the undo after sign-out, so the removed goal is never resurrected
+    // (via `prev ?? []`) into the cleared cache, and returns false so the form's router.back()
+    // doesn't fire.
+    return runSave({
+      apply: () => {
+        queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => (prev ?? []).filter((g) => g.id !== id));
+        return () => queryClient.setQueryData<GoalRecord[]>(['goals'], (prev) => reinsertBefore(prev ?? [], removed, successorIds));
+      },
+      send: () => apiDeleteGoal(id),
+      onSaved: () => true,
+      onFailed: () => {
+        showToast('Could not delete goal. Please try again.');
+        return false;
+      },
+      whenSignedOut: false,
+    });
+  }, [showToast, runSave]);
 
   const value = useMemo<AppContext>(() => ({
     alerts,
