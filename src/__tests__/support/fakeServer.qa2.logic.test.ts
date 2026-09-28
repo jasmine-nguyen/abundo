@@ -14,7 +14,9 @@ beforeEach(() => {
   resetAuth();
   jest.useFakeTimers();
 });
-afterEach(() => jest.useRealTimers());
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 describe('WHIT-637 QA fake server: held reply vs time limit', () => {
   const server = installFakeServer();
