@@ -784,7 +784,7 @@ class CategoryRepository:
         create or delete landing between chunks.
 
         FAIL-OPEN on the READ path (strict=False). Seven handler routes call list_categories,
-        as does the webhook Lambda's budget-alert path (shared/budget_alerts.py), and every
+        as does the webhook Lambda's budget-alert path (lambda/budget_alerts.py), and every
         one of them survives today on a single get_item. If this
         write raised, a VersionConflictError would 409 the caller and any other ClientError
         would become a DatabaseError the handler does not catch — a 500 on a read that would

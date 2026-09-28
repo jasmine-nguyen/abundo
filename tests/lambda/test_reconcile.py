@@ -1150,10 +1150,10 @@ def test_resync_and_interleaved_pending_end_state(lam, repo):
 
 
 def test_reconcile_matches_empty_and_all_pending_batch(lam, repo):
-    # GAP (degenerate): _reconcile_matches over an empty posted list is []. An all-pending
+    # GAP (degenerate): match_all over an empty posted list is []. An all-pending
     # batch builds an empty match iterator, so the loop must insert every pending without
     # calling next() (a StopIteration here would 500 the webhook).
-    assert repo._reconcile_matches([], {}) == []
+    assert lam.reconcile.match_all([], {}) == []
 
     batch = [
         _norm(lam, txn_id="Q1", amount=Decimal("-1.00"),
@@ -1175,7 +1175,7 @@ def test_reconcile_matches_empty_and_all_pending_batch(lam, repo):
 
 
 def test_is_tip_adjusted_edges(lam):
-    f = lam.repository._is_tip_adjusted
+    f = lam.reconcile._is_tip_adjusted
     D = Decimal
     # equal magnitude is inside the (inclusive) window
     assert f(D("-5"), D("-5")) is True
@@ -1196,7 +1196,7 @@ def test_is_tip_adjusted_edges(lam):
 
 
 def test_merchant_in_description_word_level(lam):
-    g = lam.repository._merchant_in_description
+    g = lam.reconcile._merchant_in_description
     # empty merchant never over-matches
     assert g("", "anything at all") is False
     # single short token is NOT a substring match: 'bp' is not a word in 'bpay'
@@ -1457,7 +1457,7 @@ def test_skew_posting_wins_a_pending_contested_by_a_blank_auth_posting(lam, repo
 
 
 def test_is_skewed_next_day_edges(lam):
-    f = lam.repository._is_skewed_next_day
+    f = lam.reconcile._is_skewed_next_day
     # the real pair: pending (Melbourne) one day after the settled (UTC) day
     assert f("2026-07-22", "2026-07-21") is True
     assert f("2026-07-21", "2026-07-21") is False   # same day -> the exact tier's job
@@ -1643,7 +1643,7 @@ def test_linked_twin_one_day_ahead_also_wins_the_melbourne_day(lam, repo):
 def test_skew_gate_index_boundaries(lam):
     # The fused matcher's index-boundary guard, carried over to the gate that replaced
     # it: ragged inputs must return False, never raise.
-    g = lam.repository._merchant_matches_pending
+    g = lam.reconcile.merchant_matches_pending
     # merchant LONGER than the whole description
     assert g("KKV INTERNATIONAL PTY LTD AUSTRALIA", "KKV INTERNATIONAL",
              "kkv international") is False
@@ -1836,7 +1836,7 @@ def test_one_word_merchant_still_does_not_blank_auth_reconcile(lam, repo):
 
 
 def test_same_cleaned_merchant_edges(lam):
-    f = lam.repository._same_cleaned_merchant
+    f = lam.reconcile._same_cleaned_merchant
     # Both sides arrive already cleaned (banksync.normalise writes merchant_name through
     # clean_merchant on pending and posted alike), so this only has to absorb padding
     # and casing — not raw store numbers, which never reach it.
@@ -1850,7 +1850,7 @@ def test_same_cleaned_merchant_edges(lam):
 
 
 def test_merchant_matches_pending_branches(lam):
-    g = lam.repository._merchant_matches_pending
+    g = lam.reconcile.merchant_matches_pending
     # ANZ rows take the COLUMN branch (both of these), where the stored name is never
     # consulted — the name is read straight out of the fixed-width column
     assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) is True
@@ -1870,7 +1870,7 @@ def test_merchant_gate_returns_the_matched_branch_name(lam):
     # gate= label is read straight from this — so this is the single source both the
     # match and the label depend on. A branch-order or predicate change that mislabels
     # the log reds here.
-    g = lam.repository._merchant_gate
+    g = lam.reconcile._merchant_gate
     assert g("KKV INTERNATIONAL PTY", "", _SKEW_PEND_DESC) == "column"
     # a single-word merchant on an ANZ column is still "column" — the column branch is
     # checked first, so it never falls to the name branch (the QUEENVICTORIAMARKETSKIDAT case)
@@ -1888,8 +1888,8 @@ def test_gate_and_bool_agree_on_the_anz_shape_boundaries(lam):
     # WHIT-338 — the label and the bool now BOTH hinge on is_anz_pending vs
     # pending_merchant_column. Pin the two boundaries where an is_anz/column split would
     # silently flip a label from "column" to "name" (or admit a merge on nothing).
-    g = lam.repository._merchant_gate
-    m = lam.repository._merchant_matches_pending
+    g = lam.reconcile._merchant_gate
+    m = lam.reconcile.merchant_matches_pending
     # ANZ-shaped but the merchant column is BLANK (padding >= column width): the gate must
     # REFUSE, never fall through to a name/description containment search over the suburb.
     anz_blank = "POS AUTHORISATION" + " " * 30 + "AU"
@@ -2051,7 +2051,7 @@ def test_full_column_merchant_reconciles_and_near_names_still_miss(lam):
     # negatives below are what stops that from becoming a substring search — every pair
     # is two names that BOTH exist in the live table, and each is a DIFFERENT store, so
     # merging one would delete a real transaction.
-    g = lam.repository._merchant_matches_pending
+    g = lam.reconcile.merchant_matches_pending
     # the fix: a full column no longer defeats the match
     assert g("WOOLWORTHS/330 MILLERS RD", "WOOLWORTHS/330 MILLERS RDMELBOURNE",
              _pend_col("WOOLWORTHS/330 MILLERS RD")) is True
@@ -2236,7 +2236,7 @@ def test_near_miss_logs_only_the_amount_and_date_matched_pendings(lam, repo, cap
 # ======================================================================================
 
 
-# --- WHIT-275: _with_carried_category tag/note conflict resolution --------------------
+# --- WHIT-275: with_carried_category tag/note conflict resolution --------------------
 # (was test_reconcile_whit275_gaps.py) Carry guard is `if value:` — a truthy SOURCE
 # (pending) value overwrites the posted's own; a falsy/absent source never clobbers.
 
@@ -2245,7 +2245,7 @@ def test_carried_source_tags_overwrite_the_posted_existing_tags(lam, repo):  # [
     posted = {"transaction_id": "B", "category": "FOOD", "tags": ["stale"], "notes": "stale note"}
     source = {"category": "coffee", "tags": ["work", "travel"], "notes": "reimburse"}
 
-    carried = repo._with_carried_category(posted, source)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     # Truthy source value overwrites the posted's own — the pending user edit wins.
     assert carried["tags"] == ["work", "travel"]
@@ -2261,15 +2261,14 @@ def test_carried_absent_source_tags_keep_the_posted_existing_tags(lam, repo):  #
     posted = {"transaction_id": "B", "category": "FOOD", "tags": ["keep"]}
     source = {"category": "coffee"}  # no tags/notes
 
-    carried = repo._with_carried_category(posted, source)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     assert carried["tags"] == ["keep"]
     assert carried["category"] == "coffee"
 
 
-# --- WHIT-296/300: the budget_excluded override rides the same carry (static helper) --
-# (was test_reconcile_whit296.py) Survives re-sync like notes/tags; the dedupe sweep is
-# posted-authoritative for the exclude override.
+# --- WHIT-296/300: the budget_excluded override rides the same carry --
+# (was test_reconcile_whit296.py) Survives re-sync like notes/tags.
 
 
 def test_carry_brings_budget_excluded_onto_a_fresh_posted(lam, repo):
@@ -2278,7 +2277,7 @@ def test_carry_brings_budget_excluded_onto_a_fresh_posted(lam, repo):
     posted = {"transaction_id": "B", "category": "FOOD", "counts_to_budget": True}
     source = {"category": "coffee", "budget_excluded": True}
 
-    carried = repo._with_carried_category(posted, source)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     assert carried["budget_excluded"] is True
     assert posted.get("budget_excluded") is None  # original not mutated (it's a copy)
@@ -2291,7 +2290,7 @@ def test_bank_recompute_of_counts_to_budget_does_not_wipe_the_override(lam, repo
     posted = {"transaction_id": "B", "category": "coffee", "counts_to_budget": True}
     source = {"category": "coffee", "budget_excluded": True}
 
-    carried = repo._with_carried_category(posted, source)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     assert carried["counts_to_budget"] is True  # bank value intact
     assert carried["budget_excluded"] is True    # user override intact
@@ -2303,18 +2302,7 @@ def test_absent_source_override_keeps_the_posted_own_override(lam, repo):
     posted = {"transaction_id": "B", "category": "coffee", "budget_excluded": True}
     source = {"category": "coffee"}  # no override
 
-    carried = repo._with_carried_category(posted, source)
-
-    assert carried["budget_excluded"] is True
-
-
-def test_dedupe_guard_keeps_a_post_settlement_override(lam, repo):
-    # dedupe_sweep (the dedupe sweep): the user excluded the POSTED after
-    # settlement; a stale pending twin without the override must not un-exclude it.
-    posted = {"transaction_id": "B", "category": "coffee", "budget_excluded": True}
-    source = {"category": "coffee"}  # stale pending, no override
-
-    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     assert carried["budget_excluded"] is True
 
@@ -2326,7 +2314,7 @@ def test_carry_brings_the_rule_stamp_with_the_category(lam, repo):
     posted = {"transaction_id": "B", "counts_to_budget": True}
     source = {"category": "groceries", "filed_by_rule": "rule-1"}
 
-    carried = repo._with_carried_category(posted, source)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     assert carried["category"] == "groceries"
     assert carried["filed_by_rule"] == "rule-1"
@@ -2336,11 +2324,11 @@ def test_hand_filed_pending_strips_an_incoming_rule_stamp(lam, repo):
     # Fail-on-revert anchor: pending the user filed by hand (category, NO stamp); the incoming
     # posted arrived rule-stamped (rule_ingest stamps unfiled posted rows). The category is
     # carried from the hand-filed pending, so its (absent) stamp must win — strip the posted's.
-    # Dropping the `pop` in _with_carried_category leaves "rule-1" and this goes red.
+    # Dropping the `pop` in with_carried_category leaves "rule-1" and this goes red.
     posted = {"transaction_id": "B", "category": "AUTO", "filed_by_rule": "rule-1", "counts_to_budget": True}
     source = {"category": "groceries"}  # hand-filed: a category, no stamp
 
-    carried = repo._with_carried_category(posted, source)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     assert carried["category"] == "groceries"
     assert "filed_by_rule" not in carried
@@ -2351,38 +2339,15 @@ def test_posted_keeps_its_own_stamp_when_no_category_is_carried(lam, repo):
     posted = {"transaction_id": "B", "category": "groceries", "filed_by_rule": "rule-2", "counts_to_budget": True}
     source = {"notes": "x"}
 
-    carried = repo._with_carried_category(posted, source)
+    carried = lam.reconcile.with_carried_category(posted, source)
 
     assert carried["filed_by_rule"] == "rule-2"
-
-
-def test_dedupe_sweep_carries_the_rule_stamp_with_the_category(lam, repo):
-    posted = {"transaction_id": "B", "counts_to_budget": True}
-    source = {"category": "groceries", "filed_by_rule": "rule-3"}
-
-    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
-
-    assert carried["filed_by_rule"] == "rule-3"
-
-
-def test_dedupe_guard_does_not_carry_a_stale_exclude_onto_a_reincluded_posted(lam, repo):
-    # The user RE-INCLUDED the posted (override cleared -> absent). On the sweep a stale
-    # pending twin still marked excluded must NOT re-exclude it — that's the WHIT-300 bug.
-    # Fail-on-revert: restore the old fill-if-absent carry and budget_excluded reappears.
-    # (The live path staying intact — the sweep-only scope of this change — is guarded by
-    # test_carry_brings_budget_excluded_onto_a_fresh_posted above.)
-    posted = {"transaction_id": "B", "category": "coffee"}  # re-included: no override
-    source = {"category": "coffee", "budget_excluded": True}  # stale pending
-
-    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
-
-    assert carried.get("budget_excluded") is None  # stays included
 
 
 # --- WHIT-296: budget_excluded survives the LIVE reconcile (insert_or_reconcile) ------
 # (was test_reconcile_whit296_live.py) budget_excluded is not a bank field (normalise
 # strips it), so — like the note/tag reconcile tests — it's injected onto the stored row.
-# Fail-on-revert: drop "budget_excluded" from the carry tuple in _with_carried_category.
+# Fail-on-revert: drop "budget_excluded" from the carry tuple in with_carried_category.
 
 
 def test_reconcile_carries_budget_excluded_onto_posted(lam, repo):
@@ -2446,51 +2411,51 @@ def _row(txn_id, amount=Decimal("-9.00")):
     return {"transaction_id": txn_id, "amount": amount, "authorized_date": "2026-06-29"}
 
 
-def test_pop_lowest_id_picks_lowest_among_indices_and_pops_it(repo):
+def test_pop_lowest_id_picks_lowest_among_indices_and_pops_it(lam):
     # Only indices 0 and 2 are offered; the helper must pick the lower transaction_id
     # BETWEEN THEM ("A") and pop just it — the un-offered lower id at index 1 ("0") and
     # the loser both survive. min->max or the wrong pop target fails an assert.
     pool = [_row("A"), _row("0"), _row("C")]
-    picked = repo._pop_lowest_id(pool, [0, 2])
+    picked = lam.reconcile._pop_lowest_id(pool, [0, 2])
     assert picked["transaction_id"] == "A"
     assert [r["transaction_id"] for r in pool] == ["0", "C"]
 
 
-def test_pop_lowest_id_missing_transaction_id_sorts_first(repo):
+def test_pop_lowest_id_missing_transaction_id_sorts_first(lam):
     # `.get("transaction_id", "")` defaults a keyless row to "" so it wins the min
     # instead of raising. Drop the default and this raises KeyError.
     keyless = {"amount": Decimal("-9.00")}
     pool = [_row("A"), keyless]
-    picked = repo._pop_lowest_id(pool, [0, 1])
+    picked = lam.reconcile._pop_lowest_id(pool, [0, 1])
     assert "transaction_id" not in picked
     assert [r.get("transaction_id") for r in pool] == ["A"]
 
 
-def test_select_twin_filters_then_picks_lowest_and_pops(repo):
+def test_select_twin_filters_then_picks_lowest_and_pops(lam):
     # The predicate rejects the lowest-id row ("A"); among the matches ("M","N") the
     # helper picks the lower id and pops only it. A regression that min'd over the whole
     # pool would pick "A"; one that popped a candidate-list position not the pool index
     # would drop the wrong row.
     pool = [_row("A", Decimal("-1.00")), _row("M"), _row("N")]
-    picked = repo._select_twin(pool, lambda item: item.get("amount") == Decimal("-9.00"))
+    picked = lam.reconcile._select_twin(pool, lambda item: item.get("amount") == Decimal("-9.00"))
     assert picked["transaction_id"] == "M"
     assert [r["transaction_id"] for r in pool] == ["A", "N"]
 
 
-def test_select_twin_no_candidate_returns_none_and_keeps_pool(repo):
+def test_select_twin_no_candidate_returns_none_and_keeps_pool(lam):
     pool = [_row("A")]
-    assert repo._select_twin(pool, lambda item: False) is None
+    assert lam.reconcile._select_twin(pool, lambda item: False) is None
     assert len(pool) == 1
 
 
-def test_exact_tier_matches_a_null_amount_pair(repo):
+def test_exact_tier_matches_a_null_amount_pair(lam):
     # The exact tier deliberately has NO `amount is not None` guard, so a posted row with
     # a null amount still pairs with a null-amount pending on an equal date. Add a guard
     # "to clean up" and this goes red.
     pending = {"transaction_id": "A", "amount": None, "authorized_date": "2026-06-29"}
     posted = {"account_id": "ACC", "amount": None, "authorized_date": "2026-06-29",
               "transaction_id": "P"}
-    twin = repo._find_exact_twin(posted, {"ACC": [pending]})
+    twin = lam.reconcile._find_exact_twin(posted, [pending])
     assert twin is not None
     assert twin["transaction_id"] == "A"
 
@@ -2668,7 +2633,7 @@ def test_settlement_carries_fresh_category_after_re_read(lam, repo):
 def test_bank_owned_fields_excludes_user_fields(lam):
     # category, notes, tags, budget_excluded must NOT be in _BANK_OWNED_FIELDS.
     # If any were, _update_bank_fields would overwrite the user's edits.
-    fields = lam.repository._BANK_OWNED_FIELDS
+    fields = lam.reconcile._BANK_OWNED_FIELDS
     for user_field in ("category", "notes", "tags", "budget_excluded"):
         assert user_field not in fields
 
@@ -2742,7 +2707,7 @@ def _rule_stamped(txn, rule_id):
 
 # [G1] [A13] End-to-end: a RULE-filed pending settles onto its posted twin -> the stored posted
 # row keeps BOTH the carried category and the rule stamp. FAIL-ON-REVERT: drop the carry block
-# in _with_carried_category and the stamp is gone from the settled row.
+# in with_carried_category and the stamp is gone from the settled row.
 def test_whit536_rule_filed_pending_settles_and_posted_keeps_the_stamp(lam, repo):
     pending = _norm(lam, txn_id="A", amount=Decimal("-5.50"), pending=True, category="groceries")
     _rule_stamped(pending, "rule-7")
@@ -2813,7 +2778,7 @@ def test_whit545_unfiled_stored_category_loses_to_a_rule_fill(lam, repo):
               "account_id": "up-spending", "counts_to_budget": True}
     source = {"category": "FOOD_AND_DRINK"}
 
-    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+    carried = lam.reconcile.with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
 
     assert carried["category"] == "groceries"
     assert carried["filed_by_rule"] == "rule-1"
@@ -2826,7 +2791,7 @@ def test_whit545_filed_stored_category_still_wins(lam, repo):
               "counts_to_budget": True}
     source = {"category": "groceries"}
 
-    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+    carried = lam.reconcile.with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
 
     assert carried["category"] == "groceries"
 
@@ -2839,7 +2804,7 @@ def test_whit545_counts_to_budget_recomputed_for_the_carried_category(lam, repo)
               "counts_to_budget": False}
     source = {"category": "groceries"}
 
-    carried = repo._with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
+    carried = lam.reconcile.with_carried_category(posted, source, is_unfiled=_unfiled_check({"groceries"}))
 
     assert carried["category"] == "groceries"
     assert carried["counts_to_budget"] is True
@@ -2920,23 +2885,9 @@ def test_whit545_income_source_category_is_never_gated_as_unfiled(lam, repo):
               "counts_to_budget": True}
     source = {"category": "income"}
 
-    carried = repo._with_carried_category(posted, source, is_unfiled=is_unfiled)
+    carried = lam.reconcile.with_carried_category(posted, source, is_unfiled=is_unfiled)
 
     assert carried["category"] == "income"            # income carried, never gated as "unfiled"
-
-
-# [A5] The dedupe sweep (is_unfiled is None) must stay byte-identical to before WHIT-545: it
-# still carries even a raw enum category AND must NOT recompute counts_to_budget. FAIL-ON-REVERT:
-# make either the gate or the recompute unconditional and this flips.
-def test_whit545_dedupe_sweep_carries_raw_category_and_never_recomputes_the_flag(lam, repo):
-    posted = {"transaction_id": "B", "category": "groceries", "account_id": "up-spending",
-              "counts_to_budget": "SENTINEL"}
-    source = {"category": "FOOD_AND_DRINK"}          # a raw bank enum
-
-    carried = repo._with_carried_category(posted, source, dedupe_sweep=True)
-
-    assert carried["category"] == "FOOD_AND_DRINK"   # raw category still carries — no gate applied
-    assert carried["counts_to_budget"] == "SENTINEL"  # flag untouched — no recompute on the sweep
 
 
 # [A6] One batch, one is_unfiled, two settlements: B's twin is an unfiled raw enum + B was

@@ -3,9 +3,9 @@ mirror, the out-of-order posted-then-pending edge, and the reprocess caller.
 
 The 4 implementer tests in test_reconcile.py already lock the reconcile-side carry
 via the REAL repo. These cover the gaps:
-  * the budget-alert PREVIEW mirror (shared/budget_alerts._simulate_after) — driven
-    with the REAL webhook repo so the production _with_carried_category runs (the
-    NoTwinRepo stub in test_budget_alerts.py returns dict(txn), so it can't prove it);
+  * the budget-alert PREVIEW mirror (lambda/budget_alerts._simulate_after) — driven
+    with the REAL webhook repo so its pending rows feed the production reconcile planner
+    (the NoTwinRepo stub in test_budget_alerts.py has none, so it can't prove it);
   * the out-of-order posted-then-pending same-id edge (pinned behaviour);
   * the reprocess dead-letter caller driving the pending branch.
 
@@ -112,8 +112,8 @@ def _run_alerts(alerts, monkeypatch, *, budgets, before, normalised, webhook_rep
 # GAP 1 — the budget-alert PREVIEW mirror of the pending re-send carry.
 # _simulate_after's pending branch now carries the user's category from the
 # in-memory snapshot; these prove the preview counts spend under the USER's
-# category, not the bank's raw one. Driven with the REAL repo so the real
-# production _with_carried_category runs (NoTwinRepo's stub cannot).
+# category, not the bank's raw one. Driven with the REAL repo so its stored
+# rows feed the production reconcile planner (NoTwinRepo's stub has none).
 # ===========================================================================
 
 
