@@ -5,6 +5,9 @@ name: Client tests
 #     push no longer runs CI a SECOND time alongside the pull_request event.
 #   - pull_request with `paths` → this client suite runs only when client files
 #     change; a server-only PR skips it entirely (the Python workflow still runs).
+#   - push to main with `paths-ignore` → a push touching ONLY agent tooling (.claude/**,
+#     build_graph.py) or Markdown skips the suite; GitHub skips only when EVERY changed
+#     file matches, so any code change still runs it (WHIT-634).
 # Caveat: if branch protection ever marks this a REQUIRED check, a path-skipped run
 # leaves the PR's check "pending" and can block merge — revisit paths if that's turned on.
 # The jobs below are `logic`, `screen` (a shard matrix), `bundle` and `coverage`; if a
@@ -12,6 +15,10 @@ name: Client tests
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - ".claude/**"
+      - "build_graph.py"
+      - "**/*.md"
   pull_request:
     paths:
       - "src/**"

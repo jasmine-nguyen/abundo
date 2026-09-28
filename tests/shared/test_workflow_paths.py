@@ -9,7 +9,7 @@ end-of-list, empty-entry reject, and the raise-on-zero vacuity guard.
 
 import pytest
 
-from _workflow_paths import pull_request_paths
+from _workflow_paths import pull_request_paths, push_paths_ignore
 
 _BASE = (
     "on:\n"
@@ -100,3 +100,27 @@ def test_a_reader_that_finds_nothing_fails_loudly():
     for shape in unreadable:
         with pytest.raises(AssertionError, match="parsed zero entries"):
             pull_request_paths(shape)
+
+
+def test_push_paths_ignore_reads_push_not_pull_request():
+    """The push reader must read push's `paths-ignore`, skip `#` lines, and never sweep in
+    pull_request's `paths` declared below it."""
+    text = (
+        "on:\n"
+        "  push:\n"
+        "    branches: [main]\n"
+        "    paths-ignore:\n"
+        '      - ".claude/**"\n'
+        '      # - "src/**"\n'
+        '      - "**/*.md"\n'
+        "  pull_request:\n"
+        "    paths:\n"
+        '      - "src/**"\n'
+    )
+    assert push_paths_ignore(text) == [".claude/**", "**/*.md"]
+
+
+def test_push_paths_ignore_fails_loudly_on_an_empty_list():
+    text = 'on:\n  push:\n    branches: [main]\n    paths-ignore:\n  pull_request:\n    paths:\n      - "src/**"\n'
+    with pytest.raises(AssertionError, match="parsed zero entries out of on.push.paths-ignore"):
+        push_paths_ignore(text)
