@@ -38,11 +38,13 @@ _SHARED_DIR = str(_REPO_ROOT / "shared")
 # Modules re-imported fresh per test: every lambda_api/ module, plus the shared/ modules whose bare
 # name another lambda folder also defines (e.g. `repository`). Built from the folders so a new
 # module needs no entry here. Shedding every shared/ module too is correct but ~70% slower.
+# `api_key` is always shed: it caches keys and the Anthropic fixtures below stub its get_param.
 _OTHER_DIRS = [folder for folder in _REPO_ROOT.glob("lambda*") if folder.name != "lambda_api"]
 _COLLIDING = tuple(sorted(
     {path.stem for path in pathlib.Path(_LAMBDA_API_DIR).glob("*.py")}
     | ({path.stem for path in pathlib.Path(_SHARED_DIR).glob("*.py")}
        & {path.stem for folder in _OTHER_DIRS for path in folder.glob("*.py")})
+    | {"api_key"}
 ))
 
 
