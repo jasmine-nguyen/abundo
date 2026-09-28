@@ -94,9 +94,10 @@ from repository import (
     VersionConflictError,
 )
 from repository_job import STATUS_RUNNING, STATUS_FAILED
-from repository_rule import rule_identity
+from rule_engine import rule_identity
 from repository_transaction import read_window
 from budget_standing import budget_standing, standing_window
+from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
 from rule_spreading import SpreadSeeder
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
@@ -129,8 +130,8 @@ from filing_habits import suggest_rules_from_filing_habits
 from transaction_search import SEARCH_QUERY_MAX_LEN, search_transactions
 from milestones import mint_migration_markers
 from rule_engine import (
-    plan_rule_application, is_unfiled_category, existing_at_least_as_specific, rule_matches,
-    rule_id_for, reevaluatable_after_fill)
+    is_unfiled_category, existing_at_least_as_specific, rule_matches,
+    rule_id_for)
 from recurring_bills import detect_recurring_bills
 from repository_notify import NotifyRepository
 from goal_checkpoints import notify_goal_checkpoint_crossing
@@ -1216,7 +1217,7 @@ def list_rules_route(rule_repo: RuleRepository) -> dict:
         rules = rule_repo.list_rules()
     except DatabaseError:
         return _json_response(500, {"error": "could not read your rules"})
-    return _json_response(200, [_rule_to_client(row) for row in rules])
+    return _json_response(200, [rule_reply(rule_from_row(row)) for row in rules])
 
 
 def _spread_rule_on_category(rules: list[dict], category_id: str, exclude_id: str | None) -> bool:
@@ -1321,85 +1322,18 @@ def create_rule_route(event: dict, rule_repo: RuleRepository,
             conditions=parsed["conditions"], logic=parsed["logic"],
             spread=parsed["spread"], spread_amount=spread_amount, spread_gap_days=spread_gap_days)
     except RuleClashError as e:
-        return _rule_clash_response(_rule_to_client(e.existing))
+        return _rule_clash_response(rule_from_row(e.existing))
     except DatabaseError:
         return _json_response(500, {"error": "could not save your rule"})
 
-    return _json_response(201, _rule_to_client(rule))
+    return _json_response(201, rule_reply(rule_from_row(rule)))
 
 
-def _refile_rule_touched(
-    old_rule_id: str, edited_rule: dict | None,
-    transaction_repo: TransactionRepository, started: float,
-) -> int:
-    """Re-file or undo the stored charges a rule ALREADY filed, after that rule is edited or
-    deleted (WHIT-540). Returns how many owned charges this request did NOT reach (`remaining`).
-
-    Neither BankSync (incoming charges only) nor "Apply my rules" (unfiled charges only) reaches a
-    charge a now-edited rule already filed (WHIT-502), so a rule change would otherwise never move
-    its own history. This walks ALL history for charges still stamped `filed_by_rule == old_rule_id`
-    — the stamp survives ONLY while the user hasn't hand-filed the charge (a manual file REMOVEs it,
-    WHIT-536), so these are exactly the rule-owned, user-untouched charges — and:
-
-      * delete (edited_rule is None) — clears each back to unfiled (undo).
-      * edit whose id changed (a material edit) AND the rule does NOT match on `category`
-        (reevaluatable_after_fill) — re-evaluates: a charge that still matches the new rule is
-        re-filed to the new target and re-keyed to the new id; one that no longer matches is cleared.
-        Filing leaves every other condition field (description/merchant/amount/direction/account)
-        untouched, so `rule_matches` stays authoritative — a multi `merchant AND amount` rule
-        re-evaluates correctly even though its first flat field isn't `description` (WHIT-561).
-      * every other edit — re-files every owned charge to the new target WITHOUT re-evaluating. Two
-        cases fall here. (1) A CATEGORY rule (a condition matches on `category`): filing overwrote the
-        very category that condition matched on, so re-running it would never match and would wrongly
-        un-file a correctly filed charge. (2) An IN-PLACE edit (same id: a target-only or cosmetic
-        value change): the match set is unchanged, so re-evaluating could only spuriously drop a
-        charge (e.g. `_normalise` doesn't collapse the whitespace `fold` does), never legitimately.
-
-    Bounded by the SAME write cap / time budget as apply_rules_to_uncategorized, sharing `started`.
-    A tail beyond the budget is finished by that route's reconcile sweep on the next "Apply my
-    rules" run — it undoes a deleted rule's leftover stamps AND moves an in-place edit's leftover
-    charges to the rule's new target.
-    """
-    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
-    touched = [t for t in transactions if t.get("filed_by_rule") == old_rule_id]
-
-    # Re-evaluate (drop charges the edit no longer covers) when the edit MATERIALLY changed the rule
-    # (its id moved) AND re-running rule_matches on an already-filed charge can be trusted. That trust
-    # holds for any rule that does NOT match on the `category` field (filing overwrote that field, so
-    # a `category equals` condition would no longer match its own charge) — reevaluatable_after_fill
-    # reads the full conditions, so a multi `merchant AND amount` rule re-evaluates correctly even
-    # though its first flat field is `merchant`, not `description` (WHIT-561). An in-place edit (same
-    # id) keeps the match set, so it takes the blind re-file path regardless.
-    reevaluate = (
-        edited_rule is not None
-        and edited_rule.get("id") != old_rule_id
-        and reevaluatable_after_fill(edited_rule)
-    )
-
-    attempted = 0
-    for transaction in touched:
-        if attempted >= APPLY_RULES_MAX_WRITES:
-            break
-        # Stop well inside the API Gateway window, exactly like the apply-rules loop. `attempted and`
-        # guarantees at least one write, so a long scan can never starve it to zero progress.
-        if attempted and time.monotonic() - started >= APPLY_RULES_TIME_BUDGET_SECONDS:
-            break
-        attempted += 1
-        pk, sk = transaction["pk"], transaction["sk"]
-        try:
-            if edited_rule is None:
-                transaction_repo.clear_rule_fill(pk, sk, old_rule_id)
-            elif not reevaluate or rule_matches(edited_rule, transaction):
-                transaction_repo.refile_rule_fill(
-                    pk, sk, edited_rule["categoryId"], old_rule_id, edited_rule["id"])
-            else:
-                transaction_repo.clear_rule_fill(pk, sk, old_rule_id)
-        except DatabaseError:
-            # Best-effort: skip this row (the orphan-stamp sweep or the next edit finishes it)
-            # rather than failing the whole edit/delete the user already saw succeed.
-            continue
-
-    return len(touched) - attempted
+def _apply_rules_limit(started: float) -> WriteLimit:
+    """The write cap + clock one rule request may spend, so it stays inside the API Gateway window.
+    Measured on the same clock as `started`."""
+    return WriteLimit(APPLY_RULES_MAX_WRITES, APPLY_RULES_TIME_BUDGET_SECONDS, started,
+                      clock=time.monotonic)
 
 
 def update_rule_route(event: dict, rule_repo: RuleRepository,
@@ -1446,13 +1380,13 @@ def update_rule_route(event: dict, rule_repo: RuleRepository,
     except RuleNotFoundError:
         return _json_response(404, {"error": "rule not found"})
     except RuleClashError as e:
-        return _rule_clash_response(_rule_to_client(e.existing))
+        return _rule_clash_response(rule_from_row(e.existing))
     except DatabaseError:
         return _json_response(500, {"error": "could not save your rule"})
 
-    edited = _rule_to_client(rule)
-    remaining = _refile_rule_touched(rule_id, edited, transaction_repo, started)
-    return _json_response(200, {**edited, "remaining": remaining})
+    edited = rule_from_row(rule)
+    remaining = RuleBook.refile_touched(rule_id, edited, transaction_repo, _apply_rules_limit(started))
+    return _json_response(200, {**rule_reply(edited), "remaining": remaining})
 
 
 def delete_rule_route(event: dict, rule_repo: RuleRepository,
@@ -1474,7 +1408,7 @@ def delete_rule_route(event: dict, rule_repo: RuleRepository,
     except DatabaseError:
         return _json_response(500, {"error": "could not delete your rule"})
 
-    remaining = _refile_rule_touched(rule_id, None, transaction_repo, started)
+    remaining = RuleBook.refile_touched(rule_id, None, transaction_repo, _apply_rules_limit(started))
     return _json_response(200, {"id": rule_id, "remaining": remaining})
 
 
@@ -1615,7 +1549,7 @@ def get_filing_suggestions(
     decides nothing and writes nothing; accepting a suggestion is a separate, explicit mint request.
     """
     taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-    rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+    rules = [rule_from_row(row) for row in rule_repo.list_rules()]
     transactions = _fetch_windowed_transactions(transaction_repo, None, None)
     body = suggest_rules_from_filing_habits(transactions, rules, taxonomy_ids)
     return _json_response(200, body)
@@ -1657,50 +1591,12 @@ def get_transactions_search(
     return _json_response(200, {"transactions": matches, "truncated": truncated})
 
 
-def _as_leaf_rule(inline_rule: dict) -> dict:
-    """The inline rule in the shape rule_engine evaluates."""
-    return {
-        "id": None,
-        "field": DEFAULT_RULE_FIELD,
-        "operator": DEFAULT_RULE_OPERATOR,
-        "value": inline_rule["value"],
-        "categoryId": inline_rule["categoryId"],
-    }
-
-
-def _rule_to_client(row: dict) -> dict:
-    """Map a stored rule row (repository_rule, snake_case) to the client/engine Rule shape.
-
-    Our store speaks `category_id`; rule_engine and the apply-rules responses read `categoryId`.
-    This is the single point translating between the two.
-    """
-    return {
-        "id": row.get("id"),
-        "field": row.get("field"),
-        "operator": row.get("operator"),
-        "value": row.get("value"),
-        "categoryId": row.get("category_id"),
-        "budgetExcluded": bool(row.get("budget_excluded")),
-        # The spread action (WHIT-559) + the recurring bill it captured at create time. A non-spread
-        # rule has spread False and no amount/gap. The apply path reads these to auto-create a
-        # category spread plan on a matching charge.
-        "spread": bool(row.get("spread")),
-        "spreadAmount": row.get("spread_amount"),
-        "spreadGapDays": row.get("spread_gap_days"),
-        # Multi-condition rules (WHIT-541) carry these; a single-condition rule has None, and the
-        # engine's _conditions_of falls back to the flat field/operator/value. This output is ALSO
-        # the engine input on the sweep, so it must carry conditions for a multi rule to match.
-        "conditions": row.get("conditions"),
-        "logic": row.get("logic"),
-    }
-
-
 def _rule_clash_response(existing: dict) -> dict:
-    """The 409 for an inline rule that would fight an existing one. `existing` is a client-shaped
+    """The 409 for an inline rule that would fight an existing one. `existing` is an engine-shaped
     rule. One definition so the pre-scan clash and the mint-time race clash can't drift apart."""
     return _json_response(409, {
         "error": f"you already have a rule for that filing to '{existing['categoryId']}'",
-        "existingRule": existing,
+        "existingRule": rule_reply(existing),
     })
 
 
@@ -1850,157 +1746,6 @@ def _apply_rules_response(plan: dict, dry_run: bool, *, filed: list = (), vanish
     })
 
 
-def _build_rule_spread_map(rows: list[dict]) -> dict:
-    """id -> engine-shaped spread context {id, categoryId, spread, spreadSeeded, spreadAmount,
-    spreadGapDays} for every SPREAD rule (WHIT-559). Built from the RAW store rows, not
-    `_rule_to_client`, because the apply seed needs `spread_seeded` — which the client shape omits.
-    Only spread rows are kept, so a store with no spread rules yields an empty map (zero apply cost).
-    """
-    return {
-        row["id"]: {
-            "id": row["id"], "categoryId": row.get("category_id"),
-            "spread": True, "spreadSeeded": bool(row.get("spread_seeded")),
-            "spreadAmount": row.get("spread_amount"), "spreadGapDays": row.get("spread_gap_days"),
-        }
-        for row in rows if row.get("spread") and row.get("id")
-    }
-
-
-def _apply_rules_write_phase(
-    transaction_repo: TransactionRepository, plan: dict, transactions: list[dict],
-    rule_target_by_id: dict, rule_excluded_by_id: dict,
-    is_unfiled: Callable[[str | None], bool], *,
-    inline_stamp: str | None, inline_excluded: bool = False, run_reconcile: bool,
-    rule_spread_by_id: dict | None = None, spread_seeder: SpreadSeeder | None = None,
-    max_writes: int | None = None, time_budget: float | None = None,
-    started: float | None = None, on_progress: Callable[[dict], None] | None = None,
-) -> tuple[list[dict], list[str], list[str], list[str], int]:
-    """The write half of apply-rules, shared by the synchronous route and the async worker
-    (WHIT-537).
-
-    The route passes the cap + budget (APPLY_RULES_MAX_WRITES / APPLY_RULES_TIME_BUDGET_SECONDS)
-    so one request stays inside the API Gateway window; the async worker passes None for both, so
-    it files the whole matched set with no ceiling — which is the point of the card. `started` is
-    read only when `time_budget` is set.
-
-    The "keep out of budget" action (WHIT-558) rides the SAME conditional write: an inline "file
-    this shop" run stamps `inline_excluded` on every row (its plan rule_id is None); the plain sweep
-    reads the flag off the winning rule via `rule_excluded_by_id`.
-
-    Runs the file loop over ``plan["matched"]``, then — only when `run_reconcile` (the plain full
-    sweep, never the inline "file this shop" path) — the WHIT-540 self-healing reconcile sweep,
-    sharing ONE `attempted` count and ONE budget so the primary filing is never starved. Returns
-    (filed, vanished, failed, already_filed, matched_remaining). `on_progress` is called with the
-    running counts after each write so the worker can persist job progress; the route passes None.
-    """
-    filed: list[dict] = []
-    vanished: list[str] = []
-    failed: list[str] = []
-    already_filed: list[str] = []
-    attempted = 0  # counts ATTEMPTS, not successes — it bounds the work this request does
-
-    def over_budget() -> bool:
-        if max_writes is not None and attempted >= max_writes:
-            return True
-        # Stop well inside the API Gateway window. `attempted and` guarantees at least one write,
-        # so a slow rule read or a long scan can never starve the loop into zero progress.
-        return bool(time_budget is not None and attempted
-                    and time.monotonic() - started >= time_budget)
-
-    def emit_progress() -> None:
-        if on_progress is not None:
-            on_progress({
-                "filed": len(filed), "vanished": len(vanished), "failed": len(failed),
-                "alreadyFiled": len(already_filed), "attempted": attempted,
-            })
-
-    for transaction, category_id, rule_id in plan["matched"]:
-        if over_budget():
-            break
-        transaction_id = transaction.get("transaction_id")
-        attempted += 1
-        # Stamp which rule filed it (WHIT-536), and carry its "keep out of budget" action (WHIT-558)
-        # in the SAME write. An inline "file this shop" rule is minted after planning, so its matched
-        # rule_id is None — use the freshly-created rule's id and the inline flag; the plain sweep
-        # reads both by the winning rule's id.
-        if inline_stamp is not None:
-            stamp, budget_excluded = inline_stamp, inline_excluded
-        else:
-            stamp, budget_excluded = rule_id, rule_excluded_by_id.get(rule_id, False)
-        # Auto-spread the bill if the winning rule is a spread one (WHIT-559) — once per run,
-        # create-only, independent of whether the write below files or no-ops (the plan is about the
-        # bill, not this charge). Inline "file this shop" rules are never spread (rule_id is None).
-        if spread_seeder is not None and rule_spread_by_id:
-            spread_seeder.seed(rule_spread_by_id.get(rule_id))
-        try:
-            # Conditional on the category the SCAN saw, so a charge the user filed in the seconds
-            # since keeps their choice (WHIT-508). Their tap always beats a rule.
-            status, current_category = transaction_repo.update_transaction_category_if_unchanged(
-                transaction["pk"], transaction["sk"], category_id, transaction.get("category"),
-                filed_by_rule=stamp, budget_excluded=budget_excluded,
-            )
-        except DatabaseError:
-            failed.append(transaction_id)
-            emit_progress()
-            continue
-        if status == "written":
-            filed.append({"id": transaction_id, "category": category_id})
-        # The row was deleted between the scan and the write (a pending aged out, or its posted
-        # twin replaced it). Nothing to retry — it is gone from the next scan too.
-        elif status == "gone":
-            vanished.append(transaction_id)
-        # It changed underneath. Only the taxonomy says whether that counts as FILED: a tap files
-        # it (leave it alone), but a re-sync carrying the bank's own raw label back leaves it
-        # unfiled, and reporting THAT as filed would let the app claim the job was done while the
-        # badge still counted the charge.
-        elif is_unfiled(current_category):
-            failed.append(transaction_id)
-        else:
-            already_filed.append(transaction_id)
-        emit_progress()
-
-    # `matched_remaining` reports only the file loop's unreached matches — capture it BEFORE the
-    # sweep below, which shares `attempted` for the budget but must not be subtracted from matched.
-    matched_remaining = len(plan["matched"]) - attempted
-
-    # WHIT-540 self-healing reconcile sweep. A rule edit/delete re-files the charges it touched
-    # immediately, but only up to its own write budget; a rule on a huge history leaves a tail. The
-    # plain "Apply my rules" sweep already reads every charge, so while it is here it brings each
-    # rule-owned charge back in line with no client cooperation:
-    #   * stamp points at a rule that no longer exists -> undo the fill (delete tail, value-edit's
-    #     old id).
-    #   * stamp points at a live rule but the charge sits off that rule's current target -> move it
-    #     to the target (an in-place target edit's tail; also heals a settlement re-put that carried
-    #     a stale category back onto a stamped row, WHIT-513).
-    # It shares this request's write cap and clock (the file loop above runs first, so the primary
-    # action is never starved), and the stamp guards make each write a no-op if the user has since
-    # taken the charge over. ONLY the plain full sweep runs it: the "file this shop" path narrowed
-    # `rules` to the single minted rule, so it can't judge the store.
-    if run_reconcile:
-        for transaction in transactions:
-            if over_budget():
-                break
-            stamp = transaction.get("filed_by_rule")
-            if not stamp:
-                continue
-            target = rule_target_by_id.get(stamp)
-            try:
-                if target is None:
-                    attempted += 1
-                    transaction_repo.clear_rule_fill(transaction["pk"], transaction["sk"], stamp)
-                    emit_progress()
-                elif not is_unfiled(target) and transaction.get("category") != target:
-                    attempted += 1
-                    transaction_repo.refile_rule_fill(
-                        transaction["pk"], transaction["sk"], target, stamp, stamp)
-                    emit_progress()
-            except DatabaseError:
-                # Best-effort cleanup — a later sweep retries the tail.
-                continue
-
-    return filed, vanished, failed, already_filed, matched_remaining
-
-
 def apply_rules_to_uncategorized(
     event: dict, transaction_repo: TransactionRepository, category_repo: CategoryRepository,
     rule_repo: RuleRepository, budget_repo: BudgetRepository | None = None,
@@ -2050,44 +1795,25 @@ def apply_rules_to_uncategorized(
         # A read failure is OUR database, not an upstream — 500, and returning here (before the
         # whole-history scan and the write loop) guarantees nothing is written.
         return _json_response(500, {"error": "could not read your rules"})
-    rules = [_rule_to_client(row) for row in raw_rules]
-    # The spread context (WHIT-559) needs `spread_seeded`, absent from the client shape — build it
-    # from the raw rows, against the WHOLE store before the inline path narrows `rules`.
-    rule_spread_by_id = _build_rule_spread_map(raw_rules)
-
-    # WHIT-540: each live rule's id -> its current target, captured BEFORE the inline path narrows
-    # `rules` to the single minted rule below — the reconcile sweep needs the WHOLE store to tell an
-    # orphaned stamp (rule gone) from a drifted one (rule still here, but the charge is off its
-    # target).
-    rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
-    # Each rule's "keep out of budget" action (WHIT-558), captured against the WHOLE store before the
-    # inline path narrows `rules` — so the plain sweep can set budget_excluded from the winning rule.
-    # The inline "file this shop" path doesn't consult this map: its plan rule_id is None, so it reads
-    # the flag straight off `inline_rule` below.
-    rule_excluded_by_id = {
-        rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
+    book = RuleBook(taxonomy_ids, raw_rules)
 
     if inline_rule is not None:
-        clash = (_rule_that_would_fight(rules, inline_rule)
-                 or _rule_that_would_clash_on_exclusion(rules, inline_rule))
+        clash = (_rule_that_would_fight(book.rules, inline_rule)
+                 or _rule_that_would_clash_on_exclusion(book.rules, inline_rule))
         if clash is not None:
             return _rule_clash_response(clash)
         # File ONLY this shop (WHIT-523). The clash check above has already read the user's
         # existing rules; the sweep must not, or "file COLES" would also file whatever her other
         # rules match in stored history. The plain "Apply my rules" path (no inline rule) still
         # sweeps every rule.
-        rules = [_as_leaf_rule(inline_rule)]
-
-    def is_unfiled(category: str | None) -> bool:
-        return _is_unmapped_category(category, taxonomy_ids)
+        book = book.only(inline_rule, field=DEFAULT_RULE_FIELD, operator=DEFAULT_RULE_OPERATOR)
 
     # No rules -> nothing can match, so skip the whole-history scan entirely.
-    if not rules:
-        empty = plan_rule_application([], [], is_unfiled)
-        return _apply_rules_response(empty, dry_run)
+    if not book.rules:
+        return _apply_rules_response(book.plan([]), dry_run)
 
-    transactions = _fetch_windowed_transactions(transaction_repo, None, None)
-    plan = plan_rule_application(rules, transactions, is_unfiled)
+    transactions = read_window(transaction_repo, None, None)
+    plan = book.plan(transactions)
 
     if dry_run:
         return _apply_rules_response(plan, True, remaining=len(plan["matched"]))
@@ -2109,21 +1835,21 @@ def apply_rules_to_uncategorized(
             # WHIT-558) appeared between the pre-scan clash checks and here (a race). create_rule is
             # safe to run twice, so same-text + same-category + same-flag returns the existing rule
             # (created=False) rather than raising.
-            return _rule_clash_response(_rule_to_client(e.existing))
+            return _rule_clash_response(rule_from_row(e.existing))
         except DatabaseError:
             return _json_response(500, {"error": "could not save your rule"})
-        created_rule = _rule_to_client(row)
+        created_rule = rule_reply(rule_from_row(row))
 
-    filed, vanished, failed, already_filed, matched_remaining = _apply_rules_write_phase(
-        transaction_repo, plan, transactions, rule_target_by_id, rule_excluded_by_id, is_unfiled,
+    seeder = None
+    if budget_repo is not None and paycycle_repo is not None:
+        seeder = SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
+    filed, vanished, failed, already_filed, matched_remaining = book.sweep(
+        transaction_repo, transactions, plan,
+        limit=_apply_rules_limit(started),
         inline_stamp=(created_rule["id"] if inline_rule is not None else None),
         inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
         run_reconcile=(inline_rule is None),
-        rule_spread_by_id=rule_spread_by_id,
-        spread_seeder=(SpreadSeeder(budget_repo, paycycle_repo, rule_repo)
-                       if budget_repo is not None and paycycle_repo is not None else None),
-        max_writes=APPLY_RULES_MAX_WRITES, time_budget=APPLY_RULES_TIME_BUDGET_SECONDS,
-        started=started,
+        seeder=seeder,
     )
 
     return _apply_rules_response(
@@ -2218,7 +1944,7 @@ def start_apply_rules_job(
     # as the sync route does, rather than minting a permanent contradiction inside the worker.
     if inline_rule is not None:
         try:
-            rules = [_rule_to_client(row) for row in rule_repo.list_rules()]
+            rules = [rule_from_row(row) for row in rule_repo.list_rules()]
         except DatabaseError:
             return _json_response(500, {"error": "could not read your rules"})
         clash = (_rule_that_would_fight(rules, inline_rule)

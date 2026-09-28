@@ -1,5 +1,5 @@
 """WHIT-561: the webhook filer applies a multi-condition rule (conditions + AND/OR). Driven through
-the `lam` fixture so rule_ingest -> _to_engine_rule -> rule_engine resolve as the deployed webhook."""
+the `lam` fixture so rule_ingest -> rule_book.rule_from_row -> rule_engine resolve as the deployed webhook."""
 
 from decimal import Decimal
 

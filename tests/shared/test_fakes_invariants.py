@@ -142,7 +142,11 @@ _REGISTRY = [
          _API_TESTS / "test_rules_routes_spread_gaps.py",
          _API_TESTS / "test_apply_rules_spread.py",
          # WHIT-559 PR2a gap suite: sweep + async-worker auto-spreading edges.
-         _API_TESTS / "test_apply_rules_spread_gaps.py"),
+         _API_TESTS / "test_apply_rules_spread_gaps.py",
+         # WHIT-623 QA: every rule reply drops spreadSeeded.
+         _API_TESTS / "test_rule_reply_shape_gaps.py",
+         # WHIT-623 slice 3 QA: the callers' wiring onto RuleBook.
+         _API_TESTS / "test_rule_book_callers_qa.py"),
     ),
     _Domain(
         "rule",
@@ -183,7 +187,9 @@ _REGISTRY = [
          _API_TESTS / "test_rules_routes_spread_gaps.py",
          _API_TESTS / "test_apply_rules_spread.py",
          _API_TESTS / "test_apply_rules_spread_gaps.py",
-         _SHARED_TESTS / "test_rule_fake_contract_gaps.py"),
+         _SHARED_TESTS / "test_rule_fake_contract_gaps.py",
+         _API_TESTS / "test_rule_reply_shape_gaps.py",
+         _API_TESTS / "test_rule_book_callers_qa.py"),
     ),
     _Domain(
         "handler_patch",

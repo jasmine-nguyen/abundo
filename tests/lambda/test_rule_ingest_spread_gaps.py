@@ -76,7 +76,7 @@ def test_two_deliveries_over_the_same_store_seed_once(lam):
     # [A10] Cross-DELIVERY idempotency: delivery 1 seeds + marks the store row; delivery 2 (a fresh
     # SpreadSeeder — the per-run dedup set does NOT carry over) reads the persisted spread_seeded and
     # skips. This is the guarantee that makes the webhook and the sweep never double-seed: it lives in
-    # the store row, not the in-memory run. FAIL-ON-REVERT: stop reading spreadSeeded in _to_engine_rule
+    # the store row, not the in-memory run. FAIL-ON-REVERT: stop reading spreadSeeded in rule_book.rule_from_row
     # (or stop mark_spread_seeded flipping it) and delivery 2 re-seeds.
     store = FakeRuleStore([_spread_rule()])
     b1, _ = _apply(lam, store, [_charge("t1")])
@@ -87,7 +87,7 @@ def test_two_deliveries_over_the_same_store_seed_once(lam):
 
 
 def test_a_multi_condition_spread_rule_still_seeds(lam):
-    # [A11] A WHIT-541 multi-condition spread rule carries spread through _to_engine_rule, so a charge
+    # [A11] A WHIT-541 multi-condition spread rule carries spread through rule_book.rule_from_row, so a charge
     # matching every condition still auto-seeds the plan.
     conditions = [{"field": "description", "operator": "contains", "value": "ORIGIN"},
                   {"field": "amount", "operator": "less_than", "value": "100"}]

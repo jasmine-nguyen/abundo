@@ -6,22 +6,14 @@ This worker runs the SAME sweep with NO cap: the app's POST .../apply-rules/jobs
 row and async-invokes this function; it files every matched charge, writes its progress to the
 job row as it goes, and marks the row succeeded/failed at the end. The app polls GET .../jobs/{id}.
 
-It lives in the lambda_api bundle (not the webhook bundle) because the whole sweep — the
-whole-history read, the rule planning, the shared write phase, and the APPLY_RULES_* handling — is
-lambda_api code. It reuses those handler helpers rather than re-deriving them, so the sync route
-and the worker can never drift on WHAT gets filed; only the cap differs (a call-site parameter).
+It lives in the lambda_api bundle (not the webhook bundle) because the APPLY_RULES_* handling and the
+job row are lambda_api code. The sweep itself is the shared RuleBook (WHIT-623), the same one the
+sync route runs, so the two can never drift on WHAT gets filed; only the write limit differs.
 """
 
 import logging
 
 from api_constants import DEFAULT_RULE_FIELD, DEFAULT_RULE_OPERATOR
-from handler import (
-    _apply_rules_write_phase,
-    _as_leaf_rule,
-    _build_rule_spread_map,
-    _fetch_windowed_transactions,
-    _rule_to_client,
-)
 from repository import (
     BudgetRepository,
     CategoryRepository,
@@ -32,9 +24,10 @@ from repository import (
     RuleRepository,
     TransactionRepository,
 )
-from rule_spreading import SpreadSeeder
 from repository_job import STATUS_FAILED, STATUS_SUCCEEDED
-from rule_engine import is_unfiled_category, plan_rule_application
+from repository_transaction import read_window
+from rule_book import RuleBook, WriteLimit, rule_from_row, rule_reply
+from rule_spreading import SpreadSeeder
 
 logger = logging.getLogger(__name__)
 
@@ -67,22 +60,7 @@ def lambda_handler(event: dict, context=None) -> dict:
 
     created_rule = None
     try:
-        taxonomy_ids = {category["id"] for category in category_repo.list_categories()}
-
-        def is_unfiled(category):
-            return is_unfiled_category(category, taxonomy_ids)
-
-        raw_rules = rule_repo.list_rules()
-        rules = [_rule_to_client(row) for row in raw_rules]
-        # Captured BEFORE the inline path narrows `rules`: the reconcile sweep needs the WHOLE
-        # store to tell an orphaned stamp (rule gone) from a drifted one (rule still here), and the
-        # plain sweep reads each winning rule's "keep out of budget" action from here (WHIT-558).
-        rule_target_by_id = {rule["id"]: rule["categoryId"] for rule in rules if rule.get("id")}
-        rule_excluded_by_id = {
-            rule["id"]: bool(rule.get("budgetExcluded")) for rule in rules if rule.get("id")}
-        # The spread context (WHIT-559) — from the raw rows, since it needs spread_seeded.
-        rule_spread_by_id = _build_rule_spread_map(raw_rules)
-
+        book = RuleBook.load(rule_repo, category_repo)
         if inline_rule is not None:
             # File ONLY this shop: mint the rule (idempotent, WHIT-497) then sweep with just it.
             # The POST already refused a clash; a same-text/different-category race here raises.
@@ -91,15 +69,15 @@ def lambda_handler(event: dict, context=None) -> dict:
                 inline_rule["value"], inline_rule["categoryId"],
                 budget_excluded=inline_rule["budgetExcluded"],
             )
-            created_rule = _rule_to_client(row)
-            rules = [_as_leaf_rule(inline_rule)]
+            created_rule = rule_reply(rule_from_row(row))
+            book = book.only(inline_rule, field=DEFAULT_RULE_FIELD, operator=DEFAULT_RULE_OPERATOR)
 
-        if not rules:
+        if not book.rules:
             job_repo.finish_job(job_id, STATUS_SUCCEEDED, _zero_counts(), created_rule=created_rule)
             return {"jobId": job_id, "status": STATUS_SUCCEEDED}
 
-        transactions = _fetch_windowed_transactions(transaction_repo, None, None)
-        plan = plan_rule_application(rules, transactions, is_unfiled)
+        transactions = read_window(transaction_repo, None, None)
+        plan = book.plan(transactions)
         matched_total = len(plan["matched"])
         job_repo.update_progress(job_id, {**_zero_counts(), "matched": matched_total,
                                           "remaining": matched_total})
@@ -120,14 +98,14 @@ def lambda_handler(event: dict, context=None) -> dict:
                     "remaining": matched_total - done,
                 })
 
-        filed, vanished, failed, already_filed, matched_remaining = _apply_rules_write_phase(
-            transaction_repo, plan, transactions, rule_target_by_id, rule_excluded_by_id, is_unfiled,
+        filed, vanished, failed, already_filed, matched_remaining = book.sweep(
+            transaction_repo, transactions, plan,
+            limit=WriteLimit.none(),
             inline_stamp=(created_rule["id"] if inline_rule is not None else None),
             inline_excluded=(inline_rule["budgetExcluded"] if inline_rule is not None else False),
             run_reconcile=(inline_rule is None),
-            rule_spread_by_id=rule_spread_by_id,
-            spread_seeder=SpreadSeeder(budget_repo, paycycle_repo, rule_repo),
-            max_writes=None, time_budget=None, on_progress=on_progress,
+            seeder=SpreadSeeder(budget_repo, paycycle_repo, rule_repo),
+            on_progress=on_progress,
         )
 
         counts = {

@@ -39,16 +39,6 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def rule_identity(field: str, operator: str, value: str,
-                   conditions: Optional[list], logic: Optional[str]) -> str:
-    """The rule's id — its canonical multi-condition hash when it carries `conditions` (WHIT-541),
-    else the legacy single-condition hash. A 1-condition rule collapses to the legacy id inside
-    rule_id_for_conditions, so an existing rule keeps its id."""
-    if conditions:
-        return rule_engine.rule_id_for_conditions(conditions, logic)
-    return rule_engine.rule_id_for(field, operator, value)
-
-
 class RuleRepository:
     """Reads and writes the user's categorisation rules in our own DynamoDB table."""
 
@@ -115,7 +105,7 @@ class RuleRepository:
         NOT part of the id (the id stays the rule TEXT, rule_engine.rule_id_for), so they can only ever
         collide, never mint a second row for the same text.
         """
-        rule_id = rule_identity(field, operator, value, conditions, logic)
+        rule_id = rule_engine.rule_identity(field, operator, value, conditions, logic)
         item = _rule_row(rule_id, field, operator, value, category_id,
                          budget_excluded=budget_excluded, conditions=conditions, logic=logic,
                          spread=spread, spread_amount=spread_amount, spread_gap_days=spread_gap_days,
@@ -167,7 +157,7 @@ class RuleRepository:
         if existing is None:
             raise RuleNotFoundError(rule_id)
 
-        new_id = rule_identity(field, operator, value, conditions, logic)
+        new_id = rule_engine.rule_identity(field, operator, value, conditions, logic)
         now = _now()
 
         if new_id == rule_id:

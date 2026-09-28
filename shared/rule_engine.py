@@ -100,6 +100,16 @@ def rule_id_for_conditions(conditions: list[dict], logic: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+def rule_identity(field: str, operator: str, value: str,
+                  conditions: list | None, logic: str | None) -> str:
+    """The rule's id — its canonical multi-condition hash when it carries `conditions` (WHIT-541),
+    else the legacy single-condition hash. A 1-condition rule collapses to the legacy id inside
+    rule_id_for_conditions, so an existing rule keeps its id."""
+    if conditions:
+        return rule_id_for_conditions(conditions, logic)
+    return rule_id_for(field, operator, value)
+
+
 def _normalise(value) -> str:
     """Trim + lowercase, both sides of a comparison.
 
