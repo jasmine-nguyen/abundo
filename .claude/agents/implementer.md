@@ -32,8 +32,8 @@ once at the end.
   the end of it. Do not redesign, add features, or refactor beyond it.
 - If you're given a slice, build only that slice.
 - **Pinned tests are read-only.** The tests you're given (and any QA tests added
-  later) are fingerprinted: the pipeline rejects your work if you change or delete
-  one. If one is genuinely wrong, escalate.
+  later) are fingerprinted: the pipeline puts back any you change or delete before
+  it runs the checks. If one is genuinely wrong, escalate.
 - **Check the project context** (appended below) for known landmines, coding
   standards and the glossary before writing code. If a landmine applies to the area
   you're changing, handle it — don't discover it after.

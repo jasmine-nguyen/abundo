@@ -16,7 +16,7 @@
 #              ├→ next_slice → test_writer                      more slices to build
 #              └→ ship → END                                    both reviews passed
 #                 (END instead, with BUILD FAILED, when rounds run out)
-# ship ─→ implementer                                            final checks failed, rounds left
+# next_slice / ship ─→ implementer                               QA's new tests fail the checks, rounds left
 import argparse
 import asyncio
 import hashlib
@@ -25,9 +25,12 @@ import operator
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +49,11 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, RetryPolicy, interrupt
+
+
+def merge_unique(old: list, new: list) -> list:
+    """Keep notes from every slice and round, without repeats."""
+    return old + [item for item in new if item not in old]
 
 
 class BuildState(TypedDict):
@@ -103,12 +111,15 @@ class BuildState(TypedDict):
     # review
     code_verdict: NotRequired[str]
     code_feedback: NotRequired[str]
-    advisory: NotRequired[list[str]]
-    tech_debt: NotRequired[list[dict]]
+    code_decisions: NotRequired[list[str]]
+    advisory: Annotated[list[str], merge_unique]
+    tech_debt: Annotated[list[dict], merge_unique]
     qa_verdict: NotRequired[str]
     qa_feedback: NotRequired[str]
     qa_patch: NotRequired[str]
-    manual_checks: NotRequired[list[str]]
+    qa_test_command: NotRequired[str]
+    manual_checks: Annotated[list[str], merge_unique]
+    last_review: NotRequired[dict[str, str]]
     # wrap-up
     failed: NotRequired[bool]
     outcome: NotRequired[str]
@@ -124,9 +135,9 @@ DB_PATH = BUILD_DIR / "build_graph.db"
 PROJECT_CONTEXT_FILE = ROOT / "project-context.md"
 
 DEFAULT_MODEL = "claude-opus-5-5"
-# How hard each agent thinks. Claude Code's own default is higher; "high" is faster
+# How hard each agent thinks. Claude Code's own default is higher; "medium" is faster
 # and uses less of the plan.
-AGENT_EFFORT = "high"
+AGENT_EFFORT = "medium"
 MAX_CLARIFY_ROUNDS = 2
 MAX_PLAN_ATTEMPTS = 2
 MAX_TEST_ATTEMPTS = 2
@@ -267,7 +278,8 @@ CODE_CRITIC_OUTPUT = _output(
     report=TEXT,
 )
 QA_OUTPUT = _output(
-    spec_gaps=TEXTS, real_bugs=TEXTS, manual_checks=TEXTS, patch_written={"type": "boolean"}, report=TEXT
+    spec_gaps=TEXTS, real_bugs=TEXTS, manual_checks=TEXTS, patch_written={"type": "boolean"}, test_command=TEXT,
+    report=TEXT,
 )
 
 
@@ -275,7 +287,8 @@ QA_OUTPUT = _output(
 # --- guards ---
 #
 # The pipeline owns git: no agent commits, pushes or switches branches.
-# Planning and review agents are read-only; QA writes only in its own worktree.
+# Planning and review agents are read-only; QA writes only in the worktree the
+# pipeline makes for it.
 # These hooks block the obvious commands. fix_or_ship and prepare_branch also
 # check the working tree, which catches any write the hooks miss.
 
@@ -297,7 +310,7 @@ BASH_DENY = {
         r"\bsed\s+-i",
     ])),
     "writer": re.compile("|".join([*_NEVER, _git("worktree"), _git(r"checkout(?!\s+--\s)")])),
-    "qa": re.compile("|".join(_NEVER)),
+    "qa": re.compile("|".join([*_NEVER, _git("worktree")])),
 }
 
 
@@ -451,7 +464,7 @@ def running_message(name: str, state: BuildState) -> str | None:
         "checks": "Running typecheck and tests",
         "code_critic": "Code review: hunting for bugs and checking your standards",
         "qa": "QA: checking it does what the card asked, then testing the edge cases",
-        "ship": "Running the checks one last time, then opening the PR",
+        "ship": "Opening the PR (after running QA's new tests, if it added any)",
     }
     return messages.get(name)
 
@@ -474,7 +487,7 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
         label = REVIEW_LABELS[key]
         if update[f"{key}_verdict"] == "APPROVED":
             return f"✅ {label} passed"
-        return f"❌ {label}: {plural(finding_count(update[f'{key}_feedback']), 'thing')} to fix"
+        return f"❌ {label}: {plural(finding_count(review_findings(update, key)), 'thing')} to fix"
     if name == "designer":
         if update["clarify_questions"]:
             return f"❓ Designer has {plural(len(update['clarify_questions']), 'question')} before planning"
@@ -510,6 +523,8 @@ def finished_message(name: str, state: BuildState, update: dict) -> str | None:
         if update.get("checks_feedback"):
             return "❌ Final checks failed, nothing pushed" + ("" if update["failed"] else ", back to the implementer")
         return "❌ Couldn't push or open the PR"
+    if name == "next_slice" and update.get("checks_feedback"):
+        return "❌ QA's new tests fail the checks" + ("" if update["failed"] else ", back to the implementer")
     if name == "implementer":
         if update.get("escalation"):
             return "❓ Implementer needs a decision from you"
@@ -637,12 +652,20 @@ def card_title(state: BuildState) -> str:
     return f"{state.get('card_number', '')} {first_line(state.get('card_details', ''), 72) or 'build'}".strip()
 
 
-def check_commands() -> list[str]:
+def checks_block() -> list[str]:
     match = re.search(r"^```checks\n(.*?)^```", read_text(PROJECT_CONTEXT_FILE), re.DOTALL | re.MULTILINE)
     if not match:
         return []
-    lines = (line.strip() for line in match.group(1).splitlines())
-    return [line for line in lines if line and not line.startswith("#")]
+    return [line.strip() for line in match.group(1).splitlines() if line.strip()]
+
+
+def check_commands() -> list[str]:
+    return [line for line in checks_block() if not line.startswith("#")]
+
+
+def check_commands_in_parallel() -> bool:
+    """The checks run at the same time unless the block has a `# one at a time` line."""
+    return not any(re.fullmatch(r"#\s*one at a time", line, re.IGNORECASE) for line in checks_block())
 
 
 # --- git and shell ---
@@ -655,18 +678,25 @@ def git(*args: str) -> str:
 
 
 def run(command: str | list[str], timeout: float | None = None) -> tuple[int | None, str]:
-    """Run a command in the repo. Returns (exit code, output); the code is None on timeout."""
+    """Run a command in the repo. Returns (exit code, output); the code is None on timeout.
+    The command gets its own process group, so a timeout also stops what it started
+    (test runner workers, a dev server) instead of leaving them running."""
+    process = subprocess.Popen(
+        command, cwd=ROOT, shell=isinstance(command, str), stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, start_new_session=True,
+    )
     try:
-        done = subprocess.run(
-            command, cwd=ROOT, shell=isinstance(command, str), check=False,
-            capture_output=True, text=True, timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as e:
-        partial = e.stdout or ""
-        if isinstance(partial, bytes):
-            partial = partial.decode(errors="replace")
-        return None, f"timed out after {timeout}s\n{partial}"
-    return done.returncode, done.stdout + done.stderr
+        out, err = process.communicate(timeout=timeout)
+    except BaseException as e:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if not isinstance(e, subprocess.TimeoutExpired):
+            raise
+        out, err = process.communicate()
+        return None, f"timed out after {timeout}s\n{out}{err}"
+    return process.returncode, out + err
 
 
 def git_status() -> list[tuple[str, str]]:
@@ -708,15 +738,32 @@ def in_cloud() -> bool:
 
 
 def default_branch() -> str:
+    """The branch PRs go into. A clone records it as origin/HEAD; a repo that was pushed
+    rather than cloned may not, so ask the remote, then guess from its branches."""
     try:
         return git("symbolic-ref", "--short", "refs/remotes/origin/HEAD").removeprefix("origin/")
     except subprocess.CalledProcessError:
-        return "main"
+        pass
+    code, output = run(["git", "ls-remote", "--symref", "origin", "HEAD"], timeout=30)
+    match = re.match(r"ref: refs/heads/(\S+)\s+HEAD", output) if code == 0 else None
+    if match:
+        return match.group(1)
+    for name in ("main", "master"):
+        if run(["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}"])[0] == 0:
+            return name
+    return "main"
+
+
+def branch_taken(name: str) -> bool:
+    if run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"])[0] == 0:
+        return True
+    # A branch left on the remote by an earlier build would reject the push.
+    return run(["git", "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{name}"], timeout=30)[0] == 0
 
 
 def free_branch_name(name: str) -> str:
     candidate, n = name, 1
-    while run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{candidate}"])[0] == 0:
+    while branch_taken(candidate):
         n += 1
         candidate = f"{name}-{n}"
     return candidate
@@ -733,11 +780,33 @@ def exclude_build_dir() -> None:
             f.write("\n/.build/\n")
 
 
+# Installed packages git doesn't carry into a worktree, linked from the main checkout.
+DEPENDENCY_DIRS = ("node_modules", ".venv", "venv")
+
+
+def add_worktree() -> Path:
+    """A throwaway checkout of HEAD, outside the repo so the checks never pick it up."""
+    worktree = Path(tempfile.mkdtemp(prefix="build-qa-")) / "worktree"
+    git("worktree", "add", "--detach", str(worktree), "HEAD")
+    for name in DEPENDENCY_DIRS:
+        for source in [ROOT / name, *ROOT.glob(f"*/{name}")]:
+            target = worktree / source.relative_to(ROOT)
+            if source.is_dir() and target.parent.is_dir() and not target.exists():
+                target.symlink_to(source)
+    return worktree
+
+
+def remove_worktree(worktree: Path) -> None:
+    run(["git", "worktree", "remove", "--force", str(worktree)])
+    shutil.rmtree(worktree.parent, ignore_errors=True)
+    run(["git", "worktree", "prune"])
+
+
 # --- pinned tests ---
 #
-# Tests written before the code (and QA's tests) are fingerprinted. The checks
-# step fails if the implementer edits or deletes one, so "don't weaken the
-# tests" is enforced rather than requested.
+# Tests written before the code (and QA's tests) are fingerprinted and copied
+# aside. The checks step puts back any the implementer edits or deletes, so
+# "don't weaken the tests" is enforced rather than requested.
 
 
 def repo_path(path: str) -> str | None:
@@ -749,12 +818,21 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def fingerprints(paths) -> dict[str, str]:
+def pin_copy(state: BuildState, digest: str) -> Path:
+    return work_dir(state) / "pins" / digest
+
+
+def pin(state: BuildState, paths) -> dict[str, str]:
+    """Fingerprint test files and keep a copy of each, to put back if they're changed."""
     pins = {}
     for path in paths:
         relative = repo_path(path)
         if relative and (ROOT / relative).is_file():
-            pins[relative] = _digest(ROOT / relative)
+            digest = _digest(ROOT / relative)
+            copy = pin_copy(state, digest)
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, copy)
+            pins[relative] = digest
     return pins
 
 
@@ -765,11 +843,37 @@ def tampered_pins(pinned: dict[str, str]) -> list[str]:
     ]
 
 
-def is_red(command: str) -> tuple[bool, str]:
+def restore_pins(state: BuildState) -> list[str]:
+    """Put back every pinned test file that was changed or deleted. Returns their paths."""
+    restored = []
+    for path in tampered_pins(state.get("pinned", {})):
+        copy = pin_copy(state, state["pinned"][path])
+        if copy.is_file():
+            (ROOT / path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(copy, ROOT / path)
+            restored.append(path)
+    return restored
+
+
+# Test runners that found nothing to run: a typo'd path, or a filter that matched no test.
+NO_TESTS_RAN = re.compile(
+    r"no tests ran|no tests? (?:files? )?found|file or directory not found|no test files", re.IGNORECASE
+)
+
+
+def is_red(command: str, test_files=()) -> tuple[bool, str]:
     """Run a test command that must fail because the behaviour doesn't exist yet."""
     if not command.strip():
         return False, "no command given"
+    # The agent wrote this command, so it gets the same guard as the agent's own shell.
+    if BASH_DENY["writer"].search(command):
+        return False, f"The pipeline won't run `{command}`: it touches git, and the pipeline owns git."
+    missing = [path for path in test_files if not (repo_path(path) and (ROOT / repo_path(path)).is_file())]
+    if missing:
+        return False, f"These test files don't exist: {', '.join(missing)}"
     code, output = run(command, timeout=CHECK_TIMEOUT_S)
+    if NO_TESTS_RAN.search(output):
+        return False, f"No tests ran.\n{output}"
     return code not in (0, 126, 127, None), output
 
 
@@ -818,7 +922,21 @@ def slice_block(state: BuildState) -> str:
     )
 
 
-def review_block(state: BuildState, extra: str = "") -> str:
+def fix_round_block(state: BuildState, key: str) -> str:
+    """On a fix round, point the reviewer at what changed since it last looked."""
+    last = state.get("last_review") or {}
+    if not last.get("head") or last["head"] == git("rev-parse", "HEAD"):
+        return ""
+    return (
+        f"## Fix round\nYou already reviewed this slice up to {last['head'][:12]}. Your findings then:\n"
+        f"{last.get(key) or 'None: you approved it.'}\n\n"
+        f"The fixes since are `git diff {last['head']}..HEAD`. Check each finding was fixed, and look for "
+        "problems the fixes introduced. Don't re-review code the fixes didn't touch, and don't repeat "
+        "notes, tech debt or manual checks you already gave."
+    )
+
+
+def review_block(state: BuildState, key: str, extra: str = "") -> str:
     diff_range = f"{state['slice_base']}..HEAD"
     parts = [
         card_block(state),
@@ -828,6 +946,7 @@ def review_block(state: BuildState, extra: str = "") -> str:
             f"## What to review\nThe change is `git diff {diff_range}` "
             f"(commits: `git log --oneline {diff_range}`). Review only that range."
         ),
+        fix_round_block(state, key),
         extra,
     ]
     return "\n\n".join(part for part in parts if part)
@@ -844,13 +963,26 @@ def format_questions(items: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def review_findings(values: dict, key: str) -> str:
+    """A reviewer's must-fix findings. The code critic's unapproved decisions are kept
+    apart, so they drop out once the user has answered them."""
+    parts = [values.get(f"{key}_feedback", "")]
+    if key == "code" and values.get("code_decisions"):
+        parts.append(
+            "### Decisions made without sign-off\nDon't change the code for these: reply with status "
+            f"ESCALATE and put them to the user:\n{bullets(values['code_decisions'])}"
+        )
+    return "\n\n".join(part for part in parts if part)
+
+
 def fix_feedback(state: BuildState) -> str:
     sections = []
     if state.get("checks_feedback"):
         sections.append(f"## Automatic checks failed\n{state['checks_feedback']}")
     for key, label in REVIEW_LABELS.items():
-        if state.get(f"{key}_verdict") == "NEEDS_REWORK":
-            sections.append(f"## {label}: must fix\n{state.get(f'{key}_feedback', '')}")
+        findings = review_findings(state, key)
+        if state.get(f"{key}_verdict") == "NEEDS_REWORK" and findings:
+            sections.append(f"## {label}: must fix\n{findings}")
     if not sections:
         return ""
     return "--- FIX ROUND ---\nYour previous implementation was checked. Fix these issues:\n\n" + "\n\n".join(sections)
@@ -859,6 +991,7 @@ def fix_feedback(state: BuildState) -> str:
 def cleared_reviews() -> dict:
     return {
         "checks_feedback": "",
+        "code_decisions": [],
         **{f"{key}_verdict": "" for key in REVIEW_LABELS},
         **{f"{key}_feedback": "" for key in REVIEW_LABELS},
     }
@@ -890,25 +1023,26 @@ async def designer(state: BuildState):
 
     result = await run_agent("designer", "\n\n".join(parts), DESIGNER_OUTPUT)
     out = result.output
-    asking = bool(out["clarifying_questions"]) and rounds < MAX_CLARIFY_ROUNDS
+    if out["clarifying_questions"] and rounds < MAX_CLARIFY_ROUNDS:
+        # Keep the previous plan and the feedback it was sent back with: the next draft still needs them.
+        return {
+            "clarify_questions": out["clarifying_questions"],
+            "history": [f"• designer: asked {len(out['clarifying_questions'])} clarifying question(s)"],
+        }
     write_text(plan_file(state), out["plan"])
     slices = [] if is_bug(state) else out["slices"]
-    if asking:
-        note = f"asked {len(out['clarifying_questions'])} clarifying question(s)"
-    else:
-        note = f"{len(out['decisions'])} decision(s), {len(slices)} slice(s)"
     return {
         "validity": out["validity"],
         "validity_evidence": out["validity_evidence"],
-        "clarify_questions": out["clarifying_questions"] if asking else [],
+        "clarify_questions": [],
         "plan": out["plan"],
         **{key: out[key] for key in ("problem", "task", "solution", "files", "risks", "door", "blast_radius")},
         "seams": out["seams"],
         "decisions": out["decisions"],
         "slices": slices,
-        "plan_attempts": state.get("plan_attempts", 0) + (0 if asking else 1),
+        "plan_attempts": state.get("plan_attempts", 0) + 1,
         "plan_feedback": "",
-        "history": [f"• designer: {out['validity']}, {note}"],
+        "history": [f"• designer: {out['validity']}, {len(out['decisions'])} decision(s), {len(slices)} slice(s)"],
     }
 
 
@@ -1097,17 +1231,17 @@ async def reproducer(state: BuildState):
     result = await run_agent("reproducer", "\n\n".join(parts), REPRODUCER_OUTPUT)
     out = result.output
     if out["status"] == "REPRODUCED":
-        red, output = is_red(out["command"])
+        red, output = is_red(out["command"], out["test_files"])
         if red:
             return {
                 "repro": f"`{out['command']}` fails on: {out['symptom']}\n\n{out['summary']}",
                 "tests": out["summary"],
-                "pinned": {**state.get("pinned", {}), **fingerprints(out["test_files"])},
+                "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
                 "escalation_answer": "",
                 "history": [f"✓ reproducer: red on {first_line(out['symptom'])}"],
             }
         reason = (
-            f"The reproducer said `{out['command']}` fails on the bug, but it passed "
+            f"The reproducer said `{out['command']}` fails on the bug, but it didn't fail "
             f"when the pipeline ran it:\n{tail(output, 1500)}"
         )
     else:
@@ -1134,12 +1268,12 @@ async def test_writer(state: BuildState):
     if not out["test_files"]:
         return {**done, "tests": out["summary"], "history": [f"• test_writer: no tests — {first_line(out['summary'])}"]}
 
-    red, output = is_red(out["command"])
+    red, output = is_red(out["command"], out["test_files"])
     if red:
         return {
             **done,
             "tests": out["summary"],
-            "pinned": {**state.get("pinned", {}), **fingerprints(out["test_files"])},
+            "pinned": {**state.get("pinned", {}), **pin(state, out["test_files"])},
             "history": [f"✓ test_writer: {len(out['test_files'])} failing test file(s) pinned"],
         }
     attempts = state.get("test_attempts", 0) + 1
@@ -1246,6 +1380,8 @@ def escalation(state: BuildState):
     }
     if source == "test_writer":
         update["test_attempts"] = 0
+    if source == "implementer":
+        update["code_decisions"] = []  # answered now, so don't ask the implementer to escalate them again
     if word == "skip" and source in SKIP_TO:
         update.update(escalation_next=SKIP_TO[source], escalation_answer="", test_feedback="")
     if word == "unpin":
@@ -1254,22 +1390,33 @@ def escalation(state: BuildState):
 
 
 def failing_checks(state: BuildState) -> list[str]:
-    """Run the pinned-test check and every command in project-context.md's checks block."""
+    """Put back tampered pinned tests, then run every command in project-context.md's checks block."""
     problems = []
+    restored = restore_pins(state)
+    if restored:
+        print(f"   ↺ Put back {plural(len(restored), 'pinned test file')} the implementer changed", flush=True)
     tampered = tampered_pins(state.get("pinned", {}))
     if tampered:
         problems.append(
-            "Pinned test files were changed or deleted. Restore them with `git checkout -- <file>`; "
-            f"if one is genuinely wrong, reply with status ESCALATE instead:\n{bullets(tampered)}"
+            "Pinned test files were changed or deleted, and the pipeline has no copy to put back. Restore "
+            f"them; if one is genuinely wrong, reply with status ESCALATE instead:\n{bullets(tampered)}"
         )
     commands = check_commands()
     if not commands:
         problems.append(f"{PROJECT_CONTEXT_FILE.name} has no ```checks block, so the tests can't be run.")
-    for command in commands:
-        code, output = run(command, timeout=CHECK_TIMEOUT_S)
+    workers = len(commands) if check_commands_in_parallel() else 1
+    with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+        results = list(pool.map(lambda command: run(command, timeout=CHECK_TIMEOUT_S), commands))
+    for command, (code, output) in zip(commands, results):
         print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
         if code != 0:
             problems.append(f"$ {command}\n{tail(output)}")
+    if restored and problems:
+        problems.insert(0, (
+            "You changed or deleted pinned test files, so the pipeline put them back before running the "
+            f"checks:\n{bullets(restored)}\nDon't edit them. If one is genuinely wrong, reply with status "
+            "ESCALATE instead."
+        ))
     return problems
 
 
@@ -1302,7 +1449,7 @@ def commit_message(state: BuildState) -> str:
 
 
 async def code_critic(state: BuildState):
-    result = await run_agent("code_critic", review_block(state), CODE_CRITIC_OUTPUT)
+    result = await run_agent("code_critic", review_block(state, "code"), CODE_CRITIC_OUTPUT)
     out = result.output
     bugs, breaches, decisions = out["blocking_bugs"], out["standards_breaches"], out["decisions_to_escalate"]
     feedback = []
@@ -1310,18 +1457,15 @@ async def code_critic(state: BuildState):
         feedback.append(f"### Bugs\n{bullets(bugs)}")
     if breaches:
         feedback.append(f"### Standards breaches\n{bullets(breaches)}")
-    if decisions:
-        feedback.append(
-            "### Decisions made without sign-off\nDon't change the code for these: reply with status "
-            f"ESCALATE and put them to the user:\n{bullets(decisions)}"
-        )
+    rework = bool(feedback or decisions)
     summary = f"code review: {len(bugs)} bug(s), {len(breaches)} standards breach(es), {len(decisions)} decision(s)"
     return {
-        "code_verdict": "NEEDS_REWORK" if feedback else "APPROVED",
+        "code_verdict": "NEEDS_REWORK" if rework else "APPROVED",
         "code_feedback": "\n\n".join(feedback),
+        "code_decisions": decisions,
         "advisory": out["advisory"],
         "tech_debt": out["tech_debt"],
-        "history": [mark(not feedback, summary if feedback else "code review: approved")],
+        "history": [mark(not rework, summary if rework else "code review: approved")],
     }
 
 
@@ -1329,11 +1473,17 @@ async def qa(state: BuildState):
     patch = work_dir(state) / f"qa-{state.get('current_slice', 0)}-{state.get('implementation_attempts', 0)}.patch"
     patch.parent.mkdir(parents=True, exist_ok=True)
     patch.unlink(missing_ok=True)
+    worktree = add_worktree()
     extra = (
+        f"## Your worktree\n`{worktree}`: a checkout of HEAD, with the main checkout's installed "
+        "packages linked in. Work only there; the pipeline removes it when you finish.\n\n"
         f"## Where your tests go\nSave your test changes as a patch at `{patch}` "
         "(see 'Hand back your tests'). The pipeline applies it to the branch."
     )
-    result = await run_agent("qa", review_block(state, extra), QA_OUTPUT)
+    try:
+        result = await run_agent("qa", review_block(state, "qa", extra), QA_OUTPUT)
+    finally:
+        remove_worktree(worktree)
     out = result.output
     gaps, bugs = out["spec_gaps"], out["real_bugs"]
     sections = [f"### {title}\n{bullets(items)}" for title, items in (("Spec gaps", gaps), ("Real bugs", bugs)) if items]
@@ -1341,6 +1491,7 @@ async def qa(state: BuildState):
         "qa_verdict": "NEEDS_REWORK" if sections else "APPROVED",
         "qa_feedback": "\n\n".join(sections),
         "qa_patch": str(patch) if patch.is_file() else "",
+        "qa_test_command": out["test_command"] if patch.is_file() else "",
         "manual_checks": out["manual_checks"],
         "history": [mark(not sections, f"qa: {len(gaps)} spec gap(s), {len(bugs)} real bug(s)" if sections else "qa: passed")],
     }
@@ -1353,20 +1504,65 @@ def fix_or_ship(state: BuildState):
             "Reviewers are read-only, but these files changed during review:\n"
             f"{bullets(stray)}\nInspect and discard them (e.g. `git checkout -- <file>`), then run --retry."
         )
-    update, history = {"qa_patch": ""}, []
+    last_review = {"head": git("rev-parse", "HEAD"), **{key: review_findings(state, key) for key in REVIEW_LABELS}}
+    update, history, applied = {"qa_patch": "", "last_review": last_review}, [], []
     if state.get("qa_patch"):
         applied, note = apply_test_patch(Path(state["qa_patch"]))
         history.append(note)
         if applied:
-            update["pinned"] = {**state.get("pinned", {}), **fingerprints(applied)}
+            update["pinned"] = {**state.get("pinned", {}), **pin(state, applied)}
+        elif note.startswith("✗"):
+            problem = f"QA's tests weren't added to the branch: {note.removeprefix('✗ qa: ')}"
+            print(f"   ⚠️ {problem}", flush=True)
+            update["advisory"] = [problem]
+    if not applied:
+        update["qa_test_command"] = ""
     needs_rework = any(state.get(f"{key}_verdict") == "NEEDS_REWORK" for key in REVIEW_LABELS)
     failed = needs_rework and state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
     return {**update, "failed": failed, "outcome": "failed" if failed else "", "history": history}
 
 
+def failing_qa_tests(state: BuildState) -> list[str] | None:
+    """Run only the tests QA just added. None when QA gave no command that runs them,
+    so the caller falls back to every check."""
+    command = state.get("qa_test_command", "")
+    if not command.strip() or BASH_DENY["writer"].search(command):
+        return None
+    code, output = run(command, timeout=CHECK_TIMEOUT_S)
+    if code in (126, 127) or NO_TESTS_RAN.search(output):
+        return None
+    print(f"   {'✅' if code == 0 else '❌'} {command}", flush=True)
+    return [] if code == 0 else [f"$ {command}\n{tail(output)}"]
+
+
+def recheck_qa_tests(state: BuildState, heading: str, where: str) -> dict | None:
+    """QA's tests land after the checks last passed. If any did, run just those tests
+    (the rest of the code already passed every check). Returns the update that sends
+    the work back to the implementer, or None if all is green."""
+    if not stray_changes(state):
+        return None
+    problems = failing_qa_tests(state)
+    if problems is None:
+        problems = failing_checks(state)
+    if not problems:
+        return None
+    failed = state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
+    return {
+        "checks_feedback": f"{heading}\n\n" + "\n\n".join(problems),
+        "failed": failed,
+        "outcome": "failed" if failed else "",
+        "history": [mark(False, f"{where} — {first_line(problems[0])}")],
+    }
+
+
 def next_slice(state: BuildState):
     index = state.get("current_slice", 0)
     title = state["slices"][index]["title"]
+    sent_back = recheck_qa_tests(
+        state, "The checks failed once QA's tests were added:", "next_slice: checks failed with QA's tests"
+    )
+    if sent_back:
+        return sent_back
     ok, output = commit_all(state, f"test: QA tests for {title}")
     if not ok:
         raise BuildError(f"Couldn't commit QA's tests before the next slice:\n{tail(output)}\nFix it, then run --retry.")
@@ -1375,6 +1571,7 @@ def next_slice(state: BuildState):
         **cleared_reviews(),
         "current_slice": index,
         "slice_base": git("rev-parse", "HEAD"),
+        "last_review": {},
         "implementer_session": "",
         "implementer_resumes": 0,
         "implementation_attempts": 0,
@@ -1425,27 +1622,23 @@ def pr_body(state: BuildState) -> str:
 
 
 def ship(state: BuildState):
-    # QA's tests landed after the last checks run, so check again.
     # A failure goes back to the implementer, and its fix gets checked and reviewed again.
-    problems = failing_checks(state)
-    if problems:
-        failed = state.get("implementation_attempts", 0) >= MAX_IMPLEMENTATION_ROUNDS
-        return {
-            "checks_feedback": "The final checks before pushing failed:\n\n" + "\n\n".join(problems),
-            "failed": failed,
-            "outcome": "failed" if failed else "",
-            "history": [mark(False, f"ship: final checks failed, nothing pushed — {first_line(problems[0])}")],
-        }
+    sent_back = recheck_qa_tests(state, "The final checks before pushing failed:", "ship: final checks failed, nothing pushed")
+    if sent_back:
+        return sent_back
+    branch, base = state["branch"], state["base_branch"]
+    if branch == base:
+        return {"outcome": "ship_error", "pr_error": f"Won't push: the build is on {base}, the branch the PR goes into."}
     ok, output = commit_all(state, f"test: add QA tests for {state.get('card_number') or 'build'}")
     if not ok:
         return {"outcome": "ship_error", "pr_error": f"git commit failed:\n{tail(output)}"}
-    branch, base = state["branch"], state["base_branch"]
     title = f"{commit_prefix(state)}: {card_title(state)}"[:72]
     try:
         git("push", "-u", "origin", branch)
-        code, existing = run(["gh", "pr", "view", branch, "--json", "url", "-q", ".url"])
+        # Only an open PR counts: an old closed one on a reused branch name isn't this build's.
+        code, existing = run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "url", "-q", ".[].url"])
         if code == 0 and existing.strip():
-            pr_url = existing.strip()
+            pr_url = existing.strip().splitlines()[0]
         else:
             created = subprocess.run(
                 ["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body", pr_body(state)],
@@ -1524,10 +1717,18 @@ def after_review(state: BuildState):
     return "ship"
 
 
+def back_to_implementer(state: BuildState, otherwise: str):
+    if not state.get("checks_feedback"):
+        return otherwise
+    return END if state.get("failed") else "implementer"
+
+
+def after_next_slice(state: BuildState):
+    return back_to_implementer(state, "test_writer")
+
+
 def after_ship(state: BuildState):
-    if state.get("checks_feedback") and not state.get("failed"):
-        return "implementer"
-    return END
+    return back_to_implementer(state, END)
 
 
 # --- graph ---
@@ -1557,7 +1758,6 @@ for name, node in [
 
 builder.add_edge(START, "designer")
 builder.add_edge(REVIEWERS, "fix_or_ship")
-builder.add_edge("next_slice", "test_writer")
 
 builder.add_conditional_edges("designer", after_designer)
 builder.add_conditional_edges("clarify", after_clarify)
@@ -1570,6 +1770,7 @@ builder.add_conditional_edges("implementer", after_implementer)
 builder.add_conditional_edges("escalation", after_escalation)
 builder.add_conditional_edges("checks", after_checks)
 builder.add_conditional_edges("fix_or_ship", after_review)
+builder.add_conditional_edges("next_slice", after_next_slice)
 builder.add_conditional_edges("ship", after_ship)
 
 
@@ -1732,7 +1933,7 @@ def report(thread: str, result: dict) -> int:
             print(f"\n## Automatic checks\n{result['checks_feedback']}")
         for key, label in REVIEW_LABELS.items():
             if result.get(f"{key}_verdict") == "NEEDS_REWORK":
-                print(f"\n## {label}\n{result.get(f'{key}_feedback', '')}")
+                print(f"\n## {label}\n{review_findings(result, key)}")
         print(f"\nFix these by hand, then re-run checks and reviews:\n  {rerun()} --thread {thread} --recheck")
         code = 1
     elif outcome == "stopped":

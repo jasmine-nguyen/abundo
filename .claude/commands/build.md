@@ -170,7 +170,7 @@ the card number for card builds) and check where it is:
 5. Repeat steps 3–4 until the script ends with one of these:
 
    - **PR opened: <url>** — relay the link. The script already committed,
-     pushed and opened the PR, and it ran the checks one last time first.
+     pushed and opened the PR, and it ran QA's new tests first if QA added any.
    - **BUILD CANCELLED** — the user stopped it. Set the card's Status back
      to 'To Do', and mention the branch if the script printed one.
    - **CARD CLOSED** — the user agreed the card isn't needed. Set its Status

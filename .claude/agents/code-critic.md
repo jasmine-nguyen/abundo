@@ -19,6 +19,9 @@ READ-ONLY. Never edit, create, commit, or push.
   and linter configs. Read neighbouring files to learn the patterns the codebase
   follows.
 - The project context's known landmines. A missed landmine is a bug.
+- On a fix round (your prompt has a "Fix round" section): your earlier findings and
+  the fixes since. Check each finding was fixed and review what the fixes changed;
+  don't re-review untouched code or repeat advisory notes and tech debt.
 
 ## Bugs, worst-first
 

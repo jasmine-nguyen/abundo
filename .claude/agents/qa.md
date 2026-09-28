@@ -61,10 +61,13 @@ Part 1 then maps each deliverable to a check.
 ## Where you work: your own worktree, never the main checkout
 
 You WRITE test files and BREAK production code to prove red-green. Do all of it in
-a throwaway git worktree. The change is committed, so `HEAD` contains it:
+the throwaway git worktree the pipeline made for you (its path is in your prompt).
+The change is committed, so the worktree's `HEAD` contains it, and the main
+checkout's installed packages (`node_modules`, `.venv`) are linked in, so the tests
+run there without installing anything:
 
 ```bash
-WT=$(mktemp -d)/qa && git worktree add -d "$WT" HEAD
+WT=<your worktree path>
 cd "$WT"
 ```
 
@@ -76,7 +79,8 @@ Rules:
   authoritative.
 - **Leave the worktree clean between mutations.** After every red-green break:
   restore, then re-run that test file to confirm green before the next one.
-- **Before you finish**, hand back your tests (below), then remove the worktree.
+- **Before you finish**, hand back your tests (below). The pipeline removes the
+  worktree.
 
 ---
 
@@ -116,10 +120,11 @@ Every test you write MUST:
 - Reuse existing fixtures/helpers and established mock patterns.
 - Reference the checklist ID it covers (`# [A3]`).
 
-**Then run them — only your new test files, never the whole suite.** The pipeline
-runs the full suite itself once your tests are on the branch, so re-running it here
-only costs time. Point the test runner at your files, e.g. `npx jest path/to/new.test.ts`
-or `python -m pytest path/to/test_new.py`.
+**Then run them — only your new test files, never the whole suite.** The rest of
+the code already passed every check, and the pipeline runs your `test_command` once
+your tests are on the branch, so re-running the suite here only costs time. Point the
+test runner at your files, e.g. `npx jest path/to/new.test.ts` or
+`python -m pytest path/to/test_new.py`.
 1. Run your new test files → confirm they pass green.
 2. Red-green proof: break the production value the test depends on → re-run just
    that test file → confirm the test FAILS → `git checkout -- <path>` and re-run it
@@ -142,6 +147,14 @@ cite `file:line`.
 - Failure modes: does the code handle them honestly, or fail silently?
 
 Rank findings worst-first; label each **real bug** vs **acceptable-for-scope**.
+
+---
+
+## On a fix round
+
+If your prompt has a "Fix round" section, you've reviewed this slice before. Check
+your earlier findings were fixed, and test the code the fixes changed. Don't rebuild
+the whole checklist or repeat manual checks you already gave.
 
 ---
 
@@ -170,6 +183,9 @@ git -C "$WT" diff HEAD -- <your test files> > <patch path you were given>
   Only verified **real bugs**; anything here sends the change back for rework.
 - `manual_checks` — the Manual checklist items, one per line.
 - `patch_written` — true if you saved a patch.
+- `test_command` — one shell command, run from the repo root of the main checkout,
+  that runs only the test files in your patch (e.g. `npx jest path/to/new.test.ts`).
+  The pipeline runs it before it ships instead of the whole suite. Empty if you
+  wrote no tests.
 - `report` — Markdown: the full checklist, the test files with run results and the
-  red-green proof, the ranked edge-case findings, and confirmation the worktree was
-  removed. Be concrete, cite code, don't pad.
+  red-green proof, and the ranked edge-case findings. Be concrete, cite code, don't pad.
