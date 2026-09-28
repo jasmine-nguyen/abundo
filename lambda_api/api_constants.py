@@ -178,18 +178,6 @@ CATEGORY_BUCKETS = {"Living", "Lifestyle", "Income", "Savings"}
 # a *spend* view excludes them. A subset of CATEGORY_BUCKETS.
 SPEND_BUCKETS = {"Living", "Lifestyle"}
 
-# The bucket whose category targets are earn-targets (floors, over-is-good) rather
-# than spend ceilings (WHIT-69). A budget on an Income-bucket category rolls up the
-# POSITIVE earnings for the cycle instead of spend.
-INCOME_BUCKET = "Income"
-
-# The bucket whose categories cannot carry a budget target at all (WHIT-202). A Savings
-# category is a non-spend goal, not a pay-cycle ceiling/floor, so the client refuses to
-# render a target on it (budgetViews/budgetDetail skip Savings) — a stored one would be an
-# invisible, un-editable phantom. set_budget rejects a direct write and update_category
-# rejects re-bucketing a still-budgeted category into Savings.
-SAVINGS_BUCKET = "Savings"
-
 # Icon assigned when a create request omits one (a valid key in src/icons.tsx).
 DEFAULT_CATEGORY_ICON = "tag"
 

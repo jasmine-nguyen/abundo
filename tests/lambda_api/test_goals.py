@@ -161,7 +161,7 @@ def test_upsert_base64_body_decodes(handler):
 
 def _pin_today(handler, monkeypatch, iso="2026-07-11"):
     y, m, d = map(int, iso.split("-"))
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(y, m, d))
+    monkeypatch.setattr(handler, "melbourne_today", lambda: date(y, m, d))
 
 
 def test_manual_create_stamps_start_from_entered_balance(handler, monkeypatch):
@@ -684,7 +684,7 @@ def test_get_after_put_carries_start_pair_as_json(handler, monkeypatch):
     balances = PolledBalanceRepo([{"account_id": "up-spending", "amount": Decimal("-3200")}])
     monkeypatch.setattr(handler, "GoalsRepository", lambda: repo)
     monkeypatch.setattr(handler, "AccountBalanceRepository", lambda: balances)
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2026, 7, 11))
+    monkeypatch.setattr(handler, "melbourne_today", lambda: date(2026, 7, 11))
 
     put = handler.lambda_handler(_put_event_gaps(goal_id="hol1", body=_grow_body()), None)
     assert put["statusCode"] == 200

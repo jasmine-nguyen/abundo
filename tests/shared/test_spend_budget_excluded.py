@@ -1,5 +1,5 @@
 """WHIT-296: a user's `budget_excluded` override drops a transaction from budget
-math. The gate lives in one place — `_spend_contribution` in shared/spend.py — so
+math. The gate lives in one place — `spend_contribution` in shared/spend.py — so
 every summariser (budgets, breakdown, uncategorized, income) and everything built on
 them (over-budget alerts, AI Insights) honours it from this one change.
 

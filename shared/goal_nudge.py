@@ -24,7 +24,7 @@ from typing import Optional
 
 from goal_pace import goal_pace
 from push import send_push
-from spend import _melbourne_today
+from spend import melbourne_today
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ def notify_behind_goals(
         return 0
 
     if today is None:
-        today = _melbourne_today()
+        today = melbourne_today()
 
     cycle = paycycle_repo.get_paycycle()
     length = cycle["length"]

@@ -538,7 +538,7 @@ def test_recent_window_is_feed_window_days_on_melbourne_clock(handler, monkeypat
     # oracle): start = today - FEED_WINDOW_DAYS(7), end = today (INCLUSIVE, no
     # today+1). Literals catch a reintroduced +1 or a changed window that a
     # recomputed expression would silently mirror.
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(handler, "melbourne_today", lambda: date(2026, 7, 3))
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
     repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})
 
@@ -551,7 +551,7 @@ def test_recent_window_is_feed_window_days_on_melbourne_clock(handler, monkeypat
 def test_recent_window_reads_the_feed_window_days_constant(handler, monkeypatch):
     # Prove the window is wired to FEED_WINDOW_DAYS, not a hardcoded 7: patch the
     # constant to 3 and the start bound must move with it.
-    monkeypatch.setattr(handler, "_melbourne_today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(handler, "melbourne_today", lambda: date(2026, 7, 3))
     monkeypatch.setattr(handler, "FEED_WINDOW_DAYS", 3)
     a = list(handler.ACCOUNT_ID_MAP.values())[0]
     repo = FakeRecentFeedRepo(pages_by_account={a: [([_row(a, "2026-07-01", "t1")], None)]})

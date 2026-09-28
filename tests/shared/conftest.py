@@ -44,7 +44,7 @@ _REIMPORT = (
     "repository_balance", "repository_loanfacts", "repository_milestone", "repository_budget",
     "repository_goals", "repository_category",
     "repository_errors", "repository_insight", "repository_device", "push",
-    "repository_push_receipt", "repository_notify", "spend", "budget_alerts",
+    "repository_push_receipt", "repository_notify", "spend", "budget_standing", "budget_alerts",
     "repository_paycycle", "goal_pace", "goal_nudge", "goal_checkpoints", "milestones",
     "milestone_rows", "iso_date", "repayment_alerts", "repayment_rules", "api_key",
     "balance_fetch", "rule_engine", "repository_rule", "repository_job", "rule_spreading",

@@ -293,7 +293,7 @@ def test_worker_marks_any_other_failure_failed(ai_chat, monkeypatch, worker):
 
 def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
 
     class PayCycleRepo:
         def get_paycycle(self):
@@ -319,6 +319,64 @@ def test_load_chat_data_fetches_back_to_the_lookback_floor(ai_chat, monkeypatch)
     data = ai_chat.load_chat_data(transaction_repo, CategoryRepo(), BudgetRepo(), PayCycleRepo())
     assert data.floor == "2025-09-01" and data.today == TODAY
     assert transaction_repo.calls[0] == ("2025-09-01", TODAY)
+
+
+def test_load_chat_data_works_out_budgets_from_its_own_read_without_saving(ai_chat, monkeypatch):
+    # WHIT-622: the chat shows the same budget rows as /budgets (rollover included) from its one
+    # transaction read, and never writes the settlements — only GET /budgets saves those.
+    import spend
+    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 9, 20))
+
+    class PayCycleRepo:
+        def get_paycycle(self):
+            return {"length": 14, "last_pay_date": "2026-09-10"}
+
+    class CategoryRepo:
+        def list_categories(self):
+            return CATEGORIES
+
+    class BudgetRepo:
+        def __init__(self):
+            self.writes = []
+
+        def list_budgets(self):
+            return {"groceries": {
+                "target": Decimal("100"), "rollover": True, "carryover": Decimal("0"),
+                "carryover_from": "2026-08-27", "carryover_len": Decimal("14"),
+                "carryover_paydate": "2026-09-10",
+            }}
+
+        def settle_carryover(self, *args):
+            self.writes.append(("settle_carryover", args))
+
+        def clear_spread(self, *args):
+            self.writes.append(("clear_spread", args))
+
+        def set_spread(self, *args):
+            self.writes.append(("set_spread", args))
+
+    def row(txn_id, amount, day):
+        return {"transaction_id": txn_id, "account_id": "up-spending", "category": "groceries",
+                "amount": Decimal(amount), "status": "posted", "counts_to_budget": True, "date": day}
+
+    stored = [row("old", "-500", "2025-10-01"), row("prior", "-60", "2026-08-30"),
+              row("now", "-25", "2026-09-15")]
+
+    class TransactionRepo:
+        def get_transactions_by_date_range(self, account_id, start, end, limit=20, cursor=None):
+            if account_id != "up-spending":
+                return [], None
+            return [r for r in stored if start <= r["date"] <= end], None
+
+    budget_repo = BudgetRepo()
+    data = ai_chat.load_chat_data(TransactionRepo(), CategoryRepo(), budget_repo, PayCycleRepo())
+
+    assert data.budgets == {"groceries": {
+        "target": Decimal("100"), "posted": Decimal("25"), "pending": Decimal("0"),
+        "rollover": True, "carryover": Decimal("40"), "available": Decimal("140"),
+    }}
+    assert budget_repo.writes == []
+    assert {t["transaction_id"] for t in data.transactions} == {"old", "prior", "now"}
 
 
 # --- QA (card 609): boundaries the happy path doesn't reach ----------------------------------

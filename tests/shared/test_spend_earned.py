@@ -1,6 +1,6 @@
 """WHIT-312: `summarise_earned` — the total income (all Income-bucket categories)
 for the Insights Earned-vs-Spent chart. Income is stored POSITIVE (sign=+1), a single
-aggregate is returned, and it clamps at >= 0. It reuses the shared `_spend_contribution`
+aggregate is returned, and it clamps at >= 0. It reuses the shared `spend_contribution`
 gate, so counts_to_budget / budget_excluded / status handling is proven elsewhere; these
 tests pin what is specific to earned: the +sign, the Income-id gate, and the clamp.
 """

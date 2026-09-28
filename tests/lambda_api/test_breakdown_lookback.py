@@ -11,7 +11,7 @@ cycle=1 endpoint tests). Here we cover the gaps the implementer's tests leave op
   [A23]/[A24] length=7 and length=30 PRIOR windows through the endpoint (they only
         unit-test the helper for these cadences, not end-to-end).
 
-Same direct-call + _DateFilteringTransactionRepo + monkeypatched spend._melbourne_today
+Same direct-call + _DateFilteringTransactionRepo + monkeypatched spend.melbourne_today
 pattern as test_breakdown.py.
 """
 
@@ -76,7 +76,7 @@ def test_breakdown_cycle_2_reads_the_second_prior_window_end_to_end(handler, mon
     # not cycle=3. Proves the n-step is non-overlapping all the way through the endpoint,
     # which the implementer's cycle=1-only endpoint test can't catch (n vs 1 collapse).
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -1, "2024-01-10"),   # current  -> OUT
@@ -98,7 +98,7 @@ def test_breakdown_cap_boundary_cycle_12_is_served_not_rejected(handler, monkeyp
     # the body (200), not 400. Guards the off-by-one in the `cycle > CAP` check. The
     # window is far in the past -> empty {}, and 200 with {} is the correct answer.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([_dated("coffee", -20, "2024-01-10")])
     monkeypatch.setattr(handler, "CategoryRepository", lambda: cats)
@@ -128,7 +128,7 @@ def test_breakdown_uncategorized_bucket_appears_in_a_past_cycle(handler, monkeyp
     # a raw BankSync enum dated in the cycle=1 window folds into __uncategorized__, while
     # the same enum dated in the current window is excluded from the cycle=1 answer.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -10, "2023-12-25"),      # prior window, spend cat -> IN
@@ -147,7 +147,7 @@ def test_breakdown_prior_window_weekly_length_7_end_to_end(handler, monkeypatch)
     # so cycle=1 window is [2024-01-08, 2024-01-14]. Proves the endpoint honours a weekly
     # cadence's prior window (helper is unit-tested for 7, but not through list_category_breakdown).
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -5, "2024-01-10"),   # prior week   -> IN
@@ -167,7 +167,7 @@ def test_breakdown_prior_window_monthly_length_30_end_to_end(handler, monkeypatc
     # [A24] length=30: last pay 2024-01-01, today 2024-01-16 -> cycle_start = 2024-01-01,
     # so cycle=1 window is [2023-12-02, 2023-12-31]. End-to-end guard for the 30-day cadence.
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     cats = FakeCategoryRepo([_category("coffee", "Lifestyle")])
     txns = _DateFilteringTransactionRepo([
         _dated("coffee", -11, "2023-12-15"),  # prior month    -> IN

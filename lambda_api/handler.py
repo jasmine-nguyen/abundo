@@ -28,7 +28,6 @@ from api_constants import (
     FEED_PAGE_SIZE,
     GOALS_PATH,
     HOMELOAN_PATH,
-    INCOME_BUCKET,
     INSIGHTS_AI_PATH,
     INSIGHTS_PRIOR_CYCLES,
     INTEREST_CATEGORY,
@@ -43,7 +42,6 @@ from api_constants import (
     RULE_FIELD_OPERATORS,
     RULE_LOGIC,
     RULE_DIRECTIONS,
-    SAVINGS_BUCKET,
     SPEND_BUCKETS,
     TRANSACTION_BATCH_MAX,
     TRANSACTION_PATH,
@@ -64,7 +62,9 @@ from constants import (
     BANKSYNC_BASE_URL,
     FEED_WINDOW_DAYS,
     HOMELOAN_ACCOUNT_ID,
+    INCOME_BUCKET,
     MAX_PAGE_SIZE,
+    SAVINGS_BUCKET,
     SPREAD_MAX_CYCLES,
     SPREAD_MIN_CYCLES,
 )
@@ -96,6 +96,7 @@ from repository import (
 from repository_job import STATUS_RUNNING, STATUS_FAILED
 from repository_rule import rule_identity
 from repository_transaction import read_window
+from budget_standing import budget_standing, standing_window
 from rule_spreading import SpreadSeeder
 from repayment_rules import is_repayment_credit, is_number
 from api_key import get_api_key as _fetch_api_key
@@ -103,27 +104,17 @@ from balance_fetch import BalanceError, fetch_balance, normalise_account_balance
 # The pay-cycle window + spend summariser live in the shared layer (WHIT-22) so the
 # webhook's budget-alert detection computes spend identically to this read API.
 from spend import (
-    _SPREAD_ENTRY_FIELDS,
-    _melbourne_today,
-    _spend_contribution,
-    _spread_state,
     build_category_children,
-    completed_cycle_windows,
     contributes_to_budget,
     current_cycle_window,
     fold_subtree,
+    melbourne_today,
     nth_prior_cycle_window,
-    rollover_windows,
-    seal_rollover,
-    spread_adjustment,
-    spread_index,
     subtree_ids,
     summarise_earned,
     summarise_income,
     summarise_transactions,
     summarise_uncategorized,
-    transactions_in_window,
-    unified_available,
 )
 from anthropic_client import AnthropicError
 from chat_tools import lookback_floor
@@ -678,12 +669,12 @@ def patch_transactions_batch(event: dict, repo: TransactionRepository) -> dict:
 
 def get_recent_transactions(repo: TransactionRepository) -> list[dict]:
     # The last FEED_WINDOW_DAYS days, inclusive, on the user's clock. `today` is
-    # Melbourne-local — the SAME clock the budget window uses (_melbourne_today) —
+    # Melbourne-local — the SAME clock the budget window uses (melbourne_today) —
     # so the feed and the budget bar agree on where "today" ends: no UTC/Melbourne
     # ±1-day seam near midnight, and no `today + 1` end leaking a tomorrow-dated
     # charge into the list (the leak WHIT-75 removed from the budget window).
     # This is a rolling 7-day view, independent of the pay cycle by design.
-    today = _melbourne_today()
+    today = melbourne_today()
     start_date = (today - timedelta(days=FEED_WINDOW_DAYS)).isoformat()
     end_date = today.isoformat()
 
@@ -2399,11 +2390,6 @@ def get_paycycle_view(paycycle_repo: PayCycleRepository) -> dict:
     return {**cycle, "days_left": (next_payday - date.fromisoformat(today)).days}
 
 
-# _rollover_windows and _seal_rollover extracted to shared/spend.py (WHIT-555) as
-# rollover_windows / seal_rollover so the budget-alert webhook path can reuse them.
-# The handler imports them at the top of this file.
-
-
 def _persist_spread_settlements(budget_repo: BudgetRepository, finished: list, reanchored: dict) -> None:
     """Write each spread's read-side outcome back — clear the finished ones, re-save the
     settled ones — BEST-EFFORT, same posture as the rollover settle: the row is recomputed
@@ -2485,7 +2471,7 @@ def list_budgets(
     Bill spread (WHIT-504): a category with a spread plan carries a `spread` object —
     {amount, cycles, index, adjustment} — whose signed `adjustment` the client adds to the
     cycle's spendable: the full cushion in the anchor cycle, then an equal slice taken back
-    each of the next `cycles` cycles (see _spread_state). A plan that has finished, or was
+    each of the next `cycles` cycles (see spread_state). A plan that has finished, or was
     settled after a pay-cycle change, is cleared best-effort here. Like rollover it is
     spend-only, ignored on a re-bucketed category, and a plain budget's wire shape is
     unchanged. A category has rollover OR a spread, never both (enforced on write).
@@ -2493,117 +2479,13 @@ def list_budgets(
     targets = budget_repo.list_budgets()  # {id: entry}
     if not targets:
         return {}
-    pay_cycle = paycycle_repo.get_paycycle()
-    length = pay_cycle["length"]
-    last_pay_date = pay_cycle["last_pay_date"]
-    cycle_start, today = current_cycle_window(last_pay_date, length)
-
+    window = standing_window(targets, paycycle_repo.get_paycycle())
     categories = category_repo.list_categories()
-    bucket_by_id = {c["id"]: c.get("bucket") for c in categories}
-    children = build_category_children(categories)
-
-    # Each target maps to its whole subtree — the target itself plus every descendant
-    # at any depth — so a transaction tagged directly onto a parent counts toward its
-    # budget too (WHIT-228). A leaf/orphan target maps to just itself, byte-identical
-    # to the pre-rollup behaviour.
-    ids_by_target = {cat_id: subtree_ids(cat_id, children, bucket_by_id) for cat_id in targets}
-
-    # Rollover only for a flagged category that is STILL a spend category — a re-bucket to
-    # Income/Savings after the flag was set falls back to plain output (the write guard only
-    # blocks the flag going on; the bucket can change later on a different endpoint).
-    rollover_ids = {
-        cat_id for cat_id, entry in targets.items()
-        if entry.get("rollover") and bucket_by_id.get(cat_id) not in (INCOME_BUCKET, SAVINGS_BUCKET)
-    }
-    # Same still-spend guard for a bill spread: the clear on reclassify is best-effort, so a
-    # stale plan on a re-bucketed category must not move its spendable.
-    spread_ids = {
-        cat_id for cat_id, entry in targets.items()
-        if "spread_amount" in entry and bucket_by_id.get(cat_id) not in (INCOME_BUCKET, SAVINGS_BUCKET)
-    }
-
-    # Pure date math up front: the completed cycles each rollover target must fold (and any
-    # re-anchor). This drives how far back to widen the ONE transaction fetch — a non-rollover
-    # read still fetches just the current cycle, unchanged.
-    windows_by_id = {}
-    reanchor_by_id = {}
-    fetch_start = cycle_start
-    for cat_id in rollover_ids:
-        windows, reanchor = rollover_windows(targets[cat_id], cycle_start, length, last_pay_date)
-        windows_by_id[cat_id] = windows
-        if reanchor is not None:
-            reanchor_by_id[cat_id] = reanchor
-        if windows:
-            fetch_start = min(fetch_start, windows[0][0])
-
-    transactions = _fetch_windowed_transactions(transaction_repo, fetch_start, today)
-    # posted/pending are always the CURRENT cycle only. When no rollover widened the fetch,
-    # it already IS the current window (byte-identical to before); when it was widened for
-    # sealing, slice back to the current cycle by transaction date.
-    current = transactions if fetch_start == cycle_start else transactions_in_window(transactions, cycle_start, today)
-
-    # Split by each id's own bucket (the same-bucket rule keeps a subtree single-
-    # bucket, so a parent and its descendants all land on one side). Sum every needed
-    # id once (UNCLAMPED), fold per target, then clamp the target total once — so a
-    # net-negative sibling nets against the rest before the floor, and the header can't
-    # read higher than its own signed transaction list (aggregate-then-clamp, WHIT-343).
-    needed_ids = set().union(*ids_by_target.values()) if ids_by_target else set()
-    income_ids = {cid for cid in needed_ids if bucket_by_id.get(cid) == INCOME_BUCKET}
-    spend_ids = needed_ids - income_ids
-
-    per_id = summarise_transactions(current, spend_ids, clamp=False)
-    per_id.update(summarise_income(current, income_ids, clamp=False))
-
-    settlements = {}  # cat_id -> {carryover, carryover_from}, written best-effort after the loop
-    finished_spreads = []   # cat_ids whose spread ran its course, cleared best-effort
-    reanchored_spreads = {}  # cat_id -> the settle plan replacing it after a pay-cycle change
-    result = {}
-    for cat_id, entry in targets.items():
-        folded = fold_subtree(per_id, ids_by_target[cat_id])
-        row = {
-            "target": entry["target"],
-            "posted": folded["posted"],
-            "pending": folded["pending"],
-        }
-        # The two signed cushions this cycle's spendable moves by. Exactly one is ever
-        # non-zero on real data (a category is rollover OR spread, never both), so
-        # unified_available below reproduces the client's old sum byte-for-byte.
-        buffer_term = Decimal(0)
-        adjustment_term = Decimal(0)
-        # Only a rollover category carries the extra keys — a non-rollover (or legacy)
-        # budget's wire shape stays byte-identical; the client defaults rollover/carryover.
-        if cat_id in rollover_ids:
-            if cat_id in reanchor_by_id:
-                carryover = reanchor_by_id[cat_id]["carryover"]
-                settlements[cat_id] = reanchor_by_id[cat_id]
-            else:
-                carryover, persist = seal_rollover(
-                    entry, windows_by_id[cat_id], ids_by_target[cat_id], transactions, length, today
-                )
-                if persist is not None:
-                    settlements[cat_id] = persist
-            row["rollover"] = True
-            row["carryover"] = carryover
-            buffer_term = carryover
-        if cat_id in spread_ids:
-            spread_row, finished, reanchor = _spread_state(entry, cycle_start, length, last_pay_date, today)
-            if spread_row is not None:
-                row["spread"] = spread_row
-                # Rollover wins if a corrupt row is in BOTH sets, so available never sums two
-                # cushions — matching set_budget, which strips spread when rollover turns on.
-                if cat_id not in rollover_ids:
-                    adjustment_term = spread_row["adjustment"]
-            if finished:
-                finished_spreads.append(cat_id)
-            if reanchor is not None:
-                reanchored_spreads[cat_id] = reanchor
-        # The spendable the screen shows — computed server-side from the LIVE rollover/spread terms.
-        row["available"] = unified_available(entry["target"], buffer_term, adjustment_term)
-        result[cat_id] = row
-
-    _persist_rollover_settlements(budget_repo, settlements, length, last_pay_date)
-    _persist_spread_settlements(budget_repo, finished_spreads, reanchored_spreads)
-    return result
+    transactions = _fetch_windowed_transactions(transaction_repo, window.fetch_start, window.today)
+    rows, settlements = budget_standing(targets, window, categories, transactions)
+    _persist_rollover_settlements(budget_repo, settlements["rollover"], window.length, window.last_pay_date)
+    _persist_spread_settlements(budget_repo, settlements["spread_finished"], settlements["spread_reanchored"])
+    return rows
 
 
 def get_budget_transactions(
@@ -4016,10 +3898,10 @@ def _goal_start_candidate(goal: dict, balance_repo: AccountBalanceRepository) ->
     does, never compare a signed synced start to an as-entered manual current.
     """
     if "manual_balance" in goal:
-        return {"start_date": _melbourne_today().isoformat(), "start_balance": goal["manual_balance"]}
+        return {"start_date": melbourne_today().isoformat(), "start_balance": goal["manual_balance"]}
     rows = balance_repo.list_balances([goal["account_id"]])
     if rows:
-        return {"start_date": _melbourne_today().isoformat(), "start_balance": rows[0]["amount"]}
+        return {"start_date": melbourne_today().isoformat(), "start_balance": rows[0]["amount"]}
     return {}
 
 

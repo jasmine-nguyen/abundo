@@ -28,9 +28,9 @@ from api_constants import (
     CHAT_MESSAGE_MAX_LEN,
     UNCATEGORIZED_KEY,
 )
+from budget_standing import budget_standing, standing_window
 from chat_tools import TOOL_FUNCTIONS, ChatData, lookback_floor, tool_status_line
 from encoders import DecimalEncoder
-from handler import _fetch_windowed_transactions, list_budgets
 from iso_date import valid_iso_date
 from repository import (
     BudgetRepository,
@@ -41,7 +41,8 @@ from repository import (
     TransactionRepository,
 )
 from repository_job import STATUS_FAILED, STATUS_SUCCEEDED
-from spend import current_cycle_window
+from repository_transaction import read_window
+from spend import transactions_in_window
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -428,20 +429,26 @@ def run_chat(job_id: str, messages: list[dict], data: ChatData, job_repo) -> dic
 
 
 def load_chat_data(transaction_repo, category_repo, budget_repo, paycycle_repo) -> ChatData:
-    """Read everything the tools need once: categories, the /budgets rows, the pay cycle, and
-    every transaction back to the lookback floor."""
-    pay_cycle = paycycle_repo.get_paycycle()
-    length = pay_cycle["length"]
-    cycle_start, today = current_cycle_window(pay_cycle["last_pay_date"], length)
+    """Read everything the tools need once: categories, the pay cycle, and every transaction
+    back to the lookback floor. The budget rows are worked out from that same read (the
+    /budgets maths, budget_standing.py) — read-only: only GET /budgets saves settlements."""
+    targets = budget_repo.list_budgets()
+    window = standing_window(targets, paycycle_repo.get_paycycle())
+    cycle_start, length, today = window.cycle_start, window.length, window.today
     floor = lookback_floor(cycle_start, length, today)
+    categories = category_repo.list_categories()
+    transactions = read_window(transaction_repo, min(floor, window.fetch_start), today)
+    budgets, _ = budget_standing(
+        targets, window, categories, transactions_in_window(transactions, window.fetch_start, today)
+    )
     return ChatData(
-        categories=category_repo.list_categories(),
-        budgets=list_budgets(budget_repo, transaction_repo, paycycle_repo, category_repo),
+        categories=categories,
+        budgets=budgets,
         cycle_start=cycle_start,
         length=length,
         today=today,
         floor=floor,
-        transactions=_fetch_windowed_transactions(transaction_repo, floor, today),
+        transactions=transactions_in_window(transactions, floor, today),
     )
 
 

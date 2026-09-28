@@ -50,7 +50,7 @@ def test_server_days_left_equals_client_cycleclock_across_dst(handler, monkeypat
     start = date.fromisoformat(week_start)
     for i in range(14):
         today = start + timedelta(days=i)
-        monkeypatch.setattr(spend, "_melbourne_today", lambda t=today: t)
+        monkeypatch.setattr(spend, "melbourne_today", lambda t=today: t)
         server = handler.get_paycycle_view(
             FakePayCycleRepo(cycle={"length": length, "last_pay_date": last_pay_date})
         )["days_left"]
@@ -71,6 +71,6 @@ def test_server_days_left_is_always_within_1_to_length(handler, monkeypatch):
     seen = set()
     for i in range(60):
         today = start + timedelta(days=i)
-        monkeypatch.setattr(spend, "_melbourne_today", lambda t=today: t)
+        monkeypatch.setattr(spend, "melbourne_today", lambda t=today: t)
         seen.add(handler.get_paycycle_view(FakePayCycleRepo(cycle={"length": length, "last_pay_date": pay}))["days_left"])
     assert min(seen) == 1 and max(seen) == length

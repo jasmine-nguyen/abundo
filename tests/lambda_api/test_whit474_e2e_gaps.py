@@ -142,8 +142,10 @@ def _rollover_entry(target=100, carryover=0, carryover_from="2026-05-08"):
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    monkeypatch.setattr(handler, "current_cycle_window",
-                        lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
 
 
 def _budget_repo(handler, table):

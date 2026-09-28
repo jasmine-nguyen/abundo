@@ -86,8 +86,10 @@ def _list(handler, budget_repo, transactions=None, categories=None):
 
 @pytest.fixture(autouse=True)
 def _fixed_window(handler, monkeypatch):
-    monkeypatch.setattr(handler, "current_cycle_window",
-                        lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, today=None: (CYCLE_START, TODAY))
 
 
 # [G1] rollover DEFICIT: a live carryover that is NEGATIVE (prior overspend) subtracts.

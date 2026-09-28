@@ -1037,36 +1037,42 @@ def test_summarise_income_empty(handler):
 
 def test_spend_contribution_income_sign_returns_positive(handler):
     # sign=+1 keeps a positive income amount positive (posted bucket).
-    assert handler._spend_contribution(_transaction("salary", 3000, "posted"), sign=1) == (
+    import spend
+    assert spend.spend_contribution(_transaction("salary", 3000, "posted"), sign=1) == (
         "posted", Decimal("3000"))
 
 
-# --- _spend_contribution: the shared helper both summarisers call (WHIT-106) --
+# --- spend_contribution: the shared helper both summarisers call (WHIT-106) --
 
 
 def test_spend_contribution_posted_returns_bucket_and_positive_spend(handler):
     # Spend stored negative -> contribution is -amount (positive) in the posted bucket.
-    assert handler._spend_contribution(_transaction("coffee", -50, "posted")) == (
+    import spend
+    assert spend.spend_contribution(_transaction("coffee", -50, "posted")) == (
         "posted", Decimal("50"))
 
 
 def test_spend_contribution_pending_uses_pending_bucket(handler):
-    assert handler._spend_contribution(_transaction("coffee", -12, "pending")) == (
+    import spend
+    assert spend.spend_contribution(_transaction("coffee", -12, "pending")) == (
         "pending", Decimal("12"))
 
 
 def test_spend_contribution_refund_is_a_negative_contribution(handler):
     # A refund (positive amount) yields a negative spend; the caller clamps, not this.
-    assert handler._spend_contribution(_transaction("coffee", 20, "posted")) == (
+    import spend
+    assert spend.spend_contribution(_transaction("coffee", 20, "posted")) == (
         "posted", Decimal("-20"))
 
 
 def test_spend_contribution_none_when_not_counting(handler):
-    assert handler._spend_contribution(_transaction("coffee", -50, counts=False)) is None
+    import spend
+    assert spend.spend_contribution(_transaction("coffee", -50, counts=False)) is None
 
 
 def test_spend_contribution_none_on_unknown_status(handler):
-    assert handler._spend_contribution(_transaction("coffee", -50, status="settled")) is None
+    import spend
+    assert spend.spend_contribution(_transaction("coffee", -50, status="settled")) is None
 
 
 def test_current_cycle_window_end_is_today_inclusive(handler):
@@ -1151,7 +1157,7 @@ def test_list_budgets_window_excludes_tomorrow_includes_boundaries(handler, monk
     # count. Fails on the old `today+1` end (would sum 30); passes on the fix (sums 20).
     from datetime import date
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
@@ -1171,7 +1177,7 @@ def test_list_budgets_window_excludes_day_before_cycle_start(handler, monkeypatc
     # itself does. Locks the start bound the same way the end bound is locked.
     from datetime import date
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-02"},  # day before cycle_start -> OUT
@@ -1189,7 +1195,7 @@ def test_list_budgets_window_excludes_pending_dated_tomorrow(handler, monkeypatc
     # leak in either — pending stays 0, today's pending still counts.
     from datetime import date
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 16))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 16))
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "pending"), "date": "2024-01-16"},  # today    -> IN
@@ -1206,7 +1212,7 @@ def test_list_budgets_window_monthly_excludes_tomorrow(handler, monkeypatch):
     # `today`, so a txn dated tomorrow is excluded and cycle_start still counts.
     from datetime import date
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 2, 1))  # 29 days on -> cycle_start 2024-01-03
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 2, 1))  # 29 days on -> cycle_start 2024-01-03
     budget_repo = FakeBudgetRepo(budgets={"coffee": {"target": Decimal("100")}})
     txn_repo = _DateFilteringTransactionRepo(transactions=[
         {**_transaction("coffee", -10, "posted"), "date": "2024-01-03"},  # cycle_start -> IN
@@ -1229,9 +1235,9 @@ def test_current_cycle_window_injectable_today_is_deterministic(handler):
 
 def test_current_cycle_window_defaults_to_melbourne_today(handler, monkeypatch):
     from datetime import date
-    # With no explicit `today`, the window uses _melbourne_today().
+    # With no explicit `today`, the window uses melbourne_today().
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 2, 15))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 2, 15))
     start, end = handler.current_cycle_window("2024-01-03", 14)
     assert (start, end) == ("2024-02-14", "2024-02-15")
 
@@ -1245,7 +1251,7 @@ def test_melbourne_today_maps_utc_instant_to_local_date(handler, monkeypatch):
             return datetime(2024, 6, 30, 15, 30, tzinfo=timezone.utc).astimezone(tz)
     import spend
     monkeypatch.setattr(spend, "datetime", _FrozenDatetime)
-    assert spend._melbourne_today().isoformat() == "2024-07-01"
+    assert spend.melbourne_today().isoformat() == "2024-07-01"
 
 
 def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypatch):
@@ -1258,7 +1264,7 @@ def test_melbourne_today_falls_back_to_utc_when_tzdata_missing(handler, monkeypa
     def _boom(name):
         raise ZoneInfoNotFoundError(name)
     monkeypatch.setattr(spend, "ZoneInfo", _boom)
-    assert spend._melbourne_today() == datetime.now(timezone.utc).date()
+    assert spend.melbourne_today() == datetime.now(timezone.utc).date()
 
 
 # --- WHIT-220 Step 2: adversarial gap tests for sub-category roll-up ----------

@@ -163,7 +163,7 @@ def test_set_paycycle_base64_body(handler):
 def test_get_paycycle_dispatch(handler, monkeypatch):
     from datetime import date
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: date(2024, 1, 10))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: date(2024, 1, 10))
     repo = FakePayCycleRepo(cycle={"length": 14, "last_pay_date": "2024-01-03"})
     monkeypatch.setattr(handler, "PayCycleRepository", lambda: repo)
 
@@ -183,7 +183,7 @@ def test_get_paycycle_view_days_left(handler, monkeypatch):
     import spend
 
     def _view(length, last_pay_date, today):
-        monkeypatch.setattr(spend, "_melbourne_today", lambda: today)
+        monkeypatch.setattr(spend, "melbourne_today", lambda: today)
         return handler.get_paycycle_view(FakePayCycleRepo(cycle={"length": length, "last_pay_date": last_pay_date}))
 
     # On payday -> a full cycle remains.

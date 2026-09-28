@@ -25,7 +25,7 @@ _TODAY = date(2026, 7, 14)   # cycle [2026-07-01, 2026-07-14] with payday 07-01,
 @pytest.fixture
 def alerts(lam, monkeypatch):
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: _TODAY)
+    monkeypatch.setattr(spend, "melbourne_today", lambda: _TODAY)
     return lam
 
 

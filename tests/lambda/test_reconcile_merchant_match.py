@@ -364,7 +364,7 @@ def _run_alerts(lam, monkeypatch, *, budgets, before, normalised, webhook_repo, 
     the Δ simulation runs the production `_reconcile_matches` (and therefore the
     WHIT-336 gate) rather than a stand-in."""
     import spend
-    monkeypatch.setattr(spend, "_melbourne_today", lambda: __import__("datetime").date(2026, 7, 24))
+    monkeypatch.setattr(spend, "melbourne_today", lambda: __import__("datetime").date(2026, 7, 24))
     ba = lam.budget_alerts
     sent = []
     monkeypatch.setattr(ba, "send_push",

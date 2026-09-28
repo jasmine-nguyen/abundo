@@ -94,8 +94,10 @@ def _entry(target, **extra):
 
 
 def _pin_window(handler, monkeypatch, cycle_start, today):
-    monkeypatch.setattr(handler, "current_cycle_window",
-                        lambda last_pay_date, length, _today=None: (cycle_start, today))
+    import budget_standing
+    for module in (handler, budget_standing):
+        monkeypatch.setattr(module, "current_cycle_window",
+                            lambda last_pay_date, length, _today=None: (cycle_start, today))
 
 
 # --- settle-lag EXACT boundary: end == cutoff must NOT seal -------------------
