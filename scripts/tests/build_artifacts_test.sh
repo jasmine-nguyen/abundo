@@ -26,7 +26,7 @@ NEW_MODULE_NAME="zz_new_tracked_module_should_ship.py"
 NEW_MODULE="$ROOT/lambda_api/$NEW_MODULE_NAME"
 CRUFT="$ROOT/lambda_api/__cruft_should_not_ship__.py"
 SANDBOX=$(mktemp -d)
-trap 'rm -f "$CRUFT" "$NEW_MODULE"; rm -rf "$SANDBOX"' EXIT
+trap 'rm -f "$CRUFT" "$NEW_MODULE" "$ROOT/terraform/build/lambda_api/$NEW_MODULE_NAME"; rm -rf "$SANDBOX"' EXIT
 echo "x = 1" >"$NEW_MODULE"
 echo "x = 1" >"$CRUFT"
 export GIT_INDEX_FILE="$SANDBOX/index"
